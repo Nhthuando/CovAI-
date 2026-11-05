@@ -543,15 +543,50 @@ export const installPackageInWorkspace = async ({
   }
 
   const targetDir = findTargetPackageDir(effectiveRootDir, importedFrom, packageName);
-  const saveFlag = isDev ? "--save-dev" : "--save";
-  const command = `npm install ${saveFlag} ${packageName} --prefer-offline --prefer-cached --legacy-peer-deps --no-audit --no-fund --progress=false --maxsockets=4`;
+
+  // Detect package manager (npm, pnpm, yarn, bun)
+  let pkgManager = "npm";
+  const pkgJsonPath = path.join(targetDir, "package.json");
+  if (fs.existsSync(pkgJsonPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+      if (typeof parsed.packageManager === "string") {
+        if (parsed.packageManager.startsWith("pnpm")) pkgManager = "pnpm";
+        else if (parsed.packageManager.startsWith("yarn")) pkgManager = "yarn";
+        else if (parsed.packageManager.startsWith("bun")) pkgManager = "bun";
+      }
+    } catch (_) { }
+  }
+  if (pkgManager === "npm") {
+    if (fs.existsSync(path.join(targetDir, "pnpm-lock.yaml")) || fs.existsSync(path.join(effectiveRootDir, "pnpm-lock.yaml"))) {
+      pkgManager = "pnpm";
+    } else if (fs.existsSync(path.join(targetDir, "yarn.lock")) || fs.existsSync(path.join(effectiveRootDir, "yarn.lock"))) {
+      pkgManager = "yarn";
+    } else if (fs.existsSync(path.join(targetDir, "bun.lockb")) || fs.existsSync(path.join(targetDir, "bun.lock")) || fs.existsSync(path.join(effectiveRootDir, "bun.lockb"))) {
+      pkgManager = "bun";
+    }
+  }
+
+  let command;
+  if (pkgManager === "pnpm") {
+    command = `pnpm add ${isDev ? "-D" : ""} ${packageName}`;
+  } else if (pkgManager === "yarn") {
+    command = `yarn add ${isDev ? "-D" : ""} ${packageName}`;
+  } else if (pkgManager === "bun") {
+    command = `bun add ${isDev ? "-d" : ""} ${packageName}`;
+  } else {
+    const saveFlag = isDev ? "--save-dev" : "--save";
+    command = `npm install ${saveFlag} ${packageName} --prefer-offline --prefer-cached --legacy-peer-deps --no-audit --no-fund --progress=false --maxsockets=4`;
+  }
+
+  const timeoutMs = jobId ? 60 * 1000 : 30 * 1000;
 
   let execResult;
   try {
     execResult = await dockerRunner.run({
       snapshotPath: targetDir,
       command,
-      timeoutMs: 30 * 1000, // 30s timeout to prevent hanging UI
+      timeoutMs,
       jobId,
     });
   } catch (err) {
@@ -559,27 +594,14 @@ export const installPackageInWorkspace = async ({
     execResult = {
       success: false,
       stdout: "",
-      stderr: err.message || "Timed out after 30s",
+      stderr: err.message || `Timed out after ${Math.round(timeoutMs / 1000)}s`,
       exitCode: 408,
       timedOut: true,
     };
   }
 
-  // Guarantee package.json has entry in case npm ran in restricted sandbox
-  const pkgJsonPath = path.join(targetDir, "package.json");
-  if (fs.existsSync(pkgJsonPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
-      const section = isDev ? "devDependencies" : "dependencies";
-      pkg[section] = pkg[section] || {};
-      if (!pkg.dependencies?.[packageName] && !pkg.devDependencies?.[packageName]) {
-        pkg[section][packageName] = "^latest";
-        fs.writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2), "utf8");
-      }
-    } catch (err) {
-      console.warn("[installPackageInWorkspace] Notice updating package.json:", err.message);
-    }
-  }
+  // Enforce Storage Code Immutability Guard (Rule 8): Never mutate package.json on disk.
+  // Missing or sandbox-restricted packages are hermetically mocked in RAM.
 
   return {
     success: execResult.success,

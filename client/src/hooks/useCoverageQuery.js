@@ -11,7 +11,7 @@ import {
 } from "../services/coverage.service.js";
 import { getProjectCfgApi, getProjectsApi, getProjectTreeApi } from "../services/project.service.js";
 import { queryClient } from "../lib/queryClient.js";
-import { useAuth } from "./useAuth";
+import { useAuth } from "./useAuth.js";
 
 /**
  * Fetch all coverage data for a given snapshot and coverage type in parallel.

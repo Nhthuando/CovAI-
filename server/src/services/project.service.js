@@ -931,9 +931,36 @@ export const deleteProject = async (projectId, userId) => {
   const evaluations = await prisma.aiEvaluationProjectRun.findMany({ where: { projectId }, select: { id: true } });
   await cleanupProjectStorageAsync(projectId, snapshots, { evaluationIds: evaluations.map(row => row.id) });
 
+  // Docker runner and chatbot sandbox cleanup
+  try {
+    const { cleanupProjectRunnerContainers } = await import("./dockerRunner.service.js");
+    await cleanupProjectRunnerContainers(projectId);
+  } catch (err) {
+    console.warn(`[DeleteProject] Warning cleaning up runner containers for ${projectId}:`, err?.message);
+  }
+
+  for (const ev of evaluations) {
+    try {
+      const { cleanupProjectSandbox } = await import("./aiEvaluation/projectSandbox.service.js");
+      await cleanupProjectSandbox(ev.id);
+    } catch (err) {
+      console.warn(`[DeleteProject] Warning cleaning up sandbox for evaluation ${ev.id}:`, err?.message);
+    }
+  }
+
+  // Invalidate in-memory manifest cache for deleted snapshots
+  for (const snap of snapshots) {
+    if (snap?.id) {
+      try {
+        const { clearManifestCache } = await import("./unitTestVersion.service.js");
+        clearManifestCache(snap.id);
+      } catch (_) { }
+    }
+  }
+
   // Fast DB deletion:
   // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.
-  // Takes only 1 single SQL query (~10-50ms) instead of 14 separate slow queries.
+  // Takes only 1 single SQL query (~10-50ms) instead of separate slow queries.
   try {
     await withProjectGuard({ projectId, userId, capability: 'project.delete' }, tx => tx.project.delete({ where: { id: projectId } }));
   } catch (error) {
@@ -943,21 +970,86 @@ export const deleteProject = async (projectId, userId) => {
       error?.message,
     );
     await withProjectGuard({ projectId, userId, capability: 'project.delete' }, async tx => {
-        await tx.coverageSummary.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.coverageFile.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.coverageFunction.deleteMany({
-          where: { snapshot: { projectId } },
-        });
-        await tx.cyclomatic.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.cfg.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.aiContextCache.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.aiSuggestion.deleteMany({ where: { projectId } });
-        await tx.aiTest.deleteMany({ where: { projectId } });
-        await tx.jobLog.deleteMany({ where: { job: { projectId } } });
-        await tx.jobOutput.deleteMany({ where: { job: { projectId } } });
-        await tx.job.deleteMany({ where: { projectId } });
-        await tx.notification.deleteMany({ where: { projectId } });
-        await tx.projectSnapshot.deleteMany({ where: { projectId } });
+        // 1. System test & evaluation leaf models
+        if (tx.systemRunArtifact?.deleteMany) await tx.systemRunArtifact.deleteMany({ where: { assessment: { snapshot: { projectId } } } });
+        if (tx.systemRunEvent?.deleteMany) await tx.systemRunEvent.deleteMany({ where: { assessment: { snapshot: { projectId } } } });
+        if (tx.systemMutationRun?.deleteMany) await tx.systemMutationRun.deleteMany({ where: { proposal: { snapshot: { projectId } } } });
+        if (tx.systemTestProposal?.deleteMany) await tx.systemTestProposal.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemScenario?.deleteMany) await tx.systemScenario.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemAssertionBinding?.deleteMany) await tx.systemAssertionBinding.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemTestAssessment?.deleteMany) await tx.systemTestAssessment.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemRequirementRevision?.deleteMany) await tx.systemRequirementRevision.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemTestFile?.deleteMany) await tx.systemTestFile.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 2. Chatbot evaluation models
+        if (tx.aiEvaluationEvidence?.deleteMany) await tx.aiEvaluationEvidence.deleteMany({ where: { run: { projectId } } });
+        if (tx.aiEvaluationHumanReview?.deleteMany) await tx.aiEvaluationHumanReview.deleteMany({ where: { criterionResult: { caseResult: { run: { projectId } } } } });
+        if (tx.aiEvaluationCriterionResult?.deleteMany) await tx.aiEvaluationCriterionResult.deleteMany({ where: { caseResult: { run: { projectId } } } });
+        if (tx.aiEvaluationConfirmationGrant?.deleteMany) await tx.aiEvaluationConfirmationGrant.deleteMany({ where: { attempt: { caseResult: { run: { projectId } } } } });
+        if (tx.aiEvaluationToolCall?.deleteMany) await tx.aiEvaluationToolCall.deleteMany({ where: { attempt: { caseResult: { run: { projectId } } } } });
+        if (tx.aiEvaluationAttempt?.deleteMany) await tx.aiEvaluationAttempt.deleteMany({ where: { caseResult: { run: { projectId } } } });
+        if (tx.aiEvaluationCaseResult?.deleteMany) await tx.aiEvaluationCaseResult.deleteMany({ where: { run: { projectId } } });
+        if (tx.aiEvaluationRun?.deleteMany) await tx.aiEvaluationRun.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationProjectRun?.deleteMany) await tx.aiEvaluationProjectRun.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationProjectSettings?.deleteMany) await tx.aiEvaluationProjectSettings.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationTestCase?.deleteMany) await tx.aiEvaluationTestCase.deleteMany({ where: { profileVersion: { profile: { projectId } } } });
+        if (tx.aiEvaluationProfileVersion?.deleteMany) await tx.aiEvaluationProfileVersion.deleteMany({ where: { profile: { projectId } } });
+        if (tx.aiEvaluationProfile?.deleteMany) await tx.aiEvaluationProfile.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationKnowledgeSource?.deleteMany) await tx.aiEvaluationKnowledgeSource.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationTargetVersion?.deleteMany) await tx.aiEvaluationTargetVersion.deleteMany({ where: { target: { projectId } } });
+        if (tx.aiEvaluationCredential?.deleteMany) await tx.aiEvaluationCredential.deleteMany({ where: { target: { projectId } } });
+        if (tx.aiEvaluationTarget?.deleteMany) await tx.aiEvaluationTarget.deleteMany({ where: { projectId } });
+
+        // 3. Operations, mutations, file versions, events
+        if (tx.projectOperationRequest?.deleteMany) await tx.projectOperationRequest.deleteMany({ where: { projectId } });
+        if (tx.projectOperation?.deleteMany) await tx.projectOperation.deleteMany({ where: { projectId } });
+        if (tx.projectMutation?.deleteMany) await tx.projectMutation.deleteMany({ where: { projectId } });
+        if (tx.projectFileVersion?.deleteMany) await tx.projectFileVersion.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.projectEvent?.deleteMany) await tx.projectEvent.deleteMany({ where: { projectId } });
+
+        // 4. Collaboration, members, invitations
+        if (tx.invitationDelivery?.deleteMany) await tx.invitationDelivery.deleteMany({ where: { invitation: { projectId } } });
+        if (tx.projectInvitation?.deleteMany) await tx.projectInvitation.deleteMany({ where: { projectId } });
+        if (tx.projectMember?.deleteMany) await tx.projectMember.deleteMany({ where: { projectId } });
+        if (tx.projectMemory?.deleteMany) await tx.projectMemory.deleteMany({ where: { projectId } });
+        if (tx.aiContextSettings?.deleteMany) await tx.aiContextSettings.deleteMany({ where: { projectId } });
+
+        // 5. Chat messages & sessions
+        if (tx.chatMessage?.deleteMany) await tx.chatMessage.deleteMany({ where: { session: { projectId } } });
+        if (tx.chatRequest?.deleteMany) await tx.chatRequest.deleteMany({ where: { session: { projectId } } });
+        if (tx.chatSession?.deleteMany) await tx.chatSession.deleteMany({ where: { projectId } });
+
+        // 6. Test runs & scenarios
+        if (tx.testScenario?.deleteMany) await tx.testScenario.deleteMany({ where: { testRun: { snapshot: { projectId } } } });
+        if (tx.testRun?.deleteMany) await tx.testRun.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 7. Quality & structure reports
+        if (tx.qualityReport?.deleteMany) await tx.qualityReport.deleteMany({ where: { projectId } });
+        if (tx.projectStructureAnalysis?.deleteMany) await tx.projectStructureAnalysis.deleteMany({ where: { ProjectSnapshot: { projectId } } });
+        if (tx.performanceMetric?.deleteMany) await tx.performanceMetric.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.vulnerability?.deleteMany) await tx.vulnerability.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 8. Coverage & CFG metrics
+        if (tx.coverageSummary?.deleteMany) await tx.coverageSummary.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.coverageFile?.deleteMany) await tx.coverageFile.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.coverageFunction?.deleteMany) await tx.coverageFunction.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.cyclomatic?.deleteMany) await tx.cyclomatic.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.cfg?.deleteMany) await tx.cfg.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.aiContextCache?.deleteMany) await tx.aiContextCache.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 9. AI suggestions & tests
+        if (tx.aiTestResult?.deleteMany) await tx.aiTestResult.deleteMany({ where: { aiTest: { projectId } } });
+        if (tx.aiTest?.deleteMany) await tx.aiTest.deleteMany({ where: { projectId } });
+        if (tx.aiSuggestion?.deleteMany) await tx.aiSuggestion.deleteMany({ where: { projectId } });
+
+        // 10. Jobs & notifications
+        if (tx.jobLog?.deleteMany) await tx.jobLog.deleteMany({ where: { job: { projectId } } });
+        if (tx.jobOutput?.deleteMany) await tx.jobOutput.deleteMany({ where: { job: { projectId } } });
+        if (tx.job?.deleteMany) await tx.job.deleteMany({ where: { projectId } });
+        if (tx.notification?.deleteMany) await tx.notification.deleteMany({ where: { projectId } });
+
+        // 11. Project snapshots & project root
+        if (tx.projectSnapshot?.deleteMany) await tx.projectSnapshot.deleteMany({ where: { projectId } });
         await tx.project.delete({ where: { id: projectId } });
     });
   }

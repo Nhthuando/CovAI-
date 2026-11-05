@@ -470,26 +470,76 @@ export const autoRepairTestSyntaxWithAst = (code, options = {}) => {
       (e) => e.message?.includes("Unexpected token") || e.message?.includes("Unterminated") || e.message?.includes("missing")
     );
     if (hasUnclosedError) {
-      let openParen = 0;
-      let openBrace = 0;
+      const stack = [];
       let inStrChar = null;
+      let inLineComment = false;
+      let inBlockComment = false;
       for (let i = 0; i < currentCode.length; i++) {
         const c = currentCode[i];
+        const next = currentCode[i + 1];
+        if (inLineComment) {
+          if (c === '\n') inLineComment = false;
+          continue;
+        }
+        if (inBlockComment) {
+          if (c === '*' && next === '/') {
+            inBlockComment = false;
+            i++;
+          }
+          continue;
+        }
+        if (inStrChar) {
+          if (c === inStrChar && currentCode[i - 1] !== '\\') {
+            inStrChar = null;
+          }
+          continue;
+        }
+        if (c === '/' && next === '/') {
+          inLineComment = true;
+          i++;
+          continue;
+        }
+        if (c === '/' && next === '*') {
+          inBlockComment = true;
+          i++;
+          continue;
+        }
         if (c === '"' || c === "'" || c === '`') {
-          if (!inStrChar) inStrChar = c;
-          else if (inStrChar === c && currentCode[i - 1] !== '\\') inStrChar = null;
-        } else if (!inStrChar) {
-          if (c === '(') openParen++;
-          else if (c === ')') openParen = Math.max(0, openParen - 1);
-          else if (c === '{') openBrace++;
-          else if (c === '}') openBrace = Math.max(0, openBrace - 1);
+          inStrChar = c;
+          continue;
+        }
+        if (c === '(') {
+          stack.push('(');
+        } else if (c === '{') {
+          stack.push('{');
+        } else if (c === '[') {
+          stack.push('[');
+        } else if (c === ')') {
+          if (stack.length > 0 && stack[stack.length - 1] === '(') stack.pop();
+        } else if (c === '}') {
+          if (stack.length > 0 && stack[stack.length - 1] === '{') stack.pop();
+        } else if (c === ']') {
+          if (stack.length > 0 && stack[stack.length - 1] === '[') stack.pop();
         }
       }
-      if (openParen > 0 || openBrace > 0) {
+      if (stack.length > 0) {
         let suffix = "";
-        for (let p = 0; p < openParen; p++) suffix += ");";
-        for (let b = 0; b < openBrace; b++) suffix += "\n});";
-        currentCode = currentCode.trimEnd() + "\n" + suffix + "\n";
+        while (stack.length > 0) {
+          const delim = stack.pop();
+          if (delim === '{') {
+            if (stack.length > 0 && stack[stack.length - 1] === '(') {
+              stack.pop();
+              suffix += "\n});";
+            } else {
+              suffix += "\n};";
+            }
+          } else if (delim === '(') {
+            suffix += ");";
+          } else if (delim === '[') {
+            suffix += "];";
+          }
+        }
+        currentCode = currentCode.trimEnd() + suffix + "\n";
         modified = true;
       }
     }

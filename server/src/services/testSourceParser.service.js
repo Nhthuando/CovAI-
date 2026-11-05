@@ -1,6 +1,6 @@
+import { parse as babelParse } from "@babel/parser";
 import * as esprimaModule from "esprima";
 const esprima = esprimaModule?.default?.parseScript ? esprimaModule.default : esprimaModule;
-
 
 /**
  * Extracts Supertest requests from an AI-generated Jest test file content.
@@ -13,13 +13,36 @@ export const extractTestRequests = (sourceCode, filePath) => {
     const results = [];
     let ast;
     try {
-        ast = esprima.parseModule(sourceCode, { jsx: true, tolerant: true, range: true });
-    } catch (e) {
+        const parsed = babelParse(sourceCode, {
+            sourceType: "unambiguous",
+            plugins: [
+                "estree",
+                "jsx",
+                "typescript",
+                "decorators-legacy",
+                "classProperties",
+                "classPrivateProperties",
+                "classPrivateMethods",
+                "optionalChaining",
+                "nullishCoalescingOperator",
+                "dynamicImport",
+                "objectRestSpread",
+                "topLevelAwait",
+                "asyncGenerators"
+            ],
+            errorRecovery: true
+        });
+        ast = parsed.program || parsed;
+    } catch (_) {
         try {
-            ast = esprima.parseScript(sourceCode, { tolerant: true, range: true });
-        } catch (err) {
-            console.error(`[TestSourceParser] Failed to parse AST for ${filePath}`, err.message);
-            return results;
+            ast = esprima.parseModule(sourceCode, { jsx: true, tolerant: true, range: true });
+        } catch (e) {
+            try {
+                ast = esprima.parseScript(sourceCode, { tolerant: true, range: true });
+            } catch (err) {
+                console.error(`[TestSourceParser] Failed to parse AST for ${filePath}`, err.message);
+                return results;
+            }
         }
     }
 

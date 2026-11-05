@@ -280,13 +280,19 @@ const createTypedJob =
 
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
-export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL", testType, requestId, chainBuildCfg = false }) =>
+export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL", testType, requestId, chainBuildCfg = false, useHermeticMock = false }) =>
   createSnapshotJob({
     projectId,
     snapshotId,
     userId,
     type: "RUN_TESTS",
-    payloadJson: { snapshotId, mode, ...(testType ? { testType } : {}), ...(chainBuildCfg ? { chainBuildCfg: true } : {}) },
+    payloadJson: {
+      snapshotId,
+      mode,
+      ...(testType ? { testType } : {}),
+      ...(chainBuildCfg ? { chainBuildCfg: true } : {}),
+      ...(useHermeticMock ? { useHermeticMock: true } : {}),
+    },
     requestId,
   });
 
@@ -350,7 +356,7 @@ export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "
     snapshotId,
     userId,
     type: "AI_TESTS",
-    payloadJson: { snapshotId, mode, executionMode, targetEndpoints, model:model || process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    payloadJson: { snapshotId, mode, executionMode, targetEndpoints, model:model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
       ...(aiTestId ? { aiTestId } : {}), ...(scenarioId ? { scenarioId } : {}), ...(expectedVersion ? { expectedVersion } : {}) },
     ...(requestId ? { requestId } : {}),
   });

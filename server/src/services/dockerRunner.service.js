@@ -98,7 +98,7 @@ export const dockerRunner = {
    * @param {string} [params.image] - Optional Docker image; ignored by direct-shell fallback
    * @returns {Promise<{ success: boolean, exitCode: number, stdout: string, stderr: string }>}
    */
-  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false, signal }) => {
+  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false, signal, projectId = null }) => {
     if (signal?.aborted) throw new ServiceError('Execution canceled', 409);
     return new Promise((resolve, reject) => {
       let stdout = "";
@@ -138,8 +138,8 @@ export const dockerRunner = {
         ...env,
       };
 
-      // Auto-load repo-level environment variables (.env.test, .env.example, .env) into mergedEnv
-      const repoEnvFiles = [".env.test", ".env.example", ".env"];
+      // Auto-load repo-level environment variables (.env.test, .env, .env.example) into mergedEnv
+      const repoEnvFiles = [".env.test", ".env", ".env.example"];
       for (const envFile of repoEnvFiles) {
         const envFilePath = path.join(effectiveSnapshotPath, envFile);
         if (fs.existsSync(envFilePath)) {
@@ -177,6 +177,9 @@ export const dockerRunner = {
         const args = [
           "run",
           "--rm",
+          "--label", "covai.purpose=test-runner",
+          ...(projectId ? ["--label", `covai.projectId=${projectId}`] : []),
+          ...(jobId ? ["--label", `covai.jobId=${jobId}`] : []),
           "--add-host=host.docker.internal:host-gateway",
           "--memory=2g",
           "--cpus=1.5",
@@ -332,3 +335,40 @@ export const dockerRunner = {
     });
   },
 };
+
+/**
+ * Stops and removes all Docker runner containers associated with a project.
+ *
+ * @param {string} projectId
+ * @param {Function} [spawnFn=spawnSync]
+ * @returns {Promise<{ success: boolean, removedCount: number, error?: string }>}
+ */
+export async function cleanupProjectRunnerContainers(projectId, spawnFn = spawnSync) {
+  if (!projectId || typeof projectId !== "string" || !/^[A-Za-z0-9_-]+$/.test(projectId)) {
+    return { success: true, removedCount: 0 };
+  }
+  try {
+    const res = spawnFn("docker", [
+      "ps", "-a",
+      "--filter", `label=covai.projectId=${projectId}`,
+      "--format", "{{.ID}}"
+    ], { encoding: "utf8", timeout: 10000, shell: true });
+
+    if (res && res.status === 0 && res.stdout) {
+      const containerIds = res.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      for (const cid of containerIds) {
+        try {
+          spawnFn("docker", ["rm", "-f", cid], { timeout: 15000, shell: true });
+        } catch (_) { }
+      }
+      return { success: true, removedCount: containerIds.length };
+    }
+    return { success: true, removedCount: 0 };
+  } catch (err) {
+    console.warn(`[cleanupProjectRunnerContainers] Warning pruning containers for ${projectId}:`, err.message);
+    return { success: false, error: err.message, removedCount: 0 };
+  }
+}
+
+dockerRunner.cleanupProjectRunnerContainers = cleanupProjectRunnerContainers;
+

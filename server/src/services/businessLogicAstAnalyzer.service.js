@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { parseJavaScriptCode } from "./babelParser.service.js";
+import { detectInfeasibleAstNodes, isLocContained, isLocOverlapping } from "./unreachableCodeDetector.service.js";
 
 /**
  * Normalizes file path to forward slashes without leading slashes or dots.
@@ -34,6 +35,9 @@ import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js
  * - Routes and server entry points (routes/**, endpoints/**, app.js, server.js, index.js, main.js)
  */
 export const isBusinessLogicFile = (filePath = "", configExclusions = []) => {
+    if (typeof filePath === "string" && /(?:^|\/)(?:handlers|services|controllers|utils)\/[^/]+\.step\.[cm]?[jt]sx?$/i.test(filePath) && !/(?:tests?|__tests__|specs?|e2e)/i.test(filePath)) {
+        return true;
+    }
     return isBusinessLogicSourceFile(filePath, configExclusions);
 };
 
@@ -110,6 +114,8 @@ export const analyzeSourceAst = (sourceCode = "") => {
     const declaredObjects = new Map();
     const declaredInstances = new Map();
     const mongooseModels = [];
+    const callEdges = [];
+    const sourceImports = new Map();
 
     if (!sourceCode || typeof sourceCode !== "string") {
         return {
@@ -124,7 +130,13 @@ export const analyzeSourceAst = (sourceCode = "") => {
             declaredObjects: [],
             mongooseModels: [],
             unexportedFunctions: [],
-            exportedSymbolNames: []
+            exportedSymbolNames: [],
+            infeasibleNodes: [],
+            ast: null,
+            callEdges: [],
+            imports: {},
+            sourceImports: {},
+            formattedImports: {}
         };
     }
 
@@ -139,7 +151,6 @@ export const analyzeSourceAst = (sourceCode = "") => {
         const exportedMap = new Map();
         const internalMap = new Map();
         const scopeStack = [];
-        const callEdges = [];
 
         const extractParamNames = (params) => {
             if (!Array.isArray(params)) return [];
@@ -194,6 +205,40 @@ export const analyzeSourceAst = (sourceCode = "") => {
             }
             if (pushedScope) {
                 scopeStack.push(pushedScope);
+            }
+
+            // --- 0. IMPORT DECLARATIONS (ESM & CJS) ---
+            if (node.type === "ImportDeclaration") {
+                const sourcePkg = node.source?.value;
+                if (sourcePkg) {
+                    if (!sourceImports.has(sourcePkg)) sourceImports.set(sourcePkg, { default: false, names: new Set(), namespace: false });
+                    const entry = sourceImports.get(sourcePkg);
+                    for (const spec of node.specifiers || []) {
+                        if (spec.type === "ImportDefaultSpecifier") {
+                            entry.default = true;
+                        } else if (spec.type === "ImportNamespaceSpecifier") {
+                            entry.namespace = true;
+                        } else if (spec.type === "ImportSpecifier") {
+                            const importedName = spec.imported?.name || spec.imported?.value;
+                            if (importedName) entry.names.add(importedName);
+                        }
+                    }
+                }
+            } else if (node.type === "VariableDeclarator" && node.init?.type === "CallExpression") {
+                const callee = node.init.callee;
+                if (callee?.name === "require" && node.init.arguments?.[0]?.value) {
+                    const sourcePkg = node.init.arguments[0].value;
+                    if (!sourceImports.has(sourcePkg)) sourceImports.set(sourcePkg, { default: false, names: new Set(), namespace: false });
+                    const entry = sourceImports.get(sourcePkg);
+                    if (node.id?.type === "ObjectPattern") {
+                        for (const prop of node.id.properties || []) {
+                            const pName = prop.key?.name || prop.key?.value;
+                            if (pName) entry.names.add(pName);
+                        }
+                    } else if (node.id?.type === "Identifier") {
+                        entry.default = true;
+                    }
+                }
             }
 
             // --- Track Class Declarations & Expressions ---
@@ -270,6 +315,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                             name: node.declaration.id.name,
                             type: isClass ? "class" : "function",
                             line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc,
                             isDefault: false,
                             params: isClass ? classInfo.constructorParams : extractParamNames(node.declaration.params),
                             methods: isClass ? classInfo.methods : [],
@@ -293,7 +341,10 @@ export const analyzeSourceAst = (sourceCode = "") => {
                                                 name: pName,
                                                 isAsync: Boolean(p.async || p.value?.async),
                                                 params: extractParamNames(p.params || p.value?.params),
-                                                line: p.loc?.start?.line || 1
+                                                line: p.loc?.start?.line || 1,
+                                                startLine: p.loc?.start?.line || 1,
+                                                endLine: p.loc?.end?.line || 1,
+                                                loc: p.loc
                                             });
                                         }
                                     }
@@ -305,6 +356,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                                     className,
                                     methods: objMethods,
                                     line: d.loc?.start?.line || node.loc?.start?.line || 1,
+                                    startLine: d.loc?.start?.line || node.loc?.start?.line || 1,
+                                    endLine: d.loc?.end?.line || node.loc?.end?.line || 1,
+                                    loc: d.loc || node.loc,
                                     isDefault: false,
                                     params: isFn ? extractParamNames(d.init?.params) : [],
                                     calls: []
@@ -355,6 +409,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                     className,
                     methods: defaultMethods,
                     line: node.loc?.start?.line || 1,
+                    startLine: node.loc?.start?.line || 1,
+                    endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                    loc: node.loc,
                     isDefault: true,
                     params: isFn ? extractParamNames(node.declaration.params) : [],
                     calls: []
@@ -377,6 +434,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                                     name: pName,
                                     type: isMethod ? "function" : "constant",
                                     line: prop.loc?.start?.line || node.loc?.start?.line || 1,
+                                    startLine: prop.loc?.start?.line || node.loc?.start?.line || 1,
+                                    endLine: prop.loc?.end?.line || node.loc?.end?.line || 1,
+                                    loc: prop.loc || node.loc,
                                     isDefault: false,
                                     params: isMethod ? extractParamNames(prop.params || prop.value?.params) : [],
                                     calls: []
@@ -390,6 +450,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                             type: "class-instance",
                             className,
                             line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc,
                             isDefault: true,
                             params: [],
                             methods: [],
@@ -403,6 +466,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                             type: isClass ? "class" : "function",
                             className: isClass ? idName : null,
                             line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc,
                             isDefault: true,
                             params: [],
                             methods: isClass ? declaredClasses.get(idName).methods : [],
@@ -417,6 +483,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                             name: propName,
                             type: isMethod ? "function" : "constant",
                             line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc,
                             isDefault: false,
                             params: isMethod ? extractParamNames(node.right.params) : [],
                             calls: []
@@ -433,6 +502,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                         internalMap.set(fnName, {
                             name: fnName,
                             line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc,
                             isAsync: node.async === true,
                             paramCount: Array.isArray(node.params) ? node.params.length : 0,
                             params: extractParamNames(node.params),
@@ -448,6 +520,9 @@ export const analyzeSourceAst = (sourceCode = "") => {
                                 internalMap.set(fnName, {
                                     name: fnName,
                                     line: d.loc?.start?.line || node.loc?.start?.line || 1,
+                                    startLine: d.init?.loc?.start?.line || d.loc?.start?.line || node.loc?.start?.line || 1,
+                                    endLine: d.init?.loc?.end?.line || d.loc?.end?.line || node.loc?.end?.line || 1,
+                                    loc: d.init?.loc || d.loc || node.loc,
                                     isAsync: d.init?.async === true,
                                     paramCount: Array.isArray(d.init?.params) ? d.init.params.length : 0,
                                     params: extractParamNames(d.init?.params),
@@ -474,6 +549,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 const line = node.loc?.start?.line;
                 decisionPoints.push({
                     line,
+                    loc: node.loc,
                     type: "if",
                     text: getLineText(line),
                     consequentLine: node.consequent?.loc?.start?.line,
@@ -484,6 +560,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 const line = node.loc?.start?.line;
                 decisionPoints.push({
                     line,
+                    loc: node.loc,
                     type: "ternary",
                     text: getLineText(line),
                     consequentLine: node.consequent?.loc?.start?.line,
@@ -493,6 +570,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 const line = node.loc?.start?.line;
                 decisionPoints.push({
                     line,
+                    loc: node.loc,
                     type: "switch-case",
                     text: getLineText(line),
                     isDefault: node.test === null
@@ -501,6 +579,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 const line = node.loc?.start?.line;
                 decisionPoints.push({
                     line,
+                    loc: node.loc,
                     type: `logical(${node.operator})`,
                     operator: node.operator,
                     text: getLineText(line)
@@ -509,6 +588,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 const line = node.loc?.start?.line;
                 decisionPoints.push({
                     line,
+                    loc: node.loc,
                     type: "optional-chaining(?.)",
                     text: getLineText(line)
                 });
@@ -518,6 +598,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 if (paramName && line) {
                     decisionPoints.push({
                         line,
+                        loc: node.loc,
                         type: "default-arg",
                         param: paramName,
                         text: getLineText(line)
@@ -530,6 +611,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 const line = node.loc?.start?.line;
                 const pt = {
                     line,
+                    loc: node.loc,
                     type: "throw",
                     text: getLineText(line)
                 };
@@ -539,6 +621,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 const line = node.loc?.start?.line;
                 const pt = {
                     line,
+                    loc: node.loc,
                     type: "catch",
                     text: getLineText(line),
                     param: node.param?.name || "err"
@@ -550,6 +633,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                     const line = node.loc?.start?.line;
                     const pt = {
                         line,
+                        loc: node.loc,
                         type: "promise-reject",
                         text: getLineText(line)
                     };
@@ -643,16 +727,42 @@ export const analyzeSourceAst = (sourceCode = "") => {
         }
     }
 
+    const getSymbolBody = (exp, code) => {
+        if (!exp || !code) return "";
+        if (typeof exp.start === "number" && typeof exp.end === "number") {
+            return code.slice(exp.start, exp.end);
+        }
+        if (exp.loc?.start?.line && exp.loc?.end?.line) {
+            const lines = code.split(/\r?\n/);
+            return lines.slice(exp.loc.start.line - 1, exp.loc.end.line).join("\n");
+        }
+        if (exp.startLine && exp.endLine) {
+            const lines = code.split(/\r?\n/);
+            return lines.slice(exp.startLine - 1, exp.endLine).join("\n");
+        }
+        const expName = exp.name?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (!expName) return "";
+        const fnPattern = new RegExp(`(?:export\\s+)?(?:async\\s+)?(?:function\\s+${expName}|(?:const|let|var)\\s+${expName}\\s*=\\s*(?:async\\s*)?(?:function|\\([^)]*\\)\\s*=>|[a-zA-Z0-9_$]+\\s*=>))[\\s\\S]*?(?=(?:export\\s+|(?:const|let|var)\\s+[a-zA-Z0-9_$]+\\s*=|$))`);
+        const match = code.match(fnPattern);
+        return match ? match[0] : "";
+    };
+
     if (internalFunctions.length === 0) {
         const fnMatches = [...sourceCode.matchAll(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/g)];
         for (const m of fnMatches) {
             if (m[1] && !exportedSymbols.some(s => s.name === m[1]) && !internalFunctions.some(item => item.name === m[1])) {
+                const helperCallRegex = new RegExp(`\\b${m[1]}\\s*\\(`);
                 const callers = exportedSymbols
-                    .filter(exp => new RegExp(`\\b${m[1]}\\s*\\(`).test(sourceCode))
+                    .filter(exp => {
+                        const body = getSymbolBody(exp, sourceCode);
+                        return helperCallRegex.test(body);
+                    })
                     .map(exp => exp.name);
                 internalFunctions.push({
                     name: m[1],
                     line: 1,
+                    startLine: 1,
+                    endLine: 1,
                     callers: Array.from(new Set(callers)),
                     params: [],
                     warning: "DO NOT IMPORT DIRECTLY - TEST INDIRECTLY VIA EXPORTED CALLER"
@@ -669,6 +779,15 @@ export const analyzeSourceAst = (sourceCode = "") => {
         (c.methods || []).map(m => ({ ...m, className: c.name }))
     );
 
+    const infeasibleNodes = parseRes.success && parseRes.ast ? detectInfeasibleAstNodes(parseRes.ast, sourceCode) : [];
+
+    const formattedImports = Object.fromEntries(
+        Array.from(sourceImports.entries()).map(([k, v]) => [
+            k,
+            { default: Boolean(v?.default), namespace: Boolean(v?.namespace), names: Array.from(v?.names || []) }
+        ])
+    );
+
     return {
         exportedSymbols,
         internalFunctions,
@@ -681,8 +800,85 @@ export const analyzeSourceAst = (sourceCode = "") => {
         declaredObjects: Array.from(declaredObjects.values()),
         mongooseModels: detectedModels,
         unexportedFunctions: internalFunctions.map(f => f.name),
-        exportedSymbolNames: exportedSymbols.map(s => s.name)
+        exportedSymbolNames: exportedSymbols.map(s => s.name),
+        infeasibleNodes,
+        ast: parseRes.success ? parseRes.ast : null,
+        callEdges,
+        imports: formattedImports,
+        sourceImports: formattedImports,
+        formattedImports: formattedImports
     };
+};
+
+/**
+ * Backwards-compatible alias for analyzeSourceAst
+ */
+export const analyzeBusinessLogicFile = analyzeSourceAst;
+
+/**
+ * Extracts all imported packages and named specifiers from source code using AST.
+ * @param {string} sourceCode
+ * @returns {Record<string, { default: boolean, namespace: boolean, names: string[] }>}
+ */
+export const extractSourceImportsAst = (sourceCode = "") => {
+    if (!sourceCode || typeof sourceCode !== "string") return {};
+    const parseRes = parseJavaScriptCode(sourceCode);
+    const importsMap = new Map();
+
+    const walk = (node) => {
+        if (!node || typeof node !== "object") return;
+        if (node.type === "ImportDeclaration") {
+            const sourcePkg = node.source?.value;
+            if (sourcePkg) {
+                if (!importsMap.has(sourcePkg)) importsMap.set(sourcePkg, { default: false, names: new Set(), namespace: false });
+                const entry = importsMap.get(sourcePkg);
+                for (const spec of node.specifiers || []) {
+                    if (spec.type === "ImportDefaultSpecifier") {
+                        entry.default = true;
+                    } else if (spec.type === "ImportNamespaceSpecifier") {
+                        entry.namespace = true;
+                    } else if (spec.type === "ImportSpecifier") {
+                        const importedName = spec.imported?.name || spec.imported?.value;
+                        if (importedName) entry.names.add(importedName);
+                    }
+                }
+            }
+        } else if (node.type === "VariableDeclarator" && node.init?.type === "CallExpression") {
+            const callee = node.init.callee;
+            if (callee?.name === "require" && node.init.arguments?.[0]?.value) {
+                const sourcePkg = node.init.arguments[0].value;
+                if (!importsMap.has(sourcePkg)) importsMap.set(sourcePkg, { default: false, names: new Set(), namespace: false });
+                const entry = importsMap.get(sourcePkg);
+                if (node.id?.type === "ObjectPattern") {
+                    for (const prop of node.id.properties || []) {
+                        const pName = prop.key?.name || prop.key?.value;
+                        if (pName) entry.names.add(pName);
+                    }
+                } else if (node.id?.type === "Identifier") {
+                    entry.default = true;
+                }
+            }
+        }
+        for (const key of Object.keys(node)) {
+            if (key === "loc" || key === "comments" || key === "tokens") continue;
+            const child = node[key];
+            if (Array.isArray(child)) {
+                for (const item of child) walk(item);
+            } else if (child && typeof child === "object" && child.type) {
+                walk(child);
+            }
+        }
+    };
+
+    if (parseRes.success && parseRes.ast) {
+        walk(parseRes.ast);
+    }
+    return Object.fromEntries(
+        Array.from(importsMap.entries()).map(([k, v]) => [
+            k,
+            { default: v.default, namespace: v.namespace, names: Array.from(v.names) }
+        ])
+    );
 };
 
 /**
@@ -698,16 +894,18 @@ export const mapCoverageGaps = ({
     astMetadata = null,
     fileCoverageData = null,
     sourceCode = "",
-    uncoveredLinesList = []
+    uncoveredLinesList = [],
+    ast = null
 }) => {
     const codeLines = sourceCode ? sourceCode.split(/\r?\n/) : [];
     const getSnippet = (lineNum) => (codeLines[lineNum - 1] || "").trim();
 
     const uncoveredLines = new Set((uncoveredLinesList || []).map(Number));
+    const uncoveredStatements = [];
     const uncoveredBranches = [];
     const uncoveredFunctions = [];
 
-    // 1. Process statementMap & s for uncovered lines if fileCoverageData is provided
+    // 1. Process statementMap & s for uncovered lines and statements if fileCoverageData is provided
     if (fileCoverageData?.statementMap && fileCoverageData?.s) {
         for (const [id, range] of Object.entries(fileCoverageData.statementMap)) {
             const hits = fileCoverageData.s[id] ?? 0;
@@ -717,6 +915,13 @@ export const mapCoverageGaps = ({
                 for (let l = startLine; l <= endLine; l++) {
                     uncoveredLines.add(l);
                 }
+                uncoveredStatements.push({
+                    stmtId: id,
+                    line: startLine,
+                    loc: range,
+                    isInfeasible: false,
+                    infeasibleMeta: null
+                });
             }
         }
     }
@@ -738,11 +943,15 @@ export const mapCoverageGaps = ({
                 uncoveredBranches.push({
                     branchId: id,
                     line,
+                    loc: branch.loc || { start: { line, column: 0 }, end: { line, column: 99999 } },
+                    locations: branch.locations || [],
                     type,
                     condition: getSnippet(line),
                     missedTrue: isTrueUncovered,
                     missedFalse: isFalseUncovered,
-                    status: (hitTrue === 0 && hitFalse === 0) ? "entirely_uncovered" : "partially_uncovered"
+                    status: (hitTrue === 0 && hitFalse === 0) ? "entirely_uncovered" : "partially_uncovered",
+                    isInfeasible: false,
+                    infeasibleMeta: null
                 });
             }
         }
@@ -756,11 +965,15 @@ export const mapCoverageGaps = ({
                 uncoveredBranches.push({
                     branchId: b.id || `b-${b.line}`,
                     line: b.line,
+                    loc: b.loc || { start: { line: b.line, column: 0 }, end: { line: b.line, column: 99999 } },
+                    locations: b.locations || [],
                     type: b.type || "branch",
                     condition: b.condition || getSnippet(b.line),
                     missedTrue: missedTrue || b.status === "uncovered",
                     missedFalse: missedFalse || b.status === "uncovered",
-                    status: b.status || "uncovered"
+                    status: b.status || "uncovered",
+                    isInfeasible: Boolean(b.isInfeasible),
+                    infeasibleMeta: b.infeasibleMeta || null
                 });
             }
         }
@@ -775,6 +988,7 @@ export const mapCoverageGaps = ({
                     fnId: id,
                     name: fn.name || "(anonymous)",
                     line: fn.line || fn.loc?.start?.line || 1,
+                    loc: fn.loc || fn.decl || { start: { line: fn.line || 1, column: 0 }, end: { line: fn.line || 1, column: 99999 } },
                     hits: 0
                 });
             }
@@ -788,63 +1002,176 @@ export const mapCoverageGaps = ({
                     fnId: f.id || `f-${f.line}`,
                     name: f.realName || f.name || "(anonymous)",
                     line: f.line || 1,
+                    loc: f.loc || { start: { line: f.line || 1, column: 0 }, end: { line: f.line || 1, column: 99999 } },
                     hits: f.hits || 0
                 });
             }
         }
     }
 
+    // 4. Infeasible node reconciliation
+    let infeasibleCodeBlocks = astMetadata?.infeasibleNodes || [];
+    if ((!infeasibleCodeBlocks || infeasibleCodeBlocks.length === 0) && (ast || astMetadata?.ast || sourceCode)) {
+        infeasibleCodeBlocks = detectInfeasibleAstNodes(ast || astMetadata?.ast, sourceCode);
+    }
+
+    // Tag uncovered branches with infeasible metadata
+    for (const ub of uncoveredBranches) {
+        for (const inf of infeasibleCodeBlocks) {
+            let matched = false;
+
+            if (inf.affectsBranch === "TRUE_BRANCH") {
+                const trueLoc = ub.locations?.[0] || ub.loc;
+                const hasPreciseCoords = Boolean(inf.loc?.start?.column !== undefined && trueLoc?.start?.column !== undefined);
+                const isContained = isLocOverlapping(inf.loc, trueLoc) || isLocContained(inf.loc, trueLoc) || isLocContained(trueLoc, inf.loc);
+                if (isContained || (!hasPreciseCoords && inf.line === ub.line)) {
+                    if (ub.missedTrue) matched = true;
+                }
+            } else if (inf.affectsBranch === "FALSE_BRANCH") {
+                const falseLoc = ub.locations?.[1] || ub.loc;
+                const hasPreciseCoords = Boolean(inf.loc?.start?.column !== undefined && falseLoc?.start?.column !== undefined);
+                const isContained = isLocOverlapping(inf.loc, falseLoc) || isLocContained(inf.loc, falseLoc) || isLocContained(falseLoc, inf.loc);
+                if (isContained || (!hasPreciseCoords && inf.line === ub.line)) {
+                    if (ub.missedFalse) matched = true;
+                }
+            } else if (inf.affectsBranch === "BOTH") {
+                const targetLoc = ub.loc;
+                const hasPreciseCoords = Boolean(inf.loc?.start?.column !== undefined && targetLoc?.start?.column !== undefined);
+                const isContained = isLocOverlapping(inf.loc, targetLoc) || isLocContained(inf.loc, targetLoc) || isLocContained(targetLoc, inf.loc);
+                if (isContained || (!hasPreciseCoords && inf.line === ub.line)) {
+                    matched = true;
+                }
+            }
+
+            if (matched) {
+                ub.isInfeasible = true;
+                ub.infeasibleMeta = {
+                    type: inf.type,
+                    justification: inf.justification,
+                    category: inf.category,
+                    affectsBranch: inf.affectsBranch,
+                    reason: inf.reason
+                };
+                break;
+            }
+        }
+    }
+
+    // Tag uncovered statements with infeasible metadata
+    for (const us of uncoveredStatements) {
+        for (const inf of infeasibleCodeBlocks) {
+            const hasPreciseCoords = Boolean(inf.loc?.start?.column !== undefined && us.loc?.start?.column !== undefined);
+            const isContained = isLocContained(inf.loc, us.loc) || isLocOverlapping(inf.loc, us.loc) || isLocContained(us.loc, inf.loc);
+            if (isContained || (!hasPreciseCoords && inf.line === us.line)) {
+                us.isInfeasible = true;
+                us.infeasibleMeta = {
+                    type: inf.type,
+                    justification: inf.justification,
+                    category: inf.category,
+                    reason: inf.reason
+                };
+                break;
+            }
+        }
+    }
+
     const sortedUncoveredLines = Array.from(uncoveredLines).filter(n => !isNaN(n) && n > 0).sort((a, b) => a - b);
 
-    // 4. Generate Targeted Decision Guidance connecting AST decisionPoints to coverage gaps
+    // 5. Generate Targeted Decision Guidance connecting AST decisionPoints to coverage gaps via exact coordinates
     const targetedGuidance = [];
     const allDecisions = astMetadata?.decisionPoints || [];
     const allExceptions = astMetadata?.exceptionPoints || [];
 
     for (const dp of allDecisions) {
         const isLineUncovered = uncoveredLines.has(dp.line);
-        const matchedBranch = uncoveredBranches.find(ub => Math.abs(ub.line - dp.line) <= 1);
+        const matchedBranch = uncoveredBranches.find(ub => {
+            if (dp.loc && ub.loc) {
+                return isLocOverlapping(dp.loc, ub.loc) || isLocContained(dp.loc, ub.loc) || isLocContained(ub.loc, dp.loc);
+            }
+            return Math.abs(ub.line - dp.line) <= 1;
+        });
 
         if (isLineUncovered || matchedBranch) {
-            let detail = "";
-            if (matchedBranch) {
-                if (matchedBranch.missedTrue && matchedBranch.missedFalse) {
-                    detail = "NEITHER True nor False path executed";
-                } else if (matchedBranch.missedTrue) {
-                    detail = "Missing TRUE path";
-                } else if (matchedBranch.missedFalse) {
-                    detail = "Missing FALSE path";
-                }
+            if (matchedBranch?.isInfeasible) {
+                targetedGuidance.push({
+                    line: dp.line,
+                    loc: dp.loc,
+                    type: dp.type.toUpperCase(),
+                    text: dp.text,
+                    status: "INFEASIBLE_GUARD",
+                    isInfeasible: true,
+                    infeasibleMeta: matchedBranch.infeasibleMeta,
+                    guidance: `Line ${dp.line} [${dp.type.toUpperCase()}]: "${dp.text}" -> Infeasible/unreachable (${matchedBranch.infeasibleMeta?.justification}). Suppressed from unit test generation.`
+                });
             } else {
-                detail = "Unexecuted condition block";
-            }
+                let detail = "";
+                if (matchedBranch) {
+                    if (matchedBranch.missedTrue && matchedBranch.missedFalse) {
+                        detail = "NEITHER True nor False path executed";
+                    } else if (matchedBranch.missedTrue) {
+                        detail = "Missing TRUE path";
+                    } else if (matchedBranch.missedFalse) {
+                        detail = "Missing FALSE path";
+                    }
+                } else {
+                    detail = "Unexecuted condition block";
+                }
 
-            targetedGuidance.push({
-                line: dp.line,
-                type: dp.type.toUpperCase(),
-                text: dp.text,
-                status: "UNCOVERED",
-                guidance: `Line ${dp.line} [${dp.type.toUpperCase()}]: "${dp.text}" -> ${detail}. (Craft test inputs to toggle this branch!)`
-            });
+                targetedGuidance.push({
+                    line: dp.line,
+                    loc: dp.loc,
+                    type: dp.type.toUpperCase(),
+                    text: dp.text,
+                    status: "UNCOVERED",
+                    guidance: `Line ${dp.line} [${dp.type.toUpperCase()}]: "${dp.text}" -> ${detail}. (Craft test inputs to toggle this branch!)`
+                });
+            }
         }
     }
 
     for (const ep of allExceptions) {
         if (uncoveredLines.has(ep.line)) {
-            targetedGuidance.push({
-                line: ep.line,
-                type: ep.type.toUpperCase(),
-                text: ep.text,
-                status: "UNCOVERED_ERROR_PATH",
-                guidance: `Line ${ep.line} [${ep.type.toUpperCase()}]: "${ep.text}" -> Exception path not triggered. (Pass invalid arguments or mock rejected promise to exercise this catch/throw statement!)`
+            const matchedInf = infeasibleCodeBlocks.find(inf => {
+                if (ep.loc && inf.loc) {
+                    return isLocOverlapping(ep.loc, inf.loc) || isLocContained(inf.loc, ep.loc);
+                }
+                return inf.line === ep.line;
             });
+
+            if (matchedInf) {
+                targetedGuidance.push({
+                    line: ep.line,
+                    loc: ep.loc,
+                    type: ep.type.toUpperCase(),
+                    text: ep.text,
+                    status: "INFEASIBLE_EXCEPTION_PATH",
+                    isInfeasible: true,
+                    infeasibleMeta: {
+                        type: matchedInf.type,
+                        justification: matchedInf.justification,
+                        category: matchedInf.category
+                    },
+                    guidance: `Line ${ep.line} [${ep.type.toUpperCase()}]: "${ep.text}" -> Infeasible exception block (${matchedInf.justification}). Suppressed from unit test generation.`
+                });
+            } else {
+                targetedGuidance.push({
+                    line: ep.line,
+                    loc: ep.loc,
+                    type: ep.type.toUpperCase(),
+                    text: ep.text,
+                    status: "UNCOVERED_ERROR_PATH",
+                    guidance: `Line ${ep.line} [${ep.type.toUpperCase()}]: "${ep.text}" -> Exception path not triggered. (Pass invalid arguments or mock rejected promise to exercise this catch/throw statement!)`
+                });
+            }
         }
     }
 
     return {
         uncoveredLines: sortedUncoveredLines,
+        uncoveredStatements,
         uncoveredBranches,
         uncoveredFunctions,
+        infeasibleCodeBlocks,
         targetedGuidance,
         guidanceSummary: targetedGuidance.map(g => `- ${g.guidance}`).join("\n") || "All identified decision points executed in current suite."
     };

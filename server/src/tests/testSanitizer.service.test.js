@@ -6,6 +6,8 @@ import {
     findTestBlockIntervalByTitle,
     updateTestBlockByTitle,
     ensureJestMockVirtualOption,
+    ensureAllRelativeJestMocksVirtual,
+    healMissingDependencyMocks,
     balanceTestFileBraces,
     healControllerFixturesWithAst
 } from "../services/testSanitizer.service.js";
@@ -1202,6 +1204,140 @@ describe("Test", () => {
             expect(sanitized).not.toContain("expect(next).toHaveBeenCalled()");
         });
     });
+
+    describe("Relative Mock Virtual Flag & Transitive Dependency Invariants (R1 & R2)", () => {
+        test("ensureAllRelativeJestMocksVirtual adds { virtual: true } to all relative jest.mock calls without duplicating", () => {
+            const input = `
+jest.mock('../lib/prisma.js', () => ({ prisma: {} }));
+jest.mock('../../lib/prisma.js', () => ({ prisma: {} }), { virtual: true });
+jest.mock('./evaluator', () => ({ evaluate: jest.fn() }));
+jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn() }));
+
+describe('calculation', () => {
+  it('runs', () => expect(1).toBe(1));
+});`;
+            const result = ensureAllRelativeJestMocksVirtual(input);
+            expect(result).toContain("jest.mock('../lib/prisma.js', () => ({ prisma: {} }), { virtual: true });");
+            expect(result).toContain("jest.mock('../../lib/prisma.js', () => ({ prisma: {} }), { virtual: true });");
+            expect(result).not.toContain("{ virtual: true }, { virtual: true }");
+            expect(result).toContain("jest.mock('./evaluator', () => ({ evaluate: jest.fn() }), { virtual: true });");
+            // Third-party package mock should not be altered by ensureAllRelativeJestMocksVirtual
+            expect(result).toContain("jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn() }));");
+        });
+
+        test("ensureAllRelativeJestMocksVirtual leaves Vitest vi.mock calls untouched", () => {
+            const vitestCode = `
+import { describe, it, expect, vi } from 'vitest';
+vi.mock('../lib/prisma.js', () => ({ prisma: {} }));
+vi.mock('./evaluator', () => ({ evaluate: vi.fn() }));
+describe('test', () => { it('passes', () => expect(true).toBe(true)); });`;
+            const result = ensureAllRelativeJestMocksVirtual(vitestCode);
+            expect(result).toBe(vitestCode);
+            expect(result).not.toContain("virtual: true");
+        });
+
+        test("healMissingDependencyMocks injects virtual mock when relative module is missing from error output", () => {
+            const initialCode = `
+import { describe, it, expect } from '@jest/globals';
+describe('calculation.service', () => {
+  it('saves calculation', () => expect(true).toBe(true));
+});`;
+            const errorOutput = `
+FAIL tests/services/calculation.service.test.ts
+  ● Test suite failed to run
+    Cannot find module '../lib/prisma.js' from 'tests/services/calculation.service.test.ts'
+`;
+            const healed = healMissingDependencyMocks(initialCode, errorOutput, { filePath: "tests/services/calculation.service.test.ts" });
+            expect(healed).toContain("jest.mock('../lib/prisma.js'");
+            expect(healed).toContain("{ virtual: true }");
+            expect(healed).toContain("globalThis.__mockPrisma");
+        });
+
+        test("healMissingDependencyMocks injects mathjs isolation mock for transitive missing dependency", () => {
+            const initialCode = `
+import { describe, it, expect } from '@jest/globals';
+describe('calculation.controller', () => {
+  it('evaluates', () => expect(true).toBe(true));
+});`;
+            const errorOutput = `
+FAIL tests/controllers/calculation.controller.test.ts
+  ● Test suite failed to run
+    Cannot find module 'mathjs' from 'src/utils/evaluator.ts'
+    Require stack:
+      src/utils/evaluator.ts
+      src/controllers/calculation.controller.ts
+      tests/controllers/calculation.controller.test.ts
+`;
+            const healed = healMissingDependencyMocks(initialCode, errorOutput, { filePath: "tests/controllers/calculation.controller.test.ts" });
+            expect(healed).toContain("jest.mock('mathjs'");
+            expect(healed).toContain("{ virtual: true }");
+            expect(healed).toContain("compile: jest.fn");
+            expect(healed).toContain("evaluate: jest.fn");
+        });
+
+        test("ensureAllRelativeJestMocksVirtual handles backtick template literals and updates virtual: false", () => {
+            const input = "jest.mock(`../lib/prisma.js`, () => ({ prisma: {} }), { virtual: false });";
+            const result = ensureAllRelativeJestMocksVirtual(input);
+            expect(result).toContain("{ virtual: true }");
+            expect(result).not.toContain("virtual: false");
+        });
+
+        test("cleanAndDeduplicateTestContent heals missing relative module on 'Could not locate module ... mapped as'", () => {
+            const input = `
+import { describe, it, expect } from '@jest/globals';
+describe('calc', () => { it('runs', () => expect(1).toBe(1)); });`;
+            const errorOutput = `
+Configuration error: Could not locate module ../lib/prisma.js mapped as: $1.
+Please check your configuration for these entries:
+{ "moduleNameMapper": { "/^(\\.{1,2}\\/.*)\\.js$/": "$1" } }`;
+            const result = cleanAndDeduplicateTestContent(input, errorOutput, "tests/services/calculation.service.test.ts");
+            expect(result).toContain("jest.mock('../lib/prisma.js'");
+            expect(result).toContain("{ virtual: true }");
+            expect(result).toContain("$transaction");
+        });
+
+        test("ensureJestMockVirtualOption preserves virtual: false inside factory and appends options", () => {
+            const input = "jest.mock('../services/payment', () => ({ isVirtual: false, status: 'virtual:pending' }));";
+            const result = ensureJestMockVirtualOption(input, "../services/payment");
+            expect(result).toContain("isVirtual: false");
+            expect(result).toContain("status: 'virtual:pending'");
+            expect(result).toContain(", { virtual: true });");
+        });
+
+        test("ensureJestMockVirtualOption merges virtual: true into existing options object", () => {
+            const input = "jest.mock('../services/payment', () => ({}), { timeout: 1000 });";
+            const result = ensureJestMockVirtualOption(input, "../services/payment");
+            expect(result).toContain("{ virtual: true, timeout: 1000 }");
+        });
+
+        test("cleanAndDeduplicateTestContent heals _createStubMaker stubFn assignment to recursive proxy", () => {
+            const input = `
+var _createStubMaker = () => {
+  const handler = { get: (target, prop) => {
+    if (!(prop in target)) {
+      if (prop === 'default') target[prop] = target;
+      else target[prop] = stubFn();
+    }
+    return target[prop];
+  }};
+  return new Proxy({}, handler);
+};
+describe('stub', () => { it('runs', () => expect(1).toBe(1)); });`;
+            const result = cleanAndDeduplicateTestContent(input, "", "tests/stub.test.ts");
+            expect(result).toContain("target[prop] = new Proxy(fn, handler)");
+        });
+
+        test("cleanAndDeduplicateTestContent injects Prisma mocks with virtual: true", () => {
+            const input = `
+import { PrismaClient } from '@prisma/client';
+describe('prisma', () => { it('runs', () => expect(1).toBe(1)); });`;
+            const result = cleanAndDeduplicateTestContent(input, "", "tests/prisma.test.ts");
+            expect(result).toContain("jest.mock('@prisma/client'");
+            expect(result).toContain("{ virtual: true }");
+            expect(result).toContain("jest.mock(_rp");
+        });
+    });
 });
+
 
 

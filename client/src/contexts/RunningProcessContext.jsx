@@ -38,10 +38,13 @@ const initialProcesses = {
     projectId: null,
     type: "unit",
     totalCount: 0,
+    totalFiles: 0,
+    totalSugs: 0,
     completedCount: 0,
     currentFile: "",
     stats: "Applying...",
     progressPct: null,
+    phase: "",
     step: "",
     completedAt: null,
     result: null,
@@ -404,11 +407,23 @@ export function RunningProcessProvider({ children, sessionUserId }) {
   }, [scheduleAutoDismiss]);
 
   // Methods for Bulk Apply Process
-  const startBulkApply = useCallback(({ snapshotId, projectId, totalCount = 0, step = "", type = "unit" }) => {
+  const startBulkApply = useCallback(({
+    snapshotId,
+    projectId,
+    totalCount = 0,
+    totalFiles = 0,
+    totalSugs = 0,
+    step = "",
+    type = "unit",
+    stats = null,
+    progressPct = 0,
+    phase = "merge",
+  }) => {
     if (autoDismissTimersRef.current.bulkApply) {
       clearTimeout(autoDismissTimersRef.current.bulkApply);
       delete autoDismissTimersRef.current.bulkApply;
     }
+    const resolvedTotalCount = totalCount || totalSugs || totalFiles || 0;
     setProcesses((prev) => ({
       ...prev,
       bulkApply: {
@@ -416,12 +431,15 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         snapshotId,
         projectId,
         type,
-        totalCount,
+        totalCount: resolvedTotalCount,
+        totalFiles: totalFiles || (totalCount > 0 ? totalCount : 0),
+        totalSugs: totalSugs || resolvedTotalCount,
         completedCount: 0,
         currentFile: "",
-        stats: totalCount > 0 ? `0/${totalCount}` : "Applying...",
-        progressPct: 0,
-        step: step || `Applying ${totalCount} test suggestions across files...`,
+        stats: stats || (resolvedTotalCount > 0 ? `0/${resolvedTotalCount}` : "Applying..."),
+        progressPct: progressPct !== undefined ? progressPct : 0,
+        phase: phase || "merge",
+        step: step || `Applying ${resolvedTotalCount} test suggestions across files...`,
         completedAt: null,
         result: null,
       },
@@ -433,20 +451,32 @@ export function RunningProcessProvider({ children, sessionUserId }) {
       const update = typeof stepOrUpdate === "string" ? { step: stepOrUpdate } : (stepOrUpdate || {});
       const completedCount = update.completedCount !== undefined ? update.completedCount : prev.bulkApply.completedCount;
       const totalCount = update.totalCount !== undefined ? update.totalCount : prev.bulkApply.totalCount;
-      const stats = update.stats || (totalCount > 0 ? `${completedCount}/${totalCount}` : prev.bulkApply.stats);
+
+      // Extract [X/N] from step string if present to guarantee synchronization
+      const stepMatch = typeof update.step === "string" ? update.step.match(/\[(\d+)\/(\d+)\]/) : null;
+      const stepCurrent = stepMatch ? parseInt(stepMatch[1], 10) : null;
+      const stepTotal = stepMatch ? parseInt(stepMatch[2], 10) : null;
+
+      const effectiveCompleted = stepCurrent !== null ? stepCurrent : completedCount;
+      const effectiveTotal = stepTotal !== null ? stepTotal : totalCount;
+
+      const stats = update.stats !== undefined
+        ? update.stats
+        : (effectiveTotal > 0 ? `${effectiveCompleted}/${effectiveTotal}` : prev.bulkApply.stats);
       const progressPct = update.progressPct !== undefined
         ? update.progressPct
-        : (totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : prev.bulkApply.progressPct);
+        : (effectiveTotal > 0 ? Math.min(100, Math.max(4, Math.round((effectiveCompleted / effectiveTotal) * 100))) : prev.bulkApply.progressPct);
 
       return {
         ...prev,
         bulkApply: {
           ...prev.bulkApply,
           ...update,
-          completedCount,
-          totalCount,
+          completedCount: effectiveCompleted,
+          totalCount: effectiveTotal,
           stats,
           progressPct,
+          phase: update.phase || prev.bulkApply.phase,
           step: update.step || prev.bulkApply.step,
         },
       };
@@ -463,6 +493,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         result,
         progressPct: 100,
         stats: "Done",
+        phase: "done",
         step: result?.error ? `Applied with errors: ${result.error}` : (result?.message || "✓ Successfully applied test suggestions!"),
       },
     }));

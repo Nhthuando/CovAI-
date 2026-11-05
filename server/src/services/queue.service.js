@@ -296,7 +296,11 @@ const worker = new Worker(
       await executeJobDirectly(type, jobId, customData);
       console.log(`[Queue] Completed Job ${jobId} (Type: ${type})`);
     } catch (error) {
-      console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
+      if (error.code === 'OPERATION_STALE') {
+        console.warn(`[Queue] Job ${jobId} (Type: ${type}) was superseded by a newer workspace revision (${error.code}: ${error.message}).`);
+      } else {
+        console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
+      }
       // Fallback to mark job failed if the handler didn't do it itself
       try {
         const dbJob = await getJobById(jobId);

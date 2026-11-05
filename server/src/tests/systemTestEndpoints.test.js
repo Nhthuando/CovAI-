@@ -94,6 +94,7 @@ jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     computeRelativeImportPath: jest.fn(),
     generateFallbackUnitTests: jest.fn(),
     extractAstMetadata: jest.fn(() => ({ exportedSymbols: [], unexportedFunctions: [], decisionPoints: [] })),
+    classifyFeasibleCoverage: jest.fn(() => ({ isFeasibleLogicCovered: false, actionableLines: [], actionableBranches: [], infeasibleBranches: [] })),
 }));
 
 jest.unstable_mockModule('../services/applyTestSuggestion.service.js', () => ({

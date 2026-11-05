@@ -2654,7 +2654,8 @@ export const suggestUnitTestcase = async (req, res) => {
             snapshotId: actualSnapshotId,
             filePath,
             userId,
-            framework
+            framework,
+            selectedAiModel: requestedAiModel(req)
         });
         return res.status(200).json({ success: true, data: result });
     } catch (error) {

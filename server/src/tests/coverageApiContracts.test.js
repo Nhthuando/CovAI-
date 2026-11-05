@@ -45,6 +45,7 @@ jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     findExistingTestFile: jest.fn().mockReturnValue({ found: true, relativePath: 'src/tests/order.service.test.js' }),
     findAssociatedSourceFile: jest.fn().mockReturnValue('src/services/order.service.js'),
     extractAstMetadata: jest.fn().mockReturnValue({ exportedSymbols: ['processOrder'], unexportedFunctions: [], decisionPoints: [] }),
+    classifyFeasibleCoverage: jest.fn(() => ({ isFeasibleLogicCovered: false, actionableLines: [], actionableBranches: [], infeasibleBranches: [] })),
 }));
 
 const mockApplyUnitTestSuggestion = jest.fn();

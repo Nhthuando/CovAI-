@@ -197,7 +197,49 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
     const fileCount = Array.isArray(specificFiles) && specificFiles.length > 0 ? specificFiles.length : 50;
     const effectiveTimeout = Math.min(10 * 60 * 1000, Math.max(180 * 1000, 60 * 1000 + fileCount * 25 * 1000));
 
-    // 2. Determine execution mode:
+    // 2. Resolve workspace root .env, .env.test, and hermetic RAM mocks
+    let loadedWorkspaceEnv = {};
+    let loadedTestEnv = {};
+    let hermeticMocks = options?.hermeticMocks || {};
+    try {
+        const { loadWorkspaceEnv, generateHermeticMockEnvironment, detectProjectEnvironment, parseEnv } = await import("./environmentDetection.service.js");
+        const rootEnvRes = await loadWorkspaceEnv(rootDir);
+        loadedWorkspaceEnv = { ...(rootEnvRes?.variables || {}) };
+
+        const backendDirCandidate = path.join(rootDir, "backend");
+        if (fs.existsSync(backendDirCandidate)) {
+            const backendEnvRes = await loadWorkspaceEnv(backendDirCandidate);
+            loadedWorkspaceEnv = { ...loadedWorkspaceEnv, ...(backendEnvRes?.variables || {}) };
+        }
+
+        const testEnvPath = path.join(rootDir, ".env.test");
+        if (fs.existsSync(testEnvPath)) {
+            try {
+                loadedTestEnv = { ...loadedTestEnv, ...(parseEnv(fs.readFileSync(testEnvPath, "utf8"))?.variables || {}) };
+            } catch (_) { }
+        }
+        const backendTestEnvPath = path.join(backendDirCandidate, ".env.test");
+        if (fs.existsSync(backendTestEnvPath)) {
+            try {
+                loadedTestEnv = { ...loadedTestEnv, ...(parseEnv(fs.readFileSync(backendTestEnvPath, "utf8"))?.variables || {}) };
+            } catch (_) { }
+        }
+
+        if (!options?.hermeticMocks) {
+            const detected = await detectProjectEnvironment(rootDir, { existingVariables: { ...loadedWorkspaceEnv, ...loadedTestEnv } });
+            hermeticMocks = generateHermeticMockEnvironment(detected?.detectedVariables || [], { ...loadedWorkspaceEnv, ...loadedTestEnv });
+        }
+    } catch (_) { }
+
+    const vitestMergedEnv = {
+        ...SHARED_ENV,
+        ...hermeticMocks,
+        ...loadedWorkspaceEnv,
+        ...loadedTestEnv,
+        ...(options?.env || {}),
+    };
+
+    // 3. Determine execution mode:
     // If backend/ has vitest.config.* or package.json, run directly in backend/
     const backendDir = path.join(rootDir, "backend");
     const hasBackendDir = fs.existsSync(backendDir) &&
@@ -229,7 +271,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
             command: vitestCmd,
             timeoutMs: effectiveTimeout,
             jobId,
-            env: SHARED_ENV,
+            env: vitestMergedEnv,
         });
 
         // Copy backend coverage files into root coverage dir
@@ -322,7 +364,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
             command: coverageCmd,
             timeoutMs: effectiveTimeout,
             jobId,
-            env: SHARED_ENV,
+            env: vitestMergedEnv,
         });
 
         const vitestResultsPathCheck = path.join(rootCoverageDir, "vitest-results.json");
@@ -341,7 +383,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
                 command: fallbackCmd,
                 timeoutMs: effectiveTimeout,
                 jobId,
-                env: SHARED_ENV,
+                env: vitestMergedEnv,
             });
             result = fallbackResult;
         }

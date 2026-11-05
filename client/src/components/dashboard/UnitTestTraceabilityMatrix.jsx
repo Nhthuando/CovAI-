@@ -34,6 +34,7 @@ import {
   Minimize2,
   Maximize2,
   RotateCcw,
+  Play,
 } from "lucide-react";
 import { cleanDisplayPath, isTestFile } from "./CoverageTypeDashboard.jsx";
 import { getFileCoverage } from "../../services/coverage.service.js";
@@ -214,12 +215,14 @@ function CategoryMatrix4Cards({
       label: "🔵 C. Branch Toggling",
       countLabel: "C. Branch",
       tests: fn.testsByCategory?.BRANCH_TOGGLING || [],
-      hasCategory: fn.hasBranch,
+      hasCategory: fn.hasBranch || fn.isFeasibleLogicCovered || fn.proofData?.isFeasibleLogicCovered,
       color: "#0284c7",
       borderActive: isLight ? "1px solid #bae6fd" : "1px solid rgba(2, 132, 199, 0.3)",
       borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
       desc: "Verifies conditional branches (True vs False paths, fallback ??, logical || operators).",
-      missingMsg: "⚠️ Uncovered: Missing tests for alternate condition branches or fallback logic.",
+      missingMsg: (fn.isFeasibleLogicCovered || fn.proofData?.isFeasibleLogicCovered)
+        ? "✓ Category C Feasible Logic Covered: Remaining branch guards are verified environment safeguards (fake tests suppressed)."
+        : "⚠️ Uncovered: Missing tests for alternate condition branches or fallback logic.",
     },
     {
       key: "ERROR_HANDLING",
@@ -581,41 +584,43 @@ function CategoryMatrix4Cards({
                               {t.title}
                             </span>
                           </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenFile?.(
-                                fn.filePath,
-                                fn.startLine,
-                                fn.cleanName,
-                                fn.endLine,
-                                {
-                                  testFilePath: t.suiteFilePath,
-                                  testTitle: t.title || t.name,
-                                  testLine: t.line || t.location?.line || t.startLine || null,
-                                }
-                              );
-                            }}
-                            style={{
-                              background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.16)",
-                              border: "none",
-                              color: "#6366f1",
-                              cursor: "pointer",
-                              fontSize: 10,
-                              padding: "2px 6px",
-                              borderRadius: 4,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 3,
-                              flexShrink: 0,
-                            }}
-                            title={`Open test suite: ${t.suiteFileName}`}
-                          >
-                            <span style={{ maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {t.suiteFileName}
-                            </span>
-                            <ExternalLink size={9} />
-                          </button>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenFile?.(
+                                  fn.filePath,
+                                  fn.startLine,
+                                  fn.cleanName,
+                                  fn.endLine,
+                                  {
+                                    testFilePath: t.suiteFilePath,
+                                    testTitle: t.title || t.name,
+                                    testLine: t.line || t.location?.line || t.startLine || null,
+                                  }
+                                );
+                              }}
+                              style={{
+                                background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.16)",
+                                border: "none",
+                                color: "#6366f1",
+                                cursor: "pointer",
+                                fontSize: 10,
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 3,
+                                flexShrink: 0,
+                              }}
+                              title={`Open test suite: ${t.suiteFileName}`}
+                            >
+                              <span style={{ maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {t.suiteFileName}
+                              </span>
+                              <ExternalLink size={9} />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -625,12 +630,15 @@ function CategoryMatrix4Cards({
                         fontSize: 10.5,
                         color: isLight ? "#b45309" : "#fbbf24",
                         background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
-                        padding: "4px 8px",
+                        padding: "6px 8px",
                         borderRadius: 4,
                         marginTop: 4,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
                       }}
                     >
-                      {cat.missingMsg}
+                      <div>{cat.missingMsg}</div>
                     </div>
                   )}
                 </div>
@@ -681,7 +689,17 @@ export default function UnitTestTraceabilityMatrix({
   onSwitchVersion = null,
   isSwitchingVersion = false,
   switchingVersionFile = null,
+  isBulkApplying = false,
+  bulkApplyStep = "",
+  bulkApplyPhase = "",
+  bulkApplyProgress = null,
+  applyProgressSteps = {},
+  onOpenSimulation = null,
 }) {
+  const [activeTabByFunc, setActiveTabByFunc] = useState({});
+  const [matrixColWidths, setMatrixColWidths] = useState([25, 25, 25, 25]);
+  const [matrixCollapsedCols, setMatrixCollapsedCols] = useState({});
+
   const getFileVersionInfo = (fPath) => {
     if (!fPath || !unitTestVersions) return null;
     const norm = fPath.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -928,18 +946,21 @@ export default function UnitTestTraceabilityMatrix({
         ERROR_HANDLING: matchedTests.filter((t) => t.category === "ERROR_HANDLING"),
       };
 
+      const fileCoverageObj = sourceFiles.find(sf => sf.filePath === fPath);
+      const isSrcFeasibleCovered = Boolean(fileCoverageObj?.isFeasibleLogicCovered || srcMeta?.isFeasibleLogicCovered);
+
       const hasHappyPath = (testsByCategory?.HAPPY_PATH?.length || 0) > 0 || isExecuted;
-      const hasBoundary = (testsByCategory?.BOUNDARY_VALUES?.length || 0) > 0 || (isSrcFullyCovered && isExecuted);
-      const hasBranch = (testsByCategory?.BRANCH_TOGGLING?.length || 0) > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) && isExecuted);
-      const hasError = (testsByCategory?.ERROR_HANDLING?.length || 0) > 0 || (isSrcFullyCovered && isExecuted);
+      const hasBoundary = (testsByCategory?.BOUNDARY_VALUES?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
+      const hasBranch = (testsByCategory?.BRANCH_TOGGLING?.length || 0) > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100 || isSrcFeasibleCovered) && isExecuted);
+      const hasError = (testsByCategory?.ERROR_HANDLING?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
       const coveredCategoriesCount = [hasHappyPath, hasBoundary, hasBranch, hasError].filter(Boolean).length;
 
       // Calculate missing categories for guidance
       const missingCategories = [];
       if (!hasHappyPath) missingCategories.push("A. Happy Path");
-      if (!hasBoundary) missingCategories.push("B. Boundary Values");
-      if (!hasBranch) missingCategories.push("C. Branch Toggling");
-      if (!hasError) missingCategories.push("D. Error Handling");
+      if (!hasBoundary && !isSrcFeasibleCovered) missingCategories.push("B. Boundary Values");
+      if (!hasBranch && !isSrcFeasibleCovered) missingCategories.push("C. Branch Toggling");
+      if (!hasError && !isSrcFeasibleCovered) missingCategories.push("D. Error Handling");
 
       const complexity = Number(fn.complexity || 1);
       const meetsBasisPaths = (matchedTests?.length || 0) >= complexity;
@@ -958,6 +979,7 @@ export default function UnitTestTraceabilityMatrix({
         hasError,
         missingCategories,
         isFullyCovered: isSrcFullyCovered && isExecuted,
+        isFeasibleLogicCovered: isSrcFeasibleCovered && isExecuted,
         complexity,
         complexityStatus: fn.complexityStatus || (complexity > 10 ? "HIGH" : complexity > 5 ? "MEDIUM" : "LOW"),
         meetsBasisPaths,
@@ -1284,6 +1306,21 @@ export default function UnitTestTraceabilityMatrix({
     const uncoveredLines = linesInRange.filter((l) => (l.hits || 0) === 0 || l.status === "uncovered" || l.status === "failed");
     const uncoveredBranches = branchesInRange.filter((b) => b.status === "uncovered" || b.status === "partially_covered" || (Array.isArray(b.counts) && b.counts.some((c) => (c || 0) === 0)));
 
+    // Infeasible branch and statement detection
+    const infeasibleBranches = branchesInRange.filter((b) => Boolean(
+      b.isInfeasible ||
+      b.infeasibleMeta ||
+      fileCov?.infeasibleBranches?.some(ib => (ib.line === b.line || ib.branchId === b.id || ib.branchId === b.branchId))
+    ));
+    const infeasibleStatements = stmtsInRange.filter((s) => Boolean(
+      s.isInfeasible ||
+      s.infeasibleMeta ||
+      fileCov?.infeasibleCode?.some(ic => ic.line === s.startLine || (ic.loc && s.startLine >= ic.loc.start?.line && s.startLine <= ic.loc.end?.line))
+    ));
+
+    const actionableUncoveredBranches = uncoveredBranches.filter((b) => !b.isInfeasible && !fileCov?.infeasibleBranches?.some(ib => (ib.line === b.line || ib.branchId === b.id || ib.branchId === b.branchId)));
+    const actionableUncoveredLines = uncoveredLines.filter((l) => !fileCov?.infeasibleCode?.some(ic => ic.line === l.line || (ic.loc && l.line >= ic.loc.start?.line && l.line <= ic.loc.end?.line)));
+
     const isFullyCovered =
       !isFileZeroFuncs &&
       fnHit > 0 &&
@@ -1294,6 +1331,15 @@ export default function UnitTestTraceabilityMatrix({
       (uncoveredLines?.length || 0) === 0 &&
       (uncoveredBranches?.length || 0) === 0 &&
       (!fileCov ? (!isFileBranchGap || !isComplexityBranchGap) : true);
+
+    const isFeasibleLogicCovered =
+      !isFullyCovered &&
+      !isFileZeroFuncs &&
+      fnHit > 0 &&
+      funcsPct >= 100 &&
+      actionableUncoveredBranches.length === 0 &&
+      actionableUncoveredLines.length === 0 &&
+      infeasibleBranches.length > 0;
 
     return {
       startLine,
@@ -1317,7 +1363,12 @@ export default function UnitTestTraceabilityMatrix({
       linesInRange,
       uncoveredLines,
       uncoveredBranches,
+      infeasibleBranches,
+      infeasibleStatements,
+      actionableUncoveredBranches,
+      actionableUncoveredLines,
       isFullyCovered,
+      isFeasibleLogicCovered,
     };
   };
 
@@ -1705,7 +1756,7 @@ export default function UnitTestTraceabilityMatrix({
                         </div>
                       )}
 
-                      {/* File Action Center: Suggest tests / Diff / Apply / Status */}
+                      {/* File Action Center: Diff / Apply / Status */}
                       {isSuggesting ? (
                         <div
                           style={{
@@ -1740,7 +1791,21 @@ export default function UnitTestTraceabilityMatrix({
                           }}
                         >
                           <Loader2 size={12} className="animate-spin text-green-500" />
-                          <span>Applying & Running...</span>
+                          <span>
+                            {applyProgressSteps?.[group.filePath]
+                              ? (applyProgressSteps[group.filePath].includes("Running")
+                                  ? "Verifying Tests..."
+                                  : "Merging Tests...")
+                              : isBulkApplying
+                                ? (bulkApplyPhase === "merge"
+                                    ? "Merging Tests..."
+                                    : bulkApplyPhase === "verify"
+                                      ? "Verifying in RAM..."
+                                      : bulkApplyPhase === "sync"
+                                        ? "Updating Coverage..."
+                                        : "Applying Tests...")
+                                : "Applying & Running..."}
+                          </span>
                         </div>
                       ) : hasPending ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -1999,30 +2064,6 @@ export default function UnitTestTraceabilityMatrix({
                                   )}
                                 </button>
                               )}
-                              {onSuggestTestcase && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onSuggestTestcase(group.filePath);
-                                  }}
-                                  style={{
-                                    padding: "3px 8px",
-                                    borderRadius: 5,
-                                    background: isLight ? "#fee2e2" : "rgba(239, 68, 68, 0.2)",
-                                    border: isLight ? "1px solid #fca5a5" : "1px solid rgba(239, 68, 68, 0.4)",
-                                    color: isLight ? "#b91c1c" : "#fca5a5",
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 3,
-                                  }}
-                                >
-                                  <FileCode2 size={11} />
-                                  <span>Re-generate</span>
-                                </button>
-                              )}
                               {onSwitchVersion && (
                                 <button
                                   onClick={(e) => {
@@ -2056,31 +2097,6 @@ export default function UnitTestTraceabilityMatrix({
                             </div>
                           );
                         })()
-                      ) : onSuggestTestcase && !isFileFullyCovered ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSuggestTestcase(group.filePath);
-                          }}
-                          style={{
-                            padding: "3px 10px",
-                            borderRadius: 5,
-                            background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.2)",
-                            border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)",
-                            color: isLight ? "#4f46e5" : "#a5b4fc",
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            boxShadow: "0 1px 2px rgba(99, 102, 241, 0.1)",
-                          }}
-                          title="Suggest unit tests for uncovered logic and branches in this file"
-                        >
-                          <FileCode2 size={11} />
-                          <span>Suggest tests</span>
-                        </button>
                       ) : null}
 
                       {/* Prominent File-Level 4-Metric Proof Button */}
@@ -2128,6 +2144,31 @@ export default function UnitTestTraceabilityMatrix({
                       >
                         Open file
                       </button>
+                      {typeof onOpenSimulation === "function" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenSimulation({ filePath: group.filePath });
+                          }}
+                          style={{
+                            padding: "3px 8px",
+                            borderRadius: 4,
+                            background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.12)",
+                            border: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)",
+                            color: isLight ? "#059669" : "#34d399",
+                            fontSize: 11,
+                            fontWeight: 650,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 3,
+                          }}
+                          title="Mở trình phát mô phỏng kiểm thử cho tệp này"
+                        >
+                          <Zap size={11} />
+                          <span>Mô phỏng</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -2159,7 +2200,7 @@ export default function UnitTestTraceabilityMatrix({
                           const isFnExpanded = expandedFunctions.has(fnId);
                           const isCovered = (fn.hit || 0) > 0 || (Array.isArray(fn.tests) && fn.tests.length > 0);
 
-                        const activeTab = "proof"; // always show 4-metric execution proof
+                        const activeTab = activeTabByFunc[fnId] || "proof";
                         const proofData = computeFunctionProof(fn, fileCov, meta);
                         const isAnon = isAnonymousName(fn.cleanName);
                         const displayFnName = isAnon ? ((businessFunctions?.length || 0) === 0 ? `${fileBaseName} [default]` : fn.cleanName) : fn.cleanName;
@@ -2264,6 +2305,29 @@ export default function UnitTestTraceabilityMatrix({
                                   <GitBranch size={10} />
                                   <span>CC: {fn.complexity || 1}</span>
                                 </span>
+
+                                {/* Explanation Badge for Justified Infeasible Code */}
+                                {proofData.infeasibleBranches?.length > 0 && (
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.12)",
+                                      color: isLight ? "#b45309" : "#fbbf24",
+                                      border: "1px solid rgba(245, 158, 11, 0.35)",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 3,
+                                      cursor: "help",
+                                    }}
+                                    title={proofData.infeasibleBranches.map(b => `Line ${b.line}: ${b.infeasibleMeta?.justification || b.infeasibleMeta?.reason || b.condition || "Infeasible guard"}`).join("\n")}
+                                  >
+                                    <ShieldCheck size={10} />
+                                    <span>{proofData.infeasibleBranches.length} Guard Justified</span>
+                                  </span>
+                                )}
                               </div>
 
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2278,21 +2342,28 @@ export default function UnitTestTraceabilityMatrix({
                                       ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
                                       : proofData.isFullyCovered
                                         ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
-                                        : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)"),
+                                        : proofData.isFeasibleLogicCovered
+                                          ? (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)")
+                                          : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)"),
                                     color: (proofData.fnHit || 0) === 0
                                       ? (isLight ? "#dc2626" : "#f87171")
                                       : proofData.isFullyCovered
                                         ? (isLight ? "#059669" : "#4ade80")
-                                        : (isLight ? "#b45309" : "#fbbf24"),
+                                        : proofData.isFeasibleLogicCovered
+                                          ? (isLight ? "#7c3aed" : "#c4b5fd")
+                                          : (isLight ? "#b45309" : "#fbbf24"),
                                     border: (proofData.fnHit || 0) === 0
                                       ? (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.3)")
                                       : proofData.isFullyCovered
                                         ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)")
-                                        : (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)"),
+                                        : proofData.isFeasibleLogicCovered
+                                          ? (isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)")
+                                          : (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)"),
                                     display: "flex",
                                     alignItems: "center",
                                     gap: 4,
                                   }}
+                                  title={proofData.isFeasibleLogicCovered ? "All executable logic covered. Remaining gaps are verified environment safeguards." : undefined}
                                 >
                                   {(proofData.fnHit || 0) === 0 ? (
                                     <>
@@ -2304,6 +2375,11 @@ export default function UnitTestTraceabilityMatrix({
                                       <CheckCircle2 size={11} />
                                       <span>100% Covered ({(fn.tests?.length || 0)} tests)</span>
                                     </>
+                                  ) : proofData.isFeasibleLogicCovered ? (
+                                    <>
+                                      <ShieldCheck size={11} />
+                                      <span>✓ Feasible Logic Covered ({proofData.infeasibleBranches.length} Guard{proofData.infeasibleBranches.length > 1 ? "s" : ""} Justified)</span>
+                                    </>
                                   ) : (
                                     <>
                                       <AlertTriangle size={11} />
@@ -2311,7 +2387,7 @@ export default function UnitTestTraceabilityMatrix({
                                     </>
                                   )}
                                 </span>
-                                </div>
+                              </div>
                               </div>
 
                             {/* ── EXPANDED 4-METRIC EXECUTION PROOF & DECISION TABLE ── */}
@@ -2329,15 +2405,23 @@ export default function UnitTestTraceabilityMatrix({
                                 {/* Tab selector inside expanded function: 4-Metric Proof vs 4-Category Decision Table */}
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <div
+                                    <button
+                                      onClick={() => setActiveTabByFunc((prev) => ({ ...prev, [fnId]: "proof" }))}
                                       style={{
                                         padding: "4px 10px",
                                         borderRadius: 6,
                                         fontSize: 11.5,
                                         fontWeight: 700,
-                                        background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)",
-                                        color: isLight ? "#2563eb" : "#60a5fa",
-                                        border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
+                                        cursor: "pointer",
+                                        background: activeTab === "proof"
+                                          ? (isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.25)")
+                                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
+                                        color: activeTab === "proof"
+                                          ? (isLight ? "#2563eb" : "#60a5fa")
+                                          : (isLight ? "#475569" : "#cbd5e1"),
+                                        border: activeTab === "proof"
+                                          ? (isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.4)")
+                                          : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 5,
@@ -2345,7 +2429,34 @@ export default function UnitTestTraceabilityMatrix({
                                     >
                                       <Calculator size={12} />
                                       <span>4-Metric Execution Proof</span>
-                                    </div>
+                                    </button>
+
+                                    <button
+                                      onClick={() => setActiveTabByFunc((prev) => ({ ...prev, [fnId]: "matrix" }))}
+                                      style={{
+                                        padding: "4px 10px",
+                                        borderRadius: 6,
+                                        fontSize: 11.5,
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                        background: activeTab === "matrix"
+                                          ? (isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.25)")
+                                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
+                                        color: activeTab === "matrix"
+                                          ? (isLight ? "#2563eb" : "#60a5fa")
+                                          : (isLight ? "#475569" : "#cbd5e1"),
+                                        border: activeTab === "matrix"
+                                          ? (isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.4)")
+                                          : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 5,
+                                      }}
+                                      title="View 4-Category Decision Table Matrix (Happy Path, Boundary, Branch, Error)"
+                                    >
+                                      <Layers size={12} />
+                                      <span>4-Category Decision Table</span>
+                                    </button>
 
                                     <button
                                       onClick={() => onOpenCFG?.(fn.filePath, fn.cleanName, fn.startLine)}
@@ -2451,6 +2562,30 @@ export default function UnitTestTraceabilityMatrix({
                                             <span><b>Formula:</b> ({proofData.branchPathsCovered} / {proofData.branchPathsTotal} paths) × 100% = {proofData.branchesPct}%. Both True & False paths traversed.</span>
                                           )}
                                         </div>
+                                        {proofData?.infeasibleBranches?.length > 0 && (
+                                          <div
+                                            style={{
+                                              marginTop: 6,
+                                              padding: "6px 8px",
+                                              borderRadius: 5,
+                                              background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
+                                              border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.25)",
+                                              fontSize: 10.5,
+                                              color: isLight ? "#92400e" : "#fde68a",
+                                              lineHeight: 1.4,
+                                            }}
+                                          >
+                                            <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                                              <Info size={11} />
+                                              <span>Actionable Justification (Statistical Integrity Preserved):</span>
+                                            </div>
+                                            {proofData.infeasibleBranches.map((b, idx) => (
+                                              <div key={idx} style={{ marginLeft: 15 }}>
+                                                • <b>L{b.line}</b>: <code>{b.condition}</code> — {b.infeasibleMeta?.actionableJustification || b.infeasibleMeta?.justification || "Guarded in hermetic unit testing; genuine coverage statistics unaltered."}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
                                         {proofData?.branchesInRange?.length > 0 && (
                                           <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
                                             {proofData.branchesInRange.map((b, idx) => {
@@ -2469,7 +2604,9 @@ export default function UnitTestTraceabilityMatrix({
                                                   <div style={{ display: "flex", gap: 8, fontSize: 9.5, marginTop: 1 }}>
                                                     <span style={{ color: trueHits > 0 ? "#10b981" : "#ef4444" }}>True: {trueHits}×</span>
                                                     <span style={{ color: falseHits > 0 ? "#10b981" : "#ef4444" }}>False: {falseHits}×</span>
-                                                    <span style={{ color: isFullyCovered ? "#10b981" : "#f59e0b" }}>{isFullyCovered ? "✓ Fully Covered" : "⚠️ Partial"}</span>
+                                                    <span style={{ color: b.isInfeasible ? "#8b5cf6" : isFullyCovered ? "#10b981" : "#f59e0b", fontWeight: 700 }}>
+                                                      {b.isInfeasible ? "[🛡️ Guard Justified]" : isFullyCovered ? "✓ Fully Covered" : "⚠️ Partial"}
+                                                    </span>
                                                   </div>
                                                 </div>
                                               );
@@ -2694,8 +2831,21 @@ export default function UnitTestTraceabilityMatrix({
                                   </div>
                                 )}
 
+                                {/* TAB 2: 4-CATEGORY DECISION TABLE MATRIX */}
+                                {activeTab === "matrix" && (
+                                  <CategoryMatrix4Cards
+                                    fn={fn}
+                                    isLight={isLight}
+                                    onOpenFile={onOpenFile}
+                                    colWidths={matrixColWidths}
+                                    setColWidths={setMatrixColWidths}
+                                    collapsedCols={matrixCollapsedCols}
+                                    setCollapsedCols={setMatrixCollapsedCols}
+                                  />
+                                )}
+
                                 {/* Guidance & Suggest Action Footer */}
-                                {!proofData.isFullyCovered ? (
+                                {!proofData.isFullyCovered && !proofData.isFeasibleLogicCovered ? (
                                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                     <div
                                       style={{
@@ -2778,7 +2928,17 @@ export default function UnitTestTraceabilityMatrix({
                                               {isApplying ? (
                                                 <>
                                                   <Loader2 size={12} className="animate-spin" />
-                                                  <span>Applying & Verifying...</span>
+                                                  <span>
+                                                    {isBulkApplying
+                                                      ? (bulkApplyPhase === "merge"
+                                                          ? "Merging..."
+                                                          : bulkApplyPhase === "verify"
+                                                            ? "Verifying..."
+                                                            : bulkApplyPhase === "sync"
+                                                              ? "Syncing..."
+                                                              : "Applying...")
+                                                      : "Applying & Verifying..."}
+                                                  </span>
                                                 </>
                                               ) : (
                                                 <>
@@ -2916,6 +3076,25 @@ export default function UnitTestTraceabilityMatrix({
                                         </div>
                                       );
                                     })()}
+                                  </div>
+                                ) : proofData.isFeasibleLogicCovered ? (
+                                  <div
+                                    style={{
+                                      padding: "8px 12px",
+                                      borderRadius: 6,
+                                      background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.08)",
+                                      border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.25)",
+                                      fontSize: 11.5,
+                                      color: isLight ? "#6d28d9" : "#c4b5fd",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <ShieldCheck size={14} style={{ color: "#8b5cf6", flexShrink: 0 }} />
+                                    <span>
+                                      <strong>✓ Feasible Logic Covered:</strong> All executable statements and branches are tested ({proofData.branchesPct}% raw branches). The remaining {proofData.infeasibleBranches.length} branch gap{proofData.infeasibleBranches.length > 1 ? "s are" : " is a"} verified environment safeguard. Fake assertions suppressed.
+                                    </span>
                                   </div>
                                 ) : (
                                   <div
@@ -3344,8 +3523,8 @@ export default function UnitTestTraceabilityMatrix({
                                 <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: isLight ? "#0f172a" : "#f8fafc" }}>
                                   L{b.line}: <code>{b.condition}</code>
                                 </span>
-                                <span style={{ color: b.status === "fully_covered" ? "#10b981" : "#f59e0b", fontWeight: 700 }}>
-                                  {b.status === "fully_covered" ? "✓ Both Paths Traversed (100%)" : "⚠️ Partial Branch"}
+                                <span style={{ color: b.isInfeasible ? "#8b5cf6" : b.status === "fully_covered" ? "#10b981" : "#f59e0b", fontWeight: 700 }}>
+                                  {b.isInfeasible ? `🛡️ Infeasible Guard Justified (${b.infeasibleMeta?.badge || b.infeasibleMeta?.type || "Environment Guard"})` : b.status === "fully_covered" ? "✓ Both Paths Traversed (100%)" : "⚠️ Partial Branch"}
                                 </span>
                               </div>
                               {(() => {
@@ -3364,6 +3543,11 @@ export default function UnitTestTraceabilityMatrix({
                                   </div>
                                 );
                               })()}
+                              {b.isInfeasible && (
+                                <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 4, background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.1)", color: isLight ? "#6d28d9" : "#c4b5fd", fontSize: 10 }}>
+                                  <b>Justification:</b> {b.infeasibleMeta?.actionableJustification || b.infeasibleMeta?.justification || "Production or environment guard. Authentic statistics preserved without fake assertions."}
+                                </div>
+                              )}
                             </div>
                           ))
                         ) : (

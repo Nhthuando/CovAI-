@@ -51,6 +51,8 @@ import {
   saveUnitTestVersions,
   getSystemCoverageSummary,
   saveAiSystemTest,
+  checkUnitTestEnvironmentApi,
+  saveUnitTestEnvironmentApi,
 } from "../../services/coverage.service.js";
 import {
   useCoverageDashboard,
@@ -65,8 +67,6 @@ import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
-import UnitTestExecutionProcess from "./UnitTestExecutionProcess.jsx";
-import UnitTestExecutionVisualizer from "./UnitTestExecutionVisualizer.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
 import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
 import JobQueue from "./JobQueue.jsx";
@@ -80,6 +80,8 @@ import UnitTestVersionPopover from "./UnitTestVersionPopover.jsx";
 import UnitTestVersionHistoryView from "./UnitTestVersionHistoryView.jsx";
 import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
 import SuggestTestcaseModal from "./SuggestTestcaseModal.jsx";
+import UnitTestSimulationStudioModal from "./simulation/UnitTestSimulationStudioModal.jsx";
+import UnitTestEnvVarModal from "./UnitTestEnvVarModal.jsx";
 
 const CONFIG = {
   unit: {
@@ -630,6 +632,11 @@ export default function CoverageTypeDashboard({
   const [showAiDetails, setShowAiDetails] = useState(false);
   const isGenerating = generating || internalGenerating;
   const activeJobIdRef = useRef(null);
+  const pendingRunOptionsRef = useRef(null);
+  const [envModalOpen, setEnvModalOpen] = useState(false);
+  const [envDetectionData, setEnvDetectionData] = useState(null);
+  const [isCheckingEnv, setIsCheckingEnv] = useState(false);
+  const [isSavingEnv, setIsSavingEnv] = useState(false);
 
   // Suggest TestCase Modal configuration
   const [suggestModalConfig, setSuggestModalConfig] = useState({
@@ -792,13 +799,10 @@ export default function CoverageTypeDashboard({
 
   const [showJobQueueModal, setShowJobQueueModal] = useState(false);
 
-  // Mode view for Unit test: "traceability" (default for unit) | "testcases" | "visualization" | "all" | "statements" | "branches" | "functions"
+  // Mode view for Unit test: "traceability" (default for unit) | "testcases" | "versions" | "all" | "statements" | "branches" | "functions"
   const [activeMetricView, setActiveMetricView] = useState(
     type === "unit" ? "traceability" : "all",
   );
-
-  // View mode for Unit Testcases: "table" | "visualization"
-  const [testCaseViewMode, setTestCaseViewMode] = useState("table");
 
   // View mode for Function coverage
   const [functionViewMode, setFunctionViewMode] = useState("map"); // "map" | "table"
@@ -810,6 +814,9 @@ export default function CoverageTypeDashboard({
 
   // In-place file viewer state to view source and test files directly inside Unit Test without redirecting
   const [inPlaceOpenFileTarget, setInPlaceOpenFileTarget] = useState(null);
+
+  // Interactive Unit Test Execution Simulation Studio target state
+  const [simulationTarget, setSimulationTarget] = useState(null);
 
   const handleOpenFileInPlace = useCallback(
     (filePath, targetLine = null, functionName = null, endLine = null, testInfo = null) => {
@@ -1008,12 +1015,27 @@ export default function CoverageTypeDashboard({
   const handleApplySuggestionInline = useCallback(
     async (filePath, suggestion) => {
       if (!snapshotId || !suggestion) return;
+      const cleanFile = cleanDisplayPath(filePath);
       const sugId = suggestion.suggestionId || suggestion.id;
       setApplyingSuggestionIds((prev) => new Set(prev).add(sugId));
+
+      const initialStep = `[Phase 1/2] Merging test for ${cleanFile}...`;
       setApplyProgressSteps((prev) => ({
         ...prev,
-        [filePath]: "Writing modified test file to disk...",
+        [filePath]: initialStep,
       }));
+
+      startBulkApply({
+        snapshotId,
+        projectId,
+        totalCount: 1,
+        totalFiles: 1,
+        totalSugs: 1,
+        step: initialStep,
+        stats: "Phase 1/2",
+        progressPct: 40,
+        phase: "merge",
+      });
 
       // Status transition: GENERATED/EDITED -> APPLYING
       setInlineSuggestions((prev) => {
@@ -1029,10 +1051,18 @@ export default function CoverageTypeDashboard({
       });
 
       try {
+        const verifyStep = `[Phase 2/2] Running tests & measuring coverage for ${cleanFile}...`;
         setApplyProgressSteps((prev) => ({
           ...prev,
-          [filePath]: "Executing test runner & verifying real new coverage...",
+          [filePath]: verifyStep,
         }));
+        updateBulkApplyStep({
+          step: verifyStep,
+          stats: "Phase 2/2",
+          progressPct: 80,
+          phase: "verify",
+          currentFile: filePath,
+        });
 
         const res = await applyUnitTestSuggestion(snapshotId, {
           suggestion: {
@@ -1143,8 +1173,17 @@ export default function CoverageTypeDashboard({
 
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
         await ensureFileCoverage(filePath, true);
+
+        const inlineDoneMsg = isPassed
+          ? `✓ Successfully applied test for ${cleanFile}! Coverage updated.`
+          : `Applied test for ${cleanFile} (test runner reported some failures).`;
+        completeBulkApply({
+          ...resultData,
+          message: inlineDoneMsg,
+        });
       } catch (err) {
         console.error("Failed to apply suggestion:", err);
+        completeBulkApply({ error: err.message });
         setInlineSuggestions((prev) => {
           const fileSugs = prev[filePath] || [];
           return {
@@ -1176,6 +1215,8 @@ export default function CoverageTypeDashboard({
   const handleApplyAllInline = useCallback(
     async (filePath, suggestions) => {
       if (!snapshotId || !suggestions?.length) return;
+      const cleanFile = cleanDisplayPath(filePath);
+      const totalSugs = suggestions.length;
       const sugIds = suggestions.map((s) => s.suggestionId || s.id);
       setApplyingSuggestionIds((prev) => {
         const next = new Set(prev);
@@ -1183,10 +1224,23 @@ export default function CoverageTypeDashboard({
         return next;
       });
 
+      const initialInlineStep = `[Phase 1/2] Merging ${totalSugs} tests for ${cleanFile}...`;
       setApplyProgressSteps((prev) => ({
         ...prev,
-        [filePath]: `Applying ${suggestions.length} suggestions safely without conflicts...`,
+        [filePath]: initialInlineStep,
       }));
+
+      startBulkApply({
+        snapshotId,
+        projectId,
+        totalCount: totalSugs,
+        totalFiles: 1,
+        totalSugs,
+        step: initialInlineStep,
+        stats: "Phase 1/2",
+        progressPct: 40,
+        phase: "merge",
+      });
 
       setInlineSuggestions((prev) => {
         const fileSugs = prev[filePath] || [];
@@ -1201,10 +1255,18 @@ export default function CoverageTypeDashboard({
       });
 
       try {
+        const verifyInlineStep = `[Phase 2/2] Running tests & measuring coverage for ${cleanFile}...`;
         setApplyProgressSteps((prev) => ({
           ...prev,
-          [filePath]: "Running tests to measure verified new coverage...",
+          [filePath]: verifyInlineStep,
         }));
+        updateBulkApplyStep({
+          step: verifyInlineStep,
+          stats: "Phase 2/2",
+          progressPct: 80,
+          phase: "verify",
+          currentFile: filePath,
+        });
 
         const res = await applyUnitTestSuggestion(snapshotId, {
           suggestions: suggestions.map((s) => ({
@@ -1314,8 +1376,17 @@ export default function CoverageTypeDashboard({
 
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
         await ensureFileCoverage(filePath, true);
+
+        const inlineDoneMsg = isPassed
+          ? `✓ Successfully applied ${totalSugs} tests for ${cleanFile}! Coverage updated.`
+          : `Applied tests for ${cleanFile} (test runner reported some failures).`;
+        completeBulkApply({
+          ...resultData,
+          message: inlineDoneMsg,
+        });
       } catch (err) {
         console.error("Failed to apply all suggestions:", err);
+        completeBulkApply({ error: err.message });
         setInlineSuggestions((prev) => {
           const fileSugs = prev[filePath] || [];
           return {
@@ -1514,21 +1585,32 @@ export default function CoverageTypeDashboard({
 
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkApplyStep, setBulkApplyStep] = useState("");
+  const [bulkApplyProgress, setBulkApplyProgress] = useState(null);
+  const [bulkApplyPhase, setBulkApplyPhase] = useState("");
 
-  // Apply all suggestions across all files with real-time step progress (1/N, 2/N...)
+  // Apply all suggestions across all files with real-time step progress (Phase 1 -> 2 -> 3)
   const handleApplyAllGlobal = useCallback(async () => {
     if (!snapshotId || allPendingSuggestions.length === 0 || isBulkApplying) return;
 
     setIsBulkApplying(true);
     const totalFiles = filesWithPendingSuggestions.length;
     const totalSugs = allPendingSuggestions.length;
-    const initialStep = `[0/${totalFiles}] Applying ${totalSugs} suggestions across ${totalFiles} files...`;
-    setBulkApplyStep(initialStep);
+    const initialPct = Math.min(100, Math.max(4, Math.round((1 / totalFiles) * 100)));
+    const stage1Step = `[1/${totalFiles}] Batch applying ${totalSugs} suggestions across ${totalFiles} files...`;
+    setBulkApplyStep(stage1Step);
+    setBulkApplyProgress(initialPct);
+    setBulkApplyPhase("merge");
     startBulkApply({
       snapshotId,
       projectId,
       totalCount: totalFiles,
-      step: initialStep,
+      totalFiles,
+      totalSugs,
+      completedCount: 1,
+      step: stage1Step,
+      stats: `1/${totalFiles}`,
+      progressPct: initialPct,
+      phase: "merge",
     });
 
     const allSugIds = allPendingSuggestions.map((s) => s.suggestionId || s.id);
@@ -1584,14 +1666,17 @@ export default function CoverageTypeDashboard({
 
       let batchApplied = false;
       if (allCleanedSuggestions.length > 0) {
-        const batchStep = `[1/${totalFiles}] Batch applying ${allCleanedSuggestions.length} suggestions across ${totalFiles} files...`;
-        setBulkApplyStep(batchStep);
+        const stage2Step = `[Phase 2/3] Executing test runner & verifying coverage across ${totalFiles} files...`;
+        setBulkApplyStep(stage2Step);
+        setBulkApplyProgress(70);
+        setBulkApplyPhase("verify");
         updateBulkApplyStep({
-          step: batchStep,
-          completedCount: 1,
+          step: stage2Step,
+          completedCount: Math.round(totalFiles * 0.7),
           totalCount: totalFiles,
-          stats: `${totalFiles}/${totalFiles}`,
-          progressPct: 50,
+          stats: "Phase 2/3",
+          progressPct: 70,
+          phase: "verify",
           currentFile: filesWithPendingSuggestions[0],
         });
 
@@ -1623,6 +1708,19 @@ export default function CoverageTypeDashboard({
           const testStatus = resultData?.testStatus || resultData?.status;
           const isBatchPassed = testStatus === "PASSED" || resultData?.success === true;
           if (isBatchPassed) anyPassedGlobal = true;
+
+          const stage3Step = `[Phase 3/3] Synchronizing coverage reports & updating traceability matrix...`;
+          setBulkApplyStep(stage3Step);
+          setBulkApplyProgress(95);
+          setBulkApplyPhase("sync");
+          updateBulkApplyStep({
+            step: stage3Step,
+            completedCount: totalFiles,
+            totalCount: totalFiles,
+            stats: "Phase 3/3",
+            progressPct: 95,
+            phase: "sync",
+          });
 
           setInlineSuggestions((prev) => {
             const next = { ...prev };
@@ -1709,12 +1807,15 @@ export default function CoverageTypeDashboard({
         const runnerStep = `[${currentStats}] Executing tests for ${displayFile}...`;
 
         setBulkApplyStep(runnerStep);
+        setBulkApplyProgress(progressPct);
+        setBulkApplyPhase("verify");
         updateBulkApplyStep({
           step: runnerStep,
           completedCount,
           totalCount: totalFiles,
           stats: currentStats,
           progressPct,
+          phase: "verify",
           currentFile: fPath,
         });
 
@@ -1843,13 +1944,17 @@ export default function CoverageTypeDashboard({
         }
       }
 
-      setBulkSuggestMessage(
-        anyPassedGlobal
-          ? `✓ Successfully applied test suggestions across ${totalFiles} files! Coverage updated.`
-          : `Applied suggestions (Test runner reported some failures).`
-      );
+      setBulkApplyProgress(100);
+      setBulkApplyPhase("done");
+      const completionMsg = anyPassedGlobal
+        ? `✓ Successfully applied ${totalSugs} test suggestions across ${totalFiles} files! Coverage updated.`
+        : `Applied ${totalSugs} suggestions across ${totalFiles} files (test runner reported some failures).`;
 
-      completeBulkApply(lastResultData);
+      setBulkSuggestMessage(completionMsg);
+      completeBulkApply({
+        ...lastResultData,
+        message: completionMsg,
+      });
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
       await loadUnitTestVersions();
@@ -1862,9 +1967,21 @@ export default function CoverageTypeDashboard({
         );
       }
 
-      // Only trigger full project re-run if incremental coverage was not already returned by applyUnitTestSuggestion
-      const hasIncrementalCoverage = Boolean(lastResultData?.newCoverage && lastResultData?.perFileResults);
-      if (anyPassedGlobal && !hasIncrementalCoverage) {
+      // Track BullMQ background analysis job or trigger runner sync to ensure dashboard updates
+      if (lastResultData?.backgroundJob?.id) {
+        const bgJobId = lastResultData.backgroundJob.id;
+        startAnalysis({ snapshotId, projectId, type: "unit", jobId: bgJobId });
+        (async () => {
+          try {
+            await waitForJob(bgJobId, (prog) => {
+              updateAnalysisProgress({ progress: prog, message: "Refreshing full project coverage analysis..." });
+            });
+            completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
+            invalidateCoverageQueries(snapshotId);
+            await refetchCoverage();
+          } catch (_) { }
+        })();
+      } else if (anyPassedGlobal) {
         await run({ restart: true });
       }
 
@@ -1887,6 +2004,8 @@ export default function CoverageTypeDashboard({
     } finally {
       setIsBulkApplying(false);
       setBulkApplyStep("");
+      setBulkApplyProgress(null);
+      setBulkApplyPhase("");
       setApplyingSuggestionIds((prev) => {
         const next = new Set(prev);
         allSugIds.forEach((id) => next.delete(id));
@@ -2109,6 +2228,25 @@ export default function CoverageTypeDashboard({
 
   const run = async (options = {}) => {
     if (!snapshotId) return;
+
+    if (type === "unit" && !options?.bypassEnvCheck && !options?.useHermeticMock) {
+      setIsCheckingEnv(true);
+      try {
+        const envRes = await checkUnitTestEnvironmentApi(snapshotId);
+        if (envRes?.success && envRes?.data?.requiresPrompt) {
+          setEnvDetectionData(envRes.data);
+          pendingRunOptionsRef.current = options;
+          setEnvModalOpen(true);
+          setIsCheckingEnv(false);
+          return;
+        }
+      } catch (envCheckErr) {
+        console.warn("[CoverageTypeDashboard] Pre-flight env check error, proceeding with run:", envCheckErr);
+      } finally {
+        setIsCheckingEnv(false);
+      }
+    }
+
     activeJobIdRef.current = null;
     setRunning(true);
     setRunProgress(8);
@@ -2157,7 +2295,7 @@ export default function CoverageTypeDashboard({
                   s = "Preparing Supertest integration test suite...";
                 } else if (prog <= 70) {
                   s = "Executing HTTP route endpoints & assertions...";
-                } else if (prog < 100) {
+                } else if (prog <= 95) {
                   s = "Calculating API integration coverage metrics...";
                 } else {
                   s = "Integration test execution completed!";
@@ -2204,6 +2342,72 @@ export default function CoverageTypeDashboard({
         setRunStep("");
       }, 1200);
     }
+  };
+
+  const handleSaveEnvAndRun = async (envVars) => {
+    if (!snapshotId || isSavingEnv) return;
+    setIsSavingEnv(true);
+    setError("");
+    try {
+      const res = await saveUnitTestEnvironmentApi(snapshotId, {
+        envVariables: envVars,
+        runAfterSave: true,
+      });
+
+      // Synchronize workspace tree and coverage queries immediately
+      invalidateProjectTree(projectId);
+      invalidateCoverageQueries(snapshotId);
+
+      setEnvModalOpen(false);
+
+      const returnedJobId = res?.data?.jobId || res?.data?.job?.id;
+      if (returnedJobId) {
+        activeJobIdRef.current = returnedJobId;
+        setRunning(true);
+        setRunProgress(10);
+        setRunStep("Running unit test suite with configured .env variables...");
+        startAnalysis({ snapshotId, projectId, type: "unit", jobId: returnedJobId });
+        try {
+          await waitForJob(returnedJobId, (prog) => {
+            const pct = Math.max(10, Math.min(100, Math.round(prog)));
+            setRunProgress(pct);
+            setRunStep(`Executing unit tests (${pct}%)...`);
+            updateAnalysisProgress({ progress: prog, message: `Executing unit tests (${pct}%)...` });
+          });
+          setRunProgress(100);
+          completeAnalysis(true);
+          invalidateCoverageQueries(snapshotId);
+          await refetchCoverage();
+        } catch (jobErr) {
+          setError(jobErr.message || "Test execution failed.");
+          completeAnalysis(false, jobErr.message);
+        } finally {
+          activeJobIdRef.current = null;
+          setTimeout(() => {
+            setRunning(false);
+            setRunningStatus("");
+            setRunProgress(0);
+            setRunStep("");
+          }, 1200);
+        }
+      } else {
+        await run({ ...(pendingRunOptionsRef.current || {}), bypassEnvCheck: true });
+      }
+    } catch (err) {
+      console.error("[handleSaveEnvAndRun] Error saving .env:", err);
+      setError(err.message || "Failed to save environment variables.");
+      throw err;
+    } finally {
+      setIsSavingEnv(false);
+      pendingRunOptionsRef.current = null;
+    }
+  };
+
+  const handleRunHermeticFallback = async () => {
+    setEnvModalOpen(false);
+    const prevOptions = pendingRunOptionsRef.current || {};
+    pendingRunOptionsRef.current = null;
+    await run({ ...prevOptions, useHermeticMock: true, bypassEnvCheck: true });
   };
 
   useEffect(() => {
@@ -2892,6 +3096,7 @@ export default function CoverageTypeDashboard({
             runStep={runStep}
             activeJobId={activeJobIdRef.current}
             onRun={run}
+            isCheckingEnv={isCheckingEnv}
             onBulkSuggest={handleBulkSuggestTest}
             onOpenSuggestModal={(opts) => handleOpenSuggestModal(opts?.filePath, opts?.functionName, opts?.isBulk ?? true)}
             isBulkSuggesting={isBulkSuggesting}
@@ -2900,6 +3105,8 @@ export default function CoverageTypeDashboard({
             onApplyAll={handleApplyAllGlobal}
             isBulkApplying={isBulkApplying}
             bulkApplyStep={bulkApplyStep}
+            bulkApplyProgress={bulkApplyProgress}
+            bulkApplyPhase={bulkApplyPhase}
             summary={summary}
             rawTotals={rawTotals}
             executions={executions}
@@ -3426,151 +3633,153 @@ export default function CoverageTypeDashboard({
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 6,
+                justifyContent: "space-between",
+                gap: 12,
                 marginTop: 20,
-                overflowX: "auto",
-                padding: "4px 6px",
+                flexWrap: "wrap",
+                padding: "4px 8px",
                 background: isLight ? "#f8fafc" : "var(--color-surface, #11161d)",
                 borderRadius: 8,
                 border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
               }}
             >
-              {[
-                ...(type === "unit"
-                  ? [
-                    {
-                      id: "traceability",
-                      label: "Logic & Test Traceability",
-                      count: `${functionsList.length} fns`,
-                      icon: Target,
-                      accent: isLight ? "#4f46e5" : "#a5b4fc",
-                    },
-                    {
-                      id: "testcases",
-                      label: "Test Suites & Specs",
-                      count: `${unitTestSuites.length} files`,
-                      icon: FileCheck,
-                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
-                    },
-                    {
-                      id: "visualization",
-                      label: "Execution Terminal & Logs",
-                      count: "Logs & Pipeline",
-                      icon: Terminal,
-                      accent: isLight ? "#0f172a" : "#38bdf8",
-                    },
-                    {
-                      id: "versions",
-                      label: "Version History",
-                      count: `${uniqueVersionsCount} versions`,
-                      icon: History,
-                      accent: isLight ? "#7c3aed" : "#c4b5fd",
-                    },
-                  ]
-                  : [
-                    {
-                      id: "testcases",
-                      label: "Test Files",
-                      count: unitTestSuites.length,
-                      icon: null,
-                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
-                    },
-                    {
-                      id: "all",
-                      label: "Source file coverage",
-                      count: selectedFiles.length,
-                      icon: ListChecks,
-                      accent: isLight ? "#2563eb" : "#60a5fa",
-                    },
-                    {
-                      id: "statements",
-                      label: "Statement coverage",
-                      count: pct(statPct),
-                      icon: FileCode,
-                      accent: isLight ? "#6366f1" : "#a78bfa",
-                    },
-                    {
-                      id: "branches",
-                      label: "Branch coverage",
-                      count: pct(branchPct),
-                      icon: GitBranch,
-                      accent: isLight ? "#d97706" : "#fbbf24",
-                    },
-                    {
-                      id: "functions",
-                      label: "Function coverage",
-                      count: pct(funcPct),
-                      icon: Cpu,
-                      accent: isLight ? "#0284c7" : "#38bdf8",
-                    },
-                  ]),
-              ].map((tab) => {
-                const isCurrent = activeMetricView === tab.id;
-                const TabIcon = tab.icon;
+              {/* Canonical 3 Tabs (Strict Rule 10 Invariant) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, overflowX: "auto" }}>
+                {[
+                  ...(type === "unit"
+                    ? [
+                      {
+                        id: "traceability",
+                        label: "Logic & Test Traceability",
+                        count: `${functionsList.length} fns`,
+                        icon: Target,
+                        accent: isLight ? "#4f46e5" : "#a5b4fc",
+                      },
+                      {
+                        id: "simulation",
+                        label: "Test Execution Simulation",
+                        count: "Interactive Studio",
+                        icon: Zap,
+                        accent: isLight ? "#059669" : "#10b981",
+                      },
+                      {
+                        id: "testcases",
+                        label: "Test Suites & Specs",
+                        count: `${unitTestSuites.length} files`,
+                        icon: FileCheck,
+                        accent: isLight ? "#6d5dfb" : "#8b7cfd",
+                      },
+                      {
+                        id: "versions",
+                        label: "Version History",
+                        count: `${uniqueVersionsCount} versions`,
+                        icon: History,
+                        accent: isLight ? "#7c3aed" : "#c4b5fd",
+                      },
+                    ]
+                    : [
+                      {
+                        id: "testcases",
+                        label: "Test Files",
+                        count: unitTestSuites.length,
+                        icon: null,
+                        accent: isLight ? "#6d5dfb" : "#8b7cfd",
+                      },
+                      {
+                        id: "all",
+                        label: "Source file coverage",
+                        count: selectedFiles.length,
+                        icon: ListChecks,
+                        accent: isLight ? "#2563eb" : "#60a5fa",
+                      },
+                      {
+                        id: "statements",
+                        label: "Statement coverage",
+                        count: pct(statPct),
+                        icon: FileCode,
+                        accent: isLight ? "#6366f1" : "#a78bfa",
+                      },
+                      {
+                        id: "branches",
+                        label: "Branch coverage",
+                        count: pct(branchPct),
+                        icon: GitBranch,
+                        accent: isLight ? "#d97706" : "#fbbf24",
+                      },
+                      {
+                        id: "functions",
+                        label: "Function coverage",
+                        count: pct(funcPct),
+                        icon: Cpu,
+                        accent: isLight ? "#0284c7" : "#38bdf8",
+                      },
+                    ]),
+                ].map((tab) => {
+                  const isCurrent = activeMetricView === tab.id;
+                  const TabIcon = tab.icon;
 
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveMetricView(tab.id)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "6px 14px",
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: isCurrent ? 650 : 500,
-                      cursor: "pointer",
-                      background: isCurrent
-                        ? (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)")
-                        : "transparent",
-                      color: isCurrent
-                        ? (isLight ? "#0f172a" : "#f8fafc")
-                        : (isLight ? "#64748b" : "#94a3b8"),
-                      border: isCurrent
-                        ? (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)")
-                        : "1px solid transparent",
-                      boxShadow: isCurrent
-                        ? (isLight ? "0 1px 2px rgba(15, 23, 42, 0.06)" : "none")
-                        : "none",
-                      transition: "all 0.15s ease",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {TabIcon && (
-                      <TabIcon
-                        size={14}
-                        style={{ color: isCurrent ? tab.accent : (isLight ? "#94a3b8" : "#64748b") }}
-                      />
-                    )}
-                    <span>{tab.label}</span>
-                    <span
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveMetricView(tab.id)}
                       style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        padding: "1px 6px",
-                        borderRadius: 4,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "6px 14px",
+                        borderRadius: 6,
+                        fontSize: 12,
+                        fontWeight: isCurrent ? 650 : 500,
+                        cursor: "pointer",
                         background: isCurrent
-                          ? (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.1)")
-                          : (isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.05)"),
+                          ? (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)")
+                          : "transparent",
                         color: isCurrent
-                          ? (isLight ? "#334155" : "#f8fafc")
+                          ? (isLight ? "#0f172a" : "#f8fafc")
                           : (isLight ? "#64748b" : "#94a3b8"),
-                        fontFamily: "var(--font-mono, monospace)",
+                        border: isCurrent
+                          ? (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)")
+                          : "1px solid transparent",
+                        boxShadow: isCurrent
+                          ? (isLight ? "0 1px 2px rgba(15, 23, 42, 0.06)" : "none")
+                          : "none",
+                        transition: "all 0.15s ease",
+                        whiteSpace: "nowrap",
                       }}
                     >
-                      {tab.count}
-                    </span>
-                  </button>
-                );
-              })}
-
-
+                      {TabIcon && (
+                        <TabIcon
+                          size={14}
+                          style={{ color: isCurrent ? tab.accent : (isLight ? "#94a3b8" : "#64748b") }}
+                        />
+                      )}
+                      <span>{tab.label}</span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "1px 6px",
+                          borderRadius: 4,
+                          background: isCurrent
+                            ? (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.1)")
+                            : (isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.05)"),
+                          color: isCurrent
+                            ? (isLight ? "#334155" : "#f8fafc")
+                            : (isLight ? "#64748b" : "#94a3b8"),
+                          fontFamily: "var(--font-mono, monospace)",
+                        }}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
           {/* Active View Explanatory Banner */}
-          {activeMetricView !== "testcases" && activeMetricView !== "traceability" && activeMetricView !== "versions" && (
+          {activeMetricView !== "testcases" && activeMetricView !== "traceability" && activeMetricView !== "versions" && activeMetricView !== "simulation" && (
             <div
               style={{
                 marginTop: 10,
@@ -3583,74 +3792,62 @@ export default function CoverageTypeDashboard({
                 flexWrap: "wrap",
                 gap: 12,
                 background: isLight
-                  ? activeMetricView === "visualization"
-                    ? "#ecfdf5"
-                    : activeMetricView === "testcases"
-                      ? "#faf5ff"
-                      : activeMetricView === "statements"
-                        ? "#eef2ff"
-                        : activeMetricView === "branches"
-                          ? "#fffbeb"
-                          : activeMetricView === "functions"
-                            ? "#f0f9ff"
-                            : "#f8fafc"
-                  : activeMetricView === "visualization"
-                    ? "rgba(16, 185, 129, 0.08)"
-                    : activeMetricView === "testcases"
-                      ? "rgba(192, 132, 252, 0.08)"
-                      : activeMetricView === "statements"
-                        ? "rgba(167, 139, 250, 0.08)"
-                        : activeMetricView === "branches"
-                          ? "rgba(251, 191, 36, 0.08)"
-                          : activeMetricView === "functions"
-                            ? "rgba(56, 189, 248, 0.08)"
-                            : "rgba(255, 255, 255, 0.04)",
+                  ? activeMetricView === "testcases"
+                    ? "#faf5ff"
+                    : activeMetricView === "statements"
+                      ? "#eef2ff"
+                      : activeMetricView === "branches"
+                        ? "#fffbeb"
+                        : activeMetricView === "functions"
+                          ? "#f0f9ff"
+                          : "#f8fafc"
+                  : activeMetricView === "testcases"
+                    ? "rgba(192, 132, 252, 0.08)"
+                    : activeMetricView === "statements"
+                      ? "rgba(167, 139, 250, 0.08)"
+                      : activeMetricView === "branches"
+                        ? "rgba(251, 191, 36, 0.08)"
+                        : activeMetricView === "functions"
+                          ? "rgba(56, 189, 248, 0.08)"
+                          : "rgba(255, 255, 255, 0.04)",
                 border: isLight
-                  ? activeMetricView === "visualization"
-                    ? "1px solid #a7f3d0"
-                    : activeMetricView === "testcases"
-                      ? "1px solid #e9d5ff"
-                      : activeMetricView === "statements"
-                        ? "1px solid #c7d2fe"
-                        : activeMetricView === "branches"
-                          ? "1px solid #fde68a"
-                          : activeMetricView === "functions"
-                            ? "1px solid #bae6fd"
-                            : "1px solid #e2e8f0"
-                  : activeMetricView === "visualization"
-                    ? "1px solid rgba(16, 185, 129, 0.25)"
-                    : activeMetricView === "testcases"
-                      ? "1px solid rgba(192, 132, 252, 0.25)"
-                      : activeMetricView === "statements"
-                        ? "1px solid rgba(167, 139, 250, 0.25)"
-                        : activeMetricView === "branches"
-                          ? "1px solid rgba(251, 191, 36, 0.25)"
-                          : activeMetricView === "functions"
-                            ? "1px solid rgba(56, 189, 248, 0.25)"
-                            : "1px solid rgba(255, 255, 255, 0.08)",
+                  ? activeMetricView === "testcases"
+                    ? "1px solid #e9d5ff"
+                    : activeMetricView === "statements"
+                      ? "1px solid #c7d2fe"
+                      : activeMetricView === "branches"
+                        ? "1px solid #fde68a"
+                        : activeMetricView === "functions"
+                          ? "1px solid #bae6fd"
+                          : "1px solid #e2e8f0"
+                  : activeMetricView === "testcases"
+                    ? "1px solid rgba(192, 132, 252, 0.25)"
+                    : activeMetricView === "statements"
+                      ? "1px solid rgba(167, 139, 250, 0.25)"
+                      : activeMetricView === "branches"
+                        ? "1px solid rgba(251, 191, 36, 0.25)"
+                        : activeMetricView === "functions"
+                          ? "1px solid rgba(56, 189, 248, 0.25)"
+                          : "1px solid rgba(255, 255, 255, 0.08)",
                 color: isLight
-                  ? activeMetricView === "visualization"
-                    ? "#065f46"
-                    : activeMetricView === "testcases"
-                      ? "#581c87"
-                      : activeMetricView === "statements"
-                        ? "#3730a3"
-                        : activeMetricView === "branches"
-                          ? "#92400e"
-                          : activeMetricView === "functions"
-                            ? "#075985"
-                            : "#334155"
-                  : activeMetricView === "visualization"
-                    ? "#6ee7b7"
-                    : activeMetricView === "testcases"
-                      ? "#e9d5ff"
-                      : activeMetricView === "statements"
-                        ? "#c4b5fd"
-                        : activeMetricView === "branches"
-                          ? "#fde68a"
-                          : activeMetricView === "functions"
-                            ? "#bae6fd"
-                            : "#8b949e",
+                  ? activeMetricView === "testcases"
+                    ? "#581c87"
+                    : activeMetricView === "statements"
+                      ? "#3730a3"
+                      : activeMetricView === "branches"
+                        ? "#92400e"
+                        : activeMetricView === "functions"
+                          ? "#075985"
+                          : "#334155"
+                  : activeMetricView === "testcases"
+                    ? "#e9d5ff"
+                    : activeMetricView === "statements"
+                      ? "#c4b5fd"
+                      : activeMetricView === "branches"
+                        ? "#fde68a"
+                        : activeMetricView === "functions"
+                          ? "#bae6fd"
+                          : "#8b949e",
               }}
             >
               <div
@@ -3662,17 +3859,7 @@ export default function CoverageTypeDashboard({
                   minWidth: 260,
                 }}
               >
-                {activeMetricView === "visualization" ? (
-                  <>
-                    <Terminal
-                      size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#0f172a" : "#38bdf8" }}
-                    />
-                    <span>
-                      <b>Execution Terminal & Logs:</b> Real-time terminal runner output, BullMQ pipeline stages, and V8 coverage synchronization.
-                    </span>
-                  </>
-                ) : activeMetricView === "testcases" ? (
+                {activeMetricView === "testcases" ? (
                   <>
                     <FileCheck
                       size={15}
@@ -3827,28 +4014,29 @@ export default function CoverageTypeDashboard({
                 onSwitchVersion={handleSwitchVersion}
                 isSwitchingVersion={isSwitchingVersion}
                 switchingVersionFile={switchingVersionFile}
+                isBulkApplying={isBulkApplying}
+                bulkApplyStep={bulkApplyStep}
+                bulkApplyPhase={bulkApplyPhase}
+                bulkApplyProgress={bulkApplyProgress}
+                applyProgressSteps={applyProgressSteps}
+                onOpenSimulation={(simTarget) => {
+                  if (simTarget?.filePath) setSelectedSourceFile(simTarget.filePath);
+                  setActiveMetricView("simulation");
+                }}
               />
             </div>
-          ) : type === "unit" && activeMetricView === "visualization" ? (
+          ) : type === "unit" && activeMetricView === "simulation" ? (
             <div style={{ marginTop: 14 }}>
-              <UnitTestExecutionProcess
-                testSuites={unitTestSuites}
-                executions={executions}
-                sourceFiles={selectedFiles}
+              <UnitTestSimulationStudioModal
+                isOpen={true}
+                isEmbedded={true}
                 snapshotId={snapshotId}
                 projectId={projectId}
                 isLight={isLight}
-                onOpenFile={handleOpenFileInPlace}
-                onRunTests={run}
-                running={running}
-                runProgress={runProgress}
-                runStep={runStep}
-                runningStatus={runningStatus}
-                rawTotals={rawTotals}
-                summary={summary}
-                missingDependency={summary?.missingDependency}
-                onInstallDependency={handleInstallDependency}
-                isInstallingDependency={Boolean(installingDependencyName)}
+                availableSourceFiles={selectedFiles}
+                availableFunctionsList={functionsList}
+                availableTestSuites={unitTestSuites}
+                initialSourceFile={selectedSourceFile || selectedFiles?.[0]?.filePath || selectedFiles?.[0]?.path}
               />
             </div>
           ) : type === "unit" && activeMetricView === "versions" ? (
@@ -3900,28 +4088,6 @@ export default function CoverageTypeDashboard({
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <button
-                    onClick={() => setTestCaseViewMode("visualization")}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      padding: "4px 9px",
-                      borderRadius: 6,
-                      background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.15)",
-                      color: isLight ? "#4f46e5" : "#a5b4fc",
-                      border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.35)",
-                      fontSize: 11,
-                      fontWeight: 650,
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                    title="Switch to Unit Test Execution Process"
-                  >
-                    <Terminal size={12} />
-                    <span>Execution Process</span>
-                  </button>
-
                   {/* Search input */}
                   <div
                     style={{
@@ -5898,6 +6064,7 @@ export default function CoverageTypeDashboard({
           }}
           isLight={isLight}
           testSuites={unitTestSuites}
+          onOpenSimulation={(simTarget) => setSimulationTarget(simTarget)}
         />
       )}
 
@@ -5918,6 +6085,43 @@ export default function CoverageTypeDashboard({
           isLight={isLight}
         />
       )}
+
+      {/* Interactive Unit Test Execution Simulation Studio Modal */}
+      {simulationTarget && (
+        <UnitTestSimulationStudioModal
+          isOpen={Boolean(simulationTarget)}
+          onClose={() => setSimulationTarget(null)}
+          snapshotId={snapshotId}
+          projectId={projectId}
+          availableSourceFiles={selectedFiles}
+          availableFunctionsList={functionsList}
+          availableTestSuites={unitTestSuites}
+          initialSourceFile={simulationTarget.filePath || simulationTarget.sourceFilePath}
+          initialTestFile={simulationTarget.testFilePath || simulationTarget.testFile}
+          initialTestCaseId={simulationTarget.testCaseId || simulationTarget.testTitle}
+          initialFunctionName={simulationTarget.functionName}
+          initialTestCode={simulationTarget.testCode || simulationTarget.initialTestCode}
+          initialCategory={simulationTarget.category || "HAPPY_PATH"}
+          isLight={isLight}
+        />
+      )}
+
+      {/* Unit Test Environment Variable Prompting Modal (Milestone 3) */}
+      <UnitTestEnvVarModal
+        isOpen={envModalOpen}
+        onClose={() => {
+          setEnvModalOpen(false);
+          pendingRunOptionsRef.current = null;
+        }}
+        data={envDetectionData}
+        missingRequired={envDetectionData?.missingRequired}
+        detectedVariables={envDetectionData?.detectedVariables}
+        existingVariables={envDetectionData?.existingVariables}
+        onSaveAndRun={handleSaveEnvAndRun}
+        onRunHermeticFallback={handleRunHermeticFallback}
+        isSaving={isSavingEnv}
+        isLight={isLight}
+      />
     </div>
   );
 }

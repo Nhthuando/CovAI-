@@ -45,12 +45,7 @@ export const classifyTestFile = (content, filePath = "", detectedUnitFrameworks 
         lowerContent.includes("supertest") ||
         lowerContent.includes("request(app)") ||
         lowerContent.includes("request(server)") ||
-        lowerPath.includes("/integration/") ||
-        lowerPath.includes("\\integration\\") ||
-        lowerPath.includes("/routes/") ||
-        lowerPath.includes("\\routes\\") ||
-        lowerPath.includes("/api/") ||
-        lowerPath.includes("\\api\\") ||
+        /(^|[/\\])(?:integration|api|routes)([/\\]|$)/i.test(lowerPath) ||
         /\b(integration|api)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
     ) return "supertest";
 
@@ -61,10 +56,7 @@ export const classifyTestFile = (content, filePath = "", detectedUnitFrameworks 
         lowerPath.includes("playwright") ||
         lowerContent.includes("@playwright/test") ||
         lowerContent.includes("page.goto") ||
-        lowerPath.includes("/e2e/") ||
-        lowerPath.includes("\\e2e\\") ||
-        lowerPath.includes("/system/") ||
-        lowerPath.includes("\\system\\") ||
+        /(^|[/\\])(?:e2e|system)([/\\]|$)/i.test(lowerPath) ||
         /\b(e2e|system)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
     ) return "playwright";
 

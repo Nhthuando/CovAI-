@@ -27,8 +27,9 @@ import {
     CANONICAL_BUILTIN_HELPERS,
     deduplicateAstDeclarations
 } from "./testHelperRegistry.service.js";
+import { classifyFeasibleCoverage } from "./feasibleCoverageClassifier.service.js";
 
-export { buildStandardUnitTestPrompt };
+export { buildStandardUnitTestPrompt, classifyFeasibleCoverage };
 
 /**
  * Builds standard 6-part unit test prompt for LLM (Jest & Vitest).
@@ -123,29 +124,58 @@ export const sanitizeSourceFilePath = (rootDir, filePath) => {
 export const findSourceOnDisk = (rootDir, relPath) => {
     if (!relPath || !rootDir) return { path: null, content: "" };
     const clean = sanitizeSourceFilePath(rootDir, relPath);
-    const candidates = [
+
+    const allowedRoots = [path.resolve(rootDir)];
+    const repoIdx = rootDir.replace(/\\/g, "/").lastIndexOf("/repo");
+    if (repoIdx !== -1) {
+        allowedRoots.push(path.resolve(rootDir.slice(0, repoIdx + 5)));
+    }
+    const parentDir = path.dirname(rootDir);
+    if (repoIdx !== -1 && parentDir.startsWith(rootDir.slice(0, repoIdx + 5))) {
+        allowedRoots.push(path.resolve(parentDir));
+    }
+
+    const isSafePath = (targetPath) => {
+        if (!targetPath || typeof targetPath !== "string") return false;
+        try {
+            const resolved = path.resolve(targetPath);
+            return allowedRoots.some(root => {
+                const relative = path.relative(root, resolved);
+                return !relative.startsWith("..") && !path.isAbsolute(relative);
+            });
+        } catch {
+            return false;
+        }
+    };
+
+    const rawCandidates = [
         path.join(rootDir, relPath),
         path.join(rootDir, clean),
         path.join(path.dirname(rootDir), relPath),
-        path.join(path.dirname(rootDir), clean),
-        relPath
+        path.join(path.dirname(rootDir), clean)
     ];
-    const base = path.basename(rootDir);
-    if (relPath.startsWith(base + "/") || relPath.startsWith(base + "\\")) {
-        candidates.push(path.join(rootDir, relPath.slice(base.length + 1)));
-    }
-    if (clean.startsWith(base + "/") || clean.startsWith(base + "\\")) {
-        candidates.push(path.join(rootDir, clean.slice(base.length + 1)));
-    }
-    const repoIdx = rootDir.replace(/\\/g, "/").lastIndexOf("/repo");
-    if (repoIdx !== -1) {
-        const repoRoot = rootDir.slice(0, repoIdx + 5);
-        candidates.push(path.join(repoRoot, relPath));
-        candidates.push(path.join(repoRoot, clean));
+
+    if (!path.isAbsolute(relPath)) {
+        rawCandidates.push(path.join(rootDir, relPath));
+    } else if (isSafePath(relPath)) {
+        rawCandidates.push(relPath);
     }
 
-    for (const cand of candidates) {
-        if (cand && fs.existsSync(cand)) {
+    const base = path.basename(rootDir);
+    if (relPath.startsWith(base + "/") || relPath.startsWith(base + "\\")) {
+        rawCandidates.push(path.join(rootDir, relPath.slice(base.length + 1)));
+    }
+    if (clean.startsWith(base + "/") || clean.startsWith(base + "\\")) {
+        rawCandidates.push(path.join(rootDir, clean.slice(base.length + 1)));
+    }
+    if (repoIdx !== -1) {
+        const repoRoot = rootDir.slice(0, repoIdx + 5);
+        rawCandidates.push(path.join(repoRoot, relPath));
+        rawCandidates.push(path.join(repoRoot, clean));
+    }
+
+    for (const cand of rawCandidates) {
+        if (cand && isSafePath(cand) && fs.existsSync(cand)) {
             try {
                 if (!fs.statSync(cand).isDirectory()) {
                     return { path: cand, content: fs.readFileSync(cand, "utf8") };
@@ -541,7 +571,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const actions = _collectControllerActions(target);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             expect(res.status || res.json || next).toBeDefined();
         } catch (err) {
@@ -1186,7 +1216,8 @@ export const extractSourceGapsAndDecisions = ({ sourceCode = "", fileCoverageDat
         astMetadata: astMeta.details || astMeta,
         fileCoverageData,
         sourceCode,
-        uncoveredLinesList: uncoveredLines
+        uncoveredLinesList: uncoveredLines,
+        infeasibleCodeBlocks: astMeta.details?.infeasibleNodes || astMeta.infeasibleNodes || []
     });
 
     const decisionTable = buildDecisionTableMatrix({
@@ -1229,6 +1260,7 @@ export const extractSourceGapsAndDecisions = ({ sourceCode = "", fileCoverageDat
     };
 };
 
+
 /**
  * Generates suggestion for a single framework.
  */
@@ -1240,7 +1272,8 @@ const generateSuggestionForFramework = async ({
     sourceCode,
     coverageDetails,
     isTest,
-    filePath
+    filePath,
+    selectedAiModel = null
 }) => {
     return generateAiUnitTestSuite({
         userId,
@@ -1250,14 +1283,15 @@ const generateSuggestionForFramework = async ({
         sourceCode,
         coverageDetails,
         isTest,
-        filePath
+        filePath,
+        selectedAiModel
     });
 };
 
 /**
  * AI Agent for suggesting unit test cases for uncovered lines, branches, and assertion errors.
  */
-export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, userId, framework: requestedFramework }) => {
+export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, userId, framework: requestedFramework, selectedAiModel = null }) => {
     const { resolveProjectAccess } = await import("./projectAccess.service.js");
     const proposalAccess = await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
     const capturedWorkspaceRevision = proposalAccess.project.workspaceRevision;
@@ -1321,8 +1355,9 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
 
     let targetFilePath = filePath;
     if (filePath === "all") {
+        let candidateFiles = [];
         try {
-            let candidateFiles = await prisma.coverageFile.findMany({
+            candidateFiles = await prisma.coverageFile.findMany({
                 where: {
                     snapshotId: snapshot.id,
                     AND: [
@@ -1343,11 +1378,101 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
                 }
             });
             candidateFiles = candidateFiles.filter(f => isBusinessLogicFile(f.filePath));
-            const uncovered = candidateFiles.find(f => (f.stmtsPct != null && f.stmtsPct < 100) || (f.branchesPct != null && f.branchesPct < 100) || (f.linesPct != null && f.linesPct < 100));
-            targetFilePath = uncovered ? uncovered.filePath : (candidateFiles[0]?.filePath || "src/services/ai.service.js");
         } catch (_) {
-            targetFilePath = "src/services/ai.service.js";
+            candidateFiles = [];
         }
+
+        // If no candidate files found in database, scan disk in snapshot.rootDir
+        if (candidateFiles.length === 0 && snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
+            const scanDir = (dir, rel = "") => {
+                const list = [];
+                try {
+                    const entries = fs.readdirSync(dir, { withFileTypes: true });
+                    for (const ent of entries) {
+                        const entRel = rel ? `${rel}/${ent.name}` : ent.name;
+                        if (ent.isDirectory()) {
+                            if (!["node_modules", ".git", "coverage", "client", "frontend", "dist", "build"].includes(ent.name)) {
+                                list.push(...scanDir(path.join(dir, ent.name), entRel));
+                            }
+                        } else if (/\.[jt]s$/i.test(ent.name) && !/\.test\.|\.spec\./i.test(ent.name)) {
+                            if (isBusinessLogicFile(entRel)) {
+                                list.push({ filePath: entRel });
+                            }
+                        }
+                    }
+                } catch (_) {}
+                return list;
+            };
+            candidateFiles = scanDir(snapshot.rootDir);
+        }
+
+        if (candidateFiles.length === 0) {
+            return {
+                isBatch: true,
+                count: 0,
+                results: [],
+                suggestions: [],
+                testCode: "",
+                suggestedTestCode: "",
+                targetSourceFile: "",
+                sourceFile: "",
+                targetTestFile: "",
+                testFile: "",
+                scenarioMatrix: [],
+                targetFiles: [],
+                isFullyCovered: true,
+                message: "No business logic files found for unit test suggestion."
+            };
+        }
+
+        // Prioritize files that have coverage gaps
+        const uncovered = candidateFiles.filter(f =>
+            (f.stmtsPct != null && f.stmtsPct < 100) ||
+            (f.branchesPct != null && f.branchesPct < 100) ||
+            (f.linesPct != null && f.linesPct < 100) ||
+            (f.funcsPct != null && f.funcsPct < 100)
+        );
+        const targetFiles = uncovered.length > 0 ? uncovered : candidateFiles;
+
+        const batchResults = [];
+        for (const fileItem of targetFiles) {
+            try {
+                const singleRes = await suggestUnitTestcases({
+                    projectId,
+                    snapshotId: snapshot.id,
+                    filePath: fileItem.filePath,
+                    userId,
+                    framework: requestedFramework,
+                    selectedAiModel
+                });
+                if (singleRes) {
+                    batchResults.push(singleRes);
+                }
+            } catch (fileErr) {
+                console.warn(`[unitTestSuggestion] Batch file ${fileItem.filePath} skipped: ${fileErr.message}`);
+            }
+        }
+
+        const primary = batchResults[0] || {};
+        const batchTestCode = primary.testCode || primary.suggestedTestCode || primary.generatedCode || "";
+        const batchTargetSource = primary.targetSourceFile || primary.sourceFile || "";
+        const batchTargetTest = primary.targetTestFile || primary.testFile || "";
+        const batchScenarioMatrix = primary.scenarioMatrix || [];
+        return {
+            ...primary,
+            testCode: batchTestCode,
+            suggestedTestCode: batchTestCode,
+            targetSourceFile: batchTargetSource,
+            sourceFile: batchTargetSource,
+            targetTestFile: batchTargetTest,
+            testFile: batchTargetTest,
+            scenarioMatrix: batchScenarioMatrix,
+            isBatch: true,
+            count: batchResults.length,
+            results: batchResults,
+            suggestions: batchResults.flatMap(r => r.suggestions || [r]),
+            targetFiles: batchResults.map(r => r.targetSourceFile || r.sourceFile || r.sourceFileToInspect || r.filePath)
+        };
     }
 
     const isTest = isTestFilePath(targetFilePath);
@@ -1412,6 +1537,37 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         typeof lPct === "number" &&
         ((coverageDetails.summary.statementsTotal ?? 0) > 0 || (coverageDetails.summary.linesTotal ?? 0) > 0 || sPct > 0 || lPct > 0);
 
+    // Extract infeasible code blocks, branches, and summaries
+    const infeasibleCode = coverageDetails.coverageGapAnalysis?.infeasibleCodeBlocks ||
+        coverageDetails.astMetadata?.infeasibleNodes || [];
+    const allUncoveredBranches = coverageDetails.uncoveredBranches ||
+        coverageDetails.coverageGapAnalysis?.uncoveredBranches || [];
+    const infeasibleBranches = allUncoveredBranches.filter(b => b.isInfeasible);
+
+    const infeasibleSummaries = [];
+    for (const b of infeasibleBranches) {
+        infeasibleSummaries.push({
+            line: b.line || b.loc?.start?.line,
+            type: b.infeasibleMeta?.type || b.type || "ENVIRONMENT_GUARD",
+            condition: b.condition || "",
+            justification: b.infeasibleMeta?.actionableJustification || b.infeasibleMeta?.justification || "Unreachable branch or environment safeguard",
+            category: b.infeasibleMeta?.category || "BRANCH_TOGGLING"
+        });
+    }
+    for (const block of infeasibleCode) {
+        if (!infeasibleSummaries.some(s => s.line === block.line)) {
+            infeasibleSummaries.push({
+                line: block.line,
+                type: block.type,
+                condition: block.justification || "",
+                justification: block.justification || "Infeasible code block",
+                category: block.category || "DEAD_CODE"
+            });
+        }
+    }
+
+    const feasibility = classifyFeasibleCoverage(coverageDetails, infeasibleCode);
+
     const is100Coverage = hasValidMetrics &&
         !hasMissedBranches &&
         !hasUncoveredBranchesList &&
@@ -1435,8 +1591,10 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         return {
             suggestionId: `sug-${Date.now()}-1`,
             isFullyCovered: true,
+            isFeasibleLogicCovered: true,
             status: "FULLY_COVERED",
             sourceFile: sourceFileToInspect,
+            targetSourceFile: sourceFileToInspect,
             testFile: testFileRef,
             targetTestFile: testFileRef,
             framework: isTest ? (targetFilePath.includes("vitest") ? "vitest" : "jest") : "jest",
@@ -1445,6 +1603,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             explanation: `File \`${sourceFileToInspect}\` has reached 100% test coverage (Statements: 100%, Branches: 100%, Lines: 100%) with 0 assertion errors. No further suggestions needed!`,
             suggestedTestCode: "",
             generatedCode: "",
+            testCode: "",
             originalCode: "",
             fullUpdatedContent: "",
             uncoveredLines: [],
@@ -1454,6 +1613,45 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             coverageGapAnalysis: coverageDetails.coverageGapAnalysis || null,
             uncoveredBranches: [],
             decisionPoints: coverageDetails.decisionPoints || [],
+            infeasibleCode,
+            infeasibleBranches,
+            infeasibleSummaries,
+            scenarioMatrix: [],
+            suggestions: []
+        };
+    }
+
+    if (feasibility.isFeasibleLogicCovered && !hasFailed) {
+        const testFileRef = isTest ? targetFilePath : findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "jest").relativePath;
+        return {
+            suggestionId: `sug-${Date.now()}-1`,
+            isFullyCovered: false,
+            isFeasibleLogicCovered: true,
+            status: "FEASIBLE_LOGIC_COVERED",
+            sourceFile: sourceFileToInspect,
+            targetSourceFile: sourceFileToInspect,
+            testFile: testFileRef,
+            targetTestFile: testFileRef,
+            framework: isTest ? (targetFilePath.includes("vitest") ? "vitest" : "jest") : "jest",
+            targetLines: [],
+            targetBranches: [],
+            explanation: `Feasible Logic Covered: All feasible executable logic in \`${sourceFileToInspect}\` is covered by tests! Remaining uncovered branch(es) (${infeasibleBranches.length}) are verified infeasible/environment guards. No fake assertions generated.`,
+            suggestedTestCode: "",
+            generatedCode: "",
+            testCode: "",
+            originalCode: "",
+            fullUpdatedContent: "",
+            uncoveredLines: coverageDetails.uncoveredLines || [],
+            failedLines: coverageDetails.failedLines || [],
+            summary: coverageDetails.summary,
+            astMetadata: coverageDetails.astMetadata || null,
+            coverageGapAnalysis: coverageDetails.coverageGapAnalysis || null,
+            uncoveredBranches: allUncoveredBranches,
+            decisionPoints: coverageDetails.decisionPoints || [],
+            infeasibleCode,
+            infeasibleBranches,
+            infeasibleSummaries,
+            scenarioMatrix: [],
             suggestions: []
         };
     }
@@ -1519,21 +1717,42 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
                 sourceCode,
                 coverageDetails,
                 isTest,
-                filePath
+                filePath,
+                selectedAiModel
             })
         )
     );
 
     for (const suggestion of suggestions) {
         suggestion.proposalBase = { ...(suggestion.proposalBase || {}), snapshotId: snapshot.id, workspaceRevision: capturedWorkspaceRevision };
+        suggestion.infeasibleCode = infeasibleCode;
+        suggestion.infeasibleBranches = infeasibleBranches;
+        suggestion.infeasibleSummaries = infeasibleSummaries;
+        suggestion.isFeasibleLogicCovered = Boolean(feasibility.isFeasibleLogicCovered);
     }
-    const primary = suggestions[0];
+    const primary = suggestions[0] || {};
+    const primaryTestCode = primary.testCode || primary.suggestedTestCode || primary.generatedCode || "";
+    const primaryTargetSource = primary.targetSourceFile || primary.sourceFile || sourceFileToInspect;
+    const primaryTargetTest = primary.targetTestFile || primary.testFile;
+    const primaryScenarioMatrix = primary.scenarioMatrix || coverageDetails.decisionTable?.matrixEntries || [];
+
     return {
         ...primary,
+        testCode: primaryTestCode,
+        suggestedTestCode: primaryTestCode,
+        targetSourceFile: primaryTargetSource,
+        sourceFile: primaryTargetSource,
+        targetTestFile: primaryTargetTest,
+        testFile: primaryTargetTest,
+        scenarioMatrix: primaryScenarioMatrix,
         astMetadata: coverageDetails.astMetadata || null,
         coverageGapAnalysis: coverageDetails.coverageGapAnalysis || null,
         uncoveredBranches: coverageDetails.uncoveredBranches || coverageDetails.coverageGapAnalysis?.uncoveredBranches || [],
         decisionPoints: coverageDetails.decisionPoints || coverageDetails.astMetadata?.decisionPoints || [],
+        infeasibleCode,
+        infeasibleBranches,
+        infeasibleSummaries,
+        isFeasibleLogicCovered: Boolean(feasibility.isFeasibleLogicCovered),
         frameworks: suggestions.map(s => s.framework),
         suggestions
     };

@@ -9,6 +9,8 @@ import { healInvalidDynamicGetters, autoRepairTestSyntaxWithAst, validateTestCod
 export { healInvalidDynamicGetters, autoRepairTestSyntaxWithAst, validateTestCodeAst };
 import traversePkg from "@babel/traverse";
 const traverse = traversePkg?.default || traversePkg;
+import { generateMathjsMockCode } from "./unitTestContextEngineering.service.js";
+import { NODE_BUILTINS, isValidNpmPackageName } from "./dependencyResolution.service.js";
 
 const RESERVED_KEYWORDS = new Set([
     "jest", "require", "describe", "test", "it", "expect", "beforeEach", "afterEach",
@@ -1105,6 +1107,120 @@ export const healVitestHoistedMocks = (code) => {
     return code;
 };
 
+/**
+ * Heals Vitest/Jest mock factories when the test runner reports missing named exports
+ * (e.g. `No "create" export is defined on the "mathjs" mock. Did you forget to return it from "vi.mock"?`).
+ */
+export const healMissingMockNamedExports = (code, rawOutput = "", options = {}) => {
+    if (!code || typeof code !== "string" || !rawOutput || typeof rawOutput !== "string") return code;
+    const MISSING_MOCK_EXPORT_REGEX = /(?:\[vitest\]\s*)?No\s+["']([^"']+)["']\s+export is defined on the\s+["']([^"']+)["']\s+mock\.\s*Did you forget to return it from\s+["']vi\.mock["']\?/gi;
+
+    const matches = [...rawOutput.matchAll(MISSING_MOCK_EXPORT_REGEX)];
+    if (matches.length === 0) return code;
+
+    const missingByModule = new Map();
+    for (const m of matches) {
+        const exportName = m[1]?.trim();
+        const moduleName = m[2]?.trim();
+        if (exportName && moduleName) {
+            if (!missingByModule.has(moduleName)) missingByModule.set(moduleName, new Set());
+            missingByModule.get(moduleName).add(exportName);
+        }
+    }
+
+    let healed = code;
+    const isVitest = isVitestTestCode(healed) || options.framework === "vitest" || healed.includes("vi.mock");
+    const fnMaker = isVitest ? "vi.fn" : "jest.fn";
+
+    for (const [moduleName, exportsSet] of missingByModule.entries()) {
+        const exportsList = Array.from(exportsSet);
+        const escapedMod = moduleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        const buildStubForExport = (expName) => {
+            if (moduleName === "mathjs") {
+                if (expName === "create") {
+                    return `create: ${fnMaker}(() => ({ evaluate: ${fnMaker}((e) => typeof e === 'number' ? e : 0), compile: ${fnMaker}(() => ({ evaluate: ${fnMaker}(() => 0) })), parse: ${fnMaker}(() => ({ compile: ${fnMaker}(() => ({ evaluate: ${fnMaker}(() => 0) })) })), simplify: ${fnMaker}(e => e), derivative: ${fnMaker}(() => ({ evaluate: ${fnMaker}(() => 0) })), add: ${fnMaker}((a, b) => (typeof a === 'number' && typeof b === 'number' ? a + b : 0)), subtract: ${fnMaker}((a, b) => (typeof a === 'number' && typeof b === 'number' ? a - b : 0)), multiply: ${fnMaker}((a, b) => (typeof a === 'number' && typeof b === 'number' ? a * b : 0)), divide: ${fnMaker}((a, b) => (typeof a === 'number' && typeof b === 'number' && b !== 0 ? a / b : 0)) }))`;
+                }
+                if (expName === "all") {
+                    return `all: {}`;
+                }
+            }
+            return `${expName}: ${fnMaker}()`;
+        };
+
+        const stubsToInject = exportsList.map(buildStubForExport);
+
+        const modMockPattern = new RegExp(`(?:vi|jest)\\.mock[(]\\s*['"]${escapedMod}['"]`);
+        if (modMockPattern.test(healed)) {
+            let replaced = false;
+
+            // Pattern 1: Arrow returning object literal in parens: () => ({ ... })
+            const arrowParenPattern = new RegExp(`((?:vi|jest)\\.mock[(]\\s*['"]${escapedMod}['"]\\s*,\\s*(?:async\\s*)?(?:[(][^)]*[)]|[a-zA-Z0-9_$]+)\\s*=>\\s*[(]\\s*\\{)([\\s\\S]*?)(\\}\\s*[)][^;)]*?[)])`);
+            if (arrowParenPattern.test(healed)) {
+                healed = healed.replace(arrowParenPattern, (match, prefix, body, suffix) => {
+                    const missingToInsert = stubsToInject.filter(stub => {
+                        const keyName = stub.split(":")[0].trim();
+                        return !new RegExp(`\\b${keyName}\\s*:`).test(body);
+                    });
+                    if (missingToInsert.length === 0) return match;
+                    const trimmed = body.trim();
+                    const trailingComma = trimmed.endsWith(",") || !trimmed ? "" : ", ";
+                    replaced = true;
+                    return `${prefix}${trimmed}${trailingComma}${missingToInsert.join(", ")}${suffix}`;
+                });
+            }
+
+            // Pattern 2: Block return with return { ... }
+            if (!replaced) {
+                const blockReturnPattern = new RegExp(`((?:vi|jest)\\.mock[(]\\s*['"]${escapedMod}['"][\\s\\S]*?return\\s*\\{)([\\s\\S]*?)(\\}\\s*;?[\\s\\S]*?\\}\\s*[)])`);
+                if (blockReturnPattern.test(healed)) {
+                    healed = healed.replace(blockReturnPattern, (match, prefix, returnObjBody, suffix) => {
+                        const missingToInsert = stubsToInject.filter(stub => {
+                            const keyName = stub.split(":")[0].trim();
+                            return !new RegExp(`\\b${keyName}\\s*:`).test(returnObjBody);
+                        });
+                        if (missingToInsert.length === 0) return match;
+                        const trimmed = returnObjBody.trim();
+                        const trailingComma = trimmed.endsWith(",") || !trimmed ? "" : ", ";
+                        replaced = true;
+                        return `${prefix}${trimmed}${trailingComma}${missingToInsert.join(", ")}${suffix}`;
+                    });
+                }
+            }
+
+            // Pattern 3: Fallback generic object closure inside factory
+            if (!replaced) {
+                const genericFactoryPattern = new RegExp(`((?:vi|jest)\\.mock[(]\\s*['"]${escapedMod}['"][\\s\\S]*?\\{)([\\s\\S]*?)(\\}\\s*[)])`);
+                if (genericFactoryPattern.test(healed)) {
+                    healed = healed.replace(genericFactoryPattern, (match, prefix, body, suffix) => {
+                        const missingToInsert = stubsToInject.filter(stub => {
+                            const keyName = stub.split(":")[0].trim();
+                            return !new RegExp(`\\b${keyName}\\s*:`).test(body);
+                        });
+                        if (missingToInsert.length === 0) return match;
+                        const trimmed = body.trim();
+                        const trailingComma = trimmed.endsWith(",") || !trimmed ? "" : ", ";
+                        return `${prefix}${trimmed}${trailingComma}${missingToInsert.join(", ")}${suffix}`;
+                    });
+                }
+            }
+        } else {
+            const mockCode = isVitest
+                ? `vi.mock('${moduleName}', () => ({\n  default: vi.fn(),\n  ${stubsToInject.join(",\n  ")}\n}));\n`
+                : `jest.mock('${moduleName}', () => ({\n  default: jest.fn(),\n  ${stubsToInject.join(",\n  ")}\n}), { virtual: true });\n`;
+
+            const firstDescribe = healed.search(/(?:describe|test|it)\s*[(]/);
+            if (firstDescribe !== -1) {
+                healed = healed.slice(0, firstDescribe) + mockCode + "\n" + healed.slice(firstDescribe);
+            } else {
+                healed = mockCode + "\n" + healed;
+            }
+        }
+    }
+
+    return healed;
+};
+
 
 /**
  * Converts rogue ESM import statements into CommonJS require declarations in CJS test files.
@@ -1215,18 +1331,22 @@ export const ensureJestMockVirtualOption = (code, targetModuleName) => {
     const escaped = typeof targetModuleName === 'string'
         ? targetModuleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         : targetModuleName.source;
-    const regex = new RegExp(`(?:^|[\\s;(])jest\\.(?:mock|unstable_mockModule|doMock)\\s*\\(\\s*['"]${escaped}['"]`, 'g');
+    const regex = new RegExp(`(?:^|[\\s;(])jest\\.(?:mock|unstable_mockModule|doMock)\\s*\\(\\s*['"\`]${escaped}['"\`]`, 'g');
     let match;
     let result = code;
     while ((match = regex.exec(result)) !== null) {
         const startIdx = match.index;
         const parenStart = result.indexOf('(', startIdx);
         if (parenStart === -1) break;
-        let depth = 1;
+        let parenDepth = 1;
+        let braceDepth = 0;
+        let bracketDepth = 0;
         let i = parenStart + 1;
         let inString = null;
         let isEscaped = false;
-        while (i < result.length && depth > 0) {
+        const topLevelCommas = [];
+
+        while (i < result.length && parenDepth > 0) {
             const ch = result[i];
             if (inString) {
                 if (isEscaped) {
@@ -1240,25 +1360,244 @@ export const ensureJestMockVirtualOption = (code, targetModuleName) => {
                 if (ch === '\'' || ch === '"' || ch === '`') {
                     inString = ch;
                 } else if (ch === '(') {
-                    depth++;
+                    parenDepth++;
                 } else if (ch === ')') {
-                    depth--;
+                    parenDepth--;
+                } else if (ch === '{') {
+                    braceDepth++;
+                } else if (ch === '}') {
+                    braceDepth = Math.max(0, braceDepth - 1);
+                } else if (ch === '[') {
+                    bracketDepth++;
+                } else if (ch === ']') {
+                    bracketDepth = Math.max(0, bracketDepth - 1);
+                } else if (ch === ',' && parenDepth === 1 && braceDepth === 0 && bracketDepth === 0) {
+                    topLevelCommas.push(i);
                 }
             }
             i++;
         }
-        if (depth === 0) {
+
+        if (parenDepth === 0) {
             const closingParenIdx = i - 1;
-            const fullCall = result.substring(parenStart, closingParenIdx + 1);
-            if (!fullCall.includes('virtual:')) {
+            if (topLevelCommas.length === 0) {
+                // 1 argument: jest.mock('target') -> append options
                 const beforeParen = result.substring(0, closingParenIdx).trimEnd();
                 const afterParen = result.substring(closingParenIdx);
                 result = beforeParen + ', { virtual: true }' + afterParen;
                 regex.lastIndex = closingParenIdx + 18;
+            } else if (topLevelCommas.length === 1) {
+                // 2 arguments: jest.mock('target', arg2)
+                const arg2 = result.substring(topLevelCommas[0] + 1, closingParenIdx).trim();
+                const isOptionsOnly = arg2.startsWith('{') && !arg2.includes('=>') && !/\bfunction\b/.test(arg2) && !/\breturn\b/.test(arg2);
+                if (isOptionsOnly) {
+                    if (/virtual\s*:\s*false/.test(arg2)) {
+                        const replacedArg2 = arg2.replace(/virtual\s*:\s*false/g, 'virtual: true');
+                        result = result.substring(0, topLevelCommas[0] + 1) + ' ' + replacedArg2 + result.substring(closingParenIdx);
+                        regex.lastIndex = topLevelCommas[0] + 1 + replacedArg2.length + 1;
+                    } else if (!/virtual\s*:\s*true/.test(arg2)) {
+                        const replacedArg2 = arg2.replace(/^\{\s*/, '{ virtual: true, ');
+                        result = result.substring(0, topLevelCommas[0] + 1) + ' ' + replacedArg2 + result.substring(closingParenIdx);
+                        regex.lastIndex = topLevelCommas[0] + 1 + replacedArg2.length + 1;
+                    }
+                } else {
+                    // arg2 is factory function: append options argument
+                    const beforeParen = result.substring(0, closingParenIdx).trimEnd();
+                    const afterParen = result.substring(closingParenIdx);
+                    result = beforeParen + ', { virtual: true }' + afterParen;
+                    regex.lastIndex = closingParenIdx + 18;
+                }
+            } else {
+                // 3 or more arguments: jest.mock('target', factory, options)
+                const lastCommaIdx = topLevelCommas[topLevelCommas.length - 1];
+                const optionsArg = result.substring(lastCommaIdx + 1, closingParenIdx);
+                if (/virtual\s*:\s*false/.test(optionsArg)) {
+                    const replacedOptions = optionsArg.replace(/virtual\s*:\s*false/g, 'virtual: true');
+                    result = result.substring(0, lastCommaIdx + 1) + replacedOptions + result.substring(closingParenIdx);
+                    regex.lastIndex = lastCommaIdx + 1 + replacedOptions.length;
+                } else if (!/virtual\s*:\s*true/.test(optionsArg)) {
+                    if (optionsArg.trim().startsWith('{')) {
+                        const replacedOptions = optionsArg.replace(/\{\s*/, '{ virtual: true, ');
+                        result = result.substring(0, lastCommaIdx + 1) + replacedOptions + result.substring(closingParenIdx);
+                        regex.lastIndex = lastCommaIdx + 1 + replacedOptions.length;
+                    } else {
+                        const beforeParen = result.substring(0, closingParenIdx).trimEnd();
+                        const afterParen = result.substring(closingParenIdx);
+                        result = beforeParen + ', { virtual: true }' + afterParen;
+                        regex.lastIndex = closingParenIdx + 18;
+                    }
+                }
             }
         }
     }
     return result;
+};
+
+/**
+ * Safely ensures all relative path jest.mock calls (e.g. '../lib/prisma.js', './evaluator')
+ * specify { virtual: true } to prevent Jest runtime module resolution failures when
+ * virtual mock targets do not physically exist on disk.
+ */
+export const ensureAllRelativeJestMocksVirtual = (code) => {
+    if (!code || typeof code !== "string") return code;
+    if (isVitestTestCode(code)) return code;
+    const relRegex = /(?:^|[\s;(])jest\.(?:mock|unstable_mockModule|doMock)\s*\(\s*['"`](\.\.?[^'"`]+)['"`]/g;
+    let match;
+    let result = code;
+    const relativePaths = new Set();
+    while ((match = relRegex.exec(code)) !== null) {
+        relativePaths.add(match[1]);
+    }
+    for (const relPath of relativePaths) {
+        result = ensureJestMockVirtualOption(result, relPath);
+    }
+    return result;
+};
+
+/**
+ * Detects missing dependency errors (e.g. Cannot find module '<dep>' from '<source_file>',
+ * Cannot find package '<dep>' imported from '<source_file>', Failed to resolve import "<dep>")
+ * from test execution output and injects hermetic RAM virtual isolation mocks into the test file.
+ *
+ * @param {string} content - Test file content
+ * @param {string} rawOutput - Test runner stdout/stderr
+ * @param {object} [options] - Configuration options ({ framework, rootDir, filePath })
+ * @returns {string} - Healed test file content
+ */
+export const healMissingDependencyMocks = (content, rawOutput = "", options = {}) => {
+    if (!content || typeof content !== "string") return content;
+
+    const isVitest = Boolean(
+        options.framework === "vitest" ||
+        (options.filePath && options.filePath.includes("vitest")) ||
+        isVitestTestCode(content) ||
+        /from\s+['"]vitest['"]|\bvi\s*\./.test(content)
+    );
+    let result = isVitest ? content : ensureAllRelativeJestMocksVirtual(content);
+    if (!rawOutput || typeof rawOutput !== "string") return result;
+
+    // 1. Check for missing relative module mocks (e.g. Cannot find module '../lib/prisma.js' from 'tests/services/calculation.service.test.ts')
+    const relRegexes = [
+        /Cannot find module ['"](\.\.?[^'"]+)['"]/gi,
+        /Could not locate module (\.\.?[^ \n\r]+) mapped as/gi,
+        /Failed to resolve import ['"](\.\.?[^'"]+)['"]/gi
+    ];
+    const detectedRelativeModules = new Set();
+    for (const rRegex of relRegexes) {
+        for (const rm of rawOutput.matchAll(rRegex)) {
+            if (rm[1]) detectedRelativeModules.add(rm[1].trim());
+        }
+    }
+
+    for (const relMod of detectedRelativeModules) {
+        const escapedRel = relMod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const alreadyMocked = new RegExp(`(?:vi|jest)\\.(?:mock|unstable_mockModule|doMock)\\s*\\(\\s*['"]${escapedRel}['"]`).test(result);
+        if (alreadyMocked) {
+            if (!isVitest) {
+                result = ensureJestMockVirtualOption(result, relMod);
+            }
+        } else {
+            const isPrismaRel = /prisma/i.test(relMod);
+            let mockBlock = "";
+            if (isPrismaRel) {
+                const fnMaker = isVitest ? "vi.fn" : "jest.fn";
+                const fallbackProxy = `new Proxy({ $transaction: ${fnMaker}((a) => Promise.resolve(a)), $queryRaw: ${fnMaker}(() => Promise.resolve([])), $executeRaw: ${fnMaker}(() => Promise.resolve(1)) }, { get: (t, prop) => (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol' ? undefined : (prop in t ? t[prop] : new Proxy(${fnMaker}(() => Promise.resolve({ id: 1 })), { get: (_, op) => (op === 'then' || op === 'catch' || op === 'finally' || typeof op === 'symbol') ? undefined : ${fnMaker}(() => Promise.resolve({ id: 1 })) }))) })`;
+                mockBlock = isVitest
+                    ? `vi.mock('${relMod}', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : ${fallbackProxy}); return { __esModule: true, prisma: p, default: p }; });`
+                    : `jest.mock('${relMod}', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : ${fallbackProxy}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });`;
+            } else {
+                const fnMaker = isVitest ? "vi.fn" : "jest.fn";
+                mockBlock = isVitest
+                    ? `vi.mock('${relMod}', () => {\n  const handler = { get: (_, p) => p === '__esModule' ? true : (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol') ? undefined : new Proxy(${fnMaker}(), handler) };\n  const mockObj = new Proxy(${fnMaker}(), handler);\n  return Object.assign(new Proxy({}, handler), { default: mockObj });\n});`
+                    : `jest.mock('${relMod}', () => {\n  const handler = { get: (_, p) => p === '__esModule' ? true : (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol') ? undefined : new Proxy(${fnMaker}(), handler) };\n  const mockObj = new Proxy(${fnMaker}(), handler);\n  return Object.assign(new Proxy({}, handler), { default: mockObj });\n}, { virtual: true });`;
+            }
+            const firstDescribe = result.search(/(?:describe|test|it)\s*\(/);
+            if (firstDescribe !== -1) {
+                result = result.slice(0, firstDescribe) + mockBlock + "\n\n" + result.slice(firstDescribe);
+            } else {
+                result = mockBlock + "\n\n" + result;
+            }
+        }
+    }
+
+    // 2. Extract external missing package dependencies
+    const missingPatterns = [
+        /Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
+        /Cannot find package ['"]([^'"]+)['"]\s+imported from\s+['"]([^'"]+)['"]/i,
+        /Failed to resolve import ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
+        /Could not locate module ([^ \n\r]+) mapped as/i,
+        /Cannot find module ['"]([^'"]+)['"]/i,
+        /Cannot find package ['"]([^'"]+)['"]/i
+    ];
+
+    const detectedPackages = new Set();
+    for (const pat of missingPatterns) {
+        for (const m of rawOutput.matchAll(new RegExp(pat.source, "gi"))) {
+            const rawSpec = m[1]?.trim();
+            if (!rawSpec || rawSpec.startsWith(".") || rawSpec.startsWith("/") || rawSpec.startsWith("\\")) {
+                if (rawSpec && rawSpec.startsWith(".")) {
+                    result = ensureJestMockVirtualOption(result, rawSpec);
+                }
+                continue;
+            }
+            let pkg = rawSpec.startsWith("@") ? rawSpec.split("/").slice(0, 2).join("/") : rawSpec.split("/")[0];
+            pkg = pkg.replace(/@[\^~]?[0-9].*$/, "").trim();
+            if (pkg && !NODE_BUILTINS.has(pkg.toLowerCase()) && isValidNpmPackageName(pkg)) {
+                detectedPackages.add(pkg);
+            }
+        }
+    }
+
+    for (const pkgName of detectedPackages) {
+        const escapedPkg = pkgName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const alreadyMocked = new RegExp(`(?:vi|jest)\\.(?:mock|unstable_mockModule|doMock)\\s*\\(\\s*['"]${escapedPkg}['"]`).test(result);
+        if (alreadyMocked) {
+            if (!isVitest) {
+                result = ensureJestMockVirtualOption(result, pkgName);
+            }
+        } else {
+            let mockBlock = "";
+            if (pkgName === "mathjs") {
+                mockBlock = generateMathjsMockCode(isVitest ? "vitest" : "jest");
+            } else if (pkgName === "sonner") {
+                mockBlock = isVitest
+                    ? `vi.mock('sonner', () => {\n  const _mockSonnerToast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), message: vi.fn(), loading: vi.fn(), dismiss: vi.fn(), promise: vi.fn(), custom: vi.fn() });\n  return { toast: _mockSonnerToast, Toaster: vi.fn(() => null), default: { toast: _mockSonnerToast, Toaster: vi.fn(() => null) } };\n});`
+                    : `const _mockSonnerToast = Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn(), info: jest.fn(), warning: jest.fn(), message: jest.fn(), loading: jest.fn(), dismiss: jest.fn(), promise: jest.fn(), custom: jest.fn() });\njest.mock('sonner', () => ({ toast: _mockSonnerToast, Toaster: jest.fn(() => null), default: { toast: _mockSonnerToast, Toaster: jest.fn(() => null) } }), { virtual: true });`;
+            } else if (pkgName === "react-toastify") {
+                mockBlock = isVitest
+                    ? `vi.mock('react-toastify', () => {\n  const _mockToastify = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() });\n  return { toast: _mockToastify, ToastContainer: vi.fn(() => null), default: { toast: _mockToastify } };\n});`
+                    : `const _mockToastify = Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn(), info: jest.fn(), warning: jest.fn(), dismiss: jest.fn() });\njest.mock('react-toastify', () => ({ toast: _mockToastify, ToastContainer: jest.fn(() => null), default: { toast: _mockToastify } }), { virtual: true });`;
+            } else if (pkgName === "lucide-react") {
+                mockBlock = isVitest
+                    ? `vi.mock('lucide-react', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') ? undefined : vi.fn(() => null) }));`
+                    : `jest.mock('lucide-react', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') ? undefined : jest.fn(() => null) }), { virtual: true });`;
+            } else if (pkgName === "framer-motion") {
+                mockBlock = isVitest
+                    ? `vi.mock('framer-motion', () => ({ motion: new Proxy({}, { get: (_, prop) => (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') ? undefined : 'div' }), AnimatePresence: ({ children }) => children }));`
+                    : `jest.mock('framer-motion', () => ({ motion: new Proxy({}, { get: (_, prop) => (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') ? undefined : 'div' }), AnimatePresence: ({ children }) => children }), { virtual: true });`;
+            } else if (pkgName.startsWith("@radix-ui")) {
+                mockBlock = isVitest
+                    ? `vi.mock('${pkgName}', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') ? undefined : (({ children }) => children || null) }));`
+                    : `jest.mock('${pkgName}', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') ? undefined : (({ children }) => children || null) }), { virtual: true });`;
+            } else {
+                const fnMaker = isVitest ? "vi.fn" : "jest.fn";
+                mockBlock = isVitest
+                    ? `vi.mock('${pkgName}', () => {\n  const handler = { get: (_, p) => p === '__esModule' ? true : (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol') ? undefined : new Proxy(vi.fn(), handler) };\n  const mockObj = new Proxy(vi.fn(), handler);\n  return Object.assign(new Proxy({}, handler), { default: mockObj });\n});`
+                    : `jest.mock('${pkgName}', () => {\n  const handler = { get: (_, p) => p === '__esModule' ? true : (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol') ? undefined : new Proxy(jest.fn(), handler) };\n  const mockObj = new Proxy(jest.fn(), handler);\n  return Object.assign(new Proxy({}, handler), { default: mockObj });\n}, { virtual: true });`;
+            }
+
+            if (mockBlock) {
+                const firstDescribe = result.search(/(?:describe|test|it)\s*\(/);
+                if (firstDescribe !== -1) {
+                    result = result.slice(0, firstDescribe) + mockBlock + "\n\n" + result.slice(firstDescribe);
+                } else {
+                    result = mockBlock + "\n\n" + result;
+                }
+            }
+        }
+    }
+
+    return isVitest ? result : ensureAllRelativeJestMocksVirtual(result);
 };
 
 /**
@@ -1269,6 +1608,12 @@ export const ensureJestMockVirtualOption = (code, targetModuleName) => {
 export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath = "", options = {}) => {
     if (!content) return "";
     let cleaned = content;
+
+    // 0.02. In-flight healing of missing dependencies or unvirtualized relative mocks from error output
+    if (rawOutput && (rawOutput.includes("Cannot find module") || rawOutput.includes("Cannot find package") || rawOutput.includes("Failed to resolve import") || rawOutput.includes("Could not locate module"))) {
+        cleaned = healMissingDependencyMocks(cleaned, rawOutput, { ...options, filePath });
+    }
+
     // 0.05. Heal invalid dynamic getter declarations and mock getters
     cleaned = healInvalidDynamicGetters(cleaned);
 
@@ -1449,7 +1794,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     ]);
 
     cleaned = cleaned.replace(
-        /^[ \t]*(const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\2\s*;?[ \t]*\r?$/gm,
+        /^[ \t]*(const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\2\s*(?:;[ \t]*)?(?:\/\/.*)?\r?$/gm,
         (match, kind, varName) => {
             if (NODE_BUILTIN_MODULES.has(varName)) {
                 return isTsFile
@@ -2137,6 +2482,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // 10d. Heal unclosed or runaway object braces in jest.mock / vi.mock factory closures
     cleaned = healMockFactoryBraces(cleaned);
     cleaned = healVitestHoistedMocks(cleaned);
+    cleaned = healMissingMockNamedExports(cleaned, rawOutput, options);
 
     // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...) across all import and mock forms
     const computeSrcPrefix = (relPath) => {
@@ -2218,15 +2564,33 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                 return `jest.mock('axios', () => {
   const instance = {
     post: jest.fn(() => Promise.resolve({ data: {} })),
-    get: jest.fn(() => Promise.resolve({ data: {} }))
+    get: jest.fn(() => Promise.resolve({ data: {} })),
+    put: jest.fn(() => Promise.resolve({ data: {} })),
+    delete: jest.fn(() => Promise.resolve({ data: {} })),
+    patch: jest.fn(() => Promise.resolve({ data: {} })),
+    interceptors: {
+      request: { use: jest.fn(() => 0), eject: jest.fn() },
+      response: { use: jest.fn(() => 0), eject: jest.fn() }
+    },
+    defaults: { headers: { common: {} } },
+    isAxiosError: false
   };
   globalThis.__mockAxiosInstance = instance;
-  return {
+  const mockAxiosObj = {
     create: jest.fn(() => instance),
     post: instance.post,
-    get: instance.get
+    get: instance.get,
+    put: instance.put,
+    delete: instance.delete,
+    patch: instance.patch,
+    interceptors: instance.interceptors,
+    defaults: instance.defaults,
+    isAxiosError: false,
+    default: null
   };
-});\n\n`;
+  mockAxiosObj.default = mockAxiosObj;
+  return mockAxiosObj;
+}, { virtual: true });\n\n`;
             }
             return "";
         }
@@ -2465,14 +2829,14 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     if (cleaned.includes("mockAppConfig")) {
         cleaned = cleaned.replace(
             /var mockAppConfig = \(typeof mockAppConfig !== 'undefined' \? mockAppConfig : \{[\s\S]*?\}\);/g,
-            `var mockAppConfig = (typeof mockAppConfig !== 'undefined' ? mockAppConfig : new Proxy({ aiEngine: { baseUrl: 'http://localhost:5000' }, ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000, maxHistoryMessages: 2, model: 'llama3' }, groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false }, queue: { analysisQueueName: 'test-analysis-queue' }, redis: { host: 'localhost', port: 6379 }, upload: { maxFileSizeInBytes: 10485760 } }, { get: (t, p) => (p === 'then' || typeof p === 'symbol' ? undefined : (t[p] || (t[p] = {}))) }));`
+            `var mockAppConfig = (typeof mockAppConfig !== 'undefined' ? mockAppConfig : new Proxy({ aiEngine: { baseUrl: 'http://localhost:5000' }, ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000, maxHistoryMessages: 2, model: 'llama3' }, groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false }, queue: { analysisQueueName: 'test-analysis-queue' }, redis: { host: 'localhost', port: 6379 }, upload: { maxFileSizeInBytes: 10485760 } }, { get: (t, p) => (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol' ? undefined : (t[p] || (t[p] = {}))) }));`
         );
         cleaned = cleaned.replace(
             /(?:const|let|var)\s+mockAppConfig\s*=\s*\{[\s\S]*?redis:\s*\{[^}]*\}[\s\S]*?\};/g,
-            `const mockAppConfig = new Proxy({ aiEngine: { baseUrl: 'http://localhost:5000' }, ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000, maxHistoryMessages: 2, model: 'llama3' }, groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false }, queue: { analysisQueueName: 'test-analysis-queue' }, redis: { host: 'localhost', port: 6379 }, upload: { maxFileSizeInBytes: 10485760 } }, { get: (t, p) => (p === 'then' || typeof p === 'symbol' ? undefined : (t[p] || (t[p] = {}))) });`
+            `const mockAppConfig = new Proxy({ aiEngine: { baseUrl: 'http://localhost:5000' }, ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000, maxHistoryMessages: 2, model: 'llama3' }, groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false }, queue: { analysisQueueName: 'test-analysis-queue' }, redis: { host: 'localhost', port: 6379 }, upload: { maxFileSizeInBytes: 10485760 } }, { get: (t, p) => (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol' ? undefined : (t[p] || (t[p] = {}))) });`
         );
         if (!cleaned.includes("var mockAppConfig =") && !cleaned.includes("const mockAppConfig =") && !cleaned.includes("let mockAppConfig =")) {
-            const appConfigDecl = `var mockAppConfig = new Proxy({ aiEngine: { baseUrl: 'http://localhost:5000' }, ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000, maxHistoryMessages: 2, model: 'llama3' }, groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false }, queue: { analysisQueueName: 'test-analysis-queue' }, redis: { host: 'localhost', port: 6379 }, upload: { maxFileSizeInBytes: 10485760 } }, { get: (t, p) => (p === 'then' || typeof p === 'symbol' ? undefined : (t[p] || (t[p] = {}))) });\n`;
+            const appConfigDecl = `var mockAppConfig = new Proxy({ aiEngine: { baseUrl: 'http://localhost:5000' }, ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000, maxHistoryMessages: 2, model: 'llama3' }, groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false }, queue: { analysisQueueName: 'test-analysis-queue' }, redis: { host: 'localhost', port: 6379 }, upload: { maxFileSizeInBytes: 10485760 } }, { get: (t, p) => (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol' ? undefined : (t[p] || (t[p] = {}))) });\n`;
             cleaned = appConfigDecl + cleaned;
         }
     }
@@ -2481,11 +2845,11 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     if (cleaned.includes("DataTypes") && (cleaned.includes("sequelize") || cleaned.includes("models"))) {
         cleaned = cleaned.replace(
             /(?:const|let|var)\s+mDataTypes\s*=\s*\{[\s\S]*?\};/g,
-            `const mDataTypes = new Proxy({}, { get: (t, p) => { if (typeof p !== 'string' || p === 'then') return t[p]; const f = function(...a) { return String(p); }; f.key = p; f.toString = () => String(p); return f; } });`
+            `const mDataTypes = new Proxy({}, { get: (t, p) => { if (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol') return undefined; if (typeof p !== 'string') return t[p]; const f = function(...a) { return String(p); }; f.key = p; f.toString = () => String(p); return f; } });`
         );
         cleaned = cleaned.replace(
             /DataTypes:\s*\{[\s\S]*?INTEGER[\s\S]*?\}/g,
-            `DataTypes: new Proxy({}, { get: (t, p) => { if (typeof p !== 'string' || p === 'then') return t[p]; const f = function(...a) { return String(p); }; f.key = p; f.toString = () => String(p); return f; } })`
+            `DataTypes: new Proxy({}, { get: (t, p) => { if (p === 'then' || p === 'catch' || p === 'finally' || typeof p === 'symbol') return undefined; if (typeof p !== 'string') return t[p]; const f = function(...a) { return String(p); }; f.key = p; f.toString = () => String(p); return f; } })`
         );
     }
     if ((cleaned.includes("jest.mock('sequelize'") || cleaned.includes('jest.mock("sequelize"')) && cleaned.includes("mSequelize")) {
@@ -2502,7 +2866,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
 
     // Heal universal mocks for downstream local dependencies (Idempotent patch)
-    if (cleaned.includes("mockCreateUniversalStub")) {
+    if (cleaned.includes("mockCreateUniversalStub") || cleaned.includes("_createStubMaker") || cleaned.includes("stubFn()")) {
         if (!cleaned.includes("Symbol.iterator")) {
             cleaned = cleaned.replace(
                 /if\s*\(\s*prop\s*===\s*['"]then['"]\s*\|\|\s*(?:prop\s*===\s*['"]catch['"]\s*\|\|\s*)?typeof\s+prop\s*===\s*['"]symbol['"]\s*\)\s*return\s+undefined\s*;/g,
@@ -2511,11 +2875,19 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
         cleaned = cleaned.replace(
             /const mockCreateUniversalStub = \(\) => \{[\s\S]*?return target\[prop\];[\s\S]*?\};\r?\n/g,
-            `const mockCreateUniversalStub = () => {\n  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({})));\n  const stubFn = () => fnMaker(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n  const baseTarget = {\n    models: mockCreateModelRegistry(),\n    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n  };\n  return new Proxy(baseTarget, {\n    get: (target, prop) => {\n      if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n      if (prop === 'then' || typeof prop === 'symbol') return undefined;\n      if (!(prop in target)) {\n        if (prop === 'default') {\n          target[prop] = target;\n        } else if (prop === 'findAndCountAll') {\n          target[prop] = fnMaker(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n        } else {\n          target[prop] = stubFn();\n        }\n      }\n      return target[prop];\n    }\n  });\n};\n`
+            `const mockCreateUniversalStub = () => {\n  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({})));\n  const stubFn = () => fnMaker(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n  const baseTarget = {\n    models: mockCreateModelRegistry(),\n    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n  };\n  const handler = {\n    get: (target, prop) => {\n      if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n      if (prop === '__esModule') return true;\n      if (!(prop in target)) {\n        if (prop === 'default') {\n          target[prop] = target;\n        } else if (prop === 'findAndCountAll') {\n          target[prop] = fnMaker(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n        } else {\n          const fn = stubFn();\n          target[prop] = new Proxy(fn, handler);\n        }\n      }\n      return target[prop];\n    }\n  };\n  return new Proxy(baseTarget, handler);\n};\n`
         );
         cleaned = cleaned.replace(
             /jest\.mock\((['"][^'"]+['"]),\s*\(\)\s*=>\s*\(\{\s*models:\s*mockCreateModelRegistry\(\),\s*\.\.\.mockCreateUniversalStub\(\)\s*\}\),\s*\{\s*virtual:\s*true\s*\}\);/g,
             "jest.mock($1, () => mockCreateUniversalStub(), { virtual: true });"
+        );
+        cleaned = cleaned.replace(
+            /jest\.mock\((['"][^'"]+['"]),\s*\(\)\s*=>\s*\(globalThis\.__mockCreateUniversalStub\s*\|\|\s*mockCreateUniversalStub\)\(\)\s*(?:,\s*\{\s*virtual:\s*true\s*\})?\s*\);/g,
+            "jest.mock($1, () => ((typeof mockCreateUniversalStub === 'function' ? mockCreateUniversalStub : globalThis.__mockCreateUniversalStub) ? (typeof mockCreateUniversalStub === 'function' ? mockCreateUniversalStub : globalThis.__mockCreateUniversalStub)() : (() => { const fnM = typeof jest !== 'undefined' ? jest.fn : (() => ({})); const stubF = () => fnM(() => Promise.resolve({ id: 1 })); const h = { get: (t, p) => (p === '__esModule' ? true : (p === 'then' || p === 'catch' || typeof p === 'symbol') ? undefined : (p === 'default' ? t : (t[p] || (t[p] = new Proxy(stubF(), h))))) }; const obj = new Proxy(stubF(), h); return Object.assign(new Proxy({}, h), { default: obj }); })()), { virtual: true });"
+        );
+        cleaned = cleaned.replace(
+            /(else\s*(?:\{\s*)?)target\[prop\]\s*=\s*stubFn\(\);?(\s*\}?)/g,
+            "else {\n          const fn = stubFn();\n          target[prop] = new Proxy(fn, handler);\n        }"
         );
     }
 
@@ -3021,7 +3393,7 @@ function mockCreatePrismaInstance() {
   const _mockFn = () => (typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve({ id: 1, name: 'Sample', status: 'ACTIVE', title: 'Sample', createdAt: new Date() })) : (() => Promise.resolve({ id: 1 })));
   const _modelProxy = new Proxy({}, {
     get: (target, prop) => {
-      if (prop === 'then') return undefined;
+      if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;
       if (!target[prop]) {
         if (prop === 'findMany' || prop === 'findRaw') {
           target[prop] = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve([{ id: 1, name: 'Sample', status: 'ACTIVE' }])) : (() => Promise.resolve([]));
@@ -3042,6 +3414,7 @@ function mockCreatePrismaInstance() {
     $disconnect: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve()) : (() => Promise.resolve())
   }, {
     get: (target, prop) => {
+      if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;
       if (prop in target) return target[prop];
       if (!target[prop]) target[prop] = _modelProxy;
       return target[prop];
@@ -3052,37 +3425,26 @@ var mockSharedPrisma = typeof mockSharedPrisma !== 'undefined' ? mockSharedPrism
 jest.mock('@prisma/client', () => ({
   PrismaClient: jest.fn(() => (typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance())),
   default: { PrismaClient: jest.fn(() => (typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance())) }
-}));
-jest.mock('../lib/prisma.js', () => ({
-  __esModule: true,
-  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
-  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
-}));
-jest.mock('../../lib/prisma.js', () => ({
-  __esModule: true,
-  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
-  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
-}));
-jest.mock('../src/lib/prisma.js', () => ({
-  __esModule: true,
-  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
-  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
-}));
-jest.mock('../config/prisma.js', () => ({
-  __esModule: true,
-  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
-  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
-}));
-jest.mock('../../config/prisma.js', () => ({
-  __esModule: true,
-  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
-  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
-}));
-jest.mock('../src/config/prisma.js', () => ({
-  __esModule: true,
-  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
-  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
-}));
+}), { virtual: true });
+const _sanitizerRelPrismaPaths = [
+  '../lib/prisma', '../lib/prisma.js',
+  '../../lib/prisma', '../../lib/prisma.js',
+  '../src/lib/prisma', '../src/lib/prisma.js',
+  '../../src/lib/prisma', '../../src/lib/prisma.js',
+  '../config/prisma', '../config/prisma.js',
+  '../../config/prisma', '../../config/prisma.js',
+  '../src/config/prisma', '../src/config/prisma.js',
+  '../../src/config/prisma', '../../src/config/prisma.js'
+];
+for (const _rp of _sanitizerRelPrismaPaths) {
+  try {
+    jest.mock(_rp, () => ({
+      __esModule: true,
+      prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
+      default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
+    }), { virtual: true });
+  } catch (_) {}
+}
 `;
         cleaned = prismaMockCode + cleaned;
     }
@@ -3165,6 +3527,11 @@ jest.mock('../src/config/prisma.js', () => ({
     const astRepaired = autoRepairTestSyntaxWithAst(cleaned, { filePath });
     if (astRepaired.repaired && astRepaired.code) {
         cleaned = astRepaired.code;
+    }
+
+    // 25. Ensure all relative Jest mock paths specify { virtual: true }
+    if (!isVitestTestCode(cleaned) && options.framework !== "vitest") {
+        cleaned = ensureAllRelativeJestMocksVirtual(cleaned);
     }
 
     return normalizeTestFrameworkCode(cleaned, { ...options, filePath });
@@ -3348,12 +3715,17 @@ export const removeEmptyDescribeBlocks = (content) => {
  */
 export const healAxiosMock = (content) => {
     if (!content || !content.includes("axios")) return content;
-    const needsFactory = content.includes("create(") || content.includes(".create") || content.includes("mockAxiosInstance");
-    const isBrokenMock = /jest\.mock\(\s*['"]axios['"]\s*,\s*\(\)\s*=>\s*\{\s*\}\s*\)/.test(content);
+    const needsFactory = content.includes("create(") || content.includes(".create") || content.includes("mockAxiosInstance") || content.includes("interceptors");
+    const isBrokenMock = /(?:jest|vi)\.mock\(\s*['"]axios['"]\s*,\s*\(\)\s*=>\s*\{\s*\}\s*\)/.test(content);
     if (!needsFactory && !isBrokenMock) {
         return content;
     }
-    const axiosMockRegex = /jest\.mock\(\s*['"]axios['"]/g;
+    const isVitest = (/\b(?:vi|vitest)\b/.test(content) && !/\bjest\b/.test(content)) || content.includes("from 'vitest'") || content.includes('from "vitest"');
+    const fnMaker = isVitest ? "vi.fn" : "jest.fn";
+    const mockFn = isVitest ? "vi.mock" : "jest.mock";
+    const virtualOption = isVitest ? "" : ", { virtual: true }";
+
+    const axiosMockRegex = /(?:jest|vi)\.mock\(\s*['"]axios['"]/g;
     let match;
     let result = content;
     if ((match = axiosMockRegex.exec(result)) !== null) {
@@ -3379,39 +3751,51 @@ export const healAxiosMock = (content) => {
                 if (result[stmtEnd - 1] === ';') break;
             }
         } else {
-            const nextMatch = result.slice(startIdx + 10).search(/\r?\n(?=jest\.mock|\bdescribe\b|\bconst\b)/);
+            const nextMatch = result.slice(startIdx + 10).search(/\r?\n(?=(?:jest|vi)\.mock|\bdescribe\b|\bconst\b)/);
             if (nextMatch !== -1) {
                 stmtEnd = startIdx + 10 + nextMatch;
             }
         }
         if (stmtEnd !== -1) {
-            const standardMock = `jest.mock('axios', () => {
+            const standardMock = `${mockFn}('axios', () => {
   const instance = {
-    post: jest.fn((...args) => {
+    post: ${fnMaker}((...args) => {
       const fn = globalThis.__mockAxiosPost || (typeof mockPost !== 'undefined' ? mockPost : null);
       return fn ? fn(...args) : Promise.resolve({ data: {} });
     }),
-    get: jest.fn((...args) => {
+    get: ${fnMaker}((...args) => {
       const fn = globalThis.__mockAxiosGet || (typeof mockGet !== 'undefined' ? mockGet : null);
       return fn ? fn(...args) : Promise.resolve({ data: {} });
     }),
-    put: jest.fn(() => Promise.resolve({ data: {} })),
-    delete: jest.fn(() => Promise.resolve({ data: {} })),
-    patch: jest.fn(() => Promise.resolve({ data: {} }))
+    put: ${fnMaker}(() => Promise.resolve({ data: {} })),
+    delete: ${fnMaker}(() => Promise.resolve({ data: {} })),
+    patch: ${fnMaker}(() => Promise.resolve({ data: {} })),
+    request: ${fnMaker}(() => Promise.resolve({ data: {} })),
+    interceptors: {
+      request: { use: ${fnMaker}(() => 0), eject: ${fnMaker}() },
+      response: { use: ${fnMaker}(() => 0), eject: ${fnMaker}() }
+    },
+    defaults: { headers: { common: {} } },
+    isAxiosError: false
   };
   globalThis.__mockAxiosInstance = instance;
   const mockAxiosObj = {
-    create: jest.fn(() => instance),
+    create: ${fnMaker}(() => instance),
     post: instance.post,
     get: instance.get,
     put: instance.put,
     delete: instance.delete,
     patch: instance.patch,
+    request: instance.request,
+    interceptors: instance.interceptors,
+    defaults: instance.defaults,
+    isAxiosError: false,
+    CancelToken: { source: ${fnMaker}(() => ({ token: {}, cancel: ${fnMaker}() })) },
     default: null
   };
   mockAxiosObj.default = mockAxiosObj;
   return mockAxiosObj;
-});\n\n`;
+}${virtualOption});\n\n`;
             result = result.substring(0, startIdx) + standardMock + result.substring(stmtEnd);
         }
     }

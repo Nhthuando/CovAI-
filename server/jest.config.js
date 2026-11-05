@@ -1,5 +1,6 @@
 export default {
     testEnvironment: 'node',
+    resolver: '<rootDir>/src/tests/helpers/jestResolver.cjs',
     setupFiles: ['<rootDir>/src/tests/helpers/databaseSafetySetup.js'],
     transform: {
         '^.+\\.(js|ts)$': ['babel-jest', {

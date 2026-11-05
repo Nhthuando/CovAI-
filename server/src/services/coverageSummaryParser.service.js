@@ -66,13 +66,13 @@ const parseNum = (val) => {
     return 0;
 };
 
-const parseMetricEntry = (metric) => {
+const parseMetricEntry = (metric, defaultZeroTotalPct = 0) => {
     const total = parseNum(metric?.total);
     const covered = parseNum(metric?.covered);
     const skipped = parseNum(metric?.skipped);
     let pct = parsePct(metric?.pct);
     if (total === 0 && covered === 0) {
-        pct = 0;
+        pct = defaultZeroTotalPct;
     }
     return { total, covered, skipped, pct };
 };
@@ -80,22 +80,22 @@ const parseMetricEntry = (metric) => {
 /**
  * SCRUM-118: Parse line coverage from a Jest entry
  */
-const parseLineCoverage = (entry) => parseMetricEntry(entry?.lines);
+export const parseLineCoverage = (entry) => parseMetricEntry(entry?.lines, 0);
 
 /**
- * SCRUM-119: Parse branch coverage from a Jest entry
+ * SCRUM-119: Parse branch coverage from a Jest entry (default to 100 when total === 0 per Rule 7)
  */
-const parseBranchCoverage = (entry) => parseMetricEntry(entry?.branches);
+export const parseBranchCoverage = (entry) => parseMetricEntry(entry?.branches, 100);
 
 /**
- * SCRUM-120: Parse function coverage from a Jest entry
+ * SCRUM-120: Parse function coverage from a Jest entry (default to 100 when total === 0 per Rule 7)
  */
-const parseFunctionCoverage = (entry) => parseMetricEntry(entry?.functions);
+export const parseFunctionCoverage = (entry) => parseMetricEntry(entry?.functions, 100);
 
 /**
  * SCRUM-121: Parse statement coverage from a Jest entry
  */
-const parseStatementCoverage = (entry) => parseMetricEntry(entry?.statements);
+export const parseStatementCoverage = (entry) => parseMetricEntry(entry?.statements, 0);
 
 /**
  * SCRUM-122: Create or update CoverageSummary record in DB.

@@ -58,7 +58,7 @@ const runSystemImprovementJob = async (jobId, lease) => {
     try {
         await stage('Checking current source and test evidence',5);
         job.snapshot.rootDir=resolveSystemRepositoryRoot(job.snapshot.rootDir);
-        await addJobLog(jobId,'INFO',`Using Gemini model: ${input.model || process.env.GEMINI_MODEL || 'gemini-3.8-flash'}`);
+        await addJobLog(jobId,'INFO',`Using Gemini model: ${input.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'}`);
         assessment=await prisma.systemTestAssessment.findFirst({where:{id:input.assessmentId,snapshotId:job.snapshotId,status:'COMPLETED'}});
         if(!assessment)throw new ServiceError('Current completed assessment required',409);
         const latest=await prisma.systemRequirementRevision.findFirst({where:{snapshotId:job.snapshotId,status:'CONFIRMED'},orderBy:{revisionNumber:'desc'}});

@@ -16,6 +16,11 @@ import {
 } from "./unitTestSuggestion.service.js";
 import { cleanAndDeduplicateTestContent, STATEMENT_SEPARATION_EXCLUSIONS, safeDecoupleInlineStatements, healBrokenCommentSplits, balanceTestFileBracesAndParens } from "./testSanitizer.service.js";
 import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
+import {
+    validateAndHealVitestTestCollection,
+    healVitestCode,
+    validateVitestAstStructure
+} from "./vitestCollectionValidator.service.js";
 
 /**
  * STAGE 3: AI TEST GENERATION VIA LLM
@@ -25,6 +30,12 @@ import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
  * 3.2. Response Parsing & Sanity Check (AST Syntax Validation, Anti-skip, Placeholder filtering)
  * 3.3. Resilient Generation Orchestration (Gemini LLM with Isolation Fallback)
  */
+
+export const escapePromptCode = (code, maxLen = 25000) => {
+    if (!code) return "";
+    const sliced = typeof code === "string" ? code.slice(0, maxLen) : String(code);
+    return sliced.replace(/```/g, "\\`\\`\\`");
+};
 
 /**
  * 3.1 STANDARD PROMPT STRUCTURE FOR LLM (6 RIGID SECTIONS)
@@ -60,6 +71,7 @@ export const buildStandardUnitTestPrompt = ({
     const unexportedWarning = unitTestContext?.indirectTesting?.indirectGuidancePrompt || "";
     const mockInstructionsStr = unitTestContext?.mockContracts?.mockInstructions || "";
     const decisionTableMarkdown = unitTestContext?.decisionTable?.decisionTableMarkdown || "";
+    const deltaDecisionTableMarkdown = unitTestContext?.decisionTable?.deltaDecisionTableMarkdown || decisionTableMarkdown;
     const decisionGuidanceStr = unitTestContext?.coverageGaps?.guidanceSummary || "No complex branching detected";
     const cyclomaticComplexity = unitTestContext?.decisionTable?.summary?.cyclomaticComplexity ||
         unitTestContext?.astMetadata?.cyclomaticComplexity ||
@@ -118,13 +130,13 @@ ${failedLinesStr}
 ### 4. SOURCE CODE & EXISTING TESTS
 ${sourceCode ? `SOURCE CODE UNDER TEST:
 \`\`\`javascript
-${sourceCode.slice(0, 25000)}
+${escapePromptCode(sourceCode, 25000)}
 \`\`\`
 ` : ""}
 
 EXISTING TEST CODE IN ${testFileInfo.relativePath}:
 \`\`\`javascript
-${(testFileInfo.content || "").slice(0, 25000)}
+${escapePromptCode(testFileInfo.content || "", 25000)}
 \`\`\`
 
 ### 5. STRICT GENERATION RULES & METHODOLOGY (TARGETING >=90% TO 100% COVERAGE)
@@ -136,26 +148,26 @@ ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
    - Re-use the exact same mocks, fixtures, and beforeEach configurations already established.
-4. MANDATORY TEST MATRIX (DECISION TABLE) & CFG BASIS PATHS (CC = ${cyclomaticComplexity}, TARGET MINIMUM ${cyclomaticComplexity} BASIS PATHS):
-   - To satisfy McCabe's Basis Path Testing invariant, generate at least ${cyclomaticComplexity} independent test scenarios covering all execution paths in the Control Flow Graph.
-   - Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
-${decisionTableMarkdown}
-   - You MUST include test cases addressing all 4 essential business logic testing categories:
+4. MANDATORY DELTA DECISION TABLE & CFG BASIS PATHS (CC = ${cyclomaticComplexity}, TARGET MINIMUM ${cyclomaticComplexity} BASIS PATHS):
+   - To satisfy McCabe's Basis Path Testing invariant, generate complementary independent test scenarios covering missing execution paths in the Control Flow Graph.
+   - Follow this targeted DELTA Decision Table (Scenarios remaining to cover, excluding already tested paths and infeasible code):
+${deltaDecisionTableMarkdown}
+   - You MUST include test cases addressing remaining unfulfilled business logic testing categories:
    - Category A (Happy Path): Standard valid invocations verifying expected business output.
    - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
    - Category C (Branch Toggling): For EVERY conditional statement (if/else, ternary ? :, switch/case, ||, &&, ??, ?.), write test cases testing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
    - Category D (Error & Exception Handling): Force invalid parameters, test every 'throw' statement, and mock asynchronous dependency failures (rejected promises) to ensure 'catch' blocks are 100% executed.
+   - CRITICAL NON-DUPLICATION INVARIANT:
+   - Carefully review the EXISTING TEST CODE in ${testFileInfo.relativePath}.
+   - Do NOT regenerate or duplicate test cases that already exist in the test file!
+   - Every generated test case must be novel and complementary, specifically fulfilling an unexercised scenario from the DELTA Decision Table above.
+   - Never re-test already covered scenarios. Do not generate fake or placeholder assertions like expect(true).toBe(true) for unreachable code.
 5. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
-   - DO NOT write placeholder assertions like expect(true).toBe(true).
+   - DO NOT write placeholder assertions like expect(true).toBe(true) or expect(1).toBe(1).
+   - Never generate fake or tautological assertions for unreachable or environment-dependent code.
    - Every assertion must verify real outputs, state changes, or mock call arguments.
 6. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
-        if (typeof deduplicateAstDeclarations === 'function') {
-            try {
-                const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
-                if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
-            } catch (_) {}
-        }
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
 ${mockInstructionsStr}
@@ -214,7 +226,7 @@ ${failedLinesStr}
 
 ### 4. SOURCE CODE
 \`\`\`javascript
-${sourceCode.slice(0, 25000)}
+${escapePromptCode(sourceCode, 25000)}
 \`\`\`
 
 ### 5. STRICT GENERATION RULES & METHODOLOGY (TARGETING >=90% TO 100% COVERAGE)
@@ -228,14 +240,16 @@ ${unexportedWarning}
 4. MANDATORY TEST MATRIX (DECISION TABLE) & CFG BASIS PATHS (CC = ${cyclomaticComplexity}, MINIMUM ${cyclomaticComplexity} BASIS PATHS):
    - To satisfy McCabe's Basis Path Testing invariant, generate at least ${cyclomaticComplexity} independent test scenarios covering all execution paths in the Control Flow Graph.
    - Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
-${decisionTableMarkdown}
+${deltaDecisionTableMarkdown || decisionTableMarkdown}
    - You MUST include test cases addressing all 4 essential business logic testing categories:
    - Category A (Happy Path): Standard valid invocations verifying expected business output.
    - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
    - Category C (Branch Toggling): For EVERY conditional statement (if/else, switch, ternary, ||, &&, ??, ?.), craft test inputs executing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
    - Category D (Error & Exception Handling): Force invalid parameters, test every 'throw' statement, and mock asynchronous dependency failures (rejected promises) to ensure 'catch' blocks are 100% executed.
+   - Never generate fake or placeholder assertions like expect(true).toBe(true) for unreachable or environment-dependent code.
 5. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
-   - DO NOT write placeholder assertions like expect(true).toBe(true).
+   - DO NOT write placeholder assertions like expect(true).toBe(true) or expect(1).toBe(1).
+   - Never generate fake or tautological assertions for unreachable or environment-dependent code.
    - Assert exact return values, transformed objects, or mock invocations.
 6. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
@@ -361,15 +375,23 @@ export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "
             }
         }
 
-        // 3. Balance unclosed braces at EOF
+        // 3. Balance unclosed braces & parens at EOF
         const openBraces = (currentCode.match(/{/g) || []).length;
         const closeBraces = (currentCode.match(/}/g) || []).length;
+        const openParens = (currentCode.match(/\(/g) || []).length;
+        const closeParens = (currentCode.match(/\)/g) || []).length;
         if (openBraces > closeBraces) {
-            let diff = openBraces - closeBraces;
+            let braceDiff = openBraces - closeBraces;
+            let parenDiff = Math.max(0, openParens - closeParens);
             let suffix = "";
-            while (diff > 0) {
+            while (braceDiff > 0 && parenDiff > 0) {
                 suffix += "\n});";
-                diff--;
+                braceDiff--;
+                parenDiff--;
+            }
+            while (braceDiff > 0) {
+                suffix += "\n}";
+                braceDiff--;
             }
             currentCode = currentCode.trim() + suffix;
             continue;
@@ -383,9 +405,20 @@ export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "
         }
 
         // 5. Check if trailing closing delimiter is needed at EOF
-        if (!currentCode.trim().endsWith("}") && !currentCode.trim().endsWith(");")) {
-            currentCode = currentCode.trim() + "\n});";
-            continue;
+        const trimmed = currentCode.trim();
+        if (!trimmed.endsWith("}") && !trimmed.endsWith(");") && !trimmed.endsWith(";")) {
+            const needsParen = (currentCode.match(/\(/g) || []).length > (currentCode.match(/\)/g) || []).length;
+            const needsBrace = (currentCode.match(/{/g) || []).length > (currentCode.match(/}/g) || []).length;
+            if (needsParen && needsBrace) {
+                currentCode = trimmed + "\n});";
+                continue;
+            } else if (needsBrace) {
+                currentCode = trimmed + "\n}";
+                continue;
+            } else if (needsParen) {
+                currentCode = trimmed + ");";
+                continue;
+            }
         }
 
         return { success: false, code: currentCode, error: msg };
@@ -578,6 +611,9 @@ export const parseAndSanitizeAiTestResponse = ({
     for (const field of ["suggestedTestCode", "fullUpdatedContent"]) {
         if (parsedJson[field]) {
             parsedJson[field] = normalizeTestFrameworkCode(parsedJson[field], { framework });
+            if (framework === "vitest") {
+                parsedJson[field] = healVitestCode(parsedJson[field], { filePath: cleanSource });
+            }
         }
     }
 
@@ -597,6 +633,23 @@ export const parseAndSanitizeAiTestResponse = ({
         }
     } else {
         errors.push(`AST syntax validation failed: ${healResult.error || "Syntax error in generated test code"}`);
+    }
+
+    // 5.1 Dedicated Vitest AST Structure & API Validation (Requirement R3)
+    if (framework === "vitest") {
+        const vitestCheck = validateVitestAstStructure(parsedJson.fullUpdatedContent || parsedJson.suggestedTestCode);
+        if (!vitestCheck.valid) {
+            // Apply healing pass for any remaining issues
+            for (const field of ["suggestedTestCode", "fullUpdatedContent"]) {
+                if (parsedJson[field]) {
+                    parsedJson[field] = healVitestCode(parsedJson[field], { filePath: cleanSource, collectionError: vitestCheck.errors.join("; ") });
+                }
+            }
+            const recheck = validateVitestAstStructure(parsedJson.fullUpdatedContent || parsedJson.suggestedTestCode);
+            if (!recheck.valid) {
+                errors.push(...recheck.errors);
+            }
+        }
     }
 
     // 6. Ensure real assertions exist
@@ -644,7 +697,8 @@ export const generateAiUnitTestSuite = async ({
     sourceCode,
     coverageDetails,
     isTest,
-    filePath
+    filePath,
+    selectedAiModel = null
 }) => {
     const cleanSource = sanitizeSourceFilePath(snapshot?.rootDir, sourceFileToInspect);
     const ext = path.extname(cleanSource) || ".js";
@@ -693,14 +747,20 @@ export const generateAiUnitTestSuite = async ({
     // 3. Invoke LLM with 90s Timeout
     let aiParsedResult = null;
     let aiGenerationError = null;
-    let generationTimeout;
+    let generationTimer = null;
 
     try {
-        let generationTimer;
         const responseText = await Promise.race([
-            generateText(prompt),
-            new Promise((_, reject) => { generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000); })
-        ]).finally(() => clearTimeout(generationTimer));
+            generateText(prompt, selectedAiModel),
+            new Promise((_, reject) => {
+                generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000);
+            })
+        ]).finally(() => {
+            if (generationTimer) {
+                clearTimeout(generationTimer);
+                generationTimer = null;
+            }
+        });
 
         // 4. Parse & Sanitize Response (Section 3.2)
         const parseCheck = parseAndSanitizeAiTestResponse({
@@ -719,7 +779,10 @@ export const generateAiUnitTestSuite = async ({
         aiGenerationError = aiErr.message;
         console.warn(`[unitTestGenerator] AI Generation fallback triggered (${framework}): ${aiErr.message}`);
     } finally {
-        clearTimeout(generationTimeout);
+        if (generationTimer) {
+            clearTimeout(generationTimer);
+            generationTimer = null;
+        }
     }
 
     // 5. Resilient Isolation Mock Fallback if AI output failed validation
@@ -734,6 +797,47 @@ export const generateAiUnitTestSuite = async ({
             existingContent: testFileInfo.content,
             sourceCode
         });
+    }
+
+    // 5.1 Dedicated Vitest Test Collection Validation & Self-Healing Stage (Requirement R3)
+    if (framework === "vitest" || testFileInfo.relativePath?.includes("vitest")) {
+        const candidateCode = aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent || "";
+        if (candidateCode) {
+            const vitestValidation = await validateAndHealVitestTestCollection({
+                testCode: candidateCode,
+                rootDir: snapshot?.rootDir,
+                filePath: testFileInfo.relativePath,
+                maxRetries: 3
+            });
+
+            if (vitestValidation.success && vitestValidation.code) {
+                aiParsedResult.suggestedTestCode = vitestValidation.code;
+                aiParsedResult.fullUpdatedContent = vitestValidation.code;
+            } else if (!vitestValidation.success) {
+                console.warn(`[unitTestGenerator] Vitest collection validation failed after retries: ${vitestValidation.error}`);
+                aiParsedResult = generateFallbackUnitTests({
+                    framework,
+                    sourceFile: cleanSource,
+                    targetTestFile: testFileInfo.relativePath,
+                    rootDir: snapshot?.rootDir,
+                    baseName,
+                    uncoveredLines: coverageDetails?.uncoveredLines || [],
+                    existingContent: testFileInfo.content,
+                    sourceCode
+                });
+                const fallbackCandidate = aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent || "";
+                const fallbackValidation = await validateAndHealVitestTestCollection({
+                    testCode: fallbackCandidate,
+                    rootDir: snapshot?.rootDir,
+                    filePath: testFileInfo.relativePath,
+                    maxRetries: 2
+                });
+                if (fallbackValidation.code) {
+                    aiParsedResult.suggestedTestCode = fallbackValidation.code;
+                    aiParsedResult.fullUpdatedContent = fallbackValidation.code;
+                }
+            }
+        }
     }
 
     // 6. Format Final Primary Suggestion
@@ -761,11 +865,15 @@ export const generateAiUnitTestSuite = async ({
             ? `Lines ${primaryTargetLines.join(", ")} not tested in current suite`
             : "Add test cases covering edge cases and logical conditions");
 
+    const resolvedTestCode = aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent || "";
+    const scenarioMatrix = unitTestContext?.decisionTable?.matrixEntries || [];
+
     const primarySuggestion = {
         ...proposalBase,
         proposalBase: { ...proposalBase, existingContent: undefined },
         suggestionId: `sug-${Date.now()}-1`,
         sourceFile: cleanSourceFile,
+        targetSourceFile: cleanSourceFile,
         testFile: cleanTargetTest,
         targetTestFile: cleanTargetTest,
         framework,
@@ -774,8 +882,9 @@ export const generateAiUnitTestSuite = async ({
         targetBranches: targetBranchesList,
         reason: primaryReason,
         explanation: aiParsedResult.explanation || `Exhaustive ${framework.toUpperCase()} unit tests for ${cleanSourceFile}`,
-        generatedCode: aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent,
-        suggestedTestCode: aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent,
+        generatedCode: resolvedTestCode,
+        suggestedTestCode: resolvedTestCode,
+        testCode: resolvedTestCode,
         originalCode: testFileInfo.content || "",
         fullUpdatedContent: aiParsedResult.fullUpdatedContent,
         status: "GENERATED",
@@ -796,11 +905,16 @@ export const generateAiUnitTestSuite = async ({
             functionsPct: 0,
             statementsPct: 0
         },
-        decisionTableSummary: unitTestContext?.decisionTable?.summary
+        decisionTableSummary: unitTestContext?.decisionTable?.summary,
+        scenarioMatrix
     };
 
     return {
         ...primarySuggestion,
+        testCode: resolvedTestCode,
+        targetSourceFile: cleanSourceFile,
+        targetTestFile: cleanTargetTest,
+        scenarioMatrix,
         suggestions: [primarySuggestion]
     };
 };

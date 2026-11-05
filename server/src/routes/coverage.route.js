@@ -14,6 +14,7 @@ import {
     approveIntegrationTests,
     getFileCoverage,
     suggestUnitTestcase,
+    suggestUnitTestcaseAll,
     applySuggestion,
     getUnitTestVersionsController,
     switchUnitTestVersionController,
@@ -44,6 +45,10 @@ import {
     installMissingDependencyController,
     getUnifiedQualityDashboardController,
     getUnifiedTestRunInspectionController,
+    getSimulationSources,
+    getSimulationTrace,
+    checkUnitTestEnvironment,
+    saveUnitTestEnvironment,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -79,13 +84,26 @@ router.get("/:snapshotId/file-coverage", authMiddleware, getFileCoverage);
 // POST /api/coverage/:snapshotId/suggest-testcase — suggest AI unit testcases for source file
 router.post("/:snapshotId/suggest-testcase", authMiddleware, suggestUnitTestcase);
 
+// POST /api/coverage/:snapshotId/suggest-testcase-all — suggest AI unit testcases for all candidate business logic files
+router.post("/:snapshotId/suggest-testcase-all", authMiddleware, suggestUnitTestcaseAll);
+
 // POST /api/coverage/:snapshotId/apply-suggestion — write testcase to disk, rerun test, collect new coverage
 router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
+router.post("/:snapshotId/apply-test-suggestion", authMiddleware, applySuggestion);
+router.post("/:snapshotId/apply-all-test-suggestions", authMiddleware, applySuggestion);
+
+// Unit test environment variable detection & workspace persistence routes (Milestone 2)
+router.get("/:snapshotId/unit/env-check", authMiddleware, checkUnitTestEnvironment);
+router.post("/:snapshotId/unit/env", authMiddleware, saveUnitTestEnvironment);
 
 // Unit test versioning & rollback routes
 router.get("/:snapshotId/unit-test-versions", authMiddleware, getUnitTestVersionsController);
 router.post("/:snapshotId/unit-test-versions/switch", authMiddleware, switchUnitTestVersionController);
 router.post("/:snapshotId/unit-test-versions/save", authMiddleware, saveUnitTestVersionsController);
+
+// Unit test execution simulation routes
+router.get("/:snapshotId/simulation/sources", authMiddleware, getSimulationSources);
+router.post("/:snapshotId/simulation/trace", authMiddleware, getSimulationTrace);
 
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);

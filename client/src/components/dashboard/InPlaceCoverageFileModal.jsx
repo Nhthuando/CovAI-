@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   X,
   ExternalLink,
@@ -6,15 +6,12 @@ import {
   Check,
   FileCode,
   FileCheck,
-  Layers,
-  GitBranch,
-  Cpu,
-  AlertCircle,
   CheckCircle2,
   Loader2,
-  Clock,
-  Sparkles,
   Target,
+  Zap,
+  Clock,
+  Play,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { getFileCoverage } from "../../services/coverage.service.js";
@@ -22,6 +19,7 @@ import { getFileContentApi } from "../../services/project.service.js";
 import { resolveTestOrFunctionLine } from "../../services/navigation.service.js";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
+import UnitTestSimulationStudioModal from "./simulation/UnitTestSimulationStudioModal.jsx";
 
 const EXT_LANG_MAP = {
   ".js": "javascript",
@@ -60,8 +58,10 @@ export default function InPlaceCoverageFileModal({
   onOpenInExternalEditor,
   isLight = false,
   testSuites = [],
+  onOpenSimulation = null,
 }) {
   const [loading, setLoading] = useState(true);
+  const [internalSimTarget, setInternalSimTarget] = useState(null);
   const [fileCoverage, setFileCoverage] = useState(null);
   const [rawFileContent, setRawFileContent] = useState("");
   const [activeTab, setActiveTab] = useState("code"); // "code" | "assertions"
@@ -152,7 +152,9 @@ export default function InPlaceCoverageFileModal({
     if (!isOpen || !filePath) return;
 
     let isMounted = true;
-    setLoading(true);
+    queueMicrotask(() => {
+      if (isMounted) setLoading(true);
+    });
 
     const loadData = async () => {
       try {
@@ -434,6 +436,42 @@ export default function InPlaceCoverageFileModal({
               <span>{copied ? "Copied" : "Copy"}</span>
             </button>
 
+            {/* Simulate Execution Button */}
+            <button
+              onClick={() => {
+                const simTarget = {
+                  filePath,
+                  functionName,
+                  targetLine: resolvedTargetLine || targetLine,
+                  testFilePath: isTestFile ? filePath : (testInfo?.testFilePath || null),
+                  testTitle: testInfo?.testTitle || null,
+                };
+                if (typeof onOpenSimulation === "function") {
+                  onOpenSimulation(simTarget);
+                } else {
+                  setInternalSimTarget(simTarget);
+                }
+              }}
+              style={{
+                padding: "6px 11px",
+                borderRadius: 6,
+                background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+                border: "1px solid #4f46e5",
+                color: "#ffffff",
+                fontSize: 11.5,
+                fontWeight: 650,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                boxShadow: "0 1px 4px rgba(99, 102, 241, 0.3)",
+              }}
+              title="Open interactive execution simulation studio for this file and function"
+            >
+              <Zap size={12} />
+              <span>⚡ Simulate Execution</span>
+            </button>
+
             {/* Open in Full Editor (Optional fallback) */}
             {onOpenInExternalEditor && (
               <button
@@ -605,9 +643,45 @@ export default function InPlaceCoverageFileModal({
                             </span>
                           )}
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8b949e" }}>
-                          <Clock size={11} />
-                          <span>{a.duration || 0}ms</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const simTarget = {
+                                filePath: linkedSuite?.sourceFilePath || filePath,
+                                testFilePath: filePath,
+                                testCaseId: a.id || a.title || a.fullName,
+                                testTitle: a.title || a.fullName,
+                                category: a.category || "HAPPY_PATH",
+                              };
+                              if (typeof onOpenSimulation === "function") {
+                                onOpenSimulation(simTarget);
+                              } else {
+                                setInternalSimTarget(simTarget);
+                              }
+                            }}
+                            style={{
+                              background: isLight ? "rgba(99, 102, 241, 0.1)" : "rgba(99, 102, 241, 0.2)",
+                              border: isLight ? "1px solid rgba(99, 102, 241, 0.25)" : "1px solid rgba(99, 102, 241, 0.35)",
+                              color: isLight ? "#4f46e5" : "#818cf8",
+                              cursor: "pointer",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: "2px 7px",
+                              borderRadius: 4,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 3,
+                            }}
+                            title={`Simulate execution of assertion: ${a.title || a.fullName}`}
+                          >
+                            <Play size={9} fill="currentColor" />
+                            <span>Simulate</span>
+                          </button>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8b949e" }}>
+                            <Clock size={11} />
+                            <span>{a.duration || 0}ms</span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -637,6 +711,23 @@ export default function InPlaceCoverageFileModal({
           )}
         </div>
       </div>
+
+      {/* Internal Unit Test Simulation Studio Modal Fallback */}
+      {!onOpenSimulation && internalSimTarget && (
+        <UnitTestSimulationStudioModal
+          isOpen={Boolean(internalSimTarget)}
+          onClose={() => setInternalSimTarget(null)}
+          snapshotId={snapshotId}
+          projectId={projectId}
+          initialSourceFile={internalSimTarget.filePath}
+          initialFunctionName={internalSimTarget.functionName}
+          initialTestFile={internalSimTarget.testFilePath}
+          initialTestCaseId={internalSimTarget.testCaseId || internalSimTarget.testTitle}
+          initialCategory={internalSimTarget.category || "HAPPY_PATH"}
+          initialTestCode={internalSimTarget.testCode}
+          isLight={isLight}
+        />
+      )}
     </div>
   );
 }

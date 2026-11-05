@@ -1,5 +1,5 @@
 import { getAIModelHeaders } from './aiModel.service.js';
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const BASE_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "http://localhost:5000/api";
 
 function getAuthHeaders() {
     const user = localStorage.getItem("user");
@@ -120,10 +120,12 @@ export async function getCoverageFrameworks(snapshotId) {
 export async function runCoverageByType(snapshotId, coverageType, framework, executionMode, options = {}) {
     const headers = getAuthHeaders();
     const isRestart = Boolean(options?.restart);
+    const useHermeticMock = Boolean(options?.useHermeticMock);
     const bodyPayload = {
         ...(framework ? { framework } : {}),
         ...(executionMode ? { executionMode } : {}),
         ...(isRestart ? { restart: true } : {}),
+        ...(useHermeticMock ? { useHermeticMock: true } : {}),
     };
     const hasBody = Object.keys(bodyPayload).length > 0;
     const url = isRestart
@@ -156,7 +158,7 @@ export async function installMissingDependency(snapshotId, packageName, isDev = 
         return await handleResponse(res);
     } catch (err) {
         if (err.name === "AbortError") {
-            throw new Error(`Installation of '${packageName}' timed out after 35s. Test execution will proceed with universal RAM mock isolation.`);
+            throw new Error(`Installation of '${packageName}' timed out after 35s. Test execution will proceed with universal RAM mock isolation.`, { cause: err });
         }
         throw err;
     } finally {
@@ -182,6 +184,16 @@ export async function suggestUnitTestcase(snapshotId, filePath, projectId, frame
     });
     return handleResponse(res);
 }
+
+export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase-all`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ filePaths, projectId, ...(framework ? { framework } : {}) }),
+    });
+    return handleResponse(res);
+}
+
 
 export async function getCoverageFunctions(
     snapshotId,
@@ -236,13 +248,23 @@ export async function getIntegrationWorkspace(snapshotId) {
 }
 
 export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-test-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
     });
     return handleResponse(res);
 }
+
+export async function applyAllUnitTestSuggestions(snapshotId, { suggestions = [], projectId, skipBackgroundJob } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-all-test-suggestions`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
+    });
+    return handleResponse(res);
+}
+
 
 export async function saveAiSystemTest(snapshotId, options = {}) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/save-ai-test`, {
@@ -419,3 +441,54 @@ export async function saveUnitTestVersions(snapshotId, payload = {}) {
     });
     return handleResponse(res);
 }
+
+export async function getUnitTestSimulationSources(snapshotId, options = {}) {
+    const params = new URLSearchParams();
+    if (options && typeof options === "object") {
+        for (const [key, value] of Object.entries(options)) {
+            if (value !== undefined && value !== null) {
+                params.set(key, String(value));
+            }
+        }
+    }
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/simulation/sources${queryString}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getUnitTestSimulationTrace(snapshotId, payload = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/simulation/trace`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function checkUnitTestEnvironmentApi(snapshotId) {
+    if (!snapshotId) throw new Error("snapshotId is required");
+    const res = await fetch(`${BASE_URL}/coverage/${encodeURIComponent(snapshotId)}/unit/env-check`, {
+        method: "GET",
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function saveUnitTestEnvironmentApi(snapshotId, { envVariables = {}, runAfterSave = false } = {}) {
+    if (!snapshotId) throw new Error("snapshotId is required");
+    const res = await fetch(`${BASE_URL}/coverage/${encodeURIComponent(snapshotId)}/unit/env`, {
+        method: "POST",
+        headers: {
+            ...getAuthHeaders(),
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            envVariables,
+            runAfterSave: Boolean(runAfterSave),
+        }),
+    });
+    return handleResponse(res);
+}
+

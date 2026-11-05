@@ -1,3 +1,5 @@
+import { AI_MODELS } from "../../shared/aiModels.js";
+import { getSelectedAIModel, setSelectedAIModel } from "../../services/aiModel.service.js";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -1402,42 +1404,7 @@ function TypingIndicator() {
   );
 }
 
-/* ── AI Model Options ────────────────────────────────────── */
-const AI_MODELS = [
-  {
-    id: "gemini-1.5-pro",
-    name: "Gemini 1.5 Pro",
-    provider: "Google",
-    badge: "Default",
-    badgeColor: "#a78bfa",
-    desc: "Complex logic & test generation",
-  },
-  {
-    id: "gemini-1.5-flash",
-    name: "Gemini 1.5 Flash",
-    provider: "Google",
-    badge: "Fast",
-    badgeColor: "#38bdf8",
-    desc: "Ultra-low latency reasoning",
-  },
-  {
-    id: "claude-3-5-sonnet",
-    name: "Claude 3.5 Sonnet",
-    provider: "Anthropic",
-    badge: "Pro",
-    badgeColor: "#f472b6",
-    desc: "Advanced refactoring & test design",
-  },
-  {
-    id: "gpt-4o",
-    name: "GPT-4o",
-    provider: "OpenAI",
-    badge: "Smart",
-    badgeColor: "#4ade80",
-    desc: "High precision code synthesis",
-  },
-];
-
+/* ── AI Model Options (Loaded from shared catalog) ── */
 /* ── Modern Prompt Input (Compact & Dynamic Auto-Resize) ─── */
 function ChatInput({
   onSend,
@@ -1908,6 +1875,7 @@ function ChatInput({
                     key={model.id}
                     onClick={() => {
                       setSelectedModel(model);
+                      if (typeof setSelectedAIModel === "function") setSelectedAIModel(model.id);
                       setModelMenuOpen(false);
                     }}
                     className="flex items-start gap-2.5 p-2 rounded-lg text-left transition-colors cursor-pointer"
@@ -2129,7 +2097,7 @@ function ChatInput({
                 style={{ fontWeight: 500 }}
                 className="truncate max-w-[120px]"
               >
-                {selectedModel?.name || "Gemini 1.5 Pro"}
+                {selectedModel?.name || AI_MODELS[0]?.name || "Gemini 3.5 Flash Lite"}
               </span>
               <ChevronDown
                 size={12}
@@ -2206,7 +2174,10 @@ export default function AIPanel({
 
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
+  const [selectedModel, setSelectedModel] = useState(() => {
+    const curId = typeof getSelectedAIModel === "function" ? getSelectedAIModel() : null;
+    return AI_MODELS.find((m) => m.id === curId) || AI_MODELS[0];
+  });
   const [generateExpanded, setGenerateExpanded] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewFiles, setReviewFiles] = useState([]);

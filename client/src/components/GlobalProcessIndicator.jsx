@@ -122,10 +122,34 @@ export default function GlobalProcessIndicator() {
       onDismiss: () => dismissProcess("analysis"),
     };
   } else if (bulkApply.isApplying && isMatchingProject(bulkApply)) {
-    const statsText = bulkApply.stats || (bulkApply.totalCount ? `${bulkApply.completedCount || 0}/${bulkApply.totalCount}` : "Applying...");
-    const progressPct = bulkApply.progressPct !== undefined && bulkApply.progressPct !== null
-      ? bulkApply.progressPct
-      : (bulkApply.totalCount ? Math.round(((bulkApply.completedCount || 0) / bulkApply.totalCount) * 100) : null);
+    // Bidirectional synchronization guard: extract [X/N] from step if present
+    const stepMatch = typeof bulkApply.step === "string" ? bulkApply.step.match(/\[(\d+)\/(\d+)\]/) : null;
+    const currentStepNum = stepMatch ? parseInt(stepMatch[1], 10) : null;
+    const totalStepNum = stepMatch ? parseInt(stepMatch[2], 10) : null;
+
+    const resolvedCompleted = currentStepNum !== null ? currentStepNum : (bulkApply.completedCount || 0);
+    const resolvedTotal = totalStepNum !== null ? totalStepNum : (bulkApply.totalFiles || bulkApply.totalCount || 0);
+
+    let statsText = bulkApply.stats;
+    if (stepMatch && currentStepNum !== null && totalStepNum !== null) {
+      statsText = `${currentStepNum}/${totalStepNum}`;
+    } else if (!statsText) {
+      statsText = resolvedTotal > 0 ? `${resolvedCompleted}/${resolvedTotal}` : "Applying...";
+    }
+
+    let progressPct = bulkApply.progressPct;
+    if (stepMatch && currentStepNum !== null && totalStepNum !== null && totalStepNum > 0) {
+      // Calculate true proportional percentage with a visual minimum of 4%
+      progressPct = Math.min(100, Math.max(4, Math.round((currentStepNum / totalStepNum) * 100)));
+    } else if (progressPct === undefined || progressPct === null) {
+      progressPct = resolvedTotal > 0
+        ? Math.min(100, Math.max(4, Math.round((resolvedCompleted / resolvedTotal) * 100)))
+        : null;
+    }
+
+    const titleText = bulkApply.totalFiles && bulkApply.totalSugs && bulkApply.totalFiles > 1
+      ? `Applying ${bulkApply.totalSugs} Test Suggestions (${bulkApply.totalFiles} Files)`
+      : `Applying ${bulkApply.totalSugs || bulkApply.totalCount || ""} Test Suggestions`;
 
     content = {
       type: "bulkApply",
@@ -134,7 +158,7 @@ export default function GlobalProcessIndicator() {
       borderColor: "rgba(34, 197, 94, 0.4)",
       glowColor: "rgba(34, 197, 94, 0.15)",
       icon: <Zap size={16} className="text-green-400 animate-bounce" />,
-      title: `Applying ${bulkApply.totalCount || ""} Test Suggestions`,
+      title: titleText,
       progressPct: progressPct,
       stats: statsText,
       subtitle: bulkApply.step || "Writing to disk & running test verification...",

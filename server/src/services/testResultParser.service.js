@@ -33,7 +33,35 @@ export const parseJestResults = (coverageDir, options = {}) => {
         return null;
     }
     try {
-        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        let raw;
+        try {
+            raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        } catch (jsonErr) {
+            console.warn(`[TEST-RESULT] Partial or malformed Jest JSON in ${resultsPath}, attempting recovery:`, jsonErr.message);
+            try {
+                const content = fs.readFileSync(resultsPath, "utf8");
+                const match = content.match(/(\{[\s\S]*\})/);
+                if (match) raw = JSON.parse(match[1]);
+            } catch (_) {}
+            if (!raw) {
+                return {
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 1,
+                    skippedTests: 0,
+                    durationMs: 0,
+                    status: "FAILED",
+                    scenarios: [{
+                        title: "Test Execution Output Unreadable",
+                        suiteName: path.basename(resultsPath),
+                        status: "failed",
+                        duration: 0,
+                        failureMessages: [`Failed to parse runner output: ${jsonErr.message}`],
+                        testFile: null
+                    }]
+                };
+            }
+        }
 
         // Calculate duration
         const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
@@ -170,7 +198,22 @@ export const parseJestResults = (coverageDir, options = {}) => {
         return results;
     } catch (err) {
         console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
-        throw new Error(`Jest execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+        return {
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 1,
+            skippedTests: 0,
+            durationMs: 0,
+            status: "FAILED",
+            scenarios: [{
+                title: "Test Result Parse Error",
+                suiteName: path.basename(resultsPath || "Jest"),
+                status: "failed",
+                duration: 0,
+                failureMessages: [err.message],
+                testFile: null
+            }]
+        };
     }
 };
 
@@ -214,7 +257,35 @@ export const parseVitestResults = (coverageDir) => {
         return null;
     }
     try {
-        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        let raw;
+        try {
+            raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        } catch (jsonErr) {
+            console.warn(`[TEST-RESULT] Partial or malformed Vitest JSON in ${resultsPath}, attempting recovery:`, jsonErr.message);
+            try {
+                const content = fs.readFileSync(resultsPath, "utf8");
+                const match = content.match(/(\{[\s\S]*\})/);
+                if (match) raw = JSON.parse(match[1]);
+            } catch (_) {}
+            if (!raw) {
+                return {
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 1,
+                    skippedTests: 0,
+                    durationMs: 0,
+                    status: "FAILED",
+                    scenarios: [{
+                        title: "Vitest Execution Output Unreadable",
+                        suiteName: path.basename(resultsPath),
+                        status: "failed",
+                        duration: 0,
+                        failureMessages: [`Failed to parse Vitest output: ${jsonErr.message}`],
+                        testFile: null
+                    }]
+                };
+            }
+        }
 
         // Vitest JSON output format is highly compatible with Jest
         const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
@@ -252,7 +323,22 @@ export const parseVitestResults = (coverageDir) => {
         return results;
     } catch (err) {
         console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
-        throw new Error(`Vitest execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+        return {
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 1,
+            skippedTests: 0,
+            durationMs: 0,
+            status: "FAILED",
+            scenarios: [{
+                title: "Vitest Result Parse Error",
+                suiteName: path.basename(resultsPath || "Vitest"),
+                status: "failed",
+                duration: 0,
+                failureMessages: [err.message],
+                testFile: null
+            }]
+        };
     }
 };
 

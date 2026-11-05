@@ -1,4 +1,4 @@
-import { GEMINI_MODEL_IDS } from '../../../shared/aiModels.js';
+import { GEMINI_MODEL_IDS, normalizeModelId } from '../../../shared/aiModels.js';
 import { geminiQuotaError } from '../utils/geminiQuota.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -29,13 +29,14 @@ export function markModelExhausted(modelName, error = {message:'daily quota'}, c
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel, configuration) {
-  const preferred = (requestedModel && requestedModel.trim()) || configuration.model || 'gemini-3.8-flash';
-  if(!VALID_MODELS.includes(preferred)) throw new ServiceError('Select one of the four supported Gemini models.',400);
-  const quotaKey = `${configuration.credentialId}:${preferred}`;
+  const preferred = (requestedModel && requestedModel.trim()) || configuration.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const normalized = normalizeModelId(preferred);
+  if(!VALID_MODELS.includes(normalized)) throw new ServiceError('Select one of the four supported Gemini models.',400);
+  const quotaKey = `${configuration.credentialId}:${normalized}`;
   const blocked=exhaustedModels.get(quotaKey);
   if(blocked?.resetAt && Date.parse(blocked.resetAt)>Date.now()) throw blocked;
   exhaustedModels.delete(quotaKey);
-  return preferred;
+  return normalized;
 }
 
 /**

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Play,
   Package,
@@ -54,6 +54,8 @@ export default function UnitTestGuidedWorkflow({
   onApplyAll,
   isBulkApplying = false,
   bulkApplyStep = "",
+  bulkApplyProgress = null,
+  bulkApplyPhase = "",
   summary = null,
   rawTotals = null,
   executions = null,
@@ -73,6 +75,7 @@ export default function UnitTestGuidedWorkflow({
   onSwitchVersion = null,
   isSwitchingVersion = false,
   switchingVersionFile = null,
+  isCheckingEnv = false,
 }) {
   const hasAnyV2 = React.useMemo(() => {
     return Object.values(unitTestVersions || {}).some(
@@ -122,13 +125,19 @@ export default function UnitTestGuidedWorkflow({
     (functionsPct >= 100 || rawTotals?.functions?.total === 0) &&
     statementsPct >= 100;
 
+  const isFeasibleLogicCovered = Boolean(
+    summary?.isFeasibleLogicCovered ||
+    summary?.coverage?.isFeasibleLogicCovered ||
+    summary?.data?.isFeasibleLogicCovered
+  );
+
   // Determine initial workflow stage:
-  // If already 100% verified -> Stage 4
+  // If already 100% verified or maximum feasible coverage reached -> Stage 4
   // If pending suggestions exist -> Stage 3
   // If baseline has already run -> Stage 2 (Suggest Tests)
   // Otherwise -> Stage 1 (Baseline Measurement)
   const getInitialActiveStage = () => {
-    if (is100Percent) return 4;
+    if (is100Percent || isFeasibleLogicCovered) return 4;
     if (pendingSuggestionsCount > 0) return 3;
     if (hasBaselineRun) return 2;
     return 1;
@@ -137,6 +146,17 @@ export default function UnitTestGuidedWorkflow({
   const [currentStage, setCurrentStage] = useState(getInitialActiveStage);
   const [selectedStage, setSelectedStage] = useState(null);
   const currentViewStep = selectedStage !== null ? selectedStage : currentStage;
+
+  const effectiveBulkProgress = useMemo(() => {
+    if (bulkApplyProgress !== null && bulkApplyProgress !== undefined) {
+      return bulkApplyProgress;
+    }
+    const stepMatch = typeof bulkApplyStep === "string" ? bulkApplyStep.match(/\[(\d+)\/(\d+)\]/) : null;
+    if (stepMatch && parseInt(stepMatch[2], 10) > 0) {
+      return Math.min(100, Math.max(4, Math.round((parseInt(stepMatch[1], 10) / parseInt(stepMatch[2], 10)) * 100)));
+    }
+    return null;
+  }, [bulkApplyProgress, bulkApplyStep]);
 
   // Reset workflow view when switching snapshots
   React.useEffect(() => {
@@ -148,7 +168,7 @@ export default function UnitTestGuidedWorkflow({
   const prevRunningRef = React.useRef(running);
   React.useEffect(() => {
     if (prevRunningRef.current && !running && !isLatestRunFailed) {
-      if (is100Percent) {
+      if (is100Percent || isFeasibleLogicCovered) {
         setCurrentStage(4);
         setSelectedStage(null);
       } else if (currentStage === 1) {
@@ -160,7 +180,7 @@ export default function UnitTestGuidedWorkflow({
       }
     }
     prevRunningRef.current = running;
-  }, [running, isLatestRunFailed, currentStage, pendingSuggestionsCount, is100Percent]);
+  }, [running, isLatestRunFailed, currentStage, pendingSuggestionsCount, is100Percent, isFeasibleLogicCovered]);
 
   // When AI finishes generating suggestions, auto-advance to Stage 3 for review & apply
   const prevPendingCountRef = React.useRef(pendingSuggestionsCount);
@@ -172,12 +192,12 @@ export default function UnitTestGuidedWorkflow({
     prevPendingCountRef.current = pendingSuggestionsCount;
   }, [pendingSuggestionsCount]);
 
-  // When 100% is verified across all dimensions, update to Stage 4
+  // When 100% or feasible logic coverage is verified, update to Stage 4
   React.useEffect(() => {
-    if (is100Percent) {
+    if (is100Percent || isFeasibleLogicCovered) {
       setCurrentStage(4);
     }
-  }, [is100Percent]);
+  }, [is100Percent, isFeasibleLogicCovered]);
 
   const steps = [
     {
@@ -199,10 +219,10 @@ export default function UnitTestGuidedWorkflow({
       shortTitle: "Suggest Tests",
       desc: "Analyze AST coverage gaps and generate targeted unit tests",
       icon: FileCode2,
-      isDone: pendingSuggestionsCount > 0 || is100Percent,
+      isDone: pendingSuggestionsCount > 0 || is100Percent || isFeasibleLogicCovered,
       isActive: currentStage === 2,
       isViewing: currentViewStep === 2,
-      badge: pendingSuggestionsCount > 0 ? `${pendingSuggestionsCount} tests ready` : (is100Percent ? "Fully Optimized" : "Ready to Suggest")
+      badge: pendingSuggestionsCount > 0 ? `${pendingSuggestionsCount} tests ready` : (is100Percent ? "Fully Optimized" : isFeasibleLogicCovered ? "Feasible Covered" : "Ready to Suggest")
     },
     {
       num: 3,
@@ -211,7 +231,7 @@ export default function UnitTestGuidedWorkflow({
       shortTitle: "Review & Apply",
       desc: "Review business logic mappings & safely merge into test suites",
       icon: Layers,
-      isDone: hasBaselineRun && pendingSuggestionsCount === 0 && (linesPct > 0 || is100Percent),
+      isDone: hasBaselineRun && pendingSuggestionsCount === 0 && (linesPct > 0 || is100Percent || isFeasibleLogicCovered),
       isActive: currentStage === 3,
       isViewing: currentViewStep === 3,
       badge: pendingSuggestionsCount > 0 ? `Review (${pendingSuggestionsCount})` : "Merged"
@@ -220,13 +240,15 @@ export default function UnitTestGuidedWorkflow({
       num: 4,
       id: "verify",
       title: "4. Continuous Verification",
-      shortTitle: "100% Verified",
-      desc: "Re-run test suites to verify coverage gains until 100% threshold",
+      shortTitle: isFeasibleLogicCovered && !is100Percent ? "Feasible Verified" : "100% Verified",
+      desc: isFeasibleLogicCovered && !is100Percent
+        ? "Maximum feasible coverage reached — remaining gaps are justified guards"
+        : "Re-run test suites to verify coverage gains until 100% threshold",
       icon: ShieldCheck,
-      isDone: is100Percent,
+      isDone: is100Percent || isFeasibleLogicCovered,
       isActive: currentStage === 4,
       isViewing: currentViewStep === 4,
-      badge: is100Percent ? "100% Verified" : "Continuous Loop"
+      badge: is100Percent ? "100% Verified" : isFeasibleLogicCovered ? "✓ Feasible Verified" : "Continuous Loop"
     }
   ];
 
@@ -280,19 +302,19 @@ export default function UnitTestGuidedWorkflow({
                   fontWeight: 700,
                   padding: "1px 7px",
                   borderRadius: 12,
-                  background: is100Percent
+                  background: (is100Percent || isFeasibleLogicCovered)
                     ? (isLight ? "#ecfdf5" : "rgba(34, 197, 94, 0.15)")
                     : (isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)"),
-                  color: is100Percent
+                  color: (is100Percent || isFeasibleLogicCovered)
                     ? (isLight ? "#059669" : "#4ade80")
                     : (isLight ? "#2563eb" : "#60a5fa"),
-                  border: is100Percent
+                  border: (is100Percent || isFeasibleLogicCovered)
                     ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(34, 197, 94, 0.35)")
                     : (isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)"),
                   letterSpacing: "0.4px"
                 }}
               >
-                {is100Percent ? "✓ 100% VERIFIED" : `ACTIVE STAGE: ${currentStage} / 4`}
+                {is100Percent ? "✓ 100% VERIFIED" : isFeasibleLogicCovered ? "✓ FEASIBLE COVERED" : `ACTIVE STAGE: ${currentStage} / 4`}
               </span>
 
               {selectedStage !== null && selectedStage !== currentStage && (
@@ -320,7 +342,7 @@ export default function UnitTestGuidedWorkflow({
               {currentViewStep === 1 && "Stage 1: Execute initial baseline test run to record coverage metrics from Jest and Vitest."}
               {currentViewStep === 2 && "Stage 2: AI automatically identifies uncovered branches and generates complementary tests across 4 categories."}
               {currentViewStep === 3 && (pendingSuggestionsCount > 0 ? `Stage 3: ${pendingSuggestionsCount} generated unit tests ready across ${pendingFilesCount} files. Review business logic mappings and diffs.` : "Stage 3: Review applied test files, diffs, and AST syntax auto-healing details.")}
-              {currentViewStep === 4 && (is100Percent ? "Stage 4: All 4 metrics (Statements, Branches, Functions, Lines) have reached 100% verified coverage!" : "Stage 4: Running background verification to confirm actual test coverage gains.")}
+              {currentViewStep === 4 && (is100Percent ? "Stage 4: All 4 metrics (Statements, Branches, Functions, Lines) have reached 100% verified coverage!" : isFeasibleLogicCovered ? "Stage 4: Maximum feasible coverage reached — all remaining branch gaps are mathematically justified defensive guards." : "Stage 4: Running background verification to confirm actual test coverage gains.")}
             </div>
           </div>
         </div>
@@ -566,11 +588,40 @@ export default function UnitTestGuidedWorkflow({
               </span>
             </div>
           ) : isBulkApplying ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Loader2 size={16} className="animate-spin text-green-500" />
-              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#15803d" : "#86efac" }}>
-                {bulkApplyStep || "Merging test suites with AST syntax auto-healing & TDZ sanitization..."}
-              </span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 260 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Loader2 size={16} className="animate-spin text-green-500" />
+                <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#15803d" : "#86efac" }}>
+                  {bulkApplyStep || "Merging test suites with AST syntax auto-healing & TDZ sanitization..."}
+                </span>
+                {effectiveBulkProgress !== null && (
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      padding: "1px 6px",
+                      borderRadius: 10,
+                      background: isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.2)",
+                      color: isLight ? "#15803d" : "#4ade80",
+                      border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.4)",
+                    }}
+                  >
+                    {effectiveBulkProgress}%
+                  </span>
+                )}
+              </div>
+              {effectiveBulkProgress !== null && (
+                <div style={{ width: "100%", height: 3.5, background: isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.12)", borderRadius: 3, overflow: "hidden" }}>
+                  <div
+                    style={{
+                      width: `${effectiveBulkProgress}%`,
+                      height: "100%",
+                      background: "linear-gradient(90deg, #22c55e, #16a34a)",
+                      transition: "width 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+                    }}
+                  />
+                </div>
+              )}
             </div>
           ) : isBulkSuggesting ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -601,6 +652,13 @@ export default function UnitTestGuidedWorkflow({
               <CheckCircle2 size={17} style={{ color: "#16a34a" }} />
               <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#15803d" : "#4ade80" }}>
                 Source code has reached 100% coverage across all 4 metrics. Verified hermetic test suite!
+              </span>
+            </div>
+          ) : isFeasibleLogicCovered ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <CheckCircle2 size={17} style={{ color: "#7c3aed" }} />
+              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#6d28d9" : "#c4b5fd" }}>
+                ✓ Maximum Feasible Coverage Reached — All Remaining Gaps are Justified Guards
               </span>
             </div>
           ) : (
@@ -738,7 +796,17 @@ export default function UnitTestGuidedWorkflow({
                   {isBulkApplying ? (
                     <>
                       <Loader2 size={14} className="animate-spin" />
-                      <span>Applying...</span>
+                      <span>
+                        {bulkApplyPhase === "merge"
+                          ? "Merging Tests..."
+                          : bulkApplyPhase === "verify"
+                            ? "Verifying Tests..."
+                            : bulkApplyPhase === "sync"
+                              ? "Syncing Coverage..."
+                              : bulkApplyProgress !== null && bulkApplyProgress !== undefined
+                                ? `Applying (${bulkApplyProgress}%)`
+                                : "Applying..."}
+                      </span>
                     </>
                   ) : (
                     <>
@@ -749,7 +817,7 @@ export default function UnitTestGuidedWorkflow({
                 </button>
               )}
 
-              {pendingSuggestionsCount === 0 && !is100Percent && (onOpenSuggestModal || onBulkSuggest) && (
+              {pendingSuggestionsCount === 0 && !is100Percent && !isFeasibleLogicCovered && (onOpenSuggestModal || onBulkSuggest) && (
                 <button
                   onClick={() => {
                     if (onOpenSuggestModal) {
@@ -787,40 +855,48 @@ export default function UnitTestGuidedWorkflow({
           ) : currentViewStep === 2 && onBulkSuggest ? (
             /* Action Group for Stage 2: Suggest Missing Tests */
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-
-              <button
-                onClick={() => {
-                  if (onOpenSuggestModal) {
-                    onOpenSuggestModal({ isBulk: true });
-                  } else if (onBulkSuggest) {
-                    onBulkSuggest();
-                  }
-                }}
-                disabled={isBulkSuggesting}
-                style={{
-                  background: isLight ? "#4f46e5" : "#6d5dfb",
-                  border: isLight ? "1px solid #4338ca" : "1px solid #5b4be7",
-                  color: "#ffffff",
-                  borderRadius: 7,
-                  padding: "9px 18px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: isBulkSuggesting ? "wait" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  boxShadow: isLight
-                    ? "0 2px 6px rgba(79, 70, 229, 0.25)"
-                    : "0 2px 10px rgba(109, 93, 251, 0.35)",
-                  transition: "all 0.15s ease",
-                  opacity: isBulkSuggesting ? 0.7 : 1,
-                }}
-                className="hover:opacity-90"
-                title="Identify uncovered code and generate unit tests"
-              >
-                {isBulkSuggesting ? <Loader2 size={14} className="animate-spin" /> : <FileCode2 size={14} />}
-                <span>{isBulkSuggesting ? "Analyzing & suggesting..." : "2. Suggest Missing Tests"}</span>
-              </button>
+              {isFeasibleLogicCovered ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <CheckCircle2 size={16} style={{ color: "#7c3aed" }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: isLight ? "#6d28d9" : "#c4b5fd" }}>
+                    Feasible Logic Covered — Remaining Gaps are Justified Guards
+                  </span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (onOpenSuggestModal) {
+                      onOpenSuggestModal({ isBulk: true });
+                    } else if (onBulkSuggest) {
+                      onBulkSuggest();
+                    }
+                  }}
+                  disabled={isBulkSuggesting}
+                  style={{
+                    background: isLight ? "#4f46e5" : "#6d5dfb",
+                    border: isLight ? "1px solid #4338ca" : "1px solid #5b4be7",
+                    color: "#ffffff",
+                    borderRadius: 7,
+                    padding: "9px 18px",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: isBulkSuggesting ? "wait" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    boxShadow: isLight
+                      ? "0 2px 6px rgba(79, 70, 229, 0.25)"
+                      : "0 2px 10px rgba(109, 93, 251, 0.35)",
+                    transition: "all 0.15s ease",
+                    opacity: isBulkSuggesting ? 0.7 : 1,
+                  }}
+                  className="hover:opacity-90"
+                  title="Identify uncovered code and generate unit tests"
+                >
+                  {isBulkSuggesting ? <Loader2 size={14} className="animate-spin" /> : <FileCode2 size={14} />}
+                  <span>{isBulkSuggesting ? "Analyzing & suggesting..." : "2. Suggest Missing Tests"}</span>
+                </button>
+              )}
             </div>
           ) : currentViewStep === 4 ? (
             /* Action for Stage 4: Continuous Verification */
@@ -849,7 +925,7 @@ export default function UnitTestGuidedWorkflow({
                   <span>Review Merged Diffs</span>
                 </button>
               )}
-              {onBulkSuggest && !is100Percent && (
+              {onBulkSuggest && !is100Percent && !isFeasibleLogicCovered && (
                 <button
                   onClick={onBulkSuggest}
                   disabled={isBulkSuggesting}
@@ -875,39 +951,47 @@ export default function UnitTestGuidedWorkflow({
               )}
               <button
                 onClick={() => onRun && onRun({ restart: true })}
+                disabled={isCheckingEnv}
                 style={{
-                  background: is100Percent ? "#16a34a" : (isLight ? "#4f46e5" : "#6d5dfb"),
-                  border: is100Percent ? "1px solid #15803d" : (isLight ? "1px solid #4338ca" : "1px solid #5b4be7"),
+                  background: (is100Percent || isFeasibleLogicCovered) ? "#16a34a" : (isLight ? "#4f46e5" : "#6d5dfb"),
+                  border: (is100Percent || isFeasibleLogicCovered) ? "1px solid #15803d" : (isLight ? "1px solid #4338ca" : "1px solid #5b4be7"),
                   color: "#ffffff",
                   borderRadius: 7,
                   padding: "9px 18px",
                   fontSize: 13,
                   fontWeight: 700,
-                  cursor: "pointer",
+                  cursor: isCheckingEnv ? "wait" : "pointer",
+                  opacity: isCheckingEnv ? 0.75 : 1,
                   display: "flex",
                   alignItems: "center",
                   gap: 7,
-                  boxShadow: is100Percent
+                  boxShadow: (is100Percent || isFeasibleLogicCovered)
                     ? "0 2px 10px rgba(22, 163, 74, 0.35)"
                     : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(109, 93, 251, 0.35)"),
                   transition: "all 0.15s ease",
                 }}
                 className="hover:opacity-90"
-                title="Re-run tests to continuously verify coverage"
+                title={isCheckingEnv ? "Checking environment variables..." : "Re-run tests to continuously verify coverage"}
               >
-                {running ? (
+                {isCheckingEnv ? (
+                  <Loader2 size={14} className="animate-spin text-white" />
+                ) : running ? (
                   <RotateCcw size={14} className="animate-spin" />
-                ) : is100Percent ? (
+                ) : (is100Percent || isFeasibleLogicCovered) ? (
                   <ShieldCheck size={14} />
                 ) : (
                   <RefreshCw size={14} />
                 )}
                 <span>
-                  {running
+                  {isCheckingEnv
+                    ? "Checking Environment..."
+                    : running
                     ? `Verifying Tests (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)`
                     : is100Percent
                       ? "Re-run Verification (100% Guaranteed)"
-                      : "4. Run Continuous Verification"}
+                      : isFeasibleLogicCovered
+                        ? "Re-run Verification (Feasible Logic Covered)"
+                        : "4. Run Continuous Verification"}
                 </span>
               </button>
             </div>
@@ -916,8 +1000,9 @@ export default function UnitTestGuidedWorkflow({
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <button
                 onClick={() => onRun && onRun({ restart: Boolean(hasBaselineRun || running) })}
+                disabled={isCheckingEnv}
                 style={{
-                  background: running
+                  background: (running || isCheckingEnv)
                     ? (isLight ? "#4f46e5" : "#6d5dfb")
                     : (isLight ? "#4f46e5" : "#6d5dfb"),
                   border: isLight ? "1px solid #4338ca" : "1px solid #5b4be7",
@@ -926,19 +1011,22 @@ export default function UnitTestGuidedWorkflow({
                   padding: "9px 18px",
                   fontSize: 13,
                   fontWeight: 700,
-                  cursor: "pointer",
+                  cursor: isCheckingEnv ? "wait" : "pointer",
+                  opacity: isCheckingEnv ? 0.75 : 1,
                   display: "flex",
                   alignItems: "center",
                   gap: 7,
-                  boxShadow: running
+                  boxShadow: (running || isCheckingEnv)
                     ? "0 0 10px rgba(99, 102, 241, 0.4), 0 2px 6px rgba(79, 70, 229, 0.25)"
                     : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(109, 93, 251, 0.35)"),
                   transition: "all 0.15s ease",
                 }}
                 className="hover:opacity-90"
-                title={running ? "Analysis is running. Click to restart test execution." : "Run Jest and Vitest to measure source code coverage"}
+                title={isCheckingEnv ? "Checking environment variables..." : running ? "Analysis is running. Click to restart test execution." : "Run Jest and Vitest to measure source code coverage"}
               >
-                {running ? (
+                {isCheckingEnv ? (
+                  <Loader2 size={14} className="animate-spin text-white" />
+                ) : running ? (
                   <RotateCcw size={14} className="animate-spin" />
                 ) : hasBaselineRun ? (
                   <RefreshCw size={14} />
@@ -946,7 +1034,9 @@ export default function UnitTestGuidedWorkflow({
                   <Play size={14} fill="currentColor" />
                 )}
                 <span>
-                  {running
+                  {isCheckingEnv
+                    ? "Checking Environment..."
+                    : running
                     ? `Running Analysis (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)`
                     : hasBaselineRun
                       ? "1. Re-run Baseline Analysis"
