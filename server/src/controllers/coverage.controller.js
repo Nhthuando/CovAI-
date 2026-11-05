@@ -44,6 +44,9 @@ import {
     getUnitTestVersions,
     switchUnitTestVersion
 } from "../services/unitTestVersion.service.js";
+import { detectProjectEnvironment, saveWorkspaceEnv } from "../services/environmentDetection.service.js";
+import { getAvailableSimulationSources, generateSimulationTrace } from "../services/unitTestSimulationEngine.service.js";
+
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
 import { findLogicSourceFiles, extractBranches } from "../services/runTestsJob.service.js";
 import { extractFunctions } from "../services/cyclomaticFunctionExtractor.service.js";
@@ -174,6 +177,7 @@ export const runCoverageByType = async (req, res) => {
         const { snapshotId, coverageType } = req.params;
         const requestedFramework = req.body?.framework || req.query?.framework || null;
         const isRestart = Boolean(req.body?.restart || req.query?.restart);
+        const useHermeticMock = Boolean(req.body?.useHermeticMock || req.query?.useHermeticMock);
         const userId = req.user?.id;
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
@@ -219,9 +223,10 @@ export const runCoverageByType = async (req, res) => {
                         projectId: snapshot.projectId,
                         snapshotId: snapshot.id,
                         userId,
-                        mode: "FULL"
+                        mode: "FULL",
+                        useHermeticMock
                     });
-                    await addJobToQueue("RUN_TESTS", job.id);
+                    await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
                 } else {
                     job = activeUnitJob;
                     if (job.status === "QUEUED") {
@@ -234,9 +239,10 @@ export const runCoverageByType = async (req, res) => {
                     projectId: snapshot.projectId,
                     snapshotId: snapshot.id,
                     userId,
-                    mode: "FULL"
+                    mode: "FULL",
+                    useHermeticMock
                 });
-                await addJobToQueue("RUN_TESTS", job.id);
+                await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
             }
             jobs = [job];
         } else {
@@ -4273,5 +4279,217 @@ export const saveUnitTestVersionsController = async (req, res) => {
             success: false,
             message: error.message || "Failed to save unit test versions."
         });
+    }
+};
+
+
+/**
+ * POST /api/coverage/:snapshotId/suggest-testcase-all
+ * Suggest AI unit testcases for all candidate business logic files.
+ */
+export const suggestUnitTestcaseAll = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        let { projectId, framework } = req.body || {};
+
+        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+
+        const actualSnapshotId = snapshot.id;
+        const actualProjectId = projectId || snapshot.projectId;
+
+        const result = await suggestUnitTestcases({
+            projectId: actualProjectId,
+            snapshotId: actualSnapshotId,
+            filePath: "all",
+            userId,
+            framework,
+            selectedAiModel: requestedAiModel(req)
+        });
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error("[suggestUnitTestcaseAll] Error:", error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to suggest unit testcases for all files." });
+    }
+};
+
+/**
+ * GET /api/coverage/:snapshotId/unit/env-check
+ * Pre-flight check detecting process.env variables and requirements in candidate files.
+ */
+export const checkUnitTestEnvironment = async (req, res, next) => {
+    try {
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        let snapshot = null;
+        if (typeof prisma?.projectSnapshot?.findUnique === "function") {
+            try {
+                snapshot = await prisma.projectSnapshot.findUnique({
+                    where: { id: snapshotId },
+                    include: { project: true }
+                });
+            } catch (_) {}
+        }
+        if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
+            try {
+                snapshot = await prisma.projectSnapshot.findFirst({
+                    where: { id: snapshotId }
+                });
+            } catch (_) {}
+        }
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+        if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot root directory is not ready." });
+
+        const data = await detectProjectEnvironment(snapshot.rootDir || snapshot);
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });
+        if (typeof next === 'function') return next(error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to check unit test environment." });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/unit/env
+ * Persists configured environment variables into .env at workspace root.
+ */
+export const saveUnitTestEnvironment = async (req, res, next) => {
+    try {
+        const userId = req.user?.id;
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const { envVariables, runAfterSave } = req.body || {};
+        if (!envVariables || typeof envVariables !== "object" || Array.isArray(envVariables)) {
+            return res.status(400).json({ success: false, message: "envVariables must be an object of key-value pairs." });
+        }
+
+        let snapshot = null;
+        if (typeof prisma?.projectSnapshot?.findUnique === "function") {
+            try {
+                snapshot = await prisma.projectSnapshot.findUnique({
+                    where: { id: snapshotId },
+                    include: { project: true }
+                });
+            } catch (_) {}
+        }
+        if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
+            try {
+                snapshot = await prisma.projectSnapshot.findFirst({
+                    where: { id: snapshotId }
+                });
+            } catch (_) {}
+        }
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+
+        const result = await saveWorkspaceEnv({
+            snapshot,
+            envVariables,
+            userId,
+            db: prisma
+        });
+
+        let jobId = undefined;
+        let runTriggered = false;
+        if (runAfterSave) {
+            const job = await prisma.job.create({
+                data: {
+                    type: "RUN_TESTS",
+                    status: "PENDING",
+                    payloadJson: JSON.stringify({
+                        snapshotId: snapshot.id,
+                        coverageType: "unit"
+                    })
+                }
+            });
+            await addJobToQueue("RUN_TESTS", job.id);
+            jobId = job.id;
+            runTriggered = true;
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                ...result,
+                path: ".env",
+                persisted: true,
+                envVariables,
+                runTriggered,
+                ...(jobId ? { jobId } : {})
+            }
+        });
+    } catch (error) {
+        if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });
+        if (typeof next === 'function') return next(error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to save unit test environment." });
+    }
+};
+
+/**
+ * GET /api/coverage/:snapshotId/simulation/sources
+ * Returns business logic source files, functions, available tests, and virtual scenarios for simulation.
+ */
+export const getSimulationSources = async (req, res, next) => {
+    try {
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            include: { project: true }
+        });
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+
+        const options = {
+            ...(req.query || {}),
+            rootDir: snapshot.rootDir,
+            snapshot
+        };
+        const result = await getAvailableSimulationSources(snapshot.id, options);
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });
+        if (typeof next === 'function') return next(error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to get simulation sources." });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/simulation/trace
+ * Generates discrete AST execution simulation steps, branch evaluations, universal RAM mocks, and assertions.
+ */
+export const getSimulationTrace = async (req, res, next) => {
+    try {
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const { sourceFilePath, sourceCode } = req.body || {};
+        if (!sourceFilePath && typeof sourceCode !== "string") {
+            return res.status(400).json({ success: false, message: "sourceFilePath is required." });
+        }
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            include: { project: true }
+        });
+        if (!snapshot && typeof sourceCode !== "string") {
+            return res.status(404).json({ success: false, message: "Snapshot not found." });
+        }
+
+        const payload = {
+            ...(req.body || {}),
+            rootDir: snapshot?.rootDir,
+            snapshot
+        };
+        const result = await generateSimulationTrace(snapshotId, payload);
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });
+        if (typeof next === 'function') return next(error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to generate simulation trace." });
     }
 };
