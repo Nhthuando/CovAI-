@@ -165,7 +165,7 @@ export function adaptPortfolioDashboard({
       description: rp.description || "Project Workspace",
       repoUrl: rp.repoUrl || null,
       branch: rp.branch || "main",
-      snapshotId: rp.latestSnapshotId || rp.snapshots?.[0]?.id || "cmvs3749",
+      snapshotId: rp.latestSnapshotId || rp.snapshots?.[0]?.id || null,
       updatedAt: rp.updatedAt || rp.createdAt || new Date().toISOString(),
       createdAt: rp.createdAt || new Date().toISOString(),
       frameworks: detectedFrameworks,

@@ -129,7 +129,15 @@ export function UnitPillarCard({
                   <span className="font-mono text-[11px] text-[var(--ud-text)] truncate max-w-[170px]">
                     {item.name || item.filePath}
                   </span>
-                  <span className="font-mono text-[11px] font-semibold text-[var(--ud-warn)] tabular-nums shrink-0">
+                  <span
+                    className={`font-mono text-[11px] font-semibold tabular-nums shrink-0 ${
+                      Number(item.branchesPct ?? 0) >= 80
+                        ? "text-[var(--ud-pass)]"
+                        : Number(item.branchesPct ?? 0) >= 50
+                        ? "text-[var(--ud-warn)]"
+                        : "text-[var(--ud-fail)]"
+                    }`}
+                  >
                     {fmtPct(item.branchesPct)}
                   </span>
                 </button>

@@ -76,8 +76,18 @@ describe("Business Logic AST Analyzer Service - Phase 1 Verification", () => {
             expect(isBusinessLogicFile("server.js")).toBe(false);
             expect(isBusinessLogicFile("src/app.js")).toBe(false);
             expect(isBusinessLogicFile("src/server.js")).toBe(false);
-            expect(isBusinessLogicFile("src/index.js")).toBe(false);
             expect(isBusinessLogicFile("index.js")).toBe(false);
+        });
+
+        test("strictly excludes static preset data catalogs while keeping preset logic modules", () => {
+            expect(isBusinessLogicFile("src/presets/tier10-chat.ts")).toBe(false);
+            expect(isBusinessLogicFile("src/presets/tier1-essential.ts")).toBe(false);
+            expect(isBusinessLogicFile("src/presets/tier18-aunz-misc.ts")).toBe(false);
+            expect(isBusinessLogicFile("src/presets/data/catalog.js")).toBe(false);
+            expect(isBusinessLogicFile("src/presets/definitions/items.ts")).toBe(false);
+            // Preset logic with business functions remains included
+            expect(isBusinessLogicFile("src/presets/index.ts")).toBe(true);
+            expect(isBusinessLogicFile("src/popupThemePresets.ts")).toBe(true);
         });
 
         test("classifyBusinessLogicFiles scans and categorizes directory accurately", () => {

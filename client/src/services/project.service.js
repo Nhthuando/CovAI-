@@ -140,8 +140,83 @@ export async function getGithubRepositoriesApi() {
   }
 }
 
+// --- In-Memory & Session Storage Cache for File Contents ---
+const fileContentCache = new Map();
+const CACHE_PREFIX = "covai_file_cache_";
+
+function makeCacheKey(projectId, filePath, snapshotId) {
+  const normPath = (filePath || "").replace(/\\/g, "/");
+  return `${projectId}:${snapshotId || "latest"}:${normPath}`;
+}
+
+export function getFileContentFromCache(projectId, filePath, snapshotId = "") {
+  if (!projectId || !filePath) return null;
+  const key = makeCacheKey(projectId, filePath, snapshotId);
+  if (fileContentCache.has(key)) {
+    return fileContentCache.get(key);
+  }
+  try {
+    const raw = sessionStorage.getItem(`${CACHE_PREFIX}${key}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      fileContentCache.set(key, parsed);
+      return parsed;
+    }
+  } catch (_) {}
+  return null;
+}
+
+export function setFileContentToCache(projectId, filePath, data, snapshotId = "") {
+  if (!projectId || !filePath || !data) return;
+  const key = makeCacheKey(projectId, filePath, snapshotId);
+  fileContentCache.set(key, data);
+  try {
+    if (typeof data.content === "string" && data.content.length < 500000) {
+      sessionStorage.setItem(`${CACHE_PREFIX}${key}`, JSON.stringify(data));
+    }
+  } catch (_) {}
+}
+
+export function invalidateFileContentCache(projectId, filePath = null) {
+  if (!projectId) return;
+  if (!filePath) {
+    for (const key of fileContentCache.keys()) {
+      if (key.startsWith(`${projectId}:`)) fileContentCache.delete(key);
+    }
+    try {
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith(`${CACHE_PREFIX}${projectId}:`)) sessionStorage.removeItem(k);
+      }
+    } catch (_) {}
+    return;
+  }
+  const normPath = filePath.replace(/\\/g, "/");
+  for (const key of fileContentCache.keys()) {
+    if (key.startsWith(`${projectId}:`) && (key.endsWith(`:${normPath}`) || key.includes(`:${normPath}/`))) {
+      fileContentCache.delete(key);
+    }
+  }
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(`${CACHE_PREFIX}${projectId}:`) && (k.endsWith(`:${normPath}`) || k.includes(`:${normPath}/`))) {
+        sessionStorage.removeItem(k);
+      }
+    }
+  } catch (_) {}
+}
+
 export async function getFileContentApi(projectId, filePath, options = {}) {
-  const { snapshotId, signal } = typeof options === "string" ? { snapshotId: options } : options || {};
+  const { snapshotId, signal, forceFresh } = typeof options === "string" ? { snapshotId: options } : options || {};
+
+  if (!forceFresh) {
+    const cached = getFileContentFromCache(projectId, filePath, snapshotId);
+    if (cached) {
+      return { success: true, data: cached, fromCache: true };
+    }
+  }
+
   const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}${snapshotId ? `&snapshotId=${encodeURIComponent(snapshotId)}` : ""}`,
     {
@@ -149,7 +224,11 @@ export async function getFileContentApi(projectId, filePath, options = {}) {
       signal,
     },
   );
-  return handleResponse(res);
+  const data = await handleResponse(res);
+  if (data?.data) {
+    setFileContentToCache(projectId, filePath, data.data, snapshotId);
+  }
+  return data;
 }
 
 export async function updateFileContentApi(projectId, filePath, content, { snapshotId, expectedVersion, expectedWorkspaceRevision, requestId = crypto.randomUUID() } = {}) {
@@ -161,7 +240,20 @@ export async function updateFileContentApi(projectId, filePath, content, { snaps
     headers: getAuthHeaders(),
     body: JSON.stringify({ path: filePath, content, snapshotId, expectedVersion, expectedWorkspaceRevision, requestId }),
   });
-  return handleResponse(res);
+  const data = await handleResponse(res);
+  if (data?.data) {
+    setFileContentToCache(projectId, filePath, data.data, snapshotId);
+  } else {
+    const existing = getFileContentFromCache(projectId, filePath, snapshotId) || {};
+    setFileContentToCache(projectId, filePath, {
+      ...existing,
+      content,
+      path: filePath,
+      version: (existing.version || 0) + 1,
+      snapshotId,
+    }, snapshotId);
+  }
+  return data;
 }
 
 export async function createProjectFileApi(projectId, filePath, content = "", options = {}) {
@@ -170,7 +262,15 @@ export async function createProjectFileApi(projectId, filePath, content = "", op
     headers: getAuthHeaders(),
     body: JSON.stringify({ path: filePath, content, ...options, requestId: options.requestId || crypto.randomUUID() }),
   });
-  return handleResponse(res);
+  const data = await handleResponse(res);
+  setFileContentToCache(projectId, filePath, {
+    content,
+    path: filePath,
+    version: 0,
+    snapshotId: options.snapshotId,
+    workspaceRevision: options.expectedWorkspaceRevision || 0,
+  }, options.snapshotId);
+  return data;
 }
 
 export async function createProjectFolderApi(projectId, folderPath, options = {}) {
@@ -188,19 +288,32 @@ export async function renameProjectEntryApi(projectId, filePath, newPath, option
     headers: getAuthHeaders(),
     body: JSON.stringify({ path: filePath, newPath, ...options, requestId: options.requestId || crypto.randomUUID() }),
   });
-  return handleResponse(res);
+  const data = await handleResponse(res);
+  const oldCached = getFileContentFromCache(projectId, filePath, options.snapshotId);
+  invalidateFileContentCache(projectId, filePath);
+  if (oldCached) {
+    setFileContentToCache(projectId, newPath, { ...oldCached, path: newPath }, options.snapshotId);
+  }
+  return data;
 }
 
 export async function deleteProjectEntryApi(projectId, filePath, options = {}) {
+  const queryParams = new URLSearchParams({ path: filePath });
+  if (options.snapshotId) queryParams.set("snapshotId", options.snapshotId);
+  if (options.expectedWorkspaceRevision !== undefined) {
+    queryParams.set("expectedWorkspaceRevision", String(options.expectedWorkspaceRevision));
+  }
   const res = await editorAwareFetch(
-    `${BASE_URL}/projects/${projectId}/entries?path=${encodeURIComponent(filePath)}`,
+    `${BASE_URL}/projects/${projectId}/entries?${queryParams.toString()}`,
     {
       method: "DELETE",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ ...options, requestId: options.requestId || crypto.randomUUID() }),
+      body: JSON.stringify({ ...options, path: filePath, requestId: options.requestId || crypto.randomUUID() }),
     },
   );
-  return handleResponse(res);
+  const data = await handleResponse(res);
+  invalidateFileContentCache(projectId, filePath);
+  return data;
 }
 
 export async function getUserProfileApi() {

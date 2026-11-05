@@ -61,16 +61,19 @@ const resolveVitestBin = (dir) => {
 const SHARED_ENV = {
     NODE_OPTIONS: "--experimental-vm-modules",
     NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
+    VITE_CJS_IGNORE_WARNING: "true",
 };
 
 /**
  * Run Vitest with Coverage
  */
-export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificFiles = []) => {
-    const rootCoverageDir = path.join(rootDir, "coverage");
-    if (!fs.existsSync(rootCoverageDir)) {
-        try { fs.mkdirSync(rootCoverageDir, { recursive: true }); } catch { }
+export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificFiles = [], options = {}) => {
+    const targetCovDir = options?.coverageDir ? path.resolve(rootDir, options.coverageDir) : path.join(rootDir, "coverage");
+    if (!fs.existsSync(targetCovDir)) {
+        try { fs.mkdirSync(targetCovDir, { recursive: true }); } catch { }
     }
+    const rootCoverageDir = targetCovDir;
+    const relCovDir = path.relative(rootDir, targetCovDir).replace(/\\/g, "/") || "coverage";
 
     // 1. Dependency check: check both root, backend node_modules, and /app/node_modules
     const rootHasVitest = fs.existsSync(path.join(rootDir, "node_modules", "vitest")) &&
@@ -90,13 +93,15 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
     }
 
     const fileCount = Array.isArray(specificFiles) && specificFiles.length > 0 ? specificFiles.length : 50;
-    const effectiveTimeout = Math.min(15 * 60 * 1000, Math.max(VITEST_TIMEOUT_MS, fileCount * 15 * 1000));
+    const effectiveTimeout = Math.min(10 * 60 * 1000, Math.max(180 * 1000, 60 * 1000 + fileCount * 25 * 1000));
 
     // 2. Determine execution mode:
     // If backend/ has vitest.config.* or package.json, run directly in backend/
     const backendDir = path.join(rootDir, "backend");
     const hasBackendDir = fs.existsSync(backendDir) &&
         (fs.existsSync(path.join(backendDir, "package.json")) || fs.existsSync(path.join(backendDir, "vitest.config.js")));
+
+    const coverageAllFlag = "--coverage.all=false";
 
     let result;
     if (hasBackendDir) {
@@ -105,14 +110,14 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         if (Array.isArray(specificFiles) && specificFiles.length > 0) {
             const backendSpecific = specificFiles
                 .filter(f => f.startsWith("backend/") || !f.includes("/"))
-                .map(f => f.replace(/^backend\//, ""));
+                .map(f => `"${f.replace(/^backend\//, "").replace(/\\/g, "/")}"`);
             if (backendSpecific.length > 0) {
                 targetArg = backendSpecific.join(" ");
             }
         }
 
         const backendBin = resolveVitestBin(backendDir);
-        const vitestCmd = `cd backend && ${backendBin} run ${targetArg} --coverage --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=../coverage/vitest-results.json --passWithNoTests`;
+        const vitestCmd = `cd backend && ${backendBin} run ${targetArg} --globals --coverage ${coverageAllFlag} --testTimeout=10000 --maxWorkers=2 --minWorkers=1 --coverage.reportsDirectory=../${relCovDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --coverage.reportOnFailure=true --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 --reporter=default --reporter=json --outputFile=../${relCovDir}/vitest-results.json --passWithNoTests`;
 
         await addJobLog(jobId, "INFO", `[VITEST] Running Vitest in backend/ with command: ${vitestCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
@@ -126,7 +131,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
 
         // Copy backend coverage files into root coverage dir
         const backendCov = path.join(backendDir, "coverage");
-        if (fs.existsSync(backendCov)) {
+        if (!options?.coverageDir && fs.existsSync(backendCov)) {
             const bFinal = path.join(backendCov, "coverage-final.json");
             const bSummary = path.join(backendCov, "coverage-summary.json");
             const bLcov = path.join(backendCov, "lcov.info");
@@ -146,12 +151,19 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
             }
         }
 
-        // Backend fallback: if coverage or run failed, retry running tests without coverage to capture test results
+        // Backend fallback: only retry without coverage if vitest-results.json was NOT written (e.g. coverage provider crash)
         const rootResultsPathCheck = path.join(rootCoverageDir, "vitest-results.json");
-        const backendResultsPathCheck = path.join(backendDir, "coverage", "vitest-results.json");
-        if ((!result.success || (!fs.existsSync(rootResultsPathCheck) && !fs.existsSync(backendResultsPathCheck))) && result.exitCode !== null) {
+        const rootSummaryPathCheck = path.join(rootCoverageDir, "coverage-summary.json");
+        const backendSummaryPathCheck = path.join(backendCov, "coverage-summary.json");
+        const hasCoverage = fs.existsSync(rootSummaryPathCheck) || fs.existsSync(backendSummaryPathCheck);
+        const combinedBackendOutput = `${result?.stderr || ""}\n${result?.stdout || ""}`;
+        const isCoverageProviderCrash = /@vitest\/coverage|coverage provider|Failed to load coverage provider/i.test(combinedBackendOutput);
+        const shouldFallback = (!fs.existsSync(rootResultsPathCheck) || (!hasCoverage && isCoverageProviderCrash)) && result.exitCode !== null;
+        if (shouldFallback) {
             await addJobLog(jobId, "WARN", `[VITEST] Vitest backend coverage failed (exit ${result.exitCode}), retrying basic test mode to collect test results...`).catch(() => { });
-            const fallbackCmd = `cd backend && ${backendBin} run ${targetArg} --passWithNoTests --reporter=json --outputFile=../coverage/vitest-results.json`;
+            // Keep retries in the same isolated run directory and test environment.
+            if (fs.existsSync(rootResultsPathCheck)) fs.unlinkSync(rootResultsPathCheck);
+            const fallbackCmd = `cd backend && ${backendBin} run ${targetArg} --globals --coverage.enabled=false --testTimeout=10000 --maxWorkers=2 --minWorkers=1 --passWithNoTests --reporter=default --reporter=json --outputFile=../${relCovDir}/vitest-results.json`;
             const fallbackResult = await dockerRunner.run({
                 snapshotPath: rootDir,
                 command: fallbackCmd,
@@ -159,9 +171,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
                 jobId,
                 env: SHARED_ENV,
             });
-            if (fallbackResult.success || fs.existsSync(rootResultsPathCheck) || fs.existsSync(backendResultsPathCheck)) {
-                result = fallbackResult;
-            }
+            result = fallbackResult;
         }
 
         // Sync candidate results
@@ -173,7 +183,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
             path.join(backendDir, "test-results.json"),
         ];
         for (const cand of candidatePaths) {
-            if (fs.existsSync(cand) && !fs.existsSync(rootResultsPathCheck)) {
+            if (!options?.coverageDir && fs.existsSync(cand) && !fs.existsSync(rootResultsPathCheck)) {
                 try { fs.copyFileSync(cand, rootResultsPathCheck); break; } catch { }
             }
         }
@@ -181,7 +191,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         // Root project execution
         let targetArg = "";
         if (Array.isArray(specificFiles) && specificFiles.length > 0) {
-            targetArg = specificFiles.join(" ");
+            targetArg = specificFiles.map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
         }
 
         // Detect vitest config in project
@@ -199,7 +209,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
 
         const baseCmd = vitestCommand ? vitestCommand : `${resolveVitestBin(rootDir)} run`;
 
-        const coverageCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --globals --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=coverage/vitest-results.json`.replace(/\s+/g, " ").trim();
+        const coverageCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --globals --testTimeout=10000 --maxWorkers=2 --minWorkers=1 --coverage.enabled=true --coverage.provider=v8 ${coverageAllFlag} --coverage.reportsDirectory=${relCovDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --coverage.reportOnFailure=true --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 --reporter=default --reporter=json --outputFile=${relCovDir}/vitest-results.json`.replace(/\s+/g, " ").trim();
 
         await addJobLog(jobId, "INFO", `[VITEST] Running Vitest at rootDir: ${coverageCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
@@ -212,10 +222,16 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         });
 
         const vitestResultsPathCheck = path.join(rootCoverageDir, "vitest-results.json");
-        // If coverage failed (e.g. coverage provider mismatch), retry running vitest without coverage so test case results are still captured
-        if ((!result.success || !fs.existsSync(vitestResultsPathCheck)) && result.exitCode !== null) {
+        const vitestSummaryPathCheck = path.join(rootCoverageDir, "coverage-summary.json");
+        const hasCoverage = fs.existsSync(vitestSummaryPathCheck);
+        const combinedRootOutput = `${result?.stderr || ""}\n${result?.stdout || ""}`;
+        const isCoverageProviderCrash = /@vitest\/coverage|coverage provider|Failed to load coverage provider/i.test(combinedRootOutput);
+        // Only retry without coverage if vitest-results.json was not written or coverage provider itself crashed
+        const shouldFallback = (!fs.existsSync(vitestResultsPathCheck) || (!hasCoverage && isCoverageProviderCrash)) && result.exitCode !== null;
+        if (shouldFallback) {
             await addJobLog(jobId, "WARN", `[VITEST] Vitest coverage failed (exit ${result.exitCode}), retrying basic test mode to collect test results...`).catch(() => { });
-            const fallbackCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --reporter=json --outputFile=coverage/vitest-results.json`.replace(/\s+/g, " ").trim();
+            if (fs.existsSync(vitestResultsPathCheck)) fs.unlinkSync(vitestResultsPathCheck);
+            const fallbackCmd = `${baseCmd} ${configArg} ${targetArg} --globals --coverage.enabled=false --testTimeout=10000 --maxWorkers=2 --minWorkers=1 --passWithNoTests --reporter=default --reporter=json --outputFile=${relCovDir}/vitest-results.json`.replace(/\s+/g, " ").trim();
             const fallbackResult = await dockerRunner.run({
                 snapshotPath: rootDir,
                 command: fallbackCmd,
@@ -223,9 +239,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
                 jobId,
                 env: SHARED_ENV,
             });
-            if (fallbackResult.success || fs.existsSync(vitestResultsPathCheck)) {
-                result = fallbackResult;
-            }
+            result = fallbackResult;
         }
 
         // Backup to vitest-*

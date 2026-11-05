@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -22,7 +23,7 @@ const normalizeNumber = (value) => {
     return null;
 };
 
-const extractFilePath = (entry, key, rootDir) => {
+const extractFilePath = (entry, key, rootDir = "") => {
     if (!entry || typeof entry !== "object") {
         return null;
     }
@@ -43,10 +44,7 @@ const extractFilePath = (entry, key, rootDir) => {
         if (relative && relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative)) raw = relative;
     }
 
-    let norm = raw.replace(/\\/g, "/").replace(/^[a-zA-Z]:[\\/]/, "");
-    norm = norm.replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
-    norm = norm.replace(/^(?:.*?\/)?repo\//i, "");
-    return norm.replace(/^\/+/, "");
+    return canonicalizeFilePath(raw, rootDir);
 };
 
 const extractFunctionRowsFromIstanbul = (entry, snapshotId, filePath, rootDir = null) => {
@@ -231,15 +229,26 @@ export const parseCoverageFunctionsForSnapshot = async ({
 
     const functionRows = getFunctionCoverageRecords(coverageReport, snapshotId, snapshot.rootDir);
 
+    const dedupedFuncsMap = new Map();
+    for (const f of functionRows) {
+        const key = `${f.filePath}::${f.functionName}::${f.startLine}`;
+        if (!dedupedFuncsMap.has(key)) {
+            dedupedFuncsMap.set(key, f);
+        } else {
+            const existing = dedupedFuncsMap.get(key);
+            existing.hit = Math.max(existing.hit || 0, f.hit || 0);
+        }
+    }
+    const uniqueFunctionRows = Array.from(dedupedFuncsMap.values());
 
     const persist = async tx => {
         await tx.coverageFunction.deleteMany({
             where: { snapshotId },
         });
 
-        if (functionRows.length > 0) {
+        if (uniqueFunctionRows.length > 0) {
             await tx.coverageFunction.createMany({
-                data: functionRows,
+                data: uniqueFunctionRows,
                 skipDuplicates: true,
             });
         }
@@ -248,7 +257,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
     else await prisma.$transaction(persist);
 
     return {
-        totalFunctions: functionRows.length,
-        functions: functionRows,
+        totalFunctions: uniqueFunctionRows.length,
+        functions: uniqueFunctionRows,
     };
 };

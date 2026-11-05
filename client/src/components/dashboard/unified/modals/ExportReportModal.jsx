@@ -114,7 +114,7 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
                 Export Unified Quality Report
               </h2>
               <p className="text-[11px] text-[var(--ud-text-muted)] font-mono">
-                Project: {vm?.context?.projectName || "CovAI"} • Snapshot: {(vm?.context?.snapshotId || "N/A").slice(0, 8)} • Mode: {vm?.dataMode === "demo" ? "Demo Showcase" : "Live State"}
+                Project: {vm?.context?.projectName || "CovAI"} • Snapshot: {(vm?.context?.snapshotId || "N/A").slice(0, 8)}
               </p>
             </div>
           </div>

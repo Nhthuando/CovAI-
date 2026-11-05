@@ -15,6 +15,7 @@ const kinds = new Set(['WRITE_FILE', 'CREATE_FILE', 'CREATE_FOLDER', 'RENAME_ENT
 export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, capability = 'files.write',
     kind, path: filePath, newPath, content, expectedVersion, expectedWorkspaceRevision,
     requestId = randomUUID(), db = prisma, afterMutation }) => {
+    if (!snapshotId) snapshotId = (await db.projectSnapshot.findFirst({ where: { projectId }, orderBy: { createdAt: 'desc' }, select: { id: true } }))?.id;
     if (!snapshotId) throw projectFileError('FILE_VERSION_REQUIRED', 'An explicit snapshot is required', 428);
     if (!kinds.has(kind)) throw projectFileError('UNSUPPORTED_MUTATION', 'Unsupported workspace mutation', 400);
     if (typeof requestId !== 'string' || !requestId || requestId.length > 200) throw projectFileError('INVALID_REQUEST_ID', 'Invalid mutation request identifier', 400);
@@ -25,7 +26,7 @@ export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, ca
     if (['WRITE_FILE', 'APPLY_TEST'].includes(kind) && (!Number.isSafeInteger(expectedVersion?.revision) || typeof expectedVersion?.sha256 !== 'string')) {
         throw projectFileError('FILE_VERSION_REQUIRED', 'Read the current file version before saving', 428);
     }
-    if (!['WRITE_FILE', 'APPLY_TEST'].includes(kind) && !Number.isSafeInteger(expectedWorkspaceRevision)) {
+    if (!['WRITE_FILE', 'APPLY_TEST'].includes(kind) && expectedWorkspaceRevision !== undefined && !Number.isSafeInteger(expectedWorkspaceRevision)) {
         throw projectFileError('FILE_VERSION_REQUIRED', 'Read the current workspace revision before changing its structure', 428);
     }
     const inputHash = hashOperationInput({snapshotId,kind,path:filePath,newPath,content,expectedVersion,expectedWorkspaceRevision});

@@ -10,7 +10,7 @@ import { findTestsImportingSource, countTestCases } from "./testDependencyResolv
  * Normalizes file paths across Windows/Linux, stripping leading slashes and dot-slashes.
  */
 export const normalizePath = (p = "") => {
-    return p.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
+    return p.replace(/[\\/]+/g, "/").replace(/^\.?\//, "").trim();
 };
 
 /**
@@ -22,6 +22,25 @@ export const cleanRelativePath = (rootDir, targetPath) => {
     if (rootDir) {
         const normRoot = normalizePath(rootDir);
         if (norm.startsWith(normRoot)) return norm.slice(normRoot.length).replace(/^\/+/, "");
+        if (norm.toLowerCase().startsWith(normRoot.toLowerCase())) return norm.slice(normRoot.length).replace(/^\/+/, "");
+
+        try {
+            if (fs.existsSync(path.join(rootDir, norm))) {
+                norm = norm.replace(/[\\/]+/g, "/");
+    return norm.replace(/^\/+/, "");
+            }
+        } catch (_) {}
+
+        const rootUploadIdx = normRoot.indexOf("uploads/snapshots/");
+        const targetUploadIdx = norm.indexOf("uploads/snapshots/");
+        if (rootUploadIdx !== -1 && targetUploadIdx !== -1) {
+            const rootSub = normRoot.slice(rootUploadIdx);
+            const targetSub = norm.slice(targetUploadIdx);
+            if (targetSub.startsWith(rootSub)) {
+                return targetSub.slice(rootSub.length).replace(/^\/+/, "");
+            }
+        }
+
         const rootStorageIdx = normRoot.indexOf("storage/projects/");
         const targetStorageIdx = norm.indexOf("storage/projects/");
         if (rootStorageIdx !== -1 && targetStorageIdx !== -1) {
@@ -31,14 +50,31 @@ export const cleanRelativePath = (rootDir, targetPath) => {
                 return targetSub.slice(rootSub.length).replace(/^\/+/, "");
             }
         }
-        const testMatch = norm.match(/(?:tests?|__tests__|src)\/[^:\s\r\n]+\.(?:test|spec)\.[cm]?[jt]sx?/);
-        if (testMatch) {
-            return testMatch[0];
+
+        const rootBase = path.basename(normRoot);
+        if (rootBase && (norm.startsWith(rootBase + "/") || norm.toLowerCase().startsWith(rootBase.toLowerCase() + "/"))) {
+            const candidateStripped = norm.slice(rootBase.length).replace(/^\/+/, "");
+            try {
+                if (fs.existsSync(path.join(rootDir, candidateStripped))) {
+                    return candidateStripped;
+                }
+            } catch (_) {}
+            norm = candidateStripped;
+        }
+
+        const hasSubpackagePrefix = /^(?:server|client|backend|frontend|packages\/[^/]+|apps\/[^/]+)\//i.test(norm);
+        if (!hasSubpackagePrefix) {
+            const testMatch = norm.match(/(?:tests?|__tests__|src)\/[^:\s\r\n]+\.(?:test|spec)\.[cm]?[jt]sx?/);
+            if (testMatch) {
+                return testMatch[0];
+            }
         }
     }
-    norm = norm.replace(/^[a-zA-Z]:[\\/]/, "");
+    norm = norm.replace(/^[a-zA-Z]:[\\/]+/, "");
     norm = norm.replace(/^.*?\/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
+    norm = norm.replace(/^.*?\/uploads\/snapshots\/[^/]+\/[^/]+\//i, "");
     norm = norm.replace(/^.*?\/repo\//i, "");
+    norm = norm.replace(/[\\/]+/g, "/");
     return norm.replace(/^\/+/, "");
 };
 
@@ -46,12 +82,13 @@ export const cleanRelativePath = (rootDir, targetPath) => {
  * Checks if a candidate path from Istanbul coverage or stack traces matches the target file.
  */
 export const matchesFilePath = (candidatePath = "", targetPath = "") => {
-    const normCandidate = cleanRelativePath(null, candidatePath);
-    const normTarget = cleanRelativePath(null, targetPath);
+    const normCandidate = cleanRelativePath(null, candidatePath).replace(/[\\/]+/g, "/");
+    const normTarget = cleanRelativePath(null, targetPath).replace(/[\\/]+/g, "/");
     if (!normCandidate || !normTarget) return false;
     return normCandidate === normTarget ||
         normCandidate.endsWith("/" + normTarget) ||
-        normTarget.endsWith("/" + normCandidate);
+        normTarget.endsWith("/" + normCandidate) ||
+        (path.basename(normCandidate) === path.basename(normTarget) && (normCandidate.includes(normTarget) || normTarget.includes(normCandidate)));
 };
 
 /**
@@ -106,15 +143,14 @@ export const extractLineCoverage = (fileCoverageData, assertionFailures = {}) =>
     const lineStatements = {};
     const lineBranches = {};
 
-    // 1. Map statements to lines
+    // 1. Map statements to lines (Istanbul standard: each statement is mapped to its start line)
     if (fileCoverageData.statementMap && fileCoverageData.s) {
         for (const [id, range] of Object.entries(fileCoverageData.statementMap)) {
             const hits = fileCoverageData.s[id] ?? 0;
-            const startLine = range.start?.line || 1;
-            const endLine = range.end?.line || startLine;
-            for (let l = startLine; l <= endLine; l++) {
-                if (!lineStatements[l]) lineStatements[l] = [];
-                lineStatements[l].push(hits);
+            const startLine = range.start?.line;
+            if (startLine) {
+                if (!lineStatements[startLine]) lineStatements[startLine] = [];
+                lineStatements[startLine].push(hits);
             }
         }
     }
@@ -127,12 +163,9 @@ export const extractLineCoverage = (fileCoverageData, assertionFailures = {}) =>
                 branch.locations.forEach((loc, idx) => {
                     const hits = counts[idx] ?? 0;
                     const startLine = loc.start?.line || branch.line;
-                    const endLine = loc.end?.line || startLine;
                     if (startLine) {
-                        for (let l = startLine; l <= endLine; l++) {
-                            if (!lineBranches[l]) lineBranches[l] = [];
-                            lineBranches[l].push(hits);
-                        }
+                        if (!lineBranches[startLine]) lineBranches[startLine] = [];
+                        lineBranches[startLine].push(hits);
                     }
                 });
             } else if (branch.line) {
@@ -173,17 +206,26 @@ export const extractLineCoverage = (fileCoverageData, assertionFailures = {}) =>
 
         const hasZeroStmt = stmtHits.some(h => h === 0);
         const hasZeroBranch = branchHits.some(h => h === 0);
+        const maxHits = stmtHits.length ? Math.max(...stmtHits) : (branchHits.length ? Math.max(...branchHits) : 0);
 
-        if (hasZeroStmt || hasZeroBranch) {
+        if (hasZeroStmt || maxHits === 0) {
             lines[lineNum] = {
                 status: "uncovered",
                 icon: "⚑",
                 reason: hasZeroBranch && !hasZeroStmt ? "Uncovered branch" : "Uncovered statement",
-                hits: stmtHits.length ? Math.max(...stmtHits) : 0
+                hits: 0
             };
             uncoveredLines.push(lineNum);
-        } else if (stmtHits.length > 0 && stmtHits.every(h => h > 0)) {
-            const maxHits = Math.max(...stmtHits);
+        } else if (hasZeroBranch) {
+            lines[lineNum] = {
+                status: "partially_covered",
+                icon: "⚑",
+                reason: "Uncovered branch",
+                hits: maxHits,
+                hasUncoveredBranch: true
+            };
+            coveredLines.push(lineNum);
+        } else if (maxHits > 0) {
             lines[lineNum] = {
                 status: "covered",
                 icon: "✓",
@@ -500,6 +542,7 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
             fullConditionText: rawLine.slice(0, 160),
             totalHits,
             status,
+            counts: Array.isArray(counts) ? counts : [],
             missedTrue,
             missedFalse,
             uncoveredPathsCount,
@@ -660,15 +703,16 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     const subprojectPrefix = isMultiPackage && parts.length > 2 ? parts.slice(0, 2).join("/") : "";
 
     // Calculate default new test path
-    let defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
+    const defaultTestFileName = framework === "vitest" ? `${baseName}.vitest.test${ext}` : `${baseName}.test${ext}`;
+    let defaultNewTestPath = normalizePath(path.join("tests", defaultTestFileName));
     const hasTestsUnit = fs.existsSync(path.join(rootDir, "tests", "unit"));
     if (dirName.includes("src")) {
         const subRel = dirName.replace(/^src\/?/, "");
         defaultNewTestPath = hasTestsUnit
-            ? normalizePath(`tests/unit/${subRel}/${baseName}.test${ext}`.replace(/\/+/g, "/"))
-            : normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
+            ? normalizePath(`tests/unit/${subRel}/${defaultTestFileName}`.replace(/\/+/g, "/"))
+            : normalizePath(dirName.replace("src", "tests") + `/${defaultTestFileName}`);
     } else if (hasTestsUnit) {
-        defaultNewTestPath = normalizePath(`tests/unit/${baseName}.test${ext}`);
+        defaultNewTestPath = normalizePath(`tests/unit/${defaultTestFileName}`);
     }
     if (framework === "vitest" && fs.existsSync(path.join(rootDir, defaultNewTestPath))) {
         const existing = fs.readFileSync(path.join(rootDir, defaultNewTestPath), "utf8");
@@ -823,9 +867,10 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
                 const fullP = path.join(rootDir, cand);
                 if (fs.existsSync(fullP)) {
                     const content = fs.readFileSync(fullP, "utf8");
-                    // A convention match must not repurpose an explicitly Jest
-                    // suite as the target of a Vitest proposal.
-                    if (!/vitest/i.test(cand) && /\bjest\b|@jest\/globals/i.test(content) && !/\bvitest\b/i.test(content)) continue;
+const hasVitestInName = cand.includes(".vitest.") || cand.includes("vitest.test") || cand.includes("vitest.spec") || /vitest/i.test(cand);
+                    if (!hasVitestInName && (!content.includes("vitest") || (/\bjest\b|@jest\/globals/i.test(content) && !/\bvitest\b/i.test(content)))) {
+                        continue;
+                    }
                     const rel = normalizePath(cand);
                     linkedMap.set(rel, {
                         found: true,
@@ -995,22 +1040,68 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const linkedTestFiles = associatedInfo.linkedTestFiles;
 
     const getDiskSourceCode = () => {
+        const base = path.basename(rootDir);
         const candidatePaths = [
             path.join(rootDir, cleanPath),
             path.join(rootDir, targetFilePath),
+            path.join(path.dirname(rootDir), targetFilePath),
+            path.join(path.dirname(rootDir), cleanPath),
             targetFilePath,
+            cleanPath,
             path.join(rootDir, "src", path.basename(cleanPath))
         ];
+        if (targetFilePath.startsWith(base + "/") || targetFilePath.startsWith(base + "\\")) {
+            candidatePaths.push(path.join(rootDir, targetFilePath.slice(base.length + 1)));
+        }
+        if (cleanPath.startsWith(base + "/") || cleanPath.startsWith(base + "\\")) {
+            candidatePaths.push(path.join(rootDir, cleanPath.slice(base.length + 1)));
+        }
         for (const cp of candidatePaths) {
             if (cp && fs.existsSync(cp)) {
-                try { return fs.readFileSync(cp, "utf8"); } catch {}
+                try {
+                    if (!fs.statSync(cp).isDirectory()) {
+                        return fs.readFileSync(cp, "utf8");
+                    }
+                } catch {}
             }
         }
         return "";
     };
 
+    const isAlienCoverage = (data, p) => {
+        if (!data || typeof data !== "object") return true;
+        const keys = Object.keys(data);
+        if (keys.length === 0) return true;
+        if (p === path.join(rootDir, "coverage", "unit", "coverage-final.json") ||
+            p === path.join(rootDir, "coverage", "integration", "coverage-final.json") ||
+            p === path.join(rootDir, "coverage", "coverage-final.json")) {
+            return false;
+        }
+        const normRoot = rootDir.replace(/\\/g, "/");
+        const rootBase = path.basename(rootDir);
+        const hasMatchingPath = keys.some(k => {
+            const normK = k.replace(/\\/g, "/");
+            return normK.startsWith(normRoot) || normK.includes(rootBase);
+        });
+        if (!hasMatchingPath && keys.some(k => /^[a-zA-Z]:[\\/]/.test(k))) {
+            return true;
+        }
+        return false;
+    };
+
+    const targetSubpackage = targetFilePath.replace(/[\\/]+/g, "/").split("/")[0];
     const candidateCoveragePaths = [
+        path.join(rootDir, "coverage", "unit", "coverage-final.json"),
+        path.join(rootDir, "coverage", "integration", "coverage-final.json"),
+        path.join(rootDir, "coverage", "system", "coverage-final.json"),
         path.join(rootDir, "coverage", "coverage-final.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "unit", "coverage-final.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "coverage-final.json"),
+        path.join(rootDir, targetSubpackage, "coverage-final.json"),
+        path.join(rootDir, path.dirname(targetFilePath), "coverage", "coverage-final.json"),
+        path.join(rootDir, "server", "coverage", "coverage-final.json"),
+        path.join(rootDir, "client", "coverage", "coverage-final.json"),
+        path.join(rootDir, "backend", "coverage", "coverage-final.json"),
         path.join(rootDir, "coverage-final.json")
     ];
 
@@ -1018,7 +1109,12 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     for (const p of candidateCoveragePaths) {
         if (fs.existsSync(p)) {
             try {
-                coverageData = JSON.parse(fs.readFileSync(p, "utf8"));
+                const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+                if (isAlienCoverage(parsed, p)) {
+                    console.warn(`[fileCoverage] Ignoring alien/stale coverage artifact from external machine: ${p}`);
+                    continue;
+                }
+                coverageData = parsed;
                 break;
             } catch (err) {
                 console.warn(`[fileCoverage] Failed parsing ${p}:`, err.message);
@@ -1029,6 +1125,10 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     // Check test-results.json
     const candidateResultPaths = [
         path.join(rootDir, "coverage", "test-results.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "test-results.json"),
+        path.join(rootDir, "server", "coverage", "test-results.json"),
+        path.join(rootDir, "client", "coverage", "test-results.json"),
+        path.join(rootDir, "backend", "coverage", "test-results.json"),
         path.join(rootDir, "coverage", "test-result.json"),
         path.join(rootDir, "test-results.json"),
         path.join(rootDir, "test-result.json")
@@ -1132,7 +1232,16 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     // Read official summary from coverage-summary.json or prisma.coverageFile
     let officialSummary = null;
     const summaryCandidatePaths = [
+        path.join(rootDir, "coverage", "unit", "coverage-summary.json"),
+        path.join(rootDir, "coverage", "integration", "coverage-summary.json"),
+        path.join(rootDir, "coverage", "system", "coverage-summary.json"),
         path.join(rootDir, "coverage", "coverage-summary.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "unit", "coverage-summary.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "coverage-summary.json"),
+        path.join(rootDir, targetSubpackage, "coverage-summary.json"),
+        path.join(rootDir, "server", "coverage", "coverage-summary.json"),
+        path.join(rootDir, "client", "coverage", "coverage-summary.json"),
+        path.join(rootDir, "backend", "coverage", "coverage-summary.json"),
         path.join(rootDir, "coverage", "jest-coverage-summary.json"),
         path.join(rootDir, "coverage", "vitest-coverage-summary.json"),
         path.join(rootDir, "coverage-summary.json")
@@ -1184,21 +1293,6 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const funcsCovered = officialSummary?.functions?.covered ?? rawFuncsCovered;
     const funcsPct = officialSummary?.functions?.pct ?? (dbCoverageFile?.funcsPct ?? calcPct(funcsCovered, funcsTotal));
 
-    // If branches are not 100% covered, make sure branch lines are registered in uncoveredLines
-    if (branchesPct < 100 && matchedFileCoverage.branchMap) {
-        for (const [id, branch] of Object.entries(matchedFileCoverage.branchMap)) {
-            const bLine = branch.line || branch.loc?.start?.line;
-            if (bLine && !lineCoverage.uncoveredLines.includes(bLine)) {
-                lineCoverage.uncoveredLines.push(bLine);
-                lineCoverage.lines[bLine] = {
-                    status: "uncovered",
-                    icon: "⚑",
-                    reason: `Uncovered branch (${branchesCovered}/${branchesTotal} branches covered, ${branchesPct}%)`,
-                    hits: 0
-                };
-            }
-        }
-    }
 
     const summary = {
         linesPct,

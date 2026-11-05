@@ -28,7 +28,12 @@ export const useSocket = (userId, onNotification) => {
     try {
       token ||= JSON.parse(localStorage.getItem("user") || "null")?.token;
     } catch { /* An expired session reconnects after login. */ }
-    const socket = io(SOCKET_URL, { auth: { token } });
+    const socket = io(SOCKET_URL, {
+      auth: { token },
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+    });
     socketRef.current = socket;
 
     socket.on("connect", () => {

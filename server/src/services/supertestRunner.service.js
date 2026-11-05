@@ -92,6 +92,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     const testArgs = normalizedFiles.map(quoteForShell).join(" ");
     const usesEsm = shouldUseNodeJestDirect(resolvedRoot);
     const nodePathCandidates = [
+        "/app/node_modules",
         path.join(resolvedRoot, "node_modules"),
         path.join(resolvedRoot, "server", "node_modules"),
         path.join(resolvedRoot, "backend", "node_modules"),
@@ -111,7 +112,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     };
     const jestBinary = "npx --no-install jest";
 
-    const coverageDir = path.join(resolvedRoot, "coverage");
+    const coverageDir = path.join(resolvedRoot, "coverage", "integration");
     if (!fs.existsSync(coverageDir)) {
         fs.mkdirSync(coverageDir, { recursive: true });
     }
@@ -142,11 +143,14 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         console.warn("[SupertestRunner] Could not create database setup file:", setupErr.message);
     }
 
-    let jestCmd = `${jestBinary} --runInBand --testEnvironment=node --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000${setupArgs}`;
+    const relCovDir = path.relative(resolvedRoot, coverageDir).replace(/\\/g, "/") || "coverage/integration";
+    let jestCmd = `${jestBinary} --runInBand --testEnvironment=node --coverage --coverageDirectory="${relCovDir}" --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000${setupArgs}`;
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {
-        const resolvedConfig = path.resolve(jestConfigPath);
+        const resolvedConfig = path.isAbsolute(jestConfigPath)
+            ? jestConfigPath
+            : path.resolve(resolvedRoot, jestConfigPath);
         const relativeConfig = path.relative(resolvedRoot, resolvedConfig).replace(/\\/g, "/");
         const lowerConfig = relativeConfig.toLowerCase();
 
@@ -168,6 +172,13 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     }
 
     await addJobLog(jobId, "INFO", "[SUPERTEST] Starting isolated integration tests.").catch(() => { });
+
+    // Automatically generate Prisma Client if project uses Prisma
+    try {
+        const { detectAndRunPrismaGenerate } = await import("./runTestsJob.service.js");
+        await detectAndRunPrismaGenerate(jobId, resolvedRoot);
+    } catch (_) { }
+
     const startedAt = Date.now();
     let result;
     const abortSignal = options?.signal || getJobAbortSignal(jobId);
@@ -195,6 +206,9 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         stdout: result.stdout ?? "",
         stderr: result.stderr ?? "",
         executionTimeMs: Date.now() - startedAt,
-        coverageDir: path.join(resolvedRoot, "coverage"),
+        coverageDir,
     };
 };
+
+export const runSupertestTests = runSupertest;
+

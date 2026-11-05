@@ -27,8 +27,18 @@ export const cleanStoragePath = (p) => {
         return repoMatch[1].replace(/^\/+/, "");
     }
 
+    // 1b. Match .covai-temp/collaboration-operations/<id>/<file>
+    const collabMatch = clean.match(/(?:^|\/)\.?covai-temp\/collaboration-operations\/[^/]+\/(.+)$/i);
+    if (collabMatch) {
+        return collabMatch[1].replace(/^\/+/, "");
+    }
+    const tempMatch = clean.match(/(?:^|\/)\.?covai-temp\/[^/]+\/(.+)$/i);
+    if (tempMatch) {
+        return tempMatch[1].replace(/^\/+/, "");
+    }
+
     // 2. If it is exactly the repo root or storage directory without relative file
-    if (/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*)\/?$/i.test(clean)) {
+    if (/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*|\.?covai-temp(?:\/[^/]+)*)\/?$/i.test(clean)) {
         return "";
     }
 
@@ -36,6 +46,16 @@ export const cleanStoragePath = (p) => {
     const covMatch = clean.match(/(?:^|\/)storage\/projects\/[^/]+\/snapshots\/[^/]+\/coverage\/(.+)$/i);
     if (covMatch) {
         return covMatch[1].replace(/^\/+/, "");
+    }
+
+    // 3b. Match uploads/snapshots/<snapshotId>/<projectName>/<file>
+    const uploadProjMatch = clean.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/[^/]+\/(.+)$/i);
+    if (uploadProjMatch) {
+        return uploadProjMatch[1].replace(/^\/+/, "");
+    }
+    const uploadDirectMatch = clean.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/(.+)$/i);
+    if (uploadDirectMatch) {
+        return uploadDirectMatch[1].replace(/^\/+/, "");
     }
 
     // 4. Fallback: match storage/projects/<projectId>/.../<target>
@@ -46,7 +66,10 @@ export const cleanStoragePath = (p) => {
 
     // 5. Strip drive letters and docker root prefix
     clean = clean.replace(/^[a-zA-Z]:\//, "");
-    clean = clean.replace(/^\/app\/storage\/?/i, "");
+    clean = clean.replace(/^\/app\/(?:storage|uploads|\.?covai-temp)\/?/i, "");
+    clean = clean.replace(/^app\/(?:storage|uploads|\.?covai-temp)\/?/i, "");
+    clean = clean.replace(/^\/app\//i, "");
+    clean = clean.replace(/^app\//i, "");
     return clean.replace(/^\/+/, "");
 };
 
@@ -66,9 +89,49 @@ export const cleanStorageText = (text) => {
     if (!text || typeof text !== "string") return text;
     let cleaned = text
         .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]storage[\\/]projects[\\/][^ \t\r\n'\"()]+(?:[\\/][^ \t\r\n'\"()]+)*?[\\/]repo[\\/]/gi, "")
+        .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]\.?covai-temp[\\/]collaboration-operations[\\/][^ \t\r\n'\"()]+[\\/]/gi, "")
+        .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]\.?covai-temp[\\/][^ \t\r\n'\"()]+[\\/]/gi, "")
         .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/repo\//gi, "")
         .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/snapshots\/[^\s'\"()]+\/coverage\//gi, "")
         .replace(/(?:\/app)?\/storage\/projects\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*\/?/gi, "")
-        .replace(/\/app\/storage\/?/gi, "");
+        .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]uploads[\\/]snapshots[\\/][^ \t\r\n'\"()]+[\\/][^ \t\r\n'\"()]+[\\/]/gi, "")
+        .replace(/(?:\/app)?\/uploads\/snapshots\/[^\s'\"()]+\/[^\s'\"()]+\//gi, "")
+        .replace(/\/app\/(?:storage|uploads|\.?covai-temp)\/?/gi, "")
+        .replace(/^app\/(?:storage|uploads|\.?covai-temp)\/?/gi, "");
     return cleaned;
+};
+
+/**
+ * Canonicalizes a file path so that paths within the project are consistently represented.
+ * If rootDir points to a subpackage under repo (e.g. ".../repo/backend"), and filePath is "src/...",
+ * canonicalizes to "backend/src/...".
+ * If filePath has full storage or container prefix, cleanly normalizes to repository-relative format.
+ *
+ * @param {string} p
+ * @param {string} [rootDir]
+ * @returns {string}
+ */
+export const canonicalizeFilePath = (p, rootDir = "") => {
+    if (!p || typeof p !== "string") return "";
+    let clean = cleanStoragePath(p);
+    if (!clean) return "";
+
+    if (rootDir) {
+        const normRoot = rootDir.replace(/\\/g, "/").replace(/^\.?\//, "").replace(/\/+$/, "");
+        const normP = p.replace(/\\/g, "/").replace(/^\.?\//, "");
+        if (normP.toLowerCase().startsWith(normRoot.toLowerCase() + "/")) {
+            clean = normP.slice(normRoot.length + 1).replace(/^\/+/, "");
+        }
+        const subPkgMatch = normRoot.match(/(?:^|\/)repo\/([^/]+)/i);
+        if (subPkgMatch) {
+            const subPkg = subPkgMatch[1];
+            const excludedSubPkgs = new Set(["src", "tests", "test", "__tests__", "lib", "dist", "build"]);
+            if (!excludedSubPkgs.has(subPkg.toLowerCase())) {
+                if (!clean.startsWith(subPkg + "/") && !clean.startsWith("repo/")) {
+                    clean = `${subPkg}/${clean}`;
+                }
+            }
+        }
+    }
+    return clean.replace(/\\/g, "/").replace(/^\.?\//, "");
 };

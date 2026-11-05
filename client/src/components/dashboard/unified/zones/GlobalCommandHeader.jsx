@@ -1,45 +1,70 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Play, Sparkles, Download, GitBranch, Clock, Database, Layers, ArrowLeftRight } from "lucide-react";
+import { Play, Sparkles, Download, GitBranch, Clock, RefreshCw } from "lucide-react";
+import { useToast } from "../../ToastContext.jsx";
 import { QualityGateBadge } from "../primitives/QualityGateBadge.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
-import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import { ExportReportModal } from "../modals/ExportReportModal.jsx";
 import { Button } from "../../../common/Button.jsx";
 import ConfirmDialog from "../../../common/ConfirmDialog.jsx";
 import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
-import { MOCK_SNAPSHOT_PRESETS } from "../../../../services/unifiedDashboard/unifiedDashboard.mock.js";
 
 export function GlobalCommandHeader({
   vm,
   projects = [],
   onSelectProject,
-  dataMode = "live",
-  onChangeDataMode,
   onSelectSnapshot,
   runAllState,
   onNavigateWorkspace,
+  isSyncing = false,
+  onForceRefresh = null,
   className = "",
 }) {
   const navigate = useNavigate();
+  const { addToast } = useToast?.() || {};
   const [showConfirmRun, setShowConfirmRun] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
 
+  const handleManualRefresh = async () => {
+    if (!onForceRefresh || isSyncing) return;
+    try {
+      await onForceRefresh();
+      addToast?.({
+        title: "Overview Synchronized",
+        message: "Unified quality metrics refreshed with latest backend state.",
+        type: "success",
+      });
+    } catch (err) {
+      addToast?.({
+        title: "Sync Failed",
+        message: err.message || "Failed to synchronize metrics.",
+        type: "error",
+      });
+    }
+  };
+
   const context = vm?.context || {};
   const qualityGate = vm?.qualityGate || {
-    status: "PASSED",
-    label: "READY TO RELEASE",
+    status: "UNVERIFIED",
+    label: "UNVERIFIED",
     reasons: [],
     checklist: [],
   };
 
-  // Merge project snapshots with preset snapshots so the Snapshot Selector Dropdown is always interactive
-  const rawSnapshots = Array.isArray(context.snapshots) && context.snapshots.length > 0
-    ? context.snapshots
-    : MOCK_SNAPSHOT_PRESETS;
+  // Real project snapshots only (zero mock presets)
+  const rawSnapshots = Array.isArray(context.snapshots) ? context.snapshots : [];
+  const snapshotOptions = rawSnapshots.map((s, idx) => {
+    const sha = s.commitSha ? s.commitSha.slice(0, 7) : s.id.slice(0, 8);
+    const branchOrSource = s.branch || s.source || (idx === 0 ? "latest" : "");
+    return {
+      id: s.id,
+      label: s.label || sha,
+      branch: branchOrSource,
+      createdAt: s.createdAt,
+    };
+  });
 
-  const snapshotOptions = [...rawSnapshots];
   if (
     context.snapshotId &&
     !snapshotOptions.some((s) => s.id === context.snapshotId)
@@ -49,11 +74,6 @@ export function GlobalCommandHeader({
       label: context.snapshotId.slice(0, 8),
       branch: "active",
     });
-  }
-  for (const preset of MOCK_SNAPSHOT_PRESETS) {
-    if (!snapshotOptions.some((s) => s.id === preset.id)) {
-      snapshotOptions.push(preset);
-    }
   }
 
   const { runAll, isRunning, stepStates, cancelRemaining } = runAllState || {};
@@ -73,7 +93,7 @@ export function GlobalCommandHeader({
       className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 shadow-xs transition-colors ${className}`}
     >
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-        {/* Left: Project title, Snapshot Dropdown & Data Mode Switcher */}
+        {/* Left: Project title & Real Snapshot Dropdown */}
         <div className="flex flex-wrap items-center gap-3 min-w-0">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -82,8 +102,8 @@ export function GlobalCommandHeader({
               </h1>
               {/* Quick Project Switcher Dropdown */}
               <select
-                aria-label="Quick Project Switcher"
-                value={context.projectId || ""}
+                aria-label="Switch Active Project"
+                value=""
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val === "__portfolio__") {
@@ -92,19 +112,22 @@ export function GlobalCommandHeader({
                     if (onSelectProject) {
                       onSelectProject(val);
                     } else {
-                      navigate(`/main-editor?projectId=${val}&tab=overview`);
+                      navigate(`/main-editor?projectId=${val}&tab=explorer`);
                     }
                   }
                 }}
-                className="font-mono text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] py-0.5 px-2 focus:outline-hidden focus:border-[var(--ud-unit)] cursor-pointer"
+                className="font-mono text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] py-0.5 px-2 focus:outline-hidden focus:border-[var(--ud-unit)] cursor-pointer"
                 title="Switch active project or return to Portfolio"
               >
-                <option value="__portfolio__">⇄ View All Projects Portfolio</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    ● {p.name}
-                  </option>
-                ))}
+                <option value="" disabled>⇄ Switch Project…</option>
+                <option value="__portfolio__">📁 View All Projects Portfolio</option>
+                {projects
+                  .filter((p) => p.id !== context.projectId)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      ● {p.name}
+                    </option>
+                  ))}
               </select>
               <span className="text-[11px] font-mono text-[var(--ud-text-muted)] bg-[var(--ud-surface-2)] px-1.5 py-0.5 rounded border border-[var(--ud-border)] select-none">
                 Unified Quality Overview
@@ -122,44 +145,62 @@ export function GlobalCommandHeader({
                   id="ud-snapshot-select"
                   value={context.snapshotId || snapshotOptions[0]?.id || ""}
                   onChange={(e) => onSelectSnapshot?.(e.target.value)}
-                  className="font-mono text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] py-0.5 px-2 focus:outline-hidden focus:border-[var(--ud-unit)] cursor-pointer"
+                  disabled={snapshotOptions.length === 0}
+                  className="font-mono text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] py-0.5 px-2 focus:outline-hidden focus:border-[var(--ud-unit)] cursor-pointer disabled:opacity-50"
                 >
-                  {snapshotOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {(s.label || s.id).slice(0, 8)} {s.branch ? `(${s.branch})` : ""}
-                    </option>
-                  ))}
+                  {snapshotOptions.length > 0 ? (
+                    snapshotOptions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {(s.label || s.id).slice(0, 8)} {s.branch ? `(${s.branch})` : ""}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No snapshots available</option>
+                  )}
                 </select>
               </div>
 
               <span className="text-[var(--ud-border)] hidden sm:inline">•</span>
 
-              {/* Last Updated */}
-              <div className="inline-flex items-center gap-1">
-                <Clock size={12} className="shrink-0" />
-                <span>Updated {fmtRelativeTime(context.updatedAt)}</span>
+              {/* Last Updated & Hybrid Sync Button */}
+              <div className="inline-flex items-center gap-1.5">
+                <Clock size={12} className="shrink-0 text-[var(--ud-text-muted)]" />
+                <span className="text-xs text-[var(--ud-text-muted)] font-mono">
+                  Updated {fmtRelativeTime(context.updatedAt)}
+                </span>
+
+                {/* Circular Hybrid Sync Indicator / Force Refresh Button */}
+                <button
+                  type="button"
+                  id="ud-header-sync-btn"
+                  onClick={handleManualRefresh}
+                  disabled={isSyncing}
+                  aria-label="Force refresh and synchronize metrics"
+                  title={
+                    isSyncing
+                      ? "Syncing latest test metrics from backend..."
+                      : "Force refresh: Flush server cache & recompute all test metrics"
+                  }
+                  className={`inline-flex items-center justify-center w-5 h-5 rounded-full border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:border-[var(--ud-text-muted)] transition-all cursor-pointer disabled:cursor-not-allowed ${
+                    isSyncing
+                      ? "opacity-90 border-[var(--color-primary)]/50 text-[var(--color-primary)]"
+                      : "active:scale-95"
+                  }`}
+                >
+                  <RefreshCw
+                    size={11}
+                    className={`shrink-0 transition-transform ${
+                      isSyncing ? "animate-spin text-[var(--color-primary)]" : ""
+                    }`}
+                  />
+                </button>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right: Data Mode Switcher + Quality Gate Badge + Command Actions */}
+        {/* Right: Quality Gate Badge + Command Actions */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* Data Mode Switcher: Live State vs. Demo Showcase */}
-          {onChangeDataMode && (
-            <SegmentedFilter
-              idPrefix="ud-data-mode"
-              options={[
-                { label: "Live State", value: "live", icon: Database },
-                { label: "Demo Showcase", value: "demo", icon: Layers },
-              ]}
-              value={dataMode}
-              onChange={onChangeDataMode}
-              size="sm"
-            />
-          )}
-
-          <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
 
           {/* Quality Gate Status with 4-Condition Prerequisite Checklist Popover */}
           <QualityGateBadge

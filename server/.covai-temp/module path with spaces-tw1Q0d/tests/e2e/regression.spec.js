@@ -1,0 +1,1 @@
+import {test,expect} from '@playwright/test'; import {answer} from './helper.mjs';test('module resolution regression',async()=>{await test.step('Check imported helper',async()=>{expect(answer).toBe(42);});});

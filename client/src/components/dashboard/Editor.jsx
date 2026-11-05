@@ -33,9 +33,11 @@ import { useTheme } from "../../contexts/ThemeContext";
 import { GitPanel } from "./GitPanel";
 import {
   getFileContentApi,
+  getFileContentFromCache,
   updateFileContentApi,
 } from "../../services/project.service";
 import { getFileCoverage } from "../../services/coverage.service";
+import { resolveTestOrFunctionLine } from "../../services/navigation.service";
 import { EditorCodeSkeleton } from "../common/Skeleton";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useAuth } from "../../hooks/useAuth";
@@ -151,14 +153,8 @@ const EXT_LANG_MAP = {
   ".txt": "text",
 };
 
-export const isTestFile = (filePath) => {
-  if (!filePath) return false;
-  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  return (
-    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
-    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
-  );
-};
+import { isTestFile } from "./CoverageTypeDashboard.jsx";
+export { isTestFile };
 
 /* ── Tab Component (Reorderable with Drag & Drop) ────────── */
 function ReorderableTab({ tab, isActive, onSelect, onClose }) {
@@ -501,13 +497,30 @@ export default function Editor({
     }
   }, [draftUserId, projectId, snapshotId, fileContents]);
 
-  // Invalidate cache and reload current file when external sync occurs (e.g. Git pull / checkout)
+  // When an external sync occurs (e.g. Git pull / checkout), refresh the current active file
   useEffect(() => {
-    if (refreshTrigger) {
-      fetchedRef.current.clear();
-      setFileContents(previous => Object.fromEntries(Object.entries(previous).filter(([, file]) => file.draft !== undefined && file.draft !== file.content)));
+    if (refreshTrigger && activeTabId && projectId) {
+      fetchedRef.current.delete(activeTabId);
+      getFileContentApi(projectId, activeTabId, { snapshotId, forceFresh: true })
+        .then((res) => {
+          if (res?.data) {
+            setFileContents((prev) => ({
+              ...prev,
+              [activeTabId]: {
+                ...prev[activeTabId],
+                content: res.data.content,
+                version: res.data.version,
+                snapshotId: res.data.snapshotId,
+                workspaceRevision: res.data.workspaceRevision,
+                loading: false,
+                error: null,
+              },
+            }));
+          }
+        })
+        .catch(() => {});
     }
-  }, [refreshTrigger]);
+  }, [refreshTrigger, activeTabId, projectId, snapshotId]);
 
   // Coverage state
   const [fileCoverage, setFileCoverage] = useState(null);
@@ -539,8 +552,8 @@ export default function Editor({
 
     const editor = editorRef.current;
     const monaco = monacoRef.current;
-    const line = Math.max(1, Number(jumpTarget.line) || 1);
-    const endLine = Math.max(line, Number(jumpTarget.endLine) || line);
+    let line = Math.max(1, Number(jumpTarget.line) || 1);
+    let endLine = Math.max(line, Number(jumpTarget.endLine) || line);
 
     // Wait until model is available with loaded lines
     const model = editor.getModel();
@@ -549,6 +562,17 @@ export default function Editor({
     const fileText = currentFile.draft ?? currentFile.content;
     if (typeof fileText === "string" && fileText.length > 0 && model.getValueLength() === 0) {
       model.setValue(fileText);
+    }
+
+    // Auto-resolve exact line if target line is <= 1 and functionName or test title is provided
+    if ((!jumpTarget.line || Number(jumpTarget.line) <= 1) && jumpTarget.functionName) {
+      const content = model.getValue() || fileText || "";
+      const isCurrentTest = isTestFile(activeTabId);
+      const resolved = resolveTestOrFunctionLine(content, jumpTarget.functionName, isCurrentTest);
+      if (resolved && resolved > 0) {
+        line = resolved;
+        endLine = Math.max(line, Number(jumpTarget.endLine) || line);
+      }
     }
 
     const lineCount = model.getLineCount();
@@ -630,11 +654,36 @@ export default function Editor({
   useEffect(() => {
     if (!activeTabId || !projectId) return;
 
-    if (
-      fileContents[activeTabId]?.content !== undefined ||
-      fileContents[activeTabId]?.loading
-    )
+    // 1. If already loaded in state, nothing to do
+    if (fileContents[activeTabId]?.content !== undefined) return;
+
+    // 2. Synchronous cache check: instantaneous 0ms display without spinner
+    const cached = getFileContentFromCache(projectId, activeTabId, snapshotId);
+    if (cached && typeof cached.content === "string") {
+      let recovered = null;
+      try {
+        recovered = JSON.parse(
+          sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"
+        );
+      } catch {
+        /* ignore */
+      }
+      setFileContents((prev) => ({
+        ...prev,
+        [activeTabId]: {
+          content: cached.content,
+          version: recovered?.version || cached.version,
+          draft: typeof recovered?.draft === "string" ? recovered.draft : undefined,
+          snapshotId: cached.snapshotId,
+          workspaceRevision: cached.workspaceRevision,
+          loading: false,
+          error: null,
+        },
+      }));
       return;
+    }
+
+    if (fileContents[activeTabId]?.loading) return;
     if (fetchedRef.current.has(activeTabId)) return;
 
     fetchedRef.current.add(activeTabId);
@@ -647,7 +696,13 @@ export default function Editor({
     getFileContentApi(projectId, activeTabId, { snapshotId })
       .then((res) => {
         let recovered = null;
-        try { recovered = JSON.parse(sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"); } catch { /* Invalid local recovery data is ignored. */ }
+        try {
+          recovered = JSON.parse(
+            sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"
+          );
+        } catch {
+          /* ignore */
+        }
         setFileContents((prev) => ({
           ...prev,
           [activeTabId]: {
@@ -662,6 +717,7 @@ export default function Editor({
         }));
       })
       .catch((err) => {
+        fetchedRef.current.delete(activeTabId);
         setFileContents((prev) => ({
           ...prev,
           [activeTabId]: {
@@ -671,7 +727,7 @@ export default function Editor({
           },
         }));
       });
-  }, [activeTabId, projectId, snapshotId, fileContents, draftStorageKey]);
+  }, [activeTabId, projectId, snapshotId, draftStorageKey]);
 
   const currentFile = fileContents[activeTabId] || {};
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -1184,39 +1240,45 @@ export default function Editor({
               className="flex items-center gap-2 text-xs"
               style={{ fontFamily: "var(--font-mono)" }}
             >
-              <span
-                className="px-2 py-0.5 rounded"
+              <button
+                type="button"
+                onClick={() => onRunAnalysis?.()}
+                className="px-2 py-0.5 rounded cursor-pointer transition-opacity hover:opacity-80"
                 style={{
                   background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.linesPct),
                   border: "1px solid var(--color-border)",
                 }}
-                title="Line Coverage"
+                title="Line Coverage - Click to switch to Coverage Dashboard"
               >
                 Lines: {fileCoverage.summary.linesPct}%
-              </span>
-              <span
-                className="px-2 py-0.5 rounded"
+              </button>
+              <button
+                type="button"
+                onClick={() => onRunAnalysis?.()}
+                className="px-2 py-0.5 rounded cursor-pointer transition-opacity hover:opacity-80"
                 style={{
                   background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.branchesPct),
                   border: "1px solid var(--color-border)",
                 }}
-                title="Branch Coverage"
+                title="Branch Coverage - Click to switch to Coverage Dashboard"
               >
                 Branches: {fileCoverage.summary.branchesPct}%
-              </span>
-              <span
-                className="px-2 py-0.5 rounded"
+              </button>
+              <button
+                type="button"
+                onClick={() => onRunAnalysis?.()}
+                className="px-2 py-0.5 rounded cursor-pointer transition-opacity hover:opacity-80"
                 style={{
                   background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.stmtsPct),
                   border: "1px solid var(--color-border)",
                 }}
-                title="Statement Coverage"
+                title="Statement Coverage - Click to switch to Coverage Dashboard"
               >
                 Stmts: {fileCoverage.summary.stmtsPct}%
-              </span>
+              </button>
             </div>
           )}
 

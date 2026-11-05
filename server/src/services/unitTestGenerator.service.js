@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { generateText } from "./gemini.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
+import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
 import {
     computeRelativeImportPath,
@@ -10,6 +11,8 @@ import {
     findExistingTestFile,
     sanitizeSourceFilePath
 } from "./unitTestSuggestion.service.js";
+import { cleanAndDeduplicateTestContent, STATEMENT_SEPARATION_EXCLUSIONS, safeDecoupleInlineStatements, healBrokenCommentSplits, balanceTestFileBracesAndParens } from "./testSanitizer.service.js";
+import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
 
 /**
  * GIAI ĐOẠN 3: AI TEST GENERATION (SINH TEST THÔNG MINH QUA LLM)
@@ -44,6 +47,10 @@ export const buildStandardUnitTestPrompt = ({
 }) => {
     const isVitest = framework === "vitest";
     const isTest = Boolean(testFileInfo.found);
+    const runnerContract = isVitest
+        ? "Use ESM imports from 'vitest' and vi.fn/vi.spyOn/vi.mock. Never require('vitest') or use jest.*. Keep runner imports as ESM even when the source module uses CommonJS."
+        : "For ESM tests import { jest } from '@jest/globals' before using jest.*. For CommonJS tests use the injected jest global without redeclaring it.";
+    const pathContract = "Trace each input through normalization, validation/regex guards and early returns BEFORE choosing a later branch's expected result. An input rejected by an earlier guard cannot test a downstream result-type/error branch. Use an input accepted by all preceding guards, or isolate the real dependency with a supported mock. Never mock the function under test. Derive exact error messages from the reached return statement, not from the test title. Do not invent a passing test or weaken an assertion just to claim coverage of an unreachable branch.";
 
     const exportedSymbols = unitTestContext?.astMetadata?.exportedSymbolNames || [];
     const exportedSymbolsStr = exportedSymbols.length > 0 ? exportedSymbols.join(", ") : "All exported module members";
@@ -51,6 +58,9 @@ export const buildStandardUnitTestPrompt = ({
     const mockInstructionsStr = unitTestContext?.mockContracts?.mockInstructions || "";
     const decisionTableMarkdown = unitTestContext?.decisionTable?.decisionTableMarkdown || "";
     const decisionGuidanceStr = unitTestContext?.coverageGaps?.guidanceSummary || "No complex branching detected";
+    const cyclomaticComplexity = unitTestContext?.decisionTable?.summary?.cyclomaticComplexity ||
+        unitTestContext?.astMetadata?.cyclomaticComplexity ||
+        (1 + (unitTestContext?.astMetadata?.decisionPoints || []).length);
 
     const uncoveredLinesStr = formatLineRanges(coverageDetails?.uncoveredLines || []);
     const failedLinesStr = (coverageDetails?.failedLines || []).map(l => `Line ${l}: ${coverageDetails?.lines?.[l]?.error || "failed assertion"}`).join("\n") || "None";
@@ -78,15 +88,20 @@ which tests the source file: ${cleanSource}
 ### 1. ROLE DEFINITION & PROJECT CONTEXT
 - Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: globals describe, test, it, expect, jest are available globally. In CommonJS NEVER import or declare 'jest' (e.g. NEVER write const { jest } = require('@jest/globals') or const jest = ...), as 'jest' is already a global parameter."})
 - Target Test File: ${testFileInfo.relativePath} (Status: EXISTING FILE - MUST PRESERVE AND AUGMENT)
+- Runner API contract: ${runnerContract}
+- Branch reachability contract: ${pathContract}
 - Target Source File: ${cleanSource}
 
 ### 2. TARGET FILE & IMPORT CONTRACT
 - Source Module Import Path: "${cleanImportPath}" (e.g. import { ... } from '${cleanImportPath}';)
 - EXPORTED PUBLIC SYMBOLS (ONLY import and call these directly): ${exportedSymbolsStr}
 ${unexportedWarning}
+- MODEL SCHEMA INVARIANT: When testing Sequelize/Mongoose model definitions (e.g. defineVersionModel(sequelize)), ALWAYS import the exported function from "${cleanImportPath}". In expect(mockSequelize.define).toHaveBeenCalledWith(...) assertions, guarantee that every property object is properly closed with braces and comma (e.g. id: { type: ..., primaryKey: true },) before the next property or before the options object ({ tableName: ... }).
+- CUCUMBER / GHERKIN AST FIXTURE INVARIANT: When testing Cucumber/Gherkin functions or AST code-generation (e.g. ParsedFeature, ParsedScenario, ParsedStep), NEVER pass incomplete mock step or scenario objects. Every step object MUST contain { lineNumber, stepText: string, keyword: 'Given'|'When'|'Then' }. Every scenario object MUST contain { lineNumber, title: string, steps: ParsedStep[] }.
 
 ### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS
 - Current Coverage: Lines ${coverageDetails?.summary?.linesPct ?? 0}%, Branches ${coverageDetails?.summary?.branchesPct ?? 0}%, Functions ${coverageDetails?.summary?.funcsPct ?? 0}%, Statements ${coverageDetails?.summary?.stmtsPct ?? 0}%
+- Control Flow Graph Complexity: Cyclomatic Complexity (CC) = ${cyclomaticComplexity} (Basis Paths = ${cyclomaticComplexity})
 - Uncovered Lines in Source: ${uncoveredLinesStr}
 - Uncovered Functions (0 invocations):
 ${functionDetailsStr}
@@ -118,10 +133,11 @@ ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
    - Re-use the exact same mocks, fixtures, and beforeEach configurations already established.
-4. MANDATORY TEST MATRIX (DECISION TABLE) TO HIT >= 90% TO 100% COVERAGE:
-   Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
+4. MANDATORY TEST MATRIX (DECISION TABLE) & CFG BASIS PATHS (CC = ${cyclomaticComplexity}, TARGET MINIMUM ${cyclomaticComplexity} BASIS PATHS):
+   - To satisfy McCabe's Basis Path Testing invariant, generate at least ${cyclomaticComplexity} independent test scenarios covering all execution paths in the Control Flow Graph.
+   - Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
 ${decisionTableMarkdown}
-   You MUST include test cases addressing all 4 essential business logic testing categories:
+   - You MUST include test cases addressing all 4 essential business logic testing categories:
    - Category A (Happy Path): Standard valid invocations verifying expected business output.
    - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
    - Category C (Branch Toggling): For EVERY conditional statement (if/else, ternary ? :, switch/case, ||, &&, ??, ?.), write test cases testing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
@@ -131,13 +147,34 @@ ${decisionTableMarkdown}
    - Every assertion must verify real outputs, state changes, or mock call arguments.
 6. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
+        if (typeof deduplicateAstDeclarations === 'function') {
+            try {
+                const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
+                if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
+            } catch (_) {}
+        }
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
 ${mockInstructionsStr}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
+8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
+   - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
+   - When declaring mock data objects, use standard 'const mockItem = { ... };' or 'var mockItem = globalThis["mockItem"] = globalThis["mockItem"] || { ... };'.
+   - NEVER leave open parentheses or unclosed string literals at statement boundaries.
+9. EXPRESS CONTROLLER & MIDDLEWARE FIXTURES CONTRACT:
+   - When generating tests for Express controllers or route handlers (or mutating req.body, req.file, req.params, req.query, req.headers):
+   - ALWAYS ensure 'req', 'res', and 'next' are properly initialized as objects before tests execute!
+   - In beforeEach or within the test block:
+     req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], user: { id: 1, role: 'admin' } };
+     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis(), end: jest.fn().mockReturnThis() };
+     next = jest.fn();
+   - NEVER access properties like 'req.file = ...' or 'req.body = ...' without ensuring 'req' is an object.
+10. RUNNER COMPATIBILITY (JEST & VITEST):
+   - In Jest environments, use 'jest.fn()', 'jest.mock()', 'jest.spyOn()'.
+   - NEVER access 'vi.fn()' in Jest suites unless 'vi' is explicitly imported or aliased to 'jest'.
 
 ### 6. OUTPUT FORMAT
-Format your output strictly in JSON:
+Format your output strictly in JSON (ensure valid JSON syntax: values MUST be strings enclosed in double quotes "...", never backtick characters):
 {
   "explanation": "Summary of the added test cases and which branches are covered",
   "suggestedTestCode": "// only executable test code blocks with real assertions",
@@ -151,6 +188,8 @@ We need to generate a comprehensive unit test suite to achieve >=90% to 100% cov
 - Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: describe, test, it, expect, jest are globally available. In CommonJS NEVER import or declare 'jest' (e.g. NEVER write const { jest } = require('@jest/globals') or const jest = ...), as 'jest' is already a global parameter."})
 - Target Source File: ${cleanSource}
 - Target Test File: ${testFileInfo.relativePath} (Status: NEW TEST FILE TO CREATE)
+- Runner API contract: ${runnerContract}
+- Branch reachability contract: ${pathContract}
 
 ### 2. TARGET FILE & IMPORT CONTRACT
 - Source Module Import Path: "${cleanImportPath}" (MUST import from: '${cleanImportPath}'; DO NOT guess other folders!)
@@ -159,6 +198,7 @@ ${unexportedWarning}
 
 ### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS
 - Current Coverage: Lines ${coverageDetails?.summary?.linesPct ?? 0}%, Branches ${coverageDetails?.summary?.branchesPct ?? 0}%, Functions ${coverageDetails?.summary?.funcsPct ?? 0}%, Statements ${coverageDetails?.summary?.stmtsPct ?? 0}%
+- Control Flow Graph Complexity: Cyclomatic Complexity (CC) = ${cyclomaticComplexity} (Basis Paths = ${cyclomaticComplexity})
 - Uncovered Lines in Source: ${uncoveredLinesStr}
 - Uncovered Functions (0 invocations):
 ${functionDetailsStr}
@@ -182,10 +222,11 @@ ${sourceCode.slice(0, 25000)}
 ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - If test code exists, re-use existing mock patterns and assertions.
-4. MANDATORY TEST MATRIX (DECISION TABLE) TO HIT >= 90% TO 100% COVERAGE:
-   Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
+4. MANDATORY TEST MATRIX (DECISION TABLE) & CFG BASIS PATHS (CC = ${cyclomaticComplexity}, MINIMUM ${cyclomaticComplexity} BASIS PATHS):
+   - To satisfy McCabe's Basis Path Testing invariant, generate at least ${cyclomaticComplexity} independent test scenarios covering all execution paths in the Control Flow Graph.
+   - Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
 ${decisionTableMarkdown}
-   You MUST include test cases addressing all 4 essential business logic testing categories:
+   - You MUST include test cases addressing all 4 essential business logic testing categories:
    - Category A (Happy Path): Standard valid invocations verifying expected business output.
    - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
    - Category C (Branch Toggling): For EVERY conditional statement (if/else, switch, ternary, ||, &&, ??, ?.), craft test inputs executing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
@@ -199,6 +240,21 @@ ${decisionTableMarkdown}
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
 ${mockInstructionsStr}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
+8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
+   - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
+   - When declaring mock data objects, use standard 'const mockItem = { ... };' or 'var mockItem = globalThis["mockItem"] = globalThis["mockItem"] || { ... };'.
+   - NEVER leave open parentheses or unclosed string literals at statement boundaries.
+9. EXPRESS CONTROLLER & MIDDLEWARE FIXTURES CONTRACT:
+   - When generating tests for Express controllers or route handlers (or mutating req.body, req.file, req.params, req.query, req.headers):
+   - ALWAYS ensure 'req', 'res', and 'next' are properly initialized as objects before tests execute!
+   - In beforeEach or within the test block:
+     req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], user: { id: 1, role: 'admin' } };
+     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis(), end: jest.fn().mockReturnThis() };
+     next = jest.fn();
+   - NEVER access properties like 'req.file = ...' or 'req.body = ...' without ensuring 'req' is an object.
+10. RUNNER COMPATIBILITY (JEST & VITEST):
+   - In Jest environments, use 'jest.fn()', 'jest.mock()', 'jest.spyOn()'.
+   - NEVER access 'vi.fn()' in Jest suites unless 'vi' is explicitly imported or aliased to 'jest'.
 
 ### 6. OUTPUT FORMAT
 Format your output strictly in JSON:
@@ -208,6 +264,130 @@ Format your output strictly in JSON:
   "fullUpdatedContent": "// complete test file content to be written"
 }
 `;
+};
+
+/**
+ * Iterative AST Syntax Self-Healing Engine (Rule 5 & Rule 9)
+ * Repairs missing semicolons at line:col, missing commas in objects/arrays,
+ * unclosed blocks/braces, unseparated statements, and runs deep sanitization.
+ */
+export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "", maxRetries = 6 } = {}) => {
+    if (!codeString || typeof codeString !== "string") {
+        return { success: false, code: codeString, error: "Empty code" };
+    }
+    let currentCode = codeString;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        if (typeof balanceTestFileBracesAndParens === "function") {
+            try {
+                currentCode = balanceTestFileBracesAndParens(currentCode);
+            } catch (_) {}
+        }
+        if (typeof cleanAndDeduplicateTestContent === "function") {
+            try {
+                currentCode = cleanAndDeduplicateTestContent(currentCode, "", filePath, { framework });
+            } catch (_) {}
+        if (typeof deduplicateAstDeclarations === 'function') {
+            try {
+                const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
+                if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
+            } catch (_) {}
+        }
+        }
+
+        const parsed = parseJavaScriptCode(currentCode);
+        if (parsed.success) {
+            return { success: true, code: currentCode, ast: parsed.ast };
+        }
+
+        const msg = parsed.error || "";
+
+        // 1. Missing semicolon at line:col (e.g. Missing semicolon. (2:15))
+        const semiMatch = msg.match(/Missing semicolon\. \((\d+):(\d+)\)/);
+        if (semiMatch) {
+            const lineNum = parseInt(semiMatch[1], 10);
+            const colNum = parseInt(semiMatch[2], 10);
+            const lines = currentCode.split("\n");
+            if (lineNum <= lines.length) {
+                const line = lines[lineNum - 1];
+                const before = line.slice(0, colNum);
+                const after = line.slice(colNum);
+                lines[lineNum - 1] = `${before};\n${after.trimStart()}`;
+                currentCode = lines.join("\n");
+                continue;
+            }
+        }
+
+        // 2. Unexpected token (e.g. Unexpected token, expected "," (76:154) or Unexpected token ';')
+        const unexpectedMatch = msg.match(/Unexpected token(?:, expected [",']?(.*?)[",']?)? \((\d+):(\d+)\)/);
+        if (unexpectedMatch) {
+            const expectedToken = unexpectedMatch[1] || "";
+            const lineNum = parseInt(unexpectedMatch[2], 10);
+            const colNum = parseInt(unexpectedMatch[3], 10);
+            const lines = currentCode.split("\n");
+            if (lineNum > 0 && lineNum <= lines.length) {
+                const targetLine = lines[lineNum - 1];
+                const stripped = targetLine
+                    .replace(/\/\/.*$/, "")
+                    .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "");
+
+                let pOpen = 0, pClose = 0;
+                for (const ch of stripped) {
+                    if (ch === "(") pOpen++;
+                    else if (ch === ")") pClose++;
+                }
+
+                // If line has unclosed parentheses before semicolon, heal parentheses first!
+                if (pOpen > pClose) {
+                    const semiIdx = targetLine.lastIndexOf(";");
+                    if (semiIdx !== -1) {
+                        lines[lineNum - 1] = targetLine.slice(0, semiIdx) + ")".repeat(pOpen - pClose) + targetLine.slice(semiIdx);
+                        currentCode = lines.join("\n");
+                        continue;
+                    }
+                }
+
+                if (expectedToken === ",") {
+                    const before = targetLine.slice(0, colNum);
+                    const after = targetLine.slice(colNum);
+                    lines[lineNum - 1] = `${before}, ${after.trimStart()}`;
+                    currentCode = lines.join("\n");
+                    continue;
+                }
+            }
+        }
+
+        // 3. Balance unclosed braces at EOF
+        const openBraces = (currentCode.match(/{/g) || []).length;
+        const closeBraces = (currentCode.match(/}/g) || []).length;
+        if (openBraces > closeBraces) {
+            let diff = openBraces - closeBraces;
+            let suffix = "";
+            while (diff > 0) {
+                suffix += "\n});";
+                diff--;
+            }
+            currentCode = currentCode.trim() + suffix;
+            continue;
+        }
+
+        // 4. Decouple glued inline statements safely
+        const decoupled = safeDecoupleInlineStatements(currentCode);
+        if (decoupled !== currentCode) {
+            currentCode = decoupled;
+            continue;
+        }
+
+        // 5. Check if trailing closing delimiter is needed at EOF
+        if (!currentCode.trim().endsWith("}") && !currentCode.trim().endsWith(");")) {
+            currentCode = currentCode.trim() + "\n});";
+            continue;
+        }
+
+        return { success: false, code: currentCode, error: msg };
+    }
+
+    return { success: false, code: currentCode, error: "Exceeded AST self-healing retries" };
 };
 
 /**
@@ -250,23 +430,56 @@ export const parseAndSanitizeAiTestResponse = ({
 
     // 2. Extract JSON payload
     let parsedJson = null;
-    try {
-        const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            parsedJson = JSON.parse(jsonMatch[0]);
-        } else {
-            parsedJson = JSON.parse(cleanText);
-        }
-    } catch (parseErr) {
-        // Attempt mild JSON repair (e.g. unescaped newlines or trailing comma)
+
+    // 2.1 Direct regex extraction for LLM outputs that wrap code in backticks (`...`) instead of JSON string quotes
+    const extractBacktickField = (fieldName, text) => {
+        const match = text.match(new RegExp(`["']${fieldName}["']\\s*:\\s*\`([\\s\\S]*?)\`\\s*(?:,|\\n|\\r|\\})`, "m"));
+        return match ? match[1] : null;
+    };
+
+    const btTestCode = extractBacktickField("suggestedTestCode", cleanText);
+    const btFullContent = extractBacktickField("fullUpdatedContent", cleanText);
+    const btExplanation = extractBacktickField("explanation", cleanText);
+
+    if (btTestCode || btFullContent) {
+        parsedJson = {
+            explanation: btExplanation || "Targeted unit test cases for uncovered branches",
+            suggestedTestCode: btTestCode || btFullContent || "",
+            fullUpdatedContent: btFullContent || btTestCode || ""
+        };
+    }
+
+    if (!parsedJson) {
         try {
-            const repaired = cleanText
-                .replace(/,\s*([}\]])/g, "$1") // trailing commas
-                .replace(/\r?\n/g, "\\n");
-            const match = repaired.match(/\{[\s\S]*\}/);
-            if (match) parsedJson = JSON.parse(match[0]);
-        } catch (_) {
-            errors.push(`JSON parsing error: ${parseErr.message}`);
+            const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                parsedJson = JSON.parse(jsonMatch[0]);
+            } else {
+                parsedJson = JSON.parse(cleanText);
+            }
+        } catch (parseErr) {
+            // Attempt mild JSON repair (e.g. unescaped newlines, backticks, or trailing commas)
+            try {
+                let repaired = cleanText
+                    .replace(/:\s*`([\s\S]*?)`\s*([,}])/g, (m, val, post) => `: ${JSON.stringify(val)}${post}`)
+                    .replace(/,\s*([}\]])/g, "$1") // trailing commas
+                    .replace(/\r?\n/g, "\\n");
+                const match = repaired.match(/\{[\s\S]*\}/);
+                if (match) parsedJson = JSON.parse(match[0]);
+            } catch (_) {
+                // 2.2 Direct code extraction fallback from markdown code blocks or cleanText
+                const codeBlockMatch = rawResponse.match(/```(?:javascript|js|typescript|ts)?\r?\n([\s\S]*?)```/);
+                const candidateCode = codeBlockMatch ? codeBlockMatch[1] : cleanText;
+                if (candidateCode && (candidateCode.includes("test(") || candidateCode.includes("it(") || candidateCode.includes("describe("))) {
+                    parsedJson = {
+                        explanation: "Extracted test suite from code block response",
+                        suggestedTestCode: candidateCode.trim(),
+                        fullUpdatedContent: candidateCode.trim()
+                    };
+                } else {
+                    errors.push(`JSON parsing error: ${parseErr.message}`);
+                }
+            }
         }
     }
 
@@ -290,6 +503,42 @@ export const parseAndSanitizeAiTestResponse = ({
     }
     if (parsedJson.fullUpdatedContent) {
         parsedJson.fullUpdatedContent = unskipCode(parsedJson.fullUpdatedContent);
+    }
+
+    // 3.4. Decouple glued inline statements safely
+    if (parsedJson.suggestedTestCode) {
+        parsedJson.suggestedTestCode = safeDecoupleInlineStatements(parsedJson.suggestedTestCode);
+    }
+    if (parsedJson.fullUpdatedContent) {
+        parsedJson.fullUpdatedContent = safeDecoupleInlineStatements(parsedJson.fullUpdatedContent);
+    }
+
+    // 3.5. Self-assignment sanitization (e.g. const path = path; -> const path = require('path'); or removal)
+    const sanitizeSelfAssignments = (code) => {
+        if (!code || typeof code !== "string") return code;
+        const NODE_BUILTIN_MODULES = new Set([
+            "path", "fs", "crypto", "http", "https", "os", "url", "util", "events", "stream",
+            "child_process", "buffer", "zlib", "net", "tls", "cluster", "readline", "vm", "worker_threads"
+        ]);
+        const isTs = framework === "vitest" || /\bimport\s+/.test(code);
+        return code.replace(
+            /(?:^[ \t]*|\n[ \t]*)(const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\2\s*;?[ \t]*(?:\r?\n|$)/gm,
+            (match, kind, varName) => {
+                if (NODE_BUILTIN_MODULES.has(varName)) {
+                    return isTs
+                        ? `\nimport ${varName} from '${varName}';\n`
+                        : `\nconst ${varName} = require('${varName}');\n`;
+                }
+                return "\n";
+            }
+        );
+    };
+
+    if (parsedJson.suggestedTestCode) {
+        parsedJson.suggestedTestCode = sanitizeSelfAssignments(parsedJson.suggestedTestCode);
+    }
+    if (parsedJson.fullUpdatedContent) {
+        parsedJson.fullUpdatedContent = sanitizeSelfAssignments(parsedJson.fullUpdatedContent);
     }
 
     // 4. Placeholder detection & reconciliation
@@ -321,27 +570,29 @@ export const parseAndSanitizeAiTestResponse = ({
         return { success: false, parsed: parsedJson, syntaxValid: false, errors };
     }
 
-    // 5. AST Syntax Validation via Babel Parser
-    const codeToValidate = parsedJson.fullUpdatedContent || parsedJson.suggestedTestCode;
-    const astResult = parseJavaScriptCode(codeToValidate);
-    let syntaxValid = astResult.success;
-
-    if (!syntaxValid) {
-        // Syntax auto-repair attempt: check for unclosed quotes or missing closing braces at EOF
-        let repairedCode = codeToValidate;
-        if (!repairedCode.endsWith("}") && !repairedCode.endsWith(");")) {
-            repairedCode = repairedCode + "\n});";
-            const retryAst = parseJavaScriptCode(repairedCode);
-            if (retryAst.success) {
-                syntaxValid = true;
-                if (parsedJson.fullUpdatedContent) parsedJson.fullUpdatedContent = repairedCode;
-                if (parsedJson.suggestedTestCode) parsedJson.suggestedTestCode = repairedCode;
-            }
+    // Enforce runner imports before previewing or applying AI-generated code.
+    for (const field of ["suggestedTestCode", "fullUpdatedContent"]) {
+        if (parsedJson[field]) {
+            parsedJson[field] = normalizeTestFrameworkCode(parsedJson[field], { framework });
         }
     }
 
-    if (!syntaxValid) {
-        errors.push(`AST syntax validation failed: ${astResult.error || "Syntax error in generated test code"}`);
+    // 5. AST Syntax Validation & Universal Self-Healing via Babel Parser (Rule 5 & Rule 9)
+    let codeToValidate = parsedJson.fullUpdatedContent || parsedJson.suggestedTestCode;
+    const healResult = autoHealAstSyntax(codeToValidate, { framework, filePath: cleanSource });
+    let syntaxValid = healResult.success;
+
+    if (syntaxValid) {
+        if (parsedJson.fullUpdatedContent) {
+            const healedFull = autoHealAstSyntax(parsedJson.fullUpdatedContent, { framework, filePath: cleanSource });
+            if (healedFull.success) parsedJson.fullUpdatedContent = healedFull.code;
+        }
+        if (parsedJson.suggestedTestCode) {
+            const healedSuggested = autoHealAstSyntax(parsedJson.suggestedTestCode, { framework, filePath: cleanSource });
+            if (healedSuggested.success) parsedJson.suggestedTestCode = healedSuggested.code;
+        }
+    } else {
+        errors.push(`AST syntax validation failed: ${healResult.error || "Syntax error in generated test code"}`);
     }
 
     // 6. Ensure real assertions exist
@@ -435,15 +686,16 @@ export const generateAiUnitTestSuite = async ({
         unitTestContext
     });
 
-    // 3. Invoke LLM with 45s Timeout
+    // 3. Invoke LLM with 90s Timeout
     let aiParsedResult = null;
     let aiGenerationError = null;
+    let generationTimeout;
 
     try {
         let generationTimer;
         const responseText = await Promise.race([
             generateText(prompt),
-            new Promise((_, reject) => { generationTimer = setTimeout(() => reject(new Error("AI generation timed out (45s limit reached)")), 45000); })
+            new Promise((_, reject) => { generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000); })
         ]).finally(() => clearTimeout(generationTimer));
 
         // 4. Parse & Sanitize Response (Section 3.2)
@@ -462,6 +714,8 @@ export const generateAiUnitTestSuite = async ({
     } catch (aiErr) {
         aiGenerationError = aiErr.message;
         console.warn(`[unitTestGenerator] AI Generation fallback triggered (${framework}): ${aiErr.message}`);
+    } finally {
+        clearTimeout(generationTimeout);
     }
 
     // 5. Resilient Isolation Mock Fallback if AI output failed validation

@@ -39,7 +39,6 @@ export function generateMarkdownReport(vm, sections = DEFAULT_EXPORT_SECTIONS) {
     actions = {},
     history = {},
     ai = {},
-    dataMode = "live",
   } = vm || {};
 
   const sec = { ...DEFAULT_EXPORT_SECTIONS, ...(sections || {}) };
@@ -48,7 +47,6 @@ export function generateMarkdownReport(vm, sections = DEFAULT_EXPORT_SECTIONS) {
     `# Unified Quality & Testing Report — ${context.projectName || "Project"}`,
     ``,
     `> **Snapshot ID:** \`${context.snapshotId || "N/A"}\``,
-    `> **Data Mode:** \`${dataMode === "demo" ? "Demo Showcase" : "Live State"}\``,
     `> **Generated:** ${new Date().toISOString()} (${fmtRelativeTime(context.updatedAt)})`,
     `> **Quality Gate Status:** **${qualityGate.label || "N/A"}** (${qualityGate.status || "N/A"})`,
     ``,
@@ -88,11 +86,11 @@ export function generateMarkdownReport(vm, sections = DEFAULT_EXPORT_SECTIONS) {
         pyramid.warning ? ` — *${pyramid.warning}*` : ""
       }`,
       ``,
-      `| Layer | Framework | Executed (P/F/Total) | Pass Rate | Coverage | Avg Latency | Source |`,
-      `|---|---|---|---|---|---|---|`,
-      `| **Unit Tests** | ${pillars.unit.framework} | ${pillars.unit.passedTests} / ${pillars.unit.failedTests} / ${pillars.unit.totalTests} | ${pillars.unit.passRate}% | Lines: ${fmtPct(pillars.unit.coverageMetrics?.lines)} (Branches: ${fmtPct(pillars.unit.coverageMetrics?.branches)}) | ${fmtDuration(pillars.unit.avgDurationMs)} | ${pillars.unit.source} |`,
-      `| **Integration** | ${pillars.integration.framework} | ${pillars.integration.passedTests} / ${pillars.integration.failedTests} / ${pillars.integration.totalTests} (Uncovered: ${pillars.integration.coverageMetrics?.uncoveredApis ?? 0}) | ${pillars.integration.passRate}% | API: ${fmtPct(pillars.integration.coverageMetrics?.apiEndpoint)} (Code: ${fmtPct(pillars.integration.coverageMetrics?.lines)}) | ${fmtDuration(pillars.integration.avgDurationMs)} | ${pillars.integration.source} |`,
-      `| **System (E2E)** | ${pillars.system.framework} | ${pillars.system.passedTests} / ${pillars.system.failedTests} / ${pillars.system.totalTests} | ${pillars.system.passRate}% | Flow: ${fmtPct(pillars.system.coverageMetrics?.flow)} | ${fmtDuration(pillars.system.avgDurationMs)} | ${pillars.system.source} |`,
+      `| Layer | Framework | Executed (P/F/Total) | Pass Rate | Coverage | Avg Latency |`,
+      `|---|---|---|---|---|---|`,
+      `| **Unit Tests** | ${pillars.unit.framework} | ${pillars.unit.passedTests} / ${pillars.unit.failedTests} / ${pillars.unit.totalTests} | ${pillars.unit.passRate}% | Lines: ${fmtPct(pillars.unit.coverageMetrics?.lines)} (Branches: ${fmtPct(pillars.unit.coverageMetrics?.branches)}) | ${fmtDuration(pillars.unit.avgDurationMs)} |`,
+      `| **Integration** | ${pillars.integration.framework} | ${pillars.integration.passedTests} / ${pillars.integration.failedTests} / ${pillars.integration.totalTests} (Uncovered: ${pillars.integration.coverageMetrics?.uncoveredApis ?? 0}) | ${pillars.integration.passRate}% | API: ${fmtPct(pillars.integration.coverageMetrics?.apiEndpoint)} (Code: ${fmtPct(pillars.integration.coverageMetrics?.lines)}) | ${fmtDuration(pillars.integration.avgDurationMs)} |`,
+      `| **System (E2E)** | ${pillars.system.framework} | ${pillars.system.passedTests} / ${pillars.system.failedTests} / ${pillars.system.totalTests} | ${pillars.system.passRate}% | Flow: ${fmtPct(pillars.system.coverageMetrics?.flow)} | ${fmtDuration(pillars.system.avgDurationMs)} |`,
       ``
     );
   }
@@ -142,7 +140,7 @@ export function generateMarkdownReport(vm, sections = DEFAULT_EXPORT_SECTIONS) {
       ...((history.runs || []).length > 0
         ? history.runs.map(
             (run) =>
-              `| \`${run.id}\` | ${run.type.toUpperCase()} | ${run.status.toUpperCase()} | ${run.passed} / ${run.failed} | ${fmtPct(run.coveragePct)} | ${fmtDuration(run.durationMs)} | \`${run.commitSha || "N/A"}\` |`
+              `| \`${run.shortId || run.id}\` | ${run.type.toUpperCase()} | ${run.status.toUpperCase()} | ${run.passed} / ${run.failed} | ${fmtPct(run.coveragePct)} | ${fmtDuration(run.durationMs)} | \`${run.commitSha || "N/A"}\` |`
           )
         : [`| *No runs recorded* | — | — | — | — | — | — |`]),
       ``
@@ -161,7 +159,6 @@ export function buildFilteredJsonPayload(vm, sections = DEFAULT_EXPORT_SECTIONS)
   const sec = { ...DEFAULT_EXPORT_SECTIONS, ...(sections || {}) };
   const payload = {
     context: vm?.context,
-    dataMode: vm?.dataMode || "live",
     exportedAt: new Date().toISOString(),
   };
 

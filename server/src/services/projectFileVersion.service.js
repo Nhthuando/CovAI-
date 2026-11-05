@@ -21,12 +21,32 @@ export const projectEditableWorkspaceRoot = snapshot => {
     return resolveSystemRepositoryRoot(root);
 };
 
+export const sanitizeRawProjectPath = (value) => {
+    if (!value || typeof value !== 'string') return '';
+    let clean = value.replaceAll('\\', '/').trim();
+    // Strip absolute container or root prefixes: e.g. /app/ or app/
+    clean = clean.replace(/^(?:\/?app\/)?\.?covai-temp\/collaboration-operations\/[^/]+\//i, '');
+    clean = clean.replace(/^(?:\/?app\/)?\.?covai-temp\/[^/]+\//i, '');
+    clean = clean.replace(/^(?:\/?app\/)?storage\/projects\/[^/]+\/(?:snapshots\/[^/]+\/)?/i, '');
+    clean = clean.replace(/^(?:\/?app\/)/i, '');
+    clean = clean.replace(/^[a-zA-Z]:\//i, '');
+    clean = clean.replace(/^\/+/, '');
+    return clean;
+};
+
 export const normalizeProjectPath = (value,{allowGitMetadata = false} = {}) => {
-    if (typeof value !== 'string' || !value.trim() || value.includes('\0') || path.isAbsolute(value)
-        || /^[a-z]:/i.test(value) || value.startsWith('\\')) {
+    // Accept only the known legacy container prefixes, not arbitrary absolute
+    // host paths. Keep the strict editor boundary when merging path fallback.
+    if (typeof value !== 'string' || /^[a-z]:/i.test(value) || value.startsWith('\\')
+        || (path.isAbsolute(value) && !/^\/(?:app\/|storage\/projects\/|\.?covai-temp\/)/i.test(value))) {
         throw projectFileError('INVALID_FILE_PATH', 'A project-relative path is required', 400);
     }
-    const parts = value.replaceAll('\\', '/').split('/');
+    const sanitized = sanitizeRawProjectPath(value);
+    if (!sanitized || sanitized.includes('\0') || path.isAbsolute(sanitized)
+        || /^[a-z]:/i.test(sanitized) || sanitized.startsWith('\\')) {
+        throw projectFileError('INVALID_FILE_PATH', 'A project-relative path is required', 400);
+    }
+    const parts = sanitized.split('/');
     if (parts.some(part => !part || part === '.' || part === '..' || /[<>:"|?*]/.test(part)
         || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(part)
         || (!allowGitMetadata && part.toLowerCase() === '.git') || part.toLowerCase().startsWith('.covai-collaboration'))) {
@@ -51,6 +71,16 @@ export const resolveContainedProjectPath = async (snapshot, value, options = {})
         const legacyExists = await exists(path.join(analysis,relativePath));
         const rootPrefixExists = await exists(path.join(root,relativePath.split('/')[0]));
         if (!directExists && (legacyExists || snapshot.source !== 'GITHUB' && !rootPrefixExists)) relativePath = `${analysisRelative}/${relativePath}`;
+    }
+    const exists = target => fs.lstat(target).then(()=>true,error=>{if(error.code === 'ENOENT')return false;throw error;});
+    if (!(await exists(path.join(root, relativePath)))) {
+        const rootBase = path.basename(root);
+        if (relativePath.startsWith(rootBase + '/')) {
+            const trimmed = relativePath.slice(rootBase.length + 1);
+            if (await exists(path.join(root, trimmed))) {
+                relativePath = trimmed;
+            }
+        }
     }
     let candidate = root;
     for (const part of relativePath.split('/')) {

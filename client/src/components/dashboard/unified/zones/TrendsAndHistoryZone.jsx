@@ -5,7 +5,6 @@ export function TrendsAndHistoryZone({
   vm,
   onNavigateWorkspace,
   onInspectItem,
-  onSwitchToDemo,
   className = "",
 }) {
   const trend = vm?.trend || {};
@@ -15,10 +14,7 @@ export function TrendsAndHistoryZone({
     <div className={`grid grid-cols-12 gap-4 ${className}`}>
       {/* Left 6 Cols: Coverage & Quality Trends Chart */}
       <div className="col-span-12 xl:col-span-6">
-        <CoverageTrendChart
-          trendData={trend}
-          onSwitchToDemo={onSwitchToDemo}
-        />
+        <CoverageTrendChart trendData={trend} />
       </div>
 
       {/* Right 6 Cols: Unified Execution History Table */}
@@ -27,7 +23,6 @@ export function TrendsAndHistoryZone({
           historyData={history}
           onNavigateWorkspace={onNavigateWorkspace}
           onInspectItem={onInspectItem}
-          onSwitchToDemo={onSwitchToDemo}
         />
       </div>
     </div>

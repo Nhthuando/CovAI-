@@ -35,7 +35,7 @@ import {failInterruptedProjectOperation} from './projectOperationRecovery.servic
 let isRedisConnected = false;
 const durableOperationTypes = new Set(['RUN_TESTS', 'ANALYSIS', 'AI_TESTS', 'AI_SUGGEST',
   'SUPERTEST_COVERAGE', 'INSTALL_DEPS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'BUILD_CFG', 'PERFORMANCE_ANALYSIS', 'CODE_HYGIENE', 'QUALITY_ANALYSIS', 'SECURITY_ANALYSIS', 'COVERAGE', 'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT',
-  'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION']);
+  'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION', 'AI_EVALUATION', 'AI_EVALUATION_PREPARE']);
 
 const redisOptions = {
   maxRetriesPerRequest: null,
@@ -118,6 +118,12 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
   console.log(`[DirectExecutor] Running job directly: type=${type}, jobId=${jobId}`);
   try {
     switch (type) {
+      case 'AI_EVALUATION':
+        await (await import('./aiEvaluation/runner.service.js')).processEvaluation(jobId);
+        break;
+      case 'AI_EVALUATION_PREPARE':
+        await (await import('./aiEvaluation/runner.service.js')).processEvaluationPrepare(jobId);
+        break;
       case 'CHAT_CONTEXT':
         await processChatContextMaintenance(customData);
         break;
@@ -330,6 +336,9 @@ worker.on('error', (err) => {
 });
 
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {
+  if (['AI_EVALUATION', 'AI_EVALUATION_PREPARE'].includes(type) && connection.status !== 'ready') {
+    throw new ServiceError('Redis must be ready before evaluation can be queued', 503, 'DEPENDENCY_UNAVAILABLE');
+  }
   if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
     if (durableOperationTypes.has(type)) throw new ServiceError('Redis must be ready before this operation can be queued',503,'DEPENDENCY_UNAVAILABLE');
     console.warn(`[Queue] Redis unavailable. Executing Job ${jobId} (${type}) directly in-memory...`);

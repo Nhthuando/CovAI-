@@ -195,8 +195,15 @@ test("computePyramid identifies pyramid, missing-unit, ice-cream-cone, hourglass
   assert.equal(p4.shape, "insufficient");
   assert.equal(
     p4.badgeTitle,
-    "No Tests Executed — Run suites or enable Demo Mode"
+    "No Tests Executed — Run suites to establish baseline"
   );
+});
+
+test("computeQualityGate returns UNVERIFIED when zero tests have been executed across all pillars", () => {
+  const gate = computeQualityGate({});
+  assert.equal(gate.status, "UNVERIFIED");
+  assert.equal(gate.label, "UNVERIFIED");
+  assert.equal(gate.checklist.length, 4);
 });
 
 test("diagnoseRootCause matches cross-layer diagnosis truth table", () => {
@@ -208,7 +215,7 @@ test("diagnoseRootCause matches cross-layer diagnosis truth table", () => {
   assert.equal(diagnoseRootCause("untested", "pass", "pass").suspectLayer, "unit");
 });
 
-test("buildActionItems orders actions by High, Medium, Low priority", () => {
+test("buildActionItems orders actions by CRITICAL, HIGH, MEDIUM, LOW priority using real data", () => {
   const pillars = {
     unit: { failedTests: 1, lowCoverageItems: [{ filePath: "service.js", branchesPct: 40 }] },
     integration: { failedTests: 2, coverageMetrics: { uncoveredApis: 3 } },
@@ -216,15 +223,15 @@ test("buildActionItems orders actions by High, Medium, Low priority", () => {
   };
   const items = buildActionItems(pillars, [], 5);
   assert.ok(items.length > 0);
-  assert.equal(items[0].priority, "HIGH");
+  assert.equal(items[0].priority, "CRITICAL");
   const priorities = items.map((i) => i.priority);
+  assert.ok(priorities.indexOf("CRITICAL") <= priorities.indexOf("HIGH"));
   assert.ok(priorities.indexOf("HIGH") <= priorities.indexOf("MEDIUM"));
 });
 
-test("adaptUnifiedDashboard ensures 0 split-brain contradictions in Live mode and 100% mathematical consistency in Demo mode", () => {
-  // Live mode with 9 uncovered endpoints and 0 executed tests
+test("adaptUnifiedDashboard ensures 0 split-brain contradictions and 100% mathematical consistency on real payloads", () => {
+  // Real state with 9 uncovered endpoints and 0 executed tests
   const liveVm = adaptUnifiedDashboard({
-    dataMode: "live",
     context: { snapshotId: "cmvs3749" },
     integrationRaw: {
       endpoints: Array.from({ length: 9 }, (_, i) => ({
@@ -242,7 +249,8 @@ test("adaptUnifiedDashboard ensures 0 split-brain contradictions in Live mode an
   assert.equal(liveVm.execution.uncoveredApis, 9);
   assert.equal(liveVm.pillars.integration.passedTests, 0);
   assert.equal(liveVm.pillars.integration.coverageMetrics.uncoveredApis, 9);
-  // All failure layer breakdown counts in Live mode must be 0 when failedTests === 0
+  assert.equal(liveVm.qualityGate.status, "UNVERIFIED");
+  // All failure layer breakdown counts must be 0 when failedTests === 0
   assert.ok(
     Object.values(liveVm.pillars.integration.failureDistribution).every(
       (count) => count === 0
@@ -254,31 +262,79 @@ test("adaptUnifiedDashboard ensures 0 split-brain contradictions in Live mode an
     )
   );
 
-  // Demo mode must be 100% mathematically coherent across all 5 Zones
-  const demoVm = adaptUnifiedDashboard({
-    dataMode: "demo",
-    context: { snapshotId: "cmvs3749" },
+  // Real unified backend payload must be 100% mathematically coherent across all 5 Zones
+  const fullVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-real-1" },
+    unifiedBackendRaw: {
+      pillars: {
+        unit: {
+          framework: "Jest",
+          totalTests: 42,
+          passedTests: 40,
+          failedTests: 2,
+          skippedTests: 0,
+          durationMs: 1850,
+          coverageMetrics: { lines: 84.5, branches: 78.2, functions: 88.0, statements: 85.1 },
+          lowCoverageItems: [
+            { filePath: "src/auth.service.js", branchesPct: 62.5, linesPct: 75.0 },
+          ],
+        },
+        integration: {
+          framework: "Supertest",
+          totalTests: 12,
+          passedTests: 10,
+          failedTests: 2,
+          skippedTests: 0,
+          durationMs: 3200,
+          avgDurationMs: 145,
+          coverageMetrics: {
+            lines: 81.0,
+            branches: 74.0,
+            functions: 82.0,
+            statements: 81.5,
+            apiEndpoint: 83.3,
+            uncoveredApis: 2,
+            totalApis: 12,
+          },
+          failureDistribution: { route: 0, middlewareAuth: 1, controller: 1, database: 0 },
+        },
+        system: {
+          framework: "Playwright",
+          totalTests: 5,
+          passedTests: 5,
+          failedTests: 0,
+          flakyTests: 0,
+          durationMs: 9400,
+          coverageMetrics: { lines: 100, flow: 100 },
+          failureDistribution: { selectorNotFound: 0, networkTimeout: 0, assertion: 0, flaky: 0 },
+        },
+      },
+      ai: { aiGenerated: 8, aiRepaired: 3, gaps: 3 },
+    },
   });
+
   const sumTotal =
-    demoVm.pillars.unit.totalTests +
-    demoVm.pillars.integration.totalTests +
-    demoVm.pillars.system.totalTests;
+    fullVm.pillars.unit.totalTests +
+    fullVm.pillars.integration.totalTests +
+    fullVm.pillars.system.totalTests;
   const sumPassed =
-    demoVm.pillars.unit.passedTests +
-    demoVm.pillars.integration.passedTests +
-    demoVm.pillars.system.passedTests;
+    fullVm.pillars.unit.passedTests +
+    fullVm.pillars.integration.passedTests +
+    fullVm.pillars.system.passedTests;
   const sumFailed =
-    demoVm.pillars.unit.failedTests +
-    demoVm.pillars.integration.failedTests +
-    demoVm.pillars.system.failedTests;
+    fullVm.pillars.unit.failedTests +
+    fullVm.pillars.integration.failedTests +
+    fullVm.pillars.system.failedTests;
 
-  assert.equal(demoVm.execution.total, sumTotal);
-  assert.equal(demoVm.execution.passed, sumPassed);
-  assert.equal(demoVm.execution.failed, sumFailed);
+  assert.equal(fullVm.execution.total, sumTotal);
+  assert.equal(fullVm.execution.passed, sumPassed);
+  assert.equal(fullVm.execution.failed, sumFailed);
+  assert.equal(fullVm.ai.aiGenerated, 8);
+  assert.equal(fullVm.ai.aiRepaired, 3);
 
-  // Integration breakdown sum equals integration failedTests
   const intBreakdownSum = Object.values(
-    demoVm.pillars.integration.failureDistribution
+    fullVm.pillars.integration.failureDistribution
   ).reduce((acc, count) => acc + count, 0);
-  assert.equal(intBreakdownSum, demoVm.pillars.integration.failedTests);
+  assert.equal(intBreakdownSum, fullVm.pillars.integration.failedTests);
 });
+

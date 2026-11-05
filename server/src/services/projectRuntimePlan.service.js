@@ -6,7 +6,7 @@ import { ServiceError } from '../utils/serviceError.js';
 import semver from 'semver';
 import {isWorkspaceMember} from '../utils/projectWorkspace.js';
 
-export const runtimeIgnoredDirectories = new Set(['node_modules','.git','.agents','.codex','.covai-temp','.covai-system-test','.covai-collaboration','test-results','coverage','dist','build','.next','.nuxt','.output','.svelte-kit','.turbo','.parcel-cache','.cache','.vite']);
+export const runtimeIgnoredDirectories = new Set(['node_modules','.git','.agents','.codex','.covai-temp','.covai-system-test','.covai-collaboration','.covai_journal','test-results','coverage','dist','build','.next','.nuxt','.output','.svelte-kit','.turbo','.parcel-cache','.cache','.vite']);
 const frontendTools = ['vite','next','react-scripts','@vue/cli-service','astro','nuxt','@sveltejs/kit','@angular/cli','webpack-dev-server','parcel'];
 const locks = {npm:['npm-shrinkwrap.json','package-lock.json'],pnpm:['pnpm-lock.yaml'],yarn:['yarn.lock'],bun:['bun.lock','bun.lockb']};
 export const readRuntimePackage = directory => {

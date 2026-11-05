@@ -52,7 +52,6 @@ export function SmartActionCenter({
 }) {
   const [showAll, setShowAll] = useState(false);
   const allItems = useMemo(() => actionsData?.items || [], [actionsData?.items]);
-  const source = actionsData?.source || "live";
 
   const filteredItems = useMemo(() => {
     if (!activeCrossFilter) return allItems;
@@ -63,6 +62,7 @@ export function SmartActionCenter({
   const visibleItems = showAll ? filteredItems : filteredItems.slice(0, initialLimit);
 
   const priorityStyles = {
+    CRITICAL: "border-[var(--ud-fail)]/50 bg-[var(--ud-fail)]/15 text-[var(--ud-fail)]",
     HIGH: "border-[var(--ud-fail)]/40 bg-[var(--ud-fail)]/10 text-[var(--ud-fail)]",
     MEDIUM: "border-[var(--ud-warn)]/40 bg-[var(--ud-warn)]/10 text-[var(--ud-warn)]",
     LOW: "border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)]",
@@ -74,9 +74,12 @@ export function SmartActionCenter({
         id: act.id,
         title: act.title,
         pillar: act.pillar,
-        status: act.priority === "HIGH" ? "fail" : "warn",
+        priority: act.priority,
+        status: act.priority === "CRITICAL" || act.priority === "HIGH" ? "fail" : "warn",
         targetName: act.targetName,
         summary: act.description,
+        description: act.description,
+        diagnostics: act.diagnostics || null,
         failureLayer:
           act.diagnostics?.failureLayer || act.failureCategory || `${act.pillar.toUpperCase()} Layer`,
         httpStatus: act.diagnostics?.httpStatus || null,
@@ -84,7 +87,7 @@ export function SmartActionCenter({
         stackTrace: act.diagnostics?.stackTrace || null,
         testCases: act.diagnostics?.testCases || [],
         focusParams: act.focusParams,
-        aiPrompt: act.aiPrompt,
+        aiPrompt: act.aiPrompt || act.diagnostics?.aiPrompt,
       });
       return;
     }
@@ -97,12 +100,13 @@ export function SmartActionCenter({
     e.stopPropagation();
     const promptText =
       act.aiPrompt ||
+      act.diagnostics?.aiPrompt ||
       `Diagnose ${act.priority} priority ${act.pillar} issue "${act.title}" on target ${act.targetName}: ${act.description}. Provide root cause analysis and recommended fix.`;
     if (onAskAi) {
       onAskAi(promptText);
     } else if (typeof window !== "undefined") {
       window.dispatchEvent(
-        new CustomEvent("covai:prefill-prompt", { detail: { prompt: promptText } })
+        new CustomEvent("covai:prefill-prompt", { detail: { promptText } })
       );
     }
   };
@@ -112,7 +116,6 @@ export function SmartActionCenter({
       id="ud-smart-actions"
       title="Smart Action Center"
       description="Prioritized test fixes & coverage generation"
-      source={source}
       contentClassName="p-4"
       className="h-full"
       actions={

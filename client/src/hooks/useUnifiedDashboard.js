@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useCallback } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { fetchCoverageDashboardData } from "./useCoverageQuery.js";
 import {
+  getUnifiedQualityDashboard,
   getIntegrationWorkspace,
   getCoverageSummary,
   getBeforeAfterComparison,
@@ -13,11 +14,12 @@ import {
 import { adaptUnifiedDashboard } from "../services/unifiedDashboard/unifiedDashboard.adapter.js";
 
 /**
- * Fetch raw data across Unit, Integration, and System testing layers in parallel.
+ * Fetch 100% real data across Unified Aggregation API + Unit, Integration, and System testing layers in parallel.
  */
-export async function fetchAllTestingLayers({ snapshotId, projectId }) {
+export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = false }) {
   if (!snapshotId) {
     return {
+      unifiedBackendRaw: null,
       unitRaw: null,
       integrationRaw: null,
       systemRaw: null,
@@ -28,6 +30,24 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
 
   const errorsByLayer = { unit: null, integration: null, system: null };
 
+  // FAST PATH: Single unified endpoint returns aggregated data across all 3 tiers in < 300ms
+  try {
+    const unifiedRes = await getUnifiedQualityDashboard(snapshotId, { refresh });
+    if (unifiedRes?.data) {
+      return {
+        unifiedBackendRaw: unifiedRes.data,
+        unitRaw: null,
+        integrationRaw: null,
+        systemRaw: null,
+        comparisonRaw: null,
+        errorsByLayer,
+      };
+    }
+  } catch (err) {
+    console.warn("[useUnifiedDashboard] Unified quality endpoint unavailable, falling back to multi-layer fetch:", err.message);
+  }
+
+  // FALLBACK PATH: If unified aggregation endpoint is unavailable, fan out to legacy individual endpoints
   const [unitRes, intWorkspaceRes, , sysSummaryRes, , comparisonRes] =
     await Promise.all([
       // 1. Unit Test Layer (re-uses shared cached queryFn)
@@ -65,12 +85,13 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
       // 4. Baseline Before/After Comparison (for deltas & trends)
       projectId
         ? getBeforeAfterComparison(projectId, { snapshotId })
-            .then((res) => res?.data || null)
-            .catch(() => null)
+          .then((res) => res?.data || null)
+          .catch(() => null)
         : Promise.resolve(null),
     ]);
 
   return {
+    unifiedBackendRaw: null,
     unitRaw: unitRes,
     integrationRaw: intWorkspaceRes,
     systemRaw: sysSummaryRes,
@@ -79,38 +100,54 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
   };
 }
 
+const EMPTY_SNAPSHOTS = [];
+
 /**
- * React Query Hook for Unified Quality & Testing Dashboard.
- * Supports instantaneous toggling between `live` and `demo` data modes.
+ * React Query Hook for Unified Quality & Testing Dashboard (100% Real Data).
  */
 export function useUnifiedDashboard({
   snapshotId,
   projectId,
   projectName = "",
-  snapshots = [],
-  dataMode = "live",
+  snapshots = EMPTY_SNAPSHOTS,
 }) {
-  const effectiveSnapshotId = snapshotId || "cmvs3749";
+  const effectiveSnapshotId = snapshotId || snapshots[0]?.id || "";
+  const isForceRefreshingRef = useRef(false);
 
   const query = useQuery({
     queryKey: ["unifiedDashboard", effectiveSnapshotId, projectId || null],
-    queryFn: () => fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId }),
-    enabled: Boolean(effectiveSnapshotId) && dataMode === "live",
-    placeholderData: keepPreviousData,
-    staleTime: 5 * 60 * 1000, // 5 minutes cache freshness
-    gcTime: 30 * 60 * 1000,    // 30 minutes in memory
+    queryFn: () => {
+      const isRefresh = isForceRefreshingRef.current;
+      isForceRefreshingRef.current = false;
+      return fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId, refresh: isRefresh });
+    },
+    enabled: Boolean(effectiveSnapshotId),
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey?.[1] === effectiveSnapshotId ? previousData : undefined,
+    staleTime: 15 * 1000, // 15 seconds cache freshness for responsive tab switching
+    refetchOnWindowFocus: true,
+    gcTime: 30 * 60 * 1000,
   });
 
+  const forceRefresh = useCallback(async () => {
+    if (!effectiveSnapshotId) return;
+    isForceRefreshingRef.current = true;
+    try {
+      return await query.refetch();
+    } finally {
+      isForceRefreshingRef.current = false;
+    }
+  }, [effectiveSnapshotId, query]);
+
   const vm = useMemo(() => {
-    if (dataMode === "demo") {
+    if (!effectiveSnapshotId) {
       return adaptUnifiedDashboard({
         context: {
           projectId,
           projectName,
-          snapshotId: effectiveSnapshotId,
+          snapshotId: "",
           snapshots,
         },
-        dataMode: "demo",
       });
     }
 
@@ -118,7 +155,8 @@ export function useUnifiedDashboard({
       return null;
     }
 
-    return adaptUnifiedDashboard({
+    const adapted = adaptUnifiedDashboard({
+      unifiedBackendRaw: query.data?.unifiedBackendRaw || null,
       unitRaw: query.data?.unitRaw || null,
       integrationRaw: query.data?.integrationRaw || null,
       systemRaw: query.data?.systemRaw || null,
@@ -129,11 +167,17 @@ export function useUnifiedDashboard({
         snapshotId: effectiveSnapshotId,
         snapshots,
       },
-      dataMode: "live",
     });
+
+    if (adapted && adapted.context) {
+      const latestSyncTime = query.dataUpdatedAt || adapted.context.updatedAt || Date.now();
+      adapted.context.updatedAt = latestSyncTime;
+    }
+
+    return adapted;
   }, [
-    dataMode,
     query.data,
+    query.dataUpdatedAt,
     query.isLoading,
     projectId,
     projectName,
@@ -144,11 +188,12 @@ export function useUnifiedDashboard({
   return {
     vm,
     errorsByLayer: query.data?.errorsByLayer || { unit: null, integration: null, system: null },
-    isLoading: dataMode === "live" ? query.isLoading : false,
-    isFetching: dataMode === "live" ? query.isFetching : false,
-    isError: dataMode === "live" ? query.isError : false,
+    isLoading: Boolean(effectiveSnapshotId) ? query.isLoading : false,
+    isFetching: Boolean(effectiveSnapshotId) ? query.isFetching : false,
+    isError: Boolean(effectiveSnapshotId) ? query.isError : false,
     error: query.error,
     refetch: query.refetch,
+    forceRefresh,
   };
 }
 

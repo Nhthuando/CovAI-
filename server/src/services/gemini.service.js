@@ -9,16 +9,81 @@ import { isCollaborationLocalTest } from '../config/collaborationLocal.js';
 
 dotenv.config();
 
-// Manage API keys & Configure Gemini SDK
-const apiKey = process.env.GEMINI_API_KEY;
-let genAI = null;
+// Task-to-Environment-Variable mapping for independent quota separation
+const TASK_KEY_MAP = {
+  unit: "GEMINI_KEY_UNIT_TEST",
+  "unit-test": "GEMINI_KEY_UNIT_TEST",
+  integration: "GEMINI_KEY_INTEGRATION_TEST",
+  "integration-test": "GEMINI_KEY_INTEGRATION_TEST",
+  supertest: "GEMINI_KEY_INTEGRATION_TEST",
+  e2e: "GEMINI_KEY_E2E_TEST",
+  system: "GEMINI_KEY_E2E_TEST",
+  "system-test": "GEMINI_KEY_E2E_TEST",
+  chatbox: "GEMINI_KEY_CHATBOX",
+  chat: "GEMINI_KEY_CHATBOX",
+};
 
-if (apiKey) {
-  genAI = new GoogleGenerativeAI(apiKey);
-} else {
-  console.warn(
-    "[Gemini API] WARNING: GEMINI_API_KEY is not defined in the environment variables.",
-  );
+/**
+ * Validates availability of task-specific environment keys on service startup.
+ */
+export function validateGeminiKeys() {
+  const REQUIRED_KEY_VARS = [
+    "GEMINI_KEY_UNIT_TEST",
+    "GEMINI_KEY_INTEGRATION_TEST",
+    "GEMINI_KEY_E2E_TEST",
+    "GEMINI_KEY_CHATBOX",
+  ];
+  for (const keyVar of REQUIRED_KEY_VARS) {
+    if (!process.env[keyVar]) {
+      console.warn(
+        `[Gemini API] WARNING: Dedicated environment variable ${keyVar} is not defined. Falling back to GEMINI_API_KEY.`
+      );
+    }
+  }
+  if (!process.env.GEMINI_API_KEY && !process.env.GEMINI_KEY_INTEGRATION_TEST) {
+    console.warn(
+      "[Gemini API] CRITICAL: Neither GEMINI_KEY_INTEGRATION_TEST nor GEMINI_API_KEY is configured in environment."
+    );
+  }
+}
+validateGeminiKeys();
+
+/**
+ * Resolves the appropriate Gemini API key for a given task type.
+ * Priority: Dedicated Task Key -> Legacy GEMINI_API_KEY.
+ *
+ * @param {'unit' | 'integration' | 'e2e' | 'system' | 'chatbox' | 'chat'} taskType
+ * @returns {string} The resolved API key
+ */
+export function getGeminiApiKey(taskType = "integration") {
+  const normalizedTask = String(taskType || "integration").toLowerCase();
+  const envVarName = TASK_KEY_MAP[normalizedTask] || "GEMINI_KEY_INTEGRATION_TEST";
+  return process.env[envVarName] || process.env.GEMINI_API_KEY || "";
+}
+
+// Client cache to avoid reinstantiating GoogleGenerativeAI on every request
+const clientCache = new Map();
+
+/**
+ * Factory provider returning a cached GoogleGenerativeAI client instance for the specified task.
+ *
+ * @param {'unit' | 'integration' | 'e2e' | 'chatbox'} taskType
+ * @param {string|null} explicitApiKey
+ * @returns {GoogleGenerativeAI}
+ */
+export function getGeminiClient(taskType = "integration", explicitApiKey = null) {
+  const key = explicitApiKey || getGeminiApiKey(taskType);
+  if (!key) {
+    throw new Error(
+      `Gemini API key is not configured for task '${taskType}'. Please set ${
+        TASK_KEY_MAP[taskType?.toLowerCase()] || "GEMINI_KEY_INTEGRATION_TEST"
+      } or GEMINI_API_KEY in your environment.`
+    );
+  }
+  if (!clientCache.has(key)) {
+    clientCache.set(key, new GoogleGenerativeAI(key));
+  }
+  return clientCache.get(key);
 }
 
 const VALID_MODELS = GEMINI_MODEL_IDS;
@@ -34,9 +99,10 @@ export function markModelExhausted(modelName, error = {message:'daily quota'}) {
 /**
  * Normalizes model names, replacing deprecated or quota-exhausted models
  * with the currently active and verified models.
+ * Default: gemini-3.5-flash-lite
  */
 function resolveModelName(requestedModel) {
-  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   if(!VALID_MODELS.includes(preferred)) throw new ServiceError('Select one of the four supported Gemini models.',400);
   const blocked=exhaustedModels.get(preferred);
   if(blocked?.resetAt && Date.parse(blocked.resetAt)>Date.now()) throw blocked;
@@ -47,8 +113,9 @@ function resolveModelName(requestedModel) {
 /**
  * Send prompts & Receive responses
  * @param {string} prompt - The prompt to send to the Gemini model
- * @param {string|null} modelOrInstruction - Optional model name (e.g., 'gemini-2.5-flash') or system instruction
- * @param {string|null} maybeInstruction - Optional system instruction if model name was provided as 2nd arg
+ * @param {string|object|null} modelOrInstruction - Optional model name or system instruction or generationConfig
+ * @param {string|object|null} maybeInstructionOrConfig - Optional system instruction or generationConfig
+ * @param {object} maybeConfig - Optional generationConfig
  * @returns {Promise<string>} The generated text response
  */
 export const generateText = async (prompt, modelOrInstruction = null, maybeInstructionOrConfig = null, maybeConfig = {}) => {
@@ -58,8 +125,15 @@ export const generateText = async (prompt, modelOrInstruction = null, maybeInstr
 
   if (typeof modelOrInstruction === "string" && (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.includes("/"))) {
     modelName = modelOrInstruction;
-    systemInstruction = maybeInstructionOrConfig;
-    generationConfig = maybeConfig || {};
+    if (typeof maybeInstructionOrConfig === "object" && maybeInstructionOrConfig !== null) {
+      generationConfig = maybeInstructionOrConfig;
+      systemInstruction = null;
+    } else {
+      systemInstruction = maybeInstructionOrConfig;
+      generationConfig = maybeConfig || {};
+    }
+  } else if (typeof modelOrInstruction === "object" && modelOrInstruction !== null) {
+    generationConfig = modelOrInstruction;
   } else {
     systemInstruction = modelOrInstruction;
     if (maybeInstructionOrConfig && typeof maybeInstructionOrConfig === "object") {
@@ -94,9 +168,6 @@ export const generateMultimodalText = async (
     if (String(prompt).startsWith("Summarize stored chat DATA")) return "[LOCAL AI FIXTURE] Shared conversation context retained for the collaboration test.";
     return "[LOCAL AI FIXTURE] Shared project chat response. This deterministic response verifies collaboration; no live Gemini request was made.";
   }
-  if (!genAI) {
-    throw new Error("GEMINI_API_KEY is not configured.");
-  }
 
   let modelName = null;
   let generationConfig = {};
@@ -110,7 +181,21 @@ export const generateMultimodalText = async (
     generationConfig = maybeConfig || {};
   }
 
-  const {requestTimeoutMs,totalTimeoutMs,maxAttempts,onRetry,onWait,retryBaseDelayMs,...providerConfig}=generationConfig;
+  const taskType = generationConfig.taskType || "integration";
+  const genAI = getGeminiClient(taskType, generationConfig.apiKey);
+
+  const {
+    requestTimeoutMs,
+    totalTimeoutMs,
+    maxAttempts,
+    onRetry,
+    onWait,
+    retryBaseDelayMs,
+    taskType: _taskType,
+    apiKey: _apiKey,
+    ...providerConfig
+  } = generationConfig;
+
   let primaryModelName = resolveModelName(modelName);
   
   const createModelInstance = (mName) => {
