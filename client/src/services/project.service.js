@@ -401,14 +401,9 @@ export async function getProjectCfgApi(projectId, snapshotId) {
 }
 
 export async function getProjectCcApi(projectId, snapshotId) {
-<<<<<<< Updated upstream
-  const res = await editorAwareFetch(
-    `${BASE_URL}/projects/${projectId}/cc?snapshotId=${snapshotId}`,
-=======
   const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/cc${query}`,
->>>>>>> Stashed changes
     {
       headers: getAuthHeaders(),
     },
@@ -417,12 +412,8 @@ export async function getProjectCcApi(projectId, snapshotId) {
 }
 
 export async function buildCfgApi(projectId, snapshotId) {
-<<<<<<< Updated upstream
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
-=======
   const body = snapshotId ? { snapshotId } : {};
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
->>>>>>> Stashed changes
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(body),
@@ -547,12 +538,23 @@ export async function selectTestingFrameworkApi(
   return handleResponse(res);
 }
 
-export async function createProjectSnapshotApi(projectId, { label, message }) {
+export async function createProjectSnapshotApi(projectId, { label, message } = {}) {
   const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ label, message }),
   });
+  return handleResponse(res);
+}
+
+export async function activateProjectSnapshotApi(projectId, snapshotId) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/activate`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+    }
+  );
   return handleResponse(res);
 }
 

@@ -8,6 +8,20 @@ import {
   getPassRate,
 } from "./unifiedDashboard.selectors.js";
 
+export function resolvePillarState(pillar) {
+  if (!pillar) return "NOT_RUN";
+  const passed = Number(pillar.passedTests ?? 0);
+  const failed = Number(pillar.failedTests ?? 0);
+  const total = Number(pillar.totalTests ?? (passed + failed));
+  if (total === 0 || (passed === 0 && failed === 0)) {
+    return "NOT_RUN";
+  }
+  if (failed === 0) {
+    return "ALL_PASSING";
+  }
+  return "HAS_FAILURES";
+}
+
 function toFixedPct(val, fallback = 0) {
   if (val === null || val === undefined || val === "") return fallback;
   const num = Number(val);
@@ -143,10 +157,12 @@ export function adaptUnit(raw, unifiedUnit = null) {
     line: 1,
   }));
 
+  const pillarState = resolvePillarState({ passedTests, failedTests, totalTests });
   return {
     id: "unit",
     label: "Unit Test",
     framework,
+    state: pillarState,
     totalTests,
     passedTests,
     failedTests,
@@ -159,6 +175,7 @@ export function adaptUnit(raw, unifiedUnit = null) {
     lowCoverageItems,
     failedScenarios: [],
     failureDistribution: {},
+    failuresByCategory: [],
     errorMessage: null,
   };
 }

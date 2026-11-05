@@ -5,7 +5,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { cleanStoragePath } from "../utils/pathSanitizer.js";
-import { loadSourceCode } from "./aiContextBuilder.service.js";
+import { loadSourceCode, clearSourceCodeCache } from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { getBucket } from "../config/firebase.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
@@ -212,12 +212,24 @@ export function parseFailureMessages(failureMessages, req = null) {
 
 const endpointCache = new Map();
 const firebaseCache = new Map();
+const runtimeEvidenceCache = new Map();
+const inFlightIntegrationBuilds = new Map();
 const aiTestParseCache = new Map(); // Structure: Map<snapshotId, Map<aiTestId, { updatedAt: number, requests: Array }>>
 const apiTraceCache = new Map();
 
 export const invalidateEndpointCache = (snapshotId, rootDir = null) => {
   endpointCache.delete(snapshotId);
-  firebaseCache.delete(snapshotId);
+  clearSourceCodeCache(snapshotId);
+  for (const key of Array.from(firebaseCache.keys())) {
+    if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+      firebaseCache.delete(key);
+    }
+  }
+  for (const key of Array.from(runtimeEvidenceCache.keys())) {
+    if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+      runtimeEvidenceCache.delete(key);
+    }
+  }
   aiTestParseCache.delete(snapshotId);
   for (const key of apiTraceCache.keys()) {
     if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
@@ -827,6 +839,22 @@ export const discoverProjectIntegrationTests = async (rootDir) => {
 };
 
 export const buildIntegrationWorkspace = async (snapshotId) => {
+  if (!snapshotId) return null;
+  if (inFlightIntegrationBuilds.has(snapshotId)) {
+    return inFlightIntegrationBuilds.get(snapshotId);
+  }
+  const buildPromise = (async () => {
+    try {
+      return await executeBuildIntegrationWorkspace(snapshotId);
+    } finally {
+      inFlightIntegrationBuilds.delete(snapshotId);
+    }
+  })();
+  inFlightIntegrationBuilds.set(snapshotId, buildPromise);
+  return buildPromise;
+};
+
+const executeBuildIntegrationWorkspace = async (snapshotId) => {
   const start = Date.now();
 
   const startDb = Date.now();
@@ -881,6 +909,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
   let discoveredEndpoints = [];
   let sourceFilesCount = 0;
   let sourceTime = 0;
+  let loadedSourceCode = null;
 
   if (!discoveredEndpointsCache) {
     // Try file cache
@@ -914,6 +943,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     if (!discoveredEndpointsCache) {
       const startSource = Date.now();
       const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
+      loadedSourceCode = sourceCode;
       sourceTime = Date.now() - startSource;
       sourceFilesCount = sourceCode.length;
       discoveredEndpoints = extractValidEndpoints(sourceCode);
@@ -1024,7 +1054,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error("Firebase scenario check timed out")),
-            2500,
+            1200,
           ),
         );
         const downloadPromise = (async () => {
@@ -1059,50 +1089,55 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
   // 3.5 Load Runtime Execution Evidence
   let runtimeEvidences = [];
-  if (snapshot?.rootDir) {
-    const candidateEvPaths = [
-      path.join(snapshot.rootDir, "coverage", "runtime-evidence.json"),
-      path.join(snapshot.rootDir, ".covai-temp", "runtime-evidence.json"),
-    ];
-    for (const cand of candidateEvPaths) {
-      try {
-        if (fs.existsSync(cand)) {
-          const parsed = JSON.parse(fs.readFileSync(cand, "utf8"));
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            runtimeEvidences = parsed;
-            break;
+  if (runtimeEvidenceCache.has(firebaseCacheKey)) {
+    runtimeEvidences = runtimeEvidenceCache.get(firebaseCacheKey);
+  } else {
+    if (snapshot?.rootDir) {
+      const candidateEvPaths = [
+        path.join(snapshot.rootDir, "coverage", "runtime-evidence.json"),
+        path.join(snapshot.rootDir, ".covai-temp", "runtime-evidence.json"),
+      ];
+      for (const cand of candidateEvPaths) {
+        try {
+          if (fs.existsSync(cand)) {
+            const parsed = JSON.parse(fs.readFileSync(cand, "utf8"));
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              runtimeEvidences = parsed;
+              break;
+            }
           }
-        }
-      } catch (_) {}
-    }
-  }
-
-  if (runtimeEvidences.length === 0 && artifactPrefix) {
-    try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Firebase runtime-evidence check timed out")),
-          2500,
-        ),
-      );
-      const downloadPromise = (async () => {
-        const file = getBucket().file(
-          `${artifactPrefix}/runtime-evidence.json`,
-        );
-        const [exists] = await file.exists();
-        if (exists) {
-          const [content] = await file.download();
-          return JSON.parse(content.toString("utf8"));
-        }
-        return null;
-      })();
-      const downloaded = await Promise.race([downloadPromise, timeoutPromise]);
-      if (downloaded && Array.isArray(downloaded)) {
-        runtimeEvidences = downloaded;
+        } catch (_) {}
       }
-    } catch (e) {
-      // non-fatal
     }
+
+    if (runtimeEvidences.length === 0 && artifactPrefix) {
+      try {
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Firebase runtime-evidence check timed out")),
+            1200,
+          ),
+        );
+        const downloadPromise = (async () => {
+          const file = getBucket().file(
+            `${artifactPrefix}/runtime-evidence.json`,
+          );
+          const [exists] = await file.exists();
+          if (exists) {
+            const [content] = await file.download();
+            return JSON.parse(content.toString("utf8"));
+          }
+          return null;
+        })();
+        const downloaded = await Promise.race([downloadPromise, timeoutPromise]);
+        if (downloaded && Array.isArray(downloaded)) {
+          runtimeEvidences = downloaded;
+        }
+      } catch (e) {
+        // non-fatal
+      }
+    }
+    runtimeEvidenceCache.set(firebaseCacheKey, runtimeEvidences);
   }
 
   // Isolate runtime evidence to the active testRun to prevent mixing historical runs
@@ -1168,10 +1203,15 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       }
     }
 
-    let sourceCodeList = [];
-    try {
-      sourceCodeList = await loadSourceCode(snapshotId);
-    } catch (_) {}
+    let sourceCodeList = loadedSourceCode;
+    if (!sourceCodeList) {
+      try {
+        sourceCodeList = await loadSourceCode(snapshotId);
+        loadedSourceCode = sourceCodeList;
+      } catch (_) {
+        sourceCodeList = [];
+      }
+    }
 
     apiTraceResult = traceApiEndpointCoverage({
       endpoints: discoveredEndpoints,

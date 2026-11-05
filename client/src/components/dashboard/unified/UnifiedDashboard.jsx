@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useUnifiedDashboard } from "../../../hooks/useUnifiedDashboard.js";
 import { useRunAllSuites } from "../../../hooks/useRunAllSuites.js";
+import { useDashboardSocket } from "../../../hooks/useDashboardSocket.js";
 import { buildWorkspaceUrl } from "../../../services/unifiedDashboard/workspaceNavigation.js";
 
 import { ZoneErrorBoundary } from "./primitives/ZoneErrorBoundary.jsx";
@@ -9,8 +10,7 @@ import { UnifiedDashboardSkeleton } from "./skeletons/UnifiedDashboardSkeleton.j
 import { GlobalCommandHeader } from "./zones/GlobalCommandHeader.jsx";
 import { ExecutiveKpiRow } from "./zones/ExecutiveKpiRow.jsx";
 import { PyramidAndPillarsZone } from "./zones/PyramidAndPillarsZone.jsx";
-import { TraceAndActionsZone } from "./zones/TraceAndActionsZone.jsx";
-import { TrendsAndHistoryZone } from "./zones/TrendsAndHistoryZone.jsx";
+import { AnalysisTabsZone } from "./zones/AnalysisTabsZone.jsx";
 import { SlideOverInspectorDrawer } from "./inspector/SlideOverInspectorDrawer.jsx";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
@@ -31,21 +31,13 @@ export function UnifiedDashboard({
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Track active snapshot selection (allows switching snapshots interactively)
-  const [activeSnapshotId, setActiveSnapshotId] = useState(
-    () => snapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""
-  );
-
-  useEffect(() => {
-    const nextId =
-      snapshotId ||
-      project?.latestSnapshotId ||
-      project?.snapshots?.[0]?.id ||
-      "";
-    if (nextId && nextId !== activeSnapshotId) {
-      setActiveSnapshotId(nextId);
-    }
-  }, [snapshotId, project?.latestSnapshotId, project?.snapshots, activeSnapshotId]);
+  // Resolved effective snapshot ID derived directly from props without lagging state sync
+  const effectiveSnapshotId =
+    snapshotId ||
+    project?.activeSnapshotId ||
+    project?.latestSnapshotId ||
+    project?.snapshots?.[0]?.id ||
+    "";
 
   // Cross-filtering state (triggered from Zone 3 Pyramid or Pillar Failure Breakdowns)
   const [activeCrossFilter, setActiveCrossFilter] = useState(null);
@@ -58,10 +50,17 @@ export function UnifiedDashboard({
 
   // 1. Fetch & Adapt Real Multi-Tier Data
   const { vm, isLoading, isFetching, isError, error, refetch, forceRefresh } = useUnifiedDashboard({
-    snapshotId: activeSnapshotId,
+    snapshotId: effectiveSnapshotId,
     projectId,
     projectName,
     snapshots,
+  });
+
+  // Real-time telemetry via Socket.IO
+  const effectiveProjectId = projectId || project?.id || vm?.context?.projectId;
+  const { isConnected: isSocketConnected, liveRuns } = useDashboardSocket({
+    projectId: effectiveProjectId,
+    snapshotId: effectiveSnapshotId,
   });
 
   // Publish live unified quality summary to parent / COV AI Agent context (guarded against duplicate emissions)
@@ -129,7 +128,7 @@ export function UnifiedDashboard({
 
   // 2. Multi-Suite Sequential Run
   const runAllState = useRunAllSuites({
-    snapshotId: activeSnapshotId,
+    snapshotId: effectiveSnapshotId,
     projectId,
     onCompleted: () => refetch(),
   });
@@ -138,7 +137,6 @@ export function UnifiedDashboard({
   const handleSelectSnapshot = useCallback(
     (newSnapshotId) => {
       if (!newSnapshotId) return;
-      setActiveSnapshotId(newSnapshotId);
       setActiveCrossFilter(null);
       const params = new URLSearchParams(location.search);
       params.set("snapshotId", newSnapshotId);
@@ -171,7 +169,9 @@ export function UnifiedDashboard({
     }
   }, []);
 
-  const isDashboardLoading = !vm && isLoading && Boolean(activeSnapshotId);
+  // Immediately render Skeleton from t=0ms when project or active snapshot is loading (no empty dashboard flash)
+  const isInitialWaiting = (!projectId && !project) || !effectiveSnapshotId;
+  const isDashboardLoading = isInitialWaiting || (!vm && (isLoading || isFetching));
 
   if (isDashboardLoading) {
     return (
@@ -227,6 +227,8 @@ export function UnifiedDashboard({
             onNavigateWorkspace={handleNavigate}
             isSyncing={isFetching}
             onForceRefresh={forceRefresh}
+            liveRuns={liveRuns}
+            isSocketConnected={isSocketConnected}
           />
         </ZoneErrorBoundary>
 
@@ -245,9 +247,9 @@ export function UnifiedDashboard({
           />
         </ZoneErrorBoundary>
 
-        {/* ZONE 4: Cross-Layer Traceability Matrix & Action Center (8 cols + 4 cols) */}
-        <ZoneErrorBoundary zoneTitle="Traceability Matrix & Actions" onRetry={refetch}>
-          <TraceAndActionsZone
+        {/* ZONE 4: Unified Analysis Tabs (Traceability Matrix & Action Strip vs Trends & History) */}
+        <ZoneErrorBoundary zoneTitle="Deep Quality Analysis" onRetry={refetch}>
+          <AnalysisTabsZone
             vm={vm}
             onNavigateWorkspace={handleNavigate}
             onInspectItem={setInspectedItem}
@@ -256,21 +258,12 @@ export function UnifiedDashboard({
             onClearCrossFilter={() => setActiveCrossFilter(null)}
           />
         </ZoneErrorBoundary>
-
-        {/* ZONE 5: Trends & Execution History (6 cols + 6 cols) */}
-        <ZoneErrorBoundary zoneTitle="Trends & Execution History" onRetry={refetch}>
-          <TrendsAndHistoryZone
-            vm={vm}
-            onNavigateWorkspace={handleNavigate}
-            onInspectItem={setInspectedItem}
-          />
-        </ZoneErrorBoundary>
       </div>
 
       {/* Slide-Over Diagnostic & Run Inspector Drawer */}
       <SlideOverInspectorDrawer
         item={inspectedItem}
-        snapshotId={activeSnapshotId}
+        snapshotId={effectiveSnapshotId}
         onClose={() => setInspectedItem(null)}
         onNavigateWorkspace={handleNavigate}
         onAskAi={onAskAi}

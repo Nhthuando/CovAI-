@@ -10,6 +10,7 @@ export function useProjectEvents(projectId, userId, onEvent) {
   useEffect(() => {
     if (!projectId || !userId) return;
     let sequence = 0;
+    let hasConnectedOnce = false;
     let alive = true;
     let replaying = false;
     let invalidateTimeout = null;
@@ -72,7 +73,10 @@ export function useProjectEvents(projectId, userId, onEvent) {
 
     socket.on("connect", async () => {
       socket.emit("project:subscribe", { projectId });
-      invalidate();
+      if (hasConnectedOnce) {
+        invalidate();
+      }
+      hasConnectedOnce = true;
       await replay(sequence);
     });
     socket.on("project:event", receive);
