@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { systemEvidenceRequest } from '../../../services/systemTest.service.js';
+import { useProjectAccess } from '../../../hooks/useProjectAccess';
+import { useEffect, useState } from "react";
 import { X, Sparkles, Plus, Trash2, Check, AlertCircle, Loader2 } from "lucide-react";
 import Button from "../../common/Button.jsx";
 import { generateColdStartSystemTests } from "../../../services/systemTest.service.js";
@@ -9,15 +11,27 @@ export default function SystemTestGeneratorModal({
   isOpen,
   onClose,
   snapshotId,
+  projectId,
+  executionMode = "full",
   initialFramework = "playwright",
   onSuccess,
 }) {
+  const access = useProjectAccess(projectId);
+  const [reviewed, setReviewed] = useState(false);
+  const [setupApproved, setSetupApproved] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [framework, setFramework] = useState(initialFramework);
   const [routes, setRoutes] = useState([]);
   const [newRoute, setNewRoute] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    let current=true;
+    if(isOpen)systemEvidenceRequest(snapshotId,'generation-drafts/latest').then(data=>{if(current && data && data.executionMode === 'full')setResult(data);}).catch(()=>{});
+    return ()=>{current=false;};
+  },[snapshotId,isOpen]);
 
   if (!isOpen) return null;
 
@@ -52,11 +66,10 @@ export default function SystemTestGeneratorModal({
       const res = await generateColdStartSystemTests(snapshotId, {
         framework,
         routes,
+        executionMode,
       });
       setResult(res.data);
-      if (onSuccess) {
-        onSuccess(res.data);
-      }
+
     } catch (err) {
       setError(
         err.response?.data?.message ||
@@ -79,7 +92,7 @@ export default function SystemTestGeneratorModal({
             </div>
             <div>
               <h3 className="text-sm font-semibold text-[var(--color-text)]">
-                Auto-Generate System Tests with AI
+                Generate Full Stack tests
               </h3>
               <p className="text-[11px] text-[var(--color-text-secondary)] m-0">
                 Source-based tests for browser routes and user workflows
@@ -89,7 +102,7 @@ export default function SystemTestGeneratorModal({
           <button
             onClick={onClose}
             aria-label="Close test generator"
-            disabled={generating}
+            disabled={generating || applying}
             className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
           >
             <X size={16} />
@@ -106,28 +119,18 @@ export default function SystemTestGeneratorModal({
           )}
 
           {result ? (
-            <div className="p-4 rounded-[var(--radius-md)] bg-[var(--color-success)]/10 border border-[var(--color-success)]/30 text-[var(--color-text)] space-y-2">
-              <div className="flex items-center gap-2 text-[var(--color-success)] font-semibold text-xs">
-                <Check size={16} />
-                <span>Test Suite Generated Successfully!</span>
-              </div>
-              <div className="text-[11px] text-[var(--color-text-secondary)]">
-                File created:{" "}
-                <span className="font-mono text-[var(--color-text)] font-medium">
-                  {result.filePath}
-                </span>
-              </div>
-              <div className="text-[11px] text-[var(--color-text-secondary)]">
-                Scenarios generated:{" "}
-                <span className="font-semibold text-[var(--color-text)]">
-                  {result.scenariosCount ?? result.scenarioCount ?? 0}
-                </span>
-              </div>
-              <div className="pt-2 flex justify-end">
-                <Button variant="primary" size="sm" onClick={onClose}>
-                  Done & Refresh
-                </Button>
-              </div>
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold">Review generated draft</h3>
+              {result.stale && <p className="text-amber-600">Workspace changed after this draft was generated. Generate a new draft before applying.</p>}
+              <button type="button" disabled={applying} onClick={() => {setResult(null);setReviewed(false);setSetupApproved(false);}} className="text-xs underline">Generate another draft</button>
+              <p className="text-xs text-[var(--color-text-muted)]">{result.scenarioCount} scenarios ? {result.executionMode === 'full' ? 'Full Stack' : 'Frontend'} ? Not runtime verified</p>
+              <p className="break-all font-mono text-xs">{result.filePath}</p>
+              {result.scenarios?.map(row => <article key={row.id || row.title} className="rounded-lg border border-[var(--color-border)] p-3"><h4 className="font-semibold">{row.title}</h4><p className="mt-1">Input: {[...(row.preconditions || []),...(row.inputs || [])].join('; ') || 'Not specified'}</p><p className="mt-1">Expected: {(row.expected || []).join('; ') || 'Review the code assertions'}</p></article>)}
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--color-border)] p-3 text-[11px]">{result.code}</pre>
+              {!!result.setupChanges?.length && <div className="space-y-2">{result.setupChanges.map(file => <details key={file.path}><summary>Shared setup: {file.path}</summary><pre className="max-h-40 overflow-auto whitespace-pre-wrap text-[11px]">{file.content}</pre></details>)}<label className="flex gap-2"><input type="checkbox" checked={setupApproved} onChange={event => setSetupApproved(event.target.checked)} />I reviewed shared setup changes. They are not rolled back by test versions.</label></div>}
+              <label className="flex gap-2"><input type="checkbox" checked={reviewed} onChange={event => setReviewed(event.target.checked)} />I reviewed the test code, inputs and expected outcomes.</label>
+              <Button size="sm" loading={applying} disabled={result.stale || !reviewed || !access.can('evidence.approve') || (result.setupChanges?.length > 0 && !setupApproved)} onClick={async () => { setApplying(true);setError(null);try { const saved=await systemEvidenceRequest(snapshotId, `generation-drafts/${result.aiTestId}/apply`, {method:'POST',data:{expectedCandidateHash:result.candidateHash,reviewed:true,approveSharedSetup:setupApproved}});onSuccess?.(saved);onClose(); } catch(err) {setError(err.response?.data?.message || err.message);} finally {setApplying(false);} }}>Apply reviewed tests</Button>
+              {!access.can('evidence.approve') && <p>Ask a project owner to approve and apply these tests.</p>}
             </div>
           ) : (
             <>

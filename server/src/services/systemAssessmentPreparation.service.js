@@ -36,9 +36,7 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
     const discover=()=> (dependencies.discover || discoverSystemAssessment)({rootDir,runner:input.runner,executionMode:input.executionMode});
     try{resolved=discover();}catch(error){
         if(input.executionMode!=='full' || !['FULL_STACK_TESTS_REQUIRED','SYSTEM_TESTS_NOT_FOUND'].includes(error.code))throw error;
-        const generateTests=dependencies.prepareTests || (await import('./automaticSystemTests.service.js')).prepareMissingSystemTests;
-        await generateTests({rootDir,jobId,model:input.model,signal,onProgress:checkpoint});
-        resolved=discover();
+        throw new ServiceError('No compatible tests are applied. Generate a draft, review it and apply the tests before running.',409);
     }
     return {rootDir, input: parseRequest(assessmentRequest, resolved),aiUsage:currentAiJobBudget()?.snapshot()};
 };

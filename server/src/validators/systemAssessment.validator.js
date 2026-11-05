@@ -16,7 +16,7 @@ export const scenarioDraftRequest = z.object(scenarioDetails).strict();
 export const scenarioUpdateRequest = z.object({ ...scenarioDetails, expectedScenarioHash: z.string().length(64) }).strict();
 export const scenarioExpectedConfirmationRequest = z.object({ expectedScenarioHash: z.string().length(64) }).strict();
 export const scenarioReviewRequest = z.object({ expectedScenarioHash: z.string().length(64), revisionId: z.string().min(1), expectedRequirementHash: z.string().length(64), assertionIds: z.array(z.string().min(1)).min(1).max(100) }).strict();
-export const proposalReviewRequest = z.object({ expectedCandidateTestHash: z.string().length(64), expectedRequirementHash: z.string().length(64), scenarios: z.array(z.object({ ...scenarioDetails, assertionIds: z.array(z.string().min(1)).min(1).max(50) }).strict()).min(1).max(50) }).strict();
+export const proposalReviewRequest = z.object({ expectedCandidateTestHash: z.string().length(64), expectedRequirementHash: z.string().length(64).nullable().optional(), scenarios: z.array(z.object({ ...scenarioDetails, assertionIds: z.array(z.string().min(1)).min(1).max(50) }).strict()).min(1).max(50) }).strict();
 export const improvementRequest = z.object({ assessmentId: z.string(), model: z.string().optional(), filePath: relativePath, gapIds: z.array(z.string()).min(1).max(20), expectedTestHash: z.string(), instruction: z.string().max(2000).default(''), autoApply: z.boolean().default(false) }).strict();
 export const parseRequest = (schema, value) => {
     const parsed = schema.safeParse(value);

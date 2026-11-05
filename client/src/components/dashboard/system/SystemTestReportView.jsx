@@ -1,380 +1,48 @@
-import SystemTestEvidencePreview from "./SystemTestEvidencePreview.jsx";
-import { Fragment, useState } from "react";
-import {
-  Printer,
-  Download,
-  ArrowLeft,
-  FileCode2,
-  Activity,
-  Layers,
-} from "lucide-react";
-import Button from "../../common/Button.jsx";
+import { useState } from 'react';
+import { downloadSystemAssessmentPdf } from '../../../services/systemTest.service.js';
+import SystemTestReportCharts from './SystemTestReportCharts.jsx';
+import SystemTestDimensionsTable from './SystemTestDimensionsTable.jsx';
+import SystemTestScenarioLibrary from './SystemTestScenarioLibrary.jsx';
+import { formatReportDate } from './systemReportModel.js';
+import SystemTestCoverageComparison from './SystemTestCoverageComparison.jsx';
 
-import { downloadSystemAssessmentPdf } from "../../../services/systemTest.service.js";
-
-function formatMs(ms) {
-  if (!ms || ms <= 0) return "0ms";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-}
-
-export default function SystemTestReportView({
-  summary,
-  testFiles = [],
-  projectName = "CovAI Project",
-  snapshotId,
-  assessmentId,
-  onBack,
-}) {
-  const [exporting, setExporting] = useState(false);
-
-  const total = summary?.totalTests || 0;
-  const passed = summary?.passedTests || 0;
-  const flaky = summary?.flakyTests || 0;
-  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
-  const cov = summary?.coverageSummary || null;
-
-  // Print Report Handler
-  const handlePrint = () => {
-    window.print();
+export default function SystemTestReportView({ assessment, snapshotId, onBack }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const report = assessment?.presentation;
+  const download = async () => {
+    setBusy(true); setError('');
+    try { await downloadSystemAssessmentPdf(snapshotId, assessment.id); }
+    catch { setError('Could not export PDF. Try again.'); }
+    finally { setBusy(false); }
   };
-
-  // Download Official PDF from Backend
-  const handleDownloadPdf = async () => {
-    if (!snapshotId || !assessmentId) {
-      window.print();
-      return;
-    }
-    setExporting(true);
+  const print = async () => {
+    setError('');
     try {
-      await downloadSystemAssessmentPdf(snapshotId, assessmentId);
-    } catch (err) {
-      console.warn("Server PDF export failed, falling back to print dialog:", err);
+      await Promise.all([...document.images].map(image => image.decode ? image.decode() : Promise.resolve()));
       window.print();
-    } finally {
-      setExporting(false);
-    }
+    } catch { setError('Could not load report images. Wait for captured evidence to load, then try Print view again.'); }
   };
-
-  // Export JSON Report Handler
-  const handleExportJson = () => {
-    setExporting(true);
-    try {
-      const reportData = {
-        projectName,
-        snapshotId,
-        generatedAt: new Date().toISOString(),
-        summary,
-        testFiles: testFiles.map((file) => ({
-          filePath: file.filePath,
-          total: file.scenarios?.length || 0,
-          scenarios: file.scenarios || [],
-        })),
-      };
-
-      const dataStr =
-        "data:text/json;charset=utf-8," +
-        encodeURIComponent(JSON.stringify(reportData, null, 2));
-      const downloadAnchor = document.createElement("a");
-      downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute(
-        "download",
-        `system-test-report-${snapshotId || "summary"}.json`
-      );
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
-    } finally {
-      setExporting(false);
-    }
+  const exportJson = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = `system-test-${assessment.id}.json`; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-
-  return (
-    <div className="system-test-report min-h-screen bg-[var(--color-bg)] text-[var(--color-text)] font-sans p-4 sm:p-8">
-      {/* Print styles injected cleanly */}
-      <style>{`
-        @media print {
-          body {
-            background: #ffffff !important;
-            color: #000000 !important;
-          }
-          .no-print {
-            display: none !important;
-          }
-          .system-test-report {
-            padding: 0 !important;
-            max-width: 100% !important;
-          }
-          .report-card {
-            border: 1px solid #d1d5db !important;
-            page-break-inside: avoid;
-            background: #ffffff !important;
-            color: #000000 !important;
-          }
-          table {
-            page-break-inside: auto;
-          }
-          tr {
-            page-break-inside: avoid;
-            page-break-after: auto;
-          }
-        }
-      `}</style>
-
-      {/* Top Action Bar (hidden when printing) */}
-      <div className="no-print max-w-5xl mx-auto flex items-center justify-between pb-6 border-b border-[var(--color-border)] mb-6">
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={ArrowLeft}
-          onClick={onBack}
-        >
-          Back to Dashboard
-        </Button>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={Download}
-            onClick={handleExportJson}
-            disabled={exporting}
-          >
-            Export JSON
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={Printer}
-            onClick={handlePrint}
-          >
-            Print
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            icon={Download}
-            onClick={handleDownloadPdf}
-            loading={exporting}
-          >
-            Export PDF Report
-          </Button>
-        </div>
-      </div>
-
-      {/* Report Document Content */}
-      <div className="max-w-5xl mx-auto space-y-6">
-        {/* Document Header */}
-        <div className="border-b border-[var(--color-border)] pb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xs font-bold tracking-wider uppercase text-[var(--color-primary)] font-mono">
-                CovAI System Testing Platform
-              </span>
-              <span className="text-xs px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] font-mono border border-[var(--color-border)]">
-                Official Report
-              </span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--color-text)]">
-              End-to-End System Test & Coverage Report
-            </h1>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-              Project: <span className="font-semibold text-[var(--color-text)]">{projectName}</span> | Snapshot:{" "}
-              <span className="font-mono">{snapshotId || "N/A"}</span>
-            </p>
-          </div>
-
-          <div className="text-right text-xs text-[var(--color-text-muted)] font-mono">
-            <div>Generated: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</div>
-            <div>Runner: <span className="font-semibold uppercase text-[var(--color-primary)]">{summary?.runner || "Playwright"}</span></div>
-            <div>Mode: {summary?.executionMode === 'full' ? 'Full Stack' : 'Frontend Dev Server'}</div>
-            {summary?.latestRun?.finishedAt && <div>Run finished: {new Date(summary.latestRun.finishedAt).toLocaleString()}</div>}
-          </div>
-        </div>
-
-        {/* High-Level Metrics Summary Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="report-card p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-            <div className="text-xs text-[var(--color-text-muted)] font-medium mb-1">
-              Pass Rate
-            </div>
-            <div className="text-2xl font-bold text-[var(--color-text)]">
-              {passRate}%
-            </div>
-            <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-1">
-              {passed} of {total} passed
-            </div>
-          </div>
-
-          <div className="report-card p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-            <div className="text-xs text-[var(--color-text-muted)] font-medium mb-1">
-              Line Coverage
-            </div>
-            <div className="text-2xl font-bold text-[var(--color-primary)]">
-              {cov?.lines !== undefined ? `${Math.round(cov.lines)}%` : "N/A"}
-            </div>
-            <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-1">
-              Statements: {cov?.statements !== undefined ? `${Math.round(cov.statements)}%` : "-"}
-            </div>
-          </div>
-
-          <div className="report-card p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-            <div className="text-xs text-[var(--color-text-muted)] font-medium mb-1">
-              Repeat-run evidence
-            </div>
-            <div className="text-2xl font-bold text-[var(--color-text)]">
-              {"Not measured"}
-            </div>
-            <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-1">
-              Flaky tests: {flaky}
-            </div>
-          </div>
-
-          <div className="report-card p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-            <div className="text-xs text-[var(--color-text-muted)] font-medium mb-1">
-              Execution Duration
-            </div>
-            <div className="text-2xl font-bold text-[var(--color-text)] font-mono">
-              {formatMs(summary?.durationMs)}
-            </div>
-            <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-1">
-              {testFiles.length} spec files
-            </div>
-          </div>
-        </div>
-
-        {/* Coverage Breakdown Section */}
-        {cov && (
-          <div className="report-card p-5 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-            <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-              <Activity size={16} className="text-[var(--color-primary)]" />
-              <span>Coverage Matrix Breakdown</span>
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
-              <div className="p-3 bg-[var(--color-surface-secondary)]/50 rounded-[var(--radius-md)] border border-[var(--color-border)]">
-                <span className="text-[var(--color-text-muted)] block text-[11px]">Statements</span>
-                <span className="text-lg font-bold text-[var(--color-text)]">
-                  {cov.statements !== undefined ? `${cov.statements.toFixed(1)}%` : "N/A"}
-                </span>
-              </div>
-              <div className="p-3 bg-[var(--color-surface-secondary)]/50 rounded-[var(--radius-md)] border border-[var(--color-border)]">
-                <span className="text-[var(--color-text-muted)] block text-[11px]">Branches</span>
-                <span className="text-lg font-bold text-[var(--color-text)]">
-                  {cov.branches !== undefined ? `${cov.branches.toFixed(1)}%` : "N/A"}
-                </span>
-              </div>
-              <div className="p-3 bg-[var(--color-surface-secondary)]/50 rounded-[var(--radius-md)] border border-[var(--color-border)]">
-                <span className="text-[var(--color-text-muted)] block text-[11px]">Functions</span>
-                <span className="text-lg font-bold text-[var(--color-text)]">
-                  {cov.functions !== undefined ? `${cov.functions.toFixed(1)}%` : "N/A"}
-                </span>
-              </div>
-              <div className="p-3 bg-[var(--color-surface-secondary)]/50 rounded-[var(--radius-md)] border border-[var(--color-border)]">
-                <span className="text-[var(--color-text-muted)] block text-[11px]">Lines</span>
-                <span className="text-lg font-bold text-[var(--color-text)]">
-                  {cov.lines !== undefined ? `${cov.lines.toFixed(1)}%` : "N/A"}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Test Suites & Scenarios Section */}
-        <div className="report-card p-5 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
-            <Layers size={16} className="text-[var(--color-primary)]" />
-            <span>Executed Scenarios by Test Spec</span>
-          </h3>
-
-          {testFiles.length === 0 ? (
-            <div className="text-xs text-[var(--color-text-muted)] italic py-4 text-center">
-              No test spec records in this report.
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {testFiles.map((file) => {
-                const scenarios = file.scenarios || [];
-                return (
-                  <div key={file.filePath} className="border border-[var(--color-border)] rounded-[var(--radius-md)] overflow-hidden">
-                    <div className="px-4 py-2.5 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between text-xs font-mono">
-                      <div className="flex items-center gap-2">
-                        <FileCode2 size={14} className="text-[var(--color-primary)]" />
-                        <span className="font-semibold text-[var(--color-text)]">{file.filePath}</span>
-                      </div>
-                      <span className="text-[var(--color-text-secondary)]">
-                        {scenarios.length} scenarios
-                      </span>
-                    </div>
-
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider bg-[var(--color-surface)]">
-                          <th className="py-2 px-4 font-medium">Scenario Title</th>
-                          <th className="py-2 px-4 font-medium w-24">Status</th>
-                          <th className="py-2 px-4 font-medium w-24">Duration</th>
-                          <th className="py-2 px-4 font-medium w-28 text-right">Coverage</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--color-border)]">
-                        {scenarios.map((sc) => {
-                          const isPassed = String(sc.status).toUpperCase() === "PASSED";
-                          const isFailed = String(sc.status).toUpperCase() === "FAILED";
-                          return (
-                            <Fragment key={sc.id || sc.title}>
-                            <tr className="hover:bg-[var(--color-surface-secondary)]/20">
-                              <td className="py-2 px-4 text-[var(--color-text)]">
-                                <div className="font-medium">{sc.title}</div>
-                                {isFailed && sc.errorMessage && (
-                                  <div className="text-[11px] text-[var(--color-danger)] font-mono mt-0.5 whitespace-pre-wrap">
-                                    {sc.errorMessage}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="py-2 px-4">
-                                <span
-                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] ${
-                                    isPassed
-                                      ? "bg-[var(--color-success)]/10 text-[var(--color-success)]"
-                                      : isFailed
-                                      ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)]"
-                                      : "bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
-                                  }`}
-                                >
-                                  {sc.status || "UNKNOWN"}
-                                </span>
-                              </td>
-                              <td className="py-2 px-4 text-[var(--color-text-secondary)] font-mono text-[11px]">
-                                {formatMs(sc.executionTimeMs || sc.durationMs)}
-                              </td>
-                              <td className="py-2 px-4 text-right font-mono text-[11px] text-[var(--color-primary)]">
-                                {typeof sc.coverageContributionPct === "number"
-                                  ? `${Math.round(sc.coverageContributionPct)}%`
-                                  : "—"}
-                              </td>
-                            </tr>
-                            <tr>
-                              <td colSpan={4}>
-                                <SystemTestEvidencePreview key={`${snapshotId}:${sc.id}`} snapshotId={snapshotId} scenario={sc} />
-                              </td>
-                            </tr>
-                            </Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="pt-6 border-t border-[var(--color-border)] text-center text-xs text-[var(--color-text-muted)] font-mono">
-          Report generated automatically by CovAI System Testing Engine.
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="mx-auto max-w-6xl space-y-6 p-4 text-[var(--color-text)] sm:p-8">
+    <style>{`@media print { .system-report-actions { display:none!important; } body { background:white!important; } }`}</style>
+    <div className="system-report-actions flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={onBack} className="text-sm underline">Back to tests</button><div className="flex gap-4 text-sm"><button type="button" disabled={busy || !report} onClick={download}>{busy ? 'Exporting...' : 'Download PDF'}</button><button type="button" disabled={!report} onClick={exportJson}>Export JSON</button><button type="button" onClick={print}>Print view</button></div></div>
+    {error && <p role="alert" className="text-sm text-rose-600">{error} <button type="button" className="underline" onClick={download}>Retry</button></p>}
+    <header className="border-b border-[var(--color-border)] pb-6"><p className="text-xs font-semibold uppercase tracking-widest text-[var(--color-primary)]">CovAI / System Test</p><h1 className="mt-2 text-3xl font-semibold tracking-tight">Execution report</h1><p className="mt-3 break-all text-xs text-[var(--color-text-muted)]">Assessment {assessment?.id || 'Not selected'} / {assessment?.executionMode === 'full' ? 'Full Stack' : 'Frontend'} / {formatReportDate(assessment?.createdAt)}</p>{report && <p className="mt-2 break-all font-mono text-[10px] text-[var(--color-text-muted)]">Source {report.identity.sourceHash} / Tests {report.identity.testHash}</p>}</header>
+    {!report ? <p>No completed assessment is available for this selection. Run the selected tests first.</p> : <>
+      <div className="grid gap-4 sm:grid-cols-3">{[['Passed scenarios', `${report.execution.passed}/${report.execution.selected}`], ['Repeat evidence', `${report.stability.completedRuns}/${report.stability.requiredRuns} runs / ${report.stability.status.replaceAll('_', ' ').toLowerCase()}`], ['Suite quality', report.qualityScore.status === 'CALCULATED' ? `${report.qualityScore.value}/100` : 'Not calculated']].map(([label, value]) => <article key={label} className="rounded-xl bg-[var(--color-surface-secondary)] p-5"><h2 className="text-xs text-[var(--color-text-muted)]">{label}</h2><p className="mt-2 text-xl font-semibold tabular-nums">{value}</p></article>)}</div>
+      <p className="break-all text-xs text-[var(--color-text-muted)]">Snapshot: {report.identity.snapshotId} / Test version: {report.identity.suiteVersionId || 'Not recorded'} / Runtime: {Number.isFinite(report.execution.elapsedMs) ? `${(report.execution.elapsedMs / 1000).toFixed(1)}s` : 'Not measured'}</p>
+      {report.qualityScore.status === 'CALCULATED' && <details className="text-xs"><summary className="cursor-pointer">How the quality score is calculated</summary><p className="mt-2">Requirements (40), assertion strength (25), repeat stability (20), captured evidence (15).</p><dl className="mt-2 space-y-1">{Object.entries(report.qualityScore.components || {}).map(([key,value]) => <div key={key} className="flex max-w-xs justify-between gap-4"><dt className="capitalize">{key}</dt><dd>{Number(value).toFixed(1)}</dd></div>)}</dl></details>}
+      <SystemTestReportCharts report={report} />
+      <SystemTestDimensionsTable assessment={{ presentation: report }} />
+      {report.comparison?.comparable && <SystemTestCoverageComparison changes={report.comparison.coverageChanges} />}
+      <section><h2 className="mb-4 text-lg font-semibold">Scenario evidence</h2><SystemTestScenarioLibrary presentation={report} /></section>
+      <section><h2 className="mb-3 text-lg font-semibold">Next actions</h2>{report.gaps.length ? <ul className="space-y-3 text-sm">{report.gaps.map((gap, index) => <li key={gap.id || index} className="border-l-2 border-amber-500 pl-3"><p>{gap.description}</p><p className="mt-1 text-xs text-[var(--color-text-muted)]">{gap.nextAction || gap.filePath || gap.criterionId}</p></li>)}</ul> : <p className="text-sm text-[var(--color-text-muted)]">No findings recorded. This does not prove complete business coverage.</p>}</section>
+      <footer className="border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-text-muted)]">{report.limitations.map((item, index) => <p key={index} className="mt-1">{item}</p>)}</footer>
+    </>}
+  </div>;
 }
-

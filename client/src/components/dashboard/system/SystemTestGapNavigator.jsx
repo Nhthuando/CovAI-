@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { ArrowUpRight, FileCode2, Layers, AlertCircle, CheckCircle2, Filter, GitBranch, Code2, ShieldAlert } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ArrowUpRight, FileCode2, CheckCircle2, GitBranch, Code2, ShieldAlert } from 'lucide-react';
 
 export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
   const [filterType, setFilterType] = useState('ALL');
@@ -65,9 +65,9 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
       <div className="flex items-center gap-3 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400">
         <CheckCircle2 size={20} className="shrink-0" />
         <div>
-          <h4 className="text-sm font-semibold">100% Edge-Case & Source Code Coverage Achieved!</h4>
+          <h4 className="text-sm font-semibold">No findings recorded in this assessment</h4>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            All code branches, keyboard interactions, validations, and error fallbacks have been executed and verified in independent Playwright runs.
+            An empty findings list does not establish complete coverage. Check measurement status and scope.
           </p>
         </div>
       </div>
@@ -88,11 +88,6 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
           ▼
         </span>
       </summary>
-
-      {/* Explanatory relationship banner */}
-      <div className="mt-3.5 p-3 rounded-lg bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] leading-relaxed">
-        <span className="font-semibold text-[var(--color-text)]">💡 Dimension Mapping Insight:</span> The 4 System Test Dimensions above measure macro-level functional completeness (<strong>100% passed</strong> for all user workflows, routes, and APIs). The <strong>{gaps.length} findings below</strong> pinpoint micro-level AST branches (keyboard shortcuts, edge validations, error states) that must be exercised to push code coverage to <strong>95%+</strong>.
-      </div>
 
       {/* Controls & Filters */}
       <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">

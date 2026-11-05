@@ -340,6 +340,8 @@ model Project {
 }
 
 model ProjectSnapshot {
+  systemSuiteState SystemSuiteState?
+  systemSuiteVersions SystemSuiteVersion[]
   editorDocuments ProjectEditorDocument[]
   codeChanges ProjectCodeChange[]
   id                          String                    @id @default(cuid())
@@ -910,6 +912,7 @@ model SystemAssertionBinding {
   @@unique([revisionId, assertionId, testHash])
 }
 model SystemTestAssessment {
+  suiteVersionId String?
   id String @id @default(cuid())
   snapshotId String
   jobId String @unique
@@ -970,6 +973,11 @@ model SystemRunEvent {
   @@index([assessmentId, scenarioKey])
 }
 model SystemRunArtifact {
+  runIndex Int?
+  attemptIndex Int?
+  stepKey String?
+  purpose String?
+  expiredAt DateTime?
   id String @id @default(cuid())
   assessmentId String
   scenarioKey String?
@@ -1000,6 +1008,49 @@ model SystemTestProposal {
   applier User? @relation("ProposalApplier", fields: [appliedByUserId], references: [id], onDelete: SetNull)
   @@index([snapshotId, state])
 }
+model SystemSuiteState {
+  snapshotId String @id
+  headVersionId String? @unique
+  revision Int @default(0)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  head SystemSuiteVersion? @relation("SuiteHead", fields: [headVersionId], references: [id], onDelete: SetNull)
+}
+
+model SystemSuiteVersion {
+  id String @id @default(cuid())
+  snapshotId String
+  parentVersionId String?
+  restoredFromVersionId String?
+  sequence Int
+  action String
+  suiteHash String
+  sourceHash String
+  configHash String
+  requirementRevisionId String?
+  manifestJson Json
+  scenarioSnapshotJson Json
+  provenanceJson Json
+  actorId String?
+  requestId String
+  requestHash String
+  createdAt DateTime @default(now())
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  parent SystemSuiteVersion? @relation("SuiteParent", fields: [parentVersionId], references: [id], onDelete: SetNull)
+  children SystemSuiteVersion[] @relation("SuiteParent")
+  restoredFrom SystemSuiteVersion? @relation("SuiteRestore", fields: [restoredFromVersionId], references: [id], onDelete: SetNull)
+  restores SystemSuiteVersion[] @relation("SuiteRestore")
+  state SystemSuiteState? @relation("SuiteHead")
+  @@unique([snapshotId, sequence])
+  @@unique([snapshotId, requestId])
+}
+
+model SystemTestBlob {
+  sha256 String @id
+  content String @db.Text
+  byteSize Int
+  createdAt DateTime @default(now())
+}
+
 model SystemMutationRun {
   id String @id @default(cuid())
   assessmentId String

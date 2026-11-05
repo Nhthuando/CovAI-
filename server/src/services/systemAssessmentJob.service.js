@@ -1,3 +1,5 @@
+import { buildSystemReportProjection } from './systemReportProjection.service.js';
+import { prepareHistoricalSuiteRun } from './systemSuiteVersionRun.service.js';
 import { operationAbortReason } from './systemOperationError.service.js';
 import { persistAssessmentRuns } from './systemAssessmentPersistence.service.js';
 import fs from 'node:fs';
@@ -21,13 +23,18 @@ import { enumerateMutations } from './systemMutation.service.js';
 import { storeScenarioScreenshot } from './systemTestEvidence.service.js';
 import { prepareAutomaticAssessment } from './systemAssessmentPreparation.service.js';
 import { runtimeDependencyFingerprint } from './projectRuntimePlan.service.js';
-import { createSystemEventPublisher } from './systemLiveEvent.service.js';
+import { createSystemEventPublisher, recordSystemLiveFrame } from './systemLiveEvent.service.js';
 import { persistRunArtifacts } from './systemRunArtifact.service.js';
 import { deriveScenarioVerdict, buildSystemGaps, scoreSystemSuite } from './systemScenarioVerdict.service.js';
 import { syncSystemScenarioCatalog } from './systemScenarioCatalog.service.js';
+import { ensureFullSystemSetup } from './fullSystemSetup.service.js';
+import { withProjectDependencyCache } from './projectDependencyCache.service.js';
 
 export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir, input, jobId, revision, bindings = [], catalog = [], dependencies = {}, onProgress = async () => {}, onEvent = async () => {}, signal, stopOnFailure = false }) => {
     const deadline = Date.now() + 20 * 60 * 1000;
+    if (input.executionMode === 'full' && !dependencies.run) {
+        await ensureFullSystemSetup({ rootDir, onProgress: (progress, message) => onProgress(message, Math.min(20, progress)) });
+    }
     const initial = snapshotIdentity(rootDir);
     const identity = { sourceHash: initial.sourceHash, testHash: initial.testHash, scopeHash: digest(input.coverageScope), configHash: initial.configHash, runner: input.runner, browser: 'chromium', executionMode: input.executionMode, adapterVersion: 'istanbul-source-v1', seed: 'fresh-database', requirementRevisionId: revision?.id || null };
     const staticAnalysis = input.testFiles.map(filePath => {
@@ -53,7 +60,7 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
             const execution = { runner: 'playwright', rootDir: workspace.rootDir, testDirectory: 'tests', selectedFiles: input.testFiles.map(file => containedPath(workspace.rootDir, file)), selectedTitles: input.reviewMode === 'scenario' ? catalog.map(scenario => scenario.title) : undefined, command: 'npx playwright test --reporter=json', reportDirectory, reportPath: path.join(reportDirectory, 'results.json'), headed: Boolean(input.headed) };
             const startedAt = new Date();
             const result = await (dependencies.run || runSystemTests)({ rootDir: workspace.rootDir, jobId, execution, executionMode: input.executionMode, measurementPreparation: preparation, assertionBindings: bindings, signal, onEvent: event => onEvent({ runIndex: index + 1, ...event }), onPreparing: (progress, message) => onProgress(`Run ${index + 1}/${input.repeatRuns}: ${message}`, baseProgress + Math.min(25, progress * 0.7)), onReady: () => onProgress(`Run ${index + 1}/${input.repeatRuns}: executing ${input.testFiles.length} test file(s)`, baseProgress + 30) });
-            const testRun = parseSystemTestResult({ runner: 'playwright', resultPath: result.reportPath, startedAt, finishedAt: new Date(), rootDir: workspace.rootDir });
+            const testRun = parseSystemTestResult({ runner: 'playwright', resultPath: result.reportPath, startedAt, finishedAt: new Date(), rootDir: workspace.rootDir, stderr: result.stderr });
             if (result.exitCode !== 0 && testRun.status === 'PASSED') throw new ServiceError('Runner report and exit code disagree', 422);
             const mapping = JSON.parse(fs.readFileSync(path.join(path.dirname(result.reportPath), 'source-map.json'), 'utf8'));
             testRun.scenarios = testRun.scenarios.map(s => ({ ...s, testFile: mapping[path.basename(s.testFile || '')] || s.testFile, screenshotPath: storeScenarioScreenshot({ rootDir:environmentRoot, source: typeof s.screenshotSource === 'string' && fs.existsSync(s.screenshotSource) ? {body: fs.readFileSync(containedPath(workspace.rootDir, path.relative(workspace.rootDir, s.screenshotSource))).toString('base64')} : s.screenshotSource, runKey: measurementId }), screenshotSource: undefined }));
@@ -111,6 +118,7 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
     const backend = input.coverageScope.backend;
     report.mutationTargets = backend ? initial.files.filter(file => file.path.startsWith(backend.root + '/' + backend.sourceDirectory + '/') && /\.[cm]?js$/.test(file.path) && !/\.(test|spec)\./.test(file.path)).flatMap(file => enumerateMutations({ content: fs.readFileSync(containedPath(rootDir, file.path), 'utf8'), filePath: file.path })).slice(0, 100) : [];
     report.input = input;
+    report.scenarioSnapshot = catalog;
     report.evidenceArtifacts = evidenceArtifacts;
     report.scenarioVerdicts = catalog.filter(item => item.filePath).map(scenario => deriveScenarioVerdict({ scenario, runs, requirements: report.requirements }));
     report.workflowGaps = buildSystemGaps({ report, verdicts: report.scenarioVerdicts });
@@ -125,9 +133,15 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
     const prepareOnly = input.prepareOnly === true;
     let preparationUsage;
     let emit;
+    let historical;
     try {
         await withOperationPublishGuard(tx=>tx.systemTestAssessment.update({where:{jobId},data:{status:'RUNNING'}}));
         const onProgress = async (message, progress = 30) => { await lease.assertHeld(); const current = await getJobById(jobId); if (current.status !== 'RUNNING') throw new ServiceError('Assessment canceled', 409); await updateJobProgress(jobId, Math.max(current.progress || 0, progress)); await addJobLog(jobId, 'INFO', `Assessment stage: ${message}`); };
+        if(input.versionCheck) {
+            job.snapshot.rootDir = currentProjectOperation()?.rootDir || job.snapshot.rootDir;
+            historical = await prepareHistoricalSuiteRun({rootDir:job.snapshot.rootDir,snapshotId:job.snapshotId,input});
+            input = historical.input;
+        }
         if (input.autoDiscover) {
             const prepared = await prepareAutomaticAssessment({rootDir:job.snapshot.rootDir,input,onProgress,signal:lease.signal,jobId});
             input = prepared.input;
@@ -154,41 +168,61 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
         const revision = input.requirementRevisionId ? await prisma.systemRequirementRevision.findFirst({ where: { id: input.requirementRevisionId, snapshotId: job.snapshotId, status: 'CONFIRMED' }, include: { bindings: true } }) : null;
         const assessment = await prisma.systemTestAssessment.findUnique({ where: { jobId }, select: { id: true } });
         emit = await createSystemEventPublisher({ client: prisma, assessmentId: assessment.id, snapshotId: job.snapshotId, userId: job.userId });
-        const catalog = await prisma.systemScenario.findMany({ where: { snapshotId: job.snapshotId, filePath: { in: input.testFiles }, ...(input.reviewMode === 'scenario' ? { id: { in: input.scenarioIds } } : {}) }, select: { id: true, scenarioKey: true, filePath: true, title: true } });
+        const catalog = historical?.catalog || await prisma.systemScenario.findMany({ where: { snapshotId: job.snapshotId, filePath: { in: input.testFiles }, ...(input.reviewMode === 'scenario' ? { id: { in: input.scenarioIds } } : {}) }, select: { id: true, scenarioKey: true, filePath: true, title: true, reviewState: true, criterionIds: true, flowJson: true, inputJson: true, expectedJson: true, assertionHashes: true, requirementRevisionId: true } });
         if (input.reviewMode === 'scenario' && catalog.length !== input.scenarioIds.length) throw new ServiceError('Selected scenarios changed before execution; review the catalog and retry', 409);
         const onEvent = async ({ runIndex, type, screenshotBody, frame, ...payload }) => {
             if (type === 'LIVE_FRAME' && frame) {
-                const payload = {
+                const framePayload = {
                     snapshotId: job.snapshotId,
                     assessmentId: assessment.id,
+                    runIndex,
                     frame,
                 };
-                await withOperationPublishGuard(()=>global.io?.to?.(`user:${job.userId}`)?.emit?.('system-run:frame',payload));
+                recordSystemLiveFrame(framePayload);
+                global.io?.to?.(`user:${job.userId}`)?.emit?.('system-run:frame', framePayload);
                 const operation = currentProjectOperation();
-                if (operation) await deliverScopedProjectTransport({projectId:operation.projectId,event:'system-run:frame',payload});
+                if (operation) void deliverScopedProjectTransport({ projectId: operation.projectId, event: 'system-run:frame', payload: framePayload });
                 return;
             }
             const matches = catalog.filter(scenario => scenario.filePath === payload.filePath && scenario.title === payload.title);
+            if (type === 'SCENARIO_ENDED' && screenshotBody) {
+                const framePayload = {
+                    snapshotId: job.snapshotId,
+                    assessmentId: assessment.id,
+                    runIndex,
+                    frame: screenshotBody,
+                };
+                recordSystemLiveFrame(framePayload);
+                global.io?.to?.(`user:${job.userId}`)?.emit?.('system-run:frame', framePayload);
+                const operation = currentProjectOperation();
+                if (operation) void deliverScopedProjectTransport({ projectId: operation.projectId, event: 'system-run:frame', payload: framePayload });
+            }
             if (type === 'SCENARIO_ENDED' && matches.length === 1 && screenshotBody) {
                 try {
                     const relativePath = storeScenarioScreenshot({ rootDir: job.snapshot.rootDir, source: { body: screenshotBody }, runKey: `live-${assessment.id}-${runIndex}` });
                     if (relativePath) {
-                        const saved = await persistRunArtifacts({ client: prisma, assessmentId: assessment.id, rootDir: job.snapshot.rootDir, artifacts: [{ filePath: payload.filePath, title: payload.title, kind: 'SCREENSHOT', relativePath }], catalog });
+                        const saved = await persistRunArtifacts({ client: prisma, assessmentId: assessment.id, rootDir: job.snapshot.rootDir, artifacts: [{ filePath: payload.filePath, title: payload.title, kind: 'SCREENSHOT', runIndex, purpose:'CHECKPOINT', relativePath }], catalog });
                         if (saved[0]) payload.artifactId = saved[0].id;
                     }
                 } catch { /* Checkpoint failure must not change the runner verdict. */ }
             }
             return emit({ runIndex, type, scenarioKey: matches.length === 1 ? matches[0].scenarioKey : null, payload });
         };
-        const report = await assessSystemWorkspace({ rootDir: job.snapshot.rootDir, input, jobId, signal:lease.signal, revision, bindings: revision?.bindings || [], catalog, onProgress, onEvent });
+        const report = await withProjectDependencyCache(() => assessSystemWorkspace({ rootDir: job.snapshot.rootDir, input, jobId, signal:lease.signal, revision, bindings: revision?.bindings || [], catalog, onProgress, onEvent }));
+        if(historical) {report.suiteVersionId=historical.version.id;report.limitations.push('Historical tests on current source. Requirement reviews are stale; this check does not restore application source.');}
         if(preparationUsage)report.aiUsage=preparationUsage;
         await lease.assertHeld();
         await updateJobProgress(jobId, 95);
         await addJobLog(jobId, 'INFO', 'Assessment stage: Saving coverage measurements and scenario results');
         const testRunId = await persistAssessmentRuns({report,snapshotId:job.snapshotId,executionMode:input.executionMode});
-        const storedAssessment = await prisma.systemTestAssessment.findUnique({where:{jobId},select:{id:true}});
+        const storedAssessment = await prisma.systemTestAssessment.findUnique({where:{jobId},select:{id:true,suiteVersionId:true}});
+        if(storedAssessment.suiteVersionId)report.suiteVersionId=storedAssessment.suiteVersionId;
+        report.presentation = buildSystemReportProjection({ assessment: {id: storedAssessment.id, snapshotId: job.snapshotId, requirementRevisionId: revision?.id}, report });
         await stagePreparedPublication(tx=>tx.systemTestAssessment.update({ where: { jobId }, data: { status: 'COMPLETED', sourceHash: report.sourceHash, testHash: report.testHash, scopeHash: report.scopeHash, testRunId, reportJson: JSON.parse(JSON.stringify(report)) } }));
-        await persistRunArtifacts({ client: prisma, assessmentId: storedAssessment.id, rootDir: job.snapshot.rootDir, artifacts: report.evidenceArtifacts || [], catalog });
+        const persistedArtifacts = await persistRunArtifacts({ client: prisma, assessmentId: storedAssessment.id, rootDir: job.snapshot.rootDir, artifacts: report.evidenceArtifacts || [], catalog });
+        report.qualityScore = scoreSystemSuite({report,catalog,verdicts:report.scenarioVerdicts,artifacts:persistedArtifacts});
+        report.presentation = buildSystemReportProjection({assessment:{id:storedAssessment.id,snapshotId:job.snapshotId,requirementRevisionId:revision?.id,suiteVersionId:report.suiteVersionId},report,artifacts:persistedArtifacts});
+        await stagePreparedPublication(tx=>tx.systemTestAssessment.update({where:{jobId},data:{reportJson:JSON.parse(JSON.stringify(report))}}));
         await markJobSuccess(jobId, { assessmentId: storedAssessment.id });
     } catch (error) {
         const current = await getJobById(jobId);

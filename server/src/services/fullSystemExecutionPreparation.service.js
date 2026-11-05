@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {containedPath} from './fullSystemConfig.service.js';
 import {validateFullSystemTest} from './systemTestEvidence.service.js';
-import {generateVerifiedSystemTests} from './verifiedSystemGeneration.service.js';
 import {ServiceError} from '../utils/serviceError.js';
 
 const collectSpecs = directory => {
@@ -32,7 +31,7 @@ export const prepareFullSystemExecution = async ({rootDir,execution,jobId,onProg
     if(execution.testFile) {
         const file=resolveSystemTestFile(rootDir,runnerRoot,execution.testFile);
         try { validateFullSystemTest(fs.readFileSync(file,'utf8')); }
-        catch(error) { throw new ServiceError(`${path.relative(rootDir,file).replace(/\\/g,'/')}: ${error.message} Switch to Frontend mode to run this mocked test. No other suite was run.`,422); }
+        catch(error) { throw new ServiceError(`${path.relative(rootDir,file).replace(/\\/g,'/')}: ${error.message} Generate Full Stack tests that call the real backend instead of API mocks. No other suite was run.`,422); }
         return {execution:{...execution,testFile:file}};
     }
     // Full-system generations have their own directory; never mix them with frontend mocks.
@@ -54,17 +53,5 @@ export const prepareFullSystemExecution = async ({rootDir,execution,jobId,onProg
         catch { continue; }
         return {execution:{...execution,testDirectory:directory}};
     }
-    await onProgress(18,'No compatible Full Stack suite found; generating and verifying real-backend tests');
-    let preparationProgress=18;
-    const generated=await (dependencies.generate || generateVerifiedSystemTests)({rootDir,jobId,onProgress:(progress,message)=>{
-        preparationProgress=Math.max(preparationProgress,Math.min(30,Math.round(18+progress*0.12)));
-        return onProgress(preparationProgress,message);
-    }});
-    if(generated.failed) throw new ServiceError(generated.error || 'Generated Full Stack tests failed verification; no suite was saved',422);
-    validateFullSystemTest(generated.code);
-    const filePath='tests/system/ai-generated.spec.js';
-    const file=containedPath(rootDir,filePath);
-    fs.mkdirSync(path.dirname(file),{recursive:true});
-    fs.writeFileSync(file,generated.code,'utf8');
-    return {execution:{...execution,rootDir,testDirectory:'tests/system',testFile:file},generated:{...generated,filePath}};
+    throw new ServiceError('No compatible Full Stack tests are applied. Generate, review and apply a System Test draft first.',409);
 };

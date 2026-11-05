@@ -29,8 +29,10 @@ export const prepareWebServerDependencies = async (rootDir, jobId, {repositoryRo
 };
 
 export const resolvePlaywrightCommand = (rootDir, command) => {
-  const cli = path.join(rootDir, "node_modules", "playwright", "cli.js");
-  if (!fs.existsSync(cli)) return command;
+  const localCli = path.join(rootDir, "node_modules", "playwright", "cli.js");
+  const serverCli = fileURLToPath(new URL("../../node_modules/playwright/cli.js", import.meta.url));
+  const cli = fs.existsSync(localCli) ? localCli : (fs.existsSync(serverCli) ? serverCli : null);
+  if (!cli) return command;
   return command.replace(/\bnpx(?: --yes)? playwright\b/g, `"${process.execPath}" "${cli}"`);
 };
 
@@ -102,7 +104,10 @@ export default defineConfig({
         fs.mkdirSync(path.dirname(destInRoot), { recursive: true });
         fs.symlinkSync(targetInServer, destInRoot, "junction");
       } catch {
-        // Fallback or ignore if already exists/linked
+        try {
+          if (typeof fs.rmSync === "function") fs.rmSync(destInRoot, { recursive: true, force: true });
+          if (typeof fs.cpSync === "function") fs.cpSync(targetInServer, destInRoot, { recursive: true });
+        } catch {}
       }
     }
   }
@@ -218,7 +223,7 @@ export const resolveProjectPlaywrightConfig = (rootDir,execution) => {
 export const streamPlaywrightEvents = async (managed, onEvent, run) => {
   if (!managed?.eventPath || !onEvent) return run();
   let offset = 0, pending = '', reading = false;
-  let lastFrameMtime = 0;
+  let lastFrameMtime = 0, lastFrameData = '';
   const frameFile = path.join(managed.directory, 'live-frame.b64');
   const sourceMap = JSON.parse(fs.readFileSync(path.join(managed.directory, 'source-map.json'), 'utf8'));
 
@@ -226,11 +231,12 @@ export const streamPlaywrightEvents = async (managed, onEvent, run) => {
     if (!fs.existsSync(frameFile)) return;
     try {
       const stat = fs.statSync(frameFile);
-      if (stat.mtimeMs > lastFrameMtime) {
+      if (stat.mtimeMs >= lastFrameMtime) {
         lastFrameMtime = stat.mtimeMs;
         const b64 = fs.readFileSync(frameFile, 'utf8');
-        if (b64 && b64.length > 50 && b64.length < 1500000) {
-          onEvent({ type: 'LIVE_FRAME', frame: b64 });
+        if (b64 && b64 !== lastFrameData && b64.length > 50 && b64.length < 1500000) {
+          lastFrameData = b64;
+          Promise.resolve(onEvent({ type: 'LIVE_FRAME', frame: b64 })).catch(() => {});
         }
       }
     } catch {}
@@ -296,8 +302,15 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
         await onPreparing?.(30, "Preparing Playwright browsers...");
         const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId);
         const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:stack.backendUrl,frontendPort:stack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:config,managedServer:true,measurementPreparation,assertionBindings,headed:Boolean(execution.headed)});
+        const serverNodeModules = fileURLToPath(new URL("../../node_modules/", import.meta.url));
+        const nodePath = [
+          serverNodeModules,
+          path.join(runnerRoot, "node_modules"),
+          path.join(runnerRoot, "client", "node_modules"),
+          path.join(runnerRoot, "server", "node_modules"),
+        ].filter((p) => fs.existsSync(p)).join(path.delimiter);
         await onReady?.();
-        const result=await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,signal,env:{...browserEnv,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}}));
+        const result=await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,signal,env:{...browserEnv,NODE_PATH:nodePath,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}}));
         return {...result,reportPath:managed.reportPath,autPort:stack.frontendPort,executionMode};
       } finally {await stack.cleanup();}
     } else if (execution.runner === "cypress") {

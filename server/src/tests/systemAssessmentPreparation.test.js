@@ -52,12 +52,12 @@ describe('automatic Run preparation',()=>{
         await expect(prepareAutomaticAssessment({rootDir:root,input:{executionMode:'full'},signal:{aborted:true},dependencies:{generate}})).rejects.toThrow('canceled');
         expect(generate).not.toHaveBeenCalled();
     });
-    it('automatically prepares compatible tests and rediscovers when Full Stack has only mocked tests',async()=>{
+    it('requires explicit reviewed Apply when Full Stack has only mocked tests',async()=>{
         const root=fixture(),setup=async()=>({config:{backend:{directory:'server'}}});
-        const discover=jest.fn().mockImplementationOnce(()=>{const error=new Error('Mocked tests only');error.code='FULL_STACK_TESTS_REQUIRED';throw error;}).mockReturnValue({testFiles:['new.spec.mjs'],runner:'playwright',executionMode:'full',coverageScope:{},repeatRuns:2});
-        const prepareTests=jest.fn().mockResolvedValue({verificationRuns:2});
-        const result=await prepareAutomaticAssessment({rootDir:root,input:{runner:'playwright',executionMode:'full'},dependencies:{setup,discover,prepareTests}});
-        expect(prepareTests).toHaveBeenCalledTimes(1);expect(discover).toHaveBeenCalledTimes(2);expect(result.input.testFiles).toEqual(['new.spec.mjs']);
+        const discover=jest.fn().mockImplementation(()=>{const error=new Error('Mocked tests only');error.code='FULL_STACK_TESTS_REQUIRED';throw error;});
+        const prepareTests=jest.fn();
+        await expect(prepareAutomaticAssessment({rootDir:root,input:{runner:'playwright',executionMode:'full'},dependencies:{setup,discover,prepareTests}})).rejects.toMatchObject({statusCode:409});
+        expect(prepareTests).not.toHaveBeenCalled();expect(discover).toHaveBeenCalledTimes(1);
     });
     it('does not publish setup if canceled while waiting for AI',async()=>{
         const root=fixture(),controller=new AbortController();

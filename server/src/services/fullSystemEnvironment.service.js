@@ -11,11 +11,23 @@ const atStartup=p=>{
 const sdks=new Map([
     ['stripe',{label:'Stripe',positions:[0]}],['openai',{label:'OpenAI',fields:['apiKey'],implicit:'OPENAI_API_KEY'}],
     ['@anthropic-ai/sdk',{label:'Anthropic',fields:['apiKey'],implicit:'ANTHROPIC_API_KEY'}],
-    ['@google/generative-ai',{label:'Gemini',positions:[0]}],['resend',{label:'Resend',positions:[0],implicit:'RESEND_API_KEY'}],
+    ['@google/generative-ai',{label:'Gemini',positions:[0]}],['@google/genai',{label:'Gemini',fields:['apiKey']}],['resend',{label:'Resend',positions:[0],implicit:'RESEND_API_KEY'}],
     ['twilio',{label:'Twilio',positions:[0,1]}],['@sendgrid/mail',{label:'SendGrid',method:'setApiKey',positions:[0]}],
 ]);
-const envName=node=>node?.type==='MemberExpression' && node.object?.type==='MemberExpression' && node.object.object.name==='process' && node.object.property.name==='env' ? (node.computed?node.property.value:node.property.name):null;
-const isEnvironment=node=>node?.type==='MemberExpression' && node.object.name==='process' && node.property.name==='env';
+const isEnvironment=node=>node?.type==='MemberExpression' && node.property?.name==='env' && (node.object?.name==='process' || node.object?.type==='MetaProperty' && node.object.meta?.name==='import');
+const envName=node=>node?.type==='MemberExpression' && isEnvironment(node.object) ? (node.computed?node.property.value:node.property.name):null;
+export const referencedEnvironment = files => {
+    const rows=new Map();
+    const add=(name,sourceFile)=>{if(typeof name==='string' && /^[A-Za-z_]\w*$/.test(name))rows.set(`${sourceFile}:${name}`,{name,sourceFile});};
+    for(const file of files){
+        const parsed=parseJavaScriptCode(file.content);if(!parsed.success)continue;
+        traverse(parsed.ast,{
+            MemberExpression({node}){add(envName(node),file.path);},
+            VariableDeclarator({node}){if(node.id.type==='ObjectPattern' && isEnvironment(node.init))for(const property of node.id.properties)add(property.key?.name||property.key?.value,file.path);}
+        });
+    }
+    return [...rows.values()];
+};
 const resolveEnvReference=(node,scope,depth=0)=>{
     const direct=envName(node);if(direct)return direct;
     if(node?.type!=='Identifier'||depth>4)return null;
@@ -29,6 +41,7 @@ const resolveEnvReference=(node,scope,depth=0)=>{
     return null;
 };
 export const managedEnvironmentNames = (files,config) => [
+    'NODE_ENV','CI','AUT_URL','PLAYWRIGHT_BASE_URL','CYPRESS_BASE_URL',
     ...(config?.database?['DATABASE_URL','DB_HOST','DB_PORT','DB_USER','DB_PASSWORD','DB_NAME','PGHOST','PGPORT','PGUSER','PGPASSWORD','PGDATABASE','MONGO_URL','MONGO_URI','MONGODB_URI','MONGODB_URL','SQLITE_DB_PATH','DB_FILE','DB_PATH','SQLITE_PATH','SQLITE_FILE',...files.filter(file=>file.path.endsWith('.prisma')).flatMap(file=>[...file.content.matchAll(/\burl\s*=\s*env\("([A-Za-z_]\w*)"\)/g)].map(match=>match[1]))]:[]),
     ...(config?.services?.redis?['REDIS_URL','REDIS_HOST','REDIS_PORT']:[]),
 ];
@@ -53,7 +66,7 @@ export const buildAutomaticTestEnvironment = ({files=[],env={},resources={},port
     return result;
 };
 
-const startupFiles = (files,scripts) => {
+export const startupEnvironmentFiles = (files,scripts) => {
     const entry=(scripts?.start || scripts?.dev || '').match(/^\s*(?:node|nodemon|tsx|ts-node)\s+["']?([\w./-]+\.[cm]?[jt]s)["']?\s*$/)?.[1];
     // Complex/custom launchers are checked at actual startup, not guessed here.
     if(!entry)return [];
@@ -81,7 +94,7 @@ const startupFiles = (files,scripts) => {
 // Only report mandatory SDK credentials passed directly to a module-level
 // constructor. Arbitrary env reads, lazy handlers and optional values are not
 // sufficient evidence that startup requires a variable.
-export const requiredStartupEnvironment = files => {
+export const requiredStartupEnvironment = (files,{startupOnly=true}={}) => {
     const required=[];
     for(const file of files) {
         const parsed=parseJavaScriptCode(file.content);if(!parsed.success)continue;
@@ -93,21 +106,21 @@ export const requiredStartupEnvironment = files => {
             },
         });
         const inspect=p=>{
-            if(!atStartup(p) || p.findParent(parent=>['IfStatement','ConditionalExpression','LogicalExpression','TryStatement'].includes(parent.node.type)))return;
+            if(startupOnly && (!atStartup(p) || p.findParent(parent=>['IfStatement','ConditionalExpression','LogicalExpression','TryStatement'].includes(parent.node.type))))return;
             const callee=p.node.callee;
             const sdk=bindings.get(callee.name || callee.object?.name);if(!sdk)return;
             if(sdk.method && callee.property?.name!==sdk.method)return;
             if(!sdk.method && callee.type!=='Identifier')return;
             if(p.node.arguments[1]?.type==='ObjectExpression' && p.node.arguments[1].properties.some(property=>(property.key?.name || property.key?.value)==='authenticator'))return;
             const argumentsToCheck=sdk.fields ? (p.node.arguments[0]?.properties || []).filter(property=>sdk.fields.includes(property.key?.name || property.key?.value)).map(property=>property.value) : sdk.positions.map(index=>p.node.arguments[index]);
-            if(sdk.implicit && !p.node.arguments.length)required.push({name:sdk.implicit,sourceFile:file.path,integration:sdk.label});
+            if(sdk.implicit && (!p.node.arguments.length || sdk.fields && p.node.arguments[0]?.type==='ObjectExpression' && !p.node.arguments[0].properties.some(property=>sdk.fields.includes(property.key?.name || property.key?.value))))required.push({name:sdk.implicit,sourceFile:file.path,integration:sdk.label});
             for(const argument of argumentsToCheck) {
                 const name=resolveEnvReference(argument,p.scope);
                 if(typeof name==='string' && /^[A-Za-z_]\w*$/.test(name))required.push({name,sourceFile:file.path,integration:sdk.label});
             }
         };
         traverse(parsed.ast,{CallExpression:inspect,NewExpression:inspect,IfStatement(p){
-            if(!atStartup(p) || p.node.test.type!=='UnaryExpression' || p.node.test.operator!=='!')return;
+            if((startupOnly && !atStartup(p)) || p.node.test.type!=='UnaryExpression' || p.node.test.operator!=='!')return;
             const name=resolveEnvReference(p.node.test.argument,p.scope);if(!name)return;
             const statements=p.node.consequent.type==='BlockStatement'?p.node.consequent.body:[p.node.consequent];
             if(statements.some(node=>node.type==='ThrowStatement' || node.type==='ExpressionStatement' && node.expression.type==='CallExpression' && node.expression.callee.object?.name==='process' && node.expression.callee.property?.name==='exit'))required.push({name,sourceFile:file.path,integration:'Application environment'});
@@ -117,10 +130,11 @@ export const requiredStartupEnvironment = files => {
 };
 
 export const validateStartupEnvironment = ({files,env,directory,scripts,managedVariables=[]}) => {
-    const missing=requiredStartupEnvironment(startupFiles(files,scripts)).filter(item=>!env[item.name]?.trim() && !managedVariables.includes(item.name));
+    const missing=requiredStartupEnvironment(startupEnvironmentFiles(files,scripts)).filter(item=>!env[item.name]?.trim() && !managedVariables.includes(item.name));
     if(!missing.length)return;
     const envFile=(directory==='.'?'':directory+'/')+'.env.test';
     const failure=new ServiceError(`Full Stack requires test environment configuration: ${[...new Set(missing.map(item=>item.name))].join(', ')}. Set these variables in ${envFile} for the imported project, then retry. ${missing[0].integration} is initialized during backend startup (${missing[0].sourceFile}); CovAI cannot generate third-party credentials. Existing secrets are never sent to setup AI.`,422);
     failure.code='SYSTEM_TEST_ENVIRONMENT_REQUIRED';
+    failure.details={variables:missing.map(item=>({name:item.name,service:item.integration,sourceFile:item.sourceFile,envFile}))};
     throw failure;
 };

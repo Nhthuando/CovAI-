@@ -13,14 +13,14 @@ export const subscribeToProjectRoom = async (socket, {projectId} = {}) => {
     try {
         const userId = identity(socket);
         if (typeof projectId !== 'string' || !projectId || projectId.length > 200) return {ok:false,code:'PROJECT_NOT_FOUND'};
-        return await withProjectGuard({projectId,userId,capability:'project.read'}, async (_tx, access) => {
-            await socket.join(`project:${projectId}`);
-            socket.data ||= {};
-            socket.data.projectUserId = userId;
-            if (!projectSockets.has(projectId)) projectSockets.set(projectId, new Set());
-            projectSockets.get(projectId).add(socket);
-            return {ok:true,projectId,role:access.role,accessRevision:access.project.accessRevision};
-        });
+        const access = await resolveProjectAccess({projectId,userId,capability:'project.read'});
+        await socket.join(`project:${projectId}`);
+        socket.data ||= {};
+        socket.data.projectUserId = userId;
+        socket.data.projectAccessCheckedAt = Date.now();
+        if (!projectSockets.has(projectId)) projectSockets.set(projectId, new Set());
+        projectSockets.get(projectId).add(socket);
+        return {ok:true,projectId,role:access.role,accessRevision:access.project.accessRevision};
     } catch (error) { return {ok:false,code:error.code || 'PROJECT_NOT_FOUND'}; }
 };
 
@@ -67,7 +67,12 @@ export const deliverToProjectSubscribers = async event => {
 export const deliverScopedProjectTransport = async ({projectId,event,payload}) => {
     await Promise.all([...(projectSockets.get(projectId) || [])].map(async socket=>{
         try {
-            await withProjectGuard({projectId,userId:socket.data?.projectUserId,capability:'project.read'},async()=>socket.emit(event,payload));
+            if (!socket.data?.projectAccessCheckedAt || Date.now() - socket.data.projectAccessCheckedAt >= 15000) {
+                await resolveProjectAccess({projectId,userId:socket.data?.projectUserId,capability:'project.read'});
+                socket.data ||= {};
+                socket.data.projectAccessCheckedAt = Date.now();
+            }
+            socket.emit(event,payload);
         } catch { await unsubscribeFromProjectRoom(socket,{projectId}); }
     }));
 };

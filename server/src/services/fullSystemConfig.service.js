@@ -21,7 +21,7 @@ export const readFullSystemConfig = (rootDir, {allowMissing = false} = {}) => {
   rootDir = resolveSystemRepositoryRoot(rootDir);
   const file = containedPath(rootDir, '.covai/system-test.json');
   if (!fs.existsSync(file) && allowMissing) return null;
-  if (!fs.existsSync(file)) throw new ServiceError('Full Stack is not configured. Add .covai/system-test.json with frontend, backend, database and schema configuration. Choose Frontend Dev Server to run browser tests without this setup.', 422);
+  if (!fs.existsSync(file)) throw new ServiceError('Full Stack startup setup is missing. Open Check setup in System Test, review the detected services and apply startup setup before running.', 422);
   let config;
   try { config = JSON.parse(fs.readFileSync(file,'utf8')); } catch { throw new ServiceError('Invalid .covai/system-test.json',422); }
   if(!config || typeof config !== 'object' || Array.isArray(config)) throw new ServiceError('System test configuration must be a JSON object.',422);

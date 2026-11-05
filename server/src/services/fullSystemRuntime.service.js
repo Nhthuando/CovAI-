@@ -1,3 +1,5 @@
+import { systemTestEnvironmentDirectory } from './systemTestEnvironmentRoot.service.js';
+import { containedPath } from './fullSystemConfig.service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { dockerRunner } from './dockerRunner.service.js';
@@ -7,6 +9,8 @@ import { prepareProjectDependencies } from './projectDependencies.service.js';
 import {resolveProjectPrismaCli} from '../utils/projectPrismaCli.js';
 
 export const readApplicationEnvironment = directory => {
+    const original=systemTestEnvironmentDirectory(directory);
+    if(original!==directory)return readAssessmentTestEnvironment(directory);
     const env = {};
     for (const name of ['.env','.env.test']) {
         const file=path.join(directory,name);
@@ -18,8 +22,11 @@ export const readApplicationEnvironment = directory => {
 // Measurement copies exclude credential files. Read the explicitly configured
 // test environment from the owned original snapshot into process memory only.
 export const readAssessmentTestEnvironment = directory => {
-    const file = path.join(directory, '.env.test');
-    return fs.existsSync(file) ? parse(fs.readFileSync(file, 'utf8')) : {};
+    directory=systemTestEnvironmentDirectory(directory);
+    const file = containedPath(directory, '.env.test');
+    if(!fs.existsSync(file))return {};
+    if(!fs.statSync(file).isFile() || fs.statSync(file).size>64*1024)throw new ServiceError('The test environment file must be a text file up to 64 KiB.',422);
+    return parse(fs.readFileSync(file,'utf8'));
 };
 
 export const prepareFullSystemPackage = async ({directory, repositoryRoot=directory, env={}, jobId, database = false, signal, schemaStrategy, prismaSchema}) => {

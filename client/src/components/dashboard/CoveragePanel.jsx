@@ -2,7 +2,7 @@
  * CoveragePanel: Panel with 3 buttons to select coverage type: Unit, Integration, System
  * Clicking each button switches the corresponding mode. Local UI & state only.
  */
-import { useNavigate, useLocation } from "react-router-dom";
+
 
 const typeLabels = [
   { key: "unit", label: "Unit Test" },
@@ -15,8 +15,6 @@ export default function CoveragePanel({
   coverageType,
   setCoverageType,
 }) {
-  const navigate = useNavigate();
-  const location = useLocation();
   return (
     <div
       className="flex flex-col h-full flex-shrink-0"
@@ -53,13 +51,13 @@ export default function CoveragePanel({
               <button
                 key={t.key}
                 id={`coverage-type-${t.key}`}
+                type="button"
+                aria-current={isSelected ? "page" : undefined}
                 onClick={() => {
                   setCoverageType(t.key);
-                  const params = new URLSearchParams(location.search);
-                  params.set("type", t.key);
-                  navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+
                 }}
-                className="transition-colors cursor-pointer text-left"
+                className="transition-colors cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]"
                 style={{
                   width: "100%",
                   background: isSelected
@@ -77,7 +75,6 @@ export default function CoveragePanel({
                   padding: "8px 12px",
                   fontFamily: "var(--font-sans)",
                   boxShadow: "none",
-                  outline: "none",
                 }}
                 onMouseEnter={(e) => {
                   if (!isSelected) {

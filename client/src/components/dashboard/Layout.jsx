@@ -84,12 +84,6 @@ const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const DEFAULT_AI_PANEL_WIDTH = 340;
 
-const COVERAGE_TEST_TABS = [
-  { key: "unit", label: "Unit Test", shortLabel: "Unit", icon: FlaskConical },
-  { key: "integration", label: "Integration Test", shortLabel: "Integration", icon: Network },
-  { key: "system", label: "System Test", shortLabel: "System", icon: Layers },
-];
-
 const containerVariants = {
   hidden: {},
   visible: {
@@ -342,24 +336,22 @@ function LayoutInner() {
   });
 
   const handleSelectCoverageType = (type) => {
+    setShowCFG(false);
+    setActiveActivity("coverage");
     setCoverageType(type);
     const params = new URLSearchParams(location.search);
-    if (params.get("coverageType") !== type) {
-      params.set("coverageType", type);
+    params.set("tab", "coverage");
+    params.set("coverageType", type);
+    params.set("type", type);
+    for (const key of ["focusFile", "focusEndpoint", "focusScenario"]) params.delete(key);
+    if (params.toString() !== location.search.slice(1)) {
       navigate(`${location.pathname}?${params.toString()}`, { replace: true });
     }
   };
 
   const handleTriggerRunAnalysis = () => {
-    setShowCFG(false);
-    setActiveActivity("coverage");
     handleSelectCoverageType("unit");
     setCoverageRunTrigger((prev) => prev + 1);
-    const params = new URLSearchParams(location.search);
-    if (params.get("tab") !== "coverage") {
-      params.set("tab", "coverage");
-      navigate(`${location.pathname}?${params.toString()}`);
-    }
   };
 
   const handleGitSync = async () => {
@@ -1014,63 +1006,6 @@ function LayoutInner() {
           )}
         </div>
 
-        {/* ── Center: Test Suite Levels (Unit, Integration, System) ── */}
-        <div className="flex items-center justify-center flex-shrink-0 mx-2">
-          <nav
-            role="tablist"
-            aria-label="Coverage Test Levels"
-            className="inline-flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] shadow-xs"
-          >
-            {COVERAGE_TEST_TABS.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeActivity === "coverage" && coverageType === tab.key;
-              return (
-                <button
-                  key={tab.key}
-                  role="tab"
-                  id={`top-nav-test-${tab.key}`}
-                  aria-selected={isActive}
-                  type="button"
-                  onClick={() => {
-                    handleSelectCoverageType(tab.key);
-                    if (activeActivity !== "coverage") {
-                      setShowCFG(false);
-                      setActiveActivity("coverage");
-                      const params = new URLSearchParams(location.search);
-                      params.set("tab", "coverage");
-                      params.set("type", tab.key);
-                      params.set("coverageType", tab.key);
-                      navigate(`${location.pathname}?${params.toString()}`);
-                    }
-                  }}
-                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${
-                    isActive
-                      ? "text-[var(--color-primary)] font-semibold"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
-                  }`}
-                  title={`${tab.label} Suite`}
-                >
-                  {isActive && (
-                    <motion.div
-                      layoutId="active-test-tab-pill"
-                      className="absolute inset-0 rounded-[var(--radius-sm)] bg-[var(--color-bg)] border border-[var(--color-border)] shadow-xs"
-                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
-                    />
-                  )}
-                  <span className="relative z-10 flex items-center gap-1.5">
-                    <Icon
-                      size={13}
-                      strokeWidth={isActive ? 2.2 : 1.8}
-                      className={isActive ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}
-                    />
-                    <span className="hidden sm:inline">{tab.label}</span>
-                    <span className="sm:hidden">{tab.shortLabel}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
-        </div>
 
         <div
           className="flex items-center gap-2 flex-1 justify-end"
@@ -1171,7 +1106,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
             <motion.div
               key="sidebar"
               initial={
@@ -1218,9 +1153,9 @@ function LayoutInner() {
                 />
               ) : activeActivity === "coverage" ? (
                 <CoveragePanel
-                  sidebarWidth={sidebarWidth}
+                  sidebarWidth={isMobile ? 280 : sidebarWidth}
                   coverageType={coverageType}
-                  setCoverageType={handleSelectCoverageType}
+                  setCoverageType={(type) => { handleSelectCoverageType(type); if (isMobile) setSidebarOpen(false); }}
                 />
               ) : activeActivity === "git" ? (
                 <GitPanel projectId={project?.id} onSync={handleGitSync} />
@@ -1249,7 +1184,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1257,7 +1192,7 @@ function LayoutInner() {
             currentWidth={sidebarWidth}
             defaultWidth={DEFAULT_SIDEBAR_WIDTH}
             side="left"
-            label="Explorer"
+            label={activeActivity === "coverage" ? "Test navigation" : "Explorer"}
           />
         )}
         <motion.div

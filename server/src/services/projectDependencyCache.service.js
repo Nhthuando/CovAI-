@@ -22,7 +22,7 @@ export const withProjectDependencyCache = async work => {
     finally {
         const relative = path.relative(os.tmpdir(), root);
         if (!relative.startsWith('covai-job-dependencies-') || relative.includes(path.sep)) throw new Error('Invalid dependency cache cleanup path');
-        await fs.rm(root, { recursive: true, force: true, maxRetries:10, retryDelay:100 });
+        await fs.rm(root, { recursive: true, force: true, maxRetries:15, retryDelay:200 }).catch(() => {});
     }
 };
 export const canCacheProjectDependencies = plan => plan.manager === 'npm' && plan.installRoot === plan.directory

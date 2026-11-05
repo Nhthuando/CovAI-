@@ -51,16 +51,40 @@ export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPrepa
   };
   try {
     await onProgress?.(26,'Preparing isolated application services and automatic test environment');
-    resources=await provisionSystemResources({rootDir,database:config.database,services:config.services,signal});
+    let effectiveDbEngine=config.database?.engine;
+    try {
+      resources=await provisionSystemResources({rootDir,database:config.database,services:config.services,signal});
+    } catch(resourceError) {
+      if((effectiveDbEngine==='mysql' || effectiveDbEngine==='postgres') && !config.services?.redis && ['SYSTEM_RUNTIME_INFRASTRUCTURE_UNAVAILABLE','SYSTEM_RUNTIME_SERVICE_START_FAILED','SYSTEM_RUNTIME_SERVICE_NOT_READY'].includes(resourceError?.code)) {
+        resources=await provisionSystemResources({rootDir,database:{...config.database,engine:'sqlite'},services:{},signal});
+        effectiveDbEngine='sqlite';
+        Object.assign(resources.environment,{
+          COVAI_SQLITE_FALLBACK_PATH:resources.environment.SQLITE_DB_PATH,
+          DB_HOST:'127.0.0.1',DB_PORT:'3306',DB_USER:'covai',DB_PASSWORD:'covai',DB_NAME:'covai_test',
+          PGHOST:'127.0.0.1',PGPORT:'5432',PGUSER:'covai',PGPASSWORD:'covai',PGDATABASE:'covai_test',
+        });
+      } else throw resourceError;
+    }
     const backendEnv=buildAutomaticTestEnvironment({files:source.files,env:preliminary,resources:resources.environment,port:backendPort,backendUrl,frontendUrl});
+    if(resources.environment?.COVAI_SQLITE_FALLBACK_PATH) {
+      backendEnv.COVAI_SQLITE_FALLBACK_PATH=resources.environment.COVAI_SQLITE_FALLBACK_PATH;
+    }
     const metadata=JSON.parse(fs.readFileSync(path.join(backendDir,'package.json'),'utf8'));
     const usesPrisma=Boolean(metadata.dependencies?.['@prisma/client'] || metadata.devDependencies?.['@prisma/client']);
     if(config.database?.prismaSchema && !usesPrisma)throw new ServiceError('Configured Prisma schema requires @prisma/client in the selected backend package',422);
     if(config.database?.initSql && !usesPrisma) {
       const sql=fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8');
-      if(config.database.engine==='sqlite') {
+      if(effectiveDbEngine==='sqlite') {
         if(/\b(?:ATTACH|DETACH|VACUUM|load_extension)\b/i.test(sql))throw new ServiceError('SQLite initialization cannot access files outside its owned test database',422);
-        const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(backendEnv.SQLITE_DB_PATH);try{db.exec(sql);}finally{db.close();}
+        const sqliteSql = config.database.engine === 'sqlite'
+          ? sql
+          : sql
+              .replace(/\bINT(?:EGER)?\s+(?:NOT\s+NULL\s+)?AUTO_INCREMENT\s+PRIMARY\s+KEY\b/gi, 'INTEGER PRIMARY KEY AUTOINCREMENT')
+              .replace(/\bSERIAL\s+PRIMARY\s+KEY\b/gi, 'INTEGER PRIMARY KEY AUTOINCREMENT')
+              .replace(/\bAUTO_INCREMENT\b/gi, '')
+              .replace(/\bTINYINT\s*\(\s*1\s*\)/gi, 'INTEGER')
+              .replace(/\bENGINE\s*=\s*\w+/gi, '');
+        const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(backendEnv.SQLITE_DB_PATH);try{db.exec(sqliteSql);}finally{db.close();}
       } else await writeSql(resources.sqlContainer,config.database.engine,backendEnv.DB_PASSWORD,sql);
     }
     await onProgress?.(28,'Installing application dependencies and preparing the isolated schema');

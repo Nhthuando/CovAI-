@@ -427,7 +427,7 @@ export const formatAutStartupFailure = (output, env = {}) => {
   }
   clean = clean.replace(/(?:mysql|postgres(?:ql)?):\/\/[^\s'"`]+/gi, '[redacted database URL]');
   if (/Neither apiKey nor config.authenticator provided/.test(clean)) {
-    return 'Stripe could not start because its test API key is missing. Set STRIPE_SECRET_KEY to a Stripe test key in the backend .env.test file and retry Full Stack. Choose Frontend Dev Server to test the UI without the payment service.';
+    return 'Stripe could not start because its test API key is missing. Set STRIPE_SECRET_KEY to a Stripe test key in the backend .env.test file and retry Full Stack. Configure this test-only credential before running Full Stack tests.';
   }
   const error = clean.search(/(?:^|\n)(?:Error|\w+Error)(?:\s*\[[^\]]+\])?:/);
   return (error >= 0 ? clean.slice(error).trim() : clean).slice(0, 2000);

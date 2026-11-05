@@ -1,3 +1,4 @@
+import { requireFullStackMode } from '../services/systemExecutionPolicy.service.js';
 import { withPreparedProjectWorkspace } from '../services/projectWorkspacePreparation.service.js';
 import { stagePreparedPublication } from '../services/projectOperationWorkspace.service.js';
 import { membershipWhere, resolveProjectAccess, resolveSnapshotAccess, withProjectGuard } from '../services/projectAccess.service.js';
@@ -52,7 +53,6 @@ import {
 } from "../services/scenarioManager.service.js";
 import { cleanStoragePath, cleanStorageText, canonicalizeFilePath } from "../utils/pathSanitizer.js";
 import { isBusinessLogicSourceFile, extractProjectCoverageExclusions } from "../utils/businessLogicFileDetector.js";
-import { generateColdStartSystemTests } from "../services/verifiedSystemGeneration.service.js";
 import { detectSystemTestFrameworksForSnapshot } from "../services/systemTestFrameworkDetection.service.js";
 import { optimizeSystemTest } from "../services/systemTestBooster.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
@@ -3014,7 +3014,7 @@ export const getSystemTestEvidence = async (req, res) => {
  * Triggers system test execution and analysis for Playwright or Cypress.
  * Parameters:
  *   - runner: "playwright" | "cypress" (optional)
- *   - executionMode: "frontend" | "full" (optional, default: "frontend")
+ *   - executionMode: "full" (optional, default: "full")
  *   - testFile: string (optional)
  */
 export const runSystemTestCoverage = async (req, res) => {
@@ -3064,11 +3064,7 @@ export const runSystemTestCoverage = async (req, res) => {
             }
         }
 
-        const rawMode = req.body?.executionMode || "frontend";
-        const executionMode = String(rawMode).toLowerCase().trim();
-        if (!["frontend", "full"].includes(executionMode)) {
-            return res.status(400).json({ success: false, message: "executionMode must be 'frontend' or 'full'." });
-        }
+        const executionMode = requireFullStackMode(req.body?.executionMode);
         if (executionMode === "full") {
             readFullSystemConfig(snapshot.rootDir, {allowMissing: true});
         }
@@ -3616,112 +3612,23 @@ export const saveAiSystemTest = async (req, res) => {
  * and writes runnable test files to disk and DB.
  */
 export const generateColdStartSystemTestsController = async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({success:false,message:"Authentication required"});
+    const cancellation=new AbortController();
+    const onAbort=()=>cancellation.abort();
+    req.once?.('aborted',onAbort);
     try {
-        const userId = req.user?.id;
-        if (!userId) {
-            return res.status(401).json({ success: false, message: "Unauthorized." });
+        const framework = req.body?.framework || 'playwright';
+        const executionMode = requireFullStackMode(req.body?.executionMode);
+        const targetRoutes = req.body?.routes || req.body?.targetRoutes || [];
+        if (!['playwright','cypress'].includes(framework) || !Array.isArray(targetRoutes) || targetRoutes.length>20 || targetRoutes.some(route=>typeof route!=='string'||route.length>500||!route.startsWith('/')||route.startsWith('//'))) {
+            return res.status(400).json({success:false,message:'Choose a supported framework, execution mode and at most 20 local routes.'});
         }
-
-        const { snapshotId } = req.params;
-        if (!snapshotId) {
-            return res.status(400).json({ success: false, message: "snapshotId is required." });
-        }
-
-        const snapshot = await prisma.projectSnapshot.findUnique({
-            where: { id: snapshotId },
-            include: { project: true },
-        });
-
-        if (!snapshot) {
-            return res.status(404).json({ success: false, message: "Snapshot not found." });
-        }
-        const generationAccess = await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "ai.use" });
-
-        const rootDir = snapshot.rootDir;
-        if (!rootDir || !fs.existsSync(rootDir)) {
-            return res.status(409).json({ success: false, message: "Snapshot repository is not available on disk." });
-        }
-
-        const rawFramework = req.body?.framework || req.body?.runner || "playwright";
-        const framework = String(rawFramework).toLowerCase() === "cypress" ? "cypress" : "playwright";
-        const targetRoutes = Array.isArray(req.body?.targetRoutes)
-            ? req.body.targetRoutes
-            : Array.isArray(req.body?.routes)
-            ? req.body.routes
-            : [];
-
-        const executionMode = req.body?.executionMode === 'full' ? 'full' : 'frontend';
-
-        let aiTest;
-        const generationResult = await withPreparedProjectWorkspace({
-            projectId: snapshot.projectId, snapshotId, userId, capability: "ai.use",
-            expectedWorkspaceRevision: generationAccess.project.workspaceRevision,
-            type: "AI_COLDSTART", input: { framework, targetRoutes, executionMode, model: requestedAiModel(req) || null },
-        }, async context => {
-            const result = await generateColdStartSystemTests({
-                model: requestedAiModel(req), rootDir: path.join(context.rootDir, context.analysisRelative),
-                framework, targetRoutes, executionMode,
-            });
-            await stagePreparedPublication(async tx => {
-                aiTest = await tx.aiTest.create({ data: {
-                    projectId: snapshot.projectId, snapshotId, filePath: result.filePath,
-                    content: result.code, status: "VERIFIED", mode: framework === "cypress" ? "CYPRESS_E2E" : "PLAYWRIGHT_E2E",
-                    metaJson: JSON.stringify({
-                        coldStart: true, applied: true, suiteCount: result.suiteCount, scenarioCount: result.scenarioCount,
-                        suites: result.suites, scenarios: result.scenarios, configCreated: result.configCreated, configPath: result.configPath,
-                        proposalBase: { snapshotId, workspaceRevision: context.workspaceRevision },
-                    }),
-                } });
-                // SystemTestFile belongs to an actual TestRun, not a snapshot.
-                // Generation metadata stays in AiTest; execution creates its own
-                // file rows without inventing a successful run here.
-            });
-            return result;
-        });
-
-        // Refresh framework detection for snapshot to update hasTestFiles and isZeroTestProject
-        invalidateCoverageCache(snapshotId);
-        let frameworks = null;
-        try {
-            frameworks = await detectSystemTestFrameworksForSnapshot(snapshotId, snapshot);
-        } catch (_) {}
-
-        // Automatically sync scenario catalog so scenarios are immediately available in Scenario Library
-        if (prisma?.systemScenario) {
-            try {
-                const { syncSystemScenarioCatalog } = await import("../services/systemScenarioCatalog.service.js");
-                await syncSystemScenarioCatalog({ client: prisma, snapshotId, rootDir: snapshot.rootDir });
-            } catch (syncErr) {
-                console.warn("[generateColdStartSystemTestsController] Auto-sync catalog notice:", syncErr.message);
-            }
-        }
-
-        return res.status(200).json({
-            success: true,
-            message: `Successfully generated ${generationResult.framework} system tests with ${generationResult.scenarioCount} scenarios.`,
-            data: {
-                aiTestId: aiTest.id,
-                snapshotId,
-                workspaceRevision: generationResult.workspaceRevision,
-                applied: true,
-                framework: generationResult.framework,
-                filePath: generationResult.filePath,
-                configCreated: generationResult.configCreated,
-                configPath: generationResult.configPath,
-                suiteCount: generationResult.suiteCount,
-                scenarioCount: generationResult.scenarioCount,
-                suites: generationResult.suites,
-                scenarios: generationResult.scenarios,
-                frameworks,
-            },
-        });
-    } catch (error) {
-        console.error("[generateColdStartSystemTestsController] Error:", error);
-        return res.status(error.statusCode || 500).json({
-            success: false,
-            message: error.message || "Failed to generate system tests.",
-        });
-    }
+        const {createSystemGenerationDraft} = await import('../services/systemGenerationProposal.service.js');
+        const data = await createSystemGenerationDraft({snapshotId:req.params.snapshotId,userId:req.user.id,framework,targetRoutes,executionMode,model:requestedAiModel(req),signal:AbortSignal.any([cancellation.signal,AbortSignal.timeout(10*60*1000)])});
+        return res.json({success:true,data,message:'Draft generated. Review the tests before applying.'});
+    } catch(error) {
+        return res.status(error.statusCode||500).json({success:false,message:error.statusCode?error.message:'System Test generation failed. Check the job log and try again.'});
+    } finally { req.off?.('aborted',onAbort); }
 };
 
 /**
@@ -3959,9 +3866,7 @@ export const runSingleSystemTest = async (req, res) => {
             return res.status(400).json({ success: false, message: "runner must be 'playwright' or 'cypress'." });
         }
 
-        const executionMode = explicitMode && ["full", "frontend"].includes(String(explicitMode).toLowerCase())
-            ? String(explicitMode).toLowerCase()
-            : "frontend";
+        const executionMode = requireFullStackMode(explicitMode);
 
         const job = await createSystemTestAnalysisJob({
             projectId: snapshot.projectId,

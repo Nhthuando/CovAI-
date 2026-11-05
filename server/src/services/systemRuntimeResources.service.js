@@ -91,6 +91,7 @@ export const provisionSystemResources = async ({rootDir,database,services,signal
             const mysql=engine==='mysql';
             const result=await start({kind:engine,port:mysql?3306:5432,image:mysql?'mysql:8.4':'postgres:17',
                 env:mysql?['-e',`MYSQL_ROOT_PASSWORD=${password}`,'-e','MYSQL_DATABASE=covai_test','-e','MYSQL_USER=covai','-e',`MYSQL_PASSWORD=${password}`]:['-e','POSTGRES_DB=covai_test','-e','POSTGRES_USER=covai','-e',`POSTGRES_PASSWORD=${password}`],
+                command:mysql?['--innodb-buffer-pool-size=32M','--performance-schema=OFF','--skip-log-bin','--max-connections=50']:[],
                 probe:name=>mysql?['exec','-e',`MYSQL_PWD=${password}`,name,'mysql','-h127.0.0.1','-ucovai','covai_test','-e','SELECT 1']:['exec',name,'pg_isready','-h','127.0.0.1','-U','covai','-d','covai_test']});
             sqlContainer=result.name;
             Object.assign(environment,{DATABASE_URL:`${mysql?'mysql':'postgresql'}://covai:${password}@127.0.0.1:${result.port}/covai_test`,DB_HOST:'127.0.0.1',DB_PORT:String(result.port),DB_USER:'covai',DB_PASSWORD:password,DB_NAME:'covai_test',PGHOST:'127.0.0.1',PGPORT:String(result.port),PGUSER:'covai',PGPASSWORD:password,PGDATABASE:'covai_test'});

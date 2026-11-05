@@ -33,3 +33,23 @@ describe('System Test workflow endpoint ownership', () => {
         expect(client.systemRunArtifact.findMany).not.toHaveBeenCalled();
     });
 });
+
+describe('Persisted assessment history',()=>{
+    const owned=()=>({projectSnapshot:{findFirst:jest.fn().mockResolvedValue({id:'snapshot'})}});
+    it('scopes history and its pagination to runner and execution mode',async()=>{
+        const client={...owned(),systemTestAssessment:{findMany:jest.fn().mockResolvedValue([{id:'older',status:'COMPLETED'}])}};
+        const res=response();await createAssessmentControllers({client}).history({user:{id:'owner'},params:{snapshotId:'snapshot'},query:{runner:'playwright',executionMode:'frontend',limit:'5'}},res);
+        expect(res.body.data.items[0].id).toBe('older');
+        expect(client.systemTestAssessment.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{snapshotId:'snapshot',runner:'playwright',executionMode:'frontend'},take:6}));
+    });
+    it('rejects an assessment cursor outside the selected history before listing records',async()=>{
+        const client={...owned(),systemTestAssessment:{findFirst:jest.fn().mockResolvedValue(null),findMany:jest.fn()}};
+        const res=response();await createAssessmentControllers({client}).history({user:{id:'owner'},params:{snapshotId:'snapshot'},query:{cursor:'foreign',executionMode:'full'}},res);
+        expect(res.statusCode).toBe(404);expect(client.systemTestAssessment.findMany).not.toHaveBeenCalled();
+    });
+    it('reads a saved scenario after it has disappeared from the current catalog',async()=>{
+        const client={...owned(),systemTestAssessment:{findFirst:jest.fn().mockResolvedValue({id:'old',reportJson:{scenarioSnapshot:[{scenarioKey:'deleted'}]}})},systemRunArtifact:{findMany:jest.fn().mockResolvedValue([])}};
+        const res=response();await createAssessmentControllers({client}).scenarioEvidence({user:{id:'owner'},params:{snapshotId:'snapshot',assessmentId:'old',scenarioKey:'deleted'}},res);
+        expect(res.statusCode).toBe(200);expect(res.body.data.status).toBe('NOT_CAPTURED');
+    });
+});

@@ -44,7 +44,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
         }
         if (!read && /\/install-dependencies$/.test(path)) capability = "integrations.write";
         else if (!read && /\/apply-tests$/.test(path)) capability = "files.write";
-        else if (!read && (/\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path) || /\/system\/proposals\/[^/]+\/apply$/.test(path))) capability = "evidence.approve";
+        else if (!read && (/\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path) || /\/system\/proposals\/[^/]+\/apply$/.test(path) || /\/system\/versions\/[^/]+\/restore$/.test(path) || /\/system\/generation-drafts\/[^/]+\/apply$/.test(path) || /\/system\/setup\/apply$/.test(path) || (method === "POST" && /\/system\/versions$/.test(path)))) capability = "evidence.approve";
         else if (!read && /\/(apply|apply-suggestion|save-ai-test|materialize)(?:\/|$)/.test(path)) capability = "files.write";
         else if (!read && /generate|suggest|optimize|regenerate|improvements/.test(path)) capability = "ai.use";
         else if (method === "PUT" || method === "PATCH" || method === "DELETE") capability = "files.write";
