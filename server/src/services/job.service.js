@@ -9,6 +9,7 @@ import prisma from "../config/prisma.js";
 import { admitProjectOperation } from "./projectOperation.service.js";
 import { operationSnapshot, currentProjectOperation, withOperationPublishGuard, stagePreparedPublication, deferPreparedCommit } from "./projectOperationWorkspace.service.js";
 import { resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import { assertEditorSnapshotChangeAllowed } from './projectEditorBridge.service.js';
 import { deliverProjectEvent, publishProjectEvent } from "./projectEvent.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { notificationService } from "./notification.service.js";
@@ -388,7 +389,7 @@ export const createSnapshotIngestJob = async ({
     return { reused: true, result: cached };
   }
 
-  return prisma.$transaction(async (tx) => {
+  return withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx) => {
     const [project, user] = await Promise.all([
       tx.project.findUnique({ where: { id: projectId }, select: { id: true } }),
       tx.user.findUnique({ where: { id: userId }, select: { id: true } }),
@@ -398,10 +399,12 @@ export const createSnapshotIngestJob = async ({
     if (!user) throw new ServiceError("User not found", 404);
 
     await assertNoActiveJob(projectId, "INGEST", tx);
+    await assertEditorSnapshotChangeAllowed(tx, projectId);
 
     const snapshot = await tx.projectSnapshot.create({
       data: { projectId, source: "ZIP", checksum, storagePath },
     });
+    await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
 
     const job = await tx.job.create({
       data: {

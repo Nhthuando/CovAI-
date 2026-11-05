@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { captureWorkspaceFiles } from "./projectWorkspacePublish.service.js";
 import prisma from "../config/prisma.js";
 import { membershipWhere, resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import { assertEditorSnapshotChangeAllowed } from './projectEditorBridge.service.js';
 import { publishProjectEvent, deliverProjectEvent } from './projectEvent.service.js';
 import { readVersionedProjectFile,projectEditableWorkspaceRoot } from "./projectFileVersion.service.js";
 import { mutateProjectWorkspace } from "./projectMutation.service.js";
@@ -747,6 +748,13 @@ export const createProjectCheckpoint = async ({
   const analysisRelative = path.relative(workspaceRoot, activeSnapshot.rootDir);
   const checkpointAnalysisRoot = path.join(baseStorage, analysisRelative);
   const { fileCount, sizeBytes } = copyDirRecursive(workspaceRoot, baseStorage);
+  const srcGit = path.join(workspaceRoot, ".git");
+  const destGit = path.join(baseStorage, ".git");
+  if (fs.existsSync(srcGit) && !fs.existsSync(destGit)) {
+    try {
+      fs.cpSync(srcGit, destGit, { recursive: true });
+    } catch (_) {}
+  }
 
   const checkpointMeta = {
     id: newSnapshotId,
@@ -776,6 +784,7 @@ export const createProjectCheckpoint = async ({
   const checksum = `${currentHash || "snap"}_v${newVersionNumber}`;
 
   const committed = await withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx, access) => {
+    await assertEditorSnapshotChangeAllowed(tx, projectId);
     if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing checkpoint; try again', 409, 'SNAPSHOT_CHANGED');
     const newSnapshot = await tx.projectSnapshot.create({
       data: {
@@ -875,7 +884,31 @@ export const restoreProjectCheckpoint = async ({
   const restoreCheckpointId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
   const restoreStorage = path.resolve("storage/projects", projectId, "snapshots", restoreCheckpointId);
   fs.mkdirSync(restoreStorage, { recursive: true });
-  const { fileCount, sizeBytes } = copyDirRecursive(targetWorkspace, restoreStorage, [".git", "node_modules"]);
+  const { fileCount, sizeBytes } = copyDirRecursive(targetWorkspace, restoreStorage, ["node_modules"]);
+  const restoreGit = path.join(restoreStorage, ".git");
+  if (!fs.existsSync(restoreGit)) {
+    try {
+      const targetGit = path.join(targetWorkspace, ".git");
+      if (fs.existsSync(targetGit)) {
+        fs.cpSync(targetGit, restoreGit, { recursive: true });
+      } else {
+        const priorWithGit = await prisma.projectSnapshot.findMany({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+        });
+        for (const prior of priorWithGit) {
+          const priorWs = snapshotWorkspaceRoot(prior);
+          if (priorWs) {
+            const priorGit = path.join(priorWs, ".git");
+            if (fs.existsSync(priorGit)) {
+              fs.cpSync(priorGit, restoreGit, { recursive: true });
+              break;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
   // A restore publishes a new active snapshot. Never erase a workspace that
   // another member or worker may still be reading from the historical snapshot.
 
@@ -911,6 +944,7 @@ export const restoreProjectCheckpoint = async ({
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
   const committed = await withProjectGuard({ projectId, userId, capability: 'snapshot.restore' }, async (tx, access) => {
+    await assertEditorSnapshotChangeAllowed(tx, projectId);
     if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing restore; try again', 409, 'SNAPSHOT_CHANGED');
     const newSnapshot = await tx.projectSnapshot.create({
     data: {

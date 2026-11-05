@@ -4,6 +4,7 @@ import path from "path";
 import { ServiceError } from "../utils/serviceError.js";
 import { generateInputHash, reuseCachedContext, saveCacheRecord } from "./aiContextCache.service.js";
 import { currentProjectOperation, operationSnapshot } from "./projectOperationWorkspace.service.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 // Helper to collect files recursively
 function collectFiles(dir, isMatch, rootDir = dir) {
@@ -68,6 +69,7 @@ export const loadSourceCode = async (snapshotId) => {
     if (!snapshot || !snapshot.rootDir) {
         throw new ServiceError("Snapshot root directory not found", 404);
     }
+    const effectiveRootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
 
     const isSourceMatch = (fileName, filePath) => {
         const ext = path.extname(fileName).toLowerCase();
@@ -76,7 +78,7 @@ export const loadSourceCode = async (snapshotId) => {
         return validExts.includes(ext) && !isTest;
     };
 
-    const files = collectFiles(snapshot.rootDir, isSourceMatch);
+    const files = collectFiles(effectiveRootDir, isSourceMatch);
     if (snapshotId) {
         sourceCodeMemoryCache.set(snapshotId, files);
     }
@@ -91,6 +93,7 @@ export const loadTestFiles = async (snapshotId) => {
     if (!snapshot || !snapshot.rootDir) {
         throw new ServiceError("Snapshot root directory not found", 404);
     }
+    const effectiveRootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
 
     const isTestMatch = (fileName, filePath) => {
         const ext = path.extname(fileName).toLowerCase();
@@ -99,7 +102,7 @@ export const loadTestFiles = async (snapshotId) => {
         return validExts.includes(ext) && isTest;
     };
 
-    return collectFiles(snapshot.rootDir, isTestMatch);
+    return collectFiles(effectiveRootDir, isTestMatch);
 };
 
 /**

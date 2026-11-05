@@ -1,3 +1,4 @@
+import { disciplineLabel } from '../../../shared/projectRoles.js';
 const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[character]);
@@ -8,7 +9,7 @@ const roles = {
 };
 
 /** Multipart email content only; delivery reuses the password-reset transport. */
-export function createProjectInvitationEmail({ projectName, inviterName, role, email, invitationUrl, expiresAt }) {
+export function createProjectInvitationEmail({ projectName, inviterName, role, disciplineRole = null, email, invitationUrl, expiresAt }) {
     const access = roles[role];
     if (!access) throw new TypeError('Invalid invitation role');
     const url = new URL(invitationUrl);
@@ -21,7 +22,7 @@ export function createProjectInvitationEmail({ projectName, inviterName, role, e
     const safe = { project: escapeHtml(name), inviter: escapeHtml(inviter), email: escapeHtml(email),
         link: escapeHtml(url.href), expiry: escapeHtml(expiryLabel) };
     const subject = `You're invited to ${name.replace(/[\r\n]+/g, ' ')} | CovAI`;
-    const message = `${inviter} invited you to join ${name} on CovAI.\n\nYour access: ${access.label}\n${access.description}\n\nAccept invitation:\n${url.href}\n\nSign in with ${email} to accept.\nExpires: ${expiryLabel}\n\nProject files, test results, chat history and AI memory are shared with project members.\nIf you weren't expecting this invitation, you can ignore this email.\n\nCovAI · Project collaboration`;
+    const message = `${inviter} invited you to join ${name} on CovAI.\n\nYour role: ${disciplineLabel(disciplineRole)}\nYour access: ${access.label}\n${access.description}\n\nAccept invitation:\n${url.href}\n\nSign in with ${email} to accept.\nExpires: ${expiryLabel}\n\nProject files, test results, chat history and AI memory are shared with project members.\nIf you weren't expecting this invitation, you can ignore this email.\n\nCovAI · Project collaboration`;
     const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -52,7 +53,7 @@ export function createProjectInvitationEmail({ projectName, inviterName, role, e
 <p style="margin:0;font-size:18px;line-height:26px;font-weight:bold;color:#17202e;overflow-wrap:anywhere;word-break:break-word;">${safe.project}</p>
 </td></tr>
 <tr><td style="padding:0 22px 20px;">
-<p style="margin:0 0 7px;font-size:12px;line-height:18px;color:#526073;">Your access <strong style="color:#5745d9;">&nbsp;${access.label}</strong></p>
+<p style="margin:0 0 7px;font-size:12px;line-height:18px;color:#526073;">Role: ${escapeHtml(disciplineLabel(disciplineRole))}<br>Your access <strong style="color:#5745d9;">&nbsp;${access.label}</strong></p>
 <p style="margin:0;font-size:13px;line-height:21px;color:#526073;">${access.description}</p>
 </td></tr></table>
 <p style="margin:24px 0 20px;font-size:14px;line-height:23px;color:#526073;">Sign in with <strong style="color:#17202e;word-break:break-all;">${safe.email}</strong> to accept this invitation.</p>

@@ -15,6 +15,7 @@ import {
   Terminal,
   Activity,
   CheckSquare,
+  Loader2,
 } from 'lucide-react';
 import { systemEvidenceRequest } from '../../../services/systemTest.service.js';
 
@@ -52,7 +53,7 @@ const getTagBadgeStyle = (tag) => {
     return 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/15 dark:text-sky-400 dark:border-sky-500/30';
   }
   if (['UPDATE', 'EDIT', 'TOGGLE', 'PUT', 'PATCH', 'CHANGE', 'SAVE', 'MODIFY'].some(k => norm.includes(k))) {
-    return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30';
+    return 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/40 font-semibold';
   }
   if (['DELETE', 'REMOVE', 'CANCEL', 'DROP', 'CLEAR'].some(k => norm.includes(k))) {
     return 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30';
@@ -137,6 +138,7 @@ export default function SystemTestWorkflow({
   onRunSelected,
 }) {
   const [catalog, setCatalog] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [features, setFeatures] = useState([]);
   const [selectedIds, setSelectedIds] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
@@ -155,6 +157,7 @@ export default function SystemTestWorkflow({
   const refresh = useCallback(async (sync = false) => {
     if (!snapshotId) return;
     if (inFlightRefreshRef.current) return inFlightRefreshRef.current;
+    setLoading(true);
     const task = (async () => {
       try {
         const [nextCatalog, nextFeatures] = await Promise.all([
@@ -187,6 +190,7 @@ export default function SystemTestWorkflow({
         setFeatures(groups);
       } finally {
         inFlightRefreshRef.current = null;
+        setLoading(false);
       }
     })();
     inFlightRefreshRef.current = task;
@@ -371,8 +375,15 @@ export default function SystemTestWorkflow({
             <h2 className="text-base font-bold text-[var(--color-text)] tracking-tight">
               Test Scenarios
             </h2>
-            <span className="tabular-nums px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 dark:bg-zinc-800/80 dark:text-zinc-400 dark:border-zinc-700/50">
-              {catalog.length}
+            <span className="tabular-nums px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 dark:bg-zinc-800/80 dark:text-zinc-400 dark:border-zinc-700/50 flex items-center gap-1.5">
+              {loading && !catalog.length ? (
+                <>
+                  <Loader2 size={11} className="animate-spin text-indigo-500" />
+                  <span>Loading…</span>
+                </>
+              ) : (
+                catalog.length
+              )}
             </span>
           </div>
 
@@ -504,9 +515,9 @@ export default function SystemTestWorkflow({
               type="button"
               disabled={busy}
               onClick={confirmAll}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-500/20 text-xs font-medium transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md border border-amber-400 dark:border-amber-500/40 bg-amber-100/90 dark:bg-amber-500/20 text-amber-900 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-500/30 text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-40"
             >
-              <CheckSquare size={12} /> Confirm All
+              <CheckSquare size={13} className="text-amber-800 dark:text-amber-300" /> Confirm All
             </button>
           )}
 
@@ -537,7 +548,24 @@ export default function SystemTestWorkflow({
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
-            {visible.map(row => {
+            {loading && !catalog.length ? (
+              <tr>
+                <td colSpan={5} className="py-20 text-center">
+                  <div className="flex flex-col items-center justify-center space-y-3">
+                    <Loader2 size={28} className="animate-spin text-indigo-600 dark:text-indigo-400" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-[var(--color-text)]">
+                        Loading scenario library…
+                      </p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">
+                        Scanning test specs and loading verified scenarios
+                      </p>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              visible.map(row => {
               const open = expandedId === row.id;
               const site = analysis?.scenarioSites?.find(item => item.title === row.title);
               const assertions = analysis?.assertionSites?.filter(item => item.scenarioLine === site?.line && item.supported) || [];
@@ -573,12 +601,13 @@ export default function SystemTestWorkflow({
                   onOpenFile={() => onOpenFile?.(row.filePath)}
                 />
               );
-            })}
+            })
+            )}
           </tbody>
         </table>
       </div>
 
-      {!visible.length && (
+      {!loading && !visible.length && (
         <div className="py-12 text-center text-xs text-[var(--color-text-secondary)] space-y-1">
           <p className="font-semibold text-sm">No scenarios match this filter</p>
           <p>Try resetting the search query or selecting "All Modules".</p>
@@ -586,8 +615,8 @@ export default function SystemTestWorkflow({
       )}
 
       {selectedRows.length > 0 && !readiness.ready && readiness.blockers?.length > 0 && (
-        <div className="border-t border-amber-500/20 bg-amber-500/5 px-5 py-2.5 text-xs text-amber-300 flex items-center gap-2">
-          <AlertCircle size={14} className="shrink-0" />
+        <div className="border-t border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-950/40 px-5 py-2.5 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2 font-medium">
+          <AlertCircle size={15} className="shrink-0 text-amber-700 dark:text-amber-400" />
           <span>{readiness.blockers[0]?.message}</span>
         </div>
       )}
@@ -751,9 +780,9 @@ function ModernScenarioRow({
               type="button"
               disabled={busy || !row.expectedJson?.length}
               onClick={onConfirm}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 transition-colors cursor-pointer disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/40 transition-colors cursor-pointer disabled:opacity-40"
             >
-              <AlertCircle size={12} className="shrink-0 text-amber-600 dark:text-amber-400" />
+              <AlertCircle size={12} className="shrink-0 text-amber-700 dark:text-amber-400" />
               Confirm
             </button>
           )}
@@ -850,7 +879,7 @@ function ScenarioInspectorView({
                 type="button"
                 disabled={busy}
                 onClick={onConfirm}
-                className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 dark:text-amber-300 dark:bg-amber-500/10 dark:border-amber-500/30 px-2 py-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors"
+                className="text-[11px] text-amber-900 bg-amber-100 border border-amber-300 dark:text-amber-200 dark:bg-amber-500/15 dark:border-amber-500/30 px-2 py-0.5 rounded-full hover:bg-amber-200 transition-colors font-medium"
               >
                 Confirm Expected Outcome
               </button>

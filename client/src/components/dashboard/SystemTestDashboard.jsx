@@ -11,6 +11,7 @@ import {
   Activity,
   CheckCircle2,
   Monitor,
+  Sparkles,
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { getJobDetailApi } from "../../services/job.service.js";
@@ -21,6 +22,7 @@ import SystemTestScenarioList from "./system/SystemTestScenarioList.jsx";
 import SystemTestExecutionView from "./system/SystemTestExecutionView.jsx";
 import SystemTestBreakpointModal from "./system/SystemTestBreakpointModal.jsx";
 import SystemTestGeneratorModal from "./system/SystemTestGeneratorModal.jsx";
+import SystemTestZeroStateBanner from "./system/SystemTestZeroStateBanner.jsx";
 import SystemTestEditorModal from "./system/SystemTestEditorModal.jsx";
 import SystemTestReportView from "./system/SystemTestReportView.jsx";
 import SystemTestWorkflow from "./system/SystemTestWorkflow.jsx";
@@ -53,7 +55,7 @@ export default function SystemTestDashboard({ projectId, snapshotId, focusScenar
 
   // Selected framework: "playwright" | "cypress"
   const [activeFramework, setActiveFramework] = useState("playwright");
-  const [executionMode, setExecutionMode] = useState("frontend"); // "frontend" | "full"
+  const [executionMode] = useState("frontend"); // "frontend" | "full"
 
   // Data states
   const [frameworksData, setFrameworksData] = useState(null);
@@ -151,14 +153,6 @@ export default function SystemTestDashboard({ projectId, snapshotId, focusScenar
     loadResults();
     return () => { ignore = true; };
   }, [snapshotId, executionMode, activeFramework, selectionKey, refreshKey]);
-
-  const selectResults = (mode, framework) => {
-    setExecutionMode(mode);
-    setActiveFramework(framework);
-    setInspectedScenario(null);
-    setEditorTarget(null);
-    setError(null);
-  };
 
   const refreshData = useCallback(() => {
     setLoading(true);
@@ -419,10 +413,78 @@ export default function SystemTestDashboard({ projectId, snapshotId, focusScenar
       );
     }
   };
+  const activeFrameworkData = frameworksData?.frameworks?.find(
+    (f) => f.name?.toLowerCase() === activeFramework?.toLowerCase()
+  );
+  const activeFrameworkFileCount =
+    activeFrameworkData?.testFileCount ??
+    activeFrameworkData?.testFiles?.length ??
+    0;
 
   const isZeroTestProject =
     frameworksData?.isZeroTestProject ||
-    (frameworksData?.hasSystemTests === false && testFiles.length === 0);
+    (frameworksData?.hasSystemTests === false && testFiles.length === 0) ||
+    (frameworksData?.totalFilesCount === 0 && testFiles.length === 0);
+
+  const hasNoTests = Boolean(
+    !loading &&
+    !runningTests &&
+    !activeJobId &&
+    frameworksData &&
+    (
+      isZeroTestProject ||
+      frameworksData.hasTestFiles === false ||
+      frameworksData.totalFilesCount === 0 ||
+      (activeFrameworkFileCount === 0 && testFiles.length === 0)
+    ) &&
+    testFiles.length === 0 &&
+    !workflowReady?.scenarioIds?.length
+  );
+
+    // When checking frameworks and initial discovery is in flight
+  if (loading && !frameworksData) {
+    return (
+      <div className="w-full min-h-[400px] flex flex-col items-center justify-center p-12 text-center space-y-3 bg-[var(--color-bg)] text-[var(--color-text)]">
+        <Loader2 size={32} className="animate-spin text-indigo-500" />
+        <p className="text-sm font-semibold">Checking system test configuration...</p>
+        <p className="text-xs text-[var(--color-text-secondary)]">
+          Scanning Playwright, Cypress specs and test setup in snapshot
+        </p>
+      </div>
+    );
+  }
+
+  // Zero-State: When no test files exist in the project, show clean AI generator view
+  if (hasNoTests) {
+    return (
+      <div className="w-full min-h-full bg-[var(--color-bg)] text-[var(--color-text)] font-sans p-4 sm:p-6 space-y-6">
+        {/* Hero Zero-State Card */}
+        <SystemTestZeroStateBanner
+          framework={activeFramework}
+          executionMode={executionMode}
+          onOpenGenerator={() => setIsGeneratorOpen(true)}
+          canGenerate={projectAccess.can("ai.use")}
+        />
+
+        {/* Cold-Start Test Generator Modal */}
+        {isGeneratorOpen && (
+          <SystemTestGeneratorModal
+            isOpen={isGeneratorOpen}
+            onClose={() => {
+              setIsGeneratorOpen(false);
+              refreshData();
+            }}
+            snapshotId={snapshotId}
+            initialFramework={activeFramework}
+            onSuccess={() => {
+              setActiveSubTab("scenarios");
+              refreshData();
+            }}
+          />
+        )}
+      </div>
+    );
+  }
 
   // If in Report View mode, render SystemTestReportView
   if (currentView === "report") {
@@ -443,48 +505,28 @@ export default function SystemTestDashboard({ projectId, snapshotId, focusScenar
 
       {/* Top Action Bar */}
       <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        {/* Framework Selector & Mode */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5 p-1 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-xs font-medium">
-            <button
-              type="button"
-              onClick={() => selectResults(executionMode, "playwright")}
-              className={`px-3 py-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                activeFramework === "playwright"
-                  ? "bg-[var(--color-primary)] text-white font-semibold"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              Playwright
-            </button>
-            <button
-              type="button"
-              onClick={() => selectResults(executionMode, "cypress")}
-              className={`px-3 py-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                activeFramework === "cypress"
-                  ? "bg-[var(--color-primary)] text-white font-semibold"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              Cypress
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
-            <span className="text-[11px] font-medium">Mode:</span>
-            <select
-              value={executionMode}
-              onChange={(e) => selectResults(e.target.value, activeFramework)}
-              className="bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded-[var(--radius-sm)] px-2 py-1 text-xs text-[var(--color-text)] focus:outline-hidden focus:border-[var(--color-primary)]"
-            >
-              <option value="frontend">Frontend Dev Server</option>
-              <option value="full">Full Stack (AUT + API)</option>
-            </select>
-          </div>
+        {/* Engine Badge */}
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border border-indigo-500/20 text-xs font-semibold">
+            <ShieldCheck size={14} />
+            Playwright System Testing
+          </span>
         </div>
 
         {/* Action Controls */}
         <div className="flex items-center gap-2.5 w-full md:w-auto justify-end">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={Sparkles}
+            onClick={() => setIsGeneratorOpen(true)}
+            disabled={loading || runningTests}
+            className="text-xs h-9 font-medium"
+            title="Auto-generate system test scenarios with AI"
+          >
+            Generate with AI
+          </Button>
+
           <Button
             variant="secondary"
             size="sm"
@@ -529,7 +571,7 @@ export default function SystemTestDashboard({ projectId, snapshotId, focusScenar
             onClick={() => handleRunTests()}
             className="text-xs h-9 font-semibold"
           >
-            {runningTests ? "Running System Tests..." : `Run Suite (${modeLabel})`}
+            {runningTests ? "Running System Tests..." : "Run Test Suite"}
           </Button>
         </div>
       </div>
@@ -683,6 +725,7 @@ export default function SystemTestDashboard({ projectId, snapshotId, focusScenar
         <div className="space-y-4">
           <SystemTestAssessmentPanel
             key={snapshotId}
+            projectId={projectId}
             snapshotId={snapshotId}
             refreshKey={refreshKey}
             onOpenFile={onOpenFile}

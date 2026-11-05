@@ -552,14 +552,26 @@ class ProjectController {
 
   async deleteEntry(req, res) {
     try {
+      const filePath = req.query.path || req.body?.path;
+      const snapshotId = req.query.snapshotId || req.body?.snapshotId;
+      const expectedWorkspaceRevision = req.query.expectedWorkspaceRevision !== undefined
+        ? Number(req.query.expectedWorkspaceRevision)
+        : req.body?.expectedWorkspaceRevision;
+      const expectedVersion = req.query.expectedVersion
+        ? (typeof req.query.expectedVersion === "string" ? JSON.parse(req.query.expectedVersion) : req.query.expectedVersion)
+        : req.body?.expectedVersion;
+      const requestId = req.query.requestId || req.body?.requestId;
+
       const result = await deleteProjectEntry(
         req.params.id,
         req.user.id,
-        req.query.path,
-          { snapshotId: req.query.snapshotId,
-            expectedWorkspaceRevision: req.query.expectedWorkspaceRevision === undefined ? undefined : Number(req.query.expectedWorkspaceRevision),
-            expectedVersion: req.query.expectedVersion ? JSON.parse(req.query.expectedVersion) : undefined,
-            requestId: req.query.requestId },
+        filePath,
+        {
+          snapshotId,
+          expectedWorkspaceRevision,
+          expectedVersion,
+          requestId,
+        },
       );
       return res.status(200).json({ success: true, data: result });
     } catch (error) {

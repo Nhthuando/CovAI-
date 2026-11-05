@@ -1,7 +1,7 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useAuth } from "../../hooks/useAuth";
 /* eslint-disable no-unused-vars */
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Cpu,
@@ -17,27 +17,32 @@ import {
   BrainCircuit,
   Ban,
   Layers,
-  RotateCcw,
   History,
-  BookmarkPlus,
   Calendar,
   FileCode2,
-  HardDrive,
   Sparkles,
   AlertCircle,
   Search,
+  Filter,
+  Users,
+  ChevronDown,
+  ChevronRight,
+  Terminal,
+  ExternalLink,
+  Info,
   Check,
-  Tag,
-  ArrowRight,
   ShieldCheck,
+  FolderGit2,
+  Code2,
+  Zap,
 } from "lucide-react";
-import { getUserJobsApi, cancelJobApi } from "../../services/job.service";
 import {
-  getProjectSnapshotsApi,
-  createProjectSnapshotApi,
-  restoreProjectSnapshotApi,
-} from "../../services/project.service";
-import { SnapshotsListSkeleton, JobsListSkeleton } from "../common/Skeleton";
+  getUserJobsApi,
+  getProjectJobsApi,
+  cancelJobApi,
+} from "../../services/job.service";
+import { getProjectEventsApi } from "../../services/project.service";
+import { JobsListSkeleton } from "../common/Skeleton";
 
 /* ── Helpers: map backend enums to UI props ────────────────── */
 
@@ -46,113 +51,145 @@ const JOB_TYPE_CONFIG = {
     label: "AI Test Improvement",
     icon: Sparkles,
     taskLabel: "Generating tests and verifying measured coverage gains",
+    category: "ai",
   },
   SYSTEM_TEST_ASSESSMENT: {
     label: "System Test Assessment",
     icon: TestTube2,
     taskLabel: "Running independent tests and measuring coverage",
+    category: "test",
   },
   INGEST: {
     label: "Source Ingest",
     icon: PackageOpen,
     taskLabel: "Extracting and indexing source files",
+    category: "system",
   },
   INSTALL_DEPS: {
-    label: "Install Deps",
+    label: "Install Dependencies",
     icon: Wrench,
-    taskLabel: "Installing project dependencies",
+    taskLabel: "Installing project dependencies via package manager",
+    category: "system",
   },
   RUN_TESTS: {
     label: "Run Tests",
     icon: TestTube2,
-    taskLabel: "Running test suite with coverage",
+    taskLabel: "Running test suite with coverage collection",
+    category: "test",
   },
   SUPERTEST_COVERAGE: {
     label: "Supertest Coverage",
     icon: TestTube2,
-    taskLabel: "Running Supertest integration coverage",
+    taskLabel: "Running Supertest integration coverage analysis",
+    category: "test",
   },
   PARSE_COVERAGE: {
     label: "Parse Coverage",
     icon: Activity,
-    taskLabel: "Parsing coverage report data",
+    taskLabel: "Parsing coverage report and AST mapping data",
+    category: "test",
   },
   BUILD_CFG: {
     label: "Build CFG",
     icon: Cpu,
-    taskLabel: "Building control flow graphs",
+    taskLabel: "Generating Control Flow Graphs from source AST",
+    category: "code",
   },
   AI_SUGGEST: {
-    label: "AI Suggest",
+    label: "AI Suggestions",
     icon: BrainCircuit,
-    taskLabel: "Generating AI improvement suggestions",
+    taskLabel: "Generating AI test & improvement suggestions",
+    category: "ai",
   },
-  AI_EVALUATION: { label: 'Chatbot Evaluation', icon: BrainCircuit, taskLabel: 'Evaluating project chatbot against its benchmark' },
-  AI_EVALUATION_PREPARE: { label: 'Evaluation Preparation', icon: BrainCircuit, taskLabel: 'Preparing evaluation knowledge or benchmark proposal' },
-  AI_TESTS: {
-    label: "AI Tests",
+  AI_EVALUATION: {
+    label: "Chatbot Evaluation",
     icon: BrainCircuit,
-    taskLabel: "Generating AI test cases",
+    taskLabel: "Evaluating project chatbot against benchmark",
+    category: "ai",
+  },
+  AI_EVALUATION_PREPARE: {
+    label: "Evaluation Preparation",
+    icon: BrainCircuit,
+    taskLabel: "Preparing evaluation knowledge or benchmark proposal",
+    category: "ai",
+  },
+  AI_TESTS: {
+    label: "AI Test Generator",
+    icon: BrainCircuit,
+    taskLabel: "Synthesizing AI test scenarios and edge cases",
+    category: "ai",
   },
   CODE_HYGIENE: {
     label: "Code Hygiene",
     icon: Activity,
-    taskLabel: "Analyzing code hygiene and quality",
+    taskLabel: "Analyzing code hygiene, linter and quality metrics",
+    category: "code",
   },
   PERFORMANCE_ANALYSIS: {
-    label: "Performance",
+    label: "Performance Analysis",
     icon: Activity,
-    taskLabel: "Analyzing performance metrics",
+    taskLabel: "Analyzing runtime performance metrics",
+    category: "code",
   },
   ANALYSIS: {
     label: "Project Analysis",
     icon: Activity,
-    taskLabel: "Analyzing project structure",
+    taskLabel: "Analyzing project structure and architecture",
+    category: "code",
   },
   QUALITY_ANALYSIS: {
     label: "Quality Analysis",
     icon: Activity,
-    taskLabel: "Evaluating AI generated tests",
+    taskLabel: "Evaluating AI generated tests and coverage",
+    category: "code",
   },
   SECURITY_ANALYSIS: {
     label: "Security Analysis",
-    icon: Activity,
-    taskLabel: "Scanning for security vulnerabilities",
+    icon: ShieldCheck,
+    taskLabel: "Scanning for security vulnerabilities and CVEs",
+    category: "code",
   },
   RUN_VITEST_TESTS: {
     label: "Run Vitest",
     icon: TestTube2,
-    taskLabel: "Running Vitest test suite",
+    taskLabel: "Executing Vitest test suite",
+    category: "test",
   },
   VITEST_COVERAGE: {
     label: "Vitest Coverage",
     icon: TestTube2,
-    taskLabel: "Running Vitest coverage",
+    taskLabel: "Collecting Vitest execution coverage",
+    category: "test",
   },
   SYSTEM_TEST_ANALYSIS: {
     label: "System Test Analysis",
     icon: Cpu,
-    taskLabel: "Analyzing E2E tests",
+    taskLabel: "Analyzing End-to-End system test runs",
+    category: "test",
   },
   CYPRESS_SYSTEM_TEST: {
     label: "Cypress System Test",
     icon: TestTube2,
-    taskLabel: "Running Cypress E2E tests",
+    taskLabel: "Running Cypress E2E browser tests",
+    category: "test",
   },
   CYPRESS_SYSTEM_COVERAGE: {
     label: "Cypress Coverage",
     icon: TestTube2,
-    taskLabel: "Running Cypress E2E coverage",
+    taskLabel: "Running Cypress E2E coverage instrumentation",
+    category: "test",
   },
   PLAYWRIGHT_SYSTEM_TEST: {
     label: "Playwright System Test",
     icon: TestTube2,
-    taskLabel: "Running Playwright E2E tests",
+    taskLabel: "Running Playwright E2E browser tests",
+    category: "test",
   },
   PLAYWRIGHT_SYSTEM_COVERAGE: {
     label: "Playwright Coverage",
     icon: TestTube2,
-    taskLabel: "Running Playwright E2E coverage",
+    taskLabel: "Running Playwright E2E coverage instrumentation",
+    category: "test",
   },
 };
 
@@ -194,8 +231,51 @@ const JOB_STATUS_CONFIG = {
   },
 };
 
+const EVENT_TYPE_MAP = {
+  "workspace.changed": {
+    label: "Workspace Mutated",
+    icon: FileCode2,
+    color: "var(--color-primary)",
+    category: "workspace",
+    desc: "Files, checkpoints or workspace state updated",
+  },
+  "job.updated": {
+    label: "Task Updated",
+    icon: Cpu,
+    color: "var(--color-info)",
+    category: "tasks",
+    desc: "Background runner execution progress or completion",
+  },
+  "chat.message": {
+    label: "Collaboration Chat",
+    icon: Users,
+    color: "var(--color-text-secondary)",
+    category: "team",
+    desc: "Message sent in collaboration session",
+  },
+  "invitation.changed": {
+    label: "Project Invitation",
+    icon: Users,
+    color: "var(--color-warning)",
+    category: "team",
+    desc: "Team member invitation created or updated",
+  },
+  "member.changed": {
+    label: "Member Access",
+    icon: ShieldCheck,
+    color: "var(--color-success)",
+    category: "team",
+    desc: "Project role or member membership modified",
+  },
+};
+
 function getJobVisual(job) {
-  const typeConf = JOB_TYPE_CONFIG[job.type] || JOB_TYPE_CONFIG.INGEST;
+  const typeConf = JOB_TYPE_CONFIG[job.type] || {
+    label: job.type || "Task",
+    icon: Activity,
+    taskLabel: "Executing background task",
+    category: "system",
+  };
   const statusConf = JOB_STATUS_CONFIG[job.status] || JOB_STATUS_CONFIG.QUEUED;
 
   return {
@@ -206,263 +286,291 @@ function getJobVisual(job) {
     typeLabel: typeConf.label,
     taskLabel: typeConf.taskLabel,
     statusLabel: statusConf.label,
+    category: typeConf.category,
   };
 }
 
 /* ── Polling intervals (ms) ───────────────────────────── */
 const POLL_FAST = 3000;
-const POLL_SLOW = 15000;
+const POLL_SLOW = 12000;
 
 /* ── Component ─────────────────────────────────────────────── */
 export default function JobQueue({ projectId, onSync }) {
   const projectAccess = useProjectAccess(projectId);
   const { userId } = useAuth();
-  // Main view mode: "snapshots" | "jobs"
-  const [activeTab, setActiveTab] = useState("snapshots");
 
-  /* ── Snapshot State ──────────────────────────────────────── */
-  const [snapshots, setSnapshots] = useState([]);
-  const [loadingSnapshots, setLoadingSnapshots] = useState(true);
-  const [errorSnapshots, setErrorSnapshots] = useState(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newLabel, setNewLabel] = useState("");
-  const [newMessage, setNewMessage] = useState("");
-  const [creatingSnapshot, setCreatingSnapshot] = useState(false);
-  const [confirmRestoreSnapshot, setConfirmRestoreSnapshot] = useState(null);
-  const [restoring, setRestoring] = useState(false);
-  const [snapshotSearch, setSnapshotSearch] = useState("");
-  const [feedbackNotice, setFeedbackNotice] = useState(null);
+  // Active view: "activity" (Activity Log & Audit Trail) | "tasks" (Task Queue & Runners)
+  const [activeTab, setActiveTab] = useState("activity");
+
+  /* ── Activity / Events State ─────────────────────────────── */
+  const [events, setEvents] = useState([]);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [errorEvents, setErrorEvents] = useState(null);
+  const [eventCategoryFilter, setEventCategoryFilter] = useState("ALL"); // ALL | tasks | workspace | team
+  const [activitySearch, setActivitySearch] = useState("");
+  const [expandedEventId, setExpandedEventId] = useState(null);
 
   /* ── Job Queue State ─────────────────────────────────────── */
   const [jobs, setJobs] = useState([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [errorJobs, setErrorJobs] = useState(null);
-  const [filterJobs, setFilterJobs] = useState("ALL"); // ALL | ACTIVE | COMPLETED
+  const [filterJobs, setFilterJobs] = useState("ALL"); // ALL | ACTIVE | COMPLETED | FAILED
   const [cancelingJobId, setCancelingJobId] = useState(null);
+  const [selectedJobForModal, setSelectedJobForModal] = useState(null);
   const intervalRef = useRef(null);
 
-  const handleCancelJob = async (jobId) => {
-    const job = jobs.find(row => row.id === jobId);
-    if (!projectAccess.can("tests.run") || (projectAccess.role !== "OWNER" && job?.userId !== userId)) return;
-    try {
-      setCancelingJobId(jobId);
-      await cancelJobApi(jobId);
-      await fetchJobs(true);
-    } catch (err) {
-      setErrorJobs(err.message || "Failed to cancel job");
-    } finally {
-      setCancelingJobId(null);
-    }
-  };
+  /* ── Fetch Handlers ──────────────────────────────────────── */
 
-  // Fetch snapshots
-  const fetchSnapshots = useCallback(
+  const fetchEvents = useCallback(
     async (silent = false) => {
       if (!projectId) return;
-      if (!silent) setLoadingSnapshots(true);
-      setErrorSnapshots(null);
+      if (!silent) setLoadingEvents(true);
+      setErrorEvents(null);
       try {
-        const res = await getProjectSnapshotsApi(projectId);
-        setSnapshots(res.data || []);
+        const res = await getProjectEventsApi(projectId, { after: 0, limit: 100 });
+        if (res?.success && res?.data?.events) {
+          // Sort reverse chronological
+          const sorted = [...res.data.events].reverse();
+          setEvents(sorted);
+        } else {
+          setEvents([]);
+        }
       } catch (err) {
-        setErrorSnapshots(err.message || "Failed to load snapshots");
+        // If event endpoint is not supported yet or 404, fall back gracefully
+        console.warn("Could not load project events:", err.message);
+        setErrorEvents(err.message || "Failed to load project activity");
       } finally {
-        setLoadingSnapshots(false);
+        setLoadingEvents(false);
       }
     },
     [projectId],
   );
 
-  // Fetch jobs
-  const fetchJobs = useCallback(async (silent = false) => {
-    if (!silent) setLoadingJobs(true);
-    setErrorJobs(null);
-    try {
-      const data = await getUserJobsApi();
-      const visibleJobs = (data.jobs || []).filter(
-        (job) => !["PERFORMANCE_ANALYSIS", "CODE_HYGIENE"].includes(job.type),
-      );
-      setJobs(visibleJobs);
-    } catch (err) {
-      setErrorJobs(err.message);
-    } finally {
-      setLoadingJobs(false);
-    }
-  }, []);
+  const fetchJobs = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoadingJobs(true);
+      setErrorJobs(null);
+      try {
+        let jobList = [];
+        if (projectId) {
+          try {
+            const projectJobsRes = await getProjectJobsApi(projectId);
+            if (projectJobsRes?.jobs) {
+              jobList = projectJobsRes.jobs;
+            }
+          } catch (_) {
+            // fallback to user jobs
+            const userJobsRes = await getUserJobsApi();
+            jobList = userJobsRes?.jobs || [];
+          }
+        } else {
+          const userJobsRes = await getUserJobsApi();
+          jobList = userJobsRes?.jobs || [];
+        }
 
-  // Initial fetch
+        const visibleJobs = jobList.filter(
+          (job) => !["PERFORMANCE_ANALYSIS", "CODE_HYGIENE"].includes(job.type),
+        );
+        setJobs(visibleJobs);
+      } catch (err) {
+        setErrorJobs(err.message || "Failed to load jobs");
+      } finally {
+        setLoadingJobs(false);
+      }
+    },
+    [projectId],
+  );
+
+  const handleRefreshAll = async () => {
+    await Promise.all([fetchEvents(), fetchJobs()]);
+  };
+
+  const handleCancelJob = async (jobId) => {
+    const job = jobs.find((row) => row.id === jobId);
+    if (
+      !projectAccess.can("tests.run") ||
+      (projectAccess.role !== "OWNER" && job?.userId !== userId)
+    ) {
+      return;
+    }
+    try {
+      setCancelingJobId(jobId);
+      await cancelJobApi(jobId);
+      await fetchJobs(true);
+    } catch (err) {
+      setErrorJobs(err.message || "Failed to cancel task");
+    } finally {
+      setCancelingJobId(null);
+    }
+  };
+
+  /* ── Initial Fetch & Polling ─────────────────────────────── */
   useEffect(() => {
-    fetchSnapshots();
+    fetchEvents();
     fetchJobs();
 
     intervalRef.current = setInterval(() => {
       fetchJobs(true);
+      fetchEvents(true);
     }, POLL_FAST);
 
     return () => clearInterval(intervalRef.current);
-  }, [fetchSnapshots, fetchJobs]);
+  }, [fetchEvents, fetchJobs]);
 
-  // Adjust polling speed
+  // Adjust polling speed according to active jobs
   useEffect(() => {
-    const hasActive = jobs.some((j) =>
-      ["QUEUED", "RUNNING"].includes(j.status),
-    );
+    const hasActive = jobs.some((j) => ["QUEUED", "RUNNING"].includes(j.status));
     const interval = hasActive ? POLL_FAST : POLL_SLOW;
 
     clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
       fetchJobs(true);
+      fetchEvents(true);
     }, interval);
 
     return () => clearInterval(intervalRef.current);
-  }, [jobs, fetchJobs]);
+  }, [jobs, fetchJobs, fetchEvents]);
 
-  // Refresh all
-  const handleRefreshAll = async () => {
-    await Promise.all([fetchSnapshots(), fetchJobs()]);
-  };
-
-  // Create snapshot handler
-  const handleCreateSnapshot = async (e) => {
-    e.preventDefault();
-    if (!projectAccess.can("snapshot.restore")) return;
-    e?.preventDefault();
-    if (!projectId || creatingSnapshot) return;
-    setCreatingSnapshot(true);
-    try {
-      const res = await createProjectSnapshotApi(projectId, {
-        label: newLabel.trim() || undefined,
-        message: newMessage.trim() || undefined,
-      });
-      setNewLabel("");
-      setNewMessage("");
-      setShowCreateModal(false);
-      setFeedbackNotice({
-        type: "success",
-        text: `Snapshot "${res.data?.label || "Checkpoint"}" captured successfully!`,
-      });
-      setTimeout(() => setFeedbackNotice(null), 4000);
-      await fetchSnapshots();
-      await onSync?.();
-    } catch (err) {
-      setFeedbackNotice({
-        type: "error",
-        text: err.message || "Failed to create snapshot",
-      });
-      setTimeout(() => setFeedbackNotice(null), 5000);
-    } finally {
-      setCreatingSnapshot(false);
-    }
-  };
-
-  // Restore snapshot handler
-  const handleConfirmRestore = async () => {
-    if (!projectAccess.can("snapshot.restore")) return;
-    if (!projectId || !confirmRestoreSnapshot || restoring) return;
-    setRestoring(true);
-    try {
-      const targetLabel =
-        confirmRestoreSnapshot.label || confirmRestoreSnapshot.id.slice(0, 8);
-      const res = await restoreProjectSnapshotApi(
-        projectId,
-        confirmRestoreSnapshot.id,
-      );
-      setConfirmRestoreSnapshot(null);
-      setFeedbackNotice({
-        type: "success",
-        text: `Successfully rolled back code to snapshot "${targetLabel}"!`,
-      });
-      setTimeout(() => setFeedbackNotice(null), 4000);
-      await fetchSnapshots();
-      await onSync?.();
-    } catch (err) {
-      setFeedbackNotice({
-        type: "error",
-        text: err.message || "Failed to restore snapshot",
-      });
-      setTimeout(() => setFeedbackNotice(null), 5000);
-    } finally {
-      setRestoring(false);
-    }
-  };
-
-  // Derived jobs stats
-  const activeJobs = jobs.filter((j) =>
-    ["QUEUED", "RUNNING"].includes(j.status),
+  /* ── Derived Job & Activity Metrics ──────────────────────── */
+  const activeJobs = useMemo(
+    () => jobs.filter((j) => ["QUEUED", "RUNNING"].includes(j.status)),
+    [jobs],
   );
-  const completedJobs = jobs.filter((j) => j.status === "SUCCESS");
-  const failedJobs = jobs.filter((j) => j.status === "FAILED");
+  const completedJobs = useMemo(
+    () => jobs.filter((j) => j.status === "SUCCESS"),
+    [jobs],
+  );
+  const failedJobs = useMemo(
+    () => jobs.filter((j) => j.status === "FAILED"),
+    [jobs],
+  );
 
-  const filteredJobs =
-    filterJobs === "ALL"
-      ? jobs
-      : filterJobs === "ACTIVE"
-        ? activeJobs
-        : jobs.filter((j) =>
-            ["SUCCESS", "FAILED", "CANCELED"].includes(j.status),
-          );
+  const filteredJobs = useMemo(() => {
+    if (filterJobs === "ALL") return jobs;
+    if (filterJobs === "ACTIVE") return activeJobs;
+    if (filterJobs === "COMPLETED") return completedJobs;
+    if (filterJobs === "FAILED") return failedJobs;
+    return jobs;
+  }, [jobs, filterJobs, activeJobs, completedJobs, failedJobs]);
 
-  const workerLoad =
-    jobs.length > 0
-      ? Math.round((activeJobs.length / Math.max(jobs.length, 1)) * 100)
-      : 0;
+  // Combine jobs and events into an unified chronological activity feed
+  const unifiedActivities = useMemo(() => {
+    const list = [];
 
-  // Filtered snapshots
-  const filteredSnapshots = snapshots.filter((snap) => {
-    if (!snapshotSearch.trim()) return true;
-    const term = snapshotSearch.toLowerCase();
-    return (
-      (snap.label && snap.label.toLowerCase().includes(term)) ||
-      (snap.message && snap.message.toLowerCase().includes(term)) ||
-      (snap.source && snap.source.toLowerCase().includes(term)) ||
-      (snap.commitSha && snap.commitSha.toLowerCase().includes(term))
-    );
-  });
+    // Add server events
+    events.forEach((evt) => {
+      const typeInfo = EVENT_TYPE_MAP[evt.type] || {
+        label: evt.type || "System Event",
+        icon: Activity,
+        color: "var(--color-text-secondary)",
+        category: "workspace",
+        desc: "Project system event",
+      };
 
-  const activeSnapshot = snapshots.find((s) => s.isCurrent) || snapshots[0];
+      list.push({
+        id: `evt-${evt.id || evt.sequence}`,
+        source: "EVENT",
+        sequence: evt.sequence,
+        type: evt.type,
+        title: typeInfo.label,
+        description:
+          evt.payload?.message ||
+          evt.payload?.description ||
+          evt.payload?.action ||
+          typeInfo.desc,
+        category: typeInfo.category,
+        timestamp: evt.createdAt,
+        actor: evt.actorId ? `User #${evt.actorId.slice(-4)}` : "System",
+        status: "RECORDED",
+        Icon: typeInfo.icon,
+        color: typeInfo.color,
+        raw: evt,
+      });
+    });
 
-  // Format helpers
+    // Add jobs as activities
+    jobs.forEach((job) => {
+      const visual = getJobVisual(job);
+      list.push({
+        id: `job-${job.id}`,
+        source: "JOB",
+        sequence: job.id,
+        type: job.type,
+        title: visual.typeLabel,
+        description: job.params?.label || job.error || visual.taskLabel,
+        category: visual.category === "test" || visual.category === "ai" ? "tasks" : "workspace",
+        timestamp: job.createdAt || job.startedAt,
+        actor: job.userId ? `User #${job.userId.slice(-4)}` : "Runner",
+        status: job.status,
+        Icon: visual.Icon,
+        color: visual.color,
+        raw: job,
+      });
+    });
+
+    // Sort descending by timestamp
+    list.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    return list;
+  }, [events, jobs]);
+
+  // Filter activities
+  const filteredActivities = useMemo(() => {
+    return unifiedActivities.filter((act) => {
+      if (eventCategoryFilter !== "ALL" && act.category !== eventCategoryFilter) {
+        return false;
+      }
+      if (activitySearch.trim()) {
+        const q = activitySearch.toLowerCase();
+        const matchTitle = act.title?.toLowerCase().includes(q);
+        const matchDesc = act.description?.toLowerCase().includes(q);
+        const matchActor = act.actor?.toLowerCase().includes(q);
+        const matchType = act.type?.toLowerCase().includes(q);
+        return matchTitle || matchDesc || matchActor || matchType;
+      }
+      return true;
+    });
+  }, [unifiedActivities, eventCategoryFilter, activitySearch]);
+
+  /* ── Format Helpers ──────────────────────────────────────── */
   const formatDateTime = (dateStr) => {
     if (!dateStr) return "—";
     const d = new Date(dateStr);
-    return d.toLocaleString("vi-VN", {
+    return d.toLocaleString("en-US", {
+      month: "short",
       day: "2-digit",
-      month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
+      hour12: false,
     });
   };
 
-  const formatTime = (dateStr) => {
+  const formatRelativeTime = (dateStr) => {
     if (!dateStr) return "—";
+    const now = new Date();
     const d = new Date(dateStr);
-    return d.toLocaleTimeString("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
+    const diffSec = Math.floor((now - d) / 1000);
+    if (diffSec < 5) return "Just now";
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHour = Math.floor(diffMin / 60);
+    if (diffHour < 24) return `${diffHour}h ago`;
+    const diffDays = Math.floor(diffHour / 24);
+    return `${diffDays}d ago`;
   };
 
   const formatDuration = (start, end) => {
     if (!start) return "—";
     const s = new Date(start);
     const e = end ? new Date(end) : new Date();
-    const diffMs = e - s;
+    const diffMs = Math.max(0, e - s);
     const diffSec = Math.floor(diffMs / 1000);
     if (diffSec < 60) return `${diffSec}s`;
     const mins = Math.floor(diffSec / 60);
     const secs = diffSec % 60;
     return `${mins}m ${secs}s`;
-  };
-
-  const formatBytes = (bytes) => {
-    if (!bytes || bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
   };
 
   return (
@@ -490,7 +598,7 @@ export default function JobQueue({ projectId, onSync }) {
                 letterSpacing: "-0.01em",
               }}
             >
-              Pipelines & Version Hub
+              Activity Log & Task Queue
             </h1>
             <span
               className="px-2 py-0.5 rounded-[var(--radius-sm)] text-[11px] font-medium"
@@ -500,33 +608,29 @@ export default function JobQueue({ projectId, onSync }) {
                 border: "1px solid var(--color-border)",
               }}
             >
-              Checkpoints & AI Queues
+              Activity History & Progress
             </span>
+            {activeJobs.length > 0 && (
+              <span
+                className="flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-sm)] text-[11px] font-semibold"
+                style={{
+                  background: "rgba(2, 132, 199, 0.12)",
+                  color: "var(--color-info)",
+                  border: "1px solid rgba(2, 132, 199, 0.25)",
+                }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-info)] animate-pulse" />
+                {activeJobs.length} running
+              </span>
+            )}
           </div>
           <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>
-            Capture project checkpoints, restore previous code versions, and
-            monitor active test generation pipelines.
+            Track workspace operations, source mutations, and background task queues.
           </p>
         </div>
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5">
-          <motion.button
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-1.5 rounded-[var(--radius-md)] font-medium text-xs cursor-pointer transition-colors"
-            style={{
-              background: "var(--color-primary)",
-              color: "#ffffff",
-              padding: "7px 14px",
-              border: "1px solid transparent",
-            }}
-          >
-            <BookmarkPlus size={14} />
-            Create Snapshot
-          </motion.button>
-
           <motion.button
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
@@ -536,130 +640,227 @@ export default function JobQueue({ projectId, onSync }) {
               background: "var(--color-surface)",
               border: "1px solid var(--color-border)",
               color: "var(--color-text)",
-              padding: "7px 12px",
+              padding: "7px 14px",
             }}
-            title="Refresh Snapshots and Jobs"
+            title="Refresh activity history and task queue"
           >
             <RefreshCw
               size={13}
-              className={loadingSnapshots || loadingJobs ? "animate-spin" : ""}
+              className={loadingEvents || loadingJobs ? "animate-spin" : ""}
             />
-            Refresh
+            <span>Refresh</span>
           </motion.button>
         </div>
       </div>
 
-      {/* ── Feedback Notification ──────────────────────────────── */}
-      <AnimatePresence>
-        {feedbackNotice && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="mb-4 rounded-[var(--radius-md)] flex items-center justify-between px-3.5 py-2.5 text-xs font-medium"
-            style={{
-              background:
-                feedbackNotice.type === "success"
-                  ? "rgba(22, 163, 74, 0.12)"
-                  : "rgba(220, 38, 38, 0.12)",
-              border:
-                feedbackNotice.type === "success"
-                  ? "1px solid rgba(22, 163, 74, 0.25)"
-                  : "1px solid rgba(220, 38, 38, 0.25)",
-              color:
-                feedbackNotice.type === "success"
-                  ? "var(--color-success)"
-                  : "var(--color-danger)",
-            }}
-          >
-            <div className="flex items-center gap-2">
-              {feedbackNotice.type === "success" ? (
-                <CheckCircle2
-                  size={15}
-                  style={{ color: "var(--color-success)" }}
-                />
-              ) : (
-                <AlertCircle
-                  size={15}
-                  style={{ color: "var(--color-danger)" }}
-                />
-              )}
-              <span>{feedbackNotice.text}</span>
-            </div>
-            <button
-              onClick={() => setFeedbackNotice(null)}
-              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer text-xs p-1"
+      {/* ── KPI Stat Cards (Solid design tokens, no gradients) ──── */}
+      <div
+        className="grid grid-cols-2 sm:grid-cols-4 gap-3.5"
+        style={{ marginBottom: 20 }}
+      >
+        {/* Total Activities */}
+        <div
+          className="rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between"
+          style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <span
+              className="text-[11px] font-medium uppercase tracking-wider"
+              style={{ color: "var(--color-text-muted)" }}
             >
-              ✕
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              Total Activities
+            </span>
+            <History size={15} style={{ color: "var(--color-primary)" }} />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span
+              className="text-xl font-bold font-mono"
+              style={{ color: "var(--color-text)" }}
+            >
+              {unifiedActivities.length}
+            </span>
+            <span className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+              events recorded
+            </span>
+          </div>
+        </div>
 
-      {/* ── Tab Switcher ───────────────────────────────────────── */}
+        {/* Active Jobs */}
+        <div
+          className="rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between"
+          style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <span
+              className="text-[11px] font-medium uppercase tracking-wider"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              Active Tasks
+            </span>
+            <Cpu size={15} style={{ color: "var(--color-info)" }} />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span
+              className="text-xl font-bold font-mono"
+              style={{
+                color:
+                  activeJobs.length > 0
+                    ? "var(--color-info)"
+                    : "var(--color-text)",
+              }}
+            >
+              {activeJobs.length}
+            </span>
+            <span className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+              in runner queue
+            </span>
+          </div>
+        </div>
+
+        {/* Completed Jobs */}
+        <div
+          className="rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between"
+          style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <span
+              className="text-[11px] font-medium uppercase tracking-wider"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              Completed
+            </span>
+            <CheckCircle2 size={15} style={{ color: "var(--color-success)" }} />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span
+              className="text-xl font-bold font-mono"
+              style={{ color: "var(--color-success)" }}
+            >
+              {completedJobs.length}
+            </span>
+            <span className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+              tasks succeeded
+            </span>
+          </div>
+        </div>
+
+        {/* Failed / Issues */}
+        <div
+          className="rounded-[var(--radius-lg)] p-3.5 flex flex-col justify-between"
+          style={{
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <span
+              className="text-[11px] font-medium uppercase tracking-wider"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              Failed / Errors
+            </span>
+            <XCircle
+              size={15}
+              style={{
+                color:
+                  failedJobs.length > 0
+                    ? "var(--color-danger)"
+                    : "var(--color-text-muted)",
+              }}
+            />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span
+              className="text-xl font-bold font-mono"
+              style={{
+                color:
+                  failedJobs.length > 0
+                    ? "var(--color-danger)"
+                    : "var(--color-text)",
+              }}
+            >
+              {failedJobs.length}
+            </span>
+            <span className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+              require inspection
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Tab Switcher: Activity Log vs Task Queue ────────────── */}
       <div
         className="flex items-center gap-2 border-b border-[var(--color-border)] pb-2.5"
         style={{ marginBottom: 20 }}
       >
         <button
-          onClick={() => setActiveTab("snapshots")}
+          onClick={() => setActiveTab("activity")}
           className="flex items-center gap-2 rounded-[var(--radius-md)] px-3.5 py-1.5 text-xs font-semibold cursor-pointer transition-colors"
           style={{
             background:
-              activeTab === "snapshots"
+              activeTab === "activity"
                 ? "var(--color-surface-secondary)"
                 : "transparent",
             color:
-              activeTab === "snapshots"
+              activeTab === "activity"
                 ? "var(--color-text)"
                 : "var(--color-text-muted)",
             border:
-              activeTab === "snapshots"
+              activeTab === "activity"
                 ? "1px solid var(--color-border)"
                 : "1px solid transparent",
           }}
         >
-          <Layers
+          <History
             size={13}
             style={{
               color:
-                activeTab === "snapshots"
+                activeTab === "activity"
                   ? "var(--color-primary)"
                   : "var(--color-text-muted)",
             }}
           />
-          <span>Code Snapshots & Checkpoints</span>
+          <span>Activity Log</span>
           <span
             className="rounded-full px-1.5 py-0.2 text-[10px] font-mono font-medium"
             style={{
               background:
-                activeTab === "snapshots"
+                activeTab === "activity"
                   ? "rgba(109, 93, 251, 0.12)"
                   : "var(--color-surface-secondary)",
               color:
-                activeTab === "snapshots"
+                activeTab === "activity"
                   ? "var(--color-primary)"
                   : "var(--color-text-muted)",
             }}
           >
-            {snapshots.length}
+            {unifiedActivities.length}
           </span>
         </button>
 
         <button
-          onClick={() => setActiveTab("jobs")}
+          onClick={() => setActiveTab("tasks")}
           className="flex items-center gap-2 rounded-[var(--radius-md)] px-3.5 py-1.5 text-xs font-semibold cursor-pointer transition-colors"
           style={{
             background:
-              activeTab === "jobs"
+              activeTab === "tasks"
                 ? "var(--color-surface-secondary)"
                 : "transparent",
             color:
-              activeTab === "jobs"
+              activeTab === "tasks"
                 ? "var(--color-text)"
                 : "var(--color-text-muted)",
             border:
-              activeTab === "jobs"
+              activeTab === "tasks"
                 ? "1px solid var(--color-border)"
                 : "1px solid transparent",
           }}
@@ -668,12 +869,12 @@ export default function JobQueue({ projectId, onSync }) {
             size={13}
             style={{
               color:
-                activeTab === "jobs"
+                activeTab === "tasks"
                   ? "var(--color-primary)"
                   : "var(--color-text-muted)",
             }}
           />
-          <span>Pipelines & Job Queue</span>
+          <span>Task Queue</span>
           {activeJobs.length > 0 ? (
             <span
               className="flex items-center gap-1 rounded-full px-2 py-0.2 text-[10px] font-semibold"
@@ -683,7 +884,7 @@ export default function JobQueue({ projectId, onSync }) {
               }}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-info)]" />
-              {activeJobs.length} active
+              {activeJobs.length} running
             </span>
           ) : (
             <span
@@ -699,517 +900,324 @@ export default function JobQueue({ projectId, onSync }) {
         </button>
       </div>
 
-      {/* ── TAB 1: CODE SNAPSHOTS & CHECKPOINTS ────────────────── */}
-      {activeTab === "snapshots" && (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          {/* Left Column: Timeline & Checkpoint List */}
-          <div className="xl:col-span-2 flex flex-col gap-4">
-            {/* Search and count header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <History size={15} style={{ color: "var(--color-primary)" }} />
-                <h2
+      {/* ── TAB 1: ACTIVITY LOG & AUDIT TRAIL ────────────────────── */}
+      {activeTab === "activity" && (
+        <div className="flex flex-col gap-4">
+          {/* Filters & Search Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Category pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+              {[
+                { id: "ALL", label: "All" },
+                { id: "tasks", label: "Tasks & Testing" },
+                { id: "workspace", label: "Source & Checkpoints" },
+                { id: "team", label: "Members & Access" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setEventCategoryFilter(tab.id)}
+                  className="rounded-[var(--radius-md)] text-xs font-medium px-3 py-1.5 cursor-pointer transition-colors whitespace-nowrap"
                   style={{
-                    fontSize: 15,
-                    fontWeight: 600,
-                    color: "var(--color-text)",
+                    background:
+                      eventCategoryFilter === tab.id
+                        ? "var(--color-surface-secondary)"
+                        : "transparent",
+                    color:
+                      eventCategoryFilter === tab.id
+                        ? "var(--color-text)"
+                        : "var(--color-text-muted)",
+                    border:
+                      eventCategoryFilter === tab.id
+                        ? "1px solid var(--color-border)"
+                        : "1px solid transparent",
                   }}
                 >
-                  Snapshot History ({filteredSnapshots.length})
-                </h2>
-              </div>
-
-              <div
-                className="flex items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-1.5"
-                style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                  width: 240,
-                }}
-              >
-                <Search
-                  size={13}
-                  style={{ color: "var(--color-text-muted)" }}
-                />
-                <input
-                  type="text"
-                  placeholder="Search checkpoints..."
-                  value={snapshotSearch}
-                  onChange={(e) => setSnapshotSearch(e.target.value)}
-                  className="bg-transparent border-none text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none w-full"
-                />
-                {snapshotSearch && (
-                  <button
-                    onClick={() => setSnapshotSearch("")}
-                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs cursor-pointer"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
-            {/* Loading state */}
-            {loadingSnapshots && snapshots.length === 0 && (
-              <SnapshotsListSkeleton count={3} />
-            )}
+            {/* Search Input */}
+            <div
+              className="flex items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-1.5"
+              style={{
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                width: 260,
+              }}
+            >
+              <Search size={13} style={{ color: "var(--color-text-muted)" }} />
+              <input
+                type="text"
+                placeholder="Search operations, tasks, events..."
+                value={activitySearch}
+                onChange={(e) => setActivitySearch(e.target.value)}
+                className="bg-transparent border-none text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none w-full"
+              />
+              {activitySearch && (
+                <button
+                  onClick={() => setActivitySearch("")}
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
 
-            {/* Error state */}
-            {errorSnapshots && (
-              <div
-                className="rounded-[var(--radius-md)] flex items-center gap-2.5 p-3 text-xs"
+          {/* Loading state */}
+          {(loadingEvents || loadingJobs) && unifiedActivities.length === 0 && (
+            <JobsListSkeleton count={4} />
+          )}
+
+          {/* Empty state */}
+          {!loadingEvents && !loadingJobs && filteredActivities.length === 0 && (
+            <div
+              className="flex flex-col items-center justify-center rounded-[var(--radius-lg)] p-12 text-center"
+              style={{
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+              }}
+            >
+              <History
+                size={36}
+                style={{ color: "var(--color-text-muted)", marginBottom: 10 }}
+              />
+              <p
                 style={{
-                  background: "rgba(220, 38, 38, 0.1)",
-                  border: "1px solid rgba(220, 38, 38, 0.25)",
-                  color: "var(--color-danger)",
+                  color: "var(--color-text)",
+                  fontSize: 14,
+                  fontWeight: 600,
                 }}
               >
-                <XCircle size={15} />
-                {errorSnapshots}
-              </div>
-            )}
+                No activity recorded yet
+              </p>
+              <p
+                style={{
+                  color: "var(--color-text-secondary)",
+                  fontSize: 12,
+                  marginTop: 4,
+                  maxWidth: 400,
+                }}
+              >
+                {activitySearch || eventCategoryFilter !== "ALL"
+                  ? "No activity matches the current filters."
+                  : "File changes, checkpoints, test runs, and background tasks will appear here in chronological order."}
+              </p>
+            </div>
+          )}
 
-            {/* Empty state */}
-            {!loadingSnapshots &&
-              !errorSnapshots &&
-              filteredSnapshots.length === 0 && (
+          {/* Activities Timeline Feed */}
+          <div className="flex flex-col gap-2.5">
+            {filteredActivities.map((act) => {
+              const isExpanded = expandedEventId === act.id;
+              const Icon = act.Icon;
+
+              return (
                 <div
-                  className="flex flex-col items-center justify-center rounded-[var(--radius-lg)] p-10 text-center"
+                  key={act.id}
+                  className="rounded-[var(--radius-md)] border transition-all"
                   style={{
                     background: "var(--color-surface)",
-                    border: "1px solid var(--color-border)",
+                    borderColor: isExpanded
+                      ? "var(--color-primary)"
+                      : "var(--color-border)",
                   }}
                 >
-                  <BookmarkPlus
-                    size={28}
-                    style={{ color: "var(--color-text-muted)" }}
-                    className="mb-2.5"
-                  />
-                  <p
-                    style={{
-                      color: "var(--color-text)",
-                      fontSize: 14,
-                      fontWeight: 600,
-                    }}
+                  <div
+                    onClick={() =>
+                      setExpandedEventId(isExpanded ? null : act.id)
+                    }
+                    className="p-3.5 flex items-start sm:items-center justify-between gap-3 cursor-pointer select-none"
                   >
-                    No snapshots found
-                  </p>
-                  <p
-                    style={{
-                      color: "var(--color-text-secondary)",
-                      fontSize: 12,
-                      marginTop: 4,
-                      maxWidth: 320,
-                    }}
-                  >
-                    Click &quot;Create Snapshot&quot; to capture your current
-                    code as a safe restore point.
-                  </p>
-                  <button
-                    onClick={() => setShowCreateModal(true)}
-                    className="mt-3 px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
-                    style={{
-                      background: "var(--color-primary)",
-                      color: "#ffffff",
-                      border: "none",
-                    }}
-                  >
-                    Capture First Checkpoint
-                  </button>
-                </div>
-              )}
-
-            {/* Snapshot Cards Timeline */}
-            <div className="flex flex-col gap-3">
-              <AnimatePresence mode="popLayout">
-                {filteredSnapshots.map((snap, idx) => {
-                  const isCurrent = snap.isCurrent;
-
-                  return (
-                    <motion.div
-                      key={snap.id}
-                      layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ delay: idx * 0.03, duration: 0.25 }}
-                      className="relative rounded-[var(--radius-lg)] overflow-hidden flex flex-col transition-all"
-                      style={{
-                        background: "var(--color-surface)",
-                        border: isCurrent
-                          ? "1px solid var(--color-primary)"
-                          : "1px solid var(--color-border)",
-                        padding: "16px 20px",
-                      }}
-                    >
-                      {/* Left Accent Stripe */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      {/* Event Icon badge */}
                       <div
-                        className="absolute left-0 top-0 bottom-0"
+                        className="w-8 h-8 rounded-[var(--radius-sm)] flex items-center justify-center flex-shrink-0"
                         style={{
-                          width: 3,
-                          background: isCurrent
-                            ? "var(--color-primary)"
-                            : "transparent",
+                          background: "var(--color-surface-secondary)",
+                          color: act.color,
+                          border: "1px solid var(--color-border)",
                         }}
-                      />
+                      >
+                        <Icon size={15} />
+                      </div>
 
-                      {/* Header Row */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2.5">
-                        <div className="flex items-center gap-3">
-                          <div
-                            className="flex items-center justify-center w-8 h-8 rounded-[var(--radius-md)] flex-shrink-0"
+                      {/* Info & Title */}
+                      <div className="min-w-0 flex flex-col">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className="font-semibold text-xs truncate"
+                            style={{ color: "var(--color-text)" }}
+                          >
+                            {act.title}
+                          </span>
+                          <span
+                            className="text-[10px] font-mono px-1.5 py-0.2 rounded"
                             style={{
-                              background: isCurrent
-                                ? "rgba(109, 93, 251, 0.12)"
-                                : "var(--color-surface-secondary)",
-                              border: isCurrent
-                                ? "1px solid rgba(109, 93, 251, 0.3)"
-                                : "1px solid var(--color-border)",
-                              color: isCurrent
-                                ? "var(--color-primary)"
-                                : "var(--color-text-secondary)",
+                              background: "var(--color-surface-secondary)",
+                              color: "var(--color-text-secondary)",
+                              border: "1px solid var(--color-border)",
                             }}
                           >
-                            <BookmarkPlus size={15} />
-                          </div>
-
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3
-                                style={{
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  color: "var(--color-text)",
-                                }}
-                              >
-                                {snap.label}
-                              </h3>
-                              {isCurrent && (
-                                <span
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-bold"
-                                  style={{
-                                    background: "rgba(22, 163, 74, 0.12)",
-                                    color: "var(--color-success)",
-                                    border: "1px solid rgba(22, 163, 74, 0.25)",
-                                  }}
-                                >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)]" />
-                                  ACTIVE VERSION
-                                </span>
-                              )}
-                            </div>
-                            <p
+                            {act.type}
+                          </span>
+                          {act.status && act.status !== "RECORDED" && (
+                            <span
+                              className="text-[10px] font-semibold px-1.5 py-0.2 rounded uppercase"
                               style={{
-                                fontSize: 12,
-                                color: "var(--color-text-secondary)",
-                                marginTop: 2,
+                                color:
+                                  act.status === "SUCCESS"
+                                    ? "var(--color-success)"
+                                    : act.status === "FAILED"
+                                      ? "var(--color-danger)"
+                                      : "var(--color-info)",
+                                background:
+                                  act.status === "SUCCESS"
+                                    ? "rgba(22, 163, 74, 0.12)"
+                                    : act.status === "FAILED"
+                                      ? "rgba(220, 38, 38, 0.12)"
+                                      : "rgba(2, 132, 199, 0.12)",
                               }}
                             >
-                              {snap.message || "Manual code checkpoint"}
-                            </p>
-                          </div>
+                              {act.status}
+                            </span>
+                          )}
                         </div>
+                        <p
+                          className="text-xs truncate mt-0.5"
+                          style={{ color: "var(--color-text-secondary)" }}
+                        >
+                          {act.description}
+                        </p>
+                      </div>
+                    </div>
 
-                        {/* Action: Restore Button */}
-                        <div className="flex items-center gap-2 self-start sm:self-center">
-                          {!isCurrent ? (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => setConfirmRestoreSnapshot(snap)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-                              style={{
-                                background: "var(--color-surface-secondary)",
-                                color: "var(--color-text)",
-                                border: "1px solid var(--color-border)",
-                              }}
-                              title="Revert code to this checkpoint"
-                            >
-                              <RotateCcw size={12} />
-                              <span>Rollback to this</span>
-                            </motion.button>
-                          ) : (
+                    {/* Metadata & Timestamp */}
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="flex flex-col items-end text-right">
+                        <span
+                          className="text-xs font-medium"
+                          style={{ color: "var(--color-text)" }}
+                        >
+                          {formatRelativeTime(act.timestamp)}
+                        </span>
+                        <span
+                          className="text-[11px] font-mono"
+                          style={{ color: "var(--color-text-muted)" }}
+                        >
+                          {act.actor}
+                        </span>
+                      </div>
+
+                      <button
+                        className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+                        title={isExpanded ? "Collapse details" : "Expand details"}
+                      >
+                        {isExpanded ? (
+                          <ChevronDown size={15} />
+                        ) : (
+                          <ChevronRight size={15} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded Detail Accordion */}
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="px-4 pb-4 pt-1 border-t border-[var(--color-border)]"
+                      >
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs mb-3 mt-2">
+                          <div>
                             <span
                               className="text-[11px] font-medium"
                               style={{ color: "var(--color-text-muted)" }}
                             >
-                              Current Workspace
+                              Execution Time:
                             </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Metadata Row */}
-                      <div
-                        className="flex flex-wrap items-center gap-4 text-xs pt-2.5 border-t border-[var(--color-border)]"
-                        style={{
-                          color: "var(--color-text-muted)",
-                          fontFamily: "var(--font-mono)",
-                        }}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <Clock size={12} />
-                          <span>{formatDateTime(snap.createdAt)}</span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
-                          <Tag size={12} />
-                          <span>
-                            {snap.source === "GITHUB"
-                              ? "GitHub"
-                              : snap.source === "ZIP"
-                                ? "Archive"
-                                : "Checkpoint"}
-                          </span>
-                        </div>
-
-                        {snap.commitSha && (
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              style={{
-                                color: "var(--color-primary)",
-                                fontWeight: 600,
-                              }}
+                            <div
+                              className="font-mono mt-0.5"
+                              style={{ color: "var(--color-text)" }}
                             >
-                              Commit:
-                            </span>
-                            <span>{snap.commitSha.slice(0, 7)}</span>
+                              {formatDateTime(act.timestamp)}
+                            </div>
                           </div>
-                        )}
-
-                        {snap.fileCount !== null &&
-                          snap.fileCount !== undefined && (
-                            <div className="flex items-center gap-1.5">
-                              <FileCode2 size={12} />
-                              <span>{snap.fileCount} files</span>
+                          <div>
+                            <span
+                              className="text-[11px] font-medium"
+                              style={{ color: "var(--color-text-muted)" }}
+                            >
+                              Source:
+                            </span>
+                            <div
+                              className="font-mono mt-0.5"
+                              style={{ color: "var(--color-text)" }}
+                            >
+                              {act.source === "JOB"
+                                ? "Task Queue Runner"
+                                : "Project Event Log"}
                             </div>
-                          )}
-
-                        {snap.sizeBytes !== null &&
-                          snap.sizeBytes !== undefined && (
-                            <div className="flex items-center gap-1.5">
-                              <HardDrive size={12} />
-                              <span>{formatBytes(snap.sizeBytes)}</span>
+                          </div>
+                          <div>
+                            <span
+                              className="text-[11px] font-medium"
+                              style={{ color: "var(--color-text-muted)" }}
+                            >
+                              Identifier:
+                            </span>
+                            <div
+                              className="font-mono mt-0.5 truncate"
+                              style={{ color: "var(--color-text)" }}
+                            >
+                              {act.sequence || act.raw?.id || act.id}
                             </div>
-                          )}
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </AnimatePresence>
-            </div>
-          </div>
+                          </div>
+                        </div>
 
-          {/* Right Column: Quick Create & Version Insights */}
-          <div className="flex flex-col gap-4">
-            {/* Quick Create Checkpoint Card */}
-            <div
-              className="rounded-[var(--radius-lg)] flex flex-col p-5"
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <BookmarkPlus
-                  size={15}
-                  style={{ color: "var(--color-primary)" }}
-                />
-                <h3
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "var(--color-text)",
-                  }}
-                >
-                  Quick Checkpoint
-                </h3>
-              </div>
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                  marginBottom: 14,
-                }}
-              >
-                Save the current code state to easily revert anytime.
-              </p>
-
-              <form
-                onSubmit={handleCreateSnapshot}
-                className="flex flex-col gap-3"
-              >
-                <div>
-                  <label
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                      marginBottom: 4,
-                      display: "block",
-                    }}
-                  >
-                    Checkpoint Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Before refactoring auth..."
-                    value={newLabel}
-                    onChange={(e) => setNewLabel(e.target.value)}
-                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
-                    style={{
-                      background: "var(--color-bg)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  />
+                        {/* Raw JSON or Parameters payload */}
+                        <div className="mt-2">
+                          <span
+                            className="text-[11px] font-medium mb-1 block"
+                            style={{ color: "var(--color-text-muted)" }}
+                          >
+                            Detailed Payload / Context:
+                          </span>
+                          <pre
+                            className="p-2.5 rounded-[var(--radius-sm)] text-[11px] font-mono overflow-x-auto max-h-48"
+                            style={{
+                              background: "var(--color-surface-secondary)",
+                              color: "var(--color-text-secondary)",
+                              border: "1px solid var(--color-border)",
+                            }}
+                          >
+                            {JSON.stringify(
+                              act.raw?.payload ||
+                                act.raw?.params ||
+                                act.raw?.error ||
+                                act.raw,
+                              null,
+                              2,
+                            )}
+                          </pre>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
-
-                <div>
-                  <label
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                      marginBottom: 4,
-                      display: "block",
-                    }}
-                  >
-                    Description / Notes (Optional)
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="Brief description of current changes..."
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors resize-none"
-                    style={{
-                      background: "var(--color-bg)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  />
-                </div>
-
-                <motion.button
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.98 }}
-                  type="submit"
-                  disabled={creatingSnapshot || !projectAccess.can("snapshot.restore")}
-                  className="w-full flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-semibold cursor-pointer mt-1"
-                  style={{
-                    background: "var(--color-primary)",
-                    color: "#ffffff",
-                    border: "none",
-                    opacity: creatingSnapshot ? 0.7 : 1,
-                  }}
-                >
-                  {creatingSnapshot ? (
-                    <>
-                      <Loader2 size={13} className="animate-spin" />
-                      <span>Capturing Checkpoint...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={13} />
-                      <span>Capture Snapshot Now</span>
-                    </>
-                  )}
-                </motion.button>
-              </form>
-            </div>
-
-            {/* Version Overview Card */}
-            <div
-              className="rounded-[var(--radius-lg)] flex flex-col p-5 gap-4"
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: "var(--color-text)",
-                }}
-              >
-                Version Overview
-              </h3>
-
-              <div className="flex justify-between items-center text-xs">
-                <span style={{ color: "var(--color-text-secondary)" }}>
-                  Total Checkpoints
-                </span>
-                <span
-                  style={{
-                    fontWeight: 700,
-                    color: "var(--color-text)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {snapshots.length}
-                </span>
-              </div>
-
-              <div style={{ height: 1, background: "var(--color-border)" }} />
-
-              <div className="flex justify-between items-center text-xs">
-                <span style={{ color: "var(--color-text-secondary)" }}>
-                  Active Version
-                </span>
-                <span
-                  className="truncate max-w-[150px] font-semibold"
-                  style={{ color: "var(--color-primary)" }}
-                  title={activeSnapshot?.label || "None"}
-                >
-                  {activeSnapshot?.label || "None"}
-                </span>
-              </div>
-
-              <div style={{ height: 1, background: "var(--color-border)" }} />
-
-              <div className="flex justify-between items-center text-xs">
-                <span style={{ color: "var(--color-text-secondary)" }}>
-                  Last Captured
-                </span>
-                <span
-                  style={{
-                    color: "var(--color-text)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {activeSnapshot?.createdAt
-                    ? formatTime(activeSnapshot.createdAt)
-                    : "—"}
-                </span>
-              </div>
-
-              {/* Safety notice */}
-              <div
-                className="rounded-[var(--radius-md)] p-3 text-[11px] leading-relaxed flex items-start gap-2"
-                style={{
-                  background: "var(--color-surface-secondary)",
-                  border: "1px solid var(--color-border)",
-                  color: "var(--color-text-secondary)",
-                }}
-              >
-                <ShieldCheck
-                  size={14}
-                  className="flex-shrink-0 mt-0.5"
-                  style={{ color: "var(--color-primary)" }}
-                />
-                <span>
-                  All checkpoints are immutable. Restoring a previous version
-                  automatically creates a new checkpoint of your current code
-                  first, ensuring zero data loss.
-                </span>
-              </div>
-            </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* ── TAB 2: PIPELINES & JOB QUEUE ───────────────────────── */}
-      {activeTab === "jobs" && (
+      {/* ── TAB 2: TASK QUEUE & BACKGROUND RUNNERS ──────────────── */}
+      {activeTab === "tasks" && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {/* Left Column: Jobs List */}
           <div className="xl:col-span-2 flex flex-col gap-4">
@@ -1222,37 +1230,43 @@ export default function JobQueue({ projectId, onSync }) {
                 }}
               >
                 {filterJobs === "ALL"
-                  ? `All Jobs (${jobs.length})`
+                  ? `All Tasks (${jobs.length})`
                   : filterJobs === "ACTIVE"
-                    ? `Active Jobs (${activeJobs.length})`
-                    : `Completed (${completedJobs.length + failedJobs.length})`}
+                    ? `Running (${activeJobs.length})`
+                    : filterJobs === "COMPLETED"
+                      ? `Completed (${completedJobs.length})`
+                      : `Failed (${failedJobs.length})`}
               </h2>
               <div className="flex items-center gap-1.5">
-                {["ALL", "ACTIVE", "COMPLETED"].map((f) => (
+                {[
+                  { id: "ALL", label: "All" },
+                  { id: "ACTIVE", label: "Running" },
+                  { id: "COMPLETED", label: "Completed" },
+                  { id: "FAILED", label: "Failed" },
+                ].map((f) => (
                   <button
-                    key={f}
-                    onClick={() => setFilterJobs(f)}
+                    key={f.id}
+                    onClick={() => setFilterJobs(f.id)}
                     className="rounded-[var(--radius-md)] transition-colors cursor-pointer"
                     style={{
                       background:
-                        filterJobs === f
+                        filterJobs === f.id
                           ? "var(--color-surface-secondary)"
                           : "transparent",
                       border:
-                        filterJobs === f
+                        filterJobs === f.id
                           ? "1px solid var(--color-border)"
                           : "1px solid transparent",
                       color:
-                        filterJobs === f
+                        filterJobs === f.id
                           ? "var(--color-text)"
                           : "var(--color-text-muted)",
                       fontSize: 12,
                       fontWeight: 500,
                       padding: "4px 10px",
-                      fontFamily: "var(--font-sans)",
                     }}
                   >
-                    {f === "ALL" ? "All" : f === "ACTIVE" ? "Active" : "Done"}
+                    {f.label}
                   </button>
                 ))}
               </div>
@@ -1272,7 +1286,7 @@ export default function JobQueue({ projectId, onSync }) {
                 }}
               >
                 <XCircle size={15} />
-                {errorJobs}
+                <span>{errorJobs}</span>
               </div>
             )}
 
@@ -1296,7 +1310,7 @@ export default function JobQueue({ projectId, onSync }) {
                     fontWeight: 600,
                   }}
                 >
-                  No jobs found
+                  No tasks found
                 </p>
                 <p
                   style={{
@@ -1306,8 +1320,8 @@ export default function JobQueue({ projectId, onSync }) {
                   }}
                 >
                   {filterJobs !== "ALL"
-                    ? "Try changing the filter."
-                    : "Jobs will appear here when you import a project or run tests."}
+                    ? "Try adjusting the filter."
+                    : "Background tasks will appear here when running tests or automated analysis."}
                 </p>
               </div>
             )}
@@ -1318,6 +1332,11 @@ export default function JobQueue({ projectId, onSync }) {
                 {filteredJobs.map((job, idx) => {
                   const visual = getJobVisual(job);
                   const isActive = ["QUEUED", "RUNNING"].includes(job.status);
+                  const canCancel =
+                    isActive &&
+                    (projectAccess.can("tests.run") ||
+                      projectAccess.role === "OWNER" ||
+                      job?.userId === userId);
 
                   return (
                     <motion.div
@@ -1332,7 +1351,7 @@ export default function JobQueue({ projectId, onSync }) {
                       }}
                       transition={{
                         delay: idx * 0.03,
-                        duration: 0.25,
+                        duration: 0.2,
                         ease: "easeOut",
                       }}
                       className="relative rounded-[var(--radius-lg)] overflow-hidden flex flex-col"
@@ -1351,195 +1370,173 @@ export default function JobQueue({ projectId, onSync }) {
                         }}
                       />
 
-                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
-                        <div className="flex items-center gap-3">
+                      {/* Header Row */}
+                      <div className="flex items-start justify-between gap-3 mb-2.5">
+                        <div className="flex items-center gap-2.5">
                           <div
-                            className="flex items-center justify-center rounded-[var(--radius-md)] flex-shrink-0"
+                            className="w-8 h-8 rounded-[var(--radius-md)] flex items-center justify-center flex-shrink-0"
                             style={{
-                              width: 38,
-                              height: 38,
-                              background: "var(--color-surface-secondary)",
-                              border: "1px solid var(--color-border)",
+                              background: visual.bg,
+                              border: `1px solid ${visual.border}`,
+                              color: visual.color,
                             }}
                           >
-                            <visual.Icon
-                              size={17}
-                              style={{ color: visual.color }}
-                            />
+                            <visual.Icon size={16} />
                           </div>
+
                           <div>
-                            <div className="flex items-center gap-2">
-                              <h3
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
                                 style={{
-                                  fontSize: 14,
+                                  fontSize: 13,
                                   fontWeight: 600,
                                   color: "var(--color-text)",
                                 }}
                               >
                                 {visual.typeLabel}
-                              </h3>
-                              {job.project?.name && (
-                                <span
-                                  style={{
-                                    fontSize: 11,
-                                    fontWeight: 500,
-                                    color: "var(--color-primary)",
-                                    background: "rgba(109, 93, 251, 0.1)",
-                                    border:
-                                      "1px solid rgba(109, 93, 251, 0.25)",
-                                    padding: "1px 7px",
-                                    borderRadius: "var(--radius-sm)",
-                                  }}
-                                >
-                                  {job.project.name}
-                                </span>
-                              )}
+                              </span>
+                              <span
+                                className="font-mono text-[10px] px-1.5 py-0.2 rounded"
+                                style={{
+                                  background: "var(--color-surface-secondary)",
+                                  color: "var(--color-text-secondary)",
+                                  border: "1px solid var(--color-border)",
+                                }}
+                              >
+                                #{job.id.slice(0, 8)}
+                              </span>
                             </div>
                             <p
                               style={{
-                                fontSize: 12,
+                                fontSize: 11,
                                 color: "var(--color-text-secondary)",
-                                marginTop: 2,
+                                marginTop: 1,
                               }}
                             >
                               {visual.taskLabel}
                             </p>
-                            <p
-                              style={{
-                                fontSize: 11,
-                                color: "var(--color-text-muted)",
-                                marginTop: 3,
-                                fontFamily: "var(--font-mono)",
-                              }}
-                            >
-                              Started:{" "}
-                              {formatTime(job.startedAt || job.createdAt)}
-                              {job.finishedAt &&
-                                ` · Duration: ${formatDuration(job.startedAt || job.createdAt, job.finishedAt)}`}
-                            </p>
                           </div>
                         </div>
 
-                        {isActive && projectAccess.can("tests.run") && (projectAccess.role === "OWNER" || job.userId === userId) && (
-                          <button
-                            type="button"
-                            onClick={() => handleCancelJob(job.id)}
-                            disabled={cancelingJobId === job.id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 5,
-                              padding: "3px 8px",
-                              borderRadius: "var(--radius-sm)",
-                              fontSize: 11,
-                              fontWeight: 600,
-                              color: "var(--color-danger)",
-                              background: "rgba(239, 68, 68, 0.1)",
-                              border: "1px solid rgba(239, 68, 68, 0.3)",
-                              cursor: "pointer",
-                              transition: "all 0.15s ease",
-                            }}
-                            title="Pause / Cancel this running job"
-                            className="hover:bg-red-500/20"
-                          >
-                            <Ban size={11} />
-                            <span>{cancelingJobId === job.id ? "Stopping..." : "Stop Job"}</span>
-                          </button>
-                        )}
-
-                        {/* Status Badge */}
-                        <div
-                          className="rounded-full flex items-center gap-1.5 flex-shrink-0"
-                          style={{
-                            padding: "4px 12px",
-                            background: visual.bg,
-                            border: `1px solid ${visual.border}`,
-                          }}
-                        >
-                          {isActive && projectAccess.can("tests.run") && (projectAccess.role === "OWNER" || job.userId === userId) && (
-                            <motion.div
-                              animate={{ opacity: [1, 0.4, 1] }}
-                              transition={{ duration: 1.5, repeat: Infinity }}
-                              className="rounded-full"
-                              style={{
-                                width: 6,
-                                height: 6,
-                                background: visual.color,
-                              }}
-                            />
-                          )}
+                        {/* Status Badge & Actions */}
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           <span
+                            className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold tracking-wide"
                             style={{
-                              fontSize: 10,
-                              fontWeight: 700,
+                              background: visual.bg,
                               color: visual.color,
-                              letterSpacing: "0.04em",
+                              border: `1px solid ${visual.border}`,
                             }}
                           >
+                            {isActive ? (
+                              <Loader2 size={10} className="animate-spin" />
+                            ) : (
+                              <span
+                                className="w-1.5 h-1.5 rounded-full"
+                                style={{ background: visual.color }}
+                              />
+                            )}
                             {visual.statusLabel}
                           </span>
+
+                          {canCancel && (
+                            <button
+                              onClick={() => handleCancelJob(job.id)}
+                              disabled={cancelingJobId === job.id}
+                              className="text-xs px-2 py-1 rounded text-[var(--color-danger)] hover:bg-[rgba(220,38,38,0.1)] transition-colors cursor-pointer"
+                              title="Cancel task"
+                            >
+                              {cancelingJobId === job.id ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                "Cancel"
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
 
-                      {/* Progress Bar */}
-                      <div>
-                        <div className="flex justify-between items-center mb-1.5">
-                          <span
-                            style={{
-                              fontSize: 11,
-                              color: "var(--color-text-secondary)",
-                              fontWeight: 500,
-                            }}
-                          >
-                            Progress
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              color: "var(--color-text)",
-                              fontWeight: 600,
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {job.progress}%
-                          </span>
-                        </div>
-                        <div
-                          className="w-full rounded-full overflow-hidden"
-                          style={{
-                            height: 6,
-                            background: "var(--color-surface-secondary)",
-                            border: "1px solid var(--color-border)",
-                          }}
-                        >
+                      {/* Progress Bar (if running) */}
+                      {isActive && (
+                        <div className="my-2">
+                          <div className="flex items-center justify-between text-[11px] mb-1">
+                            <span style={{ color: "var(--color-text-muted)" }}>
+                              {job.status === "QUEUED"
+                                ? "Waiting for available worker..."
+                                : "Executing runner process..."}
+                            </span>
+                            <span
+                              className="font-mono font-medium"
+                              style={{ color: "var(--color-info)" }}
+                            >
+                              {job.progress ? `${job.progress}%` : "In flight"}
+                            </span>
+                          </div>
                           <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${job.progress}%`,
-                              background: visual.color,
-                              transition: "width 0.4s ease-out",
-                            }}
-                          />
+                            className="w-full h-1.5 rounded-full overflow-hidden"
+                            style={{ background: "var(--color-surface-secondary)" }}
+                          >
+                            <div
+                              className="h-full rounded-full transition-all duration-300"
+                              style={{
+                                width: job.progress ? `${job.progress}%` : "50%",
+                                background: "var(--color-info)",
+                              }}
+                            />
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                      {/* Error message */}
-                      {job.status === "FAILED" && job.errorMessage && (
+                      {/* Failure / Error Snippet */}
+                      {job.status === "FAILED" && job.error && (
                         <div
-                          className="mt-3 rounded-[var(--radius-md)]"
+                          className="my-2 p-2.5 rounded-[var(--radius-sm)] flex items-start justify-between gap-2 text-xs"
                           style={{
                             background: "rgba(220, 38, 38, 0.08)",
                             border: "1px solid rgba(220, 38, 38, 0.2)",
-                            padding: "8px 12px",
-                            fontSize: 11,
                             color: "var(--color-danger)",
-                            fontFamily: "var(--font-mono)",
-                            wordBreak: "break-word",
                           }}
                         >
-                          {job.errorMessage}
+                          <div className="flex items-start gap-1.5 overflow-hidden">
+                            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                            <span className="font-mono text-[11px] truncate">
+                              {job.error}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setSelectedJobForModal(job)}
+                            className="underline text-[11px] whitespace-nowrap hover:opacity-80 cursor-pointer"
+                          >
+                            Details
+                          </button>
                         </div>
                       )}
+
+                      {/* Metadata Footer */}
+                      <div
+                        className="flex items-center justify-between gap-4 pt-2 mt-1 border-t border-[var(--color-border)] text-[11px]"
+                        style={{ color: "var(--color-text-muted)" }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="flex items-center gap-1">
+                            <Calendar size={11} />
+                            {formatDateTime(job.createdAt)}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock size={11} />
+                            {formatDuration(job.startedAt || job.createdAt, job.completedAt)}
+                          </span>
+                        </div>
+
+                        {job.status === "FAILED" && (
+                          <button
+                            onClick={() => setSelectedJobForModal(job)}
+                            className="text-[var(--color-primary)] hover:underline font-medium cursor-pointer"
+                          >
+                            View error log
+                          </button>
+                        )}
+                      </div>
                     </motion.div>
                   );
                 })}
@@ -1547,481 +1544,189 @@ export default function JobQueue({ projectId, onSync }) {
             </div>
           </div>
 
-          {/* Right Column: Stats & Resources */}
+          {/* Right Column: Runner Health & Metrics */}
           <div className="flex flex-col gap-4">
-            {/* Stats Summary */}
             <div
-              className="flex items-center gap-4 rounded-[var(--radius-lg)] w-full"
+              className="rounded-[var(--radius-lg)] p-4 flex flex-col gap-3.5"
               style={{
                 background: "var(--color-surface)",
                 border: "1px solid var(--color-border)",
-                padding: "14px 20px",
               }}
             >
-              <div className="flex flex-col flex-1">
+              <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
                 <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: "var(--color-text-secondary)",
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    marginBottom: 2,
-                  }}
+                  className="font-semibold text-xs"
+                  style={{ color: "var(--color-text)" }}
                 >
-                  Completed
+                  Runner Health & System Load
                 </span>
                 <span
+                  className="text-[10px] font-mono px-1.5 py-0.5 rounded"
                   style={{
-                    fontSize: 22,
-                    fontWeight: 700,
+                    background: "rgba(22, 163, 74, 0.12)",
                     color: "var(--color-success)",
-                    fontFamily: "var(--font-mono)",
                   }}
                 >
-                  {completedJobs.length}
+                  Online
                 </span>
               </div>
-              <div
-                style={{
-                  width: 1,
-                  height: 36,
-                  background: "var(--color-border)",
-                }}
-              />
-              <div className="flex flex-col flex-1">
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: "var(--color-text-secondary)",
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    marginBottom: 2,
-                  }}
-                >
-                  Failed
-                </span>
-                <span
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 700,
-                    color:
-                      failedJobs.length > 0
-                        ? "var(--color-danger)"
-                        : "var(--color-text-muted)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {failedJobs.length}
-                </span>
+
+              <div className="flex flex-col gap-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span style={{ color: "var(--color-text-secondary)" }}>
+                    Worker Status
+                  </span>
+                  <span
+                    className="font-semibold"
+                    style={{
+                      color:
+                        activeJobs.length > 0
+                          ? "var(--color-info)"
+                          : "var(--color-success)",
+                    }}
+                  >
+                    {activeJobs.length > 0 ? "Busy (Processing)" : "Idle (Ready)"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span style={{ color: "var(--color-text-secondary)" }}>
+                    Success Rate
+                  </span>
+                  <span
+                    className="font-mono font-semibold"
+                    style={{ color: "var(--color-text)" }}
+                  >
+                    {jobs.length > 0
+                      ? `${Math.round((completedJobs.length / jobs.length) * 100)}%`
+                      : "100%"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span style={{ color: "var(--color-text-secondary)" }}>
+                    Sync Polling
+                  </span>
+                  <span
+                    className="font-mono text-[11px]"
+                    style={{ color: "var(--color-text-muted)" }}
+                  >
+                    {activeJobs.length > 0 ? `${POLL_FAST / 1000}s` : `${POLL_SLOW / 1000}s`}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Queue & Resources Card */}
+            {/* Quick tips */}
             <div
-              className="rounded-[var(--radius-lg)] flex flex-col gap-4 p-5"
+              className="rounded-[var(--radius-lg)] p-4 flex flex-col gap-2"
               style={{
-                background: "var(--color-surface)",
+                background: "var(--color-surface-secondary)",
                 border: "1px solid var(--color-border)",
               }}
             >
-              <h3
-                style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: "var(--color-text)",
-                }}
+              <div className="flex items-center gap-1.5 text-xs font-semibold">
+                <Info size={13} style={{ color: "var(--color-primary)" }} />
+                <span>Version Control Note</span>
+              </div>
+              <p
+                className="text-[11px] leading-relaxed"
+                style={{ color: "var(--color-text-secondary)" }}
               >
-                Queue & Resources
-              </h3>
-
-              <div className="flex justify-between items-center text-xs">
-                <span style={{ color: "var(--color-text-secondary)" }}>
-                  Pending Jobs
-                </span>
-                <span
-                  style={{
-                    fontWeight: 600,
-                    color: "var(--color-warning)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {jobs.filter((j) => j.status === "QUEUED").length}
-                </span>
-              </div>
-
-              <div style={{ height: 1, background: "var(--color-border)" }} />
-
-              <div className="flex justify-between items-center text-xs">
-                <span style={{ color: "var(--color-text-secondary)" }}>
-                  Running Jobs
-                </span>
-                <span
-                  style={{
-                    fontWeight: 600,
-                    color: "var(--color-info)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {jobs.filter((j) => j.status === "RUNNING").length}
-                </span>
-              </div>
-
-              <div style={{ height: 1, background: "var(--color-border)" }} />
-
-              <div className="flex justify-between items-center text-xs">
-                <span style={{ color: "var(--color-text-secondary)" }}>
-                  Total Jobs
-                </span>
-                <span
-                  style={{
-                    fontWeight: 600,
-                    color: "var(--color-text)",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {jobs.length}
-                </span>
-              </div>
-
-              <div style={{ height: 1, background: "var(--color-border)" }} />
-
-              <div>
-                <div className="flex justify-between items-center mb-2">
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--color-text-secondary)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    Worker Load
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {workerLoad}%
-                  </span>
-                </div>
-                <div
-                  className="w-full rounded-full overflow-hidden"
-                  style={{
-                    height: 6,
-                    background: "var(--color-surface-secondary)",
-                    border: "1px solid var(--color-border)",
-                  }}
-                >
-                  <div
-                    className="h-full rounded-full"
-                    style={{
-                      width: `${workerLoad}%`,
-                      background:
-                        workerLoad > 80
-                          ? "var(--color-danger)"
-                          : workerLoad > 50
-                            ? "var(--color-warning)"
-                            : "var(--color-success)",
-                      transition: "width 0.4s ease-out",
-                    }}
-                  />
-                </div>
-              </div>
+                The <strong>Snapshot & Checkpoint</strong> features have been consolidated into the <strong>Version Control</strong> tab on the left navigation bar.
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── CREATE SNAPSHOT MODAL ──────────────────────────────── */}
+      {/* ── Error Detail Inspection Modal ───────────────────────── */}
       <AnimatePresence>
-        {showCreateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+        {selectedJobForModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: "rgba(0, 0, 0, 0.5)" }}
+            onClick={() => setSelectedJobForModal(null)}
+          >
             <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="w-full max-w-md rounded-[var(--radius-lg)] p-5 shadow-2xl flex flex-col gap-4"
+              className="w-full max-w-xl rounded-[var(--radius-lg)] overflow-hidden shadow-xl"
               style={{
                 background: "var(--color-surface)",
                 border: "1px solid var(--color-border)",
-                color: "var(--color-text)",
               }}
+              onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
+              <div className="p-4 border-b border-[var(--color-border)] flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <BookmarkPlus
-                    size={16}
-                    style={{ color: "var(--color-primary)" }}
-                  />
+                  <AlertCircle size={16} style={{ color: "var(--color-danger)" }} />
                   <h3
-                    style={{
-                      fontSize: 15,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                    }}
+                    className="font-bold text-sm"
+                    style={{ color: "var(--color-text)" }}
                   >
-                    Capture Code Snapshot
+                    Task Error Details #{selectedJobForModal.id.slice(0, 8)}
                   </h3>
                 </div>
                 <button
-                  onClick={() => setShowCreateModal(false)}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer text-sm"
+                  onClick={() => setSelectedJobForModal(null)}
+                  className="text-xs p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
 
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                  lineHeight: 1.5,
-                }}
-              >
-                Save the current code state across all project files as an
-                immutable checkpoint. You can restore this version at any time.
-              </p>
-
-              <form
-                onSubmit={handleCreateSnapshot}
-                className="flex flex-col gap-3"
-              >
-                <div>
-                  <label
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                      marginBottom: 4,
-                      display: "block",
-                    }}
+              <div className="p-5 flex flex-col gap-3">
+                <div className="text-xs flex flex-col gap-1">
+                  <span
+                    className="font-medium text-[11px]"
+                    style={{ color: "var(--color-text-muted)" }}
                   >
-                    Checkpoint Name / Tag
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Before refactoring auth service"
-                    value={newLabel}
-                    onChange={(e) => setNewLabel(e.target.value)}
-                    autoFocus
-                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
-                    style={{
-                      background: "var(--color-bg)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  />
+                    Task Type:
+                  </span>
+                  <span
+                    className="font-semibold"
+                    style={{ color: "var(--color-text)" }}
+                  >
+                    {JOB_TYPE_CONFIG[selectedJobForModal.type]?.label ||
+                      selectedJobForModal.type}
+                  </span>
                 </div>
 
-                <div>
-                  <label
+                <div className="text-xs flex flex-col gap-1">
+                  <span
+                    className="font-medium text-[11px]"
+                    style={{ color: "var(--color-text-muted)" }}
+                  >
+                    Error Message / Stack Trace:
+                  </span>
+                  <pre
+                    className="p-3 rounded-[var(--radius-sm)] text-xs font-mono overflow-x-auto whitespace-pre-wrap max-h-60"
                     style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                      marginBottom: 4,
-                      display: "block",
+                      background: "rgba(220, 38, 38, 0.08)",
+                      border: "1px solid rgba(220, 38, 38, 0.2)",
+                      color: "var(--color-danger)",
                     }}
                   >
-                    Description / Notes (Optional)
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="What changed in this checkpoint?"
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors resize-none"
-                    style={{
-                      background: "var(--color-bg)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  />
+                    {selectedJobForModal.error || "No detailed stack trace available"}
+                  </pre>
                 </div>
-
-                <div className="flex items-center justify-end gap-2.5 mt-2 pt-3 border-t border-[var(--color-border)]">
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateModal(false)}
-                    className="px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
-                    style={{
-                      background: "var(--color-surface-secondary)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <motion.button
-                    whileHover={{ scale: 1.01 }}
-                    whileTap={{ scale: 0.98 }}
-                    type="submit"
-                    disabled={creatingSnapshot || !projectAccess.can("snapshot.restore")}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
-                    style={{
-                      background: "var(--color-primary)",
-                      color: "#ffffff",
-                      border: "none",
-                    }}
-                  >
-                    {creatingSnapshot ? (
-                      <>
-                        <Loader2 size={13} className="animate-spin" />
-                        <span>Capturing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={13} />
-                        <span>Create Checkpoint</span>
-                      </>
-                    )}
-                  </motion.button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* ── CONFIRM RESTORE MODAL ──────────────────────────────── */}
-      <AnimatePresence>
-        {confirmRestoreSnapshot && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8 }}
-              transition={{ duration: 0.15 }}
-              className="w-full max-w-md rounded-[var(--radius-lg)] p-5 shadow-2xl flex flex-col gap-4"
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text)",
-              }}
-            >
-              <div className="flex items-center gap-2.5 pb-2.5 border-b border-[var(--color-border)]">
-                <RotateCcw
-                  size={16}
-                  style={{ color: "var(--color-warning)" }}
-                />
-                <h3
-                  style={{
-                    fontSize: 15,
-                    fontWeight: 600,
-                    color: "var(--color-text)",
-                  }}
-                >
-                  Rollback to Checkpoint?
-                </h3>
               </div>
 
-              <div
-                className="rounded-[var(--radius-md)] p-3 flex flex-col gap-2"
-                style={{
-                  background: "var(--color-bg)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span
-                    style={{
-                      color: "var(--color-text-secondary)",
-                    }}
-                  >
-                    Target Checkpoint:
-                  </span>
-                  <span
-                    style={{
-                      fontWeight: 700,
-                      color: "var(--color-primary)",
-                    }}
-                  >
-                    {confirmRestoreSnapshot.label}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span
-                    style={{
-                      color: "var(--color-text-secondary)",
-                    }}
-                  >
-                    Captured at:
-                  </span>
-                  <span
-                    style={{
-                      color: "var(--color-text)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {formatDateTime(confirmRestoreSnapshot.createdAt)}
-                  </span>
-                </div>
-                {confirmRestoreSnapshot.message && (
-                  <p className="text-xs text-[var(--color-text-secondary)] mt-1 italic border-t border-[var(--color-border)] pt-2">
-                    &ldquo;{confirmRestoreSnapshot.message}&rdquo;
-                  </p>
-                )}
-              </div>
-
-              <div
-                className="rounded-[var(--radius-md)] p-2.5 text-xs leading-relaxed flex items-start gap-2"
-                style={{
-                  background: "rgba(217, 119, 6, 0.1)",
-                  border: "1px solid rgba(217, 119, 6, 0.25)",
-                  color: "var(--color-warning)",
-                }}
-              >
-                <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
-                <span>
-                  All current workspace files will be reverted to this
-                  checkpoint. A new checkpoint will automatically be created
-                  first to preserve your current changes.
-                </span>
-              </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-2">
+              <div className="p-3.5 border-t border-[var(--color-border)] flex justify-end">
                 <button
-                  type="button"
-                  disabled={restoring || !projectAccess.can("snapshot.restore")}
-                  onClick={() => setConfirmRestoreSnapshot(null)}
-                  className="px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
+                  onClick={() => setSelectedJobForModal(null)}
+                  className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-md)] cursor-pointer"
                   style={{
                     background: "var(--color-surface-secondary)",
                     border: "1px solid var(--color-border)",
+                    color: "var(--color-text)",
                   }}
                 >
-                  Cancel
+                  Close
                 </button>
-                <motion.button
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.98 }}
-                  type="button"
-                  disabled={restoring || !projectAccess.can("snapshot.restore")}
-                  onClick={handleConfirmRestore}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
-                  style={{
-                    background: "var(--color-danger)",
-                    color: "#ffffff",
-                    border: "none",
-                  }}
-                >
-                  {restoring ? (
-                    <>
-                      <Loader2 size={13} className="animate-spin" />
-                      <span>Rolling back...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RotateCcw size={13} />
-                      <span>Confirm & Rollback</span>
-                    </>
-                  )}
-                </motion.button>
               </div>
             </motion.div>
           </div>

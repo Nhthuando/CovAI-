@@ -23,7 +23,7 @@ export async function dispatchInvitationDeliveries({ db = prisma, send = sendEma
             const base = new URL(process.env.CLIENT_URL || 'http://localhost:5173');
             const link = new URL(`/invitations/${token}`, base).href;
             await send({ email, ...createProjectInvitationEmail({ projectName: row.invitation.project.name,
-                inviterName: row.invitation.invitedBy?.name, role: row.invitation.role, email,
+                inviterName: row.invitation.invitedBy?.name, role: row.invitation.role, disciplineRole: row.invitation.disciplineRole, email,
                 invitationUrl: link, expiresAt: row.invitation.expiresAt }) });
             await db.invitationDelivery.updateMany({ where: { id: row.id, status: 'SENDING', attempts: row.attempts }, data: { status: 'SENT', encryptedPayload: null, lockedUntil: null, lastErrorCode: null } });
         } catch {

@@ -13,7 +13,7 @@ it.each([
     ["projects", "POST", "/p1/upload-zip", {}, "integrations.write"],
     ["projects", "PUT", "/p1/file-content", {}, "files.write"],
     ["coverage", "POST", "/s1/system/catalog/c1/confirm-expected", {}, "evidence.approve"],
-    ["coverage", "POST", "/s1/system/proposals/p1/apply", {}, "files.write"],
+    ["coverage", "POST", "/s1/system/proposals/p1/apply", {}, "evidence.approve"],
     ["coverage", "POST", "/s1/system/generate-tests", {}, "ai.use"],
     ["coverage", "GET", "/s1/system/assessments/a1/events", {}, "project.read"],
     ["coverage", "GET", "/project/p1/comparison", {}, "project.read"],

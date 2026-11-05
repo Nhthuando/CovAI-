@@ -171,15 +171,26 @@ export function GlobalCommandHeader({
           <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ud-text-muted)]">
             {/* Project Switcher */}
             {projects.length > 1 ? (
-              <select
-                aria-label="Select Project"
+                            <select
+                aria-label="Switch Active Project or View Portfolio"
                 value={context.projectId || ""}
-                onChange={(e) => onSelectProject?.(e.target.value)}
-                className="font-semibold text-[var(--ud-text)] bg-transparent border border-[var(--ud-border)] rounded-[var(--radius-sm)] px-2 py-0.5 text-xs hover:border-[var(--color-primary)] transition-colors cursor-pointer focus:outline-none"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "__portfolio__") {
+                    navigate("/projects");
+                  } else if (val) {
+                    onSelectProject?.(val);
+                  }
+                }}
+                className="font-semibold text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] hover:border-[var(--color-primary)] py-0.5 px-2 focus:outline-none cursor-pointer transition-colors"
+                title="Switch active project or return to Portfolio"
               >
+                <option value="__portfolio__" className="bg-[var(--ud-surface)] text-[var(--ud-text-muted)] font-medium">
+                  ⇄ View All Projects (Portfolio)
+                </option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id} className="bg-[var(--ud-surface)] text-[var(--ud-text)]">
-                    {p.name}
+                    ● {p.name}
                   </option>
                 ))}
               </select>

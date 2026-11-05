@@ -33,6 +33,8 @@ export const unsubscribeFromProjectRoom = async (socket, {projectId} = {}) => {
 };
 
 export const revokeProjectSubscriptions = async ({projectId,userId,accessRevision}) => {
+    const { revokeEditorAccess } = await import('../realtime/projectEditor.gateway.js');
+    await revokeEditorAccess({projectId,userId,accessRevision});
     let stillCanRead = false;
     try { await resolveProjectAccess({projectId,userId,capability:'project.read'}); stillCanRead = true; }
     catch { /* Missing member/disabled collaboration: revoke fail closed. */ }

@@ -34,6 +34,7 @@ const selectImprovementGaps = gaps => {
 };
 
 export default function SystemTestAssessmentPanel({
+  projectId,
   snapshotId,
   runner,
   executionMode,
@@ -436,6 +437,7 @@ export default function SystemTestAssessmentPanel({
 
         {proposal && (
           <SystemTestImprovementReview
+            projectId={projectId}
             snapshotId={snapshotId}
             proposal={proposal}
             gaps={current?.workflowGaps || gaps}

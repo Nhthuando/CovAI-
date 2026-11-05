@@ -1,7 +1,10 @@
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { detectSupertest } from "./supertestDetection.service.js";
 import { scenarioArtifactVersion } from './scenarioManager.service.js';
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { cleanStoragePath } from "../utils/pathSanitizer.js";
 import { loadSourceCode, clearSourceCodeCache } from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { getBucket } from "../config/firebase.js";
@@ -54,7 +57,7 @@ export const extractValidatedTestRequests = (t) => {
             suiteName: mr.suiteName || "Integration Test Suite",
             method: (mr.method || "GET").toUpperCase(),
             path: mr.path || "/",
-            testFile: t.filePath,
+            testFile: cleanStoragePath(t.filePath) || t.filePath,
             scenarioId: mr.scenarioId,
             enabled: mr.enabled !== false,
             userEdited: Boolean(mr.userEdited),
@@ -740,6 +743,101 @@ export const isScenarioContractVerified = (s) => {
  * Builds the data payload for the Integration Test workspace.
  * Re-extracts endpoints dynamically from source code and merges with Jest execution results.
  */
+
+export const discoverProjectIntegrationTests = async (rootDir) => {
+  if (!rootDir) return [];
+  const resolvedRoot = resolveProjectRoot(rootDir) || rootDir;
+  if (!fs.existsSync(resolvedRoot)) return [];
+
+  const candidateDirs = [
+    resolvedRoot,
+    path.join(resolvedRoot, "server"),
+    path.join(resolvedRoot, "backend"),
+    path.join(resolvedRoot, "api"),
+  ].filter((d) => fs.existsSync(d));
+
+  const foundTestFiles = new Set();
+
+  for (const dir of candidateDirs) {
+    try {
+      const supertestInfo = await detectSupertest(dir).catch(() => null);
+      const detected = [
+        ...(supertestInfo?.supertestFiles || []),
+        ...(supertestInfo?.testFiles || []),
+      ];
+      for (const f of detected) {
+        const full = path.isAbsolute(f) ? f : path.join(dir, f);
+        if (fs.existsSync(full)) foundTestFiles.add(full);
+      }
+    } catch (_) {}
+
+    const testFolderNames = ["tests", "test", "__tests__"];
+    for (const folder of testFolderNames) {
+      const folderPath = path.join(dir, folder);
+      if (fs.existsSync(folderPath)) {
+        try {
+          const files = fs.readdirSync(folderPath);
+          for (const f of files) {
+            if (/\.(test|spec)\.(js|cjs|mjs|ts)$/i.test(f)) {
+              foundTestFiles.add(path.join(folderPath, f));
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  const results = [];
+  for (const fullPath of foundTestFiles) {
+    try {
+      const content = fs.readFileSync(fullPath, "utf8");
+      if (!/supertest|request\s*\(|superagent|chai-http/i.test(content)) continue;
+
+      const relativePath = path.relative(resolvedRoot, fullPath).replace(/\\/g, "/");
+      const reqs = extractTestRequests(content, relativePath);
+      if (reqs.length > 0) {
+        const fileId = `existing_test_${crypto.createHash("md5").update(relativePath).digest("hex").slice(0, 10)}`;
+        const requests = reqs.map((r, idx) => ({
+          ...r,
+          scenarioId: `sc_${idx}_${crypto.createHash("md5").update(r.testName || `scenario_${idx}`).digest("hex").slice(0, 8)}`,
+          testName: r.testName,
+          suiteName: r.suiteName || "",
+          method: (r.method || "GET").toUpperCase(),
+          path: r.path || "/",
+          expectedStatus: r.expectedStatus || 200,
+          origin: "PROJECT_EXISTING",
+          enabled: true,
+          userEdited: false,
+          description: r.description || r.testName || "",
+          category: r.category || (r.expectedStatus && r.expectedStatus >= 400 ? "Validation" : "Happy Path"),
+          code: r.code || undefined,
+        }));
+
+        results.push({
+          id: fileId,
+          filePath: relativePath,
+          content,
+          version: 1,
+          isExisting: true,
+          metaJson: JSON.stringify({
+            framework: "SUPERTEST",
+            status: "APPROVED",
+            origin: "PROJECT_EXISTING",
+            isValid: true,
+            requests,
+            approvedScenarios: requests.map((r) => r.scenarioId),
+          }),
+          requests,
+        });
+      }
+    } catch (err) {
+      console.warn("[discoverProjectIntegrationTests] Failed to parse file:", fullPath, err.message);
+    }
+  }
+
+  return results;
+};
+
 export const buildIntegrationWorkspace = async (snapshotId) => {
   if (!snapshotId) return null;
   if (inFlightIntegrationBuilds.has(snapshotId)) {
@@ -817,9 +915,10 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
     // Try file cache
     const fs = (await import("fs")).default;
     const path = (await import("path")).default;
-    const cacheFile = snapshot?.rootDir
+    const resolvedRootDir = resolveProjectRoot(snapshot?.rootDir) || snapshot?.rootDir;
+    const cacheFile = resolvedRootDir
       ? path.join(
-          snapshot.rootDir,
+          resolvedRootDir,
           ".covai-temp",
           `endpoints-${snapshotId}.json`,
         )
@@ -921,7 +1020,7 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
               : null,
       duration: typeof s.duration === "number" ? s.duration : s.durationMs || 0,
       failureMessages: s.failureMessages || [],
-      testFile: s.testFile || null,
+      testFile: cleanStoragePath(s.testFile) || s.testFile || null,
     }));
     firebaseCache.set(firebaseCacheKey, testScenarios);
   } else {
@@ -1061,6 +1160,25 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       return false;
     }
   });
+
+  // Discover existing integration test files from the project codebase
+  if (snapshot?.rootDir) {
+    try {
+      const projectExistingTests = await discoverProjectIntegrationTests(snapshot.rootDir);
+      const existingFilePaths = new Set(
+        integrationTests.map((t) => (t.filePath || "").replace(/\\/g, "/").toLowerCase())
+      );
+      for (const pt of projectExistingTests) {
+        const norm = (pt.filePath || "").replace(/\\/g, "/").toLowerCase();
+        if (!existingFilePaths.has(norm)) {
+          integrationTests.push(pt);
+          existingFilePaths.add(norm);
+        }
+      }
+    } catch (err) {
+      console.warn("[buildIntegrationWorkspace] Error discovering project tests:", err.message);
+    }
+  }
 
   // 5.5 Load Unified Coverage and Trace API Coverage (Cached by snapshotId + latestRun)
   const apiTraceCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
@@ -1327,6 +1445,11 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
           scenarioId: genReq.scenarioId,
           testId: genReq.testId,
           title: genReq.testName,
+          name: genReq.testName,
+          method: genReq.method,
+          path: genReq.path,
+          code: genReq.code,
+          origin: genReq.origin,
           suiteName: genReq.suiteName || "",
           status: "not_run",
           duration: 0,
@@ -1668,6 +1791,12 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
 
         return {
           ...rest,
+          name: rest.name || rest.title || req?.testName,
+          method: rest.method || requestMethod,
+          path: rest.path || rawReqPath,
+          code: rest.code || req?.code || null,
+          origin: rest.origin || req?.origin || "AI_GENERATED",
+          testFile: cleanStoragePath(rest.testFile || req?.testFile) || rest.testFile || req?.testFile || null,
           targetEndpoint: `${ep.method.toUpperCase()} ${ep.fullPath || ep.path}`,
           failureLayer:
             failureDiagnostics?.failureLayer ||

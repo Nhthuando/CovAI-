@@ -22,6 +22,12 @@ import {
   X,
   Layers,
   HardDriveDownload,
+  FlaskConical,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ArrowRight,
+  FileCode,
 } from "lucide-react";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -205,6 +211,19 @@ export function getScenarioOrigin(scenario) {
       tooltip: `User Modified • Scenario code modified by user${origInfo}`,
     };
   }
+  if (
+    scenario.origin === "PROJECT_EXISTING" ||
+    scenario.origin === "EXISTING" ||
+    scenario.origin === "CODEBASE"
+  ) {
+    return {
+      type: "PROJECT_EXISTING",
+      badge: "P",
+      label: "Project Existing",
+      badgeStyle: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30",
+      tooltip: "Project Existing • Discovered from codebase integration test files",
+    };
+  }
   return {
     type: "AI_GENERATED",
     badge: "AI",
@@ -261,6 +280,9 @@ export default function IntegrationScenariosPane({
   readOnly = false,
   canGenerate = true,
   canApprove = true,
+  generationHistory = [],
+  executionHistory = [],
+  onOpenHistory,
 }) {
   const { showToast } = useToast();
   const [editorOpen, setEditorOpen] = useState(false);
@@ -338,6 +360,8 @@ export default function IntegrationScenariosPane({
   // Group tests by endpoint & Sort scenarios inside each endpoint by priority matrix
   const scenariosByEndpoint = useMemo(() => {
     const map = {};
+
+    // 1. Ingest scenarios from AI tests (if any)
     (aiTests || []).forEach((t) => {
       if (!t) return;
       (t.requests || []).forEach((r, idx) => {
@@ -371,8 +395,85 @@ export default function IntegrationScenariosPane({
           testName: r.testName || `Scenario ${idx + 1}`,
           enabled: r.enabled !== false,
           userEdited: Boolean(r.userEdited),
+          origin: r.origin || (r.userEdited ? "USER_MODIFIED" : "AI_GENERATED"),
         });
       });
+    });
+
+    // 2. Ingest existing project scenarios discovered from codebase test files
+    (endpoints || []).forEach((ep) => {
+      const epMethod = (ep.method || "GET").toUpperCase();
+      const epPath = ep.path || ep.route || ep.fullPath || "/";
+      const epKey = `${epMethod} ${epPath}`;
+      const epSourceFile =
+        ep.source?.sourceFile || ep.sourceFile || ep.filePath || "tests/integration/api.test.js";
+
+      if (!map[epKey]) {
+        map[epKey] = {
+          method: epMethod,
+          path: epPath,
+          module: getEndpointModule(epPath),
+          isValid: true,
+          filePath: epSourceFile,
+          scenarios: [],
+          testFileId: ep.id || epKey,
+          version: 1,
+          fileStatus: "READY",
+        };
+      }
+
+      (ep.scenarios || []).forEach((s, idx) => {
+        const scenarioId = s.id || `${epKey}::scenario_${idx}`;
+        const sTitle = s.title || s.testName || `Scenario ${idx + 1}`;
+        const existingIdx = map[epKey].scenarios.findIndex(
+          (ex) =>
+            ex.id === scenarioId ||
+            (ex.testName && (ex.testName === sTitle || ex.testName === s.testName))
+        );
+
+        if (existingIdx === -1) {
+          map[epKey].scenarios.push({
+            ...s,
+            id: scenarioId,
+            testName: sTitle,
+            description: s.description || s.category || "",
+            expectedStatus:
+              s.expectedStatus !== undefined
+                ? s.expectedStatus
+                : s.actualStatus || 200,
+            actualStatus: s.actualStatus,
+            status: s.status || "not_run",
+            category: s.category || (s.status === "passed" ? "Happy Path" : "General"),
+            origin: s.origin || "PROJECT_EXISTING",
+            enabled: s.enabled !== false,
+            userEdited: Boolean(s.userEdited),
+            failureDiagnostics: s.failureDiagnostics,
+            runtimeEvidence: s.runtimeEvidence,
+          });
+        } else {
+          // Merge execution & runtime data onto existing scenario
+          const existing = map[epKey].scenarios[existingIdx];
+          if (s.actualStatus !== undefined && existing.actualStatus === undefined) {
+            existing.actualStatus = s.actualStatus;
+          }
+          if (s.status && (!existing.status || existing.status === "not_run")) {
+            existing.status = s.status;
+          }
+          if (s.runtimeEvidence && !existing.runtimeEvidence) {
+            existing.runtimeEvidence = s.runtimeEvidence;
+          }
+          if (s.failureDiagnostics && !existing.failureDiagnostics) {
+            existing.failureDiagnostics = s.failureDiagnostics;
+          }
+        }
+      });
+    });
+
+    // Prune endpoints with 0 scenarios so we do not render empty endpoint shells
+    Object.keys(map).forEach((k) => {
+      if (!map[k].scenarios || map[k].scenarios.length === 0) {
+        delete map[k];
+      }
     });
 
     // Level 3: Sort scenarios inside each endpoint according to the priority matrix
@@ -429,6 +530,7 @@ export default function IntegrationScenariosPane({
     let ai = 0;
     let added = 0;
     let modified = 0;
+    let existing = 0;
     let happy = 0;
     let validation = 0;
     let disabled = 0;
@@ -439,6 +541,7 @@ export default function IntegrationScenariosPane({
         const origin = getScenarioOrigin(s);
         if (origin.type === "USER_ADDED") added++;
         else if (origin.type === "USER_MODIFIED") modified++;
+        else if (origin.type === "PROJECT_EXISTING") existing++;
         else ai++;
 
         const c = getScenarioClassification(s);
@@ -448,7 +551,7 @@ export default function IntegrationScenariosPane({
       });
     });
 
-    return { all, ai, added, modified, happy, validation, disabled };
+    return { all, ai, added, modified, existing, happy, validation, disabled };
   }, [scenariosByEndpoint]);
 
   // Search & Filter predicate
@@ -457,6 +560,9 @@ export default function IntegrationScenariosPane({
     const origin = getScenarioOrigin(scenario);
 
     if (activeTypeFilter === "AI" && origin.type !== "AI_GENERATED") {
+      return false;
+    }
+    if (activeTypeFilter === "EXISTING" && origin.type !== "PROJECT_EXISTING") {
       return false;
     }
     if (activeTypeFilter === "ADDED" && origin.type !== "USER_ADDED") {
@@ -773,6 +879,36 @@ export default function IntegrationScenariosPane({
     const scenarioId = parts.join("::");
     setProcessingScenarioId(scenario.id);
     try {
+      const isExistingTest =
+        scenario.origin === "PROJECT_EXISTING" ||
+        scenario.origin === "EXISTING" ||
+        (aiTestId && aiTestId.startsWith("existing_test_")) ||
+        !aiTests.some((t) => t.id === aiTestId);
+
+      if (isExistingTest) {
+        // Discovered from existing project test file
+        const mockCode =
+          scenario.code ||
+          scenario.sourceCode ||
+`// Existing Project Integration Test: ${scenario.testName}
+// Discovered from: ${scenario.filePath || "Project Test Files"}
+describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
+  it('${scenario.testName}', async () => {
+    // Expected HTTP Status: ${scenario.expectedStatus || 200}
+    // Execution Verdict: ${scenario.status || "Passed"}
+  });
+});`;
+        setEditingScenario({
+          aiTestId: aiTestId || "project",
+          scenarioId: scenarioId || scenario.id,
+          expectedVersion: 1,
+        });
+        setAddingToEndpoint(null);
+        setEditorTitle(`Test Scenario: ${scenario.testName}`);
+        setEditorCode(mockCode);
+        setEditorOpen(true);
+        return;
+      }
       const result = await getIntegrationScenarioApi(snapshotId, aiTestId, scenarioId);
       setEditingScenario({ aiTestId, scenarioId, expectedVersion: result.version || result.aiTest?.version });
       setAddingToEndpoint(null);
@@ -815,7 +951,14 @@ export default function IntegrationScenariosPane({
     }
   };
 
-  if (!hasAnalysis && !hasGeneratedTests) {
+  const totalScenariosCount = useMemo(() => {
+    return Object.values(scenariosByEndpoint).reduce(
+      (acc, ep) => acc + (ep.scenarios || []).length,
+      0,
+    );
+  }, [scenariosByEndpoint]);
+
+  if (!hasAnalysis && !hasGeneratedTests && totalScenariosCount === 0) {
     return (
       <div className="p-12 text-center flex flex-col items-center justify-center h-full gap-3 text-[var(--color-text-secondary)] font-sans">
         <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-1">
@@ -843,31 +986,102 @@ export default function IntegrationScenariosPane({
     );
   }
 
-  if (!hasGeneratedTests) {
+  if (!hasGeneratedTests && totalScenariosCount === 0) {
+    const recentHistory = [
+      ...(generationHistory || []).map((g) => ({
+        id: g.jobId || g.id,
+        type: "AI Generation",
+        mode: g.mode,
+        timestamp: g.timestamp || g.createdAt,
+        status: g.status,
+      })),
+      ...(executionHistory || []).map((e) => ({
+        id: e.testRunId || e.id,
+        type: "Test Run",
+        mode: `${e.totalTests || 0} tests (${e.passed || 0} pass, ${e.failed || 0} fail)`,
+        timestamp: e.timestamp || e.createdAt,
+        status: e.status,
+      })),
+    ].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+
     return (
-      <div className="p-12 text-center flex flex-col items-center justify-center h-full gap-3 text-[var(--color-text-secondary)] font-sans">
+      <div className="p-8 text-center flex flex-col items-center justify-center min-h-[400px] gap-6 text-[var(--color-text-secondary)] font-sans max-w-2xl mx-auto">
         <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-1">
           <Sparkles size={22} />
         </div>
-        <div className="text-xs max-w-md">
-          <p className="font-semibold text-sm text-[var(--color-text)] mb-1">
+        <div className="text-xs max-w-md space-y-2">
+          <p className="font-semibold text-sm text-[var(--color-text)]">
             No test scenarios have been generated yet
           </p>
-          <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed mb-4">
+          <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
             CovAI analyzes your endpoint controllers, generates boundary conditions and valid request payloads, and creates runnable Supertest suites.
           </p>
           {onReGenerateSelected && (
-            <button
-              type="button"
-              onClick={onReGenerateSelected}
-              disabled={!canGenerate || isGenerating}
-              className="px-4 py-2 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 shadow-sm disabled:opacity-50"
-            >
-              <Sparkles size={14} />
-              <span>{isGenerating ? "Generating Scenarios..." : "Generate Test Scenarios"}</span>
-            </button>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={onReGenerateSelected}
+                disabled={!canGenerate || isGenerating}
+                className="px-4 py-2 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                <Sparkles size={14} />
+                <span>{isGenerating ? "Generating Scenarios..." : "Generate Test Scenarios"}</span>
+              </button>
+            </div>
           )}
         </div>
+
+        {/* Generation & Execution History */}
+        {recentHistory.length > 0 && (
+          <div className="w-full mt-4 p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-left shadow-xs space-y-3 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)]">
+                <Clock size={14} className="text-[var(--color-primary)]" />
+                <span>Recent Generation & Execution History</span>
+              </div>
+              {onOpenHistory && (
+                <button
+                  type="button"
+                  onClick={onOpenHistory}
+                  className="text-[11px] text-[var(--color-primary)] hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                >
+                  <span>View Full History</span>
+                  <ArrowRight size={11} />
+                </button>
+              )}
+            </div>
+            <div className="divide-y divide-[var(--color-border)]/50">
+              {recentHistory.slice(0, 5).map((item, idx) => (
+                <div key={item.id || idx} className="py-2 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                      {item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : `#${idx + 1}`}
+                    </span>
+                    <span className="font-semibold text-[var(--color-text)]">{item.type}</span>
+                    {item.mode && (
+                      <span className="text-[10px] text-[var(--color-text-secondary)] font-mono">
+                        ({item.mode})
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${
+                        item.status === "SUCCESS" || item.status === "PASSED"
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                          : item.status === "FAILED"
+                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                          : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                      }`}
+                    >
+                      {item.status || "COMPLETED"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -955,12 +1169,12 @@ export default function IntegrationScenariosPane({
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-opacity shadow-xs disabled:opacity-40 cursor-pointer"
               title={
                 selectedCount > 0
-                  ? `Apply ${selectedCount} kịch bản đã chọn vào mã nguồn dự án`
-                  : "Chọn ít nhất 1 kịch bản để apply"
+                  ? `Apply ${selectedCount} selected scenario${selectedCount > 1 ? "s" : ""} to repository`
+                  : "Select at least 1 scenario to apply"
               }
             >
               <HardDriveDownload size={13} />
-              <span>Apply vào Mã Nguồn ({selectedCount})</span>
+              <span>Apply to Repo ({selectedCount})</span>
             </button>
           )}
 
@@ -1061,6 +1275,23 @@ export default function IntegrationScenariosPane({
             <span>All</span>
             <span className="font-mono text-[10px] opacity-80">({filterCounts.all})</span>
           </button>
+
+          {filterCounts.existing > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTypeFilter("EXISTING")}
+              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+                activeTypeFilter === "EXISTING"
+                  ? "bg-blue-600 text-white border-transparent"
+                  : "bg-[var(--color-surface)] text-blue-600 dark:text-blue-400 border-[var(--color-border)] hover:bg-blue-500/10"
+              }`}
+              title="Scenarios discovered from codebase test files"
+            >
+              <FileCode size={11} />
+              <span>Project Existing</span>
+              <span className="font-mono text-[10px] opacity-80">({filterCounts.existing})</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -1199,13 +1430,57 @@ export default function IntegrationScenariosPane({
 
       {/* 4. 3-Tier Hierarchical Scenarios List (Module -> Endpoint -> Priority-Sorted Scenarios) */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4 custom-scrollbar">
-        {filteredModules.length === 0 ? (
-          <div className="text-center text-[var(--color-text-secondary)] py-12 text-xs font-mono">
-            {searchQuery || activeTypeFilter !== "ALL"
-              ? "No scenarios match the current search or filter criteria."
-              : hasGeneratedTests
-                ? "Zero scenarios produced for this selection."
-                : "No scenarios found. Click 'Generate Test Scenarios' to create scenarios automatically."}
+        {isGenerating && filteredModules.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center py-16 px-4 space-y-3">
+            <RefreshCw size={24} className="animate-spin text-[var(--color-primary)]" />
+            <h4 className="text-sm font-semibold text-[var(--color-text)]">
+              AI Test Synthesis in Progress...
+            </h4>
+            <p className="text-xs text-[var(--color-text-secondary)] max-w-sm leading-relaxed">
+              Analyzing route definitions, validating request schemas, and synthesizing multi-tier integration test scenarios...
+            </p>
+          </div>
+        ) : filteredModules.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center py-14 px-4">
+            <div className="w-12 h-12 rounded-full bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-muted)] mb-3 shadow-xs">
+              <FlaskConical size={22} className="text-[var(--color-primary)]" />
+            </div>
+            <h4 className="text-sm font-semibold text-[var(--color-text)] mb-1">
+              {searchQuery || activeTypeFilter !== "ALL"
+                ? "No matching test scenarios"
+                : "No test scenarios configured"}
+            </h4>
+            <p className="text-xs text-[var(--color-text-secondary)] max-w-sm mb-4 leading-relaxed">
+              {searchQuery || activeTypeFilter !== "ALL"
+                ? "No scenarios matched your search term or active category filters. Try adjusting or clearing your filters."
+                : "Generate comprehensive API integration test scenarios automatically using AI, or create one manually via the Monaco editor."}
+            </p>
+            {searchQuery || activeTypeFilter !== "ALL" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setActiveTypeFilter("ALL");
+                }}
+                className="px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer shadow-2xs"
+              >
+                Clear all filters
+              </button>
+            ) : canGenerate ? (
+              <button
+                type="button"
+                onClick={() => onReGenerateSelected && onReGenerateSelected()}
+                disabled={isGenerating}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                {isGenerating ? (
+                  <RefreshCw size={12} className="animate-spin" />
+                ) : (
+                  <Sparkles size={12} />
+                )}
+                <span>{isGenerating ? "Synthesizing Scenarios..." : "Generate Test Scenarios"}</span>
+              </button>
+            ) : null}
           </div>
         ) : (
           <div className="flex flex-col gap-3.5">
@@ -1454,8 +1729,28 @@ export default function IntegrationScenariosPane({
                                         </div>
                                       </div>
 
-                                      {/* Right: Milestone Badge (AI, A, M) + Status Indicator + Actions */}
+                                      {/* Right: Milestone Badge (AI, A, M, P) + Status Indicator + Actions */}
                                       <div className="flex items-center gap-2 shrink-0">
+                                        {/* Execution status badge */}
+                                        {scenario.status === "passed" && (
+                                          <span
+                                            className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0 font-semibold flex items-center gap-1"
+                                            title="Test passed successfully"
+                                          >
+                                            <CheckCircle2 size={10} />
+                                            <span>Passed{scenario.actualStatus ? ` (${scenario.actualStatus})` : ""}</span>
+                                          </span>
+                                        )}
+                                        {scenario.status === "failed" && (
+                                          <span
+                                            className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0 font-semibold flex items-center gap-1"
+                                            title="Test execution failed"
+                                          >
+                                            <XCircle size={10} />
+                                            <span>Failed{scenario.actualStatus ? ` (${scenario.actualStatus})` : ""}</span>
+                                          </span>
+                                        )}
+
                                         {/* Right-aligned short Git-style Milestone Badge */}
                                         {(() => {
                                           const originMeta = getScenarioOrigin(scenario);

@@ -22,14 +22,14 @@ async function handleResponse(res) {
 }
 
 export const fetchIntegrationReport = async (projectId) => {
-  const res = await fetch(`${BASE_URL}/reports/project/${projectId}/integration`, {
+  const res = await fetch(`${BASE_URL}/reports/project/${projectId}/integration?t=${Date.now()}`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
 };
 
 export const fetchIntegrationGuidance = async (projectId) => {
-  const res = await fetch(`${BASE_URL}/reports/project/${projectId}/integration/guidance`, {
+  const res = await fetch(`${BASE_URL}/reports/project/${projectId}/integration/guidance?t=${Date.now()}`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);

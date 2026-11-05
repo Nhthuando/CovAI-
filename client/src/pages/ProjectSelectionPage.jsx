@@ -42,8 +42,8 @@ export default function ProjectSelectionPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // AI Assistant Sidebar state
-  const [aiPanelOpen, setAiPanelOpen] = useState(() => !isMobile);
+  // AI Assistant Sidebar state (collapsed by default across pages)
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
   const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
@@ -246,7 +246,7 @@ export default function ProjectSelectionPage() {
             favorites={favorites}
             onTogglePin={toggleFavorite}
             onOpenProjectOverview={(projectId) =>
-              navigate(`/main-editor?projectId=${projectId}&tab=overview${dataMode === "demo" ? "&mode=demo" : ""}`)
+              navigate(`/main-editor?projectId=${projectId}&tab=explorer${dataMode === "demo" ? "&mode=demo" : ""}`)
             }
             onNavigateWorkspace={(projectId, pillar, focus = {}) => {
               const params = new URLSearchParams();
