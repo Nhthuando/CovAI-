@@ -633,7 +633,7 @@ export default function IntegrationWorkspace({
   const { logs: activeLogs, logsEndRef } = useLiveJobLogs(
     activeJobId,
     handleJobComplete,
-    (err) => {
+    async (err) => {
       setActiveJobStatus("FAILED");
       setError(err.message);
       setIsCancelling(false);
@@ -642,6 +642,14 @@ export default function IntegrationWorkspace({
         title: "Task Failed",
         message: err.message || "Execution encountered an error.",
       });
+      try {
+        await load();
+      } catch (_) {}
+      setTimeout(() => {
+        setActiveJobId(null);
+        setActiveJobType(null);
+        setPendingAction(null);
+      }, 1200);
     },
     handleJobCanceled,
   );
@@ -1157,6 +1165,16 @@ export default function IntegrationWorkspace({
       });
     });
 
+    // Also collect any scenarios from workspace.aiTests (including codebase discovered tests)
+    (workspace?.aiTests || []).forEach((t) => {
+      (t.requests || []).forEach((r) => {
+        const key = r.id || `${t.id}::${r.scenarioId || r.testName}`;
+        if (key && !uniqueScenariosMap.has(key)) {
+          uniqueScenariosMap.set(key, r);
+        }
+      });
+    });
+
     const uncoveredApis = Math.max(0, totalApis - testedApis);
     const apiPassRate =
       testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
@@ -1656,10 +1674,10 @@ export default function IntegrationWorkspace({
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-[var(--color-text)]">
                         {activeJobType === "EXECUTE"
-                          ? "Đang Thực Thi Kiểm Thử Tích Hợp & Phân Tích Độ Bao Phủ API (Supertest Runner)..."
+                          ? "Executing Integration Tests & API Coverage Analysis (Supertest Runner)..."
                           : activeJobType === "GENERATE"
-                          ? "Đang Phân Tích Controller & Sinh Kịch Bản Kiểm Thử AI..."
-                          : "Đang Quét & Phân Tích Kiến Trúc Tuyến Đường AST..."}
+                          ? "Analyzing Controllers & Synthesizing AI Test Scenarios..."
+                          : "Scanning & Analyzing AST Route Architecture..."}
                       </span>
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
                         Job #{activeJobId?.substring(0, 8) || "running"}
@@ -1667,8 +1685,8 @@ export default function IntegrationWorkspace({
                     </div>
                     <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
                       {activeJobType === "EXECUTE"
-                        ? "Hệ thống đang chạy test suite trong Docker container cô lập và ánh xạ ngược độ bao phủ dòng mã."
-                        : "AI đang phân tích luồng controller và tạo test scenarios runnable."}
+                        ? "Running test suite in an isolated runner environment and mapping reverse line coverage."
+                        : "AI is analyzing controller flows and generating runnable test scenarios."}
                     </p>
                   </div>
                 </div>
@@ -1684,7 +1702,7 @@ export default function IntegrationWorkspace({
                     disabled={isCancelling}
                     className="px-2.5 py-1 rounded-[var(--radius-sm)] bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/25 hover:bg-rose-500/20 text-xs font-medium cursor-pointer transition-colors disabled:opacity-50"
                   >
-                    {isCancelling ? "Đang hủy..." : "Hủy tác vụ"}
+                    {isCancelling ? "Canceling..." : "Cancel Task"}
                   </button>
                 </div>
               </div>
@@ -1730,11 +1748,11 @@ export default function IntegrationWorkspace({
                   >
                     <Terminal size={11} />
                     <span>
-                      {showLiveLogsDetails ? "Ẩn console logs" : `Xem console logs (${activeLogs.length} dòng)`}
+                      {showLiveLogsDetails ? "Hide console logs" : `View console logs (${activeLogs.length} lines)`}
                     </span>
                   </button>
                   <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
-                    Tự động đồng bộ kết quả độ bao phủ khi hoàn tất
+                    Auto-syncing coverage results upon completion
                   </span>
                 </div>
 
@@ -1742,7 +1760,7 @@ export default function IntegrationWorkspace({
                 {showLiveLogsDetails && (
                   <div className="p-3 bg-[#090D12] text-slate-300 font-mono text-[11px] max-h-48 overflow-y-auto custom-scrollbar rounded border border-[var(--color-border)]">
                     {activeLogs.length === 0 ? (
-                      <div className="text-slate-500 italic">Đang chờ sự kiện SSE...</div>
+                      <div className="text-slate-500 italic">Waiting for runner events...</div>
                     ) : (
                       activeLogs.map((log, idx) => (
                         <div key={idx} className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2">

@@ -550,16 +550,16 @@ export default function CFGCalculator({
     try {
       setRebuilding(true);
       setError(null);
-      await buildCfgApi(project.id, "");
+      await buildCfgApi(project.id);
       // Wait a moment for the job to process, then refetch
       await new Promise((r) => setTimeout(r, 3000));
       const [cfgRes, ccRes] = await Promise.all([
-        getProjectCfgApi(project.id, ""),
-        getProjectCcApi(project.id, ""),
+        getProjectCfgApi(project.id),
+        getProjectCcApi(project.id),
       ]);
-      setCfgs(cfgRes.data);
-      setCcs(ccRes.data);
-      if (cfgRes.data.length > 0) {
+      setCfgs(cfgRes.data || []);
+      setCcs(ccRes.data || []);
+      if (cfgRes?.data?.length > 0) {
         const firstFile = [...new Set(cfgRes.data.map((c) => c.filePath))][0];
         setSelectedFile(firstFile);
       }
@@ -576,10 +576,10 @@ export default function CFGCalculator({
     async function fetchData() {
       try {
         setLoading(true);
-        // Using snapshotId empty to default to latest snapshot
+        // Default to latest snapshot
         let [cfgRes, ccRes] = await Promise.all([
-          getProjectCfgApi(project.id, ""),
-          getProjectCcApi(project.id, ""),
+          getProjectCfgApi(project.id),
+          getProjectCcApi(project.id),
         ]);
 
         let currentCfgs = cfgRes?.data || [];
@@ -597,11 +597,11 @@ export default function CFGCalculator({
           autoRebuiltRef.current = true;
           setRebuilding(true);
           try {
-            await buildCfgApi(project.id, "");
+            await buildCfgApi(project.id);
             await new Promise((r) => setTimeout(r, 2000));
             const [cfgRes2, ccRes2] = await Promise.all([
-              getProjectCfgApi(project.id, ""),
-              getProjectCcApi(project.id, ""),
+              getProjectCfgApi(project.id),
+              getProjectCcApi(project.id),
             ]);
             currentCfgs = cfgRes2?.data || [];
             currentCcs = ccRes2?.data || [];
