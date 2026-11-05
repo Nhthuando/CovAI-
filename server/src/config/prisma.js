@@ -6,8 +6,9 @@ import { Pool } from "pg";
 let prismaClient;
 
 if (process.env.DATABASE_URL) {
+    const connectionString = process.env.DATABASE_URL.replace(/([?&])sslmode=require(?=&|$)/, "$1sslmode=verify-full");
     const pool = new Pool({ 
-        connectionString: process.env.DATABASE_URL,
+        connectionString,
         max: 25,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 45000,
