@@ -28,7 +28,7 @@ import {
   Code2,
   Terminal,
 } from "lucide-react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor from "./editor/CollaborativeCodeEditor";
 import { useTheme } from "../../contexts/ThemeContext";
 import { GitPanel } from "./GitPanel";
 import {
@@ -788,7 +788,7 @@ export default function Editor({
         },
       }));
     } catch (err) {
-      if (err.status === 409) setConflict({ path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
+      if (err.status === 409) setConflict({ projectId, original: file.content, path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
       setSaveError(err.message || "Could not save file");
     } finally {
       setSaving(false);
@@ -798,7 +798,7 @@ export default function Editor({
   saveHandlerRef.current = handleSave;
 
   const handleCopyCurrentCode = () => {
-    const code = currentFile.draft ?? currentFile.content ?? "";
+    const code = editorRef.current?.getValue() ?? currentFile.draft ?? currentFile.content ?? "";
     if (!code) return;
     navigator.clipboard.writeText(code);
     setCopiedCode(true);
@@ -1387,7 +1387,7 @@ export default function Editor({
           ) : previewMode && isMarkdown ? (
             <MarkdownPreview key="md-preview" content={codeContent} />
           ) : (
-            <MonacoEditor
+            <MonacoEditor projectId={projectId} snapshotId={snapshotId} filePath={activeTabId}
               key={`${activeTabId}-${resolvedTheme}`}
               height="100%"
               language={lang}
@@ -1475,7 +1475,11 @@ export default function Editor({
           <span>Spaces: 2</span>
         </div>
       </div>
-      <FileConflictDialog conflict={conflict} loading={saving} onClose={() => setConflict(null)} onReload={async () => {
+      <FileConflictDialog conflict={conflict} loading={saving} onMerged={async (content, latest) => {
+        const result = await updateFileContentApi(projectId, conflict.path, content, {snapshotId:conflict.snapshotId, expectedVersion:latest.version});
+        setFileContents(previous => ({...previous,[conflict.path]:{...latest,content,draft:undefined,version:result.data.version,workspaceRevision:result.data.workspaceRevision,loading:false,error:null}}));
+        setConflict(null); setSaveError("");
+      }} onClose={() => setConflict(null)} onReload={async () => {
         if (!conflict) return;
         downloadEditorDraft(conflict.path, conflict.draft);
         setSaving(true);

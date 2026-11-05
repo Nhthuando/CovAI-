@@ -42,6 +42,7 @@ export const withPreparedProjectWorkspace = async ({projectId,snapshotId,userId,
         };
         const publication = shouldPublish ? await publishPreparedWorkspace({projectId,snapshotId,userId,capability,
             expectedWorkspaceRevision,beforeFiles,preparedRoot:context.rootDir,requestId:operation.id,afterMutation:complete,includeGitMetadata,
+            provenanceSource:/^(AI_|APPLY_UNIT_SUGGESTION|SYSTEM_TEST_IMPROVEMENT)/.test(type) ? 'AI_APPLY' : 'HUMAN_EDIT',
             emitCommittedEvent:async event=>deferPreparedCommit(()=>deliverProjectEvent(event))}) : null;
         if (!shouldPublish) await withProjectGuard({projectId,userId,capability},tx=>complete(tx,{workspaceRevision:expectedWorkspaceRevision,changedPaths:[]}));
         await deliverPreparedCommits();

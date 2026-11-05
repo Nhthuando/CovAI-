@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import Editor, { DiffEditor } from "@monaco-editor/react";
+import { DiffEditor } from "@monaco-editor/react";
+import Editor from "../editor/CollaborativeCodeEditor";
 import {
   X,
   Save,
@@ -123,7 +124,7 @@ export default function SystemTestEditorModal({
       setSuccessMessage("File saved successfully.");
       if (onSaved) onSaved(res.data);
     } catch (err) {
-      if (err.response?.status === 409 || err.status === 409) setConflict({ path: filePath, draft: content });
+      if (err.response?.status === 409 || err.status === 409) setConflict({ projectId, snapshotId, original: originalContent, path: filePath, draft: content });
       setError(
         err.response?.data?.message ||
           err.message ||
@@ -423,7 +424,7 @@ export default function SystemTestEditorModal({
                 }}
               />
             ) : (
-              <Editor
+              <Editor projectId={projectId} snapshotId={snapshotId} filePath={filePath}
                 height="100%"
                 language="javascript"
                 value={content}
@@ -444,7 +445,10 @@ export default function SystemTestEditorModal({
           </div>
         </div>
       </div>
-      <FileConflictDialog conflict={conflict} loading={loading} onClose={() => setConflict(null)} onReload={async () => {
+      <FileConflictDialog conflict={conflict} loading={loading} onMerged={async (merged, latest) => {
+        const result = await updateSystemTestFileContent(snapshotId,filePath,merged,{expectedVersion:latest.version});
+        setContent(merged); setOriginalContent(merged); setBaseVersion(result.data?.version || null); setConflict(null); setError(null); onSaved?.();
+      }} onClose={() => setConflict(null)} onReload={async () => {
         setLoading(true);
         try {
           const response = await getSystemTestFileContent(snapshotId, filePath);

@@ -2982,6 +2982,16 @@ export const generateColdStartSystemTestsController = async (req, res) => {
             frameworks = await detectSystemTestFrameworksForSnapshot(snapshotId, snapshot);
         } catch (_) {}
 
+        // Automatically sync scenario catalog so scenarios are immediately available in Scenario Library
+        if (prisma?.systemScenario) {
+            try {
+                const { syncSystemScenarioCatalog } = await import("../services/systemScenarioCatalog.service.js");
+                await syncSystemScenarioCatalog({ client: prisma, snapshotId, rootDir: snapshot.rootDir });
+            } catch (syncErr) {
+                console.warn("[generateColdStartSystemTestsController] Auto-sync catalog notice:", syncErr.message);
+            }
+        }
+
         return res.status(200).json({
             success: true,
             message: `Successfully generated ${generationResult.framework} system tests with ${generationResult.scenarioCount} scenarios.`,

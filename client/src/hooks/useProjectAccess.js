@@ -10,10 +10,10 @@ export function useProjectAccess(projectId) {
     queryKey: projectAccessKey(userId, projectId),
     queryFn: ({ signal }) => getProjectAccessApi(projectId, signal),
     enabled: !!userId && !!projectId,
-    staleTime: 0,
+    staleTime: 5000,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
-    refetchInterval: 5000,
+    refetchInterval: 15000,
     retry: (count, error) => error.status >= 500 && count < 1,
   });
   const access = query.error ? null : query.data;

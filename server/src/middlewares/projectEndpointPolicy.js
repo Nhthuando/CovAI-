@@ -1,3 +1,7 @@
+import { editorEnabled } from '../../../shared/editorProtocol.js';
+import { editorSnapshotStatus, checkpointEditorDocuments } from '../services/projectEditorCheckpoint.service.js';
+import { withEditorCheckpoint } from '../services/projectEditorRequestContext.service.js';
+import { editorDocumentsFor } from '../services/projectEditorBridge.service.js';
 import prisma from "../config/prisma.js";
 import { resolveProjectAccess, resolveSnapshotAccess } from "../services/projectAccess.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -35,7 +39,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
         snapshotId = parts[0];
         if (!read && /\/install-dependencies$/.test(path)) capability = "integrations.write";
         else if (!read && /\/apply-tests$/.test(path)) capability = "files.write";
-        else if (!read && /\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path)) capability = "evidence.approve";
+        else if (!read && (/\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path) || /\/system\/proposals\/[^/]+\/apply$/.test(path))) capability = "evidence.approve";
         else if (!read && /\/(apply|apply-suggestion|save-ai-test|materialize)(?:\/|$)/.test(path)) capability = "files.write";
         else if (!read && /generate|suggest|optimize|regenerate|improvements/.test(path)) capability = "ai.use";
         else if (method === "PUT" || method === "PATCH" || method === "DELETE") capability = "files.write";
@@ -80,6 +84,22 @@ export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async
             // redundant prefetch that can diverge from the actual resolver.
             req.projectAccess = await snapshotAccess({ ...rule, userId: req.user.id, db });
         } else req.projectAccess = await projectAccess({ ...rule, userId: req.user.id, db });
+        if (editorEnabled() && !["GET", "HEAD"].includes(req.method)) {
+            const projectId = req.projectAccess.project.id;
+            if (family === 'git' || /upload-zip|import-github|\/restore$|\/snapshots$/.test(req.path)) {
+                const rows = await editorDocumentsFor(db, { projectId, active: true });
+                if (rows.some(row => row.revision !== row.checkpointRevision)) throw new ServiceError('Save shared changes before changing the workspace or Git state.',409,'EDITOR_DRAFT_CONFLICT');
+            }
+            if (['tests.run', 'ai.use'].includes(rule.capability) && /run|analysis|generate|suggest|optimize|improvements|mutations|calculate|refresh|cfg\/build/i.test(req.path)) {
+                const snapshotId = req.projectAccess.snapshot?.id || (await db.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}}))?.id;
+                if (snapshotId) {
+                    const state = await editorSnapshotStatus({projectId,snapshotId,userId:req.user.id,db});
+                    const documents = state.documents.filter(doc=>doc.dirty);
+                    const checkpoint = documents.length ? await checkpointEditorDocuments({projectId,snapshotId,userId:req.user.id,db,documents,expectedWorkspaceRevision:state.workspaceRevision}) : state;
+                    return withEditorCheckpoint(checkpoint.workspaceRevision,()=>next());
+                }
+            }
+        }
         return next();
     } catch (error) {
         return res.status(error.statusCode || 500).json({ success: false, code: error.code || "PROJECT_POLICY_ERROR", message: error.statusCode ? error.message : "Project access could not be verified" });

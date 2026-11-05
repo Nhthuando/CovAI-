@@ -7,6 +7,7 @@ import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import CoveragePanel from "./CoveragePanel";
 import Editor from "./Editor";
+import RetainedPanel from '../common/RetainedPanel';
 import GitPanel from "./GitPanel";
 import CoverageDashboard from "./CoverageDashboard";
 import UnitTestDashboard from "./UnitTestDashboard";
@@ -1081,13 +1082,16 @@ function LayoutInner() {
           </div>
 
           <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <RetainedPanel active={activeActivity === 'architecture'}>
             <ProjectArchitecturePanel
               projectId={project?.id}
               initialFile={archInitialContext?.initialFile}
             />
+            </RetainedPanel>
           </div>
 
           <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <RetainedPanel active={activeActivity === 'overview'}>
             <UnifiedDashboard
               projectId={project?.id}
               project={project}
@@ -1108,10 +1112,12 @@ function LayoutInner() {
               }}
               onAskAi={handleAskAiPrompt}
             />
+            </RetainedPanel>
           </div>
 
           <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
             <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
+              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'unit'}>
               <UnitTestDashboard
                 snapshotId={
                   searchParams.get("snapshotId") ||
@@ -1128,8 +1134,10 @@ function LayoutInner() {
                 onOpenCFG={handleOpenCFG}
                 runTrigger={coverageRunTrigger}
               />
+              </RetainedPanel>
             </div>
             <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
+              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'integration'}>
               <IntegrationTestDashboard
                 snapshotId={
                   searchParams.get("snapshotId") ||
@@ -1148,8 +1156,10 @@ function LayoutInner() {
                 initialContext={integrationInitialContext}
                 onContextChange={setIntegrationInitialContext}
               />
+              </RetainedPanel>
             </div>
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
+              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'system'}>
               <SystemTestDashboard
                 snapshotId={
                   project?.snapshots?.[0]?.id ||
@@ -1162,6 +1172,7 @@ function LayoutInner() {
                 projectId={project?.id}
                 onOpenFile={handleOpenFileByPath}
               />
+              </RetainedPanel>
             </div>
           </div>
 

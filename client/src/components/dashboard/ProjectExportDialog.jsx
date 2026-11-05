@@ -5,6 +5,8 @@ import Button from "../common/Button";
 import { getProjectSnapshotsApi } from "../../services/project.service";
 import { downloadProjectExportApi } from "../../services/export.service";
 import { useToast } from "./ToastContext";
+import { useProjectAccess } from '../../hooks/useProjectAccess';
+import { checkpointCurrentSnapshot } from '../../services/projectEditor.service';
 
 const formats = [
   { id: "pdf", label: "Analysis report", extension: "PDF", icon: FileText, description: "A formatted report with coverage, quality, test results and analysis details. Ready to share or print." },
@@ -13,6 +15,7 @@ const formats = [
 ];
 
 export default function ProjectExportDialog({ project, initialSnapshotId, onClose }) {
+  const access = useProjectAccess(project.id);
   const dialogRef = useRef(null);
   const requestRef = useRef(null);
   const initialSnapshotRef = useRef(initialSnapshotId);
@@ -57,6 +60,7 @@ export default function ProjectExportDialog({ project, initialSnapshotId, onClos
     const controller = new AbortController();
     requestRef.current = controller;
     try {
+      if (format === 'zip' && access.access?.features?.liveEditing && access.can('files.write') && snapshots[0]?.id === snapshotId) await checkpointCurrentSnapshot({ projectId: project.id, snapshotId });
       const filename = await downloadProjectExportApi(project.id, { snapshotId, format, signal: controller.signal });
       showToast({ type: "success", title: "Export downloaded", message: filename });
       onClose();

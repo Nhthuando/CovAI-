@@ -14,14 +14,16 @@ export async function resolveProjectAccess({ projectId, userId, capability, db =
     const project = await db.project.findFirst({ where: { id: projectId, ...membershipWhere(userId) } });
     if (!project) throw failure('Project not found', 404, 'PROJECT_NOT_FOUND');
     let role = 'OWNER';
+    let disciplineRole = 'PM';
     if (project.ownerId !== userId) {
         const member = await db.projectMember.findUnique({ where: { projectId_userId: { projectId, userId } } });
         if (!member) throw failure('Project not found', 404, 'PROJECT_NOT_FOUND');
         role = member.role;
+        disciplineRole = member.disciplineRole ?? null;
     }
     const capabilities = capabilitiesForRole(role);
     if (!capabilities.includes(capability)) throw failure('Your role does not allow this action', 403, 'CAPABILITY_DENIED');
-    return { project, role, capabilities };
+    return { project, role, disciplineRole, capabilities };
 }
 export async function resolveSnapshotAccess({ projectId, snapshotId, userId, capability, db = prisma }) {
     if (!snapshotId && !projectId) throw failure('Snapshot not found', 404, 'RESOURCE_NOT_FOUND');

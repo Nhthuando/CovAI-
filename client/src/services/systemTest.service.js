@@ -1,5 +1,8 @@
 import { getAIModelHeaders } from './aiModel.service.js';
-import axios from "axios";
+import axiosLibrary from "axios";
+import { prepareEditorRequest } from './editorAwareRequest';
+const axios = axiosLibrary.create();
+axios.interceptors.request.use(async config => { await prepareEditorRequest(config.url, {method: config.method}); return config; });
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -150,6 +153,9 @@ export const updateSystemTestFileContent = async (
   content,
   options = {}
 ) => {
+  const { saveCollaborativeSnapshotFile } = await import('../lib/editor/editorModelRegistry');
+  const live = await saveCollaborativeSnapshotFile(snapshotId, filePath, content);
+  if (live) return live;
   const headers = getAuthHeaders();
   const response = await axios.put(
     `${API_BASE}/coverage/${snapshotId}/system/tests/content`,

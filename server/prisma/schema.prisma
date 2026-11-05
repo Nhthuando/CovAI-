@@ -34,6 +34,8 @@ model User {
   requirementApprovals SystemRequirementRevision[] @relation("RequirementApprover")
   bindingApprovals SystemAssertionBinding[] @relation("BindingApprover")
   proposalApplications SystemTestProposal[] @relation("ProposalApplier")
+  editorUpdates ProjectEditorUpdate[]
+  codeChanges ProjectCodeChange[]
   projectMemberships ProjectMember[] @relation("MemberUser")
   membershipsAdded ProjectMember[] @relation("MemberAddedBy")
   sentProjectInvitations ProjectInvitation[] @relation("InvitationSender")
@@ -50,6 +52,8 @@ model User {
 
 model Project {
   id                   String            @id @default(cuid())
+  editorDocuments ProjectEditorDocument[]
+  codeChanges ProjectCodeChange[]
   accessRevision       Int               @default(0)
   workspaceRevision    Int               @default(0)
   eventSequence        Int               @default(0)
@@ -99,6 +103,8 @@ model Project {
 }
 
 model ProjectSnapshot {
+  editorDocuments ProjectEditorDocument[]
+  codeChanges ProjectCodeChange[]
   id                          String                    @id @default(cuid())
   fileVersions                ProjectFileVersion[]
   mutations                   ProjectMutation[]
@@ -767,6 +773,7 @@ model SystemMutationRun {
 }
 
 model ProjectMember {
+  disciplineRole String?
   id String @id @default(cuid())
   projectId String
   userId String
@@ -781,6 +788,7 @@ model ProjectMember {
   @@index([userId])
 }
 model ProjectInvitation {
+  disciplineRole String?
   id String @id @default(cuid())
   projectId String
   canonicalEmail String
@@ -832,6 +840,8 @@ model ProjectEvent {
   @@unique([projectId, sequence])
 }
 model ProjectFileVersion {
+  lineAttributionJson Json?
+  attributionStatus String?
   id String @id @default(cuid())
   snapshotId String
   relativePath String
@@ -924,4 +934,56 @@ model AiQuotaReservation {
   createdAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@unique([userId, requestKey])
+}
+
+model ProjectEditorDocument {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  relativePath String
+  generation Int @default(1)
+  revision Int @default(0)
+  stateBytes Bytes
+  text String @db.Text
+  contentHash String
+  baseFileRevision Int
+  baseFileHash String
+  checkpointRevision Int @default(0)
+  lineAttributionJson Json
+  attributionStatus String @default("AVAILABLE")
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  updates ProjectEditorUpdate[]
+  @@unique([snapshotId, relativePath])
+  @@index([projectId, active])
+}
+model ProjectEditorUpdate {
+  id String @id @default(cuid())
+  documentId String
+  generation Int
+  actorId String?
+  requestId String
+  updateHash String
+  resultRevision Int
+  resultContentHash String
+  createdAt DateTime @default(now())
+  document ProjectEditorDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@unique([documentId, generation, actorId, requestId])
+}
+model ProjectCodeChange {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  actorId String?
+  source String
+  metadata Json?
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([projectId, snapshotId])
 }

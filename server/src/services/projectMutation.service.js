@@ -1,3 +1,4 @@
+import { assertEditorReplacementAllowed, reconcileEditorReplacement } from './projectEditorBridge.service.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -48,7 +49,7 @@ export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, ca
             return { mutationId: previous.id, snapshotId, path: resolved.relativePath, version: currentVersion ? fileVersion(currentVersion) : undefined,
                 workspaceRevision: previous.nextWorkspaceRevision, reused: true };
         }
-        if (expectedWorkspaceRevision !== undefined && expectedWorkspaceRevision !== project.workspaceRevision) {
+        if (!['WRITE_FILE', 'APPLY_TEST'].includes(kind) && expectedWorkspaceRevision !== undefined && expectedWorkspaceRevision !== project.workspaceRevision) {
             throw projectFileError('SNAPSHOT_CHANGED', 'Workspace changed; refresh its file tree', 409, { workspaceRevision: project.workspaceRevision });
         }
         let stat;
@@ -76,6 +77,7 @@ export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, ca
             try { await fs.lstat(destination.target); throw projectFileError('FILE_ALREADY_EXISTS', 'Destination already exists'); }
             catch (error) { if (error.code !== 'ENOENT') throw error; }
         }
+        await assertEditorReplacementAllowed({ tx, projectId, snapshotId, paths: [resolved.relativePath, ...(destination ? [destination.relativePath] : [])] });
         const journalDir = mutationJournalDirectory(resolved.root);
         try {
             const journalStat = await fs.lstat(journalDir);
@@ -118,6 +120,7 @@ export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, ca
             where: { snapshotId, relativePath: { startsWith: `${resolved.relativePath}/` } },
             data: { deleted: true, sha256: null, revision: { increment: 1 }, updatedByUserId: userId },
         });
+        await reconcileEditorReplacement({ tx, projectId, snapshotId, actorId: userId, source: kind === 'APPLY_TEST' ? 'AI_APPLY' : 'HUMAN_EDIT', changes: [{ path: resolved.relativePath, newPath: destination?.relativePath, before: writesContent ? before?.toString('utf8') ?? '' : undefined, content: writesContent ? content : kind === 'CREATE_FOLDER' ? undefined : null }] });
         const mutationResult = afterMutation ? await afterMutation(tx) : undefined;
         const nextProject = await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
         await tx.projectMutation.update({ where: { id: mutation.id }, data: { state: 'APPLIED' } });

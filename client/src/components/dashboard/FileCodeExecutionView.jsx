@@ -20,7 +20,7 @@ import {
   ChevronRight,
   Layers,
 } from "lucide-react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor from "./editor/CollaborativeCodeEditor";
 import { updateFileContentApi } from "../../services/project.service.js";
 import { useVersionedProjectFile } from "../../hooks/useVersionedProjectFile";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
@@ -749,7 +749,7 @@ export default function FileCodeExecutionView({
       >
         {viewMode === "editor" ? (
           <div style={{ flex: 1, minHeight: 0, height: "100%", width: "100%" }}>
-            <MonacoEditor
+            <MonacoEditor projectId={projectId} snapshotId={snapshotId} filePath={filePath}
               height="100%"
               minHeight="100%"
               language={lang}

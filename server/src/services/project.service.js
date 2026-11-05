@@ -1,5 +1,6 @@
 import prisma from "../config/prisma.js";
 import { membershipWhere, resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import { assertEditorSnapshotChangeAllowed } from './projectEditorBridge.service.js';
 import { publishProjectEvent, deliverProjectEvent } from './projectEvent.service.js';
 import { readVersionedProjectFile,projectEditableWorkspaceRoot } from "./projectFileVersion.service.js";
 import { mutateProjectWorkspace } from "./projectMutation.service.js";
@@ -616,6 +617,7 @@ export const createProjectCheckpoint = async ({
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
   const committed = await withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx, access) => {
+    await assertEditorSnapshotChangeAllowed(tx, projectId);
     if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing checkpoint; try again', 409, 'SNAPSHOT_CHANGED');
     const newSnapshot = await tx.projectSnapshot.create({
     data: {
@@ -738,6 +740,7 @@ export const restoreProjectCheckpoint = async ({
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
   const committed = await withProjectGuard({ projectId, userId, capability: 'snapshot.restore' }, async (tx, access) => {
+    await assertEditorSnapshotChangeAllowed(tx, projectId);
     if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing restore; try again', 409, 'SNAPSHOT_CHANGED');
     const newSnapshot = await tx.projectSnapshot.create({
     data: {

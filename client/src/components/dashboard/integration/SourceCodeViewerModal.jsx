@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect, useRef, useCallback } from "react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor from "../editor/CollaborativeCodeEditor";
 import { X, ExternalLink, Copy, Check, FileCode, Loader2, AlertCircle, Eye } from "lucide-react";
 import { getFileContentApi } from "../../../services/project.service.js";
 
@@ -61,7 +61,7 @@ export default function SourceCodeViewerModal({
     setLoading(true);
     setError(null);
 
-    getFileContentApi(projectId, currentPath, snapshotId)
+    getFileContentApi(projectId, currentPath, { snapshotId })
       .then((res) => {
         if (!isMounted) return;
         const raw = res?.data?.content ?? res?.content ?? "";
@@ -79,7 +79,7 @@ export default function SourceCodeViewerModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, projectId, currentPath]);
+  }, [isOpen, projectId, currentPath, snapshotId]);
 
   // Handle jump and line highlight in Monaco
   const applyLineHighlight = useCallback(() => {
@@ -254,7 +254,7 @@ export default function SourceCodeViewerModal({
           )}
 
           {!error && (
-            <MonacoEditor
+            <MonacoEditor projectId={projectId} snapshotId={snapshotId} filePath={currentPath}
               height="100%"
               language={getLanguage(currentPath)}
               theme="vs-dark"

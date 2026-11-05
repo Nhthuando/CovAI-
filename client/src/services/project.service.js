@@ -1,3 +1,4 @@
+import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -33,7 +34,7 @@ async function handleResponse(res) {
 }
 
 export async function createProjectApi({ name, description, repoUrl }) {
-  const res = await fetch(`${BASE_URL}/projects`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ name, description, repoUrl }),
@@ -42,14 +43,14 @@ export async function createProjectApi({ name, description, repoUrl }) {
 }
 
 export async function getProjectsApi() {
-  const res = await fetch(`${BASE_URL}/projects`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
 }
 
 export async function deleteProjectApi(projectId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}`, {
     method: "DELETE",
     headers: getAuthHeaders(),
   });
@@ -57,7 +58,7 @@ export async function deleteProjectApi(projectId) {
 }
 
 export async function getProjectTreeApi(projectId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/tree`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/tree`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
@@ -73,7 +74,7 @@ export async function validateArchiveApi(file) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE_URL}/projects/validate-archive`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/validate-archive`, {
     method: "POST",
     headers,
     body: formData,
@@ -92,7 +93,7 @@ export async function uploadZipApi(projectId, file) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/upload-zip`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/upload-zip`, {
     method: "POST",
     headers,
     body: formData,
@@ -101,7 +102,7 @@ export async function uploadZipApi(projectId, file) {
 }
 
 export async function importGithubUrlApi(projectId, url) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/github/projects/${projectId}/import-github-url`,
     {
       method: "POST",
@@ -113,7 +114,7 @@ export async function importGithubUrlApi(projectId, url) {
 }
 
 export async function importGithubRepoApi(projectId, owner, repo) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/github/projects/${projectId}/import-github-repo`,
     {
       method: "POST",
@@ -126,7 +127,7 @@ export async function importGithubRepoApi(projectId, owner, repo) {
 
 export async function getGithubRepositoriesApi() {
   try {
-    const res = await fetch(`${BASE_URL}/auth/github/repositories`, {
+    const res = await editorAwareFetch(`${BASE_URL}/auth/github/repositories`, {
       headers: getAuthHeaders(),
     });
     if (!res.ok) {
@@ -141,7 +142,7 @@ export async function getGithubRepositoriesApi() {
 
 export async function getFileContentApi(projectId, filePath, options = {}) {
   const { snapshotId, signal } = typeof options === "string" ? { snapshotId: options } : options || {};
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}${snapshotId ? `&snapshotId=${encodeURIComponent(snapshotId)}` : ""}`,
     {
       headers: getAuthHeaders(),
@@ -152,7 +153,10 @@ export async function getFileContentApi(projectId, filePath, options = {}) {
 }
 
 export async function updateFileContentApi(projectId, filePath, content, { snapshotId, expectedVersion, expectedWorkspaceRevision, requestId = crypto.randomUUID() } = {}) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/file-content`, {
+  const { saveActiveCollaborativeFile } = await import('../lib/editor/editorModelRegistry');
+  const live = await saveActiveCollaborativeFile(projectId, snapshotId, filePath, content);
+  if (live) return live;
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/file-content`, {
     method: "PUT",
     headers: getAuthHeaders(),
     body: JSON.stringify({ path: filePath, content, snapshotId, expectedVersion, expectedWorkspaceRevision, requestId }),
@@ -161,7 +165,7 @@ export async function updateFileContentApi(projectId, filePath, content, { snaps
 }
 
 export async function createProjectFileApi(projectId, filePath, content = "", options = {}) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/files`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/files`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ path: filePath, content, ...options, requestId: options.requestId || crypto.randomUUID() }),
@@ -170,7 +174,7 @@ export async function createProjectFileApi(projectId, filePath, content = "", op
 }
 
 export async function createProjectFolderApi(projectId, folderPath, options = {}) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/folders`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/folders`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ path: folderPath, ...options, requestId: options.requestId || crypto.randomUUID() }),
@@ -179,7 +183,7 @@ export async function createProjectFolderApi(projectId, folderPath, options = {}
 }
 
 export async function renameProjectEntryApi(projectId, filePath, newPath, options = {}) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/entries`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/entries`, {
     method: "PATCH",
     headers: getAuthHeaders(),
     body: JSON.stringify({ path: filePath, newPath, ...options, requestId: options.requestId || crypto.randomUUID() }),
@@ -188,7 +192,7 @@ export async function renameProjectEntryApi(projectId, filePath, newPath, option
 }
 
 export async function deleteProjectEntryApi(projectId, filePath, options = {}) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/entries?path=${encodeURIComponent(filePath)}`,
     {
       method: "DELETE",
@@ -200,7 +204,7 @@ export async function deleteProjectEntryApi(projectId, filePath, options = {}) {
 }
 
 export async function getUserProfileApi() {
-  const res = await fetch(`${BASE_URL}/users/me`, {
+  const res = await editorAwareFetch(`${BASE_URL}/users/me`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
@@ -215,7 +219,7 @@ export async function sendAiChatMessageApi(
   sessionId = null,
   context = {},
 ) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/chat`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ message, model, attachments, sessionId, ...context }),
@@ -224,14 +228,14 @@ export async function sendAiChatMessageApi(
 }
 
 export async function getChatSessionsApi(projectId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
 }
 
 export async function createChatSessionApi(projectId, title) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ title }),
@@ -240,7 +244,7 @@ export async function createChatSessionApi(projectId, title) {
 }
 
 export async function getChatSessionMessagesApi(projectId, sessionId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/chat/sessions/${sessionId}`,
     {
       headers: getAuthHeaders(),
@@ -250,7 +254,7 @@ export async function getChatSessionMessagesApi(projectId, sessionId) {
 }
 
 export async function updateChatSessionApi(projectId, sessionId, title) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/chat/sessions/${sessionId}`,
     {
       method: "PATCH",
@@ -262,7 +266,7 @@ export async function updateChatSessionApi(projectId, sessionId, title) {
 }
 
 export async function deleteChatSessionApi(projectId, sessionId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/chat/sessions/${sessionId}`,
     {
       method: "DELETE",
@@ -273,7 +277,7 @@ export async function deleteChatSessionApi(projectId, sessionId) {
 }
 
 export async function getProjectCfgApi(projectId, snapshotId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/cfg?snapshotId=${snapshotId}`,
     {
       headers: getAuthHeaders(),
@@ -283,7 +287,7 @@ export async function getProjectCfgApi(projectId, snapshotId) {
 }
 
 export async function getProjectCcApi(projectId, snapshotId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/cc?snapshotId=${snapshotId}`,
     {
       headers: getAuthHeaders(),
@@ -293,7 +297,7 @@ export async function getProjectCcApi(projectId, snapshotId) {
 }
 
 export async function buildCfgApi(projectId, snapshotId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ snapshotId }),
@@ -302,14 +306,14 @@ export async function buildCfgApi(projectId, snapshotId) {
 }
 
 export async function getAiSuggestionsApi(projectId) {
-  const res = await fetch(`${BASE_URL}/ai-suggestions?projectId=${projectId}`, {
+  const res = await editorAwareFetch(`${BASE_URL}/ai-suggestions?projectId=${projectId}`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
 }
 
 export async function getProjectSnapshotsApi(projectId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
@@ -319,7 +323,7 @@ export async function getProjectStructureAnalysisApi(projectId, snapshotId) {
   const query = snapshotId
     ? `?snapshotId=${encodeURIComponent(snapshotId)}`
     : "";
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/structure-analysis${query}`,
     {
       headers: getAuthHeaders(),
@@ -329,7 +333,7 @@ export async function getProjectStructureAnalysisApi(projectId, snapshotId) {
 }
 
 export async function runAnalysisApi(projectId, { snapshotId, testType } = {}) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ snapshotId, testType }),
@@ -340,7 +344,7 @@ export async function runAnalysisApi(projectId, { snapshotId, testType } = {}) {
 }
 
 export async function runProjectStructureAnalysisApi(projectId, snapshotId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/structure-analysis`,
     {
       method: "POST",
@@ -356,7 +360,7 @@ export async function generateSkeletonApi(
   snapshotId,
   mode = "SKELETON",
 ) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ snapshotId, mode }),
@@ -378,7 +382,7 @@ export async function generateIntegrationTestApi(
   force = false,
   targetEndpoints = null,
 ) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/ai/generate-integration-test`,
     {
       method: "POST",
@@ -393,7 +397,7 @@ export async function getFrameworkRecommendationApi(projectId, snapshotId) {
   const query = snapshotId
     ? `?snapshotId=${encodeURIComponent(snapshotId)}`
     : "";
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/test-framework-recommendation${query}`,
     {
       headers: getAuthHeaders(),
@@ -407,7 +411,7 @@ export async function selectTestingFrameworkApi(
   snapshotId,
   framework,
 ) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/test-framework-selection`,
     {
       method: "PUT",
@@ -419,7 +423,7 @@ export async function selectTestingFrameworkApi(
 }
 
 export async function createProjectSnapshotApi(projectId, { label, message }) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ label, message }),
@@ -428,7 +432,7 @@ export async function createProjectSnapshotApi(projectId, { label, message }) {
 }
 
 export async function restoreProjectSnapshotApi(projectId, snapshotId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/restore`,
     {
       method: "POST",
@@ -442,7 +446,7 @@ export async function getArchitectureAiSummaryApi(
   projectId,
   { snapshotId, filePath, force = false },
 ) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/architecture/ai-summary`,
     {
       method: "POST",
@@ -454,7 +458,7 @@ export async function getArchitectureAiSummaryApi(
 }
 
 export async function getProjectIntegrationDetection(projectId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/integration/frameworks`, {
+  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/integration/frameworks`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);
