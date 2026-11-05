@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { currentEditorCheckpoint } from './projectEditorRequestContext.service.js';
 import prisma from '../config/prisma.js';
 import { withProjectGuard } from './projectAccess.service.js';
 import { projectFileError } from './projectFileVersion.service.js';
@@ -12,6 +13,8 @@ export const admitProjectOperation = async ({projectId,snapshotId,userId,type,in
     if (typeof requestId !== 'string' || !requestId || requestId.length > 200) throw projectFileError('INVALID_REQUEST_ID','Invalid operation request identifier',400);
     const capability = type.startsWith('AI_') ? 'ai.use' : 'tests.run';
     return withProjectGuard({projectId,userId,capability,db},async (tx,access) => {
+        const expectedWorkspaceRevision = currentEditorCheckpoint();
+        if (expectedWorkspaceRevision !== undefined && expectedWorkspaceRevision !== access.project.workspaceRevision) throw projectFileError('SNAPSHOT_CHANGED','The saved workspace changed before the operation started. Run it again.');
         const snapshot = await tx.projectSnapshot.findFirst({where:{id:snapshotId,projectId}});
         if (!snapshot) throw projectFileError('RESOURCE_NOT_FOUND','Snapshot not found',404);
         if (!snapshot.rootDir) throw projectFileError('SNAPSHOT_NOT_READY','Project snapshot is not ready for analysis',409);

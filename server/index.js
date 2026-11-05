@@ -1,3 +1,5 @@
+import projectEditorRoutes from './src/routes/projectEditor.route.js';
+import { attachProjectEditorGateway } from './src/realtime/projectEditor.gateway.js';
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -59,6 +61,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
+  maxHttpBufferSize: 2 * 1024 * 1024 + 65536,
   cors: {
     origin: [
       process.env.CLIENT_URL || "http://localhost:5173",
@@ -99,6 +102,7 @@ app.use("/api/auth", authRoute);
 app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
 app.use('/api/ai-agents', aiAgentRoutes);
+app.use('/api/projects', projectEditorRoutes);
 app.use('/api/projects', projectMemberRoutes);
 app.use('/api/projects', projectEventRoutes);
 app.use('/api/invitations', projectInvitationRoutes);
@@ -162,6 +166,7 @@ io.on("connection", (socket) => {
 // Make io available globally for services
 global.io = io;
 attachProjectSubscriptions(io);
+attachProjectEditorGateway(io);
 
 async function startServer() {
   try {

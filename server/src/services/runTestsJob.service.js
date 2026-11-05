@@ -1372,7 +1372,7 @@ export const healAllTestFiles = (_rootDir, _specificFiles = []) => {
  * SCRUM-139: Run npm install in rootDir via Docker if dependencies missing.
  * @returns {Promise<void>}
  */
-const runNpmInstall = async (jobId, rootDir) => {
+export const runNpmInstall = async (jobId, rootDir) => {
     const rootPkg = path.join(rootDir, "package.json");
     const hasRootPkg = fs.existsSync(rootPkg);
     const nodeModulesDir = path.join(rootDir, "node_modules");

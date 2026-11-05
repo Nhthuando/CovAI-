@@ -276,8 +276,13 @@ _Mục tiêu: Đóng gói toàn bộ các dịch vụ kiểm thử tích hợp t
 
 _Mục tiêu: Tái sử dụng shell layout, đập bỏ các bảng logic cũ bị lỗi; xây dựng giao diện báo cáo độ bao phủ API chuẩn xác, bóc tách điểm lỗi và cho phép lưu test case linh hoạt._
 
-- [x] **Task 5.1: Giao Diện Workspace & Layout Cơ Bản [TÁI SỬ DỤNG]**
-  - [x] `IntegrationWorkspace.jsx`, `IntegrationTargetsPane.jsx`, `IntegrationScenariosPane.jsx`.
+- [x] **Task 5.1: Giao Diện Workspace & Layout Tinh Giản [TÁI CẤU TRÚC & TINH GIẢN]**
+  - [x] `IntegrationWorkspace.jsx`, `IntegrationRouteMatrixTable.jsx`, `IntegrationScenariosPane.jsx`, `IntegrationReportEmbed.jsx`.
+  - [x] Tinh giản 4 tab làm việc trực quan, loại bỏ các mục trùng lặp:
+    1. **Endpoints Matrix**: Quét và ánh xạ API Express/Node.js, kiểm tra trạng thái Pass/Fail/Uncovered.
+    2. **Test Scenarios**: Quản lý kịch bản, Monaco Editor, AI sinh test case, Apply vào repo.
+    3. **Execution & Logs**: Terminal theo dõi log console thời gian thực.
+    4. **Executive Report**: Báo cáo tổng hợp chất lượng, chẩn đoán 5 tầng lỗi, phân tích giao thức và module.
 
 - [x] **Task 5.2: Bổ Sung Banner & Modal Xử Lý 4 Kịch Bản Thư Viện [XÂY MỚI]**
   - [x] **Banner "Dự Án Chưa Có Test Integration"**:
@@ -287,17 +292,16 @@ _Mục tiêu: Tái sử dụng shell layout, đập bỏ các bảng logic cũ b
     - Hiển thị danh sách thư viện cần thiết suy luận từ mã test (vd: `supertest@^6.3.3`, `jest@^29.0.0` hoặc `@playwright/test`).
     - Nút bấm: **"Cài đặt thư viện & Tiếp tục phân tích"** gọi API auto-install dependencies.
 
-- [x] **Task 5.3: Nâng Cấp Bảng Báo Cáo Đo Độ Bao Phủ & Tầng Bị Lỗi [ĐẬP ĐI XÂY LẠI]**
-  - [x] Thẻ chỉ số tổng quan (Overview Metric Cards) trong `IntegrationRunResultsPane.jsx`:
+- [x] **Task 5.3: Báo Cáo Đo Độ Bao Phủ & Chẩn Đoán 5 Tầng Lỗi Hợp Nhất [HỢP NHẤT & TINH GỌN]**
+  - [x] Thẻ chỉ số tổng quan (Overview Metric Cards) chuẩn trong `IntegrationWorkspace.jsx` & `IntegrationReportEmbed.jsx`:
     - **API Pass Rate %**: Tỉ lệ API test thành công trên tổng số API đã thực thi.
     - **API Coverage %**: Tỉ lệ API đã có test trên tổng số API hệ thống kèm progress bar trực quan.
-    - **Code Coverage %**: Dòng, Nhánh, Hàm, Câu lệnh (Lines, Branches, Functions, Stmts %).
-    - Tổng quan trạng thái: `Passed APIs` / `Failed APIs` / `Uncovered APIs`.
-  - [x] **Chi tiết kịch bản thất bại (Failure Inspector)**:
-    - Hiển thị nhãn tầng bị lỗi chuẩn xác: `[ROUTER_NOT_FOUND]`, `[MIDDLEWARE_REJECTED]`, `[CONTROLLER_CRASH]`, `[DATABASE_FAILURE]`, `[ASSERTION_FAILED]`.
-    - Khối code frame hiển thị chính xác dòng mã bị fail, số dòng và callstack chi tiết.
-    - Hiển thị Expected Response vs Received Response kèm HTTP status và body preview.
-    - Nút **"Sửa kịch bản bằng AI"** kích hoạt AI Booster sửa lỗi tự động.
+    - **5-Layer Health**: Tình trạng 5 tầng lỗi (Router, Middleware, Controller, Database, Assertion).
+    - **Execution Time**: Thời gian thực thi và timestamp lần chạy gần nhất.
+  - [x] **Chẩn đoán 5 tầng lỗi & Báo cáo điều hành (Executive Audit Report)**:
+    - Bóc tách lỗi 5 tầng chuẩn xác: `[ROUTER_NOT_FOUND]`, `[MIDDLEWARE_REJECTED]`, `[CONTROLLER_CRASH]`, `[DATABASE_FAILURE]`, `[ASSERTION_FAILED]`.
+    - Tích hợp trực tiếp vào tab **Executive Report**, loại bỏ tab Diagnostics rời rạc khi 0 lỗi.
+    - Expected Response vs Received Response kèm HTTP status, body preview và nút "Sửa kịch bản bằng AI".
 
 - [x] **Task 5.4: Nâng Cấp Trình Biên Tập Test Case & Áp Dụng Vào Source Code [XÂY MỚI]**
   - [x] Monaco Code Editor xem và chỉnh sửa trực tiếp mã nguồn test case (`IntegrationScenarioEditorModal.jsx`).
@@ -349,3 +353,6 @@ _Mục tiêu: Viết bộ test tự động toàn diện kiểm chứng mọi lu
 | **22/10/2026** | Antigravity AI | Hoàn thành Phase 6: Kiểm Thử Tích Hợp & Kiểm Tra Toàn Diện (Testing & Verification) | Triển khai toàn bộ bộ kiểm thử tự động cho Task 6.1 (4 permutations của `supertestDetection.service.test.js`, chẩn đoán 5 tầng lỗi trong `integrationExecutionAndTracing.test.js`, REST endpoints trong `integrationApiEndpoints.test.js`) và 4 kịch bản E2E thực tế của Task 6.2 trong `integrationE2EWorkflow.test.js`. Toàn bộ 53/53 tests trong 7 test suites đều vượt qua 100%, client build hoàn thành sạch sẽ. Toàn bộ kế hoạch tái cấu trúc Integration Testing đã hoàn thành trọn vẹn. |
 | **23/10/2026** | Antigravity AI | Tái thiết kế toàn diện UI Phase 5: Unified Single-View Cockpit | Loại bỏ hoàn toàn mô hình chuyển tab từng bước rời rạc và việc chuyển hướng trang báo cáo riêng lẻ; quy tụ 100% luồng làm việc vào một giao diện cuộn thống nhất (`IntegrationWorkspace.jsx`), tích hợp thanh điều hướng nhanh sticky anchor, 4 KPI cards tiêu chuẩn kỹ thuật cao, Live Progress Terminal, Failure Inspector 5 tầng lỗi, Ma trận Route Matrix (`IntegrationRouteMatrixTable.jsx`), Quản lý kịch bản & Monaco Editor, cùng Báo cáo tích hợp in ấn PDF/JSON trực tiếp (`IntegrationReportEmbed.jsx`) và Drawer Lịch sử/So sánh mượt mà. Tuân thủ triệt để design token và không dùng màu gradient AI. Client build thành công sạch sẽ (2.29s). |
 | **23/10/2026** | Antigravity AI | Khắc phục lỗi Crash Render, Logic Metric API & Runner Supertest AI | Sửa triệt để lỗi crash `handleSaveAndApplyEditor is not defined` trong `IntegrationScenariosPane.jsx`; loại bỏ toàn bộ chỉ số đơn vị Istanbul (Statements, Branches, Functions, Lines) khỏi giao diện Test API theo đúng thiết kế CovAI Tracing Engine (thay bằng Uncovered Endpoints và Controller Handler Execution Tracing); sửa lỗi runner `No valid AI-generated Supertest files were found` (chấp nhận test DRAFT, auto-approve trước khi chạy, auto-trigger sinh test nếu chưa có kịch bản); nâng cấp model Gemini sang `gemini-3.8-flash` tương thích khóa API người dùng. Client build hoàn tất 100% không lỗi. |
+| **02/11/2026** | Antigravity AI | Quốc tế hóa 100% UI Tiếng Anh & Tách biệt API Key LLM Độc lập | Chuyển đổi toàn bộ chuỗi giao diện Integration Testing sang tiếng Anh chuẩn chuyên nghiệp (Cockpit, Metric KPIs, 5-Layer Failure Inspector, Endpoint Matrix Table, Monaco Editor Drawer, Apply Modal và Báo cáo in PDF); Tách biệt kiến trúc Gemini API Key độc lập theo từng module (`GEMINI_KEY_INTEGRATION_TEST`, `GEMINI_KEY_UNIT_TEST`, `GEMINI_KEY_E2E_TEST`, `GEMINI_KEY_CHATBOX`), thiết lập client caching và hàm `getGeminiClient`/`getGeminiApiKey`; Chuẩn hóa model sinh Integration Test sang `gemini-3.5-flash-lite` với `temperature: 0.2`, `maxOutputTokens: 1500`; Sửa lỗi phân giải overload config trong `gemini.service.js`; Verify toàn bộ 100% backend integration test suites và client build thành công sạch sẽ. |
+| **02/11/2026** | Antigravity AI | Sửa triệt để lỗi "Guarded operation failed", Export `runNpmInstall` & Hoàn tất bản dịch UI | Khắc phục lỗi thiếu `export` cho `runNpmInstall` trong `runTestsJob.service.js` dẫn tới `TypeError: runNpmInstall is not a function` khi chạy Supertest Coverage Pipeline; Khắc phục cơ chế mask lỗi trong `projectOperationWorkspace.service.js` để hiển thị và ghi log chi tiết lỗi thực tế (`error.message`) vào `jobLog`; Thay thế chuỗi tiếng Việt sót `+ Sinh test AI` thành `+ Generate AI Tests` trong `IntegrationWorkspace.jsx`; Rebuild client và restart docker container `covai_server` thành công 100%. |
+| **03/11/2026** | Antigravity AI | Tối Giản Hóa Danh Mục & Xóa Bỏ Dead Code / Component Dư Thừa | Theo dõi đối chiếu `planintegrationtest.md`: Loại bỏ tab `Diagnostics` riêng lẻ trống rỗng (hợp nhất 100% chẩn đoán 5 tầng lỗi và Failure Audit Log vào tab `Executive Report` & tương tác 1-click từ KPI thẻ 3); Tinh giản Cockpit còn 4 tab nòng cốt (Endpoints Matrix, Test Scenarios, Execution & Logs, Executive Report); Dọn sạch 4 tệp tin dead code trong thư mục `client/src/components/dashboard/integration/` (`IntegrationAnalysisOverview.jsx`, `IntegrationEndpointDetail.jsx`, `IntegrationRunResultsPane.jsx`, `IntegrationTargetsPane.jsx`); Đảm bảo đầy đủ 100% tính năng kiểm thử và báo cáo. Rebuild client thành công 100%. |

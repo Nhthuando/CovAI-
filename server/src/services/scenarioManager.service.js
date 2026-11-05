@@ -645,7 +645,15 @@ ${originalCode}
 Please improve it, fix potential issues, or make it more robust based on the API context if relevant. Do NOT output a full file, ONLY the test block (e.g. it(...) {...}).
 `;
 
-    const generatedText = await generateText(withAgentContext(prompt, 'integration-test', { phase: 'repair' }), payload.model || null);
+    const generatedText = await generateText(
+        prompt,
+        payload.model || process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
+        {
+            taskType: "integration",
+            temperature: 0.2,
+            maxOutputTokens: 1500,
+        }
+    );
     if (!generatedText) throw new Error("Failed to generate test from AI");
 
     const cleanText = generatedText.replace(/```(javascript|js|typescript|ts)?/g, '').replace(/```/g, '').trim();

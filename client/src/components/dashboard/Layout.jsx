@@ -7,6 +7,7 @@ import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import CoveragePanel from "./CoveragePanel";
 import Editor from "./Editor";
+import RetainedPanel from '../common/RetainedPanel';
 import GitPanel from "./GitPanel";
 import CoverageDashboard from "./CoverageDashboard";
 import UnitTestDashboard from "./UnitTestDashboard";
@@ -51,6 +52,10 @@ import {
   Terminal,
   LogOut,
   Download,
+  FlaskConical,
+  Network,
+  Layers,
+  FileText,
 } from "lucide-react";
 
 import { useAuth } from "../../hooks/useAuth";
@@ -67,12 +72,23 @@ import {
   renameProjectEntryApi,
   deleteProjectEntryApi,
 } from "../../services/project.service";
+import {
+  insertNodeIntoTree,
+  renameNodeInTree,
+  deleteNodeFromTree,
+} from "../../utils/fileTreeUtils";
 import { getProjectJobsApi } from "../../services/job.service";
 import { queryClient } from "../../lib/queryClient.js";
 
 const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const DEFAULT_AI_PANEL_WIDTH = 340;
+
+const COVERAGE_TEST_TABS = [
+  { key: "unit", label: "Unit Test", shortLabel: "Unit", icon: FlaskConical },
+  { key: "integration", label: "Integration Test", shortLabel: "Integration", icon: Network },
+  { key: "system", label: "System Test", shortLabel: "System", icon: Layers },
+];
 
 const containerVariants = {
   hidden: {},
@@ -202,7 +218,7 @@ function LayoutInner() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
   const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
   const [tabs, setTabs] = useState(INITIAL_TABS);
@@ -414,7 +430,6 @@ function LayoutInner() {
       setAiPanelOpen(false);
     } else {
       setSidebarOpen(true);
-      setAiPanelOpen(true);
     }
   }, [isMobile, isTablet]);
 
@@ -722,72 +737,159 @@ function LayoutInner() {
     }
   };
 
-  const refreshProjectFiles = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["projectTree"] });
-    await projectAccess.refetch();
-    await loadData(project?.id, 1, 0);
+  const refreshProjectFiles = async (silent = true) => {
+    if (!project?.id) return;
+    try {
+      if (silent) {
+        const { getProjectTreeApi } = await import("../../services/project.service");
+        const res = await getProjectTreeApi(project.id);
+        const sourceTree = Array.isArray(res) ? res : (res?.data || res?.tree || []);
+        if (sourceTree && sourceTree.length > 0) {
+          setFileTree(sourceTree);
+          if (res.snapshotId) {
+            setTreeVersion({ snapshotId: res.snapshotId, expectedWorkspaceRevision: res.workspaceRevision });
+          }
+          queryClient.setQueryData(["projectTree", user?.id, project.id], {
+            tree: sourceTree,
+            snapshotId: res.snapshotId,
+            workspaceRevision: res.workspaceRevision,
+          });
+        }
+        await projectAccess.refetch();
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ["projectTree"] });
+        await projectAccess.refetch();
+        await loadData(project?.id, 1, 0);
+      }
+    } catch (err) {
+      console.warn("Silent tree refresh failed", err);
+    }
   };
 
   const handleCreateFile = async (filePath) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const normalizedPath = filePath.replace(/\\/g, "/");
+    const fileName = normalizedPath.split("/").pop();
+
+    // 1. Optimistically insert into tree immediately (instant 0ms response)
+    setFileTree((prev) => insertNodeIntoTree(prev, normalizedPath, false));
+
+    // 2. Open tab right away
+    handleOpenFile({
+      id: normalizedPath,
+      name: fileName,
+      type: "file",
+    });
+
     try {
-      await createProjectFileApi(project.id, filePath, "", treeVersion || {});
-      await refreshProjectFiles();
-      handleOpenFile({
-        id: filePath.replace(/\\/g, "/"),
-        name: filePath.split(/[\\/]/).pop(),
-        type: "file",
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await createProjectFileApi(project.id, normalizedPath, "", {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
       });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "File created", message: normalizedPath });
     } catch (err) {
-      showToast({ type: "error", title: "Could not create file" });
+      setFileTree((prev) => deleteNodeFromTree(prev, normalizedPath));
+      showToast({ type: "error", title: "Could not create file", message: err?.message || "File creation failed" });
     }
   };
 
   const handleCreateFolder = async (folderPath) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const normalizedPath = folderPath.replace(/\\/g, "/");
+
+    // 1. Optimistically insert folder into tree immediately
+    setFileTree((prev) => insertNodeIntoTree(prev, normalizedPath, true));
+
     try {
-      await createProjectFolderApi(project.id, folderPath, treeVersion || {});
-      await refreshProjectFiles();
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await createProjectFolderApi(project.id, normalizedPath, {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
+      });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "Folder created", message: normalizedPath });
     } catch (err) {
-      showToast({ type: "error", title: "Could not create folder" });
+      setFileTree((prev) => deleteNodeFromTree(prev, normalizedPath));
+      showToast({ type: "error", title: "Could not create folder", message: err?.message || "Folder creation failed" });
     }
   };
 
   const handleRenameEntry = async (filePath, newPath) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const normOld = filePath.replace(/\\/g, "/");
+    const normNew = newPath.replace(/\\/g, "/");
+
+    // 1. Optimistically rename in tree immediately
+    setFileTree((prev) => renameNodeInTree(prev, normOld, normNew));
+
+    // 2. Optimistically update open tabs
+    setTabs((prev) =>
+      prev.map((tab) =>
+        tab.id === normOld
+          ? { ...tab, id: normNew, name: normNew.split("/").pop() }
+          : tab.id.startsWith(`${normOld}/`)
+          ? { ...tab, id: `${normNew}${tab.id.slice(normOld.length)}` }
+          : tab,
+      ),
+    );
+    if (activeTabId === normOld) setActiveTabId(normNew);
+    else if (activeTabId?.startsWith(`${normOld}/`)) {
+      setActiveTabId(`${normNew}${activeTabId.slice(normOld.length)}`);
+    }
+    if (activeFileId === normOld) setActiveFileId(normNew);
+    else if (activeFileId?.startsWith(`${normOld}/`)) {
+      setActiveFileId(`${normNew}${activeFileId.slice(normOld.length)}`);
+    }
+
     try {
-      await renameProjectEntryApi(project.id, filePath, newPath, treeVersion || {});
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === filePath
-            ? { ...tab, id: newPath, name: newPath.split("/").pop() }
-            : tab,
-        ),
-      );
-      if (activeTabId === filePath) setActiveTabId(newPath);
-      if (activeFileId === filePath) setActiveFileId(newPath);
-      await refreshProjectFiles();
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await renameProjectEntryApi(project.id, normOld, normNew, {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
+      });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "Renamed", message: `${normOld} → ${normNew}` });
     } catch (err) {
-      showToast({ type: "error", title: "Could not rename" });
+      setFileTree((prev) => renameNodeInTree(prev, normNew, normOld));
+      showToast({ type: "error", title: "Could not rename", message: err?.message || "Rename failed" });
     }
   };
 
   const handleDeleteEntry = async (node) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const targetPath = node.id.replace(/\\/g, "/");
+
+    // 1. Optimistically delete from tree immediately
+    setFileTree((prev) => deleteNodeFromTree(prev, targetPath));
+
+    // 2. Optimistically close affected tabs
+    setTabs((prev) =>
+      prev.filter(
+        (tab) => tab.id !== targetPath && !tab.id.startsWith(`${targetPath}/`),
+      ),
+    );
+    if (activeFileId === targetPath || activeFileId?.startsWith(`${targetPath}/`)) {
+      setActiveFileId(null);
+      setActiveTabId(null);
+    }
+
     try {
-      await deleteProjectEntryApi(project.id, node.id, treeVersion || {});
-      setTabs((prev) =>
-        prev.filter(
-          (tab) => tab.id !== node.id && !tab.id.startsWith(`${node.id}/`),
-        ),
-      );
-      if (activeFileId === node.id || activeFileId?.startsWith(`${node.id}/`)) {
-        setActiveFileId(null);
-        setActiveTabId(null);
-      }
-      await refreshProjectFiles();
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await deleteProjectEntryApi(project.id, targetPath, {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
+      });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "Deleted", message: node.name || targetPath });
     } catch (err) {
-      showToast({ type: "error", title: "Could not delete" });
+      refreshProjectFiles(false);
+      showToast({ type: "error", title: "Could not delete", message: err?.message || "Delete failed" });
     }
   };
 
@@ -912,8 +1014,66 @@ function LayoutInner() {
           )}
         </div>
 
+        {/* ── Center: Test Suite Levels (Unit, Integration, System) ── */}
+        <div className="flex items-center justify-center flex-shrink-0 mx-2">
+          <nav
+            role="tablist"
+            aria-label="Coverage Test Levels"
+            className="inline-flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] shadow-xs"
+          >
+            {COVERAGE_TEST_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeActivity === "coverage" && coverageType === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  role="tab"
+                  id={`top-nav-test-${tab.key}`}
+                  aria-selected={isActive}
+                  type="button"
+                  onClick={() => {
+                    handleSelectCoverageType(tab.key);
+                    if (activeActivity !== "coverage") {
+                      setShowCFG(false);
+                      setActiveActivity("coverage");
+                      const params = new URLSearchParams(location.search);
+                      params.set("tab", "coverage");
+                      params.set("type", tab.key);
+                      params.set("coverageType", tab.key);
+                      navigate(`${location.pathname}?${params.toString()}`);
+                    }
+                  }}
+                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${
+                    isActive
+                      ? "text-[var(--color-primary)] font-semibold"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
+                  }`}
+                  title={`${tab.label} Suite`}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="active-test-tab-pill"
+                      className="absolute inset-0 rounded-[var(--radius-sm)] bg-[var(--color-bg)] border border-[var(--color-border)] shadow-xs"
+                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    <Icon
+                      size={13}
+                      strokeWidth={isActive ? 2.2 : 1.8}
+                      className={isActive ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}
+                    />
+                    <span className="hidden sm:inline">{tab.label}</span>
+                    <span className="sm:hidden">{tab.shortLabel}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
         <div
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 flex-1 justify-end"
           style={{ position: "relative" }}
         >
           <MissingTestFilesModal
@@ -1011,7 +1171,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
             <motion.div
               key="sidebar"
               initial={
@@ -1089,7 +1249,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1128,13 +1288,16 @@ function LayoutInner() {
           {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
 
           <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <RetainedPanel active={activeActivity === 'architecture'}>
             <ProjectArchitecturePanel
               projectId={project?.id}
               initialFile={archInitialContext?.initialFile}
             />
+            </RetainedPanel>
           </div>
 
           <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <RetainedPanel active={activeActivity === 'overview'}>
             <UnifiedDashboard
               projectId={project?.id}
               project={project}
@@ -1156,10 +1319,12 @@ function LayoutInner() {
               onAskAi={handleAskAiPrompt}
               onSummaryChange={setUnifiedSummary}
             />
+            </RetainedPanel>
           </div>
 
           <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
             <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
+              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'unit'}>
               <UnitTestDashboard
                 snapshotId={
                   searchParams.get("snapshotId") ||
@@ -1178,8 +1343,10 @@ function LayoutInner() {
                 onOpenCFG={handleOpenCFG}
                 runTrigger={coverageRunTrigger}
               />
+              </RetainedPanel>
             </div>
             <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
+              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'integration'}>
               <IntegrationTestDashboard
                 snapshotId={
                   searchParams.get("snapshotId") ||
@@ -1198,8 +1365,10 @@ function LayoutInner() {
                 initialContext={integrationInitialContext}
                 onContextChange={setIntegrationInitialContext}
               />
+              </RetainedPanel>
             </div>
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
+              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'system'}>
               <SystemTestDashboard
                 snapshotId={
                   searchParams.get("snapshotId") ||
@@ -1214,6 +1383,7 @@ function LayoutInner() {
                 focusScenario={searchParams.get("focusScenario")}
                 onOpenFile={handleOpenFileByPath}
               />
+              </RetainedPanel>
             </div>
           </div>
 

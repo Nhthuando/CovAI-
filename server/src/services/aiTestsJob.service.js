@@ -633,7 +633,15 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                     
                     try {
                         // The model name is hardcoded here but gemini.service resolves fallbacks internally
-                        const supertestResponseText = await withGeminiFeature('integration-test', () => generateText(supertestPrompt, selectedAiModel));
+                        const supertestResponseText = await withGeminiFeature('integration-test', () => generateText(
+                            supertestPrompt,
+                            selectedAiModel || "gemini-3.5-flash-lite",
+                            {
+                                taskType: "integration",
+                                temperature: 0.2,
+                                maxOutputTokens: 1500,
+                            }
+                        ));
                         
                         if (supertestResponseText) {
                             try {

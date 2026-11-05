@@ -26,6 +26,23 @@ function getPassRate(passed = 0, failed = 0) {
 const frameworkCache = new Map();
 const dashboardPayloadCache = new Map();
 
+/**
+ * Invalidate in-memory unified dashboard cache for a snapshot or all snapshots.
+ */
+export function clearUnifiedDashboardCache(snapshotId = null) {
+  if (snapshotId) {
+    for (const key of dashboardPayloadCache.keys()) {
+      if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+        dashboardPayloadCache.delete(key);
+      }
+    }
+    frameworkCache.delete(snapshotId);
+  } else {
+    dashboardPayloadCache.clear();
+    frameworkCache.clear();
+  }
+}
+
 function resolveSnapshotRootDir(rootDir) {
   if (!rootDir) return null;
   let candidate = rootDir;
@@ -449,7 +466,7 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
 /**
  * Compute Unified Quality Dashboard payload for a given snapshotId.
  */
-export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
+export async function buildUnifiedQualityDashboard({ snapshotId, userId, bypassCache = false }) {
   const snapshot = await prisma.projectSnapshot.findUnique({
     where: { id: snapshotId },
     select: {
@@ -479,10 +496,14 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
 
   const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
 
-  // Fast cache hit (< 50ms)
-  const cachedEntry = dashboardPayloadCache.get(snapshotId);
-  if (cachedEntry && Date.now() - cachedEntry.cachedAt < 5000) {
-    return cachedEntry.data;
+  // Fast cache hit (< 50ms) unless bypassCache is explicitly requested
+  if (!bypassCache) {
+    const cachedEntry = dashboardPayloadCache.get(snapshotId);
+    if (cachedEntry && Date.now() - cachedEntry.cachedAt < 5000) {
+      return cachedEntry.data;
+    }
+  } else {
+    clearUnifiedDashboardCache(snapshotId);
   }
 
   // 1. Fetch all snapshots for this project for the header Snapshot selector

@@ -1,0 +1,52 @@
+import { chromium } from '../server/node_modules/playwright/index.mjs';
+const browser = await chromium.launch({ executablePath: 'C:/Users/thuan/.agent-browser/browsers/chrome-153.0.8010.47/chrome.exe', headless: true });
+const results = [];
+try {
+  for (const [width, height] of [[1200,800], [760,800], [560,800], [390,800], [390,480]]) {
+    const page = await browser.newPage({ viewport: { width, height } });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto('http://localhost:5173/.evidence-review/collaboration-ui.html', { waitUntil: 'networkidle' });
+    await page.getByRole('table', { name: 'Project members' }).waitFor();
+    const overflow = await page.evaluate(() => [...document.querySelectorAll('.members-card,.members-table,.members-invite-form')].filter(el => el.scrollWidth > el.clientWidth + 1).map(el => el.className));
+    if (overflow.length || errors.length) throw new Error(JSON.stringify({ width, overflow, errors }));
+    await page.getByRole('button', { name: 'Manage Quality Engineer', exact: true }).click();
+    const menu = page.getByRole('menu', { name: 'Manage member' });
+    await menu.waitFor();
+    const box = await menu.boundingBox();
+    if (box.x < 0 || box.y < 0 || box.x + box.width > width + 1 || box.y + box.height > height + 1) throw new Error(`Menu outside viewport: ${JSON.stringify(box)}`);
+    await page.screenshot({ path: `outputs/collaboration-members-${width}.png`, fullPage: true });
+    await page.keyboard.press('Escape');
+    if (!(await page.getByRole('button', { name: 'Manage Quality Engineer', exact: true }).evaluate(el => document.activeElement === el))) throw new Error('Escape did not return focus');
+    await page.getByRole('button', { name: 'Manage Quality Engineer', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Tech Lead', exact: true }).click();
+    const qa = page.getByRole('row').filter({ hasText: 'qa@example.test' });
+    if (!(await qa.innerText()).includes('Tech Lead') || !(await qa.innerText()).includes('View')) throw new Error('Role/access display did not update independently');
+    await page.getByRole('tab', { name: 'Pending invitations (1)' }).click();
+    await page.getByRole('button', { name: 'Resend invitation' }).waitFor();
+    await page.screenshot({ path: `outputs/collaboration-invitation-${width}.png`, fullPage: true });
+    await page.getByRole('button', { name: 'Show 3 online collaborators' }).click();
+    const presence = page.getByRole('region', { name: 'Online collaborators' });
+    await presence.waitFor();
+    const pop = await presence.boundingBox();
+    if (pop.x < 0 || pop.x + pop.width > width + 1 || pop.y < 0 || pop.y + pop.height > height + 1) throw new Error('Presence popover outside viewport');
+    await page.screenshot({ path: `outputs/collaboration-presence-${width}.png`, fullPage: true });
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Review file conflict' }).click();
+    await page.getByRole('dialog', { name: 'File changed' }).waitFor();
+    await page.getByLabel('Your draft').waitFor();
+    const dialogBox = await page.getByRole('dialog').locator(':scope > div').boundingBox();
+    if (dialogBox.y < 0 || dialogBox.y + dialogBox.height > height + 1) throw new Error('Conflict dialog outside viewport');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+    if (!(await page.getByRole('dialog').evaluate(el => el.contains(document.activeElement)))) throw new Error('Focus escaped dialog');
+    await page.screenshot({ path: `outputs/collaboration-conflict-${width}.png`, fullPage: true });
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+    await page.getByRole('tab', { name: 'Members (3)' }).click();
+    await page.screenshot({ path: `outputs/collaboration-light-${width}.png`, fullPage: true });
+    results.push({ width, height, overflow, errors, menu: box, presence: pop });
+    await page.close();
+  }
+  console.log(JSON.stringify(results));
+} finally { await browser.close(); }

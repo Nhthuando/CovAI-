@@ -15,8 +15,6 @@ import {
   FolderPlus,
   Pencil,
   Trash2,
-  Loader2,
-  Check,
   Box,
   Lock,
   Sliders,
@@ -41,25 +39,25 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".spec.jsx") ||
     lower.endsWith(".test.jsx")
   ) {
-    return <TestTube2 size={14} style={{ color: "#c084fc", flexShrink: 0 }} />;
+    return <TestTube2 size={14} className="text-purple-400 shrink-0" />;
   }
 
   // React & TypeScript
   if (lower.endsWith(".tsx")) {
-    return <FileCode2 size={14} style={{ color: "#67e8f9", flexShrink: 0 }} />;
+    return <FileCode2 size={14} className="text-cyan-400 shrink-0" />;
   }
   if (lower.endsWith(".jsx")) {
-    return <FileCode2 size={14} style={{ color: "#22d3ee", flexShrink: 0 }} />;
+    return <FileCode2 size={14} className="text-cyan-400 shrink-0" />;
   }
   if (lower.endsWith(".ts")) {
-    return <Braces size={14} style={{ color: "#38bdf8", flexShrink: 0 }} />;
+    return <Braces size={14} className="text-sky-400 shrink-0" />;
   }
   if (
     lower.endsWith(".js") ||
     lower.endsWith(".mjs") ||
     lower.endsWith(".cjs")
   ) {
-    return <FileCode2 size={14} style={{ color: "#fbbf24", flexShrink: 0 }} />;
+    return <FileCode2 size={14} className="text-amber-400 shrink-0" />;
   }
 
   // Config files
@@ -71,17 +69,17 @@ function getFileIcon(fileName = "") {
     lower.startsWith("eslint") ||
     lower.startsWith("jest.config")
   ) {
-    return <Sliders size={14} style={{ color: "#facc15", flexShrink: 0 }} />;
+    return <Sliders size={14} className="text-yellow-400 shrink-0" />;
   }
 
   // Package & NPM
   if (lower === "package.json" || lower === "package-lock.json") {
-    return <Box size={14} style={{ color: "#fb923c", flexShrink: 0 }} />;
+    return <Box size={14} className="text-orange-400 shrink-0" />;
   }
 
   // JSON
   if (lower.endsWith(".json") || lower.endsWith(".jsonc")) {
-    return <FileJson size={14} style={{ color: "#4ade80", flexShrink: 0 }} />;
+    return <FileJson size={14} className="text-emerald-400 shrink-0" />;
   }
 
   // Styles
@@ -91,12 +89,12 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".sass") ||
     lower.endsWith(".less")
   ) {
-    return <FileText size={14} style={{ color: "#f472b6", flexShrink: 0 }} />;
+    return <FileText size={14} className="text-pink-400 shrink-0" />;
   }
 
   // HTML
   if (lower.endsWith(".html") || lower.endsWith(".htm")) {
-    return <FileCode2 size={14} style={{ color: "#fb923c", flexShrink: 0 }} />;
+    return <FileCode2 size={14} className="text-orange-400 shrink-0" />;
   }
 
   // Markdown & Docs
@@ -105,7 +103,7 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".markdown") ||
     lower.endsWith(".txt")
   ) {
-    return <FileText size={14} style={{ color: "#94a3b8", flexShrink: 0 }} />;
+    return <FileText size={14} className="text-slate-400 shrink-0" />;
   }
 
   // Git / Env / Lock
@@ -114,10 +112,10 @@ function getFileIcon(fileName = "") {
     lower.startsWith(".env") ||
     lower.endsWith(".lock")
   ) {
-    return <Lock size={13} style={{ color: "#86efac", flexShrink: 0 }} />;
+    return <Lock size={13} className="text-emerald-300 shrink-0" />;
   }
 
-  return <File size={14} style={{ color: "#94a3b8", flexShrink: 0 }} />;
+  return <File size={14} className="text-slate-400 shrink-0" />;
 }
 
 function getFolderIcon(folderName = "", isOpen = false) {
@@ -129,7 +127,7 @@ function getFolderIcon(folderName = "", isOpen = false) {
     lower === "tests" ||
     lower === "e2e"
   ) {
-    return <TestTube2 size={14} style={{ color: "#c084fc", flexShrink: 0 }} />;
+    return <TestTube2 size={14} className="text-purple-400 shrink-0" />;
   }
 
   if (
@@ -145,53 +143,62 @@ function getFolderIcon(folderName = "", isOpen = false) {
     return (
       <FolderGit2
         size={14}
-        style={{ color: isOpen ? "#38bdf8" : "#0284c7", flexShrink: 0 }}
+        className={`${isOpen ? "text-sky-400" : "text-sky-600"} shrink-0`}
       />
     );
   }
 
   if (isOpen) {
-    return <FolderOpen size={14} style={{ color: "#e3b341", flexShrink: 0 }} />;
+    return <FolderOpen size={14} className="text-amber-500 shrink-0" />;
   }
-  return <Folder size={14} style={{ color: "#e3b341", flexShrink: 0 }} />;
+  return <Folder size={14} className="text-amber-500 shrink-0" />;
 }
 
 /* ── Inline Input Row (for New File / Folder) ─────────────── */
 function InlineCreationRow({ type, indent, onSubmit, onCancel }) {
   const [val, setVal] = useState("");
   const inputRef = useRef(null);
+  const submittedRef = useRef(false);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
+  const handleSubmit = (value) => {
+    if (submittedRef.current) return;
+    const trimmed = (value ?? val).trim();
+    if (!trimmed) {
+      submittedRef.current = true;
+      onCancel();
+      return;
+    }
+    submittedRef.current = true;
+    onSubmit(trimmed);
+  };
+
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && val.trim()) {
+    if (e.key === "Enter") {
       e.preventDefault();
-      onSubmit(val.trim());
+      handleSubmit();
     } else if (e.key === "Escape") {
       e.preventDefault();
+      submittedRef.current = true;
       onCancel();
     }
   };
 
   return (
     <div
-      className="flex items-center gap-2 select-none"
+      className="flex items-center gap-2 select-none py-1 px-2 my-0.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 border-l-2 border-[var(--color-primary)]"
       style={{
         paddingLeft: indent,
-        paddingRight: 14,
-        paddingTop: 4,
-        paddingBottom: 4,
-        background: "rgba(124, 58, 237, 0.08)",
-        borderLeft: "2px solid #7c3aed",
       }}
     >
-      <span className="w-3 flex-shrink-0" />
+      <span className="w-3 shrink-0" />
       {type === "folder" ? (
-        <FolderPlus size={14} style={{ color: "#e3b341", flexShrink: 0 }} />
+        <FolderPlus size={14} className="text-amber-500 shrink-0" />
       ) : (
-        <FileCode2 size={14} style={{ color: "#a78bfa", flexShrink: 0 }} />
+        <FileCode2 size={14} className="text-[var(--color-primary)] shrink-0" />
       )}
       <input
         ref={inputRef}
@@ -199,25 +206,25 @@ function InlineCreationRow({ type, indent, onSubmit, onCancel }) {
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onKeyDown={handleKeyDown}
-        onBlur={() => {
-          if (val.trim()) onSubmit(val.trim());
-          else onCancel();
-        }}
+        onBlur={() => handleSubmit()}
         placeholder={type === "folder" ? "folder-name" : "file-name.js"}
-        style={{
-          flex: 1,
-          background: "var(--color-bg)",
-          border: "1px solid var(--color-primary)",
-          borderRadius: "4px",
-          color: "var(--color-text)",
-          fontSize: "12px",
-          padding: "2px 6px",
-          outline: "none",
-          fontFamily: "var(--font-sans)",
-        }}
+        className="flex-1 bg-[var(--color-bg)] border border-[var(--color-primary)] rounded-[var(--radius-sm)] text-[var(--color-text)] text-xs px-1.5 py-0.5 outline-none font-sans"
       />
     </div>
   );
+}
+
+/* ── Helper to find node in tree ─────────────────────────── */
+function findNodeInTree(nodes, id) {
+  if (!nodes || !id) return null;
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    if (n.children) {
+      const found = findNodeInTree(n.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 /* ── Tree Node Component ─────────────────────────────────── */
@@ -226,6 +233,9 @@ function TreeNode({
   depth = 0,
   onSelect,
   activeFileId,
+  selectedNode,
+  onSelectNode,
+  onContextMenu,
   action,
   onStartAction,
   onCancelAction,
@@ -235,12 +245,13 @@ function TreeNode({
   const [open, setOpen] = useState(
     treeToggleTrigger ? !treeToggleTrigger.collapsed : depth < 1,
   );
-  const [hovered, setHovered] = useState(false);
   const [renameVal, setRenameVal] = useState(node.name);
   const renameInputRef = useRef(null);
+  const renameSubmittedRef = useRef(false);
 
   const isFolder = node.type === "folder";
   const isActive = activeFileId === node.id;
+  const isSelected = selectedNode?.id === node.id;
   const indent = depth * 14 + 14;
 
   const isRenaming = action?.type === "rename" && action?.node?.id === node.id;
@@ -256,13 +267,21 @@ function TreeNode({
 
   useEffect(() => {
     if (isRenaming) {
+      renameSubmittedRef.current = false;
       setRenameVal(node.name);
       setTimeout(() => {
-        renameInputRef.current?.focus();
-        renameInputRef.current?.select();
+        if (renameInputRef.current) {
+          renameInputRef.current.focus();
+          const dotIdx = node.name.lastIndexOf(".");
+          if (dotIdx > 0 && !isFolder) {
+            renameInputRef.current.setSelectionRange(0, dotIdx);
+          } else {
+            renameInputRef.current.select();
+          }
+        }
       }, 50);
     }
-  }, [isRenaming, node.name]);
+  }, [isRenaming, node.name, isFolder]);
 
   useEffect(() => {
     if (isCreatingInside && !open) {
@@ -271,17 +290,21 @@ function TreeNode({
   }, [isCreatingInside, open]);
 
   const handleRenameSubmit = (e) => {
-    e.preventDefault();
-    if (renameVal.trim() && renameVal.trim() !== node.name) {
-      onSubmitAction({ type: "rename", node, value: renameVal.trim() });
+    if (e) e.preventDefault();
+    if (renameSubmittedRef.current) return;
+    const trimmed = renameVal.trim();
+    if (trimmed && trimmed !== node.name) {
+      renameSubmittedRef.current = true;
+      onSubmitAction({ type: "rename", node, value: trimmed });
     } else {
+      renameSubmittedRef.current = true;
       onCancelAction();
     }
   };
 
   return (
-    <div style={{ position: "relative" }}>
-      {/* Indentation guide line */}
+    <div className="relative">
+      {/* Indentation guide line: smooth, subtle, theme-aware */}
       {depth > 0 && (
         <div
           style={{
@@ -290,60 +313,46 @@ function TreeNode({
             top: 0,
             bottom: 0,
             width: "1px",
-            background: "rgba(255, 255, 255, 0.04)",
+            background: "var(--color-border)",
+            opacity: 0.45,
             pointerEvents: "none",
           }}
         />
       )}
 
-      <motion.div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onClick={() => {
+      {/* Row: pure VS Code style, no clutter on hover */}
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelectNode?.(node);
           if (isFolder) setOpen((o) => !o);
-          else onSelect(node);
+          else onSelect?.(node);
         }}
-        whileTap={{ scale: 0.99 }}
-        className="flex items-center gap-2 cursor-pointer select-none relative group"
+        onContextMenu={(e) => onContextMenu?.(e, node)}
+        className={`group flex items-center gap-2 cursor-pointer select-none relative transition-colors duration-100 rounded-[var(--radius-sm)] mx-1 my-0.5 py-1 pr-2 ${
+          isActive
+            ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium border-l-2 border-[var(--color-primary)]"
+            : isSelected
+            ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-medium border-l-2 border-[var(--color-primary)]/60"
+            : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]/60 border-l-2 border-transparent"
+        }`}
         style={{
           paddingLeft: indent,
-          paddingRight: 10,
-          paddingTop: 5,
-          paddingBottom: 5,
-          background: isActive
-            ? "var(--color-primary-light)"
-            : hovered
-              ? "var(--color-surface-secondary)"
-              : "transparent",
-          borderLeft: isActive
-            ? "2px solid var(--color-primary)"
-            : "2px solid transparent",
-          color: isActive
-            ? "var(--color-primary)"
-            : hovered
-              ? "var(--color-text)"
-              : "var(--color-text-secondary)",
           fontSize: 13,
-          fontFamily: "var(--font-sans)",
-          transition: "background 0.1s ease, color 0.1s ease",
-          borderRadius: "4px",
-          margin: "1px 4px",
         }}
       >
         {/* Expand / Collapse arrow */}
         {isFolder ? (
-          <motion.span
-            animate={{ rotate: open ? 90 : 0 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
-            style={{ display: "flex", flexShrink: 0 }}
+          <span
+            className="flex shrink-0 transition-transform duration-150 text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]"
+            style={{
+              transform: open ? "rotate(90deg)" : "rotate(0deg)",
+            }}
           >
-            <ChevronRight
-              size={12}
-              style={{ opacity: hovered || open ? 0.9 : 0.4 }}
-            />
-          </motion.span>
+            <ChevronRight size={12} />
+          </span>
         ) : (
-          <span className="w-3 flex-shrink-0" />
+          <span className="w-3 shrink-0" />
         )}
 
         {/* Icon */}
@@ -351,106 +360,38 @@ function TreeNode({
 
         {/* Name / Rename Input */}
         {isRenaming ? (
-          <form onSubmit={handleRenameSubmit} style={{ flex: 1, margin: 0 }}>
+          <form
+            onSubmit={handleRenameSubmit}
+            className="flex-1 m-0 mr-2"
+            onClick={(e) => e.stopPropagation()}
+          >
             <input
               ref={renameInputRef}
               value={renameVal}
               onChange={(e) => setRenameVal(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Escape") onCancelAction();
-              }}
-              onBlur={() => {
-                if (renameVal.trim() && renameVal.trim() !== node.name) {
-                  onSubmitAction({
-                    type: "rename",
-                    node,
-                    value: renameVal.trim(),
-                  });
-                } else {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleRenameSubmit(e);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  renameSubmittedRef.current = true;
                   onCancelAction();
                 }
               }}
-              style={{
-                width: "100%",
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-primary)",
-                borderRadius: "4px",
-                color: "var(--color-text)",
-                fontSize: "12px",
-                padding: "1px 6px",
-                outline: "none",
-                fontFamily: "var(--font-sans)",
-              }}
+              onBlur={() => handleRenameSubmit()}
+              className="w-full bg-[var(--color-bg)] border border-[var(--color-primary)] rounded-[var(--radius-sm)] text-[var(--color-text)] text-xs px-1.5 py-0.5 outline-none font-sans"
             />
           </form>
         ) : (
           <span
-            className="truncate leading-none"
-            style={{
-              fontWeight: isActive ? 600 : 400,
-              color: isActive ? "var(--color-primary)" : undefined,
-            }}
+            className="truncate leading-tight flex-1"
+            title={node.name}
           >
             {node.name}
           </span>
         )}
-
-        {/* Hover Action Buttons */}
-        {hovered && !isRenaming && (
-          <span
-            className="ml-auto flex items-center gap-0.5"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "6px",
-              padding: "2px 3px",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
-            {isFolder && (
-              <>
-                <button
-                  type="button"
-                  title="New File here"
-                  onClick={() =>
-                    onStartAction({ type: "file", parentPath: node.id })
-                  }
-                  className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center"
-                >
-                  <Plus size={12} />
-                </button>
-                <button
-                  type="button"
-                  title="New Folder here"
-                  onClick={() =>
-                    onStartAction({ type: "folder", parentPath: node.id })
-                  }
-                  className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center"
-                >
-                  <FolderPlus size={12} />
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              title="Rename"
-              onClick={() => onStartAction({ type: "rename", node })}
-              className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center"
-            >
-              <Pencil size={11} />
-            </button>
-            <button
-              type="button"
-              title="Delete"
-              onClick={() => onStartAction({ type: "delete", node })}
-              className="p-1 rounded-[var(--radius-sm)] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/15 transition-colors cursor-pointer border-0 bg-transparent flex items-center"
-            >
-              <Trash2 size={11} />
-            </button>
-          </span>
-        )}
-      </motion.div>
+      </div>
 
       {/* Children & Inline creation */}
       {isFolder && open && (
@@ -477,6 +418,9 @@ function TreeNode({
               depth={depth + 1}
               onSelect={onSelect}
               activeFileId={activeFileId}
+              selectedNode={selectedNode}
+              onSelectNode={onSelectNode}
+              onContextMenu={onContextMenu}
               action={action}
               onStartAction={onStartAction}
               onCancelAction={onCancelAction}
@@ -516,6 +460,25 @@ export default function Sidebar({
   const [treeToggleTrigger, setTreeToggleTrigger] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // VS Code style selection & context menu
+  const [selectedNode, setSelectedNode] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+
+  // Auto-sync selectedNode when activeFileId changes
+  useEffect(() => {
+    if (activeFileId && (!selectedNode || selectedNode.id !== activeFileId)) {
+      const found = findNodeInTree(fileTree, activeFileId);
+      if (found) setSelectedNode(found);
+    }
+  }, [activeFileId, fileTree]);
+
+  // Context menu dismissal on global click
+  useEffect(() => {
+    const handleCloseMenu = () => setContextMenu(null);
+    window.addEventListener("click", handleCloseMenu);
+    return () => window.removeEventListener("click", handleCloseMenu);
+  }, []);
+
   const handleStartAction = (act) => {
     if (!access.can("files.write")) return;
     if (act.type === "delete") {
@@ -529,39 +492,53 @@ export default function Sidebar({
     setAction(null);
   };
 
-  const handleSubmitAction = async (act) => {
+  const handleSubmitAction = (act) => {
     if (!act) return;
-    if (act.type === "rename" && act.value.trim()) {
-      const parent = act.node.id.includes("/")
-        ? act.node.id.slice(0, act.node.id.lastIndexOf("/"))
-        : "";
-      await onRenameEntry(
-        act.node.id,
-        parent ? `${parent}/${act.value.trim()}` : act.value.trim(),
-      );
-    } else if (act.value?.trim()) {
-      const targetPath = act.parentPath
-        ? `${act.parentPath}/${act.value.trim()}`
-        : act.value.trim();
-      await (act.type === "file"
-        ? onCreateFile(targetPath)
-        : onCreateFolder(targetPath));
-    }
+    // Immediately close inline input to guarantee zero UX lag
     setAction(null);
+    try {
+      if (act.type === "rename" && act.value?.trim()) {
+        const parent = act.node.id.includes("/")
+          ? act.node.id.slice(0, act.node.id.lastIndexOf("/"))
+          : "";
+        const newPath = parent ? `${parent}/${act.value.trim()}` : act.value.trim();
+        onRenameEntry(act.node.id, newPath);
+      } else if (act.value?.trim()) {
+        const targetPath = act.parentPath
+          ? `${act.parentPath}/${act.value.trim()}`
+          : act.value.trim();
+        if (act.type === "file") {
+          onCreateFile(targetPath);
+        } else {
+          onCreateFolder(targetPath);
+        }
+      }
+    } catch (err) {
+      console.error("Action submit failed", err);
+    }
   };
 
   const handleConfirmDeleteItem = async () => {
     if (!itemToDelete) return;
     setIsDeleting(true);
-    await onDeleteEntry(itemToDelete);
-    setIsDeleting(false);
-    setItemToDelete(null);
+    try {
+      await onDeleteEntry(itemToDelete);
+    } finally {
+      setIsDeleting(false);
+      setItemToDelete(null);
+      if (selectedNode?.id === itemToDelete.id) {
+        setSelectedNode(null);
+      }
+    }
   };
 
   const handleTriggerRefresh = async () => {
     setIsRefreshing(true);
-    await onRefresh();
-    setTimeout(() => setIsRefreshing(false), 500);
+    try {
+      await onRefresh?.();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 400);
+    }
   };
 
   const handleToggleCollapse = () => {
@@ -570,73 +547,141 @@ export default function Sidebar({
     setTreeToggleTrigger({ collapsed: nextCollapsed, id: Date.now() });
   };
 
+  /**
+   * VS Code exact creation path resolution:
+   * 1. No item selected (or clicked on root / empty space) -> root ("")
+   * 2. Folder selected -> inside that folder
+   * 3. File selected -> alongside that file (in the same directory)
+   */
+  const getCreationParentPath = () => {
+    if (!selectedNode) return "";
+    if (selectedNode.type === "folder") {
+      return selectedNode.id;
+    }
+    const norm = selectedNode.id.replace(/\\/g, "/");
+    const lastSlash = norm.lastIndexOf("/");
+    return lastSlash > -1 ? norm.slice(0, lastSlash) : "";
+  };
+
+  // Right-click context menu handlers
+  const handleContextMenu = (e, node) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedNode(node);
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      node,
+    });
+  };
+
+  const handleContainerContextMenu = (e) => {
+    e.preventDefault();
+    setSelectedNode(null);
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      node: null,
+    });
+  };
+
+  // Keyboard shortcuts: F2 for Rename, Delete for Delete
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        document.activeElement?.isContentEditable ||
+        document.activeElement?.closest(".monaco-editor")
+      ) {
+        return;
+      }
+
+      const target =
+        selectedNode ||
+        (activeFileId ? findNodeInTree(fileTree, activeFileId) : null);
+
+      if (!target) return;
+
+      if (e.key === "F2") {
+        e.preventDefault();
+        if (access.can("files.write")) {
+          handleStartAction({ type: "rename", node: target });
+        }
+      } else if (e.key === "Delete") {
+        e.preventDefault();
+        if (access.can("files.write")) {
+          setItemToDelete(target);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedNode, activeFileId, fileTree, access]);
+
   return (
-    <motion.div
-      className="flex flex-col h-full flex-shrink-0 select-none"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1, width: sidebarWidth }}
-      transition={{
-        opacity: { duration: 0.25 },
-        width: { duration: 0.18, ease: [0.4, 0, 0.2, 1] },
-      }}
+    <div
+      className="flex flex-col h-full shrink-0 select-none bg-[var(--color-surface)] border-r border-[var(--color-border)] relative"
       style={{
-        background: "var(--color-surface)",
-        borderRight: "1px solid var(--color-border)",
-        position: "relative",
+        width: sidebarWidth,
       }}
     >
       {/* ── Explorer Header ─────────────────────────────── */}
-      <div
-        className="flex items-center justify-between flex-shrink-0"
-        style={{
-          height: 44,
-          paddingLeft: 18,
-          paddingRight: 12,
-          borderBottom: "1px solid var(--color-border)",
-        }}
-      >
-        <span
-          style={{
-            color: "var(--color-text-secondary)",
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            fontFamily: "var(--font-sans)",
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-          }}
-        >
+      <div className="flex items-center justify-between shrink-0 h-11 px-4 border-b border-[var(--color-border)]">
+        <span className="text-[11px] font-bold tracking-wider uppercase text-[var(--color-text-secondary)] font-sans flex items-center gap-1.5">
           Explorer
         </span>
 
         {/* Toolbar buttons */}
         <div className="flex items-center gap-1">
-          <motion.button
-            whileTap={{ scale: 0.9 }}
+          <button
+            type="button"
             className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
-            title="New File at root"
-            aria-label="New File at root" disabled={!access.can("files.write")}
-            onClick={() => handleStartAction({ type: "file", parentPath: "" })}
+            title={
+              selectedNode
+                ? selectedNode.type === "folder"
+                  ? `New File inside '${selectedNode.name}'`
+                  : `New File alongside '${selectedNode.name}'`
+                : "New File at root"
+            }
+            aria-label="New File"
+            disabled={!access.can("files.write")}
+            onClick={() =>
+              handleStartAction({
+                type: "file",
+                parentPath: getCreationParentPath(),
+              })
+            }
           >
             <Plus size={14} />
-          </motion.button>
+          </button>
 
-          <motion.button
-            whileTap={{ scale: 0.9 }}
+          <button
+            type="button"
             className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
-            title="New Folder at root"
-            aria-label="New Folder at root" disabled={!access.can("files.write")}
+            title={
+              selectedNode
+                ? selectedNode.type === "folder"
+                  ? `New Folder inside '${selectedNode.name}'`
+                  : `New Folder alongside '${selectedNode.name}'`
+                : "New Folder at root"
+            }
+            aria-label="New Folder"
+            disabled={!access.can("files.write")}
             onClick={() =>
-              handleStartAction({ type: "folder", parentPath: "" })
+              handleStartAction({
+                type: "folder",
+                parentPath: getCreationParentPath(),
+              })
             }
           >
             <FolderPlus size={14} />
-          </motion.button>
+          </button>
 
-          <motion.button
-            whileTap={{ scale: 0.9 }}
+          <button
+            type="button"
             onClick={handleTriggerRefresh}
             className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
             title="Refresh Files"
@@ -648,14 +693,12 @@ export default function Sidebar({
                 isRefreshing ? "animate-spin text-[var(--color-primary)]" : ""
               }
             />
-          </motion.button>
+          </button>
 
-          <motion.button
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.92 }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+          <button
+            type="button"
             onClick={handleToggleCollapse}
-            className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center justify-center relative"
+            className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center justify-center"
             title={
               treeCollapsed ? "Expand All Folders" : "Collapse All Folders"
             }
@@ -663,48 +706,22 @@ export default function Sidebar({
               treeCollapsed ? "Expand All Folders" : "Collapse All Folders"
             }
           >
-            <motion.div
-              key={treeCollapsed ? "expand" : "collapse"}
-              initial={{
-                scale: 0.7,
-                opacity: 0,
-                rotate: treeCollapsed ? -45 : 45,
-              }}
-              animate={{ scale: 1, opacity: 1, rotate: 0 }}
-              exit={{ scale: 0.7, opacity: 0 }}
-              transition={{ duration: 0.15, ease: "easeOut" }}
-              className="flex items-center justify-center"
-            >
-              {treeCollapsed ? (
-                <ChevronsUpDown size={14} />
-              ) : (
-                <ChevronsDownUp size={14} />
-              )}
-            </motion.div>
-          </motion.button>
+            {treeCollapsed ? (
+              <ChevronsUpDown size={14} />
+            ) : (
+              <ChevronsDownUp size={14} />
+            )}
+          </button>
         </div>
       </div>
 
       {/* ── Current Project Header ───────────────────────── */}
       <div
-        className="flex items-center gap-2 flex-shrink-0"
-        style={{
-          padding: "9px 18px",
-          background: "var(--color-surface-secondary)",
-          borderBottom: "1px solid var(--color-border)",
-          fontSize: "12px",
-          fontFamily: "var(--font-sans)",
-        }}
+        onClick={() => setSelectedNode(null)}
+        className="flex items-center gap-2 shrink-0 py-2 px-4 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] text-xs font-sans cursor-pointer hover:bg-[var(--color-surface-secondary)]/80 transition-colors"
+        title="Project Root (click to deselect)"
       >
-        <div
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: "var(--color-success)",
-            flexShrink: 0,
-          }}
-        />
+        <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] shrink-0" />
         <span
           className="truncate font-mono text-[11px] text-[var(--color-text)] font-semibold"
           title={project?.name || "No Project"}
@@ -715,11 +732,9 @@ export default function Sidebar({
 
       {/* ── File Tree Area ───────────────────────────────── */}
       <div
-        className="flex-1 overflow-y-auto custom-scrollbar"
-        style={{
-          paddingTop: 6,
-          paddingBottom: 6,
-        }}
+        className="flex-1 overflow-y-auto custom-scrollbar py-1.5 focus:outline-none"
+        onClick={() => setSelectedNode(null)}
+        onContextMenu={handleContainerContextMenu}
       >
         {/* Root inline creation row */}
         {action && action.parentPath === "" && (
@@ -740,10 +755,7 @@ export default function Sidebar({
         {isLoading ? (
           <FileTreeSkeleton rows={10} />
         ) : fileTree.length === 0 ? (
-          <div
-            className="text-xs text-[var(--color-text-muted)] text-center"
-            style={{ padding: "32px 16px" }}
-          >
+          <div className="text-xs text-[var(--color-text-muted)] text-center py-8 px-4">
             No files found in workspace
           </div>
         ) : (
@@ -754,6 +766,9 @@ export default function Sidebar({
               depth={0}
               onSelect={onOpenFile}
               activeFileId={activeFileId}
+              selectedNode={selectedNode}
+              onSelectNode={setSelectedNode}
+              onContextMenu={handleContextMenu}
               action={action}
               onStartAction={handleStartAction}
               onCancelAction={handleCancelAction}
@@ -765,32 +780,104 @@ export default function Sidebar({
       </div>
 
       {/* ── Footer / Git Status ──────────────────────────── */}
-      <div
-        className="flex items-center gap-2 flex-shrink-0"
-        style={{
-          borderTop: "1px solid var(--color-border)",
-          fontSize: 11,
-          color: "var(--color-text-secondary)",
-          fontFamily: "var(--font-mono)",
-          padding: "10px 18px",
-          background: "var(--color-surface)",
-        }}
-      >
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: "var(--color-success)",
-            display: "inline-block",
-            flexShrink: 0,
-          }}
-        />
-        <span style={{ color: "var(--color-text-secondary)" }}>main</span>
-        <span style={{ color: "var(--color-success)", marginLeft: "auto" }}>
+      <div className="flex items-center gap-2 shrink-0 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-secondary)] font-mono py-2 px-4 bg-[var(--color-surface)]">
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] inline-block shrink-0" />
+        <span className="text-[var(--color-text-secondary)]">main</span>
+        <span className="text-[var(--color-success)] ml-auto">
           ↑ 2 commits
         </span>
       </div>
+
+      {/* ── Context Menu (VS Code style) ─────────────────── */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 min-w-[170px] py-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-xl text-xs font-sans text-[var(--color-text)] select-none animate-in fade-in duration-100"
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - 190),
+            top: Math.min(contextMenu.y, window.innerHeight - 200),
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-primary)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+            disabled={!access.can("files.write")}
+            onClick={() => {
+              const parentPath = contextMenu.node
+                ? contextMenu.node.type === "folder"
+                  ? contextMenu.node.id
+                  : contextMenu.node.id.includes("/")
+                  ? contextMenu.node.id.slice(0, contextMenu.node.id.lastIndexOf("/"))
+                  : ""
+                : "";
+              setContextMenu(null);
+              handleStartAction({ type: "file", parentPath });
+            }}
+          >
+            <span className="flex items-center gap-2">
+              <Plus size={13} /> New File
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-primary)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+            disabled={!access.can("files.write")}
+            onClick={() => {
+              const parentPath = contextMenu.node
+                ? contextMenu.node.type === "folder"
+                  ? contextMenu.node.id
+                  : contextMenu.node.id.includes("/")
+                  ? contextMenu.node.id.slice(0, contextMenu.node.id.lastIndexOf("/"))
+                  : ""
+                : "";
+              setContextMenu(null);
+              handleStartAction({ type: "folder", parentPath });
+            }}
+          >
+            <span className="flex items-center gap-2">
+              <FolderPlus size={13} /> New Folder
+            </span>
+          </button>
+
+          {contextMenu.node && (
+            <>
+              <div className="my-1 border-t border-[var(--color-border)]" />
+              <button
+                type="button"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-primary)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+                disabled={!access.can("files.write")}
+                onClick={() => {
+                  const node = contextMenu.node;
+                  setContextMenu(null);
+                  handleStartAction({ type: "rename", node });
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Pencil size={12} /> Rename
+                </span>
+                <span className="text-[10px] opacity-60 font-mono">F2</span>
+              </button>
+
+              <button
+                type="button"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+                disabled={!access.can("files.write")}
+                onClick={() => {
+                  const node = contextMenu.node;
+                  setContextMenu(null);
+                  setItemToDelete(node);
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Trash2 size={12} /> Delete
+                </span>
+                <span className="text-[10px] opacity-60 font-mono">Del</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Item Delete Modal (File or Folder) ─────── */}
       <ConfirmDialog
@@ -804,19 +891,7 @@ export default function Sidebar({
         loading={isDeleting}
       >
         {itemToDelete && (
-          <div
-            style={{
-              background: "var(--color-bg)",
-              border: "1px solid var(--color-border)",
-              borderRadius: 8,
-              padding: "10px 12px",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              color: "var(--color-danger)",
-              wordBreak: "break-all",
-              marginTop: 12,
-            }}
-          >
+          <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md p-2.5 text-xs font-mono text-[var(--color-danger)] break-all mt-3">
             {itemToDelete.id || itemToDelete.name}
           </div>
         )}
@@ -841,6 +916,6 @@ export default function Sidebar({
         variant="danger"
         loading={isDeleting}
       />
-    </motion.div>
+    </div>
   );
 }

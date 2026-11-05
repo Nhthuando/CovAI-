@@ -11,6 +11,85 @@ import { buildAgentInstruction } from '../agents/registry.js';
 
 dotenv.config();
 
+// Task-to-Environment-Variable mapping for independent quota separation
+export const TASK_KEY_MAP = {
+  unit: "GEMINI_KEY_UNIT_TEST",
+  "unit-test": "GEMINI_KEY_UNIT_TEST",
+  integration: "GEMINI_KEY_INTEGRATION_TEST",
+  "integration-test": "GEMINI_KEY_INTEGRATION_TEST",
+  supertest: "GEMINI_KEY_INTEGRATION_TEST",
+  e2e: "GEMINI_KEY_E2E_TEST",
+  system: "GEMINI_KEY_E2E_TEST",
+  "system-test": "GEMINI_KEY_E2E_TEST",
+  chatbox: "GEMINI_KEY_CHATBOX",
+  chat: "GEMINI_KEY_CHATBOX",
+};
+
+/**
+ * Validates availability of task-specific environment keys on service startup.
+ */
+export function validateGeminiKeys() {
+  const REQUIRED_KEY_VARS = [
+    "GEMINI_KEY_UNIT_TEST",
+    "GEMINI_KEY_INTEGRATION_TEST",
+    "GEMINI_KEY_E2E_TEST",
+    "GEMINI_KEY_CHATBOX",
+  ];
+  for (const keyVar of REQUIRED_KEY_VARS) {
+    if (!process.env[keyVar]) {
+      console.warn(
+        `[Gemini API] WARNING: Dedicated environment variable ${keyVar} is not defined. Falling back to GEMINI_API_KEY.`
+      );
+    }
+  }
+  if (!process.env.GEMINI_API_KEY && !process.env.GEMINI_KEY_INTEGRATION_TEST) {
+    console.warn(
+      "[Gemini API] CRITICAL: Neither GEMINI_KEY_INTEGRATION_TEST nor GEMINI_API_KEY is configured in environment."
+    );
+  }
+}
+if (process.env.NODE_ENV !== 'test') {
+  validateGeminiKeys();
+}
+
+/**
+ * Resolves the appropriate Gemini API key for a given task type.
+ * Priority: Dedicated Task Key -> Legacy GEMINI_API_KEY.
+ *
+ * @param {'unit' | 'integration' | 'e2e' | 'system' | 'chatbox' | 'chat'} taskType
+ * @returns {string} The resolved API key
+ */
+export function getGeminiApiKey(taskType = "integration") {
+  const normalizedTask = String(taskType || "integration").toLowerCase();
+  const envVarName = TASK_KEY_MAP[normalizedTask] || "GEMINI_KEY_INTEGRATION_TEST";
+  return process.env[envVarName] || process.env.GEMINI_API_KEY || "";
+}
+
+// Client cache to avoid reinstantiating GoogleGenerativeAI on every request
+const clientCache = new Map();
+
+/**
+ * Factory provider returning a cached GoogleGenerativeAI client instance for the specified task.
+ *
+ * @param {'unit' | 'integration' | 'e2e' | 'chatbox'} taskType
+ * @param {string|null} explicitApiKey
+ * @returns {GoogleGenerativeAI}
+ */
+export function getGeminiClient(taskType = "integration", explicitApiKey = null) {
+  const key = explicitApiKey || getGeminiApiKey(taskType);
+  if (!key) {
+    throw new Error(
+      `Gemini API key is not configured for task '${taskType}'. Please set ${
+        TASK_KEY_MAP[taskType?.toLowerCase()] || "GEMINI_KEY_INTEGRATION_TEST"
+      } or GEMINI_API_KEY in your environment.`
+    );
+  }
+  if (!clientCache.has(key)) {
+    clientCache.set(key, new GoogleGenerativeAI(key));
+  }
+  return clientCache.get(key);
+}
+
 // Manage API keys & Configure Gemini SDK
 const clients = new Map();
 
@@ -20,8 +99,8 @@ const exhaustedModels = new Map();
 /**
  * Checks if a model is currently exhausted and cleans up expired entries.
  */
-export function markModelExhausted(modelName, error = {message:'daily quota'}, configuration = geminiConfiguration()) {
-  if(modelName) exhaustedModels.set(`${configuration.credentialId}:${modelName}`,geminiQuotaError(error,modelName));
+export function markModelExhausted(modelName, error = { message: 'daily quota' }, configuration = geminiConfiguration()) {
+  if (modelName) exhaustedModels.set(`${configuration.credentialId}:${modelName}`, geminiQuotaError(error, modelName));
 }
 
 /**
@@ -31,10 +110,10 @@ export function markModelExhausted(modelName, error = {message:'daily quota'}, c
 function resolveModelName(requestedModel, configuration) {
   const preferred = (requestedModel && requestedModel.trim()) || configuration.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const normalized = normalizeModelId(preferred);
-  if(!VALID_MODELS.includes(normalized)) throw new ServiceError('Select one of the four supported Gemini models.',400);
+  if (!VALID_MODELS.includes(normalized)) throw new ServiceError('Select one of the four supported Gemini models.', 400);
   const quotaKey = `${configuration.credentialId}:${normalized}`;
-  const blocked=exhaustedModels.get(quotaKey);
-  if(blocked?.resetAt && Date.parse(blocked.resetAt)>Date.now()) throw blocked;
+  const blocked = exhaustedModels.get(quotaKey);
+  if (blocked?.resetAt && Date.parse(blocked.resetAt) > Date.now()) throw blocked;
   exhaustedModels.delete(quotaKey);
   return normalized;
 }
@@ -105,9 +184,9 @@ export const generateMultimodalText = async (
     generationConfig = maybeConfig || {};
   }
 
-  const {requestTimeoutMs,totalTimeoutMs,maxAttempts,onRetry,onWait,retryBaseDelayMs,...providerConfig}=generationConfig;
+  const { requestTimeoutMs, totalTimeoutMs, maxAttempts, onRetry, onWait, retryBaseDelayMs, ...providerConfig } = generationConfig;
   let primaryModelName = resolveModelName(modelName, configuration);
-  
+
   const createModelInstance = (mName) => {
     const modelOptions = { model: mName };
     const specialist = configuration.feature === 'general' ? '' : buildAgentInstruction(configuration.feature);
@@ -136,7 +215,7 @@ export const generateMultimodalText = async (
 
   parts.push({ text: prompt });
 
-  const apiCall = async ({signal}) => {
+  const apiCall = async ({ signal }) => {
     primaryModelName = resolveModelName(modelName, configuration);
     const budget = currentAiJobBudget();
     await budget?.beforeRequest();
@@ -149,7 +228,7 @@ export const generateMultimodalText = async (
           maxOutputTokens: 65536,
           ...providerConfig,
         },
-      }, {signal:requestSignal});
+      }, { signal: requestSignal });
       if (requestSignal.aborted) throw requestSignal.reason || new Error('AI request canceled');
       await budget?.record(result.response?.usageMetadata);
       console.log(`[Gemini API] feature=${configuration.feature} credential=${configuration.keyEnv} model=${primaryModelName}`);
@@ -159,13 +238,13 @@ export const generateMultimodalText = async (
       return result.response.text();
     } catch (primaryErr) {
       if (signal.aborted) throw primaryErr;
-      if(primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
-        if(isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName,primaryErr,configuration);
-        throw geminiQuotaError(primaryErr,primaryModelName);
+      if (primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
+        if (isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName, primaryErr, configuration);
+        throw geminiQuotaError(primaryErr, primaryModelName);
       }
       throw primaryErr;
     }
   };
 
-  return runGeminiRequest(apiCall,{requestTimeoutMs,totalTimeoutMs,maxAttempts,onRetry,onWait,retryBaseDelayMs});
+  return runGeminiRequest(apiCall, { requestTimeoutMs, totalTimeoutMs, maxAttempts, onRetry, onWait, retryBaseDelayMs });
 };

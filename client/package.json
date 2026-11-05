@@ -17,14 +17,19 @@
     "cookie-parser": "^1.4.7",
     "dagre": "^0.8.5",
     "date-fns": "^4.4.0",
+    "diff": "8.0.4",
     "framer-motion": "^12.40.0",
     "hls.js": "^1.6.16",
     "lucide-react": "^1.31.0",
+    "monaco-editor": "0.56.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.17.0",
     "socket.io-client": "^4.8.3",
-    "tailwindcss": "^4.3.0"
+    "tailwindcss": "^4.3.0",
+    "y-monaco": "0.1.6",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

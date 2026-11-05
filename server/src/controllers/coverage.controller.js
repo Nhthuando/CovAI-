@@ -145,6 +145,9 @@ export const invalidateCoverageCache = (snapshotId) => {
     } else {
         frameworksCache.clear();
     }
+    try {
+        clearUnifiedDashboardCache(snapshotId);
+    } catch (_) { }
 };
 
 export const getCoverageFrameworks = async (req, res) => {
@@ -2522,15 +2525,11 @@ select: { id: true, projectId: true, project: { select: { ownerId: true } } }
         }
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (typeof resolveProjectAccess === "function") {
-            await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
-        } else if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Forbidden." });
-        }
-
-        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
         if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
             return res.status(403).json({ success: false, message: "Forbidden." });
+        }
+        if (typeof resolveProjectAccess === "function") {
+            await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
         }
 
         const workspaceData = await buildIntegrationWorkspace(targetSnapshotId);
@@ -3695,6 +3694,16 @@ export const generateColdStartSystemTestsController = async (req, res) => {
             frameworks = await detectSystemTestFrameworksForSnapshot(snapshotId, snapshot);
         } catch (_) {}
 
+        // Automatically sync scenario catalog so scenarios are immediately available in Scenario Library
+        if (prisma?.systemScenario) {
+            try {
+                const { syncSystemScenarioCatalog } = await import("../services/systemScenarioCatalog.service.js");
+                await syncSystemScenarioCatalog({ client: prisma, snapshotId, rootDir: snapshot.rootDir });
+            } catch (syncErr) {
+                console.warn("[generateColdStartSystemTestsController] Auto-sync catalog notice:", syncErr.message);
+            }
+        }
+
         return res.status(200).json({
             success: true,
             message: `Successfully generated ${generationResult.framework} system tests with ${generationResult.scenarioCount} scenarios.`,
@@ -4048,6 +4057,7 @@ export const optimizeSystemTestController = async (req, res) => {
 import {
     buildUnifiedQualityDashboard,
     getUnifiedTestRunInspection,
+    clearUnifiedDashboardCache,
 } from "../services/unifiedQualityDashboard.service.js";
 
 /**
@@ -4064,9 +4074,12 @@ export const getUnifiedQualityDashboardController = async (req, res) => {
             return res.status(400).json({ success: false, message: "snapshotId is required." });
         }
 
+        const bypassCache = req.query?.refresh === "true" || req.query?.bypassCache === "true";
+
         const data = await buildUnifiedQualityDashboard({
             snapshotId: snapshotId.trim(),
             userId,
+            bypassCache,
         });
 
         return res.status(200).json({

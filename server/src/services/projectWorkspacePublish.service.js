@@ -1,3 +1,4 @@
+import { assertEditorReplacementAllowed, reconcileEditorReplacement } from './projectEditorBridge.service.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -8,6 +9,7 @@ import { findEditableSnapshot,hashFileContent,projectFileError,resolveContainedP
 import { durableWrite,mutationJournalDirectory,mutationKey,recoverProjectMutationMarkers } from './projectMutationRecovery.service.js';
 import { runtimeIgnoredDirectories } from './projectRuntimePlan.service.js';
 import { hashOperationInput } from '../utils/projectOperationIdentity.js';
+import { withCheckpointGuard, commitCheckpointFiles } from './projectEditorCheckpointStore.service.js';
 
 const secret = name => /^\.env(?:\.|$)/i.test(name) || /(?:credential|service[-_]?account|secret|private[-_]?key)/i.test(name) || /\.(pem|key|p12)$/i.test(name);
 const runtimeFile = name => /^(?:covai-jest|covai-vitest|covai-setup|covai-resolver|test-results|jest-results|vitest-results)/.test(name);
@@ -38,7 +40,7 @@ export const captureWorkspaceFiles = async (root,{includeGitMetadata = false} = 
 // Commits a prepared multi-file change as one workspace revision. Long builds,
 // providers and test execution happen before this bounded critical section.
 export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capability = 'files.write',
-    expectedWorkspaceRevision,beforeFiles,preparedRoot,requestId = randomUUID(),db = prisma,afterMutation,includeGitMetadata = false,emitCommittedEvent = deliverProjectEvent}) => {
+    expectedWorkspaceRevision,beforeFiles,preparedRoot,requestId = randomUUID(),db = prisma,afterMutation,includeGitMetadata = false,emitCommittedEvent = deliverProjectEvent, beforeMutation, editorCheckpoint = false, checkpointRows, checkpointDocumentIds, provenanceSource = 'HUMAN_EDIT'}) => {
     if (includeGitMetadata && capability !== 'integrations.write') throw projectFileError('CAPABILITY_DENIED','Git metadata publication requires integration permission',403);
     const afterFiles = await captureWorkspaceFiles(preparedRoot,{includeGitMetadata});
     const paths = [...new Set([...beforeFiles.keys(),...afterFiles.keys()])].filter(name=>beforeFiles.get(name)?.sha256 !== afterFiles.get(name)?.sha256).sort();
@@ -55,21 +57,24 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
         changes.push({path:name,beforeHash:beforeFiles.get(name)?.sha256 || null,afterHash:next?.sha256 || null,content});
     }
     if (total > (includeGitMetadata ? 256 : 16) * 1024 * 1024) throw projectFileError('MUTATION_TOO_LARGE','Prepared changes exceed the publication size limit',413);
-    const committed = await withProjectGuard({projectId,userId,capability,db,maxWait:60000,timeout:120000},async(tx,access) => {
+    const fastCheckpoint = editorCheckpoint && checkpointRows && !!db.$queryRaw && !includeGitMetadata && capability === 'files.write';
+    const guard = fastCheckpoint ? withCheckpointGuard : withProjectGuard;
+    const committed = await guard({projectId,snapshotId,userId,capability,documentIds:checkpointDocumentIds,db,maxWait:60000,timeout:120000},async(tx,access) => {
         const {assertProjectOperationActive} = await import('./projectOperationWorkspace.service.js');
         await assertProjectOperationActive(undefined,tx);
-        const snapshot = await findEditableSnapshot(tx,projectId,snapshotId);
-        const latest = await tx.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}});
+        const snapshot = fastCheckpoint ? access.checkpointSnapshot : await findEditableSnapshot(tx,projectId,snapshotId);
+        if (!snapshot?.rootDir) throw projectFileError('SNAPSHOT_CHANGED','Project snapshot is unavailable; select it again');
+        const latest = fastCheckpoint ? { id: access.latestSnapshotId } : await tx.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}});
         if (latest?.id !== snapshotId || access.project.workspaceRevision !== expectedWorkspaceRevision) {
             const currentOp = (await import('./projectOperationWorkspace.service.js')).currentProjectOperation?.();
-            if (currentOp?.type === 'APPLY_UNIT_SUGGESTION' && latest?.id === snapshotId) {
-                expectedWorkspaceRevision = access.project.workspaceRevision;
-            } else {
-                throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
-            }
+            if (!editorCheckpoint && currentOp?.type === 'APPLY_UNIT_SUGGESTION' && latest?.id === snapshotId) expectedWorkspaceRevision = access.project.workspaceRevision;
+            else throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
         }
+        if (beforeMutation) await beforeMutation(tx,access);
+        if (!editorCheckpoint) await assertEditorReplacementAllowed({tx,projectId,snapshotId,paths:changes.map(change=>change.path)});
         if (!changes.length) {
             const result = {snapshotId,workspaceRevision:expectedWorkspaceRevision,changedPaths:[]};
+            if (fastCheckpoint) { await commitCheckpointFiles(tx,{snapshotId,userId,rows:checkpointRows,changes}); return result; }
             if (afterMutation) await afterMutation(tx,result);
             const current = await tx.project.findUnique({where:{id:projectId},select:{workspaceRevision:true}});
             result.workspaceRevision = current.workspaceRevision;
@@ -113,10 +118,16 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
                 await fs.mkdir(path.dirname(change.target),{recursive:true});
                 await fs.rename(path.join(journalDir,change.candidateName),change.target);
             } else await fs.unlink(change.target);
-            await tx.projectFileVersion.upsert({where:{snapshotId_relativePath:{snapshotId,relativePath:change.path}},
+            if (!fastCheckpoint) await tx.projectFileVersion.upsert({where:{snapshotId_relativePath:{snapshotId,relativePath:change.path}},
                 create:{snapshotId,relativePath:change.path,sha256:change.afterHash,deleted:change.afterHash === null,revision:1,updatedByUserId:userId},
                 update:{sha256:change.afterHash,deleted:change.afterHash === null,revision:{increment:1},updatedByUserId:userId}});
         }
+        if (fastCheckpoint) {
+            const changedPaths = changes.map(change=>change.path);
+            const event = await commitCheckpointFiles(tx,{snapshotId,userId,rows:checkpointRows,changes,publication:{projectId,mutationId:mutation.id,changedPaths}});
+            return {snapshotId,workspaceRevision:event.revision,changedPaths,event,cleanup:[markerPath,...stagingNames.map(name=>path.join(journalDir,name))]};
+        }
+        if (!editorCheckpoint) await reconcileEditorReplacement({tx,projectId,snapshotId,actorId:userId,source:includeGitMetadata ? 'GIT_UPDATE' : provenanceSource,changes:changes.map(change=>({...change,before:change.before?.toString('utf8') ?? ''}))});
         if (afterMutation) await afterMutation(tx,{snapshotId,workspaceRevision:expectedWorkspaceRevision + 1,changedPaths:changes.map(change=>change.path)});
         const project = await tx.project.update({where:{id:projectId},data:{workspaceRevision:{increment:1}}});
         await tx.projectMutation.update({where:{id:mutation.id},data:{state:'APPLIED'}});
@@ -126,7 +137,10 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
     });
     if (committed.cleanup) {
         for (const target of committed.cleanup) await fs.rm(target,{recursive:true,force:true}).catch(()=>{});
-        await emitCommittedEvent(committed.event).catch(()=>{});
+        // Source, receipt, file versions and event are already committed. Slow
+        // subscriber revalidation must not keep the Save button spinning.
+        if (editorCheckpoint) void emitCommittedEvent(committed.event).catch(()=>{});
+        else await emitCommittedEvent(committed.event).catch(()=>{});
         delete committed.cleanup;delete committed.event;
     }
     return committed;

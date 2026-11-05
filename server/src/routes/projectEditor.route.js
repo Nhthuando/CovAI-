@@ -1,0 +1,10 @@
+import { Router } from 'express';
+import { authMiddleware } from '../middlewares/auth.middleware.js';
+import * as controller from '../controllers/projectEditor.controller.js';
+const router = Router();
+router.use(authMiddleware);
+router.get('/:id/editor/status', controller.status);
+router.post('/:id/editor/checkpoint', controller.save);
+router.get('/:id/editor/line-history', controller.history);
+router.get('/:id/editor/documents/:documentId/recovery', controller.recovery);
+export default router;

@@ -1,0 +1,317 @@
+{
+  "sprint": 2,
+  "modules": 12,
+  "cases": 139,
+  "tasks": 26,
+  "totalRow": 20,
+  "moduleDetails": [
+    {
+      "name": "Docker and Dependencies",
+      "count": 12,
+      "last": 23,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_RUNNER_001",
+        "TC_COV_S2_RUNNER_002",
+        "TC_COV_S2_RUNNER_003",
+        "TC_COV_S2_RUNNER_004",
+        "TC_COV_S2_RUNNER_005",
+        "TC_COV_S2_RUNNER_006",
+        "TC_COV_S2_RUNNER_007",
+        "TC_COV_S2_RUNNER_008",
+        "TC_COV_S2_RUNNER_009",
+        "TC_COV_S2_RUNNER_010",
+        "TC_COV_S2_RUNNER_011",
+        "TC_COV_S2_RUNNER_012"
+      ],
+      "tasks": [
+        1,
+        2,
+        21
+      ]
+    },
+    {
+      "name": "AST and Function Extraction",
+      "count": 14,
+      "last": 25,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_AST_001",
+        "TC_COV_S2_AST_002",
+        "TC_COV_S2_AST_003",
+        "TC_COV_S2_AST_004",
+        "TC_COV_S2_AST_005",
+        "TC_COV_S2_AST_006",
+        "TC_COV_S2_AST_007",
+        "TC_COV_S2_AST_008",
+        "TC_COV_S2_AST_009",
+        "TC_COV_S2_AST_010",
+        "TC_COV_S2_AST_011",
+        "TC_COV_S2_AST_012",
+        "TC_COV_S2_AST_013",
+        "TC_COV_S2_AST_014"
+      ],
+      "tasks": [
+        3,
+        4,
+        5,
+        22
+      ]
+    },
+    {
+      "name": "CFG and Complexity",
+      "count": 13,
+      "last": 24,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_CFGCC_001",
+        "TC_COV_S2_CFGCC_002",
+        "TC_COV_S2_CFGCC_003",
+        "TC_COV_S2_CFGCC_004",
+        "TC_COV_S2_CFGCC_005",
+        "TC_COV_S2_CFGCC_006",
+        "TC_COV_S2_CFGCC_007",
+        "TC_COV_S2_CFGCC_008",
+        "TC_COV_S2_CFGCC_009",
+        "TC_COV_S2_CFGCC_010",
+        "TC_COV_S2_CFGCC_011",
+        "TC_COV_S2_CFGCC_012",
+        "TC_COV_S2_CFGCC_013"
+      ],
+      "tasks": [
+        6,
+        7,
+        23
+      ]
+    },
+    {
+      "name": "Analysis Storage and APIs",
+      "count": 15,
+      "last": 26,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_ANALYSIS_001",
+        "TC_COV_S2_ANALYSIS_002",
+        "TC_COV_S2_ANALYSIS_003",
+        "TC_COV_S2_ANALYSIS_004",
+        "TC_COV_S2_ANALYSIS_005",
+        "TC_COV_S2_ANALYSIS_006",
+        "TC_COV_S2_ANALYSIS_007",
+        "TC_COV_S2_ANALYSIS_008",
+        "TC_COV_S2_ANALYSIS_009",
+        "TC_COV_S2_ANALYSIS_010",
+        "TC_COV_S2_ANALYSIS_011",
+        "TC_COV_S2_ANALYSIS_012",
+        "TC_COV_S2_ANALYSIS_013",
+        "TC_COV_S2_ANALYSIS_014",
+        "TC_COV_S2_ANALYSIS_015"
+      ],
+      "tasks": [
+        8,
+        9,
+        10,
+        11,
+        12,
+        24
+      ]
+    },
+    {
+      "name": "Framework and Execution",
+      "count": 12,
+      "last": 23,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_EXEC_001",
+        "TC_COV_S2_EXEC_002",
+        "TC_COV_S2_EXEC_003",
+        "TC_COV_S2_EXEC_004",
+        "TC_COV_S2_EXEC_005",
+        "TC_COV_S2_EXEC_006",
+        "TC_COV_S2_EXEC_007",
+        "TC_COV_S2_EXEC_008",
+        "TC_COV_S2_EXEC_009",
+        "TC_COV_S2_EXEC_010",
+        "TC_COV_S2_EXEC_011",
+        "TC_COV_S2_EXEC_012"
+      ],
+      "tasks": [
+        13,
+        26
+      ]
+    },
+    {
+      "name": "Coverage Parser and Storage",
+      "count": 13,
+      "last": 24,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_COVPARSE_001",
+        "TC_COV_S2_COVPARSE_002",
+        "TC_COV_S2_COVPARSE_003",
+        "TC_COV_S2_COVPARSE_004",
+        "TC_COV_S2_COVPARSE_005",
+        "TC_COV_S2_COVPARSE_006",
+        "TC_COV_S2_COVPARSE_007",
+        "TC_COV_S2_COVPARSE_008",
+        "TC_COV_S2_COVPARSE_009",
+        "TC_COV_S2_COVPARSE_010",
+        "TC_COV_S2_COVPARSE_011",
+        "TC_COV_S2_COVPARSE_012",
+        "TC_COV_S2_COVPARSE_013"
+      ],
+      "tasks": [
+        14,
+        24
+      ]
+    },
+    {
+      "name": "Coverage APIs",
+      "count": 12,
+      "last": 23,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_COVAPI_001",
+        "TC_COV_S2_COVAPI_002",
+        "TC_COV_S2_COVAPI_003",
+        "TC_COV_S2_COVAPI_004",
+        "TC_COV_S2_COVAPI_005",
+        "TC_COV_S2_COVAPI_006",
+        "TC_COV_S2_COVAPI_007",
+        "TC_COV_S2_COVAPI_008",
+        "TC_COV_S2_COVAPI_009",
+        "TC_COV_S2_COVAPI_010",
+        "TC_COV_S2_COVAPI_011",
+        "TC_COV_S2_COVAPI_012"
+      ],
+      "tasks": [
+        15,
+        24
+      ]
+    },
+    {
+      "name": "Import Progress",
+      "count": 10,
+      "last": 21,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_IMPORT_001",
+        "TC_COV_S2_IMPORT_002",
+        "TC_COV_S2_IMPORT_003",
+        "TC_COV_S2_IMPORT_004",
+        "TC_COV_S2_IMPORT_005",
+        "TC_COV_S2_IMPORT_006",
+        "TC_COV_S2_IMPORT_007",
+        "TC_COV_S2_IMPORT_008",
+        "TC_COV_S2_IMPORT_009",
+        "TC_COV_S2_IMPORT_010"
+      ],
+      "tasks": [
+        16,
+        26
+      ]
+    },
+    {
+      "name": "Job Queue and Monitor",
+      "count": 10,
+      "last": 21,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_JOB_001",
+        "TC_COV_S2_JOB_002",
+        "TC_COV_S2_JOB_003",
+        "TC_COV_S2_JOB_004",
+        "TC_COV_S2_JOB_005",
+        "TC_COV_S2_JOB_006",
+        "TC_COV_S2_JOB_007",
+        "TC_COV_S2_JOB_008",
+        "TC_COV_S2_JOB_009",
+        "TC_COV_S2_JOB_010"
+      ],
+      "tasks": [
+        17,
+        26
+      ]
+    },
+    {
+      "name": "Coverage and CFG UI",
+      "count": 12,
+      "last": 23,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_COVUI_001",
+        "TC_COV_S2_COVUI_002",
+        "TC_COV_S2_COVUI_003",
+        "TC_COV_S2_COVUI_004",
+        "TC_COV_S2_COVUI_005",
+        "TC_COV_S2_COVUI_006",
+        "TC_COV_S2_COVUI_007",
+        "TC_COV_S2_COVUI_008",
+        "TC_COV_S2_COVUI_009",
+        "TC_COV_S2_COVUI_010",
+        "TC_COV_S2_COVUI_011",
+        "TC_COV_S2_COVUI_012"
+      ],
+      "tasks": [
+        18,
+        19,
+        25
+      ]
+    },
+    {
+      "name": "Test Config and Runner Filters",
+      "count": 6,
+      "last": 17,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_CONFIG_001",
+        "TC_COV_S2_CONFIG_002",
+        "TC_COV_S2_CONFIG_003",
+        "TC_COV_S2_CONFIG_004",
+        "TC_COV_S2_CONFIG_005",
+        "TC_COV_S2_CONFIG_006"
+      ],
+      "tasks": [
+        20,
+        25
+      ]
+    },
+    {
+      "name": "Pipeline Integration",
+      "count": 10,
+      "last": 21,
+      "status": "H",
+      "ids": [
+        "TC_COV_S2_PIPE_001",
+        "TC_COV_S2_PIPE_002",
+        "TC_COV_S2_PIPE_003",
+        "TC_COV_S2_PIPE_004",
+        "TC_COV_S2_PIPE_005",
+        "TC_COV_S2_PIPE_006",
+        "TC_COV_S2_PIPE_007",
+        "TC_COV_S2_PIPE_008",
+        "TC_COV_S2_PIPE_009",
+        "TC_COV_S2_PIPE_010"
+      ],
+      "tasks": [
+        26,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ]
+    }
+  ]
+}

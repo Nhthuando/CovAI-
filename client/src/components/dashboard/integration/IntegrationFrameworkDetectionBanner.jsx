@@ -52,17 +52,17 @@ export default function IntegrationFrameworkDetectionBanner({
               </div>
               <div>
                 <h4 className="text-sm font-bold text-amber-500 m-0 flex items-center gap-2">
-                  <span>Missing Test Libraries Detected</span>
+                  <span>Test Files Detected Missing Dependencies</span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 font-semibold uppercase">
                     Scenario D
                   </span>
                 </h4>
                 <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                  Existing API test suites found (inferred framework{" "}
+                  Project contains API test files (inferred framework:{" "}
                   <strong className="text-[var(--color-text)] font-semibold font-mono">
                     {framework?.toUpperCase() || "SUPERTEST"}
                   </strong>
-                  ), but <code className="text-amber-400 font-mono">package.json</code> is missing packages required for execution.
+                  ), but required runner packages are missing from <code className="text-amber-400 font-mono">package.json</code>.
                 </p>
 
                 {/* List missing packages */}
@@ -107,13 +107,13 @@ export default function IntegrationFrameworkDetectionBanner({
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-[var(--color-primary)] m-0 flex items-center gap-2">
-                    <span>No API Integration Tests Found</span>
+                    <span>Zero Integration Tests Found</span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-primary)]/20 border border-[var(--color-primary)]/30 font-semibold uppercase">
                       Cold-Start AI
                     </span>
                   </h4>
                   <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                    No API test suites found in project. Select a framework below to let AI analyze routes/controllers and generate optimal coverage test suites.
+                    No API test files found in repository. Select your preferred testing framework to let AI analyze AST router/controller endpoints and synthesize full coverage scenarios.
                   </p>
                 </div>
               </div>
@@ -147,7 +147,7 @@ export default function IntegrationFrameworkDetectionBanner({
                       </span>
                     </div>
                     <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      Direct Express HTTP testing via in-memory listener
+                      In-memory Express HTTP server verification
                     </div>
                   </div>
                 </label>
@@ -176,7 +176,7 @@ export default function IntegrationFrameworkDetectionBanner({
                       </span>
                     </div>
                     <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      Testing via Playwright request context with JSON reports
+                      HTTP API verification via Playwright request context
                     </div>
                   </div>
                 </label>
@@ -203,4 +203,3 @@ export default function IntegrationFrameworkDetectionBanner({
     </div>
   );
 }
-

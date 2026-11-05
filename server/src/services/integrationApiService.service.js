@@ -265,7 +265,15 @@ export const runIntegrationGenerationPipeline = async ({
     await updateJobStatus({ jobId, progress: 70 }).catch(() => {});
     await addJobLog(jobId, "INFO", "[Integration AI] Sending request to AI LLM model...").catch(() => {});
 
-    const aiResponseText = await generateText(prompt, model || null);
+    const aiResponseText = await generateText(
+        prompt,
+        model || process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
+        {
+            taskType: "integration",
+            temperature: 0.2,
+            maxOutputTokens: 1500,
+        }
+    );
     if (!aiResponseText || !aiResponseText.trim()) {
         throw new ServiceError("AI model returned empty response", 500);
     }

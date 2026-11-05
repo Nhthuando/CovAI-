@@ -2,6 +2,7 @@ import { scenarioArtifactVersion } from './scenarioManager.service.js';
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { cleanStoragePath } from "../utils/pathSanitizer.js";
 import { loadSourceCode } from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { getBucket } from "../config/firebase.js";
@@ -54,7 +55,7 @@ export const extractValidatedTestRequests = (t) => {
             suiteName: mr.suiteName || "Integration Test Suite",
             method: (mr.method || "GET").toUpperCase(),
             path: mr.path || "/",
-            testFile: t.filePath,
+            testFile: cleanStoragePath(t.filePath) || t.filePath,
             scenarioId: mr.scenarioId,
             enabled: mr.enabled !== false,
             userEdited: Boolean(mr.userEdited),
@@ -216,7 +217,16 @@ export const invalidateEndpointCache = (snapshotId, rootDir = null) => {
   endpointCache.delete(snapshotId);
   firebaseCache.delete(snapshotId);
   aiTestParseCache.delete(snapshotId);
-  apiTraceCache.delete(snapshotId);
+  for (const key of apiTraceCache.keys()) {
+    if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+      apiTraceCache.delete(key);
+    }
+  }
+  try {
+    import("./unifiedQualityDashboard.service.js").then((mod) => {
+      mod?.clearUnifiedDashboardCache?.(snapshotId);
+    }).catch(() => {});
+  } catch (_) {}
   if (rootDir) {
     try {
       import("fs").then((fsModule) => {
@@ -882,7 +892,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
               : null,
       duration: typeof s.duration === "number" ? s.duration : s.durationMs || 0,
       failureMessages: s.failureMessages || [],
-      testFile: s.testFile || null,
+      testFile: cleanStoragePath(s.testFile) || s.testFile || null,
     }));
     firebaseCache.set(firebaseCacheKey, testScenarios);
   } else {
@@ -1619,6 +1629,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
         return {
           ...rest,
+          testFile: cleanStoragePath(rest.testFile || req?.testFile) || rest.testFile || req?.testFile || null,
           targetEndpoint: `${ep.method.toUpperCase()} ${ep.fullPath || ep.path}`,
           failureLayer:
             failureDiagnostics?.failureLayer ||

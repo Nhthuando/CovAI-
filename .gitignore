@@ -52,6 +52,7 @@ specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
 !/docs/superpowers/specs/2026-10-28-project-collaboration-design.md
+!/docs/superpowers/specs/2026-11-04-collaborative-editor-design.md
 
 # Disposable collaboration worker copies and generated test artifacts
 /server/.covai-temp/collaboration-operations/
@@ -62,3 +63,20 @@ specs/
 /client/.evidence-review/
 /client/evidence-preview.html
 /server/src/tests/fixtures/system-assessment/.covai-system-test/
+
+
+# Scratch directory & test results
+/scratch/
+/server/test-results/
+test-results/
+
+# Research documents and artifacts
+/docs/research/
+!/docs/research/*.md
+
+# Audit reports and PDF artifacts
+*.pdf
+
+# Ad-hoc test and debug scripts
+/server/test_*.mjs
+/server/scripts/sync_latest.mjs
