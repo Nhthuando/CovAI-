@@ -98,16 +98,21 @@ export default function IntegrationRouteMatrixTable({
     return endpoints.map((ep) => {
       const epKey = `${ep.method} ${ep.path}`;
       const scenarios = ep.scenarios || [];
-      const hasScenarios = scenarios.length > 0 || (ep.generatedCount || 0) > 0;
+      const hasScenarios = scenarios.length > 0 || (ep.generatedCount || 0) > 0 || (ep.totalScenarios || 0) > 0 || ep.status === "Not Executed";
       
-      const failedCount = (ep.failedCount || 0) + scenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
-      const passedCount = (ep.passedCount || 0) + scenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
+      const scFailed = scenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
+      const scPassed = scenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
+
+      const failedCount = scenarios.length > 0 ? scFailed : (ep.failedCount || 0);
+      const passedCount = scenarios.length > 0 ? scPassed : (ep.passedCount || 0);
 
       let status = "UNCOVERED";
-      if (failedCount > 0) {
+      if (failedCount > 0 || ep.status === "Partial" || ep.status === "failed") {
         status = "FAIL";
-      } else if (passedCount > 0) {
+      } else if (passedCount > 0 || ep.status === "Covered" || ep.status === "passed") {
         status = "PASS";
+      } else if (hasScenarios) {
+        status = "READY";
       }
 
       const mod = getEndpointModule(ep.path);
@@ -120,7 +125,7 @@ export default function IntegrationRouteMatrixTable({
         computedStatus: status,
         passedCount,
         failedCount,
-        totalScenarios: scenarios.length || ep.generatedCount || 0,
+        totalScenarios: scenarios.length || ep.generatedCount || ep.totalScenarios || 0,
         module: mod,
       };
     });
@@ -129,7 +134,7 @@ export default function IntegrationRouteMatrixTable({
   const filteredEndpoints = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return processedEndpoints.filter((ep) => {
-      if (methodFilter !== "ALL" && ep.method !== methodFilter) return false;
+      if (methodFilter !== "ALL" && (ep.method || "").toUpperCase() !== methodFilter.toUpperCase()) return false;
       if (statusFilter !== "ALL" && ep.computedStatus !== statusFilter) return false;
       if (moduleFilter !== "ALL" && ep.module !== moduleFilter) return false;
 
@@ -151,8 +156,9 @@ export default function IntegrationRouteMatrixTable({
     const total = processedEndpoints.length;
     const passed = processedEndpoints.filter((ep) => ep.computedStatus === "PASS").length;
     const failed = processedEndpoints.filter((ep) => ep.computedStatus === "FAIL").length;
+    const ready = processedEndpoints.filter((ep) => ep.computedStatus === "READY").length;
     const uncovered = processedEndpoints.filter((ep) => ep.computedStatus === "UNCOVERED").length;
-    return { total, passed, failed, uncovered };
+    return { total, passed, failed, ready, uncovered };
   }, [processedEndpoints]);
 
   return (
@@ -176,28 +182,64 @@ export default function IntegrationRouteMatrixTable({
 
           <div className="flex items-center gap-2 text-xs font-mono">
             <div className="flex items-center gap-2.5 px-3 py-1 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
-              <span className="font-semibold text-[var(--color-text)]">{stats.total} routes</span>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("ALL")}
+                className="font-semibold text-[var(--color-text)] hover:underline cursor-pointer"
+                title="Show all routes"
+              >
+                {stats.total} routes
+              </button>
               <span className="text-[var(--color-border)]">•</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setStatusFilter("PASS")}
+                className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                title="Filter passed routes"
+              >
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 {stats.passed} pass
-              </span>
+              </button>
               {stats.failed > 0 && (
                 <>
                   <span className="text-[var(--color-border)]">•</span>
-                  <span className="text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter("FAIL")}
+                    className="text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                    title="Filter failed routes"
+                  >
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
                     {stats.failed} fail
-                  </span>
+                  </button>
+                </>
+              )}
+              {stats.ready > 0 && (
+                <>
+                  <span className="text-[var(--color-border)]">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter("READY")}
+                    className="text-sky-600 dark:text-sky-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                    title="Filter ready/pending test routes"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                    {stats.ready} ready
+                  </button>
                 </>
               )}
               {stats.uncovered > 0 && (
                 <>
                   <span className="text-[var(--color-border)]">•</span>
-                  <span className="text-[var(--color-text-muted)] font-medium flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter("UNCOVERED")}
+                    className="text-[var(--color-text-muted)] font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                    title="Filter uncovered routes"
+                  >
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-zinc-600" />
                     {stats.uncovered} uncovered
-                  </span>
+                  </button>
                 </>
               )}
             </div>
@@ -286,6 +328,7 @@ export default function IntegrationRouteMatrixTable({
                 { id: "ALL", label: "All" },
                 { id: "PASS", label: "Pass" },
                 { id: "FAIL", label: "Fail" },
+                { id: "READY", label: "Ready" },
                 { id: "UNCOVERED", label: "Uncovered" },
               ].map((s) => (
                 <button
@@ -420,14 +463,19 @@ export default function IntegrationRouteMatrixTable({
                       {/* Status Badge */}
                       <td className="py-2.5 px-3 text-center">
                         {isPass ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                             Passed
                           </span>
                         ) : isFail ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/8 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
                             Failed ({ep.failedCount})
+                          </span>
+                        ) : ep.computedStatus === "READY" ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                            Ready
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
@@ -550,11 +598,11 @@ export default function IntegrationRouteMatrixTable({
                                           <button
                                             type="button"
                                             onClick={() => onViewScenarioCode(sc, ep)}
-                                            title="Xem vị trí kịch bản test này trong source code"
+                                            title="View this scenario in source code"
                                             className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer shadow-2xs font-medium"
                                           >
                                             <FileCode size={12} className="text-[var(--color-primary)]" />
-                                            <span>Xem Code</span>
+                                            <span>View Code</span>
                                           </button>
                                         </div>
                                       </div>

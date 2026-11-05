@@ -21,7 +21,7 @@ import babel from "@babel/core";
 import transformCommonJsPlugin from "@babel/plugin-transform-modules-commonjs";
 import prisma from "../config/prisma.js";
 import { randomUUID } from 'node:crypto';
-import { currentProjectOperation, withOperationPublishGuard, stagePreparedPublication } from './projectOperationWorkspace.service.js';
+import { currentProjectOperation, operationSnapshot, withOperationPublishGuard, stagePreparedPublication } from './projectOperationWorkspace.service.js';
 import { resolveContainedProjectPath } from './projectFileVersion.service.js';
 import { resolveProjectRoot, ensureMinimalPackageJson } from '../utils/projectRootResolver.js';
 import {
@@ -61,6 +61,11 @@ const ensureProjectDependencies = async (jobId, rootDir) => {
             }
         }
     }
+
+    try {
+        const { detectAndRunPrismaGenerate } = await import("./runTestsJob.service.js");
+        await detectAndRunPrismaGenerate(jobId, rootDir);
+    } catch (_) { }
 };
 
 /**
@@ -117,16 +122,28 @@ export const processSupertestCoverageJob = async (jobId) => {
         const job = await getJobById(jobId);
         if (isJobCanceled(jobId, abortController.signal) || job?.status === "CANCELED") return;
 
-        if (!job?.snapshot?.rootDir) {
+        const rawSnapshot = job.snapshot;
+        if (!rawSnapshot?.rootDir) {
             throw new ServiceError("Snapshot is not ready to run Supertest.", 409);
         }
-        const { jestConfigPath } = job.snapshot;
-        const rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
+        const snapshot = typeof operationSnapshot === "function" ? operationSnapshot(rawSnapshot) : rawSnapshot;
+        const { jestConfigPath } = snapshot;
+        const rootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
+        const origRootDir = resolveProjectRoot(rawSnapshot.rootDir) || rawSnapshot.rootDir;
         const snapshotId = job.snapshotId;
         const projectId = job.projectId;
         const userId = job.userId;
         if (currentProjectOperation()) {
             ensureMinimalPackageJson(rootDir);
+            if (origRootDir && path.resolve(origRootDir) !== path.resolve(rootDir)) {
+                for (const sub of ["", "server", "backend", "api"]) {
+                    const srcNm = sub ? path.join(origRootDir, sub, "node_modules") : path.join(origRootDir, "node_modules");
+                    const dstNm = sub ? path.join(rootDir, sub, "node_modules") : path.join(rootDir, "node_modules");
+                    if (fs.existsSync(srcNm) && !fs.existsSync(dstNm)) {
+                        try { fs.cpSync(srcNm, dstNm, { recursive: true }); } catch (_) {}
+                    }
+                }
+            }
             const { runNpmInstall } = await import('./runTestsJob.service.js');
             await runNpmInstall(jobId, rootDir);
         }

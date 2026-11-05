@@ -21,6 +21,7 @@ import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
 import TrustworthinessWorkspace from './trustworthiness/ProjectChatbotWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
+import VersionControlWorkspace from "./VersionControlWorkspace";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
@@ -143,6 +144,13 @@ function LayoutInner() {
       return;
     }
     setShowCFG(false);
+    if (id === "explorer") {
+      if (activeActivity === "explorer") {
+        setSidebarOpen((prev) => !prev);
+        return;
+      }
+      setSidebarOpen(true);
+    }
     if (id === "system") {
       setActiveActivity("coverage");
       setCoverageType("system");
@@ -236,6 +244,16 @@ function LayoutInner() {
     }),
     [activeActivity, coverageType, activeTabId, unifiedSummary]
   );
+  const isFullWidthWorkspace = [
+    "architecture",
+    "overview",
+    "trustworthiness",
+    "coverage",
+    "version-control",
+    "git",
+    "jobs",
+    "activity",
+  ].includes(activeActivity);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -1171,7 +1189,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
+          {sidebarOpen && !isFullWidthWorkspace && (
             <motion.div
               key="sidebar"
               initial={
@@ -1222,8 +1240,6 @@ function LayoutInner() {
                   coverageType={coverageType}
                   setCoverageType={handleSelectCoverageType}
                 />
-              ) : activeActivity === "git" ? (
-                <GitPanel projectId={project?.id} onSync={handleGitSync} />
               ) : (
                 <Sidebar
                   sidebarWidth={sidebarWidth}
@@ -1249,7 +1265,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
+        {!isMobile && sidebarOpen && !isFullWidthWorkspace && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1281,7 +1297,11 @@ function LayoutInner() {
             {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
           </div>
 
-          <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
+          <div className={(activeActivity === "version-control" || activeActivity === "git") ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <VersionControlWorkspace projectId={project?.id} onSync={handleGitSync} />
+          </div>
+
+          <div className={(activeActivity === "jobs" || activeActivity === "activity") ? "w-full h-full overflow-y-auto" : "hidden"}>
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           </div>
 
@@ -1387,7 +1407,7 @@ function LayoutInner() {
             </div>
           </div>
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" && activeActivity !== "trustworthiness" ? "w-full h-full" : "hidden"}>
+          <div className={!isFullWidthWorkspace && activeActivity !== "settings" ? "w-full h-full" : "hidden"}>
                 <Editor
                   key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}

@@ -879,14 +879,17 @@ export default function IntegrationScenariosPane({
     const scenarioId = parts.join("::");
     setProcessingScenarioId(scenario.id);
     try {
-      if (
-        (scenario.origin === "PROJECT_EXISTING" || scenario.origin === "EXISTING") &&
-        !aiTests.some((t) => t.id === aiTestId)
-      ) {
+      const isExistingTest =
+        scenario.origin === "PROJECT_EXISTING" ||
+        scenario.origin === "EXISTING" ||
+        (aiTestId && aiTestId.startsWith("existing_test_")) ||
+        !aiTests.some((t) => t.id === aiTestId);
+
+      if (isExistingTest) {
         // Discovered from existing project test file
         const mockCode =
-          scenario.sourceCode ||
           scenario.code ||
+          scenario.sourceCode ||
 `// Existing Project Integration Test: ${scenario.testName}
 // Discovered from: ${scenario.filePath || "Project Test Files"}
 describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
@@ -948,7 +951,14 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
     }
   };
 
-  if (!hasAnalysis && !hasGeneratedTests) {
+  const totalScenariosCount = useMemo(() => {
+    return Object.values(scenariosByEndpoint).reduce(
+      (acc, ep) => acc + (ep.scenarios || []).length,
+      0,
+    );
+  }, [scenariosByEndpoint]);
+
+  if (!hasAnalysis && !hasGeneratedTests && totalScenariosCount === 0) {
     return (
       <div className="p-12 text-center flex flex-col items-center justify-center h-full gap-3 text-[var(--color-text-secondary)] font-sans">
         <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-1">
@@ -975,13 +985,6 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
       </div>
     );
   }
-
-  const totalScenariosCount = useMemo(() => {
-    return Object.values(scenariosByEndpoint).reduce(
-      (acc, ep) => acc + (ep.scenarios || []).length,
-      0,
-    );
-  }, [scenariosByEndpoint]);
 
   if (!hasGeneratedTests && totalScenariosCount === 0) {
     const recentHistory = [
@@ -1028,7 +1031,7 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
           )}
         </div>
 
-        {/* Generation & Execution History (Lịch sử khi sinh ra / đã chạy) */}
+        {/* Generation & Execution History */}
         {recentHistory.length > 0 && (
           <div className="w-full mt-4 p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-left shadow-xs space-y-3 animate-in fade-in duration-200">
             <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">

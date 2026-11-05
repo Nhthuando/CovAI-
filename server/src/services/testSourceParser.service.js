@@ -263,7 +263,8 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     testFile: filePath,
                                     payload: testPayload,
                                     queryParams: qParams,
-                                    expectedStatus: testExpectedStatus
+                                    expectedStatus: testExpectedStatus,
+                                    code: node.range ? sourceCode.slice(node.range[0], node.range[1]) : undefined,
                                 });
                             }
                         }

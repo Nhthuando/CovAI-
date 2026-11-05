@@ -162,7 +162,7 @@ export function getFileContentFromCache(projectId, filePath, snapshotId = "") {
       fileContentCache.set(key, parsed);
       return parsed;
     }
-  } catch (_) {}
+  } catch (_) { }
   return null;
 }
 
@@ -174,7 +174,7 @@ export function setFileContentToCache(projectId, filePath, data, snapshotId = ""
     if (typeof data.content === "string" && data.content.length < 500000) {
       sessionStorage.setItem(`${CACHE_PREFIX}${key}`, JSON.stringify(data));
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 export function invalidateFileContentCache(projectId, filePath = null) {
@@ -188,7 +188,7 @@ export function invalidateFileContentCache(projectId, filePath = null) {
         const k = sessionStorage.key(i);
         if (k && k.startsWith(`${CACHE_PREFIX}${projectId}:`)) sessionStorage.removeItem(k);
       }
-    } catch (_) {}
+    } catch (_) { }
     return;
   }
   const normPath = filePath.replace(/\\/g, "/");
@@ -204,7 +204,7 @@ export function invalidateFileContentCache(projectId, filePath = null) {
         sessionStorage.removeItem(k);
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 export async function getFileContentApi(projectId, filePath, options = {}) {
@@ -588,5 +588,15 @@ export async function getProjectIntegrationDetection(projectId) {
   const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/integration/frameworks`, {
     headers: getAuthHeaders(),
   });
+  return handleResponse(res);
+}
+
+export async function getProjectEventsApi(projectId, { after = 0, limit = 100 } = {}) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/events?after=${after}&limit=${limit}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }

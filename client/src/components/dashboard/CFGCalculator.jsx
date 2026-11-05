@@ -264,15 +264,13 @@ function CFGNode({
       }}
       whileHover={{ scale: isSelected ? 1.1 : 1.05 }}
       whileTap={{ scale: 0.96 }}
-      className={`flex items-center justify-center font-mono select-none text-center shadow-sm cursor-pointer transition-all ${
-        isDiamond ? "rounded-[var(--radius-md)]" : "rounded-full"
-      } ${
-        isSelected
+      className={`flex items-center justify-center font-mono select-none text-center shadow-sm cursor-pointer transition-all ${isDiamond ? "rounded-[var(--radius-md)]" : "rounded-full"
+        } ${isSelected
           ? "border-2 border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-bold ring-2 ring-[var(--color-primary)]/50 ring-offset-2 ring-offset-[var(--color-bg)] z-30 shadow-md"
           : active
             ? "border-2 border-[var(--color-primary)] bg-[var(--color-surface)] text-[var(--color-primary)] font-semibold z-10 hover:border-[var(--color-primary)]"
             : "border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/70 text-[var(--color-text)] z-10"
-      }`}
+        }`}
       style={{
         position: "absolute",
         left: x,
@@ -300,11 +298,10 @@ function CFGNode({
       <span>{label}</span>
       {line ? (
         <span
-          className={`text-[11px] ml-1.5 font-mono ${
-            isSelected
+          className={`text-[11px] ml-1.5 font-mono ${isSelected
               ? "text-[var(--color-primary)] font-bold opacity-100"
               : "opacity-60"
-          }`}
+            }`}
         >
           (L{line})
         </span>
@@ -440,7 +437,7 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
           (c) =>
             c.functionName &&
             (c.functionName.startsWith(prefix) ||
-             c.functionName.toLowerCase().startsWith(prefix.toLowerCase()))
+              c.functionName.toLowerCase().startsWith(prefix.toLowerCase()))
         );
         if (prefixMatch) return prefixMatch.functionName;
       }
@@ -562,16 +559,16 @@ export default function CFGCalculator({
     try {
       setRebuilding(true);
       setError(null);
-      await buildCfgApi(project.id, targetSnapshotId);
+      await buildCfgApi(project.id);
       // Wait a moment for the job to process, then refetch
       await new Promise((r) => setTimeout(r, 3000));
       const [cfgRes, ccRes] = await Promise.all([
-        getProjectCfgApi(project.id, targetSnapshotId),
-        getProjectCcApi(project.id, targetSnapshotId),
+        getProjectCfgApi(project.id),
+        getProjectCcApi(project.id),
       ]);
-      setCfgs(cfgRes.data);
-      setCcs(ccRes.data);
-      if (cfgRes.data.length > 0) {
+      setCfgs(cfgRes.data || []);
+      setCcs(ccRes.data || []);
+      if (cfgRes?.data?.length > 0) {
         const firstFile = [...new Set(cfgRes.data.map((c) => c.filePath))][0];
         setSelectedFile(firstFile);
       }
@@ -588,10 +585,10 @@ export default function CFGCalculator({
     async function fetchData() {
       try {
         setLoading(true);
-        // Using snapshotId empty to default to latest snapshot
+        // Default to latest snapshot
         let [cfgRes, ccRes] = await Promise.all([
-          getProjectCfgApi(project.id, targetSnapshotId),
-          getProjectCcApi(project.id, targetSnapshotId),
+          getProjectCfgApi(project.id),
+          getProjectCcApi(project.id),
         ]);
 
         let currentCfgs = cfgRes?.data || [];
@@ -609,11 +606,11 @@ export default function CFGCalculator({
           autoRebuiltRef.current = true;
           setRebuilding(true);
           try {
-            await buildCfgApi(project.id, targetSnapshotId);
+            await buildCfgApi(project.id);
             await new Promise((r) => setTimeout(r, 2000));
             const [cfgRes2, ccRes2] = await Promise.all([
-              getProjectCfgApi(project.id, targetSnapshotId),
-              getProjectCcApi(project.id, targetSnapshotId),
+              getProjectCfgApi(project.id),
+              getProjectCcApi(project.id),
             ]);
             currentCfgs = cfgRes2?.data || [];
             currentCcs = ccRes2?.data || [];
@@ -1129,22 +1126,20 @@ export default function CFGCalculator({
                         }
                         setHighlightedLine(line.num);
                       }}
-                      className={`flex items-start px-4 py-0.5 transition-all cursor-pointer ${
-                        isTargetLine
+                      className={`flex items-start px-4 py-0.5 transition-all cursor-pointer ${isTargetLine
                           ? "bg-[var(--color-primary)]/20 border-l-[4px] border-l-[var(--color-primary)] shadow-sm font-semibold"
                           : isActiveScope
                             ? "bg-[var(--color-primary)]/5 border-l-[3px] border-l-[var(--color-primary)]/50 hover:bg-[var(--color-surface-secondary)]/50"
                             : "border-l-[3px] border-l-transparent hover:bg-[var(--color-surface-secondary)]/40"
-                      } ${isDimmed ? "opacity-35" : "opacity-100"}`}
+                        } ${isDimmed ? "opacity-35" : "opacity-100"}`}
                     >
                       <span
-                        className={`w-11 flex-shrink-0 text-right pr-2 select-none font-mono text-[11px] flex items-center justify-end gap-1 ${
-                          isTargetLine
+                        className={`w-11 flex-shrink-0 text-right pr-2 select-none font-mono text-[11px] flex items-center justify-end gap-1 ${isTargetLine
                             ? "text-[var(--color-primary)] font-bold"
                             : isActiveScope
                               ? "text-[var(--color-primary)] font-semibold"
                               : "text-[var(--color-text-muted)]"
-                        }`}
+                          }`}
                       >
                         {isTargetLine && (
                           <span className="text-[var(--color-primary)] text-[10px] animate-pulse">
@@ -1154,11 +1149,10 @@ export default function CFGCalculator({
                         <span>{line.num}</span>
                       </span>
                       <span
-                        className={`whitespace-pre-wrap break-all flex-1 font-mono text-xs ${
-                          isTargetLine
+                        className={`whitespace-pre-wrap break-all flex-1 font-mono text-xs ${isTargetLine
                             ? "text-[var(--color-text)] font-semibold"
                             : "text-[var(--color-text)]"
-                        }`}
+                          }`}
                       >
                         {syntaxHighlight(line.text)}
                       </span>
@@ -1437,13 +1431,12 @@ export default function CFGCalculator({
                           Max McCabe CC
                         </div>
                         <div
-                          className={`text-2xl font-mono font-bold ${
-                            maxCc >= 10
+                          className={`text-2xl font-mono font-bold ${maxCc >= 10
                               ? "text-[var(--color-danger)]"
                               : maxCc >= 5
                                 ? "text-[var(--color-warning)]"
                                 : "text-[var(--color-success)]"
-                          }`}
+                            }`}
                         >
                           {maxCc}
                         </div>
@@ -1586,16 +1579,15 @@ export default function CFGCalculator({
                           </div>
 
                           <span
-                            className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full border ${
-                              selectedNode.type === "condition"
+                            className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full border ${selectedNode.type === "condition"
                                 ? "bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/30"
                                 : selectedNode.type === "start"
                                   ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/30"
                                   : selectedNode.type === "return" ||
-                                      selectedNode.type === "exit"
+                                    selectedNode.type === "exit"
                                     ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/30"
                                     : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
-                            }`}
+                              }`}
                           >
                             {selectedNode.type === "condition"
                               ? "Decision (Branch)"
@@ -1647,11 +1639,10 @@ export default function CFGCalculator({
                               Complexity
                             </div>
                             <div
-                              className={`text-sm font-mono font-bold mt-0.5 ${
-                                selectedNode.type === "condition"
+                              className={`text-sm font-mono font-bold mt-0.5 ${selectedNode.type === "condition"
                                   ? "text-[var(--color-warning)]"
                                   : "text-[var(--color-text-secondary)]"
-                              }`}
+                                }`}
                             >
                               {selectedNode.type === "condition"
                                 ? "+1 CC"
@@ -1807,32 +1798,28 @@ export default function CFGCalculator({
                               <div className="w-full px-2 mt-1">
                                 <div className="flex gap-1.5 h-1.5 w-full rounded-full overflow-hidden bg-[var(--color-border)]/50 p-0.5">
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 1
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 1
                                         ? "bg-[var(--color-success)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 2
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 2
                                         ? "bg-[var(--color-warning)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 3
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 3
                                         ? "bg-[var(--color-danger)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 4
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 4
                                         ? "bg-[var(--color-danger)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                 </div>
                                 <div className="flex justify-between text-[10px] font-mono text-[var(--color-text-muted)] mt-1.5 px-0.5">
