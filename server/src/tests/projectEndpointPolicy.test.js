@@ -27,6 +27,25 @@ it("rejects raw host paths and does not permit body IDs to override path IDs", (
     expect(() => projectEndpointRule("file-manager", "POST", "/save", { filePath: "C:/secrets" })).toThrow("project-relative");
     expect(projectEndpointRule("projects", "PUT", "/p1/file-content", { projectId: "other" }).projectId).toBe("p1");
 });
+it("safely normalizes empty or undefined snapshotId strings without throwing Invalid resource identifier", () => {
+    const getCfgEmpty = projectEndpointRule("projects", "GET", "/p1/cfg", { snapshotId: "" });
+    expect(getCfgEmpty.projectId).toBe("p1");
+    expect(getCfgEmpty.snapshotId).toBeUndefined();
+    expect(getCfgEmpty.capability).toBe("project.read");
+
+    const buildCfgEmpty = projectEndpointRule("projects", "POST", "/p1/cfg/build", { snapshotId: "" });
+    expect(buildCfgEmpty.projectId).toBe("p1");
+    expect(buildCfgEmpty.snapshotId).toBeUndefined();
+    expect(buildCfgEmpty.capability).toBe("tests.run");
+
+    const getCcUndef = projectEndpointRule("projects", "GET", "/p1/cc", { snapshotId: "undefined" });
+    expect(getCcUndef.projectId).toBe("p1");
+    expect(getCcUndef.snapshotId).toBeUndefined();
+
+    const getCfgValid = projectEndpointRule("projects", "GET", "/p1/cfg", { snapshotId: "snap-123" });
+    expect(getCfgValid.projectId).toBe("p1");
+    expect(getCfgValid.snapshotId).toBe("snap-123");
+});
 it("rejects cross-project snapshots before passing to a controller", async () => {
     const next = jest.fn();
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };

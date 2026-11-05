@@ -482,12 +482,24 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
 
 export default function CFGCalculator({
   project,
+  snapshotId,
   onClose,
   initialFile,
   initialFunc,
   initialLine,
   onOpenFile,
 }) {
+  const cleanPropSnapshotId = typeof snapshotId === "object"
+    ? snapshotId?.id || snapshotId?.snapshotId || ""
+    : (String(snapshotId || "").trim() === "[object Object]" || snapshotId === "undefined" || snapshotId === "null" ? "" : snapshotId || "");
+
+  const targetSnapshotId = (
+    cleanPropSnapshotId ||
+    project?.snapshotId ||
+    project?.snapshots?.[0]?.id ||
+    project?.latestSnapshotId ||
+    ""
+  );
   const { isMobile } = useBreakpoints();
   const [cfgs, setCfgs] = useState([]);
   const [ccs, setCcs] = useState([]);
@@ -550,12 +562,12 @@ export default function CFGCalculator({
     try {
       setRebuilding(true);
       setError(null);
-      await buildCfgApi(project.id, "");
+      await buildCfgApi(project.id, targetSnapshotId);
       // Wait a moment for the job to process, then refetch
       await new Promise((r) => setTimeout(r, 3000));
       const [cfgRes, ccRes] = await Promise.all([
-        getProjectCfgApi(project.id, ""),
-        getProjectCcApi(project.id, ""),
+        getProjectCfgApi(project.id, targetSnapshotId),
+        getProjectCcApi(project.id, targetSnapshotId),
       ]);
       setCfgs(cfgRes.data);
       setCcs(ccRes.data);
@@ -578,8 +590,8 @@ export default function CFGCalculator({
         setLoading(true);
         // Using snapshotId empty to default to latest snapshot
         let [cfgRes, ccRes] = await Promise.all([
-          getProjectCfgApi(project.id, ""),
-          getProjectCcApi(project.id, ""),
+          getProjectCfgApi(project.id, targetSnapshotId),
+          getProjectCcApi(project.id, targetSnapshotId),
         ]);
 
         let currentCfgs = cfgRes?.data || [];
@@ -597,11 +609,11 @@ export default function CFGCalculator({
           autoRebuiltRef.current = true;
           setRebuilding(true);
           try {
-            await buildCfgApi(project.id, "");
+            await buildCfgApi(project.id, targetSnapshotId);
             await new Promise((r) => setTimeout(r, 2000));
             const [cfgRes2, ccRes2] = await Promise.all([
-              getProjectCfgApi(project.id, ""),
-              getProjectCcApi(project.id, ""),
+              getProjectCfgApi(project.id, targetSnapshotId),
+              getProjectCcApi(project.id, targetSnapshotId),
             ]);
             currentCfgs = cfgRes2?.data || [];
             currentCcs = ccRes2?.data || [];
@@ -661,7 +673,7 @@ export default function CFGCalculator({
     async function fetchCode() {
       if (selectedFile && project?.id) {
         try {
-          const res = await getFileContentApi(project.id, selectedFile, { snapshotId: project.snapshots?.[0]?.id || project.latestSnapshotId });
+          const res = await getFileContentApi(project.id, selectedFile, { snapshotId: targetSnapshotId || project.snapshots?.[0]?.id || project.latestSnapshotId });
           setSourceCode(res.data.content);
         } catch (err) {
           setSourceCode("// Failed to load source code");

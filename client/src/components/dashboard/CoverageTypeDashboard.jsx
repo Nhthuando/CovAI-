@@ -5923,6 +5923,7 @@ export default function CoverageTypeDashboard({
       {showCfgModal && projectId && (
         <CFGCalculator
           project={{ id: projectId }}
+          snapshotId={snapshotId}
           onClose={() => {
             setShowCfgModal(false);
             setCfgModalContext(null);

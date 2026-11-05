@@ -164,503 +164,8 @@ export const isCallbackOrAnonymousName = (name) => {
  * 1. 4-Metric Coverage Anatomy & Calculation Proof:
  *    Explains why each function and file passed 100% across Statements, Branches, Functions, and Lines,
  *    along with exact mathematical calculation formulas and Istanbul execution counts.
- * 2. 4-Category Strategy Matrix: Breakdown across Happy Path, Boundary Values, Branch Toggling, Error Handling.
- * 3. Bi-directional Traceability: Maps Business Logic functions to specific test cases and testing techniques.
-
-
-/**
- * 4-Category Decision Table Matrix with Resizable & Draggable Columns
+ * 2. Bi-directional Traceability: Maps Business Logic functions to specific test cases and testing techniques.
  */
-function CategoryMatrix4Cards({
-  fn,
-  isLight,
-  onOpenFile,
-  colWidths,
-  setColWidths,
-  collapsedCols,
-  setCollapsedCols,
-}) {
-  const containerRef = useRef(null);
-  const dragRef = useRef({ startX: 0, startWidths: [25, 25, 25, 25], containerWidth: 1000 });
-  const [draggingDivider, setDraggingDivider] = useState(null);
-
-  // Category specifications
-  const categories = useMemo(() => [
-    {
-      key: "HAPPY_PATH",
-      label: "🟢 A. Happy Path",
-      countLabel: "A. Happy",
-      tests: fn.testsByCategory?.HAPPY_PATH || [],
-      hasCategory: fn.hasHappyPath,
-      color: "#10b981",
-      borderActive: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies standard valid inputs, normal workflow, and expected return values.",
-      missingMsg: "⚠️ Uncovered: No test verifies standard execution flow with valid arguments.",
-    },
-    {
-      key: "BOUNDARY_VALUES",
-      label: "🟡 B. Boundary Values",
-      countLabel: "B. Boundary",
-      tests: fn.testsByCategory?.BOUNDARY_VALUES || [],
-      hasCategory: fn.hasBoundary,
-      color: "#f59e0b",
-      borderActive: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies boundary limits (0, -1, MAX values, empty arrays [], empty strings, null/undefined).",
-      missingMsg: "⚠️ Uncovered: Edge cases like empty inputs, zero, or max limits are not yet tested.",
-    },
-    {
-      key: "BRANCH_TOGGLING",
-      label: "🔵 C. Branch Toggling",
-      countLabel: "C. Branch",
-      tests: fn.testsByCategory?.BRANCH_TOGGLING || [],
-      hasCategory: fn.hasBranch || fn.isFeasibleLogicCovered || fn.proofData?.isFeasibleLogicCovered,
-      color: "#0284c7",
-      borderActive: isLight ? "1px solid #bae6fd" : "1px solid rgba(2, 132, 199, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies conditional branches (True vs False paths, fallback ??, logical || operators).",
-      missingMsg: (fn.isFeasibleLogicCovered || fn.proofData?.isFeasibleLogicCovered)
-        ? "✓ Category C Feasible Logic Covered: Remaining branch guards are verified environment safeguards (fake tests suppressed)."
-        : "⚠️ Uncovered: Missing tests for alternate condition branches or fallback logic.",
-    },
-    {
-      key: "ERROR_HANDLING",
-      label: "🔴 D. Error Handling",
-      countLabel: "D. Error",
-      tests: fn.testsByCategory?.ERROR_HANDLING || [],
-      hasCategory: fn.hasError,
-      color: "#ef4444",
-      borderActive: isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies thrown exceptions (throw Error), catch blocks, rejected promises, mock failures.",
-      missingMsg: "⚠️ Uncovered: No test verifies exception throwing or error handling.",
-    },
-  ], [fn, isLight]);
-
-  // Dragging handler
-  const handleStartDrag = (dividerIndex, e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!containerRef.current) return;
-    const containerRect = containerRef.current.getBoundingClientRect();
-    dragRef.current = {
-      startX: e.clientX,
-      startWidths: [...colWidths],
-      containerWidth: Math.max(containerRect.width, 400),
-    };
-    setDraggingDivider(dividerIndex);
-
-    const handleMouseMove = (moveEvt) => {
-      moveEvt.preventDefault();
-      const deltaX = moveEvt.clientX - dragRef.current.startX;
-      const deltaPct = (deltaX / dragRef.current.containerWidth) * 100;
-      const leftIdx = dividerIndex;
-      const rightIdx = dividerIndex + 1;
-      const startW = dragRef.current.startWidths;
-
-      const minPct = 12;
-      const maxPct = 70;
-
-      let newLeft = Math.max(minPct, Math.min(maxPct, startW[leftIdx] + deltaPct));
-      let newRight = Math.max(minPct, Math.min(maxPct, startW[rightIdx] - deltaPct));
-
-      const pairSum = startW[leftIdx] + startW[rightIdx];
-      if (newLeft + newRight !== pairSum) {
-        if (deltaPct > 0) {
-          newLeft = pairSum - newRight;
-        } else {
-          newRight = pairSum - newLeft;
-        }
-      }
-
-      setColWidths((prev) => {
-        const next = [...prev];
-        next[leftIdx] = Math.round(newLeft * 10) / 10;
-        next[rightIdx] = Math.round(newRight * 10) / 10;
-        return next;
-      });
-    };
-
-    const handleMouseUp = () => {
-      setDraggingDivider(null);
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      setColWidths((latest) => {
-        try {
-          localStorage.setItem("covai_matrix_4col_widths", JSON.stringify(latest));
-        } catch (_) {}
-        return latest;
-      });
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-  };
-
-  const handleResetColumns = () => {
-    const resetWidths = [25, 25, 25, 25];
-    setColWidths(resetWidths);
-    setCollapsedCols({});
-    try {
-      localStorage.setItem("covai_matrix_4col_widths", JSON.stringify(resetWidths));
-    } catch (_) {}
-  };
-
-  const handleToggleCollapse = (idx, e) => {
-    e?.stopPropagation?.();
-    setCollapsedCols((prev) => ({
-      ...prev,
-      [idx]: !prev[idx],
-    }));
-  };
-
-  const hasAnyCollapsed = Object.values(collapsedCols).some(Boolean);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Top Helper Bar with Reset & Uncollapse actions */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6, padding: "2px 4px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: isLight ? "#64748b" : "#94a3b8" }}>
-          <span>Resize columns by dragging the dividers between them</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {hasAnyCollapsed && (
-            <button
-              onClick={() => setCollapsedCols({})}
-              style={{
-                background: "transparent",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.15)",
-                borderRadius: 4,
-                padding: "2px 7px",
-                fontSize: 10.5,
-                color: isLight ? "#475569" : "#cbd5e1",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 3,
-              }}
-              title="Expand all collapsed columns"
-            >
-              <Maximize2 size={10} />
-              <span>Expand all</span>
-            </button>
-          )}
-          <button
-            onClick={handleResetColumns}
-            style={{
-              background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
-              borderRadius: 4,
-              padding: "2px 8px",
-              fontSize: 10.5,
-              fontWeight: 650,
-              color: isLight ? "#334155" : "#e2e8f0",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-            }}
-            title="Reset 4 columns to equal 25%"
-          >
-            <span>⚖️ Balance 25%</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Resizable 4 Columns Flex Container */}
-      <div
-        ref={containerRef}
-        style={{
-          display: "flex",
-          alignItems: "stretch",
-          width: "100%",
-          overflowX: "auto",
-          position: "relative",
-          minHeight: 220,
-          borderRadius: 8,
-          gap: 0,
-        }}
-      >
-        {categories.map((cat, idx) => {
-          const isCollapsed = Boolean(collapsedCols[idx]);
-          const widthPct = colWidths[idx] || 25;
-
-          return (
-            <React.Fragment key={cat.key}>
-              {/* Card Container */}
-              {isCollapsed ? (
-                /* Collapsed Column Ribbon */
-                <div
-                  onClick={() => handleToggleCollapse(idx)}
-                  style={{
-                    flex: "0 0 38px",
-                    width: 38,
-                    minWidth: 38,
-                    padding: "10px 4px",
-                    borderRadius: 8,
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                    border: cat.borderActive,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                    position: "relative",
-                  }}
-                  title={`Click to expand ${cat.label} column`}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 13 }}>{cat.label.substring(0, 2)}</span>
-                    <button
-                      onClick={(e) => handleToggleCollapse(idx, e)}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: cat.color,
-                        cursor: "pointer",
-                        padding: 0,
-                        display: "flex",
-                      }}
-                      title="Expand column"
-                    >
-                      <Maximize2 size={12} />
-                    </button>
-                  </div>
-
-                  <div
-                    style={{
-                      writingMode: "vertical-rl",
-                      transform: "rotate(180deg)",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: cat.color,
-                      letterSpacing: 0.5,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {cat.label.substring(3)}
-                  </div>
-
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 750,
-                      padding: "2px 4px",
-                      borderRadius: 3,
-                      background: cat.hasCategory ? "rgba(16, 185, 129, 0.15)" : (isLight ? "#f1f5f9" : "rgba(255,255,255,0.05)"),
-                      color: cat.hasCategory ? cat.color : "#94a3b8",
-                    }}
-                  >
-                    {cat.hasCategory ? (cat.tests?.length || 0) : "0"}
-                  </span>
-                </div>
-              ) : (
-                /* Expanded Column Card */
-                <div
-                  style={{
-                    flex: `${widthPct} 0 0%`,
-                    width: `${widthPct}%`,
-                    minWidth: 170,
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                    border: cat.hasCategory ? cat.borderActive : cat.borderInactive,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                    transition: draggingDivider !== null ? "none" : "flex 0.15s ease",
-                    position: "relative",
-                  }}
-                >
-                  {/* Card Header */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 750, color: cat.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {cat.label}
-                    </span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: "1px 5px",
-                          borderRadius: 3,
-                          background: cat.hasCategory
-                            ? (cat.key === "ERROR_HANDLING" ? "rgba(239, 68, 68, 0.15)" : cat.key === "BOUNDARY_VALUES" ? "rgba(245, 158, 11, 0.15)" : cat.key === "BRANCH_TOGGLING" ? "rgba(2, 132, 199, 0.15)" : "rgba(16, 185, 129, 0.15)")
-                            : (isLight ? "#f1f5f9" : "rgba(255,255,255,0.05)"),
-                          color: cat.hasCategory ? cat.color : "#94a3b8",
-                        }}
-                      >
-                        {cat.hasCategory ? `${cat.tests?.length || 0} tests` : "Missing"}
-                      </span>
-                      <button
-                        onClick={(e) => handleToggleCollapse(idx, e)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: isLight ? "#94a3b8" : "#64748b",
-                          cursor: "pointer",
-                          padding: "1px 3px",
-                          borderRadius: 3,
-                          display: "flex",
-                          alignItems: "center",
-                        }}
-                        title="Collapse column"
-                      >
-                        <Minimize2 size={11} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Card Description */}
-                  <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
-                    {cat.desc}
-                  </div>
-
-                  {/* Tests List or Missing Notice */}
-                  {cat.hasCategory ? (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        marginTop: 4,
-                        maxHeight: 280,
-                        overflowY: "auto",
-                        paddingRight: 2,
-                      }}
-                    >
-                      {cat.tests.map((t, testIdx) => (
-                        <div
-                          key={testIdx}
-                          onClick={() => onOpenFile?.(
-                            fn.filePath,
-                            fn.startLine,
-                            fn.cleanName,
-                            fn.endLine,
-                            {
-                              testFilePath: t.suiteFilePath,
-                              testTitle: t.title || t.name,
-                              testLine: t.line || t.location?.line || t.startLine || null,
-                            }
-                          )}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            fontSize: 11,
-                            padding: "4px 7px",
-                            background: isLight ? "#f8fafc" : "rgba(255,255,255,0.025)",
-                            borderRadius: 5,
-                            cursor: "pointer",
-                            border: "1px solid transparent",
-                            transition: "all 0.12s ease",
-                            gap: 6,
-                          }}
-                          className="hover:border-indigo-500/40 hover:bg-indigo-500/5 group"
-                          title={`Click to view function ${fn.cleanName}() and test case: ${t.title}`}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 5, flex: 1, minWidth: 0, overflow: "hidden" }}>
-                            <span style={{ color: t.status === "passed" ? "#10b981" : "#ef4444", fontWeight: 700, flexShrink: 0 }}>
-                              {t.status === "passed" ? "✓" : "✗"}
-                            </span>
-                            <span
-                              style={{
-                                fontFamily: "var(--font-mono)",
-                                color: isLight ? "#1e293b" : "#e2e8f0",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                flex: 1,
-                                minWidth: 0,
-                              }}
-                              title={t.title}
-                            >
-                              {t.title}
-                            </span>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onOpenFile?.(
-                                  fn.filePath,
-                                  fn.startLine,
-                                  fn.cleanName,
-                                  fn.endLine,
-                                  {
-                                    testFilePath: t.suiteFilePath,
-                                    testTitle: t.title || t.name,
-                                    testLine: t.line || t.location?.line || t.startLine || null,
-                                  }
-                                );
-                              }}
-                              style={{
-                                background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.16)",
-                                border: "none",
-                                color: "#6366f1",
-                                cursor: "pointer",
-                                fontSize: 10,
-                                padding: "2px 6px",
-                                borderRadius: 4,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 3,
-                                flexShrink: 0,
-                              }}
-                              title={`Open test suite: ${t.suiteFileName}`}
-                            >
-                              <span style={{ maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {t.suiteFileName}
-                              </span>
-                              <ExternalLink size={9} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        fontSize: 10.5,
-                        color: isLight ? "#b45309" : "#fbbf24",
-                        background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
-                        padding: "6px 8px",
-                        borderRadius: 4,
-                        marginTop: 4,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                      }}
-                    >
-                      <div>{cat.missingMsg}</div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Draggable Divider between columns (0, 1, 2) */}
-              {idx < 3 && (
-                <MatrixColumnDivider
-                  index={idx}
-                  isDragging={draggingDivider === idx}
-                  onMouseDown={(e) => handleStartDrag(idx, e)}
-                  onDoubleClick={handleResetColumns}
-                  isLight={isLight}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 export default function UnitTestTraceabilityMatrix({
   snapshotId = null,
@@ -696,9 +201,7 @@ export default function UnitTestTraceabilityMatrix({
   applyProgressSteps = {},
   onOpenSimulation = null,
 }) {
-  const [activeTabByFunc, setActiveTabByFunc] = useState({});
-  const [matrixColWidths, setMatrixColWidths] = useState([25, 25, 25, 25]);
-  const [matrixCollapsedCols, setMatrixCollapsedCols] = useState({});
+
 
   const getFileVersionInfo = (fPath) => {
     if (!fPath || !unitTestVersions) return null;
@@ -989,30 +492,6 @@ export default function UnitTestTraceabilityMatrix({
       };
     });
   }, [functionsList, allAssertions, sourceFiles, testSuites]);
-
-  // 4-Category Strategy Distribution counts (Happy Path, Boundary Values, Branch Toggling, Error Handling)
-  const categoryCounts = useMemo(() => {
-    const counts = {
-      HAPPY_PATH: 0,
-      BOUNDARY_VALUES: 0,
-      BRANCH_TOGGLING: 0,
-      ERROR_HANDLING: 0,
-      total: 0,
-    };
-    const targetList = (allAssertions?.length || 0) > 0
-      ? allAssertions
-      : (functionTraceability || []).flatMap((fn) => fn.tests || []);
-
-    counts.total = targetList?.length || 0;
-    for (const a of targetList) {
-      if (counts[a.category] !== undefined) {
-        counts[a.category]++;
-      } else {
-        counts.HAPPY_PATH++;
-      }
-    }
-    return counts;
-  }, [allAssertions, functionTraceability]);
 
   // Aggregate Cyclomatic Complexity & Basis Path statistics
   const { avgComplexity, maxComplexity, highestComplexityFn, basisPathsMetCount, highComplexityCount } = useMemo(() => {
@@ -1462,138 +941,6 @@ export default function UnitTestTraceabilityMatrix({
                 </span>
               )}
             </div>
-
-            {/* 4 Decision Table Category Statistics Badges */}
-            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-              {/* Happy Path */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "HAPPY_PATH" ? "ALL" : "HAPPY_PATH")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "HAPPY_PATH"
-                    ? "rgba(16, 185, 129, 0.22)"
-                    : (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.08)"),
-                  border: selectedCategory === "HAPPY_PATH"
-                    ? "1.5px solid #10b981"
-                    : "1px solid rgba(16, 185, 129, 0.25)",
-                  color: isLight ? "#047857" : "#34d399",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Happy Path: ${categoryCounts.HAPPY_PATH} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0 }} />
-                <span>Happy Path:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.HAPPY_PATH}</span>
-              </div>
-
-              {/* Boundary Value */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "BOUNDARY_VALUES" ? "ALL" : "BOUNDARY_VALUES")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "BOUNDARY_VALUES"
-                    ? "rgba(245, 158, 11, 0.22)"
-                    : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)"),
-                  border: selectedCategory === "BOUNDARY_VALUES"
-                    ? "1.5px solid #f59e0b"
-                    : "1px solid rgba(245, 158, 11, 0.25)",
-                  color: isLight ? "#b45309" : "#fbbf24",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Boundary Values: ${categoryCounts.BOUNDARY_VALUES} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
-                <span>Boundary Value:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.BOUNDARY_VALUES}</span>
-              </div>
-
-              {/* Branch Toggling */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "BRANCH_TOGGLING" ? "ALL" : "BRANCH_TOGGLING")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "BRANCH_TOGGLING"
-                    ? "rgba(2, 132, 199, 0.22)"
-                    : (isLight ? "#f0f9ff" : "rgba(2, 132, 199, 0.08)"),
-                  border: selectedCategory === "BRANCH_TOGGLING"
-                    ? "1.5px solid #0284c7"
-                    : "1px solid rgba(2, 132, 199, 0.25)",
-                  color: isLight ? "#0369a1" : "#38bdf8",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Branch Toggling: ${categoryCounts.BRANCH_TOGGLING} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#0284c7", flexShrink: 0 }} />
-                <span>Branch Toggling:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.BRANCH_TOGGLING}</span>
-              </div>
-
-              {/* Error */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "ERROR_HANDLING" ? "ALL" : "ERROR_HANDLING")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "ERROR_HANDLING"
-                    ? "rgba(239, 68, 68, 0.22)"
-                    : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.08)"),
-                  border: selectedCategory === "ERROR_HANDLING"
-                    ? "1.5px solid #ef4444"
-                    : "1px solid rgba(239, 68, 68, 0.25)",
-                  color: isLight ? "#b91c1c" : "#f87171",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Error Handling: ${categoryCounts.ERROR_HANDLING} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#ef4444", flexShrink: 0 }} />
-                <span>Error:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.ERROR_HANDLING}</span>
-              </div>
-            </div>
-
-            {selectedCategory !== "ALL" && (
-              <button
-                onClick={() => setSelectedCategory("ALL")}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: isLight ? "#4f46e5" : "#a5b4fc",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                Clear Filter ({selectedCategory === "HIGH_CC" ? "CC > 10" : selectedCategory === "HAPPY_PATH" ? "Happy Path" : selectedCategory === "BOUNDARY_VALUES" ? "Boundary Value" : selectedCategory === "BRANCH_TOGGLING" ? "Branch Toggling" : selectedCategory === "ERROR_HANDLING" ? "Error" : selectedCategory})
-              </button>
-            )}
 
             {/* Search Input */}
             <div
@@ -2144,31 +1491,7 @@ export default function UnitTestTraceabilityMatrix({
                       >
                         Open file
                       </button>
-                      {typeof onOpenSimulation === "function" && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenSimulation({ filePath: group.filePath });
-                          }}
-                          style={{
-                            padding: "3px 8px",
-                            borderRadius: 4,
-                            background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.12)",
-                            border: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)",
-                            color: isLight ? "#059669" : "#34d399",
-                            fontSize: 11,
-                            fontWeight: 650,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                          }}
-                          title="Mở trình phát mô phỏng kiểm thử cho tệp này"
-                        >
-                          <Zap size={11} />
-                          <span>Mô phỏng</span>
-                        </button>
-                      )}
+                      
                     </div>
                   </div>
 
@@ -2200,8 +1523,7 @@ export default function UnitTestTraceabilityMatrix({
                           const isFnExpanded = expandedFunctions.has(fnId);
                           const isCovered = (fn.hit || 0) > 0 || (Array.isArray(fn.tests) && fn.tests.length > 0);
 
-                        const activeTab = activeTabByFunc[fnId] || "proof";
-                        const proofData = computeFunctionProof(fn, fileCov, meta);
+                                                const proofData = computeFunctionProof(fn, fileCov, meta);
                         const isAnon = isAnonymousName(fn.cleanName);
                         const displayFnName = isAnon ? ((businessFunctions?.length || 0) === 0 ? `${fileBaseName} [default]` : fn.cleanName) : fn.cleanName;
 
@@ -2402,61 +1724,25 @@ export default function UnitTestTraceabilityMatrix({
                                   background: isLight ? "#fbfcfe" : "rgba(0, 0, 0, 0.2)",
                                 }}
                               >
-                                {/* Tab selector inside expanded function: 4-Metric Proof vs 4-Category Decision Table */}
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <button
-                                      onClick={() => setActiveTabByFunc((prev) => ({ ...prev, [fnId]: "proof" }))}
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <div
                                       style={{
                                         padding: "4px 10px",
                                         borderRadius: 6,
                                         fontSize: 11.5,
                                         fontWeight: 700,
-                                        cursor: "pointer",
-                                        background: activeTab === "proof"
-                                          ? (isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.25)")
-                                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
-                                        color: activeTab === "proof"
-                                          ? (isLight ? "#2563eb" : "#60a5fa")
-                                          : (isLight ? "#475569" : "#cbd5e1"),
-                                        border: activeTab === "proof"
-                                          ? (isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.4)")
-                                          : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                                        background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.25)",
+                                        color: isLight ? "#2563eb" : "#60a5fa",
+                                        border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.4)",
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 5,
                                       }}
                                     >
                                       <Calculator size={12} />
-                                      <span>4-Metric Execution Proof</span>
-                                    </button>
-
-                                    <button
-                                      onClick={() => setActiveTabByFunc((prev) => ({ ...prev, [fnId]: "matrix" }))}
-                                      style={{
-                                        padding: "4px 10px",
-                                        borderRadius: 6,
-                                        fontSize: 11.5,
-                                        fontWeight: 700,
-                                        cursor: "pointer",
-                                        background: activeTab === "matrix"
-                                          ? (isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.25)")
-                                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
-                                        color: activeTab === "matrix"
-                                          ? (isLight ? "#2563eb" : "#60a5fa")
-                                          : (isLight ? "#475569" : "#cbd5e1"),
-                                        border: activeTab === "matrix"
-                                          ? (isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.4)")
-                                          : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 5,
-                                      }}
-                                      title="View 4-Category Decision Table Matrix (Happy Path, Boundary, Branch, Error)"
-                                    >
-                                      <Layers size={12} />
-                                      <span>4-Category Decision Table</span>
-                                    </button>
+                                      <span>4-Metric Execution Proof &amp; Traceability</span>
+                                    </div>
 
                                     <button
                                       onClick={() => onOpenCFG?.(fn.filePath, fn.cleanName, fn.startLine)}
@@ -2476,7 +1762,7 @@ export default function UnitTestTraceabilityMatrix({
                                       title="Open Control Flow Graph (CFG) and inspect Cyclomatic Complexity (CC)"
                                     >
                                       <GitBranch size={12} />
-                                      <span>View CFG Flow Graph & CC Analysis</span>
+                                      <span>View CFG Flow Graph &amp; CC Analysis</span>
                                     </button>
                                   </div>
 
@@ -2485,9 +1771,8 @@ export default function UnitTestTraceabilityMatrix({
                                   </span>
                                 </div>
 
-                                {/* TAB 1: 4-METRIC EXECUTION PROOF & MATHEMATICAL CALCULATION */}
-                                {activeTab === "proof" && (
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                                {/* 4-METRIC EXECUTION PROOF & MATHEMATICAL CALCULATION */}
+                                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                                     {/* 4 Invariant Dimension Breakdown Cards */}
                                     <div
                                       style={{
@@ -2829,20 +2114,6 @@ export default function UnitTestTraceabilityMatrix({
                                       )}
                                     </div>
                                   </div>
-                                )}
-
-                                {/* TAB 2: 4-CATEGORY DECISION TABLE MATRIX */}
-                                {activeTab === "matrix" && (
-                                  <CategoryMatrix4Cards
-                                    fn={fn}
-                                    isLight={isLight}
-                                    onOpenFile={onOpenFile}
-                                    colWidths={matrixColWidths}
-                                    setColWidths={setMatrixColWidths}
-                                    collapsedCols={matrixCollapsedCols}
-                                    setCollapsedCols={setMatrixCollapsedCols}
-                                  />
-                                )}
 
                                 {/* Guidance & Suggest Action Footer */}
                                 {!proofData.isFullyCovered && !proofData.isFeasibleLogicCovered ? (

@@ -389,9 +389,19 @@ export async function deleteChatSessionApi(projectId, sessionId) {
   return handleResponse(res);
 }
 
+const resolveSafeSnapshotId = (snapshotId) => {
+  if (!snapshotId) return "";
+  if (typeof snapshotId === "object") return snapshotId.id || snapshotId.snapshotId || "";
+  const str = String(snapshotId).trim();
+  if (str === "undefined" || str === "null" || str === "[object Object]") return "";
+  return str;
+};
+
 export async function getProjectCfgApi(projectId, snapshotId) {
+  const cleanId = resolveSafeSnapshotId(snapshotId);
+  const query = cleanId ? `?snapshotId=${encodeURIComponent(cleanId)}` : "";
   const res = await editorAwareFetch(
-    `${BASE_URL}/projects/${projectId}/cfg?snapshotId=${snapshotId}`,
+    `${BASE_URL}/projects/${projectId}/cfg${query}`,
     {
       headers: getAuthHeaders(),
     },
@@ -400,8 +410,10 @@ export async function getProjectCfgApi(projectId, snapshotId) {
 }
 
 export async function getProjectCcApi(projectId, snapshotId) {
+  const cleanId = resolveSafeSnapshotId(snapshotId);
+  const query = cleanId ? `?snapshotId=${encodeURIComponent(cleanId)}` : "";
   const res = await editorAwareFetch(
-    `${BASE_URL}/projects/${projectId}/cc?snapshotId=${snapshotId}`,
+    `${BASE_URL}/projects/${projectId}/cc${query}`,
     {
       headers: getAuthHeaders(),
     },
@@ -410,10 +422,12 @@ export async function getProjectCcApi(projectId, snapshotId) {
 }
 
 export async function buildCfgApi(projectId, snapshotId) {
+  const cleanId = resolveSafeSnapshotId(snapshotId);
+  const payload = cleanId ? { snapshotId: cleanId } : {};
   const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId }),
+    body: JSON.stringify(payload),
   });
   return handleResponse(res);
 }

@@ -1539,6 +1539,15 @@ function LayoutInner() {
         {showCFG && (
           <CFGCalculator
             project={project}
+            snapshotId={
+              searchParams.get("snapshotId") ||
+              project?.latestSnapshotId ||
+              project?.snapshots?.[0]?.id ||
+              (project?.id
+                ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                : null) ||
+              testPromptSnapshotId
+            }
             onClose={handleCloseCFG}
             initialFile={cfgInitialContext?.initialFile}
             initialFunc={cfgInitialContext?.initialFunc}

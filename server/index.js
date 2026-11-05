@@ -90,6 +90,19 @@ app.use(
 
 app.use(cookieParser());
 
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (res.statusCode >= 400) {
+      console.error(`[HTTP ${res.statusCode}] ${req.method} ${req.originalUrl} (${duration}ms)`);
+    } else {
+      console.log(`[HTTP ${res.statusCode}] ${req.method} ${req.originalUrl} (${duration}ms)`);
+    }
+  });
+  next();
+});
+
 app.use('/api/ai-evaluation-gateway', aiEvaluationGatewayRoutes);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -140,6 +153,18 @@ app.use("/api/file-manager", fileManagerRoute);
 app.use("/api/git", gitRoute);
 app.use("/api/reports", reportRoute);
 app.use("/webhook", webhookRoute);
+
+// Centralized API Error Handler
+app.use((err, req, res, next) => {
+  console.error(`[EXPRESS UNHANDLED ERROR] ${req.method} ${req.originalUrl}:`, err);
+  if (res.headersSent) return next(err);
+  const status = err.statusCode || err.status || 500;
+  res.status(status).json({
+    success: false,
+    message: err.message || "Internal server error",
+    code: err.code,
+  });
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

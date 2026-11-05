@@ -13,36 +13,37 @@ dotenv.config();
 
 // Task-to-Environment-Variable mapping for independent quota separation
 export const TASK_KEY_MAP = {
-  unit: "GEMINI_KEY_UNIT_TEST",
-  "unit-test": "GEMINI_KEY_UNIT_TEST",
-  integration: "GEMINI_KEY_INTEGRATION_TEST",
-  "integration-test": "GEMINI_KEY_INTEGRATION_TEST",
-  supertest: "GEMINI_KEY_INTEGRATION_TEST",
-  e2e: "GEMINI_KEY_E2E_TEST",
-  system: "GEMINI_KEY_E2E_TEST",
-  "system-test": "GEMINI_KEY_E2E_TEST",
-  chatbox: "GEMINI_KEY_CHATBOX",
-  chat: "GEMINI_KEY_CHATBOX",
+  unit: ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
+  "unit-test": ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
+  integration: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  "integration-test": ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  supertest: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  e2e: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  system: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  "system-test": ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  chatbox: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
+  chat: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
 };
 
 /**
  * Validates availability of task-specific environment keys on service startup.
  */
 export function validateGeminiKeys() {
-  const REQUIRED_KEY_VARS = [
-    "GEMINI_KEY_UNIT_TEST",
-    "GEMINI_KEY_INTEGRATION_TEST",
-    "GEMINI_KEY_E2E_TEST",
-    "GEMINI_KEY_CHATBOX",
+  const REQUIRED = [
+    { label: "GEMINI_KEY_UNIT_TEST", vars: ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"] },
+    { label: "GEMINI_KEY_INTEGRATION_TEST", vars: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"] },
+    { label: "GEMINI_KEY_E2E_TEST", vars: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"] },
+    { label: "GEMINI_KEY_CHATBOX", vars: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"] },
   ];
-  for (const keyVar of REQUIRED_KEY_VARS) {
-    if (!process.env[keyVar]) {
+  for (const req of REQUIRED) {
+    const hasKey = req.vars.some(v => Boolean(process.env[v]?.trim()));
+    if (!hasKey) {
       console.warn(
-        `[Gemini API] WARNING: Dedicated environment variable ${keyVar} is not defined. Falling back to GEMINI_API_KEY.`
+        `[Gemini API] WARNING: Dedicated environment variable ${req.label} is not defined. Falling back to GEMINI_API_KEY.`
       );
     }
   }
-  if (!process.env.GEMINI_API_KEY && !process.env.GEMINI_KEY_INTEGRATION_TEST) {
+  if (!process.env.GEMINI_API_KEY && !process.env.GEMINI_KEY_INTEGRATION_TEST && !process.env.GEMINI_INTEGRATION_TEST_API_KEY) {
     console.warn(
       "[Gemini API] CRITICAL: Neither GEMINI_KEY_INTEGRATION_TEST nor GEMINI_API_KEY is configured in environment."
     );
@@ -61,8 +62,12 @@ if (process.env.NODE_ENV !== 'test') {
  */
 export function getGeminiApiKey(taskType = "integration") {
   const normalizedTask = String(taskType || "integration").toLowerCase();
-  const envVarName = TASK_KEY_MAP[normalizedTask] || "GEMINI_KEY_INTEGRATION_TEST";
-  return process.env[envVarName] || process.env.GEMINI_API_KEY || "";
+  const envVars = TASK_KEY_MAP[normalizedTask] || ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"];
+  const list = Array.isArray(envVars) ? envVars : [envVars];
+  for (const v of list) {
+    if (process.env[v]?.trim()) return process.env[v].trim();
+  }
+  return process.env.GEMINI_API_KEY?.trim() || "";
 }
 
 // Client cache to avoid reinstantiating GoogleGenerativeAI on every request
@@ -108,10 +113,17 @@ export function markModelExhausted(modelName, error = { message: 'daily quota' }
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel, configuration) {
-  const preferred = (requestedModel && requestedModel.trim()) || configuration.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const preferred = (requestedModel && requestedModel.trim()) || configuration?.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const normalized = normalizeModelId(preferred);
-  if (!VALID_MODELS.includes(normalized)) throw new ServiceError('Select one of the four supported Gemini models.', 400);
-  const quotaKey = `${configuration.credentialId}:${normalized}`;
+  if (!VALID_MODELS.includes(normalized)) {
+    const fallback = normalizeModelId(configuration?.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite');
+    if (VALID_MODELS.includes(fallback)) {
+      console.warn(`[Gemini API] Model '${preferred}' is not in catalog. Falling back to '${fallback}'.`);
+      return fallback;
+    }
+    throw new ServiceError('Select one of the supported Gemini models.', 400);
+  }
+  const quotaKey = `${configuration?.credentialId || 'default'}:${normalized}`;
   const blocked = exhaustedModels.get(quotaKey);
   if (blocked?.resetAt && Date.parse(blocked.resetAt) > Date.now()) throw blocked;
   exhaustedModels.delete(quotaKey);
@@ -130,7 +142,12 @@ export const generateText = async (prompt, modelOrInstruction = null, maybeInstr
   let systemInstruction = null;
   let generationConfig = {};
 
-  if (typeof modelOrInstruction === "string" && (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.includes("/"))) {
+  const isModelName = typeof modelOrInstruction === "string" &&
+    !modelOrInstruction.includes(" ") &&
+    !modelOrInstruction.includes("\n") &&
+    (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.startsWith("models/"));
+
+  if (isModelName) {
     modelName = modelOrInstruction;
     systemInstruction = maybeInstructionOrConfig;
     generationConfig = maybeConfig || {};
