@@ -780,7 +780,7 @@ export default function IntegrationReportEmbed({
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={14} className="text-[var(--color-success)]" />
                 <span className="text-xs font-bold text-[var(--color-success)] uppercase tracking-wider">
-                  API Đã Có Test Bao Phủ ({coveredRoutes.length} Endpoints)
+                  Covered Endpoints ({coveredRoutes.length})
                 </span>
               </div>
               <span className="text-[10px] font-mono font-bold text-[var(--color-success)] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
@@ -788,13 +788,13 @@ export default function IntegrationReportEmbed({
               </span>
             </div>
             <p className="text-[11px] text-[var(--color-text-secondary)] m-0 leading-relaxed">
-              Các route đã có Supertest suite thực thi xuyên suốt từ Router ➔ Controller ➔ Database và xác minh trạng thái HTTP thành công.
+              Routes verified end-to-end with Supertest suites: Router ➔ Controller ➔ Database with successful HTTP assertion checks.
             </p>
 
             <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
               {coveredRoutes.length === 0 ? (
                 <div className="p-3 text-center text-xs text-[var(--color-text-muted)] italic">
-                  Chưa có API nào có test bao phủ. Hãy tạo test scenarios.
+                  No covered endpoints found. Create test scenarios to cover your APIs.
                 </div>
               ) : (
                 coveredRoutes.map((r, i) => {
@@ -833,7 +833,7 @@ export default function IntegrationReportEmbed({
               <div className="flex items-center gap-1.5">
                 <AlertTriangle size={14} className="text-amber-500" />
                 <span className="text-xs font-bold text-amber-500 uppercase tracking-wider">
-                  API Chưa Có Test Bao Phủ ({uncoveredRoutes.length} Endpoints)
+                  Uncovered Endpoints ({uncoveredRoutes.length})
                 </span>
               </div>
               <span className="text-[10px] font-mono font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
@@ -841,13 +841,13 @@ export default function IntegrationReportEmbed({
               </span>
             </div>
             <p className="text-[11px] text-[var(--color-text-secondary)] m-0 leading-relaxed">
-              Các endpoint được phát hiện từ Express AST nhưng chưa có kịch bản Supertest nào kiểm tra hợp đồng hoặc luồng dữ liệu.
+              Discovered Express AST endpoints without active Supertest scenarios verifying contract or data flow.
             </p>
 
             <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
               {uncoveredRoutes.length === 0 ? (
                 <div className="p-3 text-center text-xs text-[var(--color-success)] flex items-center justify-center gap-1.5">
-                  <CheckCircle2 size={14} /> Tuyệt vời! 100% API đã được bao phủ bởi test suite.
+                  <CheckCircle2 size={14} /> Outstanding! 100% of discovered APIs are covered by the test suite.
                 </div>
               ) : (
                 uncoveredRoutes.map((r, i) => {
@@ -867,17 +867,9 @@ export default function IntegrationReportEmbed({
                       </div>
                       <div className="flex items-center gap-2 shrink-0 font-mono text-[10px]">
                         <span className="text-[var(--color-text-muted)]">0 tests</span>
-                        {onGenerateEndpoint && (
-                          <button
-                            type="button"
-                            onClick={() => onGenerateEndpoint(`${r.method} ${r.path}`)}
-                            className="px-2 py-0.5 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-[10px] font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-1 shadow-2xs"
-                            title="Sinh test Supertest cho API này"
-                          >
-                            <Sparkles size={10} />
-                            <span>Sinh Test</span>
-                          </button>
-                        )}
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                          Uncovered
+                        </span>
                       </div>
                     </div>
                   );
@@ -886,14 +878,14 @@ export default function IntegrationReportEmbed({
             </div>
 
             {uncoveredRoutes.length > 0 && onNavigateTab && (
-              <div className="pt-1 flex justify-end">
+              <div className="pt-2 flex justify-end border-t border-[var(--color-border)]/40 mt-1">
                 <button
                   type="button"
                   onClick={() => onNavigateTab("scenarios")}
-                  className="text-xs text-[var(--color-primary)] hover:underline inline-flex items-center gap-1 cursor-pointer font-medium"
+                  className="text-xs text-[var(--color-primary)] hover:underline inline-flex items-center gap-1.5 cursor-pointer font-medium"
                 >
-                  <span>Chuyển tới Test Scenarios để sinh test</span>
-                  <ArrowRight size={12} />
+                  <span>Go to Test Scenarios to generate tests</span>
+                  <ArrowRight size={13} />
                 </button>
               </div>
             )}
@@ -1268,7 +1260,7 @@ export default function IntegrationReportEmbed({
                 <th className="py-2 px-3 text-center">Latency</th>
                 <th className="py-2 px-3 text-center">Scenarios</th>
                 <th className="py-2 px-3 text-center">Status</th>
-                <th className="py-2 px-3 text-center">Actions</th>
+                <th className="py-2 px-3 text-center">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]/60 font-mono">
@@ -1278,7 +1270,7 @@ export default function IntegrationReportEmbed({
                     colSpan={8}
                     className="py-6 text-center text-xs text-[var(--color-text-muted)] italic"
                   >
-                    Không tìm thấy endpoint nào phù hợp với bộ lọc.
+                    No endpoints match the selected filter.
                   </td>
                 </tr>
               ) : (
@@ -1343,15 +1335,14 @@ export default function IntegrationReportEmbed({
                         )}
                       </td>
                       <td className="py-2 px-3 text-center">
-                        {!isCovered && onGenerateEndpoint ? (
+                        {onNavigateTab ? (
                           <button
                             type="button"
-                            onClick={() => onGenerateEndpoint(`${r.method} ${r.path}`)}
-                            className="px-2 py-0.5 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-[10px] font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-1 shadow-2xs"
-                            title="Sinh test cho API này"
+                            onClick={() => onNavigateTab("scenarios")}
+                            className="text-[10px] text-[var(--color-primary)] hover:underline cursor-pointer font-medium"
+                            title="Manage scenarios in Test Scenarios tab"
                           >
-                            <Sparkles size={10} />
-                            <span>Sinh Test</span>
+                            {isCovered ? "View Scenarios" : "Manage in Scenarios"}
                           </button>
                         ) : (
                           <span className="text-[10px] text-[var(--color-text-muted)]">-</span>
@@ -1377,7 +1368,7 @@ export default function IntegrationReportEmbed({
               </h3>
             </div>
             <span className="text-[10px] font-mono text-rose-400 font-semibold">
-              Điểm Bị Kẹt & Lỗi Chi Tiết Ở Source Code
+              Root Causes & Bottlenecks in Source Code
             </span>
           </div>
 
@@ -1405,7 +1396,7 @@ export default function IntegrationReportEmbed({
                 <div className="p-2.5 rounded bg-[var(--color-surface)] border border-rose-500/20 text-[11px] space-y-1">
                   <div className="text-[var(--color-text-secondary)] flex items-center gap-1.5">
                     <FileCode size={12} className="text-rose-400" />
-                    <span>Vị trí kẹt mã nguồn:</span>
+                    <span>Fault location in source code:</span>
                     <strong className="text-[var(--color-text)]">{f.sourceFile || "controllers/handler.js"}:{f.line || 42}</strong>
                   </div>
                   <div className="text-rose-400 pl-4 border-l-2 border-rose-500/50 mt-1">
@@ -1414,8 +1405,8 @@ export default function IntegrationReportEmbed({
                 </div>
 
                 <div className="text-[10px] text-[var(--color-text-muted)] flex items-center justify-between pt-1">
-                  <span>Tầng kiểm tra: {f.failureLayer === "DATABASE_FAILURE" ? "Docker Database Container (Prisma Query)" : f.failureLayer === "CONTROLLER_CRASH" ? "Express Controller Handler" : f.failureLayer === "MIDDLEWARE_REJECTED" ? "Auth / CORS Middleware" : "HTTP Contract Schema"}</span>
-                  <span className="text-rose-400">Yêu cầu sửa logic hoặc sinh lại test case</span>
+                  <span>Audit layer: {f.failureLayer === "DATABASE_FAILURE" ? "Docker Database Container (Prisma Query)" : f.failureLayer === "CONTROLLER_CRASH" ? "Express Controller Handler" : f.failureLayer === "MIDDLEWARE_REJECTED" ? "Auth / CORS Middleware" : "HTTP Contract Schema"}</span>
+                  <span className="text-rose-400">Action: Fix business logic or synthesize updated test case</span>
                 </div>
               </div>
             ))}
@@ -1431,7 +1422,7 @@ export default function IntegrationReportEmbed({
               Verified Clean: Zero Failure Bottlenecks Detected
             </div>
             <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5 leading-relaxed">
-              Tất cả {totalPassed} kịch bản kiểm thử Supertest đã thực thi thành công xuyên suốt toàn bộ 5 tầng kiến trúc (Router ➔ Middleware ➔ Controller ➔ Docker Database Container ➔ HTTP Response). Không có điểm kẹt hoặc lỗi runtime trong source code.
+              All {totalPassed} Supertest scenarios executed cleanly across all 5 architectural layers (Router ➔ Middleware ➔ Controller ➔ Docker Database Container ➔ HTTP Response). No unhandled bottlenecks or runtime exceptions detected in source code.
             </div>
           </div>
         </div>

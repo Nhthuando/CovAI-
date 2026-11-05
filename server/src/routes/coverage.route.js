@@ -41,6 +41,8 @@ import {
     installMissingDependencyController,
     getUnifiedQualityDashboardController,
     getUnifiedTestRunInspectionController,
+    getSuitesReadinessController,
+    confirmBatchSystemScenariosController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -49,6 +51,8 @@ router.use(authMiddleware, enforceProjectEndpointPolicy('coverage'));
 // Unified Quality Overview Dashboard (Single-Project Multi-Layer Aggregation)
 router.get("/:snapshotId/unified-dashboard", authMiddleware, getUnifiedQualityDashboardController);
 router.get("/:snapshotId/unified-dashboard/runs/:runId", authMiddleware, getUnifiedTestRunInspectionController);
+router.get("/:snapshotId/suites-readiness", authMiddleware, getSuitesReadinessController);
+router.post("/:snapshotId/system/scenarios/confirm-batch", authMiddleware, confirmBatchSystemScenariosController);
 
 // GET /api/coverage/:snapshotId/summary — fetch coverage summary result
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);

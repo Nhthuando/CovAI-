@@ -237,6 +237,16 @@ export const runCoverageByType = async (req, res) => {
         } else {
             framework = selectCoverageFramework(detection, coverageType, requestedFramework);
             if (framework === "supertest") {
+                const { detectIntegrationFrameworks } = await import("../services/integrationDetection.service.js");
+                const intDetect = await detectIntegrationFrameworks(resolvedRootDir);
+                if (!intDetect.summary?.hasDependencies && !req.body?.skipHitlCheck) {
+                    return res.status(409).json({
+                        success: false,
+                        code: "INTEGRATION_DEPENDENCY_MISSING",
+                        message: "Integration tests require supertest and jest installed in package.json. Please install dependencies before running.",
+                        missingPackages: intDetect.summary?.missingPackages || ["supertest", "jest"]
+                    });
+                }
                 const installJob = await createInstallDepsJob({ projectId: snapshot.projectId, snapshotId, userId });
                 job = await createSupertestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
                 await addSupertestCoveragePipeline(installJob.id, job.id);
@@ -2545,10 +2555,11 @@ export const approveIntegrationTests = async (req, res) => {
         const { snapshotId } = req.params;
         if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
 
-        const { approvedTestIds } = req.body;
-        if (!Array.isArray(approvedTestIds)) {
-            return res.status(400).json({ success: false, message: "approvedTestIds array is required." });
+        const { approvedTestIds, approveAll } = req.body || {};
+        if (!approveAll && !Array.isArray(approvedTestIds)) {
+            return res.status(400).json({ success: false, message: "approvedTestIds array or approveAll is required." });
         }
+        const safeApprovedTestIds = Array.isArray(approvedTestIds) ? approvedTestIds : [];
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
@@ -2560,7 +2571,7 @@ export const approveIntegrationTests = async (req, res) => {
 
         // Group approved scenarios by AiTest ID
         const approvedScenariosByTestId = {};
-        for (const idStr of approvedTestIds) {
+        for (const idStr of safeApprovedTestIds) {
             const separatorIndex = idStr.indexOf("::");
             if (separatorIndex === -1) continue;
 
@@ -2581,8 +2592,14 @@ export const approveIntegrationTests = async (req, res) => {
                         const approvedScenarios = approvedScenariosByTestId[t.id] || [];
                         const isApproved = approvedScenarios.length > 0;
 
-                        meta.status = isApproved ? "APPROVED" : "DRAFT";
-                        meta.approvedScenarios = approvedScenarios;
+                        if (approveAll) {
+                            const reqs = Array.isArray(meta.requests) ? meta.requests.map(r => r.scenarioId || r.testName).filter(Boolean) : [];
+                            meta.status = "APPROVED";
+                            meta.approvedScenarios = reqs.length > 0 ? reqs : ["*"];
+                        } else {
+                            meta.status = isApproved ? "APPROVED" : "DRAFT";
+                            meta.approvedScenarios = approvedScenarios;
+                        }
 
                         await prisma.aiTest.update({
                             where: { id: t.id },
@@ -4025,3 +4042,61 @@ export const getUnifiedTestRunInspectionController = async (req, res) => {
     }
 };
 
+
+
+/**
+ * GET /api/coverage/:snapshotId/suites-readiness
+ * Pre-flight HITL readiness check across Unit, Integration, and System suites
+ */
+export const getSuitesReadinessController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        const { snapshotId } = req.params;
+        const { getSuitesReadinessService } = await import("../services/suitesReadiness.service.js");
+        const data = await getSuitesReadinessService({ snapshotId, userId });
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        console.error("[getSuitesReadinessController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to evaluate suites readiness."
+        });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/system/scenarios/confirm-batch
+ * Pre-flight HITL quick confirmation of unconfirmed system scenario outcomes
+ */
+export const confirmBatchSystemScenariosController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        const { snapshotId } = req.params;
+        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+
+        const updated = await prisma.systemScenario.updateMany({
+            where: {
+                snapshotId: snapshot.id,
+                reviewState: { notIn: ['EXPECTED_CONFIRMED', 'REVIEWED'] }
+            },
+            data: {
+                reviewState: 'EXPECTED_CONFIRMED',
+                reviewedByUserId: userId,
+                reviewedAt: new Date()
+            }
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: `Confirmed expected outcomes for ${updated.count} system scenario(s).`,
+            count: updated.count
+        });
+    } catch (error) { 
+        console.error("[confirmBatchSystemScenariosController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to confirm system scenarios."
+        });
+    }
+};

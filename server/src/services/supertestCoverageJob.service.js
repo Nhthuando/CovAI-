@@ -21,7 +21,7 @@ import babel from "@babel/core";
 import transformCommonJsPlugin from "@babel/plugin-transform-modules-commonjs";
 import prisma from "../config/prisma.js";
 import { randomUUID } from 'node:crypto';
-import { currentProjectOperation, withOperationPublishGuard, stagePreparedPublication } from './projectOperationWorkspace.service.js';
+import { currentProjectOperation, operationSnapshot, withOperationPublishGuard, stagePreparedPublication } from './projectOperationWorkspace.service.js';
 import { resolveContainedProjectPath } from './projectFileVersion.service.js';
 import { resolveProjectRoot, ensureMinimalPackageJson } from '../utils/projectRootResolver.js';
 import {
@@ -61,6 +61,11 @@ const ensureProjectDependencies = async (jobId, rootDir) => {
             }
         }
     }
+
+    try {
+        const { detectAndRunPrismaGenerate } = await import("./runTestsJob.service.js");
+        await detectAndRunPrismaGenerate(jobId, rootDir);
+    } catch (_) { }
 };
 
 /**
@@ -117,21 +122,38 @@ export const processSupertestCoverageJob = async (jobId) => {
         const job = await getJobById(jobId);
         if (isJobCanceled(jobId, abortController.signal) || job?.status === "CANCELED") return;
 
-        if (!job?.snapshot?.rootDir) {
+        const rawSnapshot = job.snapshot;
+        if (!rawSnapshot?.rootDir) {
             throw new ServiceError("Snapshot is not ready to run Supertest.", 409);
         }
-        const { jestConfigPath } = job.snapshot;
-        const rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
+        const snapshot = typeof operationSnapshot === "function" ? operationSnapshot(rawSnapshot) : rawSnapshot;
+        const { jestConfigPath } = snapshot;
+        const rootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
+        const origRootDir = resolveProjectRoot(rawSnapshot.rootDir) || rawSnapshot.rootDir;
         const snapshotId = job.snapshotId;
         const projectId = job.projectId;
         const userId = job.userId;
         if (currentProjectOperation()) {
             ensureMinimalPackageJson(rootDir);
+            if (origRootDir && path.resolve(origRootDir) !== path.resolve(rootDir)) {
+                for (const sub of ["", "server", "backend", "api"]) {
+                    const srcNm = sub ? path.join(origRootDir, sub, "node_modules") : path.join(origRootDir, "node_modules");
+                    const dstNm = sub ? path.join(rootDir, sub, "node_modules") : path.join(rootDir, "node_modules");
+                    if (fs.existsSync(srcNm) && !fs.existsSync(dstNm)) {
+                        try { fs.cpSync(srcNm, dstNm, { recursive: true }); } catch (_) {}
+                    }
+                }
+            }
             const { runNpmInstall } = await import('./runTestsJob.service.js');
             await runNpmInstall(jobId, rootDir);
         }
 
         const supertestInfo = await detectSupertest(rootDir);
+        const { detectIntegrationFrameworks } = await import("./integrationDetection.service.js");
+        const intDetection = await detectIntegrationFrameworks(rootDir);
+        if (!intDetection.summary?.hasDependencies) {
+            throw new ServiceError("Integration tests require 'supertest' to be installed in the project's package.json. Please run 'Install supertest & jest' first.", 409);
+        }
         
         // Use ONLY generated AI tests to avoid running broken user tests
         const aiTests = await prisma.aiTest.findMany({
@@ -165,7 +187,8 @@ export const processSupertestCoverageJob = async (jobId) => {
                 const scenarioPath = findScenarioPath(ast, testName, nameIndex);
                 if (scenarioPath) {
                     const isExplicitlyApproved = approvedScenarios.has(r.scenarioId) || approvedScenarios.has(r.testName);
-                    const isApproved = approvedScenarios.size === 0 || isExplicitlyApproved;
+                    const isDraftTest = meta.status === "DRAFT" || (!meta.status && approvedScenarios.size === 0);
+                    const isApproved = !isDraftTest && (approvedScenarios.size === 0 || isExplicitlyApproved);
                     const isEnabled = r.enabled !== false;
                     const shouldRun = isApproved && isEnabled;
 
@@ -211,18 +234,39 @@ export const processSupertestCoverageJob = async (jobId) => {
         }
 
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
-        await updateJobProgress(jobId, 10);
+        const reportIntProgress = async (progress, stage, message) => {
+            await updateJobProgress(jobId, progress).catch(() => {});
+            try {
+                const { emitDashboardJobProgress } = await import("./dashboardEvents.service.js");
+                emitDashboardJobProgress(projectId, {
+                    snapshotId,
+                    jobId,
+                    pillar: "integration",
+                    progress,
+                    stage,
+                    message: message || stage
+                }).catch(() => {});
+            } catch (_) {}
+        };
+
+        try {
+            const { emitDashboardRunStatus } = await import("./dashboardEvents.service.js");
+            emitDashboardRunStatus(projectId, { snapshotId, jobId, pillar: "integration", status: "RUNNING" }).catch(() => {});
+        } catch (_) {}
+        await reportIntProgress(10, "Starting Supertest pipeline", "Preparing environment and test runner...");
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PREPARE_ENV', label: "Starting Supertest coverage pipeline...", progress: 10 }));
 
         if (isJobCanceled(jobId, abortController.signal)) return;
 
         // Ensure dependencies exist (e.g. server/node_modules) before starting test suite
+        await reportIntProgress(25, "Verifying dependencies", "Checking Supertest runtime dependencies...");
         await ensureProjectDependencies(jobId, rootDir);
 
         if (isJobCanceled(jobId, abortController.signal)) return;
 
         // 1. Run Supertest
-        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'RUN_JEST', label: "Running Supertest test suite...", progress: 20 }));
+        await reportIntProgress(40, "Running Supertest", "Executing Supertest HTTP assertion suite...");
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'RUN_JEST', label: "Running Supertest test suite...", progress: 40 }));
         const runResult = await runSupertest(
             jobId,
             rootDir,
@@ -236,7 +280,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             stderr: runResult.stderr ?? "",
         }).catch(() => { });
         const { coverageDir } = runResult;
-        await updateJobProgress(jobId, 50);
+        await reportIntProgress(60, "Parsing HTTP results", "Parsing HTTP status assertions and runtime evidence...");
 
         // 2. Parse coverage
         const summaryPath = path.join(coverageDir, "coverage-summary.json");
@@ -313,7 +357,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         await withOperationPublishGuard(() => parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId }));
         await withOperationPublishGuard(() => parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId }));
 
-        await updateJobProgress(jobId, 80);
+        await reportIntProgress(80, "Mapping coverage", "Mapping covered endpoints and functions...");
 
         // 3. Save results
         const storageResult = await storeCoverageOutputs(snapshotId, projectId, coverageDir);
@@ -335,6 +379,12 @@ export const processSupertestCoverageJob = async (jobId) => {
         });
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Supertest coverage pipeline completed.", progress: 100 }));
+        try {
+            import("./dashboardEvents.service.js").then(({ emitDashboardRunStatus, emitDashboardJobProgress }) => {
+                emitDashboardJobProgress(projectId, { snapshotId, jobId, pillar: "integration", progress: 100, stage: "Complete", message: "Supertest pipeline completed." }).catch(() => {});
+                emitDashboardRunStatus(projectId, { snapshotId, jobId, pillar: "integration", status: "SUCCESS" }).catch(() => {});
+            }).catch(() => {});
+        } catch (_) {}
 
         try {
             const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
@@ -418,6 +468,16 @@ export const processSupertestCoverageJob = async (jobId) => {
                         include: { scenarios: true }
                     });
 
+                    // Ensure Job is marked CANCELED in DB so withOperationWorkspace knows it was canceled
+                    await prisma.job.update({
+                        where: { id: jobId },
+                        data: { status: "CANCELED", finishedAt: new Date() }
+                    }).catch(() => {});
+                    try {
+                        const { emitDashboardRunStatus } = await import("./dashboardEvents.service.js");
+                        emitDashboardRunStatus(projectId, { snapshotId, jobId, pillar: "integration", status: "CANCELED" }).catch(() => {});
+                    } catch (_) {}
+
                     // Enrich runtime evidence with this canceled TestRun ID
                     if (foundEvPath && rawEv.length > 0) {
                         const scenarioMap = new Map((canceledTestRun.scenarios || []).map(s => [s.title, s]));
@@ -443,6 +503,11 @@ export const processSupertestCoverageJob = async (jobId) => {
         }
         console.error(`[SupertestCoverageJob ${jobId}] Error:`, error);
         await markJobFailed(jobId, error).catch(() => { });
+        try {
+            import("./dashboardEvents.service.js").then(({ emitDashboardRunStatus }) => {
+                emitDashboardRunStatus(projectId, { snapshotId, jobId, pillar: "integration", status: "FAILED" }).catch(() => {});
+            }).catch(() => {});
+        } catch (_) {}
     } finally {
         unregisterJobAbortController(jobId);
     }

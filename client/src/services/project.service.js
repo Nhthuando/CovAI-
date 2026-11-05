@@ -390,8 +390,9 @@ export async function deleteChatSessionApi(projectId, sessionId) {
 }
 
 export async function getProjectCfgApi(projectId, snapshotId) {
-  const res = await editorAwareFetch(
-    `${BASE_URL}/projects/${projectId}/cfg?snapshotId=${snapshotId}`,
+  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/cfg${query}`,
     {
       headers: getAuthHeaders(),
     },
@@ -400,8 +401,9 @@ export async function getProjectCfgApi(projectId, snapshotId) {
 }
 
 export async function getProjectCcApi(projectId, snapshotId) {
+  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
   const res = await editorAwareFetch(
-    `${BASE_URL}/projects/${projectId}/cc?snapshotId=${snapshotId}`,
+    `${BASE_URL}/projects/${projectId}/cc${query}`,
     {
       headers: getAuthHeaders(),
     },
@@ -410,10 +412,11 @@ export async function getProjectCcApi(projectId, snapshotId) {
 }
 
 export async function buildCfgApi(projectId, snapshotId) {
+  const body = snapshotId ? { snapshotId } : {};
   const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId }),
+    body: JSON.stringify(body),
   });
   return handleResponse(res);
 }
@@ -535,12 +538,23 @@ export async function selectTestingFrameworkApi(
   return handleResponse(res);
 }
 
-export async function createProjectSnapshotApi(projectId, { label, message }) {
+export async function createProjectSnapshotApi(projectId, { label, message } = {}) {
   const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ label, message }),
   });
+  return handleResponse(res);
+}
+
+export async function activateProjectSnapshotApi(projectId, snapshotId) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/activate`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+    }
+  );
   return handleResponse(res);
 }
 
@@ -574,5 +588,15 @@ export async function getProjectIntegrationDetection(projectId) {
   const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/integration/frameworks`, {
     headers: getAuthHeaders(),
   });
+  return handleResponse(res);
+}
+
+export async function getProjectEventsApi(projectId, { after = 0, limit = 100 } = {}) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/events?after=${after}&limit=${limit}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }

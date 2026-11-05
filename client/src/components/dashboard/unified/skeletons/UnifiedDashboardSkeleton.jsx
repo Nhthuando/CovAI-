@@ -60,31 +60,40 @@ export function UnifiedDashboardSkeleton() {
         </div>
       </div>
 
-      {/* Zone 4: Traceability Matrix & Action Center */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 xl:col-span-8 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-5 min-h-[280px]">
-          <Skeleton className="h-5 w-48 mb-4" />
-          <Skeleton className="h-40 w-full" />
+      {/* Zone 4: Unified Analysis Tabs (Tab Bar + Action Alert Strip + Full-Width Matrix) */}
+      <div className="space-y-4">
+        {/* Tab switcher skeleton */}
+        <div className="flex items-center justify-between border-b border-[var(--ud-border)] pb-3">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-44 rounded-md" />
+            <Skeleton className="h-8 w-48 rounded-md" />
+          </div>
+          <Skeleton className="h-4 w-32" />
         </div>
-        <div className="col-span-12 xl:col-span-4 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-5 min-h-[280px]">
-          <Skeleton className="h-5 w-36 mb-4" />
-          <div className="space-y-2.5">
+
+        {/* Action Alert Strip skeleton */}
+        <div className="rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-3 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-3 w-28" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
             {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-14 w-full rounded-md" />
+              <Skeleton key={i} className="h-24 w-full rounded-md" />
             ))}
           </div>
         </div>
-      </div>
 
-      {/* Zone 5: Trends & Unified Execution History */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 xl:col-span-6 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-5 min-h-[260px]">
-          <Skeleton className="h-5 w-40 mb-4" />
-          <Skeleton className="h-44 w-full" />
-        </div>
-        <div className="col-span-12 xl:col-span-6 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-5 min-h-[260px]">
-          <Skeleton className="h-5 w-40 mb-4" />
-          <Skeleton className="h-44 w-full" />
+        {/* Full-width Matrix skeleton */}
+        <div className="rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-5 min-h-[300px]">
+          <div className="flex items-center justify-between mb-4">
+            <Skeleton className="h-5 w-52" />
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-7 w-40 rounded-md" />
+              <Skeleton className="h-7 w-32 rounded-md" />
+            </div>
+          </div>
+          <Skeleton className="h-56 w-full rounded-md" />
         </div>
       </div>
     </div>

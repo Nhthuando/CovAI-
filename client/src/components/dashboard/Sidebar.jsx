@@ -189,7 +189,7 @@ function InlineCreationRow({ type, indent, onSubmit, onCancel }) {
 
   return (
     <div
-      className="flex items-center gap-2 select-none py-1 px-2 my-0.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 border-l-2 border-[var(--color-primary)]"
+      className="flex items-center gap-2 select-none py-1 pr-3 w-full bg-[var(--color-surface-secondary)]/70"
       style={{
         paddingLeft: indent,
       }}
@@ -329,12 +329,12 @@ function TreeNode({
           else onSelect?.(node);
         }}
         onContextMenu={(e) => onContextMenu?.(e, node)}
-        className={`group flex items-center gap-2 cursor-pointer select-none relative transition-colors duration-100 rounded-[var(--radius-sm)] mx-1 my-0.5 py-1 pr-2 ${
+        className={`group flex items-center gap-2 cursor-pointer select-none relative transition-colors duration-75 w-full py-1 pr-3 ${
           isActive
-            ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium border-l-2 border-[var(--color-primary)]"
+            ? "bg-[var(--color-primary)]/15 text-[var(--color-text)] font-medium"
             : isSelected
-            ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-medium border-l-2 border-[var(--color-primary)]/60"
-            : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]/60 border-l-2 border-transparent"
+            ? "bg-[var(--color-surface-raised)] text-[var(--color-text)] font-medium"
+            : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]/60"
         }`}
         style={{
           paddingLeft: indent,

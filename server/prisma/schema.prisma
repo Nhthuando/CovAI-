@@ -294,6 +294,7 @@ model Project {
   accessRevision       Int               @default(0)
   workspaceRevision    Int               @default(0)
   eventSequence        Int               @default(0)
+  activeSnapshotId     String?
   ownerId              String
   name                 String
   description          String?
@@ -351,6 +352,9 @@ model ProjectSnapshot {
   projectId                   String
   source                      SnapshotSource
   checksum                    String?
+  contentHash                 String?
+  versionNumber               Int?
+  label                       String?
   commitSha                   String?
   storagePath                 String
   rootDir                     String?
@@ -393,6 +397,7 @@ model ProjectSnapshot {
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
   @@index([projectId])
+  @@index([projectId, contentHash])
   systemRequirements SystemRequirementRevision[]
   systemAssessments SystemTestAssessment[]
   systemProposals SystemTestProposal[]

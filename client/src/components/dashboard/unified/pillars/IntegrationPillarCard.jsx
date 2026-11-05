@@ -1,14 +1,17 @@
+import React from "react";
+import { CheckCircle2, Zap } from "lucide-react";
 import { PillarCardShell } from "./PillarCardShell.jsx";
 import { StackedBar } from "../primitives/StackedBar.jsx";
 import { MeterBar } from "../primitives/MeterBar.jsx";
-import { fmtPct, fmtDuration } from "../../../../services/unifiedDashboard/format.js";
+import { HorizontalBarList } from "../primitives/charts/HorizontalBarList.jsx";
+import { fmtPct } from "../../../../services/unifiedDashboard/format.js";
 
-const FAILURE_LAYERS = [
-  { key: "route", label: "Route" },
-  { key: "middlewareAuth", label: "Middleware/Auth" },
-  { key: "controller", label: "Controller" },
-  { key: "database", label: "Database" },
-];
+const FAILURE_LAYER_LABELS = {
+  route: "Route / Endpoint",
+  middlewareAuth: "Middleware / Auth",
+  controller: "Controller Logic",
+  database: "Database / Model",
+};
 
 export function IntegrationPillarCard({
   pillarData,
@@ -25,8 +28,9 @@ export function IntegrationPillarCard({
   const totalApis = Number(
     cov.totalApis ?? (passedTests + failedTests + uncoveredApis || p.totalTests || 0)
   );
+  const state = p.state || (passedTests + failedTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
 
-  // Never show green "Passed" when Covered = 0 and Uncovered > 0!
+  // Status computation
   let status = "untested";
   if (failedTests > 0) {
     status = "fail";
@@ -40,17 +44,21 @@ export function IntegrationPillarCard({
 
   const statusLabel = `${passedTests}/${totalApis} Covered`;
 
-  const dist = p.failureDistribution || {
-    route: 0,
-    middlewareAuth: 0,
-    controller: 0,
-    database: 0,
-  };
+  const dist = p.failureDistribution || {};
+  const activeFailureLayers = Object.entries(dist)
+    .filter(([_, count]) => Number(count) > 0)
+    .map(([key, count]) => ({
+      key,
+      label: FAILURE_LAYER_LABELS[key] || key,
+      value: Number(count),
+      valueText: `${count} failed`,
+      tone: "fail",
+    }));
 
   const endpointSegments = [
     { key: "passed", value: passedTests, tone: "pass", label: "Covered" },
     { key: "failed", value: failedTests, tone: "fail", label: "Failed" },
-    { key: "uncovered", value: uncoveredApis, tone: "neutral", label: "Uncovered" },
+    { key: "uncovered", value: uncoveredApis, tone: "warn", label: "Uncovered" },
   ];
 
   return (
@@ -63,7 +71,7 @@ export function IntegrationPillarCard({
       buttonId="ud-pillar-integration-open"
       onOpenWorkspace={() => onNavigateWorkspace("integration")}
     >
-      {/* Endpoint Coverage Breakdown */}
+      {/* Endpoint Coverage Breakdown (Sole source of truth for API Endpoints) */}
       <div>
         <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider block mb-2">
           API Endpoint Distribution
@@ -76,21 +84,34 @@ export function IntegrationPillarCard({
         />
       </div>
 
-      {/* Dual Coverage Gauges */}
-      <div className="space-y-2 pt-1">
-        {/* API Coverage */}
-        <div className="rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60 p-2 space-y-1">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[var(--ud-text-muted)] text-[11px]">API Endpoint Coverage</span>
-            <span className="font-mono tabular-nums font-semibold text-[var(--ud-text)]">
-              {fmtPct(cov.apiEndpoint)}
-            </span>
-          </div>
-          <MeterBar value={cov.apiEndpoint || 0} tone="integration" height={4} />
+      {/* State 1: NOT RUN -> Empty state with direct action, vertically centered */}
+      {state === "NOT_RUN" && (
+        <div className="flex-1 flex flex-col justify-center items-center rounded-[var(--radius-md)] border border-dashed border-[var(--ud-border)] bg-[var(--ud-surface-2)]/40 p-5 text-center space-y-2.5 my-auto">
+          <p className="text-xs text-[var(--ud-text-muted)]">
+            <span className="font-semibold text-[var(--ud-warn)]">{uncoveredApis || totalApis} APIs</span> discovered from AST — not tested yet.
+          </p>
+          <button
+            type="button"
+            onClick={() => onNavigateWorkspace("integration")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--ud-integration)]/20 border border-[var(--ud-integration)]/50 text-xs font-semibold text-[var(--ud-integration)] hover:bg-[var(--ud-integration)]/30 transition-colors cursor-pointer"
+          >
+            <Zap size={13} />
+            <span>Generate & Run Tests</span>
+          </button>
         </div>
+      )}
 
-        {/* Backend Code Coverage */}
-        <div className="rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60 p-2 space-y-1">
+      {/* State 2: ALL PASSING -> Clean green badge */}
+      {state === "ALL_PASSING" && (
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-sm)] border border-[var(--ud-pass)]/30 bg-[var(--ud-pass)]/10 text-[var(--ud-pass)] text-xs font-semibold">
+          <CheckCircle2 size={13} className="shrink-0" />
+          <span>All {passedTests} tested endpoints passing — 0 failures</span>
+        </div>
+      )}
+
+      {/* Backend Code Coverage (Kept for integration impact, duplicate API coverage bar removed) */}
+      {state !== "NOT_RUN" && (
+        <div className="rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60 p-2.5 space-y-1">
           <div className="flex items-center justify-between text-xs">
             <span className="text-[var(--ud-text-muted)] text-[11px]">Backend Code Coverage</span>
             <span className="font-mono tabular-nums font-semibold text-[var(--ud-text)]">
@@ -99,61 +120,31 @@ export function IntegrationPillarCard({
           </div>
           <MeterBar value={cov.lines || 0} tone="integration" height={4} />
         </div>
-      </div>
+      )}
 
-      {/* Failure Layer Breakdown (Interactive Cross-Filter Trigger) */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider">
-            Failure Layer Breakdown
-          </span>
-          <span className="text-[10px] font-mono text-[var(--ud-text-muted)]">Click to filter</span>
+      {/* State 3: HAS FAILURES -> HorizontalBarList for active failure layers only */}
+      {state === "HAS_FAILURES" && activeFailureLayers.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-semibold text-[var(--ud-fail)] uppercase tracking-wider">
+              Failure Layer Breakdown
+            </span>
+            <span className="text-[10px] font-mono text-[var(--ud-text-muted)]">Click to filter</span>
+          </div>
+          <HorizontalBarList
+            items={activeFailureLayers}
+            height={4}
+            activeKey={activeCrossFilter?.category}
+            onItemClick={(item) =>
+              onSelectCrossFilter?.({
+                pillar: "integration",
+                category: item.key,
+                label: `Integration • ${item.label}`,
+              })
+            }
+          />
         </div>
-        <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
-          {FAILURE_LAYERS.map((layer) => {
-            const count = Number(dist[layer.key] || 0);
-            const isSelected =
-              activeCrossFilter?.pillar === "integration" &&
-              activeCrossFilter?.category === layer.key;
-            return (
-              <button
-                key={layer.key}
-                type="button"
-                onClick={() =>
-                  onSelectCrossFilter?.({
-                    pillar: "integration",
-                    category: layer.key,
-                    label: `Integration • ${layer.label} Layer`,
-                  })
-                }
-                className={`flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] border transition-colors cursor-pointer text-left ${
-                  isSelected
-                    ? "border-[var(--ud-integration)] bg-[var(--ud-integration)]/15"
-                    : "border-transparent bg-[var(--ud-surface-2)] hover:border-[var(--ud-border)]"
-                }`}
-                title={`Filter Matrix & Actions by ${layer.label} failures`}
-              >
-                <span className="text-[var(--ud-text-muted)] text-[11px] font-sans truncate">
-                  {layer.label}:
-                </span>
-                <span
-                  className={`font-semibold tabular-nums ${
-                    count > 0 ? "text-[var(--ud-fail)]" : "text-[var(--ud-text)]"
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Runtime Meta */}
-      <div className="pt-2 border-t border-[var(--ud-border)] text-[11px] text-[var(--ud-text-muted)] flex items-center justify-between font-mono">
-        <span>Average Latency:</span>
-        <span className="text-[var(--ud-text)] font-semibold">{fmtDuration(p.avgDurationMs)}</span>
-      </div>
+      )}
     </PillarCardShell>
   );
 }

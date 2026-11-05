@@ -21,6 +21,7 @@ import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
 import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
+import VersionControlWorkspace from "./VersionControlWorkspace";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
@@ -84,6 +85,12 @@ const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const DEFAULT_AI_PANEL_WIDTH = 340;
 
+const COVERAGE_TEST_TABS = [
+  { key: "unit", label: "Unit Test", shortLabel: "Unit", icon: FlaskConical },
+  { key: "integration", label: "Integration Test", shortLabel: "Integration", icon: Network },
+  { key: "system", label: "System Test", shortLabel: "System", icon: Layers },
+];
+
 const containerVariants = {
   hidden: {},
   visible: {
@@ -137,6 +144,13 @@ function LayoutInner() {
       return;
     }
     setShowCFG(false);
+    if (id === "explorer") {
+      if (activeActivity === "explorer") {
+        setSidebarOpen((prev) => !prev);
+        return;
+      }
+      setSidebarOpen(true);
+    }
     if (id === "system") {
       setActiveActivity("coverage");
       setCoverageType("system");
@@ -152,6 +166,7 @@ function LayoutInner() {
   };
 
   const [activeActivity, setActiveActivity] = useState(initialTab);
+  const [visitedPanels, setVisitedPanels] = useState(() => new Set([initialTab]));
   const [showGit, setShowGit] = useState(false);
 
   useEffect(() => {
@@ -163,10 +178,16 @@ function LayoutInner() {
     if (tab === "system") {
       setActiveActivity("coverage");
       setCoverageType("system");
+      setVisitedPanels((prev) => new Set([...prev, "coverage", "coverage:system"]));
     } else {
       setActiveActivity(tab);
       const type = params.get("coverageType") || params.get("type");
-      if (type) setCoverageType(type);
+      if (type) {
+        setCoverageType(type);
+        setVisitedPanels((prev) => new Set([...prev, tab, `${tab}:${type}`]));
+      } else {
+        setVisitedPanels((prev) => new Set([...prev, tab]));
+      }
     }
     const focusFile = params.get("focusFile");
     const focusEndpoint = params.get("focusEndpoint");
@@ -230,6 +251,16 @@ function LayoutInner() {
     }),
     [activeActivity, coverageType, activeTabId, unifiedSummary]
   );
+  const isFullWidthWorkspace = [
+    "architecture",
+    "overview",
+    "trustworthiness",
+    "coverage",
+    "version-control",
+    "git",
+    "jobs",
+    "activity",
+  ].includes(activeActivity);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -586,6 +617,7 @@ function LayoutInner() {
   };
 
   useEffect(() => {
+    if (initialProjectId && project?.id === initialProjectId) return;
     loadData(initialProjectId);
   }, [loadData, initialProjectId]);
 
@@ -617,6 +649,10 @@ function LayoutInner() {
     setActiveTabId(null);
     const newParams = new URLSearchParams(location.search);
     newParams.set("projectId", projectId);
+    newParams.delete("snapshotId");
+    newParams.delete("focusFile");
+    newParams.delete("focusEndpoint");
+    newParams.delete("focusScenario");
     navigate(`${location.pathname}?${newParams.toString()}`);
     loadData(projectId);
   };
@@ -636,6 +672,10 @@ function LayoutInner() {
         setActiveTabId(null);
         const newParams = new URLSearchParams(location.search);
         newParams.delete("projectId");
+        newParams.delete("snapshotId");
+        newParams.delete("focusFile");
+        newParams.delete("focusEndpoint");
+        newParams.delete("focusScenario");
         navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
         loadData();
       } else {
@@ -1006,6 +1046,63 @@ function LayoutInner() {
           )}
         </div>
 
+        {/* ── Center: Test Suite Levels (Unit, Integration, System) ── */}
+        <div className="flex items-center justify-center flex-shrink-0 mx-2">
+          <nav
+            role="tablist"
+            aria-label="Coverage Test Levels"
+            className="inline-flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] shadow-xs"
+          >
+            {COVERAGE_TEST_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeActivity === "coverage" && coverageType === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  role="tab"
+                  id={`top-nav-test-${tab.key}`}
+                  aria-selected={isActive}
+                  type="button"
+                  onClick={() => {
+                    handleSelectCoverageType(tab.key);
+                    if (activeActivity !== "coverage") {
+                      setShowCFG(false);
+                      setActiveActivity("coverage");
+                      const params = new URLSearchParams(location.search);
+                      params.set("tab", "coverage");
+                      params.set("type", tab.key);
+                      params.set("coverageType", tab.key);
+                      navigate(`${location.pathname}?${params.toString()}`);
+                    }
+                  }}
+                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${
+                    isActive
+                      ? "text-[var(--color-primary)] font-semibold"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
+                  }`}
+                  title={`${tab.label} Suite`}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="active-test-tab-pill"
+                      className="absolute inset-0 rounded-[var(--radius-sm)] bg-[var(--color-bg)] border border-[var(--color-border)] shadow-xs"
+                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    <Icon
+                      size={13}
+                      strokeWidth={isActive ? 2.2 : 1.8}
+                      className={isActive ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}
+                    />
+                    <span className="hidden sm:inline">{tab.label}</span>
+                    <span className="sm:hidden">{tab.shortLabel}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
 
         <div
           className="flex items-center gap-2 flex-1 justify-end"
@@ -1106,7 +1203,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
+          {sidebarOpen && !isFullWidthWorkspace && (
             <motion.div
               key="sidebar"
               initial={
@@ -1153,12 +1250,10 @@ function LayoutInner() {
                 />
               ) : activeActivity === "coverage" ? (
                 <CoveragePanel
-                  sidebarWidth={isMobile ? 280 : sidebarWidth}
+                  sidebarWidth={sidebarWidth}
                   coverageType={coverageType}
-                  setCoverageType={(type) => { handleSelectCoverageType(type); if (isMobile) setSidebarOpen(false); }}
+                  setCoverageType={handleSelectCoverageType}
                 />
-              ) : activeActivity === "git" ? (
-                <GitPanel projectId={project?.id} onSync={handleGitSync} />
               ) : (
                 <Sidebar
                   sidebarWidth={sidebarWidth}
@@ -1184,7 +1279,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
+        {!isMobile && sidebarOpen && !isFullWidthWorkspace && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1192,7 +1287,7 @@ function LayoutInner() {
             currentWidth={sidebarWidth}
             defaultWidth={DEFAULT_SIDEBAR_WIDTH}
             side="left"
-            label={activeActivity === "coverage" ? "Test navigation" : "Explorer"}
+            label="Explorer"
           />
         )}
         <motion.div
@@ -1216,53 +1311,35 @@ function LayoutInner() {
             {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
           </div>
 
-          <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
+          <div className={(activeActivity === "version-control" || activeActivity === "git") ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <VersionControlWorkspace projectId={project?.id} onSync={handleGitSync} />
+          </div>
+
+          <div className={(activeActivity === "jobs" || activeActivity === "activity") ? "w-full h-full overflow-y-auto" : "hidden"}>
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           </div>
 
           {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
 
-          <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
-            <RetainedPanel active={activeActivity === 'architecture'}>
-            <ProjectArchitecturePanel
-              projectId={project?.id}
-              initialFile={archInitialContext?.initialFile}
-            />
-            </RetainedPanel>
-          </div>
+          {(activeActivity === "architecture" || visitedPanels.has("architecture")) && (
+            <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
+              <ProjectArchitecturePanel
+                projectId={project?.id}
+                initialFile={archInitialContext?.initialFile}
+              />
+            </div>
+          )}
 
-          <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
-            <RetainedPanel active={activeActivity === 'overview'}>
-            <UnifiedDashboard
-              projectId={project?.id}
-              project={project}
-              projects={projects}
-              onSelectProject={handleChangeProject}
-              snapshotId={
-                searchParams.get("snapshotId") ||
-                project?.latestSnapshotId ||
-                project?.snapshots?.[0]?.id ||
-                (project?.id
-                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                  : null) ||
-                testPromptSnapshotId
-              }
-              onNavigateWorkspace={(pillar, focus) => {
-                const targetUrl = buildWorkspaceUrl(location, pillar, focus);
-                navigate(targetUrl);
-              }}
-              onAskAi={handleAskAiPrompt}
-              onSummaryChange={setUnifiedSummary}
-            />
-            </RetainedPanel>
-          </div>
-
-          <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
-            <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
-              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'unit'}>
-              <UnitTestDashboard
+          {(activeActivity === "overview" || visitedPanels.has("overview")) && (
+            <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+              <UnifiedDashboard
+                projectId={project?.id}
+                project={project}
+                projects={projects}
+                onSelectProject={handleChangeProject}
                 snapshotId={
                   searchParams.get("snapshotId") ||
+                  project?.activeSnapshotId ||
                   project?.latestSnapshotId ||
                   project?.snapshots?.[0]?.id ||
                   (project?.id
@@ -1270,59 +1347,87 @@ function LayoutInner() {
                     : null) ||
                   testPromptSnapshotId
                 }
-                projectId={project?.id}
-                treeVersion={treeVersion}
-                focusFile={searchParams.get("focusFile")}
-                onOpenFile={handleOpenFileByPath}
-                onSuggestTestcase={handleSuggestTestcase}
-                onOpenCFG={handleOpenCFG}
-                runTrigger={coverageRunTrigger}
+                onNavigateWorkspace={(pillar, focus) => {
+                  const targetUrl = buildWorkspaceUrl(location, pillar, focus);
+                  navigate(targetUrl);
+                }}
+                onAskAi={handleAskAiPrompt}
+                onSummaryChange={setUnifiedSummary}
               />
-              </RetainedPanel>
             </div>
-            <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
-              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'integration'}>
-              <IntegrationTestDashboard
-                snapshotId={
-                  searchParams.get("snapshotId") ||
-                  project?.latestSnapshotId ||
-                  project?.snapshots?.[0]?.id ||
-                  (project?.id
-                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                    : null) ||
-                  testPromptSnapshotId
-                }
-                projectId={project?.id}
-                onOpenFile={handleOpenFileByPath}
-                onOpenCFG={handleOpenCFG}
-                onSuggestTestcase={handleSuggestTestcase}
-                onOpenArchitecture={handleOpenArchitecture}
-                initialContext={integrationInitialContext}
-                onContextChange={setIntegrationInitialContext}
-              />
-              </RetainedPanel>
-            </div>
-            <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
-              <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'system'}>
-              <SystemTestDashboard
-                snapshotId={
-                  searchParams.get("snapshotId") ||
-                  project?.snapshots?.[0]?.id ||
-                  project?.latestSnapshotId ||
-                  (project?.id
-                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                    : null) ||
-                  testPromptSnapshotId
-                }
-                projectId={project?.id}
-                focusScenario={searchParams.get("focusScenario")}
-                onOpenFile={handleOpenFileByPath}
-              />
-              </RetainedPanel>
-            </div>
-          </div>
+          )}
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" && activeActivity !== "trustworthiness" ? "w-full h-full" : "hidden"}>
+          {(activeActivity === "coverage" || visitedPanels.has("coverage")) && (
+            <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
+              {(coverageType === "unit" || visitedPanels.has("coverage:unit")) && (
+                <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
+                  <UnitTestDashboard
+                    snapshotId={
+                      searchParams.get("snapshotId") ||
+                      project?.activeSnapshotId ||
+                      project?.latestSnapshotId ||
+                      project?.snapshots?.[0]?.id ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    treeVersion={treeVersion}
+                    focusFile={searchParams.get("focusFile")}
+                    onOpenFile={handleOpenFileByPath}
+                    onSuggestTestcase={handleSuggestTestcase}
+                    onOpenCFG={handleOpenCFG}
+                    runTrigger={coverageRunTrigger}
+                  />
+                </div>
+              )}
+              {(coverageType === "integration" || visitedPanels.has("coverage:integration")) && (
+                <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
+                  <IntegrationTestDashboard
+                    snapshotId={
+                      searchParams.get("snapshotId") ||
+                      project?.activeSnapshotId ||
+                      project?.latestSnapshotId ||
+                      project?.snapshots?.[0]?.id ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    onOpenFile={handleOpenFileByPath}
+                    onOpenCFG={handleOpenCFG}
+                    onSuggestTestcase={handleSuggestTestcase}
+                    onOpenArchitecture={handleOpenArchitecture}
+                    initialContext={integrationInitialContext}
+                    onContextChange={setIntegrationInitialContext}
+                  />
+                </div>
+              )}
+              {(coverageType === "system" || visitedPanels.has("coverage:system")) && (
+                <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
+                  <SystemTestDashboard
+                    snapshotId={
+                      searchParams.get("snapshotId") ||
+                      project?.activeSnapshotId ||
+                      project?.latestSnapshotId ||
+                      project?.snapshots?.[0]?.id ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    focusScenario={searchParams.get("focusScenario")}
+                    onOpenFile={handleOpenFileByPath}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className={!isFullWidthWorkspace && activeActivity !== "settings" ? "w-full h-full" : "hidden"}>
                 <Editor
                   key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}

@@ -319,9 +319,40 @@ export class GitService {
 
     const gitDir = path.join(rootDir, ".git");
 
+    if (!fs.existsSync(gitDir) && (isGitHubProject || project.repoUrl)) {
+      // 1. Try to copy .git from another snapshot of the same project (preserves exact history & branches)
+      try {
+        const snapshots = await prisma.projectSnapshot.findMany({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+        });
+        for (const prev of snapshots) {
+          const prevWorkspace = snapshotWorkspaceRoot(prev);
+          if (prevWorkspace && prevWorkspace !== rootDir) {
+            const prevGit = path.join(prevWorkspace, ".git");
+            if (fs.existsSync(prevGit)) {
+              fs.cpSync(prevGit, gitDir, { recursive: true });
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[git.service] Could not restore .git from previous snapshot:", err.message);
+      }
+
+      // 2. If still no .git, auto-ensure git repo so the project stays connected to GitHub
+      if (!fs.existsSync(gitDir)) {
+        try {
+          await this.ensureGitRepo(projectId, userId);
+        } catch (err) {
+          console.warn("[git.service] Auto-ensureGitRepo in getStatus failed:", err.message);
+        }
+      }
+    }
+
     if (!fs.existsSync(gitDir)) {
       return {
-        isGitHubProject: true,
+        isGitHubProject: !!(isGitHubProject || project.repoUrl),
         hasGit: false,
         branch: null,
         tracking: null,
@@ -577,16 +608,36 @@ export class GitService {
       if (!diffCached || diffCached.trim().length === 0) {
         await this.runCommand(rootDir, "git add -A");
       }
-    } catch (_) {}
+    } catch (_) {
+      try {
+        await this.runCommand(rootDir, "git add -A");
+      } catch (__) {}
+    }
 
     const user = project.owner;
     const authorName = user?.name || "GitHub Developer";
     const authorEmail = user?.email || "developer@github.com";
 
-    const { stdout } = await this.runCommand(
-      rootDir,
-      ['commit', '--author', `${authorName} <${authorEmail}>`, '-m', message],
-    );
+    let stdout = "";
+    try {
+      const res = await this.runCommand(
+        rootDir,
+        ['commit', '--author', `${authorName} <${authorEmail}>`, '-m', message],
+        {
+          GIT_AUTHOR_NAME: authorName,
+          GIT_AUTHOR_EMAIL: authorEmail,
+          GIT_COMMITTER_NAME: authorName,
+          GIT_COMMITTER_EMAIL: authorEmail,
+        },
+      );
+      stdout = res.stdout;
+    } catch (err) {
+      if (err.message && (err.message.includes("nothing to commit") || err.message.includes("working tree clean"))) {
+        stdout = "Nothing to commit, working tree clean";
+      } else {
+        throw err;
+      }
+    }
 
     return {
       success: true,
