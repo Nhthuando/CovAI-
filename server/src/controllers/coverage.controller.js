@@ -141,7 +141,12 @@ export const invalidateCoverageCache = (snapshotId) => {
         frameworksCache.clear();
     }
     try {
-        clearUnifiedDashboardCache(snapshotId);
+        import("../services/unifiedQualityDashboard.service.js").then((mod) => {
+            mod?.clearUnifiedDashboardCache?.(snapshotId);
+        }).catch(() => {});
+        import("../services/portfolioDashboard.service.js").then((mod) => {
+            mod?.clearPortfolioCache?.();
+        }).catch(() => {});
     } catch (_) { }
 };
 

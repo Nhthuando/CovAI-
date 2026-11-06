@@ -3776,6 +3776,11 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             };
         }
 
+        const runTotalTests = testResults?.numTotalTests ?? testResults?.totalTests ?? (anyPassed ? 1 : 0);
+        const runPassedTests = testResults?.numPassedTests ?? testResults?.passedTests ?? (anyPassed ? 1 : 0);
+        const runFailedTests = testResults?.numFailedTests ?? testResults?.failedTests ?? (anyPassed ? 0 : 1);
+        const runStatusUpper = (runFailedTests === 0 && anyPassed) ? "PASSED" : "FAILED";
+
         // Execute BOTH CoverageFile and CoverageSummary updates within a single atomic Prisma transaction
         try {
             const executeDbUpdates = async (tx) => {
@@ -3810,6 +3815,47 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                             ...summaryMetrics
                         }
                     });
+                    if (typeof tx.testRun?.findFirst === "function") {
+                        const existingUnitRun = await tx.testRun.findFirst({
+                            where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+                            orderBy: { createdAt: "desc" },
+                        });
+                        if (existingUnitRun?.id) {
+                            await tx.testRun.update({
+                                where: { id: existingUnitRun.id },
+                                data: {
+                                    totalTests: Math.max(Number(existingUnitRun.totalTests || 0), runTotalTests),
+                                    passedTests: Math.max(Number(existingUnitRun.passedTests || 0), runPassedTests),
+                                    failedTests: runFailedTests,
+                                    status: runStatusUpper,
+                                    coverageLinesPct: summaryMetrics.linesPct,
+                                    coverageBranchesPct: summaryMetrics.branchesPct,
+                                    coverageFunctionsPct: summaryMetrics.funcsPct,
+                                    coverageStatementsPct: summaryMetrics.stmtsPct,
+                                    finishedAt: new Date(),
+                                },
+                            });
+                        } else if (typeof tx.testRun?.create === "function") {
+                            await tx.testRun.create({
+                                data: {
+                                    snapshotId,
+                                    type: "JEST",
+                                    totalTests: Math.max(1, runTotalTests),
+                                    passedTests: Math.max(anyPassed ? 1 : 0, runPassedTests),
+                                    failedTests: runFailedTests,
+                                    skippedTests: 0,
+                                    durationMs: Number(testResults?.durationMs || 0),
+                                    status: runStatusUpper,
+                                    coverageLinesPct: summaryMetrics.linesPct,
+                                    coverageBranchesPct: summaryMetrics.branchesPct,
+                                    coverageFunctionsPct: summaryMetrics.funcsPct,
+                                    coverageStatementsPct: summaryMetrics.stmtsPct,
+                                    startedAt: new Date(),
+                                    finishedAt: new Date(),
+                                },
+                            });
+                        }
+                    }
                 }
             };
 
@@ -3837,10 +3883,20 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             parseFinalCoverageFunctions(null, snapshotId, projectId, userId, coverageDir)
         ]);
 
-        // Cache invalidation strictly occurs ONLY after transaction commit succeeds
+        // Cache invalidation & lifecycle auto-transition strictly occur ONLY after transaction commit succeeds
         try {
-            const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
-            invalidateCoverageCache(snapshotId);
+            const { autoTransitionProjectToDoingIfNeeded, invalidateAllDashboardCaches } = await import("./job.service.js");
+            if (projectId) await autoTransitionProjectToDoingIfNeeded(projectId);
+            await invalidateAllDashboardCaches(snapshotId, userId);
+            const { emitPortfolioRunCompleted } = await import("../realtime/portfolioSocket.emitter.js");
+            emitPortfolioRunCompleted({
+                projectId,
+                snapshotId,
+                jobType: "RUN_TESTS",
+                status: runStatusUpper === "PASSED" ? "SUCCESS" : "FAILED",
+                durationMs: Number(testResults?.durationMs || 0),
+                userId,
+            });
         } catch (_) { }
 
         // Clean up durable journal once committed and DB persistence succeeded

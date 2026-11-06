@@ -337,7 +337,13 @@ model Project {
   operations           ProjectOperation[]
   operationRequests    ProjectOperationRequest[]
 
+  lifecycleStatus      ProjectLifecycleStatus @default(NOT_STARTED)
+  lifecycleUpdatedAt   DateTime               @default(now())
+  isPinned             Boolean                @default(false)
+
   @@index([ownerId])
+  @@index([ownerId, lifecycleStatus])
+  @@index([updatedAt])
 }
 
 model ProjectSnapshot {
@@ -398,6 +404,7 @@ model ProjectSnapshot {
   @@unique([projectId, commitSha])
   @@index([projectId])
   @@index([projectId, contentHash])
+  @@index([projectId, createdAt])
   systemRequirements SystemRequirementRevision[]
   systemAssessments SystemTestAssessment[]
   systemProposals SystemTestProposal[]
@@ -465,6 +472,7 @@ model Job {
   @@index([snapshotId])
   @@index([status, type])
   @@index([projectId, snapshotId, type, status])
+  @@index([projectId, status, createdAt])
 }
 
 model JobLog {
@@ -634,6 +642,8 @@ model TestRun {
   testFiles             SystemTestFile[]
 
   @@index([snapshotId])
+  @@index([snapshotId, type, createdAt])
+  @@index([createdAt])
   systemMeasurement Json?
   systemAssessments SystemTestAssessment[]
 
@@ -798,6 +808,14 @@ model ProjectMemory {
   sourceMessage ChatMessage? @relation(fields: [sourceMessageId], references: [id], onDelete: SetNull)
   @@unique([projectId, fingerprint])
   @@index([projectId, userId, status])
+}
+
+enum ProjectLifecycleStatus {
+  NOT_STARTED
+  DOING
+  PAUSED
+  COMPLETED
+  CANCELLED
 }
 
 enum SnapshotSource {

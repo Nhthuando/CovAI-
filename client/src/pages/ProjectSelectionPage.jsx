@@ -31,12 +31,6 @@ export default function ProjectSelectionPage() {
   const location = useLocation();
   const { isMobile } = useBreakpoints();
 
-  // URL query parameter for demo vs live data mode
-  const [dataMode, setDataMode] = useState(() => {
-    const params = new URLSearchParams(location.search);
-    return params.get("mode") === "demo" ? "demo" : "live";
-  });
-
   const [showImport, setShowImport] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -66,17 +60,6 @@ export default function ProjectSelectionPage() {
       return next;
     });
   }, []);
-
-  const handleChangeDataMode = useCallback(
-    (nextMode) => {
-      const normalized = nextMode === "demo" ? "demo" : "live";
-      setDataMode(normalized);
-      const params = new URLSearchParams(location.search);
-      params.set("mode", normalized);
-      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
-    },
-    [location, navigate]
-  );
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
@@ -241,12 +224,10 @@ export default function ProjectSelectionPage() {
             </div>
           )}
           <ProjectsPortfolioDashboard
-            dataMode={dataMode}
-            onChangeDataMode={handleChangeDataMode}
             favorites={favorites}
             onTogglePin={toggleFavorite}
             onOpenProjectOverview={(projectId) =>
-              navigate(`/main-editor?projectId=${projectId}&tab=explorer${dataMode === "demo" ? "&mode=demo" : ""}`)
+              navigate(`/main-editor?projectId=${projectId}&tab=overview`)
             }
             onNavigateWorkspace={(projectId, pillar, focus = {}) => {
               const params = new URLSearchParams();

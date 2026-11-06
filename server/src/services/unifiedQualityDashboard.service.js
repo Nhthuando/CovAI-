@@ -670,24 +670,32 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
         )
       : 0;
 
-  const unitLinesPct = toFixedNum(
-    latestUnitRun?.coverageLinesPct ?? unitSummaryRecord?.linesPct ?? 0
-  );
-  const unitBranchesPct = toFixedNum(
-    latestUnitRun?.coverageBranchesPct ?? unitSummaryRecord?.branchesPct ?? 0
-  );
-  const unitFuncsPct = toFixedNum(
-    latestUnitRun?.coverageFunctionsPct ??
-      unitSummaryRecord?.funcsPct ??
-      unitSummaryRecord?.functionsPct ??
-      avgUnitFuncs
-  );
-  const unitStmtsPct = toFixedNum(
-    latestUnitRun?.coverageStatementsPct ??
-      unitSummaryRecord?.stmtsPct ??
-      unitSummaryRecord?.statementsPct ??
-      avgUnitStmts
-  );
+  const unitLinesPct =
+    unitTotal > 0
+      ? toFixedNum(unitSummaryRecord?.linesPct ?? latestUnitRun?.coverageLinesPct ?? 0)
+      : 0;
+  const unitBranchesPct =
+    unitTotal > 0
+      ? toFixedNum(unitSummaryRecord?.branchesPct ?? latestUnitRun?.coverageBranchesPct ?? 0)
+      : 0;
+  const unitFuncsPct =
+    unitTotal > 0
+      ? toFixedNum(
+          unitSummaryRecord?.funcsPct ??
+            unitSummaryRecord?.functionsPct ??
+            latestUnitRun?.coverageFunctionsPct ??
+            avgUnitFuncs
+        )
+      : 0;
+  const unitStmtsPct =
+    unitTotal > 0
+      ? toFixedNum(
+          unitSummaryRecord?.stmtsPct ??
+            unitSummaryRecord?.statementsPct ??
+            latestUnitRun?.coverageStatementsPct ??
+            avgUnitStmts
+        )
+      : 0;
 
   const lowBranchFiles = unitFiles.filter((f) => Number(f.branchesPct ?? 100) < 80);
   const filesToDisplay = lowBranchFiles.length > 0 ? lowBranchFiles : unitFiles;
@@ -781,14 +789,14 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   );
   const intPassRate = getPassRate(intPassed, intFailed) ?? 0;
 
-  const epCovPct =
-    wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
-      ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
-      : totalApis > 0
-      ? toFixedNum((coveredEpCount / totalApis) * 100)
-      : 0;
-
   const intHasRuns = intTotalExecuted > 0;
+  const epCovPct =
+    !intHasRuns || totalApis <= 0
+      ? 0
+      : wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
+      ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
+      : toFixedNum((coveredEpCount / totalApis) * 100);
+
   const intCodeCov = wsSummary.codeCoverage || {};
   const intCoverageMetrics = {
     lines: intHasRuns ? toFixedNum(intCodeCov.line?.pct ?? intCodeCov.line ?? 0) : 0,
@@ -915,7 +923,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   const sysPassRate = getPassRate(sysPassed, sysFailed) ?? 0;
 
   let sysFlowCoveragePct = 0;
-  if (latestSystemRun?.systemMeasurement) {
+  if (sysTotal > 0 && latestSystemRun?.systemMeasurement) {
     try {
       const sysCovSummary = coverageSummaryFor(latestSystemRun.systemMeasurement);
       const feLinesPct = sysCovSummary?.frontend?.counters?.lines?.pct;
@@ -1238,7 +1246,9 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
         rollingSysPass = rPassRate;
       }
 
-      const overallCov = toFixedNum((rollingUnitCov + rollingIntCov + rollingSysCov) / 3);
+      const overallCov = toFixedNum(
+        rollingUnitCov * 0.5 + rollingIntCov * 0.3 + rollingSysCov * 0.2
+      );
       const isLast = idx === sampledRuns.length - 1;
       const shaShort = (run.snapshot?.commitSha || run.snapshotId || "").slice(0, 6);
 
@@ -1256,7 +1266,9 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       });
     });
   } else if (unitLinesPct > 0 || epCovPct > 0 || sysFlowCoveragePct > 0) {
-    const overallCov = toFixedNum((unitLinesPct + epCovPct + sysFlowCoveragePct) / 3);
+    const overallCov = toFixedNum(
+      unitLinesPct * 0.5 + epCovPct * 0.3 + sysFlowCoveragePct * 0.2
+    );
     trendSeries.push({
       runLabel: "#1 (Current)",
       timestamp: Date.now(),

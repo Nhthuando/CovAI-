@@ -38,7 +38,7 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
 
     totalFailedTests += Number(p.failedTests || 0);
 
-    let pillarScore = 0;
+    let pillarScore;
     if (hasTests || hasMeaningfulCoverage) {
       const passRate = getPassRate(p.passedTests, p.failedTests) ?? (hasTests ? 0 : Number(coverage) || 0);
       const cov = coverage !== null ? Number(coverage) : passRate;
@@ -215,17 +215,15 @@ export function computeQualityGate(pillars = {}, matrixRows = []) {
     Number(unit?.totalTests || 0) +
     Number(integration?.totalTests || 0) +
     sysTotal;
-  const hasAnyCoverage =
-    Number(unit?.coverageMetrics?.lines || 0) > 0 ||
-    Number(integration?.coverageMetrics?.apiEndpoint || 0) > 0 ||
-    Number(system?.coverageMetrics?.flow || 0) > 0;
 
   let status = "PASSED";
   let label = "READY TO RELEASE";
 
-  if (totalExecutedAcrossLayers === 0 && !hasAnyCoverage) {
+  if (totalExecutedAcrossLayers === 0) {
     status = "UNVERIFIED";
-    label = "UNVERIFIED";
+    label = "UNVERIFIED • NOT RUN";
+    reasons.length = 0;
+    reasons.push("No test suites have been executed for this snapshot yet. Run suites to establish a quality baseline.");
   } else if (isFailed) {
     status = "FAILED";
     label = "BLOCKED";
@@ -278,25 +276,43 @@ export function computeExecutionTotals(pillars = {}) {
 }
 
 /**
- * Aggregates multi-layer coverage metrics.
+ * Aggregates multi-layer coverage metrics using the standardized weighted formula:
+ * 50% Unit + 30% Integration + 20% System (strictly 0% when 0 tests are executed).
  */
 export function computeCoverageIndex(pillars = {}) {
-  const codePct = pillars.unit?.coverageMetrics?.lines ?? null;
-  const branchPct = pillars.unit?.coverageMetrics?.branches ?? null;
-  const apiPct = pillars.integration?.coverageMetrics?.apiEndpoint ?? null;
-  const flowPct = pillars.system?.coverageMetrics?.flow ?? null;
+  const unitTotal = Number(pillars.unit?.totalTests || 0);
+  const intTotal = Number(pillars.integration?.totalTests || 0);
+  const sysTotal = Number(pillars.system?.totalTests || 0);
+  const totalExecuted = unitTotal + intTotal + sysTotal;
 
-  const available = [codePct, apiPct, flowPct].filter((v) => v !== null && !Number.isNaN(v));
-  const overall = available.length > 0
-    ? Number((available.reduce((a, b) => a + Number(b), 0) / available.length).toFixed(1))
-    : null;
+  const totalApis = Number(pillars.integration?.coverageMetrics?.totalApis ?? 0);
+
+  const codePct = unitTotal > 0 ? Number(pillars.unit?.coverageMetrics?.lines ?? 0) : 0;
+  const branchPct = unitTotal > 0 ? Number(pillars.unit?.coverageMetrics?.branches ?? 0) : 0;
+  const apiPct =
+    intTotal > 0 && totalApis > 0
+      ? Number(pillars.integration?.coverageMetrics?.apiEndpoint ?? 0)
+      : 0;
+  const flowPct = sysTotal > 0 ? Number(pillars.system?.coverageMetrics?.flow ?? 0) : 0;
+
+  const weights = UNIFIED_DASHBOARD_CONFIG.weights;
+  const overall =
+    totalExecuted > 0
+      ? Number(
+          (
+            codePct * weights.unit +
+            apiPct * weights.integration +
+            flowPct * weights.system
+          ).toFixed(1)
+        )
+      : 0;
 
   return {
     overall,
-    codePct: codePct !== null ? Number(codePct) : null,
-    branchPct: branchPct !== null ? Number(branchPct) : null,
-    apiPct: apiPct !== null ? Number(apiPct) : null,
-    flowPct: flowPct !== null ? Number(flowPct) : null,
+    codePct,
+    branchPct,
+    apiPct,
+    flowPct,
   };
 }
 

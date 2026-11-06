@@ -23,6 +23,7 @@ router.post(
   projectController.validateArchive,
 );
 router.get("/:id", projectController.getProjectById);
+router.patch("/:id/status", projectController.updateProjectStatus);
 router.get("/:id/export", downloadProjectExport);
 router.get("/:id/snapshots", projectController.listSnapshots);
 router.post("/:id/snapshots", projectController.createSnapshot);

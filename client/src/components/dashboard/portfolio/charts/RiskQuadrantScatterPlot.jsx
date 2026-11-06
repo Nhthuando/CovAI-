@@ -1,10 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, memo } from "react";
+import ContextualMetricTooltip from "../primitives/ContextualMetricTooltip.jsx";
 
 /**
  * Deterministic bounding-box label placement solver so scatter plot node labels
  * never collide with each other, with other dots, with plot edges, or with watermarks.
  */
-function computeCollisionFreeLabels(nodes, { toX, toY, padLeft, padRight, padTop, padBottom, width, height, target80X }) {
+function computeCollisionFreeLabels(nodes, { toX, toY, padLeft, padTop, padBottom, width, height, target80X }) {
   const placedBoxes = [
     // Reserve the "80% Target" header label box so node labels don't overlap it
     { x1: target80X - 28, y1: padTop - 16, x2: target80X + 28, y2: padTop - 1 },
@@ -127,6 +128,20 @@ function computeCollisionFreeLabels(nodes, { toX, toY, padLeft, padRight, padTop
   return placements;
 }
 
+// SVG Chart Dimensions
+const CHART_WIDTH = 520;
+const CHART_HEIGHT = 310;
+const PAD_LEFT = 45;
+const PAD_RIGHT = 24;
+const PAD_TOP = 28;
+const PAD_BOTTOM = 36;
+const PLOT_WIDTH = CHART_WIDTH - PAD_LEFT - PAD_RIGHT;
+const PLOT_HEIGHT = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM;
+
+const toX = (val) => PAD_LEFT + (Math.max(0, Math.min(100, val)) / 100) * PLOT_WIDTH;
+const toY = (val) => PAD_TOP + PLOT_HEIGHT - (Math.max(0, Math.min(100, val)) / 100) * PLOT_HEIGHT;
+const TARGET_80_X = toX(80);
+
 export function RiskQuadrantScatterPlot({
   quadrantNodes = [],
   coverageCutoff = 70,
@@ -137,61 +152,54 @@ export function RiskQuadrantScatterPlot({
 }) {
   const [hoveredNode, setHoveredNode] = useState(null);
 
-  // SVG Chart Dimensions
-  const width = 520;
-  const height = 310;
-  const padLeft = 45;
-  const padRight = 24;
-  const padTop = 28;
-  const padBottom = 36;
-
-  const plotWidth = width - padLeft - padRight;
-  const plotHeight = height - padTop - padBottom;
-
-  // Coordinate transforms (X: 0 - 100%, Y: 0 - 100%)
-  const toX = (val) => padLeft + (Math.max(0, Math.min(100, val)) / 100) * plotWidth;
-  const toY = (val) => padTop + plotHeight - (Math.max(0, Math.min(100, val)) / 100) * plotHeight;
+  const width = CHART_WIDTH;
+  const height = CHART_HEIGHT;
+  const padLeft = PAD_LEFT;
+  const padRight = PAD_RIGHT;
+  const padTop = PAD_TOP;
+  const padBottom = PAD_BOTTOM;
+  const plotWidth = PLOT_WIDTH;
+  const plotHeight = PLOT_HEIGHT;
+  const target80X = TARGET_80_X;
 
   const cutoffX = toX(coverageCutoff);
   const cutoffY = toY(passRateCutoff);
-  const target80X = toX(80);
 
-  const labelPlacements = useMemo(
-    () =>
-      computeCollisionFreeLabels(quadrantNodes, {
-        toX,
-        toY,
-        padLeft,
-        padRight,
-        padTop,
-        padBottom,
-        width,
-        height,
-        target80X,
-      }),
-    [quadrantNodes, coverageCutoff, passRateCutoff]
-  );
+  const labelPlacements = useMemo(() => {
+    return computeCollisionFreeLabels(quadrantNodes, {
+      toX,
+      toY,
+      padLeft: PAD_LEFT,
+      padTop: PAD_TOP,
+      padBottom: PAD_BOTTOM,
+      width: CHART_WIDTH,
+      height: CHART_HEIGHT,
+      target80X: TARGET_80_X,
+    });
+  }, [quadrantNodes]);
 
   return (
-    <div className={`relative space-y-3 font-sans ${className}`}>
-      {/* Quadrant Legend Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono tabular-nums">
-        <div className="p-1.5 rounded bg-[var(--ud-pass)]/10 border border-[var(--ud-pass)]/30 text-[var(--ud-pass)]">
-          <div className="font-bold">★ Healthy Stars</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov ≥{coverageCutoff}% • Pass ≥{passRateCutoff}%</div>
-        </div>
-        <div className="p-1.5 rounded bg-[var(--ud-warn)]/10 border border-[var(--ud-warn)]/30 text-[var(--ud-warn)]">
-          <div className="font-bold">▲ Blind Spot / Low Cov</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov &lt;{coverageCutoff}% • Pass ≥{passRateCutoff}%</div>
-        </div>
-        <div className="p-1.5 rounded bg-[#fb8500]/10 border border-[#fb8500]/30 text-[#fb8500]">
-          <div className="font-bold">▼ Active Regressions</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov ≥{coverageCutoff}% • Pass &lt;{passRateCutoff}%</div>
-        </div>
-        <div className="p-1.5 rounded bg-[var(--ud-fail)]/10 border border-[var(--ud-fail)]/30 text-[var(--ud-fail)]">
-          <div className="font-bold">✖ Critical Risk</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov &lt;{coverageCutoff}% • Pass &lt;{passRateCutoff}%</div>
-        </div>
+    <div className={`relative space-y-2 font-sans ${className}`}>
+      {/* Minimal Header with Contextual Quadrant Guide */}
+      <div className="flex items-center justify-between text-xs px-1">
+        <span className="text-[11px] font-mono text-[#8b949e]">
+          Correlation: Unified Coverage vs. Test Pass Rate
+        </span>
+        <ContextualMetricTooltip
+          title="Risk Quadrant Guide"
+          meaning="Segments active projects into 4 quality maturity quadrants."
+          formula={`★ Healthy Stars: Cov ≥ ${coverageCutoff}% & Pass ≥ ${passRateCutoff}%\n▲ Blind Spot: Cov < ${coverageCutoff}% & Pass ≥ ${passRateCutoff}%\n▼ Regressions: Cov ≥ ${coverageCutoff}% & Pass < ${passRateCutoff}%\n✖ Critical Risk: Cov < ${coverageCutoff}% & Pass < ${passRateCutoff}%`}
+          provenance="Live TestRun & CoverageSummary aggregates"
+          tip="Click on any circle or label to highlight that project card."
+          placement="bottom-right"
+        >
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#21262d] border border-[#30363d] text-[10px] text-[#8b949e] hover:text-[#58a6ff] hover:border-[#58a6ff]/40 transition-colors cursor-pointer"
+          >
+            <span>ⓘ Quadrant Guide</span>
+          </button>
+        </ContextualMetricTooltip>
       </div>
 
       {/* SVG Canvas */}
@@ -519,5 +527,5 @@ export function RiskQuadrantScatterPlot({
   );
 }
 
-export default RiskQuadrantScatterPlot;
+export default memo(RiskQuadrantScatterPlot);
 
