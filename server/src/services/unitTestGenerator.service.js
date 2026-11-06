@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
@@ -694,7 +695,7 @@ export const generateAiUnitTestSuite = async ({
     try {
         let generationTimer;
         const responseText = await Promise.race([
-            generateText(prompt),
+            withGeminiChannel("UNIT_TEST", () => generateText(prompt)),
             new Promise((_, reject) => { generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000); })
         ]).finally(() => clearTimeout(generationTimer));
 

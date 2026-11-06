@@ -5,6 +5,7 @@ import { validateStartupEnvironment, buildAutomaticTestEnvironment, managedEnvir
 import { discoverSystemAssessment } from './systemAssessmentDiscovery.service.js';
 import { assessmentRequest, parseRequest } from '../validators/systemAssessment.validator.js';
 import { generateText } from './gemini.service.js';
+import { withGeminiChannel } from './geminiTokenTracker.service.js';
 import { validateSelectedAiModel } from '../utils/selectedAiModel.js';
 import { ServiceError } from '../utils/serviceError.js';
 import {currentAiJobBudget,createAiJobBudget,withAiJobBudget} from './aiJobBudget.service.js';
@@ -22,7 +23,7 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
         const provider = dependencies.generate || generateText;
         const model = validateSelectedAiModel(input.model);
         const setup=await (dependencies.setup || ensureFullSystemSetup)({rootDir, onProgress: checkpoint, dependencies: {
-            generate: model ? (prompt, instruction, config) => provider(prompt, model, instruction, config) : provider,
+            generate: model ? (prompt, instruction, config) => withGeminiChannel("E2E_TEST", () => provider(prompt, model, instruction, config)) : ((...args) => withGeminiChannel("E2E_TEST", () => provider(...args))),
         }});
         if(setup?.config) {
             const directory=setup.config.backend.directory;

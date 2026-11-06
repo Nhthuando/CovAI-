@@ -3,6 +3,7 @@ import path from "node:path";
 import traverseModule from "@babel/traverse";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 
 const traverse = traverseModule.default || traverseModule;
 const primitive = value => value === null || typeof value === "string" || typeof value === "boolean" ||
@@ -150,7 +151,7 @@ RUNNER DIFF:\n${rawOutput.slice(0, 12000)}`;
     let timeout;
     try {
         const response = await Promise.race([
-            generateText(prompt),
+            withGeminiChannel("UNIT_TEST", () => generateText(prompt)),
             new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Input repair timed out")), 30000); })
         ]);
         const parsed = JSON.parse(String(response).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
