@@ -240,6 +240,9 @@ export const invalidateEndpointCache = (snapshotId, rootDir = null) => {
     import("./unifiedQualityDashboard.service.js").then((mod) => {
       mod?.clearUnifiedDashboardCache?.(snapshotId);
     }).catch(() => {});
+    import("./portfolioDashboard.service.js").then((mod) => {
+      mod?.clearPortfolioCache?.();
+    }).catch(() => {});
   } catch (_) {}
   if (rootDir) {
     try {
@@ -2332,13 +2335,39 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       semanticState,
       executionJobId,
       testRunId,
-      endpointCoverageMetrics: apiTraceResult?.summary || {
-        totalEndpoints: discoveredEndpoints.length,
-        coveredEndpoints: 0,
-        uncoveredEndpoints: discoveredEndpoints.length,
-        endpointCoveragePct: 0,
-        effectiveCoveragePct: 0,
-      },
+      endpointCoverageMetrics: (() => {
+        const hasExecutedRun = (latestRun?.totalTests || 0) > 0;
+        const coveredEpCount = endpoints.filter((e) => e.status === "Covered").length;
+        const effectiveCoveredEp =
+          hasExecutedRun && discoveredEndpoints.length > 0
+            ? Math.max(
+                Number(apiTraceResult?.summary?.coveredEndpoints || 0),
+                testedApis,
+                coveredEpCount
+              )
+            : 0;
+        const effectiveEpCovPct =
+          hasExecutedRun && discoveredEndpoints.length > 0
+            ? Math.max(
+                Number(apiTraceResult?.summary?.endpointCoveragePct || 0),
+                Number(((effectiveCoveredEp / discoveredEndpoints.length) * 100).toFixed(1))
+              )
+            : 0;
+        return {
+          ...(apiTraceResult?.summary || {}),
+          totalEndpoints: discoveredEndpoints.length,
+          coveredEndpoints: effectiveCoveredEp,
+          uncoveredEndpoints: Math.max(0, discoveredEndpoints.length - effectiveCoveredEp),
+          endpointCoveragePct: effectiveEpCovPct,
+          effectiveCoveragePct:
+            hasExecutedRun && discoveredEndpoints.length > 0
+              ? Math.max(
+                  Number(apiTraceResult?.summary?.effectiveCoveragePct || 0),
+                  effectiveEpCovPct
+                )
+              : 0,
+        };
+      })(),
       endpointsTraceability: apiTraceResult?.endpointsTraceability || [],
       codeCoverage: coverageSummary
         ? {

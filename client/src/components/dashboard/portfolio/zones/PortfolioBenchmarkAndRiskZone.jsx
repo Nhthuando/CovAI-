@@ -6,9 +6,11 @@ import {
   ChevronDown,
   ChevronUp,
   X,
+  Zap,
 } from "lucide-react";
 import { MultiProjectCoverageChart } from "../charts/MultiProjectCoverageChart.jsx";
 import { RiskQuadrantScatterPlot } from "../charts/RiskQuadrantScatterPlot.jsx";
+import TimeSavedRoiChart from "../charts/TimeSavedRoiChart.jsx";
 import { PillarBadge } from "../../unified/primitives/PillarBadge.jsx";
 
 const VISIBLE_ATTENTION_LIMIT = 3;
@@ -16,13 +18,15 @@ const VISIBLE_ATTENTION_LIMIT = 3;
 export function PortfolioBenchmarkAndRiskZone({
   analytics = {},
   attentionQueue = [],
+  projects = [],
+  timeRoiAnalytics = null,
   selectedProjectId = null,
   onSelectProject,
   onNavigateProjectWorkspace,
   onAskAiDiagnose,
   className = "",
 }) {
-  const [activeTab, setActiveTab] = useState("quadrant"); // "quadrant" | "benchmark"
+  const [activeTab, setActiveTab] = useState("quadrant"); // "quadrant" | "benchmark" | "time-roi"
   const [attentionCategory, setAttentionCategory] = useState("all");
   const [isAttentionExpanded, setIsAttentionExpanded] = useState(false);
 
@@ -60,7 +64,7 @@ export function PortfolioBenchmarkAndRiskZone({
                 Cross-Project Quality Benchmark
               </h2>
               <p className="text-xs text-[var(--ud-text-muted)] mt-0.5">
-                Analyze release risk distribution and 3-layer balance across the portfolio
+                Analyze release risk distribution, 3-layer balance and QA time ROI
               </p>
             </div>
 
@@ -89,6 +93,18 @@ export function PortfolioBenchmarkAndRiskZone({
               >
                 <BarChart3 size={12} />
                 <span>3-Layer Bars</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("time-roi")}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
+                  activeTab === "time-roi"
+                    ? "bg-[var(--ud-surface)] text-[var(--ud-text)] font-semibold shadow-xs"
+                    : "text-[var(--ud-text-muted)] hover:text-[var(--ud-text)]"
+                }`}
+              >
+                <Zap size={12} className="text-[#58a6ff]" />
+                <span>Time & ROI</span>
               </button>
             </div>
           </div>
@@ -123,11 +139,17 @@ export function PortfolioBenchmarkAndRiskZone({
                 selectedProjectId={selectedProjectId}
                 onSelectProject={onSelectProject}
               />
-            ) : (
+            ) : activeTab === "benchmark" ? (
               <MultiProjectCoverageChart
                 benchmarkItems={benchmarkItems}
                 selectedProjectId={selectedProjectId}
                 onSelectProject={onSelectProject}
+              />
+            ) : (
+              <TimeSavedRoiChart
+                projects={projects}
+                timeRoiAnalytics={timeRoiAnalytics}
+                onHighlightProject={onSelectProject}
               />
             )}
           </div>

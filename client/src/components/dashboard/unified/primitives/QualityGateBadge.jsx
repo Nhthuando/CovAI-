@@ -57,7 +57,15 @@ export function QualityGateBadge({
       dot: "bg-[var(--ud-fail)]",
     },
     UNVERIFIED: {
-      defaultLabel: "UNVERIFIED",
+      defaultLabel: "UNVERIFIED • NOT RUN",
+      icon: ShieldAlert,
+      border: "border-[var(--ud-border-strong)]",
+      bg: "bg-[var(--ud-surface-2)]",
+      text: "text-[var(--ud-text-muted)]",
+      dot: "bg-[var(--ud-text-muted)]",
+    },
+    NOT_RUN: {
+      defaultLabel: "UNVERIFIED • NOT RUN",
       icon: ShieldAlert,
       border: "border-[var(--ud-border-strong)]",
       bg: "bg-[var(--ud-surface-2)]",
@@ -71,6 +79,7 @@ export function QualityGateBadge({
   const Icon = current.icon;
   const items = Array.isArray(checklist) && checklist.length > 0 ? checklist : DEFAULT_CHECKLIST;
   const passedCount = items.filter((c) => c.passed).length;
+  const isUnverified = status === "UNVERIFIED" || status === "NOT_RUN";
 
   return (
     <div className={`relative inline-flex items-center ${className}`} ref={containerRef}>
@@ -85,9 +94,11 @@ export function QualityGateBadge({
       >
         <Icon size={14} className="shrink-0" />
         <span>{displayLabel}</span>
-        <span className="font-mono text-[10px] opacity-85 px-1 py-0.2 rounded bg-black/15">
-          {passedCount}/{items.length}
-        </span>
+        {!isUnverified && (
+          <span className="font-mono text-[10px] opacity-85 px-1 py-0.2 rounded bg-black/15">
+            {passedCount}/{items.length}
+          </span>
+        )}
         <ChevronDown
           size={12}
           className={`transition-transform duration-150 ${open ? "rotate-180" : ""}`}

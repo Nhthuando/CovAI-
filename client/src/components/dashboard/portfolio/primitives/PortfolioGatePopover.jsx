@@ -22,22 +22,33 @@ export function PortfolioGatePopover({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
-  const { passed = 0, atRisk = 0, blocked = 0, untested = 0 } = gateBreakdown;
+  const { passed = 0, atRisk = 0, blocked = 0, untested = 0 } = gateBreakdown || {};
 
-  // Determine overall badge variant
-  let badgeBorder = "border-[var(--ud-pass)]/40";
-  let badgeBg = "bg-[var(--ud-pass)]/10 text-[var(--ud-pass)]";
-  let icon = CheckCircle2;
+  // Determine overall badge variant strictly based on activeProjectsCount (totalProjects)
+  let badgeBorder = "border-[#30363d]";
+  let badgeBg = "bg-[#21262d] text-[#8b949e]";
+  let icon = HelpCircle;
+  let badgeText = "PORTFOLIO GATE: 0/0 ACTIVE";
 
-  if (blocked > 0) {
-    badgeBorder = "border-[var(--ud-fail)]/40";
-    badgeBg = "bg-[var(--ud-fail)]/10 text-[var(--ud-fail)]";
-    icon = XCircle;
-  } else if (atRisk > 0 || untested > 0) {
-    badgeBorder = "border-[var(--ud-warn)]/40";
-    badgeBg = "bg-[var(--ud-warn)]/10 text-[var(--ud-warn)]";
-    icon = AlertTriangle;
+  if (totalProjects > 0) {
+    if (blocked > 0) {
+      badgeBorder = "border-[#f85149]/40";
+      badgeBg = "bg-[#da3633]/15 text-[#f85149]";
+      icon = XCircle;
+      badgeText = `PORTFOLIO GATE: ${passed}/${totalProjects} PASSED • BLOCKED`;
+    } else if (passed < totalProjects || atRisk > 0 || untested > 0) {
+      badgeBorder = "border-[#d29922]/40";
+      badgeBg = "bg-[#bb8009]/15 text-[#d29922]";
+      icon = AlertTriangle;
+      badgeText = `PORTFOLIO GATE: ${passed}/${totalProjects} PASSED • AT RISK`;
+    } else {
+      badgeBorder = "border-[#3fb950]/40";
+      badgeBg = "bg-[#238636]/15 text-[#3fb950]";
+      icon = CheckCircle2;
+      badgeText = `PORTFOLIO GATE: ${passed}/${totalProjects} PASSED`;
+    }
   }
+
   const IconComponent = icon;
 
   return (
@@ -52,7 +63,7 @@ export function PortfolioGatePopover({
         aria-expanded={isOpen}
       >
         <IconComponent size={13} className="shrink-0" />
-        <span>PORTFOLIO GATE: {passed}/{totalProjects} PASSED</span>
+        <span>{badgeText}</span>
         <span className="text-[10px] opacity-75">▾</span>
       </button>
 
@@ -170,11 +181,11 @@ export function PortfolioGatePopover({
             </div>
             <div className="flex items-center gap-2 text-[11px] text-[var(--ud-text-muted)]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--ud-unit)] shrink-0" />
-              <span>Project Health Score $\ge$ 80 / 100 with zero critical defects</span>
+              <span>Project Health Score ≥ 80 / 100 with zero critical defects</span>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-[var(--ud-text-muted)]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--ud-integration)] shrink-0" />
-              <span>Unit Branch $\ge$ 75% • API Endpoint Coverage $\ge$ 80%</span>
+              <span>Unit Branch ≥ 75% • API Endpoint Coverage ≥ 80%</span>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-[var(--ud-text-muted)]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--ud-system)] shrink-0" />
@@ -188,4 +199,3 @@ export function PortfolioGatePopover({
 }
 
 export default PortfolioGatePopover;
-

@@ -22,6 +22,7 @@ import QualityDashboard from "./QualityDashboard";
 import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import VersionControlWorkspace from "./VersionControlWorkspace";
+import LifecycleStatusSelect from "./portfolio/primitives/LifecycleStatusSelect";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
@@ -1022,6 +1023,18 @@ function LayoutInner() {
               >
                 {project.name}
               </span>
+              {project?.id && (
+                <LifecycleStatusSelect
+                  projectId={project.id}
+                  currentStatus={project.lifecycleStatus || "NOT_STARTED"}
+                  onStatusChange={(newStatus) => {
+                    setProject((prev) =>
+                      prev ? { ...prev, lifecycleStatus: newStatus } : prev
+                    );
+                  }}
+                  className="ml-1"
+                />
+              )}
               {filePathSegments.map((segment, idx) => {
                 const isLast = idx === filePathSegments.length - 1;
                 return (

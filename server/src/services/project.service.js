@@ -194,6 +194,9 @@ export const listProjects = async (userId) => {
       jestConfigPath: true,
       storageBasePath: true,
       activeSnapshotId: true,
+      lifecycleStatus: true,
+      lifecycleUpdatedAt: true,
+      isPinned: true,
       createdAt: true,
       updatedAt: true,
       snapshots: {
@@ -1195,3 +1198,50 @@ export const renameProjectEntry = (projectId, userId, filePath, _content, newPat
 
 export const deleteProjectEntry = (projectId, userId, filePath, options = {}) =>
   mutateProjectWorkspace({projectId,userId,path:filePath,kind:'DELETE_ENTRY',...options});
+
+export const updateProjectLifecycleStatus = async ({
+  projectId,
+  userId,
+  lifecycleStatus,
+  isPinned,
+}) => {
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
+
+  const dataToUpdate = {};
+  if (lifecycleStatus !== undefined) {
+    dataToUpdate.lifecycleStatus = lifecycleStatus;
+    dataToUpdate.lifecycleUpdatedAt = new Date();
+  }
+  if (isPinned !== undefined) {
+    dataToUpdate.isPinned = Boolean(isPinned);
+  }
+
+  const updatedProject = await prisma.project.update({
+    where: { id: projectId },
+    data: dataToUpdate,
+    select: {
+      id: true,
+      name: true,
+      lifecycleStatus: true,
+      lifecycleUpdatedAt: true,
+      isPinned: true,
+      updatedAt: true,
+    },
+  });
+
+  try {
+    const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
+    emitPortfolioProjectUpdated({
+      projectId,
+      userId,
+      lifecycleStatus: updatedProject.lifecycleStatus,
+      isPinned: updatedProject.isPinned,
+      action: "STATUS_UPDATED",
+    });
+  } catch (_err) {
+    // Non-fatal if socket emitter not yet initialized
+  }
+
+  return updatedProject;
+};
+

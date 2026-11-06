@@ -11,8 +11,6 @@ import { SlideOverInspectorDrawer } from "../unified/inspector/SlideOverInspecto
 import { ZoneErrorBoundary } from "../unified/primitives/ZoneErrorBoundary.jsx";
 
 export function ProjectsPortfolioDashboard({
-  dataMode = "live",
-  onChangeDataMode,
   favorites = [],
   onTogglePin,
   onOpenProjectOverview,
@@ -22,10 +20,10 @@ export function ProjectsPortfolioDashboard({
   onAskAi,
   className = "",
 }) {
-  const { vm, isLoading, isError, error, refetch } = useProjectsPortfolio({
-    dataMode,
-    favorites,
-  });
+  const { vm, isFetching, refetch, forceRefresh } =
+    useProjectsPortfolio({
+      favorites,
+    });
 
   const [highlightedProjectId, setHighlightedProjectId] = useState(null);
   const [selectedForCompareIds, setSelectedForCompareIds] = useState([]);
@@ -70,10 +68,16 @@ export function ProjectsPortfolioDashboard({
   const handleInspectRun = useCallback((runEvent) => {
     setInspectedRunItem({
       id: runEvent.id,
+      runId: runEvent.runId || runEvent.id,
+      snapshotId: runEvent.snapshotId,
+      projectId: runEvent.projectId,
+      inspectorType: "run",
       title: `${runEvent.projectName} • ${runEvent.type}`,
       pillar: runEvent.pillar,
+      type: runEvent.type,
+      startedAt: runEvent.timestamp || new Date().toISOString(),
       outcome: runEvent.outcome,
-      durationMs: 4000,
+      durationMs: runEvent.durationMs || 4000,
       timestamp: runEvent.timestamp,
       summary: runEvent.summary,
       rawItem: runEvent,
@@ -107,12 +111,12 @@ export function ProjectsPortfolioDashboard({
         <ZoneErrorBoundary zoneTitle="Portfolio Command Header" onRetry={refetch}>
           <PortfolioCommandHeader
             vm={vm}
-            dataMode={dataMode}
-            onChangeDataMode={onChangeDataMode}
             onOpenCompareModal={() => setIsCompareModalOpen(true)}
             onOpenExportModal={() => setIsExportModalOpen(true)}
             onSelectStatusFilter={setStatusFilter}
             onBatchRunCompleted={refetch}
+            isSyncing={isFetching}
+            onForceRefresh={forceRefresh}
           />
         </ZoneErrorBoundary>
 
@@ -120,6 +124,7 @@ export function ProjectsPortfolioDashboard({
         <ZoneErrorBoundary zoneTitle="Executive KPIs" onRetry={refetch}>
           <PortfolioExecutiveKpiRow
             kpis={vm?.kpis}
+            lifecycleCounts={vm?.lifecycleCounts}
             onSelectStatusFilter={setStatusFilter}
             onFocusAttentionQueue={handleFocusAttentionQueue}
           />
@@ -141,10 +146,11 @@ export function ProjectsPortfolioDashboard({
             onNavigateWorkspace={onNavigateWorkspace}
             onDeleteProject={onDeleteProject}
             onExportProject={(proj) => {
-              onAskAiAboutProject?.(proj);
+              handleAskAiAboutProject?.(proj);
             }}
             onAskAiAboutProject={handleAskAiAboutProject}
             onAddProject={onAddProject}
+            onStatusChange={refetch}
           />
         </ZoneErrorBoundary>
 
@@ -153,6 +159,8 @@ export function ProjectsPortfolioDashboard({
           <PortfolioBenchmarkAndRiskZone
             analytics={vm?.analytics}
             attentionQueue={vm?.attentionQueue}
+            projects={vm?.projects}
+            timeRoiAnalytics={vm?.timeRoiAnalytics}
             selectedProjectId={highlightedProjectId}
             onSelectProject={handleSelectBenchmarkProject}
             onNavigateProjectWorkspace={(projId, pillar, focus) =>
@@ -166,6 +174,7 @@ export function ProjectsPortfolioDashboard({
         <ZoneErrorBoundary zoneTitle="Activity & Runner Infrastructure" onRetry={refetch}>
           <PortfolioActivityAndInfraZone
             activityFeed={vm?.activityFeed}
+            runnerInfrastructure={vm?.runnerInfrastructure}
             onInspectRun={handleInspectRun}
           />
         </ZoneErrorBoundary>

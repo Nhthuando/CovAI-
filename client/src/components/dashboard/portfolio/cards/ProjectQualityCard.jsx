@@ -1,19 +1,25 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import {
   Star,
   GitBranch,
   ArrowRight,
   MoreVertical,
   ArrowLeftRight,
-  Play,
   Download,
   Trash2,
-  ExternalLink,
-  MessageSquare,
   Sparkles,
+  Zap,
+  CheckCircle2,
+  AlertOctagon,
+  AlertTriangle,
+  Clock,
+  Loader2,
 } from "lucide-react";
 import { ProjectSparkline } from "../primitives/ProjectSparkline.jsx";
 import { PillarMiniProgressRow } from "../primitives/PillarMiniProgressRow.jsx";
+import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
+import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
+import ContextualMetricTooltip from "../primitives/ContextualMetricTooltip.jsx";
 
 export function ProjectQualityCard({
   project,
@@ -27,6 +33,7 @@ export function ProjectQualityCard({
   onDeleteProject,
   onExportProject,
   onAskAiAboutProject,
+  onStatusChange,
   className = "",
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,8 +64,10 @@ export function ProjectQualityCard({
     gateLabel = "UNTESTED",
     unifiedCoveragePct = 0,
     sparkline = [0, 0, 0, 0, 0],
-    bottleneckCallout = "",
+    lifecycleStatus = "NOT_STARTED",
     pillars = {},
+    timeRoi = null,
+    activeJob = null,
   } = project;
 
   const unit = pillars.unit || {};
@@ -66,32 +75,59 @@ export function ProjectQualityCard({
   const sys = pillars.system || {};
 
   // Gate Badge Variant Styling
-  let gateBadgeColor = "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)] border-[var(--ud-pass)]/30";
+  let gateBadgeColor = "bg-[#238636]/15 text-[#3fb950] border-[#238636]/30";
   if (gateStatus === "BLOCKED") {
-    gateBadgeColor = "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)] border-[var(--ud-fail)]/30";
+    gateBadgeColor = "bg-[#da3633]/15 text-[#f85149] border-[#da3633]/30";
   } else if (gateStatus === "AT_RISK") {
-    gateBadgeColor = "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border-[var(--ud-warn)]/30";
+    gateBadgeColor = "bg-[#bb8009]/15 text-[#d29922] border-[#bb8009]/30";
   } else if (gateStatus === "UNTESTED") {
-    gateBadgeColor = "bg-[var(--ud-neutral)]/15 text-[var(--ud-neutral)] border-[var(--ud-neutral)]/30";
+    gateBadgeColor = "bg-[#21262d] text-[#8b949e] border-[#30363d]";
   }
 
   // Sparkline stroke color based on health
   const sparklineStroke =
     healthScore >= 80
-      ? "var(--ud-pass)"
+      ? "#3fb950"
       : healthScore >= 60
-      ? "var(--ud-warn)"
+      ? "#d29922"
       : healthScore > 0
-      ? "var(--ud-fail)"
-      : "var(--ud-neutral)";
+      ? "#f85149"
+      : "#484f58";
+
+  // Compute compact status label (max 4-5 words)
+  const isRunning = Boolean(activeJob && activeJob.status === "RUNNING");
+  let statusIcon = <CheckCircle2 className="w-3.5 h-3.5 text-[#3fb950] shrink-0" />;
+  let statusText = "All Suites Passing";
+
+  if (isRunning) {
+    statusIcon = <Loader2 className="w-3.5 h-3.5 text-[#58a6ff] animate-spin shrink-0" />;
+    statusText = `Running ${activeJob.pillar || "Suites"} (${activeJob.progress || 0}%)`;
+  } else if (gateStatus === "BLOCKED") {
+    const totalFailed = (unit.failedTests || 0) + (int.failedTests || 0) + (sys.failedTests || 0);
+    statusIcon = <AlertOctagon className="w-3.5 h-3.5 text-[#f85149] shrink-0" />;
+    statusText = totalFailed > 0 ? `${totalFailed} Failures Detected` : "Release Blocked";
+  } else if (gateStatus === "AT_RISK") {
+    const uncovered = int.uncoveredApis || 0;
+    statusIcon = <AlertTriangle className="w-3.5 h-3.5 text-[#d29922] shrink-0" />;
+    statusText = uncovered > 0 ? `${uncovered} Uncovered APIs` : "Risk Detected";
+  } else if (gateStatus === "UNTESTED") {
+    statusIcon = <Clock className="w-3.5 h-3.5 text-[#8b949e] shrink-0" />;
+    statusText = "Ready for First Run";
+  }
+
+  // Time & ROI summary numbers
+  const speedup = timeRoi?.speedupMultiplier || 0;
+  const hoursSaved = timeRoi?.totalHoursSaved || 0;
+  const autoDurationFormatted = timeRoi?.actualAutoDurationFormatted || "0s";
+  const manualDurationFormatted = timeRoi?.estimatedManualDurationFormatted || "0s";
 
   return (
     <article
       id={`project-card-${id}`}
-      className={`rounded-[var(--radius-lg)] border bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-all relative group ${
+      className={`rounded-lg border bg-[#161b22] p-4 flex flex-col justify-between shadow-sm transition-all relative group ${
         isHighlighted
-          ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20"
-          : "border-[var(--ud-border)] hover:border-[var(--ud-border-strong)]"
+          ? "border-[#58a6ff] ring-2 ring-[#58a6ff]/20"
+          : "border-[#30363d] hover:border-[#8b949e]/40"
       } ${className}`}
     >
       <div>
@@ -107,8 +143,8 @@ export function ProjectQualityCard({
               }}
               className={`p-1 rounded cursor-pointer transition-colors mt-0.5 shrink-0 ${
                 isPinned
-                  ? "text-amber-500 bg-amber-500/10"
-                  : "text-[var(--ud-text-muted)] hover:text-amber-500 hover:bg-[var(--ud-surface-2)]"
+                  ? "text-amber-400 bg-amber-400/10"
+                  : "text-[#8b949e] hover:text-amber-400 hover:bg-[#21262d]"
               }`}
               title={isPinned ? "Unpin project" : "Pin project"}
               aria-label={isPinned ? "Unpin project" : "Pin project"}
@@ -121,7 +157,7 @@ export function ProjectQualityCard({
                 <button
                   type="button"
                   onClick={() => onOpenOverview?.(id)}
-                  className="text-sm font-bold text-[var(--ud-text)] hover:text-[var(--color-primary)] transition-colors truncate text-left cursor-pointer tracking-tight"
+                  className="text-sm font-bold text-[#f0f6fc] hover:text-[#58a6ff] transition-colors truncate text-left cursor-pointer tracking-tight"
                   title={name}
                 >
                   {name}
@@ -129,21 +165,21 @@ export function ProjectQualityCard({
               </div>
 
               {/* Source/Branch & Snapshot Badge */}
-              <div className="flex flex-wrap items-center gap-1.5 mt-1 font-mono text-[10px] text-[var(--ud-text-muted)]">
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
-                  <GitBranch size={10} className="text-[var(--color-primary)]" />
+              <div className="flex flex-wrap items-center gap-1.5 mt-1 font-mono text-[10px] text-[#8b949e]">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0d1117] border border-[#30363d]">
+                  <GitBranch size={10} className="text-[#58a6ff]" />
                   {branch}
                 </span>
                 {snapshotId && (
-                  <span className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
+                  <span className="px-1.5 py-0.5 rounded bg-[#0d1117] border border-[#30363d]">
                     {snapshotId.slice(0, 7)}
                   </span>
                 )}
                 {/* Detected Framework Tags */}
-                {frameworks.slice(0, 3).map((fw) => (
+                {frameworks.slice(0, 2).map((fw) => (
                   <span
                     key={fw}
-                    className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] border border-[var(--ud-border)]"
+                    className="px-1.5 py-0.5 rounded bg-[#0d1117] text-[#8b949e] border border-[#30363d]"
                   >
                     {fw}
                   </span>
@@ -152,15 +188,20 @@ export function ProjectQualityCard({
             </div>
           </div>
 
-          {/* Right: Quality Gate Badge + Grade + Context Menu */}
+          {/* Right: Lifecycle Switcher + Gate Badge + Context Menu */}
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* Lifecycle Selector Dropdown */}
+            <LifecycleStatusSelect
+              projectId={id}
+              currentStatus={lifecycleStatus}
+              onStatusChange={onStatusChange}
+            />
+
+            {/* Quality Gate Badge */}
             <span
-              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border uppercase tracking-wider ${gateBadgeColor}`}
+              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border uppercase tracking-wider ${gateBadgeColor}`}
             >
               {gateLabel}
-            </span>
-            <span className="w-5 h-5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)] border border-[var(--ud-border)] font-mono text-[10px] font-bold text-[var(--ud-text)] flex items-center justify-center">
-              {grade}
             </span>
 
             {/* Context Menu Dropdown */}
@@ -169,9 +210,9 @@ export function ProjectQualityCard({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setMenuOpen((prev) => !prev)}
-                }
-                className="p-1 rounded text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer"
+                  setMenuOpen((prev) => !prev);
+                }}
+                className="p-1 rounded text-[#8b949e] hover:text-[#f0f6fc] hover:bg-[#21262d] transition-colors cursor-pointer"
                 title="Project Actions"
                 aria-label="Project Actions"
               >
@@ -179,14 +220,14 @@ export function ProjectQualityCard({
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-48 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] text-[var(--ud-text)] shadow-lg z-30 py-1 text-xs font-sans animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 top-full mt-1 w-48 rounded-md border border-[#30363d] bg-[#161b22] text-[#c9d1d9] shadow-xl z-30 py-1 text-xs font-sans">
                   <button
                     type="button"
                     onClick={() => {
                       setMenuOpen(false);
                       onToggleCompare?.(id);
                     }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] cursor-pointer"
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[#21262d] cursor-pointer"
                   >
                     <ArrowLeftRight size={13} />
                     <span>{isSelectedForCompare ? "Deselect Comparison" : "Select for Comparison"}</span>
@@ -198,7 +239,7 @@ export function ProjectQualityCard({
                       setMenuOpen(false);
                       onAskAiAboutProject?.(project);
                     }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] cursor-pointer text-[var(--color-primary)]"
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[#21262d] cursor-pointer text-[#58a6ff]"
                   >
                     <Sparkles size={13} />
                     <span>Ask COV AI Diagnostics</span>
@@ -210,13 +251,13 @@ export function ProjectQualityCard({
                       setMenuOpen(false);
                       onExportProject?.(project);
                     }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] cursor-pointer"
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[#21262d] cursor-pointer"
                   >
                     <Download size={13} />
                     <span>Export Project Report</span>
                   </button>
 
-                  <div className="my-1 border-t border-[var(--ud-border)]" />
+                  <div className="my-1 border-t border-[#30363d]" />
 
                   <button
                     type="button"
@@ -224,7 +265,7 @@ export function ProjectQualityCard({
                       setMenuOpen(false);
                       onDeleteProject?.(project);
                     }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] text-[var(--ud-fail)] cursor-pointer"
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[#21262d] text-[#f85149] cursor-pointer"
                   >
                     <Trash2 size={13} />
                     <span>Delete Workspace</span>
@@ -235,28 +276,39 @@ export function ProjectQualityCard({
           </div>
         </div>
 
-        {/* ── Layer 2: Core Health & Trend Strip ───────────────────────────── */}
-        <div className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-[var(--ud-surface-2)]/60 border border-[var(--ud-border)] my-3">
-          <div className="flex items-baseline gap-1.5 font-mono">
-            <span className="text-xl font-bold text-[var(--ud-text)]">
-              {healthScore}
-            </span>
-            <span className="text-[10px] text-[var(--ud-text-muted)]">/100 Health</span>
-            {delta !== 0 && (
-              <span
-                className={`text-[10px] font-bold ml-1 ${
-                  delta > 0 ? "text-[var(--ud-pass)]" : "text-[var(--ud-fail)]"
-                }`}
-              >
-                {delta > 0 ? `+${delta}%` : `${delta}%`}
-              </span>
-            )}
+        {/* ── Layer 2: Core Health Gauge & Trend Strip ─────────────────────── */}
+        <div className="flex items-center justify-between p-2.5 rounded-md bg-[#0d1117] border border-[#21262d] my-3">
+          {/* Radial Health Gauge */}
+          <div className="flex items-center gap-3">
+            <RadialHealthGauge
+              score={healthScore}
+              grade={grade}
+              isTested={gateStatus !== "UNTESTED"}
+              size={50}
+              strokeWidth={4.5}
+            />
+            <div className="flex flex-col">
+              <span className="text-[10px] text-[#8b949e] uppercase font-mono tracking-wider">Health</span>
+              <div className="flex items-baseline gap-1 font-mono">
+                <span className="text-sm font-bold text-[#f0f6fc] tabular-nums">{healthScore}/100</span>
+                {delta !== 0 && (
+                  <span
+                    className={`text-[10px] font-bold ${
+                      delta > 0 ? "text-[#3fb950]" : "text-[#f85149]"
+                    }`}
+                  >
+                    {delta > 0 ? `+${delta}%` : `${delta}%`}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
+          {/* Unified Coverage & Sparkline */}
           <div className="flex items-center gap-3">
             <div className="text-right font-mono">
-              <div className="text-[10px] text-[var(--ud-text-muted)]">Unified Cov</div>
-              <div className="text-xs font-bold text-[var(--ud-text)]">
+              <div className="text-[10px] text-[#8b949e]">Unified Cov</div>
+              <div className="text-xs font-bold text-[#f0f6fc] tabular-nums">
                 {unifiedCoveragePct}%
               </div>
             </div>
@@ -264,7 +316,7 @@ export function ProjectQualityCard({
             <ProjectSparkline
               data={sparkline}
               strokeColor={sparklineStroke}
-              width={56}
+              width={54}
               height={18}
             />
           </div>
@@ -276,7 +328,7 @@ export function ProjectQualityCard({
           <PillarMiniProgressRow
             label="Unit"
             subLabel=""
-            accentColor="var(--ud-unit)"
+            accentColor="#58a6ff"
             coveragePct={unit.coveragePct ?? 0}
             tooltipText={`${unit.framework || "Jest"}: ${unit.coveragePct ?? 0}% line coverage • ${unit.passedTests ?? 0}/${unit.totalTests ?? 0} passed`}
           />
@@ -285,7 +337,7 @@ export function ProjectQualityCard({
           <PillarMiniProgressRow
             label="Integration"
             subLabel={`${int.coveredApis ?? 0}/${int.totalApis ?? 0} APIs`}
-            accentColor="var(--ud-integration)"
+            accentColor="#bc8cff"
             coveragePct={int.coveragePct ?? 0}
             tooltipText={`Integration APIs: ${int.coveredApis ?? 0}/${int.totalApis ?? 0} covered (${int.coveragePct ?? 0}%) • ${int.passedTests ?? 0} passed, ${int.failedTests ?? 0} failed`}
           />
@@ -294,40 +346,50 @@ export function ProjectQualityCard({
           <PillarMiniProgressRow
             label="System E2E"
             subLabel={`${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0} Flows`}
-            accentColor="var(--ud-system)"
+            accentColor="#3fb950"
             coveragePct={sys.coveragePct ?? 0}
             tooltipText={`System E2E: ${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0} flows verified (${sys.coveragePct ?? 0}%) • ${sys.passedTests ?? 0} passed, ${sys.failedTests ?? 0} failed`}
           />
         </div>
 
-        {/* ── Layer 4: Quick Diagnostics Callout (2-line clamp) ────────────── */}
-        <div
-          className={`p-2 rounded-[var(--radius-sm)] border text-xs font-mono my-3 ${
-            gateStatus === "BLOCKED"
-              ? "bg-[var(--ud-fail)]/10 border-[var(--ud-fail)]/30 text-[var(--ud-fail)]"
-              : gateStatus === "AT_RISK"
-              ? "bg-[var(--ud-warn)]/10 border-[var(--ud-warn)]/30 text-[var(--ud-warn)]"
-              : gateStatus === "UNTESTED"
-              ? "bg-[var(--ud-neutral)]/10 border-[var(--ud-neutral)]/30 text-[var(--ud-text-muted)]"
-              : "bg-[var(--ud-pass)]/10 border-[var(--ud-pass)]/30 text-[var(--ud-pass)]"
-          }`}
-        >
-          <div
-            className="line-clamp-2 min-h-[2.25rem] leading-snug break-words"
-            title={bottleneckCallout}
-          >
-            {bottleneckCallout}
+        {/* ── Layer 4: Compact Status Strip (Minimal Text, Zero Redundancy) ── */}
+        <div className="flex items-center justify-between p-2 rounded border border-[#21262d] bg-[#0d1117] text-xs font-mono my-3 min-h-[34px]">
+          {/* Left: 4-5 words status */}
+          <div className="flex items-center gap-1.5 min-w-0 pr-2">
+            {statusIcon}
+            <span className="text-[#c9d1d9] text-[11px] truncate">{statusText}</span>
           </div>
+
+          {/* Right: Time Saved ROI Badge */}
+          {speedup > 1 ? (
+            <ContextualMetricTooltip
+              title="Execution Time & QA ROI"
+              meaning="Automated execution speed vs. industry manual benchmark (120s/Unit, 300s/API, 480s/E2E)."
+              formula={`Speedup: ${speedup}x • Auto: ${autoDurationFormatted} • Manual Est: ${manualDurationFormatted}`}
+              provenance={`Snapshots: ${snapshotId ? snapshotId.slice(0, 8) : 'Live DB'}`}
+              tip="Higher speedup means faster release feedback loops for your engineering team."
+              placement="top-right"
+            >
+              <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#388bfd]/10 border border-[#1f6feb]/30 text-[10px] text-[#58a6ff] cursor-help font-bold shrink-0">
+                <Zap className="w-3 h-3 text-[#58a6ff]" />
+                <span>{speedup}x ({hoursSaved}h saved)</span>
+              </div>
+            </ContextualMetricTooltip>
+          ) : (
+            <span className="text-[10px] text-[#8b949e] shrink-0 font-mono">
+              {gateStatus === "UNTESTED" ? "No run data" : "Standard Speed"}
+            </span>
+          )}
         </div>
       </div>
 
       {/* ── Layer 5: Direct Deep-Links Footer ──────────────────────────────── */}
-      <div className="pt-3 border-t border-[var(--ud-border)] flex items-center justify-between gap-2 mt-auto">
+      <div className="pt-3 border-t border-[#30363d] flex items-center justify-between gap-2 mt-auto">
         {/* Primary CTA: Open Unified Overview */}
         <button
           type="button"
           onClick={() => onOpenOverview?.(id)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-primary)] hover:opacity-85 transition-opacity cursor-pointer group-hover:translate-x-0.5 transition-transform"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#58a6ff] hover:opacity-85 transition-opacity cursor-pointer group-hover:translate-x-0.5 transition-transform"
         >
           <span>Open Unified Overview</span>
           <ArrowRight size={13} />
@@ -338,7 +400,7 @@ export function ProjectQualityCard({
           <button
             type="button"
             onClick={() => onNavigateWorkspace?.(id, "unit")}
-            className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] hover:bg-[var(--ud-unit)]/20 text-[var(--ud-unit)] border border-[var(--ud-border)] transition-colors cursor-pointer"
+            className="px-1.5 py-0.5 rounded bg-[#21262d] hover:bg-[#58a6ff]/20 text-[#58a6ff] border border-[#30363d] transition-colors cursor-pointer"
             title="Jump to Unit Test Workspace"
           >
             Unit ↗
@@ -346,7 +408,7 @@ export function ProjectQualityCard({
           <button
             type="button"
             onClick={() => onNavigateWorkspace?.(id, "integration")}
-            className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] hover:bg-[var(--ud-integration)]/20 text-[var(--ud-integration)] border border-[var(--ud-border)] transition-colors cursor-pointer"
+            className="px-1.5 py-0.5 rounded bg-[#21262d] hover:bg-[#bc8cff]/20 text-[#bc8cff] border border-[#30363d] transition-colors cursor-pointer"
             title="Jump to Integration Test Workspace"
           >
             Int ↗
@@ -354,7 +416,7 @@ export function ProjectQualityCard({
           <button
             type="button"
             onClick={() => onNavigateWorkspace?.(id, "system")}
-            className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] hover:bg-[var(--ud-system)]/20 text-[var(--ud-system)] border border-[var(--ud-border)] transition-colors cursor-pointer"
+            className="px-1.5 py-0.5 rounded bg-[#21262d] hover:bg-[#3fb950]/20 text-[#3fb950] border border-[#30363d] transition-colors cursor-pointer"
             title="Jump to System Test Workspace"
           >
             Sys ↗
@@ -365,5 +427,18 @@ export function ProjectQualityCard({
   );
 }
 
-export default ProjectQualityCard;
-
+export default memo(ProjectQualityCard, (prev, next) => {
+  return (
+    prev.isPinned === next.isPinned &&
+    prev.isSelectedForCompare === next.isSelectedForCompare &&
+    prev.isHighlighted === next.isHighlighted &&
+    prev.project?.id === next.project?.id &&
+    prev.project?.healthScore === next.project?.healthScore &&
+    prev.project?.unifiedCoveragePct === next.project?.unifiedCoveragePct &&
+    prev.project?.gateStatus === next.project?.gateStatus &&
+    prev.project?.lifecycleStatus === next.project?.lifecycleStatus &&
+    prev.project?.activeJob?.progress === next.project?.activeJob?.progress &&
+    prev.project?.activeJob?.status === next.project?.activeJob?.status &&
+    prev.project?.timeRoi?.speedupMultiplier === next.project?.timeRoi?.speedupMultiplier
+  );
+});

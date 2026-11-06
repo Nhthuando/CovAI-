@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 export function MultiProjectCoverageChart({
   benchmarkItems = [],

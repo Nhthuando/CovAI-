@@ -1,7 +1,7 @@
 import { installIntegrationDependenciesService,detectIntegrationFrameworksService } from '../services/integrationApiService.service.js';
 import { requestedAiModel } from '../utils/selectedAiModel.js';
 import fs from "fs";
-import { parseCreateProject } from "../validators/project.validation.js";
+import { parseCreateProject, parseUpdateProjectLifecycleStatus } from "../validators/project.validation.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
 import { processRunTestsJob } from "../services/runTestsJob.service.js";
 import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.service.js";
@@ -48,6 +48,7 @@ import {
   createProjectCheckpoint,
   restoreProjectCheckpoint,
   activateProjectSnapshot,
+  updateProjectLifecycleStatus,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { getArchitectureAiSummary } from "../services/architectureAiSummary.service.js";
@@ -227,6 +228,46 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to get project",
+      });
+    }
+  }
+
+  /**
+   * PATCH /projects/:id/status
+   */
+  async updateProjectStatus(req, res) {
+    try {
+      const { id } = req.params;
+      const validation = parseUpdateProjectLifecycleStatus(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error.message,
+        });
+      }
+
+      const updated = await updateProjectLifecycleStatus({
+        projectId: id,
+        userId: req.user.id,
+        ...validation.data,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      console.error("[updateProjectStatus] Error:", error);
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message,
+          code: error.code,
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update project status",
       });
     }
   }
