@@ -51,6 +51,7 @@ import webhookRoute from "./src/routes/webhook.route.js";
 import reportRoute from "./src/routes/report.route.js";
 import gitRoute from "./src/routes/git.route.js";
 import portfolioRoute from "./src/routes/portfolio.route.js";
+import aiQuotaSettingsRoute from "./src/routes/aiQuotaSettings.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -138,6 +139,7 @@ app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/file-manager", fileManagerRoute);
 app.use("/api/git", gitRoute);
 app.use("/api/portfolio", portfolioRoute);
+app.use("/api/settings/ai-quotas", aiQuotaSettingsRoute);
 app.use("/api/reports", reportRoute);
 app.use("/webhook", webhookRoute);
 

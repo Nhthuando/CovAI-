@@ -1,4 +1,5 @@
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 
 // Basic detection regex
 const SECRET_PATTERN = /(api_key|apikey|secret|password|passwd|pwd|token)\s*[:=]\s*["']([^"']{8,})["']/i;
@@ -45,7 +46,7 @@ export const scanAiVulnerabilities = async (sourceFiles) => {
     `;
     
     try {
-        const resultText = await generateText(prompt, "Respond strictly with JSON array.");
+        const resultText = await withGeminiChannel("UNIT_TEST", () => generateText(prompt, "Respond strictly with JSON array."));
         const match = resultText.match(/\[.*\]/s);
         if (match) return JSON.parse(match[0]);
         return [];

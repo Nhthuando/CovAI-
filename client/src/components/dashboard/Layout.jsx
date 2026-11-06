@@ -32,6 +32,7 @@ import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
 import Security from "./settings/Security";
 import Billing from "./settings/Billing";
+import Usage from "./settings/Usage";
 import { ToastProvider, useToast } from "./ToastContext";
 import MissingTestFilesModal from "./MissingTestFilesModal";
 import PanelResizer from "./PanelResizer";
@@ -215,7 +216,7 @@ function LayoutInner() {
     }
   }, [location.search, showToast]);
 
-  const allowedSettings = ["profile", "appearance", "security", "notifications", "billing", "members"];
+  const allowedSettings = ["profile", "appearance", "security", "notifications", "usage", "billing", "members"];
   const selectedSetting = searchParams.get("setting");
   const activeSetting = allowedSettings.includes(selectedSetting) ? selectedSetting : "profile";
   const membersTab = searchParams.get("membersTab") === "pending" ? "pending" : "members";
@@ -1320,6 +1321,7 @@ function LayoutInner() {
             {activeSetting === "appearance" && <Appearance />}
             {activeSetting === "security" && <Security />}
             {activeSetting === "notifications" && <NotificationsSettings />}
+            {activeSetting === "usage" && <Usage isActive={activeActivity === "settings"} />}
             {activeSetting === "billing" && <Billing />}
             {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
           </div>

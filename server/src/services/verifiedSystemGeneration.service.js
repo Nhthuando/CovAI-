@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {collectSystemGenerationContext,observeSystemApplication} from './systemGenerationContext.service.js';
 import {generateText} from './gemini.service.js';
+import {withGeminiChannel} from './geminiTokenTracker.service.js';
 import {runSystemTests} from './systemTestRunner.service.js';
 import {validateGeneratedTestCode} from '../validators/aiTestCode.validator.js';
 import {validateFullSystemTest} from './systemTestEvidence.service.js';
@@ -116,7 +117,7 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
   const collect=dependencies.collect || collectSystemGenerationContext;
   const observe=dependencies.observe || observeSystemApplication;
   const provider=dependencies.generate || generateText;
-  const generate=model ? (prompt,instruction,config)=>provider(prompt,model,instruction,config) : provider;
+  const generate=model ? (prompt,instruction,config)=>withGeminiChannel("E2E_TEST", () => provider(prompt,model,instruction,config)) : ((...args) => withGeminiChannel("E2E_TEST", () => provider(...args)));
   const run=dependencies.run || runSystemTests;
   await (dependencies.ensureSetup || ensureFullSystemSetup)({rootDir,onProgress});
   await onProgress(15,'Inspecting imported source and startup configuration');
@@ -479,7 +480,7 @@ export const generateColdStartSystemTests = async ({
   const normFramework = String(framework).toLowerCase() === 'cypress' ? 'cypress' : 'playwright';
   const collect = dependencies.collect || collectSystemGenerationContext;
   const provider = dependencies.generate || generateText;
-  const generate=model ? (prompt,instruction,config)=>provider(prompt,model,instruction,config) : provider;
+  const generate=model ? (prompt,instruction,config)=>withGeminiChannel("E2E_TEST", () => provider(prompt,model,instruction,config)) : ((...args) => withGeminiChannel("E2E_TEST", () => provider(...args)));
 
   await onProgress(10, 'Harvesting application routes, components, and API endpoints');
   const context = {...collect(rootDir),requirements};

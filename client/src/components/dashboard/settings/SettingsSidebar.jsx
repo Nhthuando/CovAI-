@@ -5,6 +5,7 @@ import {
   Shield,
   Bell,
   CreditCard,
+  Gauge,
   LogOut,
   Settings,
   Users,
@@ -34,10 +35,16 @@ const SETTINGS_OPTIONS = [
     desc: "Alerts & preferences",
   },
   {
+    id: "usage",
+    label: "Usage",
+    icon: Gauge,
+    desc: "Models & token quotas",
+  },
+  {
     id: "billing",
     label: "Billing",
     icon: CreditCard,
-    desc: "Plans & AI quotas",
+    desc: "Plans & invoices",
   },
 ];
 

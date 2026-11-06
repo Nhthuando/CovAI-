@@ -6,6 +6,14 @@ import dotenv from "dotenv";
 import { runGeminiRequest, isDailyQuotaError } from './geminiRequestPolicy.service.js';
 import { currentAiJobBudget } from './aiJobBudget.service.js';
 import { isCollaborationLocalTest } from '../config/collaborationLocal.js';
+import {
+  withGeminiChannel,
+  getCurrentGeminiChannel,
+  recordGeminiTokenUsage,
+  recordGeminiRateLimit,
+} from './geminiTokenTracker.service.js';
+
+export { withGeminiChannel, getCurrentGeminiChannel };
 
 dotenv.config();
 
@@ -13,14 +21,20 @@ dotenv.config();
 const TASK_KEY_MAP = {
   unit: "GEMINI_KEY_UNIT_TEST",
   "unit-test": "GEMINI_KEY_UNIT_TEST",
+  unit_test: "GEMINI_KEY_UNIT_TEST",
   integration: "GEMINI_KEY_INTEGRATION_TEST",
   "integration-test": "GEMINI_KEY_INTEGRATION_TEST",
+  integration_test: "GEMINI_KEY_INTEGRATION_TEST",
   supertest: "GEMINI_KEY_INTEGRATION_TEST",
   e2e: "GEMINI_KEY_E2E_TEST",
+  "e2e-test": "GEMINI_KEY_E2E_TEST",
+  e2e_test: "GEMINI_KEY_E2E_TEST",
   system: "GEMINI_KEY_E2E_TEST",
   "system-test": "GEMINI_KEY_E2E_TEST",
+  system_test: "GEMINI_KEY_E2E_TEST",
   chatbox: "GEMINI_KEY_CHATBOX",
   chat: "GEMINI_KEY_CHATBOX",
+  chat_box: "GEMINI_KEY_CHATBOX",
 };
 
 /**
@@ -181,8 +195,9 @@ export const generateMultimodalText = async (
     generationConfig = maybeConfig || {};
   }
 
-  const taskType = generationConfig.taskType || "integration";
+  const taskType = generationConfig.taskType || getCurrentGeminiChannel() || "integration";
   const genAI = getGeminiClient(taskType, generationConfig.apiKey);
+  const resolvedApiKey = generationConfig.apiKey || getGeminiApiKey(taskType);
 
   const {
     requestTimeoutMs,
@@ -245,12 +260,40 @@ export const generateMultimodalText = async (
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
       }
-      return result.response.text();
+      let responseText = "";
+      try {
+        responseText = typeof result.response?.text === "function" ? result.response.text() : (result.response?.text || "");
+      } catch (_) {
+        responseText = "";
+      }
+      try {
+        recordGeminiTokenUsage({
+          taskType,
+          apiKey: resolvedApiKey,
+          modelName: primaryModelName,
+          usageMetadata: result.response?.usageMetadata,
+          promptText: prompt,
+          responseText,
+        });
+      } catch (trackingErr) {
+        console.warn("[geminiTokenTracker] Error recording usage:", trackingErr.message);
+      }
+      return responseText;
     } catch (primaryErr) {
       if (signal.aborted) throw primaryErr;
-      if(primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
-        if(isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName,primaryErr);
-        throw geminiQuotaError(primaryErr,primaryModelName);
+      if (primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
+        try {
+          recordGeminiRateLimit({
+            taskType,
+            apiKey: resolvedApiKey,
+            modelName: primaryModelName,
+            error: primaryErr,
+          });
+        } catch (rateLimitErr) {
+          console.warn("[geminiTokenTracker] Error recording rate limit:", rateLimitErr.message);
+        }
+        if (isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName, primaryErr);
+        throw geminiQuotaError(primaryErr, primaryModelName);
       }
       throw primaryErr;
     }

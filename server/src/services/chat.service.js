@@ -1,6 +1,7 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { generateMultimodalText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { reserveAiQuota, consumeAiQuota, releaseAiQuota } from "./aiQuota.service.js";
 import { assembleChatContext, contextPreview, durableAttachments } from "./chatContext.service.js";
 import { captureProjectProposalBase } from "./projectProposalBase.service.js";
@@ -78,7 +79,7 @@ export const sendContextChat = async (projectId, userId, input, dependencies = {
         if (reservation) await consumeAiQuota(reservation.id);
         dispatched = true;
         let reply;
-        try { reply = await generate(prompt, images, SYSTEM, input.model || null); }
+        try { reply = await withGeminiChannel("CHATBOX", () => generate(prompt, images, SYSTEM, input.model || null)); }
         catch (error) { if (error.code === "AI_QUOTA_EXCEEDED") throw error; throw new ServiceError("AI service is unavailable. Your message was not saved. Please try again.", 503); }
         if (typeof reply !== "string" || !reply.trim() || reply.length > 200000) throw new ServiceError("AI returned an empty or oversized reply. Try again.", 502);
         if (leaseFailure) throw leaseFailure;

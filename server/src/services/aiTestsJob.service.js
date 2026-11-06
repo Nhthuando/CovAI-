@@ -9,6 +9,7 @@ import { buildFinalPrompt, buildPlaywrightPrompt } from "./aiPromptBuilder.servi
 import { buildCypressPrompt } from "./cypressPromptBuilder.service.js";
 import { buildSupertestPrompt } from "./supertestPromptBuilder.service.js";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { processAiSuggestions } from "./aiSuggestionParser.service.js";
 import { processSkeletonTests } from "./skeletonPostProcessor.service.js";
 import { processFullTests } from "./fullTestsPostProcessor.service.js";
@@ -168,7 +169,9 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 userId: job.userId,
             });
 
-            const aiResponseText = await generateText(playwrightPrompt, selectedAiModel);
+            const aiResponseText = await withGeminiChannel("E2E_TEST", () =>
+                generateText(playwrightPrompt, selectedAiModel)
+            );
             if (!aiResponseText || !aiResponseText.trim()) {
                 throw new ServiceError("Gemini returned an empty response for Playwright test generation.", 500);
             }
@@ -986,7 +989,9 @@ const processAiTestsJobInWorkspace = async (jobId) => {
             await updateGenerationJobStatus({ jobId, progress: 40 });
 
             await addJobLog(jobId, "INFO", "Calling Gemini AI model for Cypress test generation...");
-            const cypressResponseText = await generateText(cypressPrompt, selectedAiModel);
+            const cypressResponseText = await withGeminiChannel("E2E_TEST", () =>
+                generateText(cypressPrompt, selectedAiModel)
+            );
 
             if (!cypressResponseText) {
                 throw new Error("Gemini returned an empty response for Cypress generation.");
@@ -1024,7 +1029,9 @@ const processAiTestsJobInWorkspace = async (jobId) => {
 
         // SCRUM-394: Call Gemini API
         await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
-        const responseText = await generateText(finalPrompt, selectedAiModel);
+        const responseText = await withGeminiChannel("UNIT_TEST", () =>
+            generateText(finalPrompt, selectedAiModel)
+        );
 
         // SCRUM-396: Validate AI response
         if (!responseText) {
