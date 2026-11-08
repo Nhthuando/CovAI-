@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useProjectsPortfolio } from "../../../hooks/useProjectsPortfolio.js";
 import { PortfolioCommandHeader } from "./zones/PortfolioCommandHeader.jsx";
 import { PortfolioExecutiveKpiRow } from "./zones/PortfolioExecutiveKpiRow.jsx";
@@ -31,6 +32,12 @@ export function ProjectsPortfolioDashboard({
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [inspectedRunItem, setInspectedRunItem] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const queryClient = useQueryClient();
+
+  const handleStatusChange = useCallback(() => {
+    refetch();
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+  }, [refetch, queryClient]);
 
   const handleToggleCompare = useCallback((projectId) => {
     setSelectedForCompareIds((prev) => {
@@ -150,7 +157,7 @@ export function ProjectsPortfolioDashboard({
             }}
             onAskAiAboutProject={handleAskAiAboutProject}
             onAddProject={onAddProject}
-            onStatusChange={refetch}
+            onStatusChange={handleStatusChange}
           />
         </ZoneErrorBoundary>
 

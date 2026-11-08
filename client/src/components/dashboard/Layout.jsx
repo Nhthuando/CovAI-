@@ -410,8 +410,10 @@ function LayoutInner() {
         const response = await getProjectJobsApi(projectId);
         const jobs = response.jobs || [];
         const targetSnapshotId =
-          project.snapshots?.[0]?.id ||
+          searchParams.get("snapshotId") ||
+          project.activeSnapshotId ||
           project.latestSnapshotId ||
+          project.snapshots?.[0]?.id ||
           localStorage.getItem(`latestSnapshot_${projectId}`);
         const latest =
           jobs
@@ -642,6 +644,36 @@ function LayoutInner() {
     window.addEventListener("covai:project-event", refreshTree);
     return () => { alive = false; window.removeEventListener("covai:project-event", refreshTree); };
   }, [project?.id, user?.id]);
+
+  useEffect(() => {
+    const handleStatusUpdated = (event) => {
+      const { projectId, lifecycleStatus, isPinned } = event.detail || {};
+      if (!projectId) return;
+
+      if (project?.id === projectId && lifecycleStatus !== undefined) {
+        setProject((prev) => (prev ? { ...prev, lifecycleStatus } : prev));
+      }
+
+      setProjects((prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map((p) => {
+          if (p.id === projectId) {
+            return {
+              ...p,
+              ...(lifecycleStatus !== undefined && { lifecycleStatus }),
+              ...(isPinned !== undefined && { isPinned }),
+            };
+          }
+          return p;
+        });
+      });
+    };
+
+    window.addEventListener("covai:project-status-updated", handleStatusUpdated);
+    return () => {
+      window.removeEventListener("covai:project-status-updated", handleStatusUpdated);
+    };
+  }, [project?.id]);
 
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
@@ -1032,6 +1064,18 @@ function LayoutInner() {
                     setProject((prev) =>
                       prev ? { ...prev, lifecycleStatus: newStatus } : prev
                     );
+                    setProjects((prev) =>
+                      (prev || []).map((p) =>
+                        p.id === project.id ? { ...p, lifecycleStatus: newStatus } : p
+                      )
+                    );
+                    queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
+                      if (!Array.isArray(old)) return old;
+                      return old.map((p) =>
+                        p.id === project.id ? { ...p, lifecycleStatus: newStatus } : p
+                      );
+                    });
+                    queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
                   }}
                   className="ml-1"
                 />
@@ -1444,7 +1488,7 @@ function LayoutInner() {
 
           <div className={!isFullWidthWorkspace && activeActivity !== "settings" ? "w-full h-full" : "hidden"}>
                 <Editor
-                  key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
+                  key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
                   tabs={tabs}
                   activeTabId={activeTabId}
                   onSelectTab={(tabId) => {
@@ -1457,8 +1501,10 @@ function LayoutInner() {
                   isLoadingTree={isLoadingTree}
                   projectId={project?.id}
                   snapshotId={
-                    project?.snapshots?.[0]?.id ||
+                    searchParams.get("snapshotId") ||
+                    project?.activeSnapshotId ||
                     project?.latestSnapshotId ||
+                    project?.snapshots?.[0]?.id ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
                       : null) ||
@@ -1518,12 +1564,14 @@ function LayoutInner() {
                 }
               >
                 <AIPanel
-                  key={`${user?.id}:${project?.id}`}
+                  key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || ""}`}
                   screenContext={screenContext}
                   projectId={project?.id}
                   snapshotId={
-                    project?.snapshots?.[0]?.id ||
+                    searchParams.get("snapshotId") ||
+                    project?.activeSnapshotId ||
                     project?.latestSnapshotId ||
+                    project?.snapshots?.[0]?.id ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
                       : null) ||

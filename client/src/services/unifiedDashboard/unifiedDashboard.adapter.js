@@ -301,9 +301,8 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     wsSummary.totalTests ?? wsSummary.executedApis ?? passedTests + failedTests + skippedTests
   );
   const totalApis = Number(wsSummary.totalApis ?? wsSummary.totalEndpoints ?? (endpoints.length || executedTests));
-  const uncoveredApis = Number(
-    wsSummary.uncoveredApis ?? Math.max(0, totalApis - passedTests - failedTests)
-  );
+  const coveredApis = executedTests > 0 ? passedTests : 0;
+  const uncoveredApis = Math.max(0, totalApis - coveredApis);
 
   const flakyTests = 0;
   const durationMs = Number(wsSummary.durationMs ?? 0);
