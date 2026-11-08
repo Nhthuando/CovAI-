@@ -164,7 +164,12 @@ const test=base.extend({
   _covaiRealBackend: [async ({page, context}, use) => {
     if (backend) {
       ${measurementPreparation ? `page.on('response',response=>{if(new URL(response.url()).pathname.startsWith('/api/') && response.headers()['x-covai-measurement-id'] !== ${JSON.stringify(measurementPreparation.manifest.measurementId)}){fs.writeFileSync(path.join(${JSON.stringify(measurementPreparation.directory)},'runtime-integrity-'+crypto.randomUUID()+'.json'),JSON.stringify({tier:'backend',measurementId:${JSON.stringify(measurementPreparation.manifest.measurementId)},sourceHash:${JSON.stringify(measurementPreparation.manifest.sourceHash)},coverage:{},incompleteReasons:['AUT_IDENTITY_MISMATCH']}));}});` : ''}
-      await context.route('**/api/**', route => {const original=new URL(route.request().url());return route.continue({url:backend+original.pathname+original.search});});
+      await context.route('**/*', route => {
+        const original=new URL(route.request().url());
+        const isLocalBackend=['localhost','127.0.0.1'].includes(original.hostname) && original.port && Number(original.port)!==Number(${JSON.stringify(frontendPort)}) && ['fetch','xhr'].includes(route.request().resourceType());
+        if(original.pathname.startsWith('/api/') || isLocalBackend) return route.continue({url:backend+original.pathname+original.search});
+        return route.continue();
+      });
       const forbidden=()=>{throw new Error('API mocking is prohibited in full-system mode');};
       page.route=forbidden; context.route=forbidden; page.routeFromHAR=forbidden; context.routeFromHAR=forbidden;
     }
@@ -260,7 +265,7 @@ const rebase=value=>Array.isArray(value)?value.map(rebase):typeof value==='strin
 const base={...original,globalSetup:rebase(original.globalSetup),globalTeardown:rebase(original.globalTeardown),snapshotDir:rebase(original.snapshotDir),tsconfig:rebase(original.tsconfig)||(fs.existsSync(path.join(originalRoot,'tsconfig.json'))?path.join(originalRoot,'tsconfig.json'):undefined),webServer:${managedServer ? 'undefined' : 'Array.isArray(original.webServer) ? original.webServer.map(server) : original.webServer ? server(original.webServer) : undefined'}};` : 'const base={};';
   const isHeaded = Boolean(headed || execution?.headed);
   fs.writeFileSync(config,`${inherited}
-const use={headless:${!isHeaded},launchOptions:{slowMo:${isHeaded ? 450 : 120}},...base.use,${!configPath || managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'};
+const use={headless:${!isHeaded},launchOptions:{slowMo:${isHeaded ? 450 : 0}},...base.use,${!configPath || managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'};
 export default {...base,testDir:'./specs',testMatch:'**/*.spec.*',grep:${grepPattern ? `new RegExp(${JSON.stringify(grepPattern)})` : 'base.grep'},workers:1,retries:${measurementPreparation || testFile ? 0 : 'base.retries ?? 1'},timeout:base.timeout || 30000,outputDir:'./artifacts',use,
 projects:base.projects?.map(project=>({...project,testDir:${JSON.stringify(specs)},testMatch:'**/*.spec.*',${grepPattern ? `grep:new RegExp(${JSON.stringify(grepPattern)}),` : ''}use:{...use,...project.use,${managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'}}))};`,'utf8');
   const reportPath=path.join(directory,'results.json');

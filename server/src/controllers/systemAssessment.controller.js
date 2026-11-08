@@ -4,7 +4,7 @@ import { captureSystemSuiteManifest } from '../services/systemSuiteManifest.serv
 import { projectEditableWorkspaceRoot } from '../services/projectFileVersion.service.js';
 import { expireSystemArtifacts } from '../services/systemArtifactRetention.service.js';
 import { applyReviewedSystemProposal } from '../services/systemSuiteApply.service.js';
-import { membershipWhere } from '../services/projectAccess.service.js';
+import { membershipWhere, resolveProjectAccess } from '../services/projectAccess.service.js';
 import { IMPROVEMENT_LIMITS as improvementLimits } from '../../../shared/systemImprovement.js';
 import { requestedAiModel } from '../utils/selectedAiModel.js';
 import fs from 'node:fs';
@@ -43,7 +43,7 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
         }
         return snapshot;
     };
-    const handler = fn => async (req, res) => { try { return await fn(req, res); } catch (error) { error=systemSuiteError(error);return res.status(error.statusCode || 500).json({ success: false, message: error.statusCode ? error.message : 'System assessment operation failed' }); } };
+    const handler = fn => async (req, res) => { try { return await fn(req, res); } catch (error) { error=systemSuiteError(error);return res.status(error.statusCode || 500).json({ success: false, code:error.code, message: error.statusCode ? error.message : 'System assessment operation failed' }); } };
     const enabled = flag => { if (!assessmentCapabilities().enabled || flag && !assessmentCapabilities()[flag]) throw new ServiceError('This evidence capability is not enabled; configure and validate the measurement environment first', 409); };
     const withLease = async (snapshotId, callback) => {
         const module = await queue(), redis = module.getSystemEvidenceRedis ? module.getSystemEvidenceRedis() : await module.jobQueue.client;
@@ -94,7 +94,7 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
         updateScenario: handler(async (req, res) => { enabled(); const snapshot = await owned(req); const input = parseRequest(scenarioUpdateRequest, req.body); const data = await withLease(snapshot.id, () => updateScenarioDraft({ client, snapshotId: snapshot.id, scenarioId: req.params.scenarioId, input })); clearUnifiedDashboardCache(snapshot.id); res.json({ success: true, data }); }),
         reviewScenario: handler(async (req, res) => { enabled(); const snapshot = await owned(req); const input = parseRequest(scenarioReviewRequest, req.body); res.json({ success: true, data: await withLease(snapshot.id, () => reviewScenario({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir, scenarioId: req.params.scenarioId, expectedScenarioHash: input.expectedScenarioHash, revisionId: input.revisionId, expectedRequirementHash: input.expectedRequirementHash, assertionIds: input.assertionIds, userId: req.user.id })) }); }),
         confirmScenarioExpected: handler(async (req, res) => { enabled(); const snapshot = await owned(req); const input = parseRequest(scenarioExpectedConfirmationRequest, req.body); res.json({ success: true, data: await withLease(snapshot.id, () => confirmScenarioExpected({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir, scenarioId: req.params.scenarioId, expectedScenarioHash: input.expectedScenarioHash, userId: req.user.id })) }); }),
-        readiness: handler(async (req, res) => { const snapshot = await owned(req); const testFiles = typeof req.query.testFiles === 'string' ? req.query.testFiles.split(',').filter(Boolean) : []; const scenarioIds = typeof req.query.scenarioIds === 'string' ? req.query.scenarioIds.split(',').filter(Boolean) : []; if (testFiles.length > 20 || testFiles.some(file => !/\.(spec|test)\.[cm]?[jt]s$/.test(file))) throw new ServiceError('Select supported Playwright JS/TS spec files', 400); if (scenarioIds.length > 100) throw new ServiceError('Select at most 100 scenarios', 400); const reviewMode = req.query.reviewMode === 'scenario' ? 'scenario' : 'legacy'; res.json({ success: true, data: await evaluateRunReadiness({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir, revisionId: req.query.revisionId, testFiles, reviewMode, scenarioIds, executionMode:'full' }) }); }),
+        readiness: handler(async (req, res) => { const snapshot = await owned(req); const testFiles = typeof req.query.testFiles === 'string' ? req.query.testFiles.split(',').filter(Boolean) : []; const scenarioIds = typeof req.query.scenarioIds === 'string' ? req.query.scenarioIds.split(',').filter(Boolean) : []; if (testFiles.length > 20 || testFiles.some(file => !/\.(spec|test)\.[cm]?[jt]s$/.test(file))) throw new ServiceError('Select supported Playwright JS/TS spec files', 400); if (scenarioIds.length > 100) throw new ServiceError('Select at most 100 scenarios', 400); const reviewMode = ['scenario','execution'].includes(req.query.reviewMode) ? req.query.reviewMode : 'legacy'; res.json({ success: true, data: await evaluateRunReadiness({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir, revisionId: req.query.revisionId, testFiles, reviewMode, scenarioIds, executionMode:'full' }) }); }),
         discovery: handler(async (req, res) => { const snapshot = await owned(req); if (!snapshot.rootDir) throw new ServiceError('Snapshot source is not ready', 409); const executionMode = requireFullStackMode(req.query.executionMode); res.json({ success: true, data: discoverSystemAssessment({ rootDir: snapshot.rootDir, executionMode }) }); }),
         latest: handler(async (req, res) => {
             await owned(req);
@@ -131,7 +131,15 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
         assess: handler(async (req, res) => {
             enabled('coverageEnabled'); const snapshot = await owned(req);
             if (!snapshot.rootDir) throw new ServiceError('Snapshot source is not ready', 409);
-            if (req.body.autoDiscover === true) throw new ServiceError('Prepare project tests in the scenario catalog, confirm requirements and review Input/Expected before running', 409);
+            if (req.body.autoDiscover === true) {
+                const input=parseRequest(automaticAssessmentRequest,{...req.body,executionMode:requireFullStackMode(req.body.executionMode),...(requestedAiModel(req)?{model:requestedAiModel(req)}:{})});
+                if(input.runner!=='playwright')throw new ServiceError('Cypress evidence adapter is not verified',422);
+                await resolveProjectAccess({projectId:snapshot.projectId,userId:req.user.id,capability:'tests.run',db:client});
+                if(input.allowGenerate)await resolveProjectAccess({projectId:snapshot.projectId,userId:req.user.id,capability:'ai.use',db:client});
+                const result=await withLease(snapshot.id,()=>admit({snapshot,userId:req.user.id,type:'SYSTEM_TEST_ASSESSMENT',input,create:(job,identity)=>client.systemTestAssessment.create({data:{snapshotId:snapshot.id,jobId:job.id,sourceHash:identity.sourceHash,testHash:identity.testHash,scopeHash:digest({}),runner:input.runner,executionMode:input.executionMode,reportJson:{input}}})}));
+                res.status(202).json({success:true,data:{...result,assessmentId:result.id}});
+                return;
+            }
             const input = parseRequest(assessmentRequest, {...req.body,executionMode:requireFullStackMode(req.body?.executionMode)});
             if (input.runner !== 'playwright') throw new ServiceError('Cypress evidence adapter is not verified', 422);
             if (!snapshot.rootDir) throw new ServiceError('Snapshot source is not ready', 409);
@@ -158,7 +166,8 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
             const projected = projectSystemAssessment(record,{artifacts:client.systemRunArtifact?await client.systemRunArtifact.findMany({where:{assessmentId:record.id},take:500}):[]});
             const liveFrame = getLatestSystemLiveFrame(record.id);
             if (projected && liveFrame) projected.liveFrame = liveFrame;
-            res.json({ success: true, data: { ...projected, stale: identity.sourceHash !== record.sourceHash || identity.testHash !== record.testHash || (latestRevision?.id || null) !== record.requirementRevisionId } });
+            const expected=record.reportJson?.executionOnly && record.reportJson.workspaceIdentity ? record.reportJson.workspaceIdentity : record;
+            res.json({ success: true, data: { ...projected, stale: identity.sourceHash !== expected.sourceHash || identity.testHash !== expected.testHash || (!record.reportJson?.executionOnly && (latestRevision?.id || null) !== record.requirementRevisionId) } });
         }),
         reportPdf: handler(async (req, res) => {
             const snapshot = await owned(req);

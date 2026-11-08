@@ -60,6 +60,9 @@ specs/
 
 # Local system-assessment verification artifacts
 /temp/system-assessment-*
+/temp/system-scalability-*
+/temp/system-automatic-browser/
+/prototype/
 /client/.evidence-review/
 /client/evidence-preview.html
 /server/src/tests/fixtures/system-assessment/.covai-system-test/

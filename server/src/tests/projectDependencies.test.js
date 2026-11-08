@@ -13,6 +13,22 @@ const fixture=(pkg={scripts:{dev:'vite'},devDependencies:{vite:'7'}})=>{
 };
 const tooling=root=>{fs.mkdirSync(path.join(root,'node_modules/vite'),{recursive:true});fs.writeFileSync(path.join(root,'node_modules/vite/package.json'),'{"name":"vite","type":"module","main":"index.js"}');fs.writeFileSync(path.join(root,'node_modules/vite/index.js'),'throw new Error("resolution must not execute application packages");');};
 afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+it('allows a queued preparation to recover after an earlier caller fails',async()=>{
+    const directory=fixture({});
+    let failFirst;
+    let markStarted;
+    const started=new Promise(resolve=>{markStarted=resolve;});
+    const firstRun=jest.fn(()=>new Promise(resolve=>{failFirst=()=>resolve({success:false,stderr:'temporary registry failure'});markStarted();}));
+    const secondRun=jest.fn(async()=>({success:true}));
+    const first=prepareProjectDependencies({directory,dependencies:{run:firstRun,verify:async()=>{}}});
+    const firstFailure=expect(first).rejects.toThrow('temporary registry failure');
+    const second=prepareProjectDependencies({directory,dependencies:{run:secondRun,verify:async()=>{}}});
+    await started;
+    failFirst();
+    await firstFailure;
+    await expect(second).resolves.toMatchObject({directory});
+    expect(secondRun).toHaveBeenCalledTimes(1);
+});
 it('copies job-local prepared dependencies into independent runs without sharing mutable files',async()=>{
     const first=fixture(),second=fixture();
     for(const root of [first,second])fs.writeFileSync(path.join(root,'package-lock.json'),'{}');

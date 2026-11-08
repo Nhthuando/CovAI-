@@ -232,7 +232,7 @@ export default function SystemTestWorkflow({
     });
 
     let active = true;
-    const query = new URLSearchParams({ executionMode:'full', reviewMode: 'scenario', scenarioIds: selectedKey, testFiles: fileKey });
+    const query = new URLSearchParams({ executionMode:'full', reviewMode: 'execution', scenarioIds: selectedKey, testFiles: fileKey });
     systemEvidenceRequest(snapshotId, `readiness?${query}`)
       .then(result => {
         if (active) {

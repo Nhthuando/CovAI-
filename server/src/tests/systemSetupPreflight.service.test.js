@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {it,expect,jest} from '@jest/globals';
-import {inspectSystemSetup,systemSetupConfig} from '../services/systemSetupPreflight.service.js';
+import {inspectSystemSetup,systemSetupConfig,saveSystemTestEnvironment} from '../services/systemSetupPreflight.service.js';
+import {parse as parseEnvironment} from 'dotenv';
 import {systemTestEnvironmentDirectory} from '../services/systemTestEnvironmentRoot.service.js';
 import {createSystemSetupControllers} from '../controllers/systemSetup.controller.js';
 
@@ -81,4 +82,58 @@ it('denies a foreign snapshot before inspecting files or probing Docker',async()
     const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
     await createSystemSetupControllers({db,dependencies:{checkDocker:probe}}).inspect({user:{id:'foreign'},params:{snapshotId:'snapshot'}},res);
     expect(res.status).toHaveBeenCalledWith(404);expect(probe).not.toHaveBeenCalled();
+});
+it('does not block selected application startup on an unused package credential',async()=>{
+    const root=fixture();
+    try {
+        write(root,'server/.env.test','STRIPE_SECRET_KEY=sandbox');
+        write(root,'tools/package.json',JSON.stringify({scripts:{start:'node index.js'}}));
+        write(root,'tools/index.js','if(!process.env.UNUSED_PROVIDER_TOKEN)throw Error();');
+        const report=await inspectSystemSetup({rootDir:root,dependencies});
+        expect(report.ready).toBe(true);
+        expect(report.environment.find(row=>row.name==='UNUSED_PROVIDER_TOKEN')).toMatchObject({status:'MAY_BE_NEEDED',required:false});
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('discovers package metadata even after the source context budget has been consumed',async()=>{
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'covai-large-preflight-'));
+    try {
+        for(let index=0;index<5;index++)write(root,`a-${index}.js`,'// filler\n'+' '.repeat(39000));
+        write(root,'web/package.json',JSON.stringify({scripts:{dev:'vite'},devDependencies:{vite:'7'}}));
+        const report=await inspectSystemSetup({rootDir:root,dependencies});
+        expect(report.packages).toEqual([{directory:'web',startScripts:['dev']}]);
+        expect(report.candidateConfig).toMatchObject({frontendOnly:true,unified:true});
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+const environmentDb=root=>({projectSnapshot:{findFirst:jest.fn(async()=>({id:'snapshot',projectId:'project',rootDir:root}))},project:{findFirst:jest.fn(async()=>({id:'project',ownerId:'owner',workspaceRevision:0}))},job:{findFirst:jest.fn(async()=>null)}});
+it('saves sandbox values from the dialog only into detected test environment files without returning secrets',async()=>{
+    const root=fixture(),db=environmentDb(root);
+    try {
+        write(root,'server/.env','STRIPE_SECRET_KEY=production-unchanged');
+        write(root,'server/.env.test','EXISTING_SETTING=preserved');
+        const result=await saveSystemTestEnvironment({snapshotId:'snapshot',userId:'owner',db,input:{expectedWorkspaceRevision:0,variables:[{envFile:'server/.env.test',name:'STRIPE_SECRET_KEY',value:'sandbox-test-key'}]},dependencies});
+        expect(result).toEqual({saved:1});
+        expect(JSON.stringify(result)).not.toContain('sandbox-test-key');
+        expect(parseEnvironment(fs.readFileSync(path.join(root,'server/.env.test')))).toEqual({EXISTING_SETTING:'preserved',STRIPE_SECRET_KEY:'sandbox-test-key'});
+        expect(fs.readFileSync(path.join(root,'server/.env'),'utf8')).toBe('STRIPE_SECRET_KEY=production-unchanged');
+        expect((await inspectSystemSetup({rootDir:root,dependencies})).ready).toBe(true);
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it.each([['server/.env','STRIPE_SECRET_KEY'],['server/.env.test','NODE_OPTIONS'],['client/.env.test','STRIPE_SECRET_KEY']])('rejects an unapproved credential destination %s:%s',async(envFile,name)=>{
+    const root=fixture();
+    try {
+        await expect(saveSystemTestEnvironment({snapshotId:'snapshot',userId:'owner',db:environmentDb(root),input:{expectedWorkspaceRevision:0,variables:[{envFile,name,value:'do-not-save'}]},dependencies})).rejects.toMatchObject({statusCode:422});
+        expect(fs.existsSync(path.join(root,envFile))).toBe(false);
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('refuses credential changes during active jobs, after source revision changes, or without owner approval capability',async()=>{
+    const root=fixture(),db=environmentDb(root),input={expectedWorkspaceRevision:0,variables:[{envFile:'server/.env.test',name:'STRIPE_SECRET_KEY',value:'do-not-save'}]};
+    try {
+        db.job.findFirst.mockResolvedValueOnce({id:'active'});
+        await expect(saveSystemTestEnvironment({snapshotId:'snapshot',userId:'owner',db,input,dependencies})).rejects.toMatchObject({statusCode:409});
+        await expect(saveSystemTestEnvironment({snapshotId:'snapshot',userId:'owner',db,input:{...input,expectedWorkspaceRevision:1},dependencies})).rejects.toMatchObject({statusCode:409});
+        db.project.findFirst.mockResolvedValue({id:'project',ownerId:'owner',workspaceRevision:0});
+        db.projectMember={findUnique:jest.fn(async()=>({role:'EDITOR'}))};
+        await expect(saveSystemTestEnvironment({snapshotId:'snapshot',userId:'editor',db,input,dependencies})).rejects.toMatchObject({statusCode:403});
+        expect(fs.existsSync(path.join(root,'server/.env.test'))).toBe(false);
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
 });

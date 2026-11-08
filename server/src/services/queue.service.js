@@ -1,6 +1,7 @@
 import { operationTimeout, operationCanceled } from './systemOperationError.service.js';
 import { acquireSnapshotLease } from './systemAssessmentWorkspace.service.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { queueWorkerConfig } from '../utils/queueWorkerConfig.js';
 import { Queue, Worker, FlowProducer } from 'bullmq';
 import { processChatContextMaintenance } from './chatMemoryMaintenance.service.js';
 import IORedis from 'ioredis';
@@ -274,7 +275,8 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
 };
 
 // Initialize Worker
-const worker = new Worker(
+const workerConfig=queueWorkerConfig();
+const worker = workerConfig.enabled ? new Worker(
   'covai-jobs',
   async (job) => {
     const { type, jobId, ...customData } = job.data;
@@ -320,16 +322,16 @@ const worker = new Worker(
       throw error; // Let BullMQ know it failed
     }
   },
-  { connection },
-);
+  { connection, concurrency:workerConfig.concurrency },
+) : null;
 
-worker.on('failed', (job, err) => {
+worker?.on('failed', (job, err) => {
   console.error(
     `[Queue] BullMQ reported Job ${job?.data?.jobId} failed with error: ${err.message}`,
   );
 });
 
-worker.on('error', (err) => {
+worker?.on('error', (err) => {
   if (process.env.NODE_ENV !== 'test') {
     console.error('[BullMQ Worker Error]', err.message);
   }

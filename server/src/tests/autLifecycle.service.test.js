@@ -45,6 +45,15 @@ afterEach(() => {
 });
 
 describe("autLifecycle.service", () => {
+  it('accepts an authenticated HTTP handshake only for an inferred readiness policy',async()=>{
+    const server=http.createServer((_req,res)=>{res.writeHead(401);res.end('Authentication required');});
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    try {
+      const port=server.address().port;
+      expect((await waitForHttpHealthy({port,timeoutMs:1000,allowHttpClientError:true})).status).toBe(401);
+      await expect(waitForHttpHealthy({port,timeoutMs:1000})).rejects.toThrow('status 401');
+    } finally {await new Promise(resolve=>server.close(resolve));}
+  });
   it('keeps the original startup error, strips ANSI and redacts credentials', () => {
     const message=formatAutStartupFailure('\x1b[31mError: Prisma initialization failed for secret-value\x1b[39m\n'+' at Module.load\n'.repeat(100),{DB_PASSWORD:'secret-value'});
     expect(message).toContain('Error: Prisma initialization failed for [redacted]');

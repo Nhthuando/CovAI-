@@ -15,6 +15,7 @@ import { prepareProjectDependencies, redactRuntimeOutput } from './projectDepend
 import { dockerRunner } from './dockerRunner.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { autStartupCommand } from "../utils/autStartupCommand.js";
+import { isolatedProcessEnvironment } from '../utils/isolatedProcessEnvironment.js';
 
 const safeAddJobLog = async (jobId, level, message) => {
   if (!jobId) return;
@@ -121,7 +122,7 @@ export const verifyHttpHealth = (port, pathName = "/", host = "127.0.0.1", timeo
 /** Wait for HTTP readiness after the port opens (dev servers may still be compiling). */
 export const waitForHttpHealthy = async ({
   port, healthPath = "/", timeoutMs = 45000, intervalMs = 500,
-  probeTimeoutMs = 5000, isExited = () => false, onRetry = async () => {}, allowHttpNotFound = false,
+  probeTimeoutMs = 5000, isExited = () => false, onRetry = async () => {}, allowHttpNotFound = false, allowHttpClientError = false,
 }) => {
   const deadline = Date.now() + timeoutMs;
   let result = { healthy: false, status: 0, error: "HTTP readiness timeout" };
@@ -130,7 +131,7 @@ export const waitForHttpHealthy = async ({
     if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
     result = await verifyHttpHealth(port, healthPath, "127.0.0.1", Math.max(1, Math.min(probeTimeoutMs, deadline - Date.now())));
     if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
-    if (result.healthy && (result.status < 400 || allowHttpNotFound && result.status===404)) return result;
+    if (result.healthy && (result.status < 400 || allowHttpNotFound && result.status===404 || allowHttpClientError && ![408,429].includes(result.status))) return result;
     if (result.status >= 400 && result.status < 500 && ![408, 429].includes(result.status)) break;
     if (attempts++ === 0) await onRetry(result);
     const remaining = deadline - Date.now();
@@ -282,7 +283,7 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
     command=`"${process.execPath}" "${cli}" db seed`;
   }
   await safeAddJobLog(jobId,'INFO',`[AUT Seed] Running ${seedScript} against the isolated test database...`);
-  const result=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command,forceHost:true,timeoutMs:60000,jobId,signal,env:{...runtime.env,...env,NODE_ENV:'test'}});
+  const result=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command,forceHost:true,isolatedEnv:true,timeoutMs:60000,jobId,signal,env:{...runtime.env,...env,NODE_ENV:'test'}});
   if(!result.success)throw new ServiceError(`Application seed failed. ${redactRuntimeOutput(result.stderr || result.stdout,env)}`,422);
   return {executed:true,success:true,script:seedScript};
 };
@@ -290,7 +291,7 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
 /**
  * Starts the application under test (AUT) web server and performs 2-tier healthcheck.
  */
-export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false }) => {
+export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false, allowHttpClientError = false }) => {
   if (signal?.aborted) throw new ServiceError('AUT startup canceled',409);
   const selected = !preferStart ? selectFrontendPackage({rootDir:snapshotDir}) : null;
   const candidateDirs = selected ? [path.relative(snapshotDir,selected)] : ["", "client", "frontend", "web", "ui", "app"];
@@ -328,7 +329,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
   if(needsBuild) {
     if(typeof chosenMetadata.scripts.build!=='string')throw new ServiceError('The application starts from build output but has no build script. Include a build script or a development server script.',422);
     await safeAddJobLog(jobId,'INFO','[AUT Lifecycle] Building application before preview/production startup...');
-    const built=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command:`${runtime.command} run build`,jobId,forceHost:true,timeoutMs:600000,signal,env:{...startupEnv,NODE_ENV:'development'}});
+    const built=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command:`${runtime.command} run build`,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,env:{...startupEnv,NODE_ENV:'development'}});
     if(!built.success)throw new ServiceError(`Application build failed. ${redactRuntimeOutput(built.stderr || built.stdout,startupEnv)}`,422);
   }
   if(signal?.aborted)throw new ServiceError('AUT startup canceled',409);
@@ -340,7 +341,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     windowsHide: true,
     cwd: chosenDir,
     env: {
-      ...process.env,
+      ...isolatedProcessEnvironment(),
       PORT: String(port),
       NODE_ENV: "development",
       BROWSER: "none",
@@ -392,7 +393,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
   try {
     httpResult = requireHealthy
       ? await waitForHttpHealthy({
-          port, healthPath, timeoutMs: Math.max(1, readinessDeadline - Date.now()), allowHttpNotFound,
+          port, healthPath, timeoutMs: Math.max(1, readinessDeadline - Date.now()), allowHttpNotFound, allowHttpClientError,
           isExited: () => serverExited,
           onRetry: result => safeAddJobLog(jobId, "INFO", `[AUT Healthcheck] Port ${port} is open; waiting for HTTP readiness (${result.error || `HTTP ${result.status}`})...`),
         })

@@ -5,11 +5,13 @@ import { containedPath, readFullSystemConfig, resolveSystemRepositoryRoot } from
 import { ServiceError } from '../utils/serviceError.js';
 import { validateFullSystemTest } from './systemTestEvidence.service.js';
 import { selectFrontendPackage } from './projectRuntimePlan.service.js';
+import { inspectSystemSetupSource } from './fullSystemSetup.service.js';
+import { inferFullSystemPlan } from './fullSystemPlan.service.js';
 
 export const discoverSystemAssessment = ({ rootDir, runner = 'playwright', executionMode = 'frontend' }) => {
     if (runner !== 'playwright') throw new ServiceError('Measured coverage currently supports Playwright only', 422);
     rootDir = resolveSystemRepositoryRoot(rootDir);
-    const config = executionMode === 'full' ? readFullSystemConfig(rootDir, { allowMissing: true }) : null;
+    const config = executionMode === 'full' ? readFullSystemConfig(rootDir, { allowMissing: true }) || inferFullSystemPlan(inspectSystemSetupSource(rootDir),{allowSchemaDraft:true}) : null;
     const discovered = scanSystemTestFiles(rootDir).playwrightFiles.map(file => file.filePath);
     const excludedTests = discovered.filter(file => /\.(jsx|tsx)$/.test(file)).map(filePath => ({ filePath, reason: 'Managed Playwright evidence supports JS/TS spec files without JSX syntax' }));
     const testFiles = discovered.filter(file => !/\.(jsx|tsx)$/.test(file)).filter(file => {

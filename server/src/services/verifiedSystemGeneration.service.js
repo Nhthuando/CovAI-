@@ -140,7 +140,7 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
         ? {type:'OBJECT',properties:{replacements:{type:'ARRAY',items:{type:'OBJECT',properties:{old:{type:'STRING'},new:{type:'STRING'}},required:['old','new']}}},required:['replacements']}
         : {type:'OBJECT',properties:{content:{type:'STRING'}},required:['content']};
       const selectorGuidance=patchMode ? '\nFor a strict-mode locator failure inside an assertion, replace only its locator expression, not the enclosing expect(), matcher, or expected value. Scope the locator to the actual dialog/row or use exact text matching where source supports it. For example, replace itemRow.getByText(expectedSubtotal) with itemRow.getByText(expectedSubtotal, { exact: true }); preserve the visibility assertion and expectedSubtotal.' : '';
-      const response=await generate(prompt+instruction+selectorGuidance,null,{responseMimeType:'application/json',responseSchema,temperature:0.2,maxOutputTokens:patchMode ? 4000 : 10000,
+      const response=await generate(prompt+instruction+selectorGuidance,null,{responseMimeType:'application/json',responseSchema,temperature:0.2,maxOutputTokens:patchMode ? 16000 : 32000,
         requestTimeoutMs:120000,totalTimeoutMs:300000,maxAttempts:3,
         onRetry:({attempt:retry,maxAttempts,waitMs,reason})=>onProgress(40+attempt*15,`Test generation AI ${reason}; retry ${retry}/${maxAttempts} in ${Math.ceil(waitMs/1000)}s`),
         onWait:({elapsedMs})=>onProgress(40+attempt*15,`Waiting for generated tests (${Math.round(elapsedMs/1000)}s)`),
@@ -508,7 +508,7 @@ Previous candidate (untrusted code): ${code}`;
     // Provider/quota failures must remain failures; do not silently save smoke tests.
     const response = await generate(correction, null, {
       responseMimeType: 'application/json', responseSchema,
-      temperature: 0.2, maxOutputTokens: 10000,
+      temperature: 0.2, maxOutputTokens: 32000,
       maxAttempts: 2, totalTimeoutMs: 150000,
     });
     code = extractSystemTestCode(response);

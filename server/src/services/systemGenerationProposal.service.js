@@ -37,7 +37,7 @@ export const createSystemGenerationDraft = async ({snapshotId,userId,framework,t
         for(const name of configNames)try{await fs.access(path.join(rootDir,name));existing.add(name);}catch(error){if(error.code!=='ENOENT')throw error;}
         let systemConfigExisted=true;
         try{await fs.access(path.join(rootDir,'.covai/system-test.json'));}catch(error){if(error.code!=='ENOENT')throw error;systemConfigExisted=false;}
-        const setup = executionMode==='full' ? await (dependencies.setup || ensureFullSystemSetup)({rootDir,dependencies:{generate:model ? (prompt,instruction,config)=>generateText(prompt,model,instruction,config) : generateText}}) : null;
+        const setup = executionMode==='full' ? await (dependencies.setup || ensureFullSystemSetup)({rootDir,model,dependencies:dependencies.generate?{generate:dependencies.generate}:{}}) : null;
         const generated = await (dependencies.generate || generateColdStartSystemTests)({rootDir,framework,targetRoutes,executionMode,model,requirements:revision?.contentJson||null});
         const filePath = framework==='cypress'?`cypress/e2e/covai-${suiteDigest(generated.code).slice(0,12)}.cy.js`:`tests/e2e/covai-${suiteDigest(generated.code).slice(0,12)}.spec.mjs`;
         if(signal?.aborted)throw new ServiceError('Generation canceled',409);
