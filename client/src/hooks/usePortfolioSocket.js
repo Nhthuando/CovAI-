@@ -207,9 +207,33 @@ export function usePortfolioSocket(userId) {
         };
       });
 
+      // Synchronize with general projects cache used by Layout.jsx
+      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((p) => {
+          if (p.id === projectId) {
+            return {
+              ...p,
+              ...(lifecycleStatus !== undefined && { lifecycleStatus }),
+              ...(isPinned !== undefined && { isPinned }),
+            };
+          }
+          return p;
+        });
+      });
+
+      if (projectId && lifecycleStatus !== undefined) {
+        window.dispatchEvent(
+          new CustomEvent("covai:project-status-updated", {
+            detail: { projectId, lifecycleStatus, isPinned },
+          })
+        );
+      }
+
       // Refetch whole portfolio to update executive KPIs and strict aggregations
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
+        queryClient.invalidateQueries({ queryKey: ["projects"] });
         queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
       }, 200);
     });

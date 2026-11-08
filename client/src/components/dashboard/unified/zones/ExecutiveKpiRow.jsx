@@ -44,7 +44,7 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
         label="Quality Health Score"
         icon={Activity}
         loading={loading}
-        delta={<DeltaIndicator delta={health.delta} />}
+        delta={<DeltaIndicator delta={health.delta} hasBaseline={hasBaseline} />}
         supporting={
           <div
             className="flex items-center justify-center pt-1"
@@ -147,7 +147,7 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
           <>
             <span>Multi-Layer Target</span>
             <span className="font-mono text-xs font-semibold text-[var(--ud-text)]">
-              {coverage.overall >= 75 ? "Target Met" : "Target: 75%+"}
+              {coverage.overall >= 80 ? "Target Met" : "Target: 80%+"}
             </span>
           </>
         }
