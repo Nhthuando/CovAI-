@@ -91,17 +91,15 @@ export default function IntegrationReportEmbed({
           const failScenarios = (e.scenarios || []).filter(
             (s) => s.status === "failed" || s.executionVerdict === "FAIL"
           ).length;
-          const isCovered =
-            e.status === "passed" ||
-            e.tested === true ||
-            e.passedCount > 0 ||
-            e.executedCount > 0 ||
-            passScenarios > 0 ||
-            (e.scenarios && e.scenarios.length > 0);
           const isFailed =
             e.status === "failed" ||
             e.failedCount > 0 ||
             failScenarios > 0;
+          const isCovered =
+            !isFailed &&
+            (e.status === "passed" ||
+              e.passedCount > 0 ||
+              passScenarios > 0);
           return {
             method: (e.method || "GET").toUpperCase(),
             path: e.fullPath || e.path || e.route || "/",
@@ -165,46 +163,50 @@ export default function IntegrationReportEmbed({
     routeMatrix.length ||
     0;
 
-  const totalTested = Math.max(
-    workspace?.summary?.testedApis || 0,
-    routeMatrix.filter((r) => r.status === "COVERED" || r.status === "PASS").length,
-    apiCoverage?.testedApis || 0
-  );
-
-  const totalUncovered = Math.max(0, totalDiscovered - totalTested);
-  const coverageRate =
-    totalDiscovered > 0 ? Math.round((totalTested / totalDiscovered) * 100) : 0;
-
   const coveredRoutes = routeMatrix.filter((r) => r.status === "COVERED" || r.status === "PASS");
   const uncoveredRoutes = routeMatrix.filter((r) => r.status === "UNCOVERED");
   const failedRoutes = routeMatrix.filter((r) => r.status === "FAILED" || r.status === "FAIL");
 
+  const totalTested = coveredRoutes.length;
+  const totalUncovered = Math.max(0, totalDiscovered - totalTested);
+  const coverageRate =
+    totalDiscovered > 0 ? Math.round((totalTested / totalDiscovered) * 100) : 0;
+
+  const executedPassCount = allScenarios.filter(
+    (s) => s.status === "passed" || s.executionVerdict === "PASS"
+  ).length;
+  const executedFailCount = allScenarios.filter(
+    (s) => s.status === "failed" || s.executionVerdict === "FAIL"
+  ).length;
+
   const totalExecuted = Math.max(
+    executedPassCount + executedFailCount,
     latestExecution?.totalTests || 0,
-    workspace?.summary?.totalTests || 0,
-    allScenarios.length,
-    totalScenarios
+    workspace?.summary?.totalTests || 0
   );
 
   const totalFailed =
-    latestExecution?.failedTests ??
-    workspace?.summary?.failedTests ??
-    overview?.failedScenariosCount ??
-    failureLogs.length;
+    executedFailCount > 0
+      ? executedFailCount
+      : (latestExecution?.failedTests ??
+          workspace?.summary?.failedTests ??
+          overview?.failedScenariosCount ??
+          failureLogs.length);
 
-  const totalPassed = Math.max(
-    0,
-    latestExecution?.passedTests ??
-    workspace?.summary?.passedTests ??
-    overview?.passedScenariosCount ??
-    (totalExecuted - totalFailed)
-  );
+  const totalPassed =
+    executedPassCount > 0
+      ? executedPassCount
+      : Math.max(
+          0,
+          latestExecution?.passedTests ??
+            workspace?.summary?.passedTests ??
+            overview?.passedScenariosCount ??
+            (totalExecuted - totalFailed)
+        );
 
   const passRate =
     totalExecuted > 0
       ? Math.round((totalPassed / totalExecuted) * 100)
-      : totalScenarios > 0 && totalFailed === 0
-      ? 100
       : 0;
 
   // Quality Health Score (0-100)
@@ -792,37 +794,65 @@ export default function IntegrationReportEmbed({
             </p>
 
             <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar pr-1">
-              {coveredRoutes.length === 0 ? (
+              {coveredRoutes.length === 0 && failedRoutes.length === 0 ? (
                 <div className="p-3 text-center text-xs text-[var(--color-text-muted)] italic">
-                  No covered endpoints found. Create test scenarios to cover your APIs.
+                  No executed endpoints found yet. Run All Tests to verify your APIs.
                 </div>
               ) : (
-                coveredRoutes.map((r, i) => {
-                  const methodClass = METHOD_STYLES[r.method] || METHOD_STYLES.DEFAULT;
-                  return (
-                    <div
-                      key={i}
-                      className="px-2.5 py-1.5 rounded bg-[var(--color-surface)] border border-emerald-500/20 flex items-center justify-between text-xs"
-                    >
-                      <div className="flex items-center gap-2 font-mono truncate">
-                        <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${methodClass}`}>
-                          {r.method}
-                        </span>
-                        <span className="font-semibold text-[var(--color-text)] truncate" title={r.path}>
-                          {r.path}
-                        </span>
+                <>
+                  {failedRoutes.map((r, i) => {
+                    const methodClass = METHOD_STYLES[r.method] || METHOD_STYLES.DEFAULT;
+                    return (
+                      <div
+                        key={`fail-${i}`}
+                        className="px-2.5 py-1.5 rounded bg-[var(--color-surface)] border border-rose-500/30 flex items-center justify-between text-xs"
+                      >
+                        <div className="flex items-center gap-2 font-mono truncate">
+                          <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${methodClass}`}>
+                            {r.method}
+                          </span>
+                          <span className="font-semibold text-[var(--color-text)] truncate" title={r.path}>
+                            {r.path}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 font-mono text-[10px]">
+                          <span className="text-[var(--color-text-secondary)]">
+                            {r.scenarioCount || 1} {r.scenarioCount === 1 ? "test" : "tests"}
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 font-bold">
+                            ✗ Failed ({r.failedCount || 1})
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0 font-mono text-[10px]">
-                        <span className="text-[var(--color-text-secondary)]">
-                          {r.scenarioCount || 1} {r.scenarioCount === 1 ? "test" : "tests"}
-                        </span>
-                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-[var(--color-success)] font-bold">
-                          ✓ Passed
-                        </span>
+                    );
+                  })}
+                  {coveredRoutes.map((r, i) => {
+                    const methodClass = METHOD_STYLES[r.method] || METHOD_STYLES.DEFAULT;
+                    return (
+                      <div
+                        key={`pass-${i}`}
+                        className="px-2.5 py-1.5 rounded bg-[var(--color-surface)] border border-emerald-500/20 flex items-center justify-between text-xs"
+                      >
+                        <div className="flex items-center gap-2 font-mono truncate">
+                          <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${methodClass}`}>
+                            {r.method}
+                          </span>
+                          <span className="font-semibold text-[var(--color-text)] truncate" title={r.path}>
+                            {r.path}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 font-mono text-[10px]">
+                          <span className="text-[var(--color-text-secondary)]">
+                            {r.scenarioCount || 1} {r.scenarioCount === 1 ? "test" : "tests"}
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-[var(--color-success)] font-bold">
+                            ✓ Passed
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })
+                    );
+                  })}
+                </>
               )}
             </div>
           </div>

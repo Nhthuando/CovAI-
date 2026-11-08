@@ -28,6 +28,8 @@ import {
   Clock,
   ArrowRight,
   FileCode,
+  Zap,
+  AlertCircle,
 } from "lucide-react";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -283,6 +285,10 @@ export default function IntegrationScenariosPane({
   generationHistory = [],
   executionHistory = [],
   onOpenHistory,
+  onRunEndpoint,
+  onRunScenario,
+  isRunningTests = false,
+  runningTargetKey = null,
 }) {
   const { showToast } = useToast();
   const [editorOpen, setEditorOpen] = useState(false);
@@ -416,8 +422,8 @@ export default function IntegrationScenariosPane({
           isValid: true,
           filePath: epSourceFile,
           scenarios: [],
-          testFileId: ep.id || epKey,
-          version: 1,
+          testFileId: aiTests[0]?.id || ep.id || epKey,
+          version: aiTests[0]?.version || 1,
           fileStatus: "READY",
         };
       }
@@ -453,27 +459,20 @@ export default function IntegrationScenariosPane({
         } else {
           // Merge execution & runtime data onto existing scenario
           const existing = map[epKey].scenarios[existingIdx];
-          if (s.actualStatus !== undefined && existing.actualStatus === undefined) {
+          if (s.actualStatus !== undefined) {
             existing.actualStatus = s.actualStatus;
           }
-          if (s.status && (!existing.status || existing.status === "not_run")) {
+          if (s.status && (s.status !== "not_run" || !existing.status)) {
             existing.status = s.status;
           }
-          if (s.runtimeEvidence && !existing.runtimeEvidence) {
+          if (s.runtimeEvidence) {
             existing.runtimeEvidence = s.runtimeEvidence;
           }
-          if (s.failureDiagnostics && !existing.failureDiagnostics) {
+          if (s.failureDiagnostics) {
             existing.failureDiagnostics = s.failureDiagnostics;
           }
         }
       });
-    });
-
-    // Prune endpoints with 0 scenarios so we do not render empty endpoint shells
-    Object.keys(map).forEach((k) => {
-      if (!map[k].scenarios || map[k].scenarios.length === 0) {
-        delete map[k];
-      }
     });
 
     // Level 3: Sort scenarios inside each endpoint according to the priority matrix
@@ -524,7 +523,7 @@ export default function IntegrationScenariosPane({
     });
   }, [scenariosByEndpoint]);
 
-  // Global counts for filter pills across all scenarios
+  // Global counts for filter pills across all scenarios & endpoints
   const filterCounts = useMemo(() => {
     let all = 0;
     let ai = 0;
@@ -534,10 +533,18 @@ export default function IntegrationScenariosPane({
     let happy = 0;
     let validation = 0;
     let disabled = 0;
+    let uncovered = 0;
+    let passed = 0;
+    let failed = 0;
 
     Object.values(scenariosByEndpoint).forEach((ep) => {
+      if (!ep.scenarios || ep.scenarios.length === 0) {
+        uncovered++;
+      }
       (ep.scenarios || []).forEach((s) => {
         all++;
+        if (s.status === "passed") passed++;
+        if (s.status === "failed") failed++;
         const origin = getScenarioOrigin(s);
         if (origin.type === "USER_ADDED") added++;
         else if (origin.type === "USER_MODIFIED") modified++;
@@ -551,7 +558,7 @@ export default function IntegrationScenariosPane({
       });
     });
 
-    return { all, ai, added, modified, existing, happy, validation, disabled };
+    return { all, ai, added, modified, existing, happy, validation, disabled, uncovered, passed, failed };
   }, [scenariosByEndpoint]);
 
   // Search & Filter predicate
@@ -559,6 +566,15 @@ export default function IntegrationScenariosPane({
     const classification = getScenarioClassification(scenario);
     const origin = getScenarioOrigin(scenario);
 
+    if (activeTypeFilter === "UNCOVERED") {
+      return false;
+    }
+    if (activeTypeFilter === "PASSED" && scenario.status !== "passed") {
+      return false;
+    }
+    if (activeTypeFilter === "FAILED" && scenario.status !== "failed") {
+      return false;
+    }
     if (activeTypeFilter === "AI" && origin.type !== "AI_GENERATED") {
       return false;
     }
@@ -603,6 +619,7 @@ export default function IntegrationScenariosPane({
 
   // Filtered 3-tier structure
   const filteredModules = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return modulesData
       .map((mod) => {
         const endpointsInMod = mod.endpoints
@@ -621,7 +638,28 @@ export default function IntegrationScenariosPane({
               filteredScenarios: matchingScenarios,
             };
           })
-          .filter((ep) => ep.filteredScenarios.length > 0 || (!searchQuery.trim() && activeTypeFilter === "ALL" && selectedEndpoint));
+          .filter((ep) => {
+            const isUncoveredEp = !ep.scenarios || ep.scenarios.length === 0;
+            const epMatchesSearch =
+              !q ||
+              (ep.path || "").toLowerCase().includes(q) ||
+              (ep.method || "").toLowerCase().includes(q) ||
+              (ep.module || "").toLowerCase().includes(q);
+
+            if (activeTypeFilter === "UNCOVERED") {
+              return isUncoveredEp && epMatchesSearch;
+            }
+            if (ep.filteredScenarios.length > 0) {
+              return true;
+            }
+            if (isUncoveredEp && activeTypeFilter === "ALL" && epMatchesSearch) {
+              return true;
+            }
+            if (!q && activeTypeFilter === "ALL" && selectedEndpoint) {
+              return true;
+            }
+            return false;
+          });
 
         return {
           ...mod,
@@ -805,9 +843,13 @@ export default function IntegrationScenariosPane({
 
   const handleAddClick = (data) => {
     if (readOnly) return;
+    const rawTestId = data.testFileId || aiTests[0]?.id || "default";
+    const cleanAiTestId = (typeof rawTestId === "string" && !rawTestId.includes("/") && !rawTestId.includes(" "))
+      ? rawTestId
+      : (aiTests[0]?.id || "default");
     setAddingToEndpoint({
-      aiTestId: data.testFileId,
-      expectedVersion: data.version,
+      aiTestId: cleanAiTestId,
+      expectedVersion: data.version || aiTests[0]?.version,
       endpoint: { method: data.method, path: data.path },
     });
     setEditingScenario(null);
@@ -927,7 +969,7 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
     setEditorLoading(true);
     try {
       if (addingToEndpoint) {
-        await mutateIntegrationScenarioApi({ snapshotId, aiTestId: addingToEndpoint.aiTestId, action: "ADD", code,
+        await mutateIntegrationScenarioApi({ snapshotId, aiTestId: addingToEndpoint.aiTestId || aiTests[0]?.id || "default", action: "ADD", code,
           endpoint: addingToEndpoint.endpoint, expectedVersion: addingToEndpoint.expectedVersion });
       } else if (editingScenario) {
         await mutateIntegrationScenarioApi({ snapshotId, aiTestId: editingScenario.aiTestId,
@@ -1276,6 +1318,57 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
             <span className="font-mono text-[10px] opacity-80">({filterCounts.all})</span>
           </button>
 
+          {filterCounts.uncovered > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTypeFilter("UNCOVERED")}
+              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+                activeTypeFilter === "UNCOVERED"
+                  ? "bg-amber-600 text-white border-transparent"
+                  : "bg-[var(--color-surface)] text-amber-600 dark:text-amber-400 border-[var(--color-border)] hover:bg-amber-500/10"
+              }`}
+              title="Endpoints without any test scenarios (Uncovered APIs)"
+            >
+              <AlertCircle size={11} />
+              <span>Uncovered APIs</span>
+              <span className="font-mono text-[10px] opacity-80">({filterCounts.uncovered})</span>
+            </button>
+          )}
+
+          {filterCounts.failed > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTypeFilter("FAILED")}
+              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+                activeTypeFilter === "FAILED"
+                  ? "bg-rose-600 text-white border-transparent"
+                  : "bg-[var(--color-surface)] text-rose-600 dark:text-rose-400 border-[var(--color-border)] hover:bg-rose-500/10"
+              }`}
+              title="Scenarios that failed during test execution"
+            >
+              <XCircle size={11} />
+              <span>Failed</span>
+              <span className="font-mono text-[10px] opacity-80">({filterCounts.failed})</span>
+            </button>
+          )}
+
+          {filterCounts.passed > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTypeFilter("PASSED")}
+              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+                activeTypeFilter === "PASSED"
+                  ? "bg-emerald-600 text-white border-transparent"
+                  : "bg-[var(--color-surface)] text-emerald-600 dark:text-emerald-400 border-[var(--color-border)] hover:bg-emerald-500/10"
+              }`}
+              title="Scenarios that passed during test execution"
+            >
+              <CheckCircle2 size={11} />
+              <span>Passed</span>
+              <span className="font-mono text-[10px] opacity-80">({filterCounts.passed})</span>
+            </button>
+          )}
+
           {filterCounts.existing > 0 && (
             <button
               type="button"
@@ -1565,6 +1658,12 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                         const isEpCollapsed = searchQuery.trim() ? false : collapsedEndpoints.has(epKey);
                         const methodClass = METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
 
+                        const epAllScenarios = ep.scenarios || [];
+                        const isUncoveredEndpoint = epAllScenarios.length === 0;
+                        const epPassedCount = epAllScenarios.filter((s) => s.status === "passed").length;
+                        const epFailedCount = epAllScenarios.filter((s) => s.status === "failed").length;
+                        const isRunningThisEndpoint = isRunningTests && runningTargetKey === epKey;
+
                         const epEnabledScenarios = (ep.filteredScenarios || []).filter((s) => s.enabled).map((s) => s.id);
                         const epSelectedCount = epEnabledScenarios.filter((id) => selectedTestIds.includes(id)).length;
                         const isAllEpSelected = epEnabledScenarios.length > 0 && epSelectedCount === epEnabledScenarios.length;
@@ -1578,7 +1677,13 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                           /* LEVEL 2: ENDPOINT CARD */
                           <div
                             key={epKey}
-                            className="border border-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)] shadow-xs transition-colors overflow-hidden"
+                            className={`border rounded-[var(--radius-md)] bg-[var(--color-surface)] shadow-xs transition-colors overflow-hidden ${
+                              isUncoveredEndpoint
+                                ? "border-amber-500/30"
+                                : epFailedCount > 0
+                                  ? "border-rose-500/35"
+                                  : "border-[var(--color-border)]"
+                            }`}
                           >
                             {/* Endpoint Header */}
                             <div
@@ -1607,27 +1712,50 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                 <span className="font-mono text-xs font-semibold text-[var(--color-text)] truncate" title={ep.path}>
                                   {ep.path}
                                 </span>
+
+                                {/* Endpoint Coverage / Pass / Fail Badge */}
+                                {isUncoveredEndpoint ? (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0"
+                                    title="Chưa có testcase cho endpoint này"
+                                  >
+                                    Uncovered (0 tests)
+                                  </span>
+                                ) : epFailedCount > 0 ? (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0 flex items-center gap-1"
+                                    title={`${epFailedCount} kịch bản thất bại`}
+                                  >
+                                    <XCircle size={10} />
+                                    <span>
+                                      {epFailedCount} Failed{epPassedCount > 0 ? ` · ${epPassedCount} Passed` : ""}
+                                    </span>
+                                  </span>
+                                ) : epPassedCount > 0 ? (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0 flex items-center gap-1"
+                                    title={`Tất cả ${epPassedCount} kịch bản đã chạy đều Pass`}
+                                  >
+                                    <CheckCircle2 size={10} />
+                                    <span>{epPassedCount} Passed</span>
+                                  </span>
+                                ) : null}
                               </div>
 
-                              <div className="flex items-center gap-2.5 shrink-0 text-xs">
+                              <div className="flex items-center gap-2 shrink-0 text-xs">
                                 {isEpCollapsed && hasEpEmphasized && (
                                   <span
                                     className="w-2 h-2 rounded-full bg-amber-400 dark:bg-amber-400/90 shrink-0 shadow-xs ring-2 ring-amber-400/20"
                                     title="Contains emphasized items"
                                   />
                                 )}
-                                <span className="font-mono text-[11px] text-[var(--color-text-muted)]">
-                                  {epSelectedCount}/{ep.filteredScenarios.length} selected
-                                </span>
-                                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleAddClick(ep)}
-                                    className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
-                                    title={`Add scenario to ${epKey}`}
-                                  >
-                                    <Plus size={13} />
-                                  </button>
+                                {!isUncoveredEndpoint && (
+                                  <span className="font-mono text-[11px] text-[var(--color-text-muted)]">
+                                    {epSelectedCount}/{ep.filteredScenarios.length} selected
+                                  </span>
+                                )}
+                                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                  {/* Generate Testcase Button per Endpoint */}
                                   {onGenerateThisEndpoint && (
                                     <button
                                       type="button"
@@ -1636,21 +1764,48 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                         onGenerateThisEndpoint(epKey);
                                       }}
                                       disabled={!canGenerate || isGenerating}
-                                      className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-50"
-                                      title={`Regenerate scenarios for ${epKey}`}
+                                      className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer disabled:opacity-50 ${
+                                        isUncoveredEndpoint
+                                          ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)] hover:text-white"
+                                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30"
+                                      }`}
+                                      title={`Sinh kịch bản kiểm thử AI cho ${epKey}`}
                                     >
-                                      <RefreshCw
-                                        size={12}
-                                        className={
-                                          isGenerating && generatingEndpointKey === epKey
-                                            ? "animate-spin text-[var(--color-primary)]"
-                                            : isGenerating && !generatingEndpointKey
-                                            ? "animate-spin text-[var(--color-primary)] opacity-50"
-                                            : ""
-                                        }
-                                      />
+                                      {isGenerating && generatingEndpointKey === epKey ? (
+                                        <RefreshCw size={11} className="animate-spin text-[var(--color-primary)]" />
+                                      ) : (
+                                        <Zap size={11} className="text-amber-500" />
+                                      )}
+                                      <span>{isUncoveredEndpoint ? "Generate Test" : "Generate AI"}</span>
                                     </button>
                                   )}
+
+                                  {/* Rerun Endpoint Button (only runs this endpoint's scenarios) */}
+                                  {!isUncoveredEndpoint && onRunEndpoint && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onRunEndpoint(ep)}
+                                      disabled={isRunningTests || isApprovingAndRunning}
+                                      className="px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 transition-colors cursor-pointer disabled:opacity-50"
+                                      title={`Chạy lại riêng các kịch bản của endpoint ${epKey}`}
+                                    >
+                                      <RefreshCw
+                                        size={10}
+                                        className={isRunningThisEndpoint ? "animate-spin text-[var(--color-primary)]" : ""}
+                                      />
+                                      <span>Rerun</span>
+                                    </button>
+                                  )}
+
+                                  {/* Add Manual Scenario Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddClick(ep)}
+                                    className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
+                                    title={`Thêm kịch bản thủ công cho ${epKey}`}
+                                  >
+                                    <Plus size={13} />
+                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -1658,163 +1813,262 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                             {/* LEVEL 3: SCENARIOS (Sorted by Priority Matrix) */}
                             {!isEpCollapsed && (
                               <div className="divide-y divide-[var(--color-border)]/60">
-                                {ep.filteredScenarios.map((scenario) => {
-                                  const isProcessing = processingScenarioId === scenario.id;
-                                  const isSelected = selectedTestIds.includes(scenario.id);
-                                  const isMenuOpen = activeMenuScenarioId === scenario.id;
-                                  const classification = getScenarioClassification(scenario);
-
-                                  return (
-                                    <div
-                                      key={scenario.id}
-                                      className={`px-3 py-1.5 flex items-center justify-between gap-3 text-xs transition-colors group relative ${
-                                        isMenuOpen ? "z-30" : "z-1"
-                                      } ${
-                                        !scenario.enabled
-                                          ? "bg-[var(--color-bg)]/40 opacity-60"
-                                          : !isSelected
-                                            ? "bg-[var(--color-surface)] opacity-75 hover:opacity-100"
-                                            : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)]"
-                                      }`}
-                                    >
-                                      {/* Left: Checkbox & Priority Badge & Clickable Title */}
-                                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                        <input
-                                          type="checkbox"
-                                          checked={isSelected}
-                                          onChange={(e) => {
-                                            if (e.target.checked) {
-                                              setSelectedTestIds((prev) => [...prev, scenario.id]);
-                                            } else {
-                                              setSelectedTestIds((prev) => prev.filter((x) => x !== scenario.id));
-                                            }
+                                {ep.filteredScenarios.length === 0 ? (
+                                  <div className="px-3.5 py-2.5 bg-amber-500/[0.03] flex items-center justify-between gap-3 text-xs">
+                                    <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
+                                      <AlertCircle size={13} className="text-amber-500 shrink-0" />
+                                      <span>
+                                        Chưa có kịch bản kiểm thử nào cho endpoint{" "}
+                                        <code className="font-mono font-semibold text-[var(--color-text)]">{epKey}</code>.
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      {onGenerateThisEndpoint && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setGeneratingEndpointKey(epKey);
+                                            onGenerateThisEndpoint(epKey);
                                           }}
-                                          onClick={(e) => e.stopPropagation()}
-                                          disabled={!scenario.enabled || isProcessing}
-                                          className="w-3.5 h-3.5 rounded cursor-pointer accent-[var(--color-primary)] shrink-0"
-                                        />
-
-                                        <div
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (!isProcessing) {
-                                              handleOpenEditorForScenario(scenario);
-                                            }
-                                          }}
-                                          className="flex items-center gap-2 min-w-0 truncate flex-1 cursor-pointer group/title select-none py-0.5"
-                                          title="Click scenario to edit"
+                                          disabled={!canGenerate || isGenerating}
+                                          className="px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-2xs"
                                         >
-                                          {/* Priority Matrix Badge */}
-                                          {scenario.enabled && (
+                                          {isGenerating && generatingEndpointKey === epKey ? (
+                                            <RefreshCw size={11} className="animate-spin" />
+                                          ) : (
+                                            <Zap size={11} />
+                                          )}
+                                          <span>Generate Testcase</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAddClick(ep)}
+                                        className="px-2 py-1 rounded text-[11px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <Plus size={11} />
+                                        <span>Add Scenario</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  ep.filteredScenarios.map((scenario) => {
+                                    const isProcessing = processingScenarioId === scenario.id;
+                                    const isSelected = selectedTestIds.includes(scenario.id);
+                                    const isMenuOpen = activeMenuScenarioId === scenario.id;
+                                    const classification = getScenarioClassification(scenario);
+                                    const isRunningThisScenario =
+                                      isRunningTests &&
+                                      (runningTargetKey === scenario.id || runningTargetKey === scenario.testName);
+
+                                    return (
+                                      <div
+                                        key={scenario.id}
+                                        className={`px-3 py-1.5 flex items-center justify-between gap-3 text-xs transition-colors group relative ${
+                                          isMenuOpen ? "z-30" : "z-1"
+                                        } ${
+                                          !scenario.enabled
+                                            ? "bg-[var(--color-bg)]/40 opacity-60"
+                                            : !isSelected
+                                              ? "bg-[var(--color-surface)] opacity-75 hover:opacity-100"
+                                              : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)]"
+                                        }`}
+                                      >
+                                        {/* Left: Checkbox & Priority Badge & Clickable Title */}
+                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedTestIds((prev) => [...prev, scenario.id]);
+                                              } else {
+                                                setSelectedTestIds((prev) => prev.filter((x) => x !== scenario.id));
+                                              }
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            disabled={!scenario.enabled || isProcessing}
+                                            className="w-3.5 h-3.5 rounded cursor-pointer accent-[var(--color-primary)] shrink-0"
+                                          />
+
+                                          <div
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (!isProcessing) {
+                                                handleOpenEditorForScenario(scenario);
+                                              }
+                                            }}
+                                            className="flex items-center gap-2 min-w-0 truncate flex-1 cursor-pointer group/title select-none py-0.5"
+                                            title="Click scenario to edit"
+                                          >
+                                            {/* Priority Matrix Badge */}
+                                            {scenario.enabled && (
+                                              <span
+                                                className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border shrink-0 ${classification.badgeStyle}`}
+                                              >
+                                                {classification.label}
+                                              </span>
+                                            )}
+
+                                            {/* Scenario Title */}
                                             <span
-                                              className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border shrink-0 ${classification.badgeStyle}`}
+                                              className={`truncate transition-colors ${
+                                                !scenario.enabled
+                                                  ? "line-through text-[var(--color-text-muted)]"
+                                                  : isSelected
+                                                    ? "font-medium text-[var(--color-text)] group-hover/title:text-[var(--color-primary)] group-hover/title:underline underline-offset-2"
+                                                    : "text-[var(--color-text-secondary)] group-hover/title:text-[var(--color-primary)] group-hover/title:underline underline-offset-2"
+                                              }`}
+                                              title={scenario.testName}
                                             >
-                                              {classification.label}
+                                              {scenario.testName}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Right: Milestone Badge (AI, A, M, P) + Status Indicator + Rerun + Actions */}
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          {/* Execution status badge */}
+                                          {scenario.status === "passed" && (
+                                            <span
+                                              className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0 font-semibold flex items-center gap-1"
+                                              title="Test passed successfully"
+                                            >
+                                              <CheckCircle2 size={10} />
+                                              <span>Passed{scenario.actualStatus ? ` (${scenario.actualStatus})` : ""}</span>
+                                            </span>
+                                          )}
+                                          {scenario.status === "failed" && (
+                                            <span
+                                              className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0 font-semibold flex items-center gap-1"
+                                              title={
+                                                scenario.failureDiagnostics?.assertionSummary ||
+                                                scenario.failureDiagnostics?.expectedVsReceived
+                                                  ? `Expected ${scenario.failureDiagnostics.expectedVsReceived.expected}, Received ${scenario.failureDiagnostics.expectedVsReceived.received}`
+                                                  : "Test execution failed"
+                                              }
+                                            >
+                                              <XCircle size={10} />
+                                              <span>Failed{scenario.actualStatus ? ` (${scenario.actualStatus})` : ""}</span>
                                             </span>
                                           )}
 
-                                          {/* Scenario Title */}
-                                          <span
-                                            className={`truncate transition-colors ${
-                                              !scenario.enabled
-                                                ? "line-through text-[var(--color-text-muted)]"
-                                                : isSelected
-                                                  ? "font-medium text-[var(--color-text)] group-hover/title:text-[var(--color-primary)] group-hover/title:underline underline-offset-2"
-                                                  : "text-[var(--color-text-secondary)] group-hover/title:text-[var(--color-primary)] group-hover/title:underline underline-offset-2"
-                                            }`}
-                                            title={scenario.testName}
-                                          >
-                                            {scenario.testName}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      {/* Right: Milestone Badge (AI, A, M, P) + Status Indicator + Actions */}
-                                      <div className="flex items-center gap-2 shrink-0">
-                                        {/* Execution status badge */}
-                                        {scenario.status === "passed" && (
-                                          <span
-                                            className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0 font-semibold flex items-center gap-1"
-                                            title="Test passed successfully"
-                                          >
-                                            <CheckCircle2 size={10} />
-                                            <span>Passed{scenario.actualStatus ? ` (${scenario.actualStatus})` : ""}</span>
-                                          </span>
-                                        )}
-                                        {scenario.status === "failed" && (
-                                          <span
-                                            className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0 font-semibold flex items-center gap-1"
-                                            title="Test execution failed"
-                                          >
-                                            <XCircle size={10} />
-                                            <span>Failed{scenario.actualStatus ? ` (${scenario.actualStatus})` : ""}</span>
-                                          </span>
-                                        )}
-
-                                        {/* Right-aligned short Git-style Milestone Badge */}
-                                        {(() => {
-                                          const originMeta = getScenarioOrigin(scenario);
-                                          return (
-                                            <span
-                                              className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded border shrink-0 cursor-default ${originMeta.badgeStyle}`}
-                                              title={originMeta.tooltip}
-                                            >
-                                              {originMeta.badge}
-                                            </span>
-                                          );
-                                        })()}
-
-                                        {/* Disabled indicator */}
-                                        {!scenario.enabled && (
-                                          <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] shrink-0">
-                                            Disabled
-                                          </span>
-                                        )}
-
-                                        {/* Skipped indicator */}
-                                        {scenario.enabled && !isSelected && (
-                                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/20 shrink-0">
-                                            ○ Skipped
-                                          </span>
-                                        )}
-
-                                        {/* Processing indicator */}
-                                        {isProcessing && (
-                                          <span className="flex items-center gap-1 text-[11px] text-[var(--color-primary)] font-mono animate-pulse mr-1">
-                                            <RefreshCw size={11} className="animate-spin" />
-                                            <span>Processing...</span>
-                                          </span>
-                                        )}
-
-                                        {/* Context Menu Dropdown */}
-                                        {!isApproved && (
-                                          <div className="relative shrink-0" data-context-menu>
+                                          {/* Single-Scenario Rerun Button */}
+                                          {onRunScenario && scenario.enabled && (
                                             <button
                                               type="button"
-                                              disabled={readOnly || isProcessing}
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                setActiveMenuScenarioId(isMenuOpen ? null : scenario.id);
+                                                onRunScenario(ep, {
+                                                  ...scenario,
+                                                  title: scenario.testName || scenario.title,
+                                                });
                                               }}
-                                              className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
-                                              title="More options"
+                                              disabled={isRunningTests || isApprovingAndRunning || isProcessing}
+                                              className="px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 transition-colors cursor-pointer disabled:opacity-50"
+                                              title={`Chạy lại riêng kịch bản: ${scenario.testName}`}
                                             >
-                                              <MoreHorizontal size={14} />
+                                              <RefreshCw
+                                                size={10}
+                                                className={isRunningThisScenario ? "animate-spin text-[var(--color-primary)]" : ""}
+                                              />
+                                              <span>Rerun</span>
                                             </button>
+                                          )}
 
-                                            {isMenuOpen && (
-                                              <div className="absolute right-0 top-full mt-1 z-50 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-sm)] shadow-lg py-1 min-w-[170px] font-sans">
-                                                {/* Milestone Header */}
-                                                {(() => {
-                                                  const originMeta = getScenarioOrigin(scenario);
-                                                  return (
-                                                    <div className="px-3 py-1.5 border-b border-[var(--color-border)] text-[10px] font-mono bg-[var(--color-surface-secondary)]/50">
-                                                      <div className="font-semibold text-[var(--color-text)]">{originMeta.label}</div>
-                                                    </div>
-                                                  );
-                                                })()}
+                                          {/* Right-aligned short Git-style Milestone Badge */}
+                                          {(() => {
+                                            const originMeta = getScenarioOrigin(scenario);
+                                            return (
+                                              <span
+                                                className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded border shrink-0 cursor-default ${originMeta.badgeStyle}`}
+                                                title={originMeta.tooltip}
+                                              >
+                                                {originMeta.badge}
+                                              </span>
+                                            );
+                                          })()}
 
-                                                {getScenarioOrigin(scenario).type === "USER_MODIFIED" && (
+                                          {/* Telemetry Badge if AI generated */}
+                                          {scenario.telemetry && (
+                                            <span
+                                              className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0 inline-flex items-center gap-1"
+                                              title={`AI Generation: ${scenario.telemetry.durationSeconds || "0.0"}s · ${scenario.telemetry.tokens || 0} tokens`}
+                                            >
+                                              <Clock size={9} />
+                                              <span>{scenario.telemetry.durationSeconds}s</span>
+                                              <span className="opacity-40">•</span>
+                                              <Zap size={9} className="text-amber-400" />
+                                              <span>{scenario.telemetry.tokens} tok</span>
+                                            </span>
+                                          )}
+
+                                          {/* Disabled indicator */}
+                                          {!scenario.enabled && (
+                                            <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] shrink-0">
+                                              Disabled
+                                            </span>
+                                          )}
+
+                                          {/* Skipped indicator */}
+                                          {scenario.enabled && !isSelected && (
+                                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/20 shrink-0">
+                                              ○ Skipped
+                                            </span>
+                                          )}
+
+                                          {/* Processing indicator */}
+                                          {isProcessing && (
+                                            <span className="flex items-center gap-1 text-[11px] text-[var(--color-primary)] font-mono animate-pulse mr-1">
+                                              <RefreshCw size={11} className="animate-spin" />
+                                              <span>Processing...</span>
+                                            </span>
+                                          )}
+
+                                          {/* Context Menu Dropdown */}
+                                          {!isApproved && (
+                                            <div className="relative shrink-0" data-context-menu>
+                                              <button
+                                                type="button"
+                                                disabled={readOnly || isProcessing}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setActiveMenuScenarioId(isMenuOpen ? null : scenario.id);
+                                                }}
+                                                className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
+                                                title="More options"
+                                              >
+                                                <MoreHorizontal size={14} />
+                                              </button>
+
+                                              {isMenuOpen && (
+                                                <div className="absolute right-0 top-full mt-1 z-50 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-sm)] shadow-lg py-1 min-w-[170px] font-sans">
+                                                  {/* Milestone Header */}
+                                                  {(() => {
+                                                    const originMeta = getScenarioOrigin(scenario);
+                                                    return (
+                                                      <div className="px-3 py-1.5 border-b border-[var(--color-border)] text-[10px] font-mono bg-[var(--color-surface-secondary)]/50">
+                                                        <div className="font-semibold text-[var(--color-text)]">{originMeta.label}</div>
+                                                      </div>
+                                                    );
+                                                  })()}
+
+                                                  {getScenarioOrigin(scenario).type === "USER_MODIFIED" && (
+                                                    <button
+                                                      type="button"
+                                                      disabled={readOnly || isProcessing}
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleAction("REGENERATE", scenario);
+                                                      }}
+                                                      className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 flex items-center gap-2 cursor-pointer transition-colors"
+                                                      title="Revert scenario back to original AI baseline code"
+                                                    >
+                                                      <RefreshCw size={12} />
+                                                      <span>Revert to AI Baseline</span>
+                                                    </button>
+                                                  )}
+
                                                   <button
                                                     type="button"
                                                     disabled={readOnly || isProcessing}
@@ -1822,67 +2076,53 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                                       e.stopPropagation();
                                                       handleAction("REGENERATE", scenario);
                                                     }}
-                                                    className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 flex items-center gap-2 cursor-pointer transition-colors"
-                                                    title="Revert scenario back to original AI baseline code"
+                                                    className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] flex items-center gap-2 cursor-pointer transition-colors"
                                                   >
-                                                    <RefreshCw size={12} />
-                                                    <span>Revert to AI Baseline</span>
+                                                    <RefreshCw
+                                                      size={12}
+                                                      className={
+                                                        isProcessing
+                                                          ? "animate-spin text-[var(--color-primary)]"
+                                                          : "text-[var(--color-text-muted)]"
+                                                      }
+                                                    />
+                                                    <span>Regenerate (AI)</span>
                                                   </button>
-                                                )}
-
-                                                <button
-                                                  type="button"
-                                                  disabled={readOnly || isProcessing}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleAction("REGENERATE", scenario);
-                                                  }}
-                                                  className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] flex items-center gap-2 cursor-pointer transition-colors"
-                                                >
-                                                  <RefreshCw
-                                                    size={12}
-                                                    className={
-                                                      isProcessing
-                                                        ? "animate-spin text-[var(--color-primary)]"
-                                                        : "text-[var(--color-text-muted)]"
-                                                    }
-                                                  />
-                                                  <span>Regenerate (AI)</span>
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  disabled={readOnly || isProcessing}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleAction("TOGGLE", scenario);
-                                                  }}
-                                                  className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] flex items-center gap-2 cursor-pointer transition-colors"
-                                                >
-                                                  <Power size={12} className="text-[var(--color-text-muted)]" />
-                                                  <span>{scenario.enabled ? "Disable" : "Enable"}</span>
-                                                </button>
-                                                <div className="my-1 border-t border-[var(--color-border)]" />
-                                                <button
-                                                  type="button"
-                                                  disabled={readOnly || isProcessing}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setActiveMenuScenarioId(null);
-                                                    setDeleteTarget(scenario);
-                                                  }}
-                                                  className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 flex items-center gap-2 cursor-pointer transition-colors"
-                                                >
-                                                  <Trash2 size={12} />
-                                                  <span>Delete</span>
-                                                </button>
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
+                                                  <button
+                                                    type="button"
+                                                    disabled={readOnly || isProcessing}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleAction("TOGGLE", scenario);
+                                                    }}
+                                                    className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] flex items-center gap-2 cursor-pointer transition-colors"
+                                                  >
+                                                    <Power size={12} className="text-[var(--color-text-muted)]" />
+                                                    <span>{scenario.enabled ? "Disable" : "Enable"}</span>
+                                                  </button>
+                                                  <div className="my-1 border-t border-[var(--color-border)]" />
+                                                  <button
+                                                    type="button"
+                                                    disabled={readOnly || isProcessing}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setActiveMenuScenarioId(null);
+                                                      setDeleteTarget(scenario);
+                                                    }}
+                                                    className="w-full text-left px-3 py-1.5 text-xs text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 flex items-center gap-2 cursor-pointer transition-colors"
+                                                  >
+                                                    <Trash2 size={12} />
+                                                    <span>Delete</span>
+                                                  </button>
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
                                       </div>
-                                    </div>
-                                  );
-                                })}
+                                    );
+                                  })
+                                )}
                               </div>
                             )}
                           </div>

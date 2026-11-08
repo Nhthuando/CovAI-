@@ -1,5 +1,5 @@
-import { editorAwareFetch } from './editorAwareRequest';
-import { getAIModelHeaders } from './aiModel.service.js';
+import { editorAwareFetch } from "./editorAwareRequest";
+import { getAIModelHeaders } from "./aiModel.service.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -93,11 +93,14 @@ export async function uploadZipApi(projectId, file) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/upload-zip`, {
-    method: "POST",
-    headers,
-    body: formData,
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/upload-zip`,
+    {
+      method: "POST",
+      headers,
+      body: formData,
+    },
+  );
   return handleResponse(res);
 }
 
@@ -166,7 +169,12 @@ export function getFileContentFromCache(projectId, filePath, snapshotId = "") {
   return null;
 }
 
-export function setFileContentToCache(projectId, filePath, data, snapshotId = "") {
+export function setFileContentToCache(
+  projectId,
+  filePath,
+  data,
+  snapshotId = "",
+) {
   if (!projectId || !filePath || !data) return;
   const key = makeCacheKey(projectId, filePath, snapshotId);
   fileContentCache.set(key, data);
@@ -186,21 +194,29 @@ export function invalidateFileContentCache(projectId, filePath = null) {
     try {
       for (let i = sessionStorage.length - 1; i >= 0; i--) {
         const k = sessionStorage.key(i);
-        if (k && k.startsWith(`${CACHE_PREFIX}${projectId}:`)) sessionStorage.removeItem(k);
+        if (k && k.startsWith(`${CACHE_PREFIX}${projectId}:`))
+          sessionStorage.removeItem(k);
       }
     } catch (_) {}
     return;
   }
   const normPath = filePath.replace(/\\/g, "/");
   for (const key of fileContentCache.keys()) {
-    if (key.startsWith(`${projectId}:`) && (key.endsWith(`:${normPath}`) || key.includes(`:${normPath}/`))) {
+    if (
+      key.startsWith(`${projectId}:`) &&
+      (key.endsWith(`:${normPath}`) || key.includes(`:${normPath}/`))
+    ) {
       fileContentCache.delete(key);
     }
   }
   try {
     for (let i = sessionStorage.length - 1; i >= 0; i--) {
       const k = sessionStorage.key(i);
-      if (k && k.startsWith(`${CACHE_PREFIX}${projectId}:`) && (k.endsWith(`:${normPath}`) || k.includes(`:${normPath}/`))) {
+      if (
+        k &&
+        k.startsWith(`${CACHE_PREFIX}${projectId}:`) &&
+        (k.endsWith(`:${normPath}`) || k.includes(`:${normPath}/`))
+      ) {
         sessionStorage.removeItem(k);
       }
     }
@@ -208,7 +224,8 @@ export function invalidateFileContentCache(projectId, filePath = null) {
 }
 
 export async function getFileContentApi(projectId, filePath, options = {}) {
-  const { snapshotId, signal, forceFresh } = typeof options === "string" ? { snapshotId: options } : options || {};
+  const { snapshotId, signal, forceFresh } =
+    typeof options === "string" ? { snapshotId: options } : options || {};
 
   if (!forceFresh) {
     const cached = getFileContentFromCache(projectId, filePath, snapshotId);
@@ -231,68 +248,151 @@ export async function getFileContentApi(projectId, filePath, options = {}) {
   return data;
 }
 
-export async function updateFileContentApi(projectId, filePath, content, { snapshotId, expectedVersion, expectedWorkspaceRevision, requestId = crypto.randomUUID() } = {}) {
-  const { saveActiveCollaborativeFile } = await import('../lib/editor/editorModelRegistry');
-  const live = await saveActiveCollaborativeFile(projectId, snapshotId, filePath, content);
+export async function updateFileContentApi(
+  projectId,
+  filePath,
+  content,
+  {
+    snapshotId,
+    expectedVersion,
+    expectedWorkspaceRevision,
+    requestId = crypto.randomUUID(),
+  } = {},
+) {
+  const { saveActiveCollaborativeFile } =
+    await import("../lib/editor/editorModelRegistry");
+  const live = await saveActiveCollaborativeFile(
+    projectId,
+    snapshotId,
+    filePath,
+    content,
+  );
   if (live) return live;
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/file-content`, {
-    method: "PUT",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ path: filePath, content, snapshotId, expectedVersion, expectedWorkspaceRevision, requestId }),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/file-content`,
+    {
+      method: "PUT",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        path: filePath,
+        content,
+        snapshotId,
+        expectedVersion,
+        expectedWorkspaceRevision,
+        requestId,
+      }),
+    },
+  );
   const data = await handleResponse(res);
   if (data?.data) {
     setFileContentToCache(projectId, filePath, data.data, snapshotId);
   } else {
-    const existing = getFileContentFromCache(projectId, filePath, snapshotId) || {};
-    setFileContentToCache(projectId, filePath, {
-      ...existing,
-      content,
-      path: filePath,
-      version: (existing.version || 0) + 1,
+    const existing =
+      getFileContentFromCache(projectId, filePath, snapshotId) || {};
+    setFileContentToCache(
+      projectId,
+      filePath,
+      {
+        ...existing,
+        content,
+        path: filePath,
+        version: (existing.version || 0) + 1,
+        snapshotId,
+      },
       snapshotId,
-    }, snapshotId);
+    );
   }
   return data;
 }
 
-export async function createProjectFileApi(projectId, filePath, content = "", options = {}) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/files`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ path: filePath, content, ...options, requestId: options.requestId || crypto.randomUUID() }),
-  });
+export async function createProjectFileApi(
+  projectId,
+  filePath,
+  content = "",
+  options = {},
+) {
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/files`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        path: filePath,
+        content,
+        ...options,
+        requestId: options.requestId || crypto.randomUUID(),
+      }),
+    },
+  );
   const data = await handleResponse(res);
-  setFileContentToCache(projectId, filePath, {
-    content,
-    path: filePath,
-    version: 0,
-    snapshotId: options.snapshotId,
-    workspaceRevision: options.expectedWorkspaceRevision || 0,
-  }, options.snapshotId);
+  setFileContentToCache(
+    projectId,
+    filePath,
+    {
+      content,
+      path: filePath,
+      version: 0,
+      snapshotId: options.snapshotId,
+      workspaceRevision: options.expectedWorkspaceRevision || 0,
+    },
+    options.snapshotId,
+  );
   return data;
 }
 
-export async function createProjectFolderApi(projectId, folderPath, options = {}) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/folders`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ path: folderPath, ...options, requestId: options.requestId || crypto.randomUUID() }),
-  });
+export async function createProjectFolderApi(
+  projectId,
+  folderPath,
+  options = {},
+) {
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/folders`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        path: folderPath,
+        ...options,
+        requestId: options.requestId || crypto.randomUUID(),
+      }),
+    },
+  );
   return handleResponse(res);
 }
 
-export async function renameProjectEntryApi(projectId, filePath, newPath, options = {}) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/entries`, {
-    method: "PATCH",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ path: filePath, newPath, ...options, requestId: options.requestId || crypto.randomUUID() }),
-  });
+export async function renameProjectEntryApi(
+  projectId,
+  filePath,
+  newPath,
+  options = {},
+) {
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/entries`,
+    {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        path: filePath,
+        newPath,
+        ...options,
+        requestId: options.requestId || crypto.randomUUID(),
+      }),
+    },
+  );
   const data = await handleResponse(res);
-  const oldCached = getFileContentFromCache(projectId, filePath, options.snapshotId);
+  const oldCached = getFileContentFromCache(
+    projectId,
+    filePath,
+    options.snapshotId,
+  );
   invalidateFileContentCache(projectId, filePath);
   if (oldCached) {
-    setFileContentToCache(projectId, newPath, { ...oldCached, path: newPath }, options.snapshotId);
+    setFileContentToCache(
+      projectId,
+      newPath,
+      { ...oldCached, path: newPath },
+      options.snapshotId,
+    );
   }
   return data;
 }
@@ -301,14 +401,21 @@ export async function deleteProjectEntryApi(projectId, filePath, options = {}) {
   const queryParams = new URLSearchParams({ path: filePath });
   if (options.snapshotId) queryParams.set("snapshotId", options.snapshotId);
   if (options.expectedWorkspaceRevision !== undefined) {
-    queryParams.set("expectedWorkspaceRevision", String(options.expectedWorkspaceRevision));
+    queryParams.set(
+      "expectedWorkspaceRevision",
+      String(options.expectedWorkspaceRevision),
+    );
   }
   const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/entries?${queryParams.toString()}`,
     {
       method: "DELETE",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ ...options, path: filePath, requestId: options.requestId || crypto.randomUUID() }),
+      body: JSON.stringify({
+        ...options,
+        path: filePath,
+        requestId: options.requestId || crypto.randomUUID(),
+      }),
     },
   );
   const data = await handleResponse(res);
@@ -335,24 +442,36 @@ export async function sendAiChatMessageApi(
   const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ message, model, attachments, sessionId, ...context }),
+    body: JSON.stringify({
+      message,
+      model,
+      attachments,
+      sessionId,
+      ...context,
+    }),
   });
   return handleResponse(res);
 }
 
 export async function getChatSessionsApi(projectId) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/chat/sessions`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
 export async function createChatSessionApi(projectId, title) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ title }),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/chat/sessions`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ title }),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -390,30 +509,28 @@ export async function deleteChatSessionApi(projectId, sessionId) {
 }
 
 export async function getProjectCfgApi(projectId, snapshotId) {
-  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
-  const res = await fetch(
-    `${BASE_URL}/projects/${projectId}/cfg${query}`,
-    {
-      headers: getAuthHeaders(),
-    },
-  );
+  const query = snapshotId
+    ? `?snapshotId=${encodeURIComponent(snapshotId)}`
+    : "";
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/cfg${query}`, {
+    headers: getAuthHeaders(),
+  });
   return handleResponse(res);
 }
 
 export async function getProjectCcApi(projectId, snapshotId) {
-  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
-  const res = await editorAwareFetch(
-    `${BASE_URL}/projects/${projectId}/cc${query}`,
-    {
-      headers: getAuthHeaders(),
-    },
-  );
+  const query = snapshotId
+    ? `?snapshotId=${encodeURIComponent(snapshotId)}`
+    : "";
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/cc${query}`, {
+    headers: getAuthHeaders(),
+  });
   return handleResponse(res);
 }
 
 export async function buildCfgApi(projectId, snapshotId) {
   const body = snapshotId ? { snapshotId } : {};
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(body),
@@ -422,16 +539,22 @@ export async function buildCfgApi(projectId, snapshotId) {
 }
 
 export async function getAiSuggestionsApi(projectId) {
-  const res = await editorAwareFetch(`${BASE_URL}/ai-suggestions?projectId=${projectId}`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/ai-suggestions?projectId=${projectId}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
 export async function getProjectSnapshotsApi(projectId) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/snapshots`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -449,11 +572,14 @@ export async function getProjectStructureAnalysisApi(projectId, snapshotId) {
 }
 
 export async function runAnalysisApi(projectId, { snapshotId, testType } = {}) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId, testType }),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/run-analysis`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ snapshotId, testType }),
+    },
+  );
   // Return job so client can poll
   const data = await handleResponse(res);
   return data && data.data && data.data.job ? data.data.job : data;
@@ -476,15 +602,22 @@ export async function generateSkeletonApi(
   snapshotId,
   mode = "SKELETON",
 ) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId, mode }),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/ai-tests`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ snapshotId, mode }),
+    },
+  );
   return handleResponse(res);
 }
 
-export function generateSystemTestApi(projectId, snapshotId, executionMode = "full") {
+export function generateSystemTestApi(
+  projectId,
+  snapshotId,
+  executionMode = "full",
+) {
   return fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
     method: "POST",
     headers: getAuthHeaders(),
@@ -503,7 +636,12 @@ export async function generateIntegrationTestApi(
     {
       method: "POST",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ snapshotId, framework: "SUPERTEST", force, targetEndpoints }),
+      body: JSON.stringify({
+        snapshotId,
+        framework: "SUPERTEST",
+        force,
+        targetEndpoints,
+      }),
     },
   );
   return handleResponse(res);
@@ -538,12 +676,15 @@ export async function selectTestingFrameworkApi(
   return handleResponse(res);
 }
 
-export async function createProjectSnapshotApi(projectId, { label, message } = {}) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ label, message }),
-  });
+export async function createProjectSnapshotApi(projectId, { label, message }) {
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/snapshots`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ label, message }),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -553,7 +694,7 @@ export async function activateProjectSnapshotApi(projectId, snapshotId) {
     {
       method: "POST",
       headers: getAuthHeaders(),
-    }
+    },
   );
   return handleResponse(res);
 }
@@ -585,13 +726,19 @@ export async function getArchitectureAiSummaryApi(
 }
 
 export async function getProjectIntegrationDetection(projectId) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/integration/frameworks`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/integration/frameworks`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
-export async function getProjectEventsApi(projectId, { after = 0, limit = 100 } = {}) {
+export async function getProjectEventsApi(
+  projectId,
+  { after = 0, limit = 100 } = {},
+) {
   const res = await fetch(
     `${BASE_URL}/projects/${projectId}/events?after=${after}&limit=${limit}`,
     {

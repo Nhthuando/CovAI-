@@ -1,6 +1,11 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { ServiceError } from "./serviceError.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const serverRootDir = path.resolve(__dirname, "../../");
 
 export const inside = (root, target) => {
     const relative = path.relative(root, target);
@@ -13,17 +18,75 @@ export const inside = (root, target) => {
  */
 export const normalizeDiskPath = (rawPath) => {
     if (!rawPath || typeof rawPath !== "string") return null;
-    const resolved = path.resolve(rawPath);
-    if (fs.existsSync(resolved)) return resolved;
 
+    // Normalize forward slashes and strip any Windows drive letter prefix (e.g. D:\, C:/)
     const normalized = rawPath.replace(/\\/g, "/");
+    const strippedDrive = normalized.replace(/^[a-zA-Z]:(?:\/|$)/, "/");
+
+    // On Linux/Docker, always use strippedDrive to prevent any Windows drive letter leak
+    const effectivePath = process.platform !== "win32" ? strippedDrive : rawPath;
+
+    // Direct check if effectivePath or strippedDrive already exists on this machine
+    if (fs.existsSync(effectivePath)) return path.resolve(effectivePath);
+    if (fs.existsSync(strippedDrive)) return path.resolve(strippedDrive);
+
     // Match standard CovAI storage/upload paths
-    const match = normalized.match(/(?:^|\/)((?:uploads\/snapshots|storage\/projects)\/[^/]+.*)$/);
+    const match = strippedDrive.match(/(?:^|\/)((?:uploads\/snapshots|storage\/projects)\/[^/]+.*)$/);
     if (match) {
-        const candidate = path.resolve(process.cwd(), match[1]);
-        if (fs.existsSync(candidate)) return candidate;
+        // Priority 1: Check relative to server root directory (always accurate regardless of cwd)
+        const serverCandidate = path.resolve(serverRootDir, match[1]);
+        if (fs.existsSync(serverCandidate)) return serverCandidate;
+
+        // Priority 2: Check repo root (parent of server/)
+        const repoCandidate = path.resolve(serverRootDir, "..", match[1]);
+        if (fs.existsSync(repoCandidate)) return repoCandidate;
+
+        // Priority 3: Check process.cwd()
+        const cwdCandidate = path.resolve(process.cwd(), match[1]);
+        if (fs.existsSync(cwdCandidate)) return cwdCandidate;
+
+        const cwdServerCandidate = path.resolve(process.cwd(), "server", match[1]);
+        if (fs.existsSync(cwdServerCandidate)) return cwdServerCandidate;
+
+        const parentCandidate = path.resolve(process.cwd(), "..", match[1]);
+        if (fs.existsSync(parentCandidate)) return parentCandidate;
+
+        // Priority 4: Check /app candidate (in Docker)
+        if (process.platform !== "win32") {
+            const appCandidate = path.posix.resolve("/app", match[1]);
+            if (fs.existsSync(appCandidate)) return appCandidate;
+            return appCandidate;
+        }
+
+        // On Windows fallback to serverCandidate
+        return serverCandidate;
     }
-    return resolved;
+
+    // Clean up phantom /app/... paths regardless of OS platform
+    if (/^\/?app\//i.test(strippedDrive)) {
+        const withoutApp = strippedDrive.replace(/^\/?app\//i, "");
+        if (process.platform !== "win32") {
+            const appFallback = path.posix.resolve("/app", withoutApp);
+            if (fs.existsSync(appFallback)) return appFallback;
+            return appFallback;
+        }
+        const fallback = path.resolve(serverRootDir, withoutApp);
+        if (fs.existsSync(fallback)) return fallback;
+        return fallback;
+    }
+
+    // If platform is not Windows and path had a drive letter, never return raw Windows path on Linux
+    if (process.platform !== "win32") {
+        return path.resolve(strippedDrive);
+    }
+
+    // On Windows, if path is rooted without drive letter (e.g. /app or /something), resolve from serverRootDir
+    if (rawPath.startsWith("/") || rawPath.startsWith("\\")) {
+        const clean = strippedDrive.replace(/^\/+/, "");
+        return path.resolve(serverRootDir, clean);
+    }
+
+    return path.resolve(rawPath);
 };
 
 // rootDir remains the package used by analysis runners. The workspace root
@@ -38,8 +101,14 @@ export const snapshotWorkspaceRoot = (snapshot) => {
         const candidateStorage = normalizeDiskPath(snapshot.storagePath);
         try {
             if (candidateStorage && fs.existsSync(candidateStorage) && fs.statSync(candidateStorage).isDirectory()) {
-                if (inside(candidateStorage, analysisRoot) && inside(fs.realpathSync(candidateStorage), fs.realpathSync(analysisRoot))) {
-                    return candidateStorage;
+                if (inside(candidateStorage, analysisRoot)) {
+                    let realStorage = candidateStorage;
+                    let realAnalysis = analysisRoot;
+                    try { realStorage = fs.realpathSync(candidateStorage); } catch (_) {}
+                    try { realAnalysis = fs.realpathSync(analysisRoot); } catch (_) {}
+                    if (inside(realStorage, realAnalysis)) {
+                        return candidateStorage;
+                    }
                 }
             }
         } catch (_) { /* Overwritten or remote cloud storage paths fall through */ }
@@ -50,8 +119,8 @@ export const snapshotWorkspaceRoot = (snapshot) => {
     // 2. If GITHUB clone, locate cloned 'repo' directory (even if storagePath was overwritten by coverage)
     const githubMatch = normAnalysisRoot.match(/(.*\/storage\/projects\/[^/]+\/github\/[^/]+\/repo)(?:\/|$)/);
     if (githubMatch) {
-        const repoDir = path.resolve(githubMatch[1]);
-        if (fs.existsSync(repoDir) && inside(repoDir, analysisRoot)) {
+        const repoDir = normalizeDiskPath(githubMatch[1]) || path.resolve(githubMatch[1]);
+        if (repoDir && fs.existsSync(repoDir) && inside(repoDir, analysisRoot)) {
             return repoDir;
         }
     }
@@ -59,8 +128,8 @@ export const snapshotWorkspaceRoot = (snapshot) => {
     // 3. If ZIP snapshot, locate extracted project directory in uploads/snapshots/<snapshotId>
     const snapMatch = normAnalysisRoot.match(/(.*\/uploads\/snapshots\/[^/]+)(?:\/|$)/);
     if (snapMatch) {
-        const snapDir = path.resolve(snapMatch[1]);
-        if (fs.existsSync(snapDir)) {
+        const snapDir = normalizeDiskPath(snapMatch[1]) || path.resolve(snapMatch[1]);
+        if (snapDir && fs.existsSync(snapDir)) {
             try {
                 const entries = fs.readdirSync(snapDir, { withFileTypes: true })
                     .filter((e) => e.name !== "__MACOSX" && e.name !== ".DS_Store");

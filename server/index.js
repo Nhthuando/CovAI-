@@ -1,5 +1,11 @@
 import projectEditorRoutes from './src/routes/projectEditor.route.js';
-import { attachProjectEditorGateway } from './src/realtime/projectEditor.gateway.js';
+let attachProjectEditorGateway;
+try {
+  const mod = await import('./src/realtime/projectEditor.gateway.js');
+  attachProjectEditorGateway = mod.attachProjectEditorGateway;
+} catch (err) {
+  console.warn('[Server] Project editor gateway deferred (run npm install):', err.message);
+}
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -168,7 +174,9 @@ io.on("connection", (socket) => {
 // Make io available globally for services
 global.io = io;
 attachProjectSubscriptions(io);
-attachProjectEditorGateway(io);
+if (typeof attachProjectEditorGateway === 'function') {
+  attachProjectEditorGateway(io);
+}
 
 async function startServer() {
   try {

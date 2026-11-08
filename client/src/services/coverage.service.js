@@ -125,6 +125,13 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
         ...(framework ? { framework } : {}),
         ...(executionMode ? { executionMode } : {}),
         ...(isRestart ? { restart: true } : {}),
+        ...(options?.targetEndpoint ? { targetEndpoint: options.targetEndpoint } : {}),
+        ...(Array.isArray(options?.targetTestNames) && options.targetTestNames.length > 0
+            ? { targetTestNames: options.targetTestNames }
+            : {}),
+        ...(Array.isArray(options?.selectedScenarioIds) && options.selectedScenarioIds.length > 0
+            ? { selectedScenarioIds: options.selectedScenarioIds }
+            : {}),
     };
     const hasBody = Object.keys(bodyPayload).length > 0;
     const url = isRestart

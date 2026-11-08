@@ -158,6 +158,34 @@ export const generateText = async (prompt, modelOrInstruction = null, maybeInstr
   return generateMultimodalText(prompt, [], systemInstruction, modelName, generationConfig);
 };
 
+export const generateTextWithTelemetry = async (prompt, modelOrInstruction = null, maybeInstructionOrConfig = null, maybeConfig = {}) => {
+  let modelName = null;
+  let systemInstruction = null;
+  let generationConfig = {};
+
+  if (typeof modelOrInstruction === "string" && (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.includes("/"))) {
+    modelName = modelOrInstruction;
+    if (typeof maybeInstructionOrConfig === "object" && maybeInstructionOrConfig !== null) {
+      generationConfig = { ...maybeInstructionOrConfig, returnTelemetry: true };
+      systemInstruction = null;
+    } else {
+      systemInstruction = maybeInstructionOrConfig;
+      generationConfig = { ...(maybeConfig || {}), returnTelemetry: true };
+    }
+  } else if (typeof modelOrInstruction === "object" && modelOrInstruction !== null) {
+    generationConfig = { ...modelOrInstruction, returnTelemetry: true };
+  } else {
+    systemInstruction = modelOrInstruction;
+    if (maybeInstructionOrConfig && typeof maybeInstructionOrConfig === "object") {
+      generationConfig = { ...maybeInstructionOrConfig, returnTelemetry: true };
+    } else {
+      generationConfig = { ...(maybeConfig || {}), returnTelemetry: true };
+    }
+  }
+
+  return generateMultimodalText(prompt, [], systemInstruction, modelName, generationConfig);
+};
+
 /**
  * Send prompts & attachments (images) & Receive responses
  * @param {string} prompt - The prompt to send to the Gemini model
@@ -247,6 +275,7 @@ export const generateMultimodalText = async (
     const requestSignal = budget?.signal ? AbortSignal.any([signal, budget.signal]) : signal;
     try {
       const model = createModelInstance(primaryModelName);
+      const callStartTime = Date.now();
       const result = await model.generateContent({
         contents: [{ role: "user", parts }],
         generationConfig: {
@@ -255,11 +284,13 @@ export const generateMultimodalText = async (
         },
       }, {signal:requestSignal});
       if (requestSignal.aborted) throw requestSignal.reason || new Error('AI request canceled');
+      const durationMs = Date.now() - callStartTime;
       await budget?.record(result.response?.usageMetadata);
-      console.log(`[Gemini API] Successfully generated response using primary model: ${primaryModelName}`);
+      console.log(`[Gemini API] Successfully generated response using primary model: ${primaryModelName} (${durationMs}ms)`);
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
       }
+<<<<<<< Updated upstream
       let responseText = "";
       try {
         responseText = typeof result.response?.text === "function" ? result.response.text() : (result.response?.text || "");
@@ -279,6 +310,40 @@ export const generateMultimodalText = async (
         console.warn("[geminiTokenTracker] Error recording usage:", trackingErr.message);
       }
       return responseText;
+=======
+
+      const rawText = result.response.text();
+      const usageMetadata = result.response?.usageMetadata;
+      const promptTokens = usageMetadata?.promptTokenCount || Math.max(1, Math.round(prompt.length / 4));
+      const completionTokens = usageMetadata?.candidatesTokenCount || Math.max(1, Math.round((rawText || "").length / 4));
+      const totalTokens = usageMetadata?.totalTokenCount || (promptTokens + completionTokens);
+
+      const telemetry = {
+        durationMs,
+        durationSeconds: Number((durationMs / 1000).toFixed(2)),
+        tokens: {
+          prompt: promptTokens,
+          completion: completionTokens,
+          total: totalTokens,
+        },
+        model: primaryModelName,
+      };
+
+      if (generationConfig.userId) {
+        import("./aiQuota.service.js").then(({ incrementTokenUsage }) => {
+          incrementTokenUsage(generationConfig.userId, totalTokens).catch(() => {});
+        }).catch(() => {});
+      }
+
+      if (generationConfig.returnTelemetry) {
+        return {
+          text: rawText,
+          telemetry,
+        };
+      }
+
+      return rawText;
+>>>>>>> Stashed changes
     } catch (primaryErr) {
       if (signal.aborted) throw primaryErr;
       if (primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {

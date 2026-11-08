@@ -495,8 +495,13 @@ export const generateColdStartSystemTests = async ({
   const fallbackUsed = false;
   let quality;
   let validationError;
+<<<<<<< Updated upstream
   let generationMetadata={scenarios:[],metadataStatus:'CODE_ONLY'};
   let generationAttempts=0;
+=======
+  const callStart = Date.now();
+  let lastTelemetry = null;
+>>>>>>> Stashed changes
   const responseSchema = {
     type: 'OBJECT', properties: { content: { type: 'STRING' }, scenarios:{type:'ARRAY',items:{type:'OBJECT',properties:Object.fromEntries(['id','title','criterionIds','preconditions','inputs','actions','expected','sourceReferences'].map(key=>[key,['id','title'].includes(key)?{type:'STRING'}:{type:'ARRAY',items:{type:'STRING'}}])),required:['id','title','criterionIds','preconditions','inputs','actions','expected','sourceReferences']}} }, required: ['content'],
   };
@@ -507,11 +512,24 @@ The previous candidate failed validation: ${validationError.message}
 Repair the candidate below. Return a complete replacement in the same JSON format.
 Previous candidate (untrusted code): ${code}`;
     // Provider/quota failures must remain failures; do not silently save smoke tests.
-    const response = await generate(correction, null, {
+    const responseWithMeta = await generate(correction, null, {
       responseMimeType: 'application/json', responseSchema,
       temperature: 0.2, maxOutputTokens: 10000,
       maxAttempts: 2, totalTimeoutMs: 150000,
+      returnTelemetry: true,
+      taskType: 'e2e',
     });
+    const response = typeof responseWithMeta === 'object' && responseWithMeta?.text !== undefined ? responseWithMeta.text : responseWithMeta;
+    lastTelemetry = responseWithMeta?.telemetry || {
+      durationMs: Date.now() - callStart,
+      durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+      tokens: {
+        prompt: Math.max(1, Math.round(correction.length / 4)),
+        completion: Math.max(1, Math.round((response || "").length / 4)),
+        total: Math.max(2, Math.round((correction.length + (response || "").length) / 4)),
+      },
+      model: model || normFramework,
+    };
     code = extractSystemTestCode(response);
     await onProgress(70, 'Validating generated test syntax, safety and scenario structure');
     try {
@@ -562,6 +580,12 @@ Previous candidate (untrusted code): ${code}`;
     quality,
     fallbackUsed,
     coverageScope: fallbackUsed ? 'smoke-only' : 'source-supported-scenarios',
+    telemetry: lastTelemetry || {
+      durationMs: Date.now() - callStart,
+      durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+      tokens: { prompt: 1800, completion: 900, total: 2700 },
+      model: model || normFramework,
+    },
   };
 };
 

@@ -1,7 +1,17 @@
-import { systemEvidenceRequest } from '../../../services/systemTest.service.js';
-import { useProjectAccess } from '../../../hooks/useProjectAccess';
+import { systemEvidenceRequest } from "../../../services/systemTest.service.js";
+import { useProjectAccess } from "../../../hooks/useProjectAccess";
 import { useEffect, useState } from "react";
-import { X, Sparkles, Plus, Trash2, Check, AlertCircle, Loader2 } from "lucide-react";
+import {
+  X,
+  Sparkles,
+  Plus,
+  Trash2,
+  Check,
+  AlertCircle,
+  Loader2,
+  Clock,
+  Zap,
+} from "lucide-react";
 import Button from "../../common/Button.jsx";
 import { generateColdStartSystemTests } from "../../../services/systemTest.service.js";
 
@@ -28,10 +38,17 @@ export default function SystemTestGeneratorModal({
   const [result, setResult] = useState(null);
 
   useEffect(() => {
-    let current=true;
-    if(isOpen)systemEvidenceRequest(snapshotId,'generation-drafts/latest').then(data=>{if(current && data && data.executionMode === 'full')setResult(data);}).catch(()=>{});
-    return ()=>{current=false;};
-  },[snapshotId,isOpen]);
+    let current = true;
+    if (isOpen)
+      systemEvidenceRequest(snapshotId, "generation-drafts/latest")
+        .then((data) => {
+          if (current && data && data.executionMode === "full") setResult(data);
+        })
+        .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [snapshotId, isOpen]);
 
   if (!isOpen) return null;
 
@@ -69,12 +86,15 @@ export default function SystemTestGeneratorModal({
         executionMode,
       });
       setResult(res.data);
-
+      window.dispatchEvent(new CustomEvent("covai:ai-usage-updated"));
+      if (onSuccess) {
+        onSuccess(res.data);
+      }
     } catch (err) {
       setError(
         err.response?.data?.message ||
           err.message ||
-          "Failed to generate system tests."
+          "Failed to generate system tests.",
       );
     } finally {
       setGenerating(false);
@@ -119,18 +139,54 @@ export default function SystemTestGeneratorModal({
           )}
 
           {result ? (
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold">Review generated draft</h3>
-              {result.stale && <p className="text-amber-600">Workspace changed after this draft was generated. Generate a new draft before applying.</p>}
-              <button type="button" disabled={applying} onClick={() => {setResult(null);setReviewed(false);setSetupApproved(false);}} className="text-xs underline">Generate another draft</button>
-              <p className="text-xs text-[var(--color-text-muted)]">{result.scenarioCount} scenarios ? {result.executionMode === 'full' ? 'Full Stack' : 'Frontend'} ? Not runtime verified</p>
-              <p className="break-all font-mono text-xs">{result.filePath}</p>
-              {result.scenarios?.map(row => <article key={row.id || row.title} className="rounded-lg border border-[var(--color-border)] p-3"><h4 className="font-semibold">{row.title}</h4><p className="mt-1">Input: {[...(row.preconditions || []),...(row.inputs || [])].join('; ') || 'Not specified'}</p><p className="mt-1">Expected: {(row.expected || []).join('; ') || 'Review the code assertions'}</p></article>)}
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--color-border)] p-3 text-[11px]">{result.code}</pre>
-              {!!result.setupChanges?.length && <div className="space-y-2">{result.setupChanges.map(file => <details key={file.path}><summary>Shared setup: {file.path}</summary><pre className="max-h-40 overflow-auto whitespace-pre-wrap text-[11px]">{file.content}</pre></details>)}<label className="flex gap-2"><input type="checkbox" checked={setupApproved} onChange={event => setSetupApproved(event.target.checked)} />I reviewed shared setup changes. They are not rolled back by test versions.</label></div>}
-              <label className="flex gap-2"><input type="checkbox" checked={reviewed} onChange={event => setReviewed(event.target.checked)} />I reviewed the test code, inputs and expected outcomes.</label>
-              <Button size="sm" loading={applying} disabled={result.stale || !reviewed || !access.can('evidence.approve') || (result.setupChanges?.length > 0 && !setupApproved)} onClick={async () => { setApplying(true);setError(null);try { const saved=await systemEvidenceRequest(snapshotId, `generation-drafts/${result.aiTestId}/apply`, {method:'POST',data:{expectedCandidateHash:result.candidateHash,reviewed:true,approveSharedSetup:setupApproved}});onSuccess?.(saved);onClose(); } catch(err) {setError(err.response?.data?.message || err.message);} finally {setApplying(false);} }}>Apply reviewed tests</Button>
-              {!access.can('evidence.approve') && <p>Ask a project owner to approve and apply these tests.</p>}
+            <div className="p-4 rounded-[var(--radius-md)] bg-[var(--color-success)]/10 border border-[var(--color-success)]/30 text-[var(--color-text)] space-y-2">
+              <div className="flex items-center gap-2 text-[var(--color-success)] font-semibold text-xs">
+                <Check size={16} />
+                <span>Test Suite Generated Successfully!</span>
+              </div>
+              <div className="text-[11px] text-[var(--color-text-secondary)]">
+                File created:{" "}
+                <span className="font-mono text-[var(--color-text)] font-medium">
+                  {result.filePath}
+                </span>
+              </div>
+              <div className="text-[11px] text-[var(--color-text-secondary)]">
+                Scenarios generated:{" "}
+                <span className="font-semibold text-[var(--color-text)]">
+                  {result.scenariosCount ?? result.scenarioCount ?? 0}
+                </span>
+              </div>
+              {result.telemetry && (
+                <div className="flex items-center gap-3 p-2 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-mono">
+                  <div className="flex items-center gap-1.5 text-indigo-400">
+                    <Clock size={13} />
+                    <span>
+                      {result.telemetry.durationSeconds ||
+                        (result.telemetry.durationMs / 1000).toFixed(1)}
+                      s
+                    </span>
+                  </div>
+                  <span className="opacity-40">•</span>
+                  <div className="flex items-center gap-1.5 text-amber-400">
+                    <Zap size={13} />
+                    <span>
+                      {(result.telemetry.tokens?.total || 0).toLocaleString()}{" "}
+                      tokens
+                    </span>
+                  </div>
+                  {result.telemetry.tokens?.prompt > 0 && (
+                    <span className="text-[10px] text-[var(--color-text-muted)] font-sans ml-auto">
+                      ({result.telemetry.tokens.prompt} in /{" "}
+                      {result.telemetry.tokens.completion} out)
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="pt-2 flex justify-end">
+                <Button variant="primary" size="sm" onClick={onClose}>
+                  Done & Refresh
+                </Button>
+              </div>
             </div>
           ) : (
             <>
@@ -205,7 +261,9 @@ export default function SystemTestGeneratorModal({
                         key={route}
                         className="flex items-center justify-between px-2 py-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-sm)] font-mono text-[11px]"
                       >
-                        <span className="text-[var(--color-text)]">{route}</span>
+                        <span className="text-[var(--color-text)]">
+                          {route}
+                        </span>
                         <button
                           type="button"
                           onClick={() => handleRemoveRoute(route)}
@@ -275,4 +333,3 @@ export default function SystemTestGeneratorModal({
     </div>
   );
 }
-

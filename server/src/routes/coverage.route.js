@@ -86,6 +86,7 @@ router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);
 
+router.post("/:snapshotId/integration/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType);
 

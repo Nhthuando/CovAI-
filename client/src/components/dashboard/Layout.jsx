@@ -35,6 +35,7 @@ import Billing from "./settings/Billing";
 import Usage from "./settings/Usage";
 import { ToastProvider, useToast } from "./ToastContext";
 import MissingTestFilesModal from "./MissingTestFilesModal";
+import GlobalAiTokenPill from "./GlobalAiTokenPill";
 import PanelResizer from "./PanelResizer";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ProjectExportDialog from "./ProjectExportDialog";
@@ -1128,6 +1129,8 @@ function LayoutInner() {
             projectName={currentProjectName}
             onGenerate={handleGenerateTests}
           />
+
+          <GlobalAiTokenPill />
 
           {!isMobile && (
             <button
