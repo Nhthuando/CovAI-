@@ -4280,6 +4280,28 @@ export const processRunTestsJob = async (jobId) => {
         let summaryResult = null;
         try {
             summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+            if (summaryResult?.total) {
+                try {
+                    await stagePreparedPublication(async (tx) => {
+                        const latestUnitRun = await tx.testRun.findFirst({
+                            where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+                            orderBy: { createdAt: "desc" },
+                            select: { id: true },
+                        });
+                        if (latestUnitRun?.id) {
+                            await tx.testRun.update({
+                                where: { id: latestUnitRun.id },
+                                data: {
+                                    coverageLinesPct: summaryResult.total.lines?.pct ?? 0,
+                                    coverageBranchesPct: summaryResult.total.branches?.pct ?? 0,
+                                    coverageFunctionsPct: summaryResult.total.functions?.pct ?? 0,
+                                    coverageStatementsPct: summaryResult.total.statements?.pct ?? 0,
+                                },
+                            });
+                        }
+                    });
+                } catch (_) {}
+            }
             await addJobLog(
                 jobId,
                 "INFO",

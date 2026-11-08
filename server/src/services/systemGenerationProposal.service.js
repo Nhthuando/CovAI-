@@ -18,6 +18,7 @@ import { ServiceError } from '../utils/serviceError.js';
 import { SYSTEM_PROMPT_VERSION } from './systemTestPrompt.service.js';
 import { currentAiJobBudget, createAiJobBudget, withAiJobBudget } from './aiJobBudget.service.js';
 import { generateText } from './gemini.service.js';
+import { withGeminiChannel } from './geminiTokenTracker.service.js';
 import { ensureFullSystemSetup } from './fullSystemSetup.service.js';
 
 export const createSystemGenerationDraft = async ({snapshotId,userId,framework,targetRoutes,executionMode,model,signal=AbortSignal.timeout(10*60*1000),db=prisma,dependencies={}}) => {
@@ -37,7 +38,10 @@ export const createSystemGenerationDraft = async ({snapshotId,userId,framework,t
         for(const name of configNames)try{await fs.access(path.join(rootDir,name));existing.add(name);}catch(error){if(error.code!=='ENOENT')throw error;}
         let systemConfigExisted=true;
         try{await fs.access(path.join(rootDir,'.covai/system-test.json'));}catch(error){if(error.code!=='ENOENT')throw error;systemConfigExisted=false;}
-        const setup = executionMode==='full' ? await (dependencies.setup || ensureFullSystemSetup)({rootDir,model,dependencies:dependencies.generate?{generate:dependencies.generate}:{}}) : null;
+        const aiGenerate = dependencies.generate
+            ? (model ? (prompt, instruction, config) => dependencies.generate(prompt, model, instruction, config) : dependencies.generate)
+            : (model ? (prompt, instruction, config) => withGeminiChannel("E2E_TEST", () => generateText(prompt, model, instruction, config)) : ((...args) => withGeminiChannel("E2E_TEST", () => generateText(...args))));
+        const setup = executionMode === 'full' ? await (dependencies.setup || ensureFullSystemSetup)({ rootDir, model, dependencies: { generate: aiGenerate } }) : null;
         const generated = await (dependencies.generate || generateColdStartSystemTests)({rootDir,framework,targetRoutes,executionMode,model,requirements:revision?.contentJson||null});
         const filePath = framework==='cypress'?`cypress/e2e/covai-${suiteDigest(generated.code).slice(0,12)}.cy.js`:`tests/e2e/covai-${suiteDigest(generated.code).slice(0,12)}.spec.mjs`;
         if(signal?.aborted)throw new ServiceError('Generation canceled',409);

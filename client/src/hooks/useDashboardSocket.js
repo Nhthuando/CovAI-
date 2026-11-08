@@ -59,6 +59,20 @@ export function useDashboardSocket({
         return;
       }
 
+      if (payload?.lifecycleStatus) {
+        queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((p) =>
+            p.id === projectId ? { ...p, lifecycleStatus: payload.lifecycleStatus } : p
+          );
+        });
+        window.dispatchEvent(
+          new CustomEvent("covai:project-status-updated", {
+            detail: { projectId, lifecycleStatus: payload.lifecycleStatus },
+          })
+        );
+      }
+
       if (invalidateTimeoutRef.current) clearTimeout(invalidateTimeoutRef.current);
       invalidateTimeoutRef.current = setTimeout(() => {
         if (!alive) return;
@@ -67,7 +81,8 @@ export function useDashboardSocket({
             predicate: (query) =>
               query.queryKey.includes(projectId) ||
               query.queryKey.includes(snapshotId) ||
-              (query.queryKey[0] === "unifiedDashboard" && query.queryKey[1] === snapshotId),
+              (query.queryKey[0] === "unifiedDashboard" && query.queryKey[1] === snapshotId) ||
+              query.queryKey[0] === "projects",
             cancelRefetch: false,
           })
           .catch((err) => {
@@ -81,6 +96,29 @@ export function useDashboardSocket({
         new CustomEvent("covai:dashboard-metrics-updated", { detail: payload })
       );
       callbacksRef.current.onMetricsUpdated?.(payload);
+    });
+
+    // 1b. Project Lifecycle updated event from portfolio or background auto-transition
+    socket.on("portfolio:project_updated", (payload) => {
+      if (!alive) return;
+      const targetPid = payload?.projectId || projectId;
+      if (payload?.lifecycleStatus !== undefined) {
+        queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
+          if (!Array.isArray(old)) return old;
+          return old.map((p) =>
+            p.id === targetPid ? { ...p, lifecycleStatus: payload.lifecycleStatus } : p
+          );
+        });
+        window.dispatchEvent(
+          new CustomEvent("covai:project-status-updated", {
+            detail: {
+              projectId: targetPid,
+              lifecycleStatus: payload.lifecycleStatus,
+              isPinned: payload.isPinned,
+            },
+          })
+        );
+      }
     });
 
     // 2. Run Status event (QUEUED, RUNNING, SUCCESS, FAILED, CANCELED)

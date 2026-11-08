@@ -44,6 +44,9 @@ specs/
 .covai-temp/
 /.covai-temp/
 /server/.covai-temp/
+.covai-data/
+/.covai-data/
+/server/.covai-data/
 /tmp/
 /output/
 

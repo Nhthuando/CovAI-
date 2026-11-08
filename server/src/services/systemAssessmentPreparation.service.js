@@ -5,6 +5,7 @@ import { validateStartupEnvironment, buildAutomaticTestEnvironment, managedEnvir
 import { discoverSystemAssessment } from './systemAssessmentDiscovery.service.js';
 import { assessmentRequest, parseRequest } from '../validators/systemAssessment.validator.js';
 import { generateText } from './gemini.service.js';
+import { withGeminiChannel } from './geminiTokenTracker.service.js';
 import { validateSelectedAiModel } from '../utils/selectedAiModel.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { prepareMissingSystemTests } from './automaticSystemTests.service.js';
@@ -22,9 +23,15 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
     await checkpoint(8, 'Discovering application packages and test configuration');
     if (input.executionMode === 'full') {
         const model = validateSelectedAiModel(input.model);
-        const setup=await (dependencies.setup || ensureFullSystemSetup)({rootDir, model, onProgress: checkpoint, dependencies: dependencies.generate ? {
-            generate: model ? (prompt, instruction, config) => dependencies.generate(prompt, model, instruction, config) : dependencies.generate,
-        } : {}});
+        const aiGenerate = dependencies.generate
+            ? (model ? (prompt, instruction, config) => dependencies.generate(prompt, model, instruction, config) : dependencies.generate)
+            : (model ? (prompt, instruction, config) => withGeminiChannel("E2E_TEST", () => generateText(prompt, model, instruction, config)) : ((...args) => withGeminiChannel("E2E_TEST", () => generateText(...args))));
+        const setup = await (dependencies.setup || ensureFullSystemSetup)({
+            rootDir,
+            model,
+            onProgress: checkpoint,
+            dependencies: { generate: aiGenerate },
+        });
         if(setup?.config) {
             const directory=setup.config.backend.directory;
             const backend=containedPath(rootDir,directory);

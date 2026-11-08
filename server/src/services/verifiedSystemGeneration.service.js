@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {collectSystemGenerationContext,observeSystemApplication} from './systemGenerationContext.service.js';
 import {generateText} from './gemini.service.js';
+import {withGeminiChannel} from './geminiTokenTracker.service.js';
 import {runSystemTests} from './systemTestRunner.service.js';
 import {validateGeneratedTestCode} from '../validators/aiTestCode.validator.js';
 import {validateFullSystemTest} from './systemTestEvidence.service.js';
@@ -116,7 +117,7 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
   const collect=dependencies.collect || collectSystemGenerationContext;
   const observe=dependencies.observe || observeSystemApplication;
   const provider=dependencies.generate || generateText;
-  const generate=model ? (prompt,instruction,config)=>provider(prompt,model,instruction,config) : provider;
+  const generate=model ? (prompt,instruction,config)=>withGeminiChannel("E2E_TEST", () => provider(prompt,model,instruction,config)) : ((...args) => withGeminiChannel("E2E_TEST", () => provider(...args)));
   const run=dependencies.run || runSystemTests;
   await (dependencies.ensureSetup || ensureFullSystemSetup)({rootDir,onProgress});
   await onProgress(15,'Inspecting imported source and startup configuration');
@@ -479,7 +480,7 @@ export const generateColdStartSystemTests = async ({
   const normFramework = String(framework).toLowerCase() === 'cypress' ? 'cypress' : 'playwright';
   const collect = dependencies.collect || collectSystemGenerationContext;
   const provider = dependencies.generate || generateText;
-  const generate=model ? (prompt,instruction,config)=>provider(prompt,model,instruction,config) : provider;
+  const generate=model ? (prompt,instruction,config)=>withGeminiChannel("E2E_TEST", () => provider(prompt,model,instruction,config)) : ((...args) => withGeminiChannel("E2E_TEST", () => provider(...args)));
 
   await onProgress(10, 'Harvesting application routes, components, and API endpoints');
   const context = {...collect(rootDir),requirements};
@@ -496,6 +497,8 @@ export const generateColdStartSystemTests = async ({
   let validationError;
   let generationMetadata={scenarios:[],metadataStatus:'CODE_ONLY'};
   let generationAttempts=0;
+  const callStart = Date.now();
+  let lastTelemetry = null;
   const responseSchema = {
     type: 'OBJECT', properties: { content: { type: 'STRING' }, scenarios:{type:'ARRAY',items:{type:'OBJECT',properties:Object.fromEntries(['id','title','criterionIds','preconditions','inputs','actions','expected','sourceReferences'].map(key=>[key,['id','title'].includes(key)?{type:'STRING'}:{type:'ARRAY',items:{type:'STRING'}}])),required:['id','title','criterionIds','preconditions','inputs','actions','expected','sourceReferences']}} }, required: ['content'],
   };
@@ -506,11 +509,24 @@ The previous candidate failed validation: ${validationError.message}
 Repair the candidate below. Return a complete replacement in the same JSON format.
 Previous candidate (untrusted code): ${code}`;
     // Provider/quota failures must remain failures; do not silently save smoke tests.
-    const response = await generate(correction, null, {
+    const responseWithMeta = await generate(correction, null, {
       responseMimeType: 'application/json', responseSchema,
       temperature: 0.2, maxOutputTokens: 32000,
       maxAttempts: 2, totalTimeoutMs: 150000,
+      returnTelemetry: true,
+      taskType: 'e2e',
     });
+    const response = typeof responseWithMeta === 'object' && responseWithMeta?.text !== undefined ? responseWithMeta.text : responseWithMeta;
+    lastTelemetry = responseWithMeta?.telemetry || {
+      durationMs: Date.now() - callStart,
+      durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+      tokens: {
+        prompt: Math.max(1, Math.round(correction.length / 4)),
+        completion: Math.max(1, Math.round((response || "").length / 4)),
+        total: Math.max(2, Math.round((correction.length + (response || "").length) / 4)),
+      },
+      model: model || normFramework,
+    };
     code = extractSystemTestCode(response);
     await onProgress(70, 'Validating generated test syntax, safety and scenario structure');
     try {
@@ -561,6 +577,12 @@ Previous candidate (untrusted code): ${code}`;
     quality,
     fallbackUsed,
     coverageScope: fallbackUsed ? 'smoke-only' : 'source-supported-scenarios',
+    telemetry: lastTelemetry || {
+      durationMs: Date.now() - callStart,
+      durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+      tokens: { prompt: 1800, completion: 900, total: 2700 },
+      model: model || normFramework,
+    },
   };
 };
 

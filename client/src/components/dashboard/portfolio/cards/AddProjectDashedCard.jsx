@@ -1,4 +1,4 @@
-import { Plus, FolderPlus } from "lucide-react";
+import { Plus } from "lucide-react";
 
 export function AddProjectDashedCard({ onAddProject, className = "" }) {
   return (

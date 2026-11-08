@@ -1,7 +1,20 @@
-import { systemEvidenceRequest } from '../../../services/systemTest.service.js';
-import { useProjectAccess } from '../../../hooks/useProjectAccess';
+import { systemEvidenceRequest } from "../../../services/systemTest.service.js";
+import { useProjectAccess } from "../../../hooks/useProjectAccess";
 import { useEffect, useState } from "react";
-import { X, Sparkles, Plus, Trash2, Check, AlertCircle, Loader2, RotateCcw, FileCode2, Settings2 } from "lucide-react";
+import {
+  X,
+  Sparkles,
+  Plus,
+  Trash2,
+  Check,
+  AlertCircle,
+  Loader2,
+  RotateCcw,
+  FileCode2,
+  Settings2,
+  Clock,
+  Zap,
+} from "lucide-react";
 import Button from "../../common/Button.jsx";
 import { generateColdStartSystemTests } from "../../../services/systemTest.service.js";
 
@@ -30,9 +43,9 @@ export default function SystemTestGeneratorModal({
   useEffect(() => {
     let current = true;
     if (isOpen) {
-      systemEvidenceRequest(snapshotId, 'generation-drafts/latest')
-        .then(data => {
-          if (current && data && data.executionMode === 'full') setResult(data);
+      systemEvidenceRequest(snapshotId, "generation-drafts/latest")
+        .then((data) => {
+          if (current && data && data.executionMode === "full") setResult(data);
         })
         .catch(() => {});
     }
@@ -79,11 +92,15 @@ export default function SystemTestGeneratorModal({
         executionMode,
       });
       setResult(res.data);
+      window.dispatchEvent(new CustomEvent("covai:ai-usage-updated"));
+      if (onSuccess) {
+        onSuccess(res.data);
+      }
     } catch (err) {
       setError(
         err.response?.data?.message ||
           err.message ||
-          "Failed to generate system tests."
+          "Failed to generate system tests.",
       );
     } finally {
       setGenerating(false);
@@ -99,14 +116,15 @@ export default function SystemTestGeneratorModal({
         snapshotId,
         `generation-drafts/${result.aiTestId}/apply`,
         {
-          method: 'POST',
+          method: "POST",
           data: {
             expectedCandidateHash: result.candidateHash,
             reviewed: true,
             approveSharedSetup: setupApproved,
           },
-        }
+        },
       );
+      window.dispatchEvent(new CustomEvent("covai:ai-usage-updated"));
       onSuccess?.(saved);
       onClose();
     } catch (err) {
@@ -121,7 +139,7 @@ export default function SystemTestGeneratorModal({
     !!result &&
     !result.stale &&
     reviewed &&
-    access.can('evidence.approve') &&
+    access.can("evidence.approve") &&
     (!hasSetupChanges || setupApproved);
 
   const frameworkButtonClass = (name) =>
@@ -186,10 +204,10 @@ export default function SystemTestGeneratorModal({
               <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)]/15 text-[var(--color-primary)]">
-                    {result.scenarioCount} scenarios
+                    {result.scenarioCount ?? result.scenariosCount ?? 0} scenarios
                   </span>
                   <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
-                    {result.executionMode === 'full' ? 'Full Stack' : 'Frontend'}
+                    {result.executionMode === "full" ? "Full Stack" : "Frontend"}
                   </span>
                   <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
                     Not runtime verified
@@ -199,6 +217,34 @@ export default function SystemTestGeneratorModal({
                   {result.filePath}
                 </code>
               </div>
+
+              {/* Telemetry row */}
+              {result.telemetry && (
+                <div className="flex items-center gap-3 p-2.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-mono">
+                  <div className="flex items-center gap-1.5 text-indigo-400">
+                    <Clock size={13} />
+                    <span>
+                      {result.telemetry.durationSeconds ||
+                        (result.telemetry.durationMs / 1000).toFixed(1)}
+                      s
+                    </span>
+                  </div>
+                  <span className="opacity-40">•</span>
+                  <div className="flex items-center gap-1.5 text-amber-400">
+                    <Zap size={13} />
+                    <span>
+                      {(result.telemetry.tokens?.total || 0).toLocaleString()}{" "}
+                      tokens
+                    </span>
+                  </div>
+                  {result.telemetry.tokens?.prompt > 0 && (
+                    <span className="text-[10px] text-[var(--color-text-muted)] font-sans ml-auto">
+                      ({result.telemetry.tokens.prompt} in /{" "}
+                      {result.telemetry.tokens.completion} out)
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Scenarios List */}
               {result.scenarios?.length > 0 && (
@@ -220,10 +266,10 @@ export default function SystemTestGeneratorModal({
                             {row.title}
                           </h4>
                           <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                            Input: {[...(row.preconditions || []), ...(row.inputs || [])].join('; ') || 'Not specified'}
+                            Input: {[...(row.preconditions || []), ...(row.inputs || [])].join("; ") || "Not specified"}
                           </p>
                           <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                            Expected: {(row.expected || []).join('; ') || 'Review the code assertions'}
+                            Expected: {(row.expected || []).join("; ") || "Review the code assertions"}
                           </p>
                         </div>
                       </article>
@@ -261,7 +307,7 @@ export default function SystemTestGeneratorModal({
                     </span>
                   </summary>
                   <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-bg)]">
-                    {result.setupChanges.map(file => (
+                    {result.setupChanges.map((file) => (
                       <div key={file.path} className="p-3.5 space-y-2">
                         <div className="font-mono text-[11px] font-medium text-[var(--color-text-secondary)]">
                           {file.path}
@@ -281,7 +327,7 @@ export default function SystemTestGeneratorModal({
                   <input
                     type="checkbox"
                     checked={setupApproved}
-                    onChange={event => setSetupApproved(event.target.checked)}
+                    onChange={(event) => setSetupApproved(event.target.checked)}
                     className="mt-0.5"
                   />
                   I reviewed shared setup changes. They are not rolled back by test versions.
@@ -291,13 +337,13 @@ export default function SystemTestGeneratorModal({
                 <input
                   type="checkbox"
                   checked={reviewed}
-                  onChange={event => setReviewed(event.target.checked)}
+                  onChange={(event) => setReviewed(event.target.checked)}
                   className="mt-0.5"
                 />
                 I reviewed the test code, inputs and expected outcomes.
               </label>
 
-              {!access.can('evidence.approve') && (
+              {!access.can("evidence.approve") && (
                 <p className="text-xs text-[var(--color-text-muted)]">
                   Ask a project owner to approve and apply these tests.
                 </p>
@@ -317,7 +363,9 @@ export default function SystemTestGeneratorModal({
                     className={frameworkButtonClass("playwright")}
                   >
                     <span>Playwright</span>
-                    {framework === "playwright" && <Check size={16} />}
+                    {framework === "playwright" && (
+                      <Check size={16} className="text-[var(--color-primary)]" />
+                    )}
                   </button>
                   <button
                     type="button"
@@ -325,65 +373,67 @@ export default function SystemTestGeneratorModal({
                     className={frameworkButtonClass("cypress")}
                   >
                     <span>Cypress</span>
-                    {framework === "cypress" && <Check size={16} />}
+                    {framework === "cypress" && (
+                      <Check size={16} className="text-[var(--color-primary)]" />
+                    )}
                   </button>
                 </div>
               </div>
 
               {/* Target Routes */}
               <div>
-                <div className="flex items-center justify-between mb-2.5">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
-                    Target Routes <span className="font-normal normal-case text-[var(--color-text-muted)]">(optional)</span>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Target Routes
                   </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {DEFAULT_ROUTES.map((route) => {
-                      const active = routes.includes(route);
-                      return (
-                        <button
-                          key={route}
-                          type="button"
-                          onClick={() => handleToggleDefaultRoute(route)}
-                          className={`text-xs font-mono px-2.5 py-1 rounded-md border cursor-pointer transition-colors ${
-                            active
-                              ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
-                              : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
-                          }`}
-                        >
-                          {route}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <span className="text-[11px] text-[var(--color-text-muted)]">
+                    Default routes recommended
+                  </span>
                 </div>
 
-                {/* Selected Routes List */}
-                <div className="space-y-2 max-h-36 overflow-y-auto border border-[var(--color-border)] rounded-xl p-3 bg-[var(--color-surface-secondary)]/30">
-                  {routes.length === 0 ? (
-                    <div className="text-xs text-[var(--color-text-muted)] text-center py-3">
-                      Routes are discovered automatically from your source code.
-                    </div>
-                  ) : (
-                    routes.map((route) => (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {DEFAULT_ROUTES.map((route) => {
+                    const isSelected = routes.includes(route);
+                    return (
+                      <button
+                        key={route}
+                        type="button"
+                        onClick={() => handleToggleDefaultRoute(route)}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-colors cursor-pointer ${
+                          isSelected
+                            ? "bg-[var(--color-primary)]/15 border-[var(--color-primary)]/50 text-[var(--color-primary)] font-medium"
+                            : "bg-[var(--color-surface-secondary)]/40 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                        }`}
+                      >
+                        {route}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {routes.length > 0 && (
+                  <div className="space-y-1.5 mb-3 max-h-32 overflow-y-auto pr-1">
+                    {routes.map((route) => (
                       <div
                         key={route}
                         className="flex items-center justify-between px-3 py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg font-mono text-xs"
                       >
-                        <span className="text-[var(--color-text)]">{route}</span>
+                        <span className="text-[var(--color-text)]">
+                          {route}
+                        </span>
                         <button
                           type="button"
                           onClick={() => handleRemoveRoute(route)}
-                          className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors p-1 cursor-pointer"
+                          className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={13} />
                         </button>
                       </div>
-                    ))
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
 
-                {/* Add Custom Route */}
-                <div className="flex items-center gap-2.5 mt-3">
+                <div className="flex gap-2">
                   <input
                     type="text"
                     value={newRoute}

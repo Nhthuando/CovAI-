@@ -731,26 +731,50 @@ export default function IntegrationWorkspace({
   // Run AI Test Generator
   const handleGenerateClick = async (explicitTargets = null) => {
     if (!projectAccess.can("ai.use")) return;
-    if (
-      !workspace?.generation?.hasAnalysis ||
-      (activeJobId && activeJobStatus !== "FAILED")
-    )
+    if (isJobActive || pendingAction === "GENERATE") {
       return;
+    }
+    if (endpoints.length === 0 && !workspace?.generation?.hasAnalysis) {
+      setError("Please run project analysis to discover API endpoints before generating test scenarios.");
+      showToast({
+        type: "warning",
+        title: "Analysis Needed",
+        message: "No API endpoints detected yet. Run analysis first to discover routes.",
+      });
+      return;
+    }
     setError("");
     setPendingAction("GENERATE");
     try {
       const res = await onGenerate(explicitTargets);
-      if (res === undefined) return;
-      const jobId = res?.data?.job?.id || res?.jobId;
+      if (res === undefined || res === null) return;
+      const jobId =
+        res?.data?.job?.id ||
+        res?.data?.jobId ||
+        res?.data?.job?.jobId ||
+        res?.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("GENERATE");
         setActiveJobStatus("RUNNING");
+        showToast({
+          type: "info",
+          title: "AI Test Generation Started",
+          message: explicitTargets?.length
+            ? `Generating tests for ${explicitTargets.length} endpoint(s)...`
+            : "Generating integration test scenarios with AI...",
+        });
       } else {
         await load();
       }
     } catch (err) {
-      setError(err.message || "Failed to generate test scenarios.");
+      const msg = err.message || "Failed to generate test scenarios.";
+      setError(msg);
+      showToast({
+        type: "error",
+        title: "Generation Failed",
+        message: msg,
+      });
     } finally {
       setPendingAction(null);
     }
@@ -813,25 +837,47 @@ export default function IntegrationWorkspace({
     }
   };
 
-  // Run Specific Endpoint
+  // Run Specific Endpoint (Targeted Single-Endpoint Execution)
+  const [runningTargetKey, setRunningTargetKey] = useState(null);
+
   const handleRunEndpoint = async (ep) => {
     if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || pendingAction || !ep) return;
+    const epPath = ep.path || ep.fullPath || ep.route || "/";
+    const epKey = `${(ep.method || "GET").toUpperCase()} ${epPath}`;
     const epScenarios = ep.scenarios || [];
     const scenarioIds = epScenarios
       .map((s) => s.id || `${s.testId}::${s.scenarioId || s.testName}`)
       .filter(Boolean);
-    if (scenarioIds.length === 0) {
+    const targetTestNames = epScenarios
+      .map((s) => s.title || s.testName)
+      .filter(Boolean);
+    if (scenarioIds.length === 0 && targetTestNames.length === 0) {
       setError(
-        `Endpoint ${ep.method} ${ep.path} has no test scenarios yet.`,
+        `Endpoint ${epKey} has no test scenarios yet.`,
       );
       return;
     }
     setError("");
     setPendingAction("RUN_ENDPOINT");
+    setRunningTargetKey(epKey);
     try {
-      await approveIntegrationTestsApi(snapshotId, scenarioIds);
-      const response = await runCoverageByType(snapshotId, "integration");
+      if (workspace?.aiTests && workspace.aiTests.length > 0 && scenarioIds.length > 0) {
+        try {
+          await approveIntegrationTestsApi(snapshotId, scenarioIds);
+        } catch (_) {}
+      }
+      const response = await runCoverageByType(
+        snapshotId,
+        "integration",
+        null,
+        null,
+        {
+          targetEndpoint: epKey,
+          targetTestNames,
+          selectedScenarioIds: scenarioIds,
+        },
+      );
       const jobId =
         response.data?.job?.id || response.data?.jobId || response.jobId;
       if (jobId) {
@@ -841,22 +887,42 @@ export default function IntegrationWorkspace({
       }
     } catch (err) {
       setError(err.message || "Failed to execute tests for this endpoint.");
+      setRunningTargetKey(null);
     } finally {
       setPendingAction(null);
     }
   };
 
-  // Retry Single Scenario
+  // Retry Single Scenario (Targeted Single-Scenario Execution)
   const handleRetryScenario = async (ep, sc) => {
     if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || pendingAction || !sc) return;
     const scId = sc.id || `${sc.testId}::${sc.scenarioId || sc.testName}`;
-    if (!scId) return;
+    const scTitle = sc.title || sc.testName;
+    if (!scId && !scTitle) return;
+    const epKey = ep
+      ? `${(ep.method || "GET").toUpperCase()} ${ep.path || ep.fullPath || ep.route || "/"}`
+      : null;
     setError("");
     setPendingAction("RETRY_SCENARIO");
+    setRunningTargetKey(scId || scTitle);
     try {
-      await approveIntegrationTestsApi(snapshotId, [scId]);
-      const response = await runCoverageByType(snapshotId, "integration");
+      if (workspace?.aiTests && workspace.aiTests.length > 0 && scId) {
+        try {
+          await approveIntegrationTestsApi(snapshotId, [scId]);
+        } catch (_) {}
+      }
+      const response = await runCoverageByType(
+        snapshotId,
+        "integration",
+        null,
+        null,
+        {
+          targetEndpoint: epKey,
+          targetTestNames: scTitle ? [scTitle] : [],
+          selectedScenarioIds: scId ? [scId] : [],
+        },
+      );
       const jobId =
         response.data?.job?.id || response.data?.jobId || response.jobId;
       if (jobId) {
@@ -866,6 +932,7 @@ export default function IntegrationWorkspace({
       }
     } catch (err) {
       setError(err.message || "Failed to rerun this test scenario.");
+      setRunningTargetKey(null);
     } finally {
       setPendingAction(null);
     }
@@ -1130,13 +1197,75 @@ export default function IntegrationWorkspace({
     let passedApis = 0;
     let failedApis = 0;
 
-    // Collect deduplicated scenarios across endpoints to prevent duplicate counts
-    const uniqueScenariosMap = new Map();
+    const hasExecuted =
+      Boolean(execution && (execution.totalTests > 0 || execution.status)) ||
+      endpoints.some(
+        (ep) =>
+          (ep.scenarios || []).some(
+            (s) =>
+              s.status === "passed" ||
+              s.status === "failed" ||
+              s.rawJestStatus === "passed" ||
+              s.rawJestStatus === "failed" ||
+              s.executionVerdict === "PASS" ||
+              s.executionVerdict === "FAIL",
+          ) ||
+          (ep.passedCount || 0) > 0 ||
+          (ep.failedCount || 0) > 0,
+      );
 
+    // Match executed request URL back to declared API endpoint
+    const findMatchingEndpoint = (method, reqPath) => {
+      if (!endpoints || endpoints.length === 0) return null;
+      const cleanReq = (reqPath || "").split("?")[0].replace(/\/+$/, "") || "/";
+      const reqMethod = (method || "").toUpperCase();
+
+      for (const ep of endpoints) {
+        if ((ep.method || "").toUpperCase() !== reqMethod) continue;
+        const cleanRoute = (ep.path || ep.route || ep.fullPath || "").replace(/\/+$/, "") || "/";
+        const regexStr = "^" + cleanRoute.replace(/\./g, "\\.").replace(/:[a-zA-Z0-9_]+/g, "[^/]+") + "$";
+        if (new RegExp(regexStr, "i").test(cleanReq)) {
+          return ep;
+        }
+      }
+      return null;
+    };
+
+    // Group and deduplicate scenarios across endpoints and workspace.aiTests
+    const scenariosByEndpointMap = {};
+
+    // 1. Ingest scenarios from AI tests / workspace.aiTests
+    (workspace?.aiTests || []).forEach((t) => {
+      if (!t) return;
+      (t.requests || []).forEach((r, idx) => {
+        if (!r) return;
+        const rMethod = (r.method || "GET").toUpperCase();
+        const rPath = r.path || "";
+        const matchedEp = findMatchingEndpoint(rMethod, rPath);
+        const epMethod = matchedEp ? (matchedEp.method || "GET").toUpperCase() : rMethod;
+        const epPath = matchedEp
+          ? (matchedEp.path || matchedEp.route || matchedEp.fullPath || "/")
+          : rPath.split("?")[0] || "/";
+        const epKey = `${epMethod} ${epPath}`;
+
+        if (!scenariosByEndpointMap[epKey]) {
+          scenariosByEndpointMap[epKey] = [];
+        }
+        scenariosByEndpointMap[epKey].push({
+          ...r,
+          id: `${t.id}::${r.scenarioId || r.testName || idx}`,
+          testName: r.testName || `Scenario ${idx + 1}`,
+          status: r.status || "not_run",
+        });
+      });
+    });
+
+    // 2. Ingest existing project scenarios & execution results from endpoints
     endpoints.forEach((ep) => {
+      const epMethod = (ep.method || "GET").toUpperCase();
+      const epPath = ep.path || ep.route || ep.fullPath || "/";
+      const epKey = `${epMethod} ${epPath}`;
       const epScenarios = ep.scenarios || [];
-      const hasTests = epScenarios.length > 0 || (ep.generatedCount || 0) > 0;
-      if (hasTests) testedApis++;
 
       const scFailed = epScenarios.filter(
         (s) =>
@@ -1154,34 +1283,56 @@ export default function IntegrationWorkspace({
       const epFailed = epScenarios.length > 0 ? scFailed : ep.failedCount || 0;
       const epPassed = epScenarios.length > 0 ? scPassed : ep.passedCount || 0;
 
-      if (epFailed > 0) failedApis++;
-      else if (epPassed > 0) passedApis++;
-
-      epScenarios.forEach((sc) => {
-        const key = sc.id || sc.scenarioId || sc.title;
-        if (key && !uniqueScenariosMap.has(key)) {
-          uniqueScenariosMap.set(key, sc);
+      if (hasExecuted) {
+        if (epFailed > 0) {
+          failedApis++;
+        } else if (epPassed > 0) {
+          passedApis++;
+          testedApis++;
         }
-      });
-    });
+      }
 
-    // Also collect any scenarios from workspace.aiTests (including codebase discovered tests)
-    (workspace?.aiTests || []).forEach((t) => {
-      (t.requests || []).forEach((r) => {
-        const key = r.id || `${t.id}::${r.scenarioId || r.testName}`;
-        if (key && !uniqueScenariosMap.has(key)) {
-          uniqueScenariosMap.set(key, r);
+      if (!scenariosByEndpointMap[epKey]) {
+        scenariosByEndpointMap[epKey] = [];
+      }
+
+      epScenarios.forEach((s, idx) => {
+        const scenarioId = s.id || `${epKey}::scenario_${idx}`;
+        const sTitle = s.title || s.testName || `Scenario ${idx + 1}`;
+        const existingIdx = scenariosByEndpointMap[epKey].findIndex(
+          (ex) =>
+            ex.id === scenarioId ||
+            (ex.testName && (ex.testName === sTitle || ex.testName === s.testName))
+        );
+
+        if (existingIdx === -1) {
+          scenariosByEndpointMap[epKey].push({
+            ...s,
+            id: scenarioId,
+            testName: sTitle,
+            status: s.status || "not_run",
+          });
+        } else {
+          const existing = scenariosByEndpointMap[epKey][existingIdx];
+          if (s.status && (s.status !== "not_run" || !existing.status)) {
+            existing.status = s.status;
+          }
+          if (s.rawJestStatus) existing.rawJestStatus = s.rawJestStatus;
+          if (s.executionVerdict) existing.executionVerdict = s.executionVerdict;
+          if (s.actualStatus !== undefined) existing.actualStatus = s.actualStatus;
+          if (s.failureDiagnostics) existing.failureDiagnostics = s.failureDiagnostics;
         }
       });
     });
 
     const uncoveredApis = Math.max(0, totalApis - testedApis);
+    const executedApisCount = passedApis + failedApis;
     const apiPassRate =
-      testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
+      executedApisCount > 0 ? Math.round((passedApis / executedApisCount) * 100) : 0;
     const apiCoverageRate =
       totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
 
-    const dedupedScenarios = Array.from(uniqueScenariosMap.values());
+    const dedupedScenarios = Object.values(scenariosByEndpointMap).flat();
     const dedupPassed = dedupedScenarios.filter(
       (s) =>
         s.status === "passed" ||
@@ -1234,6 +1385,7 @@ export default function IntegrationWorkspace({
           : 0;
 
     return {
+      hasExecuted,
       totalApis,
       testedApis,
       passedApis,
@@ -1247,7 +1399,7 @@ export default function IntegrationWorkspace({
       scenarioPassRate,
       scenarioCoverageRate,
     };
-  }, [endpoints, execution, generation]);
+  }, [endpoints, execution, generation, workspace]);
 
   // Loading State with Authentic Skeleton
   if (loading && !workspace) {
@@ -1389,6 +1541,20 @@ export default function IntegrationWorkspace({
                   : "Generate AI Tests"}
               </span>
             </button>
+
+            {/* AI Generation Telemetry Pill */}
+            {(workspace?.generation?.telemetry || workspace?.aiTests?.[0]?.telemetry) && (
+              <div
+                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[11px] font-mono text-[var(--color-text-secondary)] shadow-2xs"
+                title={`Last API Test Generation: ${(workspace.generation?.telemetry || workspace.aiTests?.[0]?.telemetry)?.durationSeconds || 0}s, ${(workspace.generation?.telemetry || workspace.aiTests?.[0]?.telemetry)?.tokens?.total || 0} tokens`}
+              >
+                <Clock size={11} className="text-indigo-400" />
+                <span>{((workspace.generation?.telemetry || workspace.aiTests?.[0]?.telemetry)?.durationSeconds || 0)}s</span>
+                <span className="text-[var(--color-border)] opacity-60">•</span>
+                <Zap size={11} className="text-amber-400" />
+                <span>{((workspace.generation?.telemetry || workspace.aiTests?.[0]?.telemetry)?.tokens?.total || 0).toLocaleString()} tok</span>
+              </div>
+            )}
 
             <div className="h-4 w-px bg-[var(--color-border)] mx-0.5 hidden sm:block" />
 
@@ -1798,6 +1964,7 @@ export default function IntegrationWorkspace({
             <div className="space-y-4">
               <IntegrationRouteMatrixTable
                 endpoints={endpoints}
+                hasExecuted={overallStats.hasExecuted}
                 onRunEndpoint={handleRunEndpoint}
                 onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
                 onOpenFile={onOpenFile}
@@ -1844,6 +2011,17 @@ export default function IntegrationWorkspace({
                 onScenarioChange={load}
                 onError={setError}
                 onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
+                onRunEndpoint={handleRunEndpoint}
+                onRunScenario={handleRetryScenario}
+                isRunningTests={
+                  Boolean(
+                    pendingAction === "RUN_ENDPOINT" ||
+                    pendingAction === "RETRY_SCENARIO" ||
+                    pendingAction === "RUN" ||
+                    (activeJobId && activeJobType === "EXECUTE")
+                  )
+                }
+                runningTargetKey={runningTargetKey}
                 isGenerating={
                   pendingAction === "GENERATE" ||
                   (activeJobId && activeJobType === "GENERATE")

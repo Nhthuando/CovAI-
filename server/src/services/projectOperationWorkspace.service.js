@@ -9,6 +9,8 @@ import { runtimeIgnoredDirectories } from './projectRuntimePlan.service.js';
 import { ACTIVE_PROJECT_OPERATIONS, publishOperationResults } from './projectOperation.service.js';
 import { recoverProjectMutationMarkers } from './projectMutationRecovery.service.js';
 import { publishProjectEvent,deliverProjectEvent } from './projectEvent.service.js';
+import { normalizeDiskPath } from '../utils/snapshotWorkspace.js';
+import { resolveSnapshotRootDir } from '../utils/projectRootResolver.js';
 
 const contexts = new AsyncLocalStorage();
 const serverRoot = fileURLToPath(new URL('../../',import.meta.url));
@@ -46,10 +48,19 @@ export const deliverPreparedCommits = async () => {
 export const operationSnapshot = snapshot => {
     const context = contexts.getStore();
     if (!context || context.snapshotId !== snapshot?.id) return snapshot;
-    return {...snapshot,rootDir:path.join(context.rootDir,context.analysisRelative),storagePath:context.rootDir,
-        originalRootDir:path.join(context.originalRootDir,context.analysisRelative),originalStoragePath:context.originalRootDir,
-        jestConfigPath:snapshot.jestConfigPath && path.isAbsolute(snapshot.jestConfigPath)
-            ? path.join(context.rootDir,path.relative(context.originalRootDir,snapshot.jestConfigPath)) : snapshot.jestConfigPath};
+    const relJestConfig = snapshot.jestConfigPath
+        ? (path.isAbsolute(snapshot.jestConfigPath)
+            ? path.relative(context.originalRootDir, normalizeDiskPath(snapshot.jestConfigPath) || snapshot.jestConfigPath)
+            : snapshot.jestConfigPath)
+        : null;
+    return {
+        ...snapshot,
+        rootDir: path.join(context.rootDir, context.analysisRelative),
+        storagePath: context.rootDir,
+        originalRootDir: path.join(context.originalRootDir, context.analysisRelative),
+        originalStoragePath: context.originalRootDir,
+        jestConfigPath: relJestConfig ? path.join(context.rootDir, relJestConfig) : snapshot.jestConfigPath
+    };
 };
 
 export const assertProjectOperationActive = async (context = contexts.getStore(),db = prisma) => {
@@ -96,20 +107,40 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
         const originalRootDir = projectEditableWorkspaceRoot(snapshot);
         await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:originalRootDir});
         await fs.mkdir(workspaceParent,{recursive:true});
-        try { await fs.access(rootDir); throw projectFileError('RECOVERY_REQUIRED','An interrupted operation workspace needs recovery'); }
-        catch(error) { if (error.code !== 'ENOENT') throw error; }
+        if (operation.capability === 'tests.run') {
+            await fs.rm(rootDir, { recursive: true, force: true });
+        } else {
+            try { await fs.access(rootDir); throw projectFileError('RECOVERY_REQUIRED','An interrupted operation workspace needs recovery'); }
+            catch(error) { if (error.code !== 'ENOENT') throw error; }
+        }
         await fs.cp(originalRootDir,rootDir,{recursive:true,dereference:false,errorOnExist:true,
             filter:async source => {
                 const name = path.basename(source);
                 const relative = path.relative(originalRootDir,source).replaceAll('\\','/');
                 const inGit = includeGitMetadata && (relative === '.git' || relative.startsWith('.git/'));
                 if (!inGit && source !== originalRootDir && (runtimeIgnoredDirectories.has(name) || name === '.env' || name.startsWith('.env.'))) return false;
-                const stat = await fs.lstat(source);
-                return !stat.isSymbolicLink();
+                try {
+                    const stat = await fs.lstat(source);
+                    return !stat.isSymbolicLink();
+                } catch (_) {
+                    return true;
+                }
             }});
+        const normalizedSnapshotRoot = normalizeDiskPath(snapshot.rootDir) || resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+        let analysisRelative = path.relative(originalRootDir, normalizedSnapshotRoot).replaceAll('\\', '/');
+        if (analysisRelative.startsWith('../') || analysisRelative === '..' || path.isAbsolute(analysisRelative)) {
+            const normOriginal = originalRootDir.replaceAll('\\', '/').replace(/\/+$/, '');
+            const normSnap = normalizedSnapshotRoot.replaceAll('\\', '/').replace(/\/+$/, '');
+            if (normSnap.startsWith(normOriginal + '/')) {
+                analysisRelative = normSnap.slice(normOriginal.length + 1);
+            } else {
+                const repoMatch = normSnap.match(/(?:repo|workspace|project)\/(.*)$/i);
+                analysisRelative = repoMatch ? repoMatch[1] : '';
+            }
+        }
         context = {operationId,projectId:operation.projectId,snapshotId:snapshot.id,userId:operation.actorId,
             capability:operation.capability,jobId:operation.primaryJobId,workspaceRevision:operation.capturedWorkspaceRevision,
-            rootDir,originalRootDir,analysisRelative:path.relative(originalRootDir,snapshot.rootDir)};
+            rootDir,originalRootDir,analysisRelative};
         await tx.projectOperation.update({where:{id:operationId},data:{status:'RUNNING'}});
     });
     if (!context) return {skipped:true,operationId};
@@ -158,7 +189,7 @@ export const runJobInOperationWorkspace = async (jobId,run) => {
     if (!operation) throw projectFileError('OPERATION_CONTEXT_REQUIRED','This legacy job has no guarded operation context. Submit it again.',409);
     try { return await withOperationWorkspace(operation.id,run,{deferResults:true}); }
     catch(error) {
-        console.error(`[runJobInOperationWorkspace ${jobId}] Job execution failed:`, error);
+        console.error(`[runJobInOperationWorkspace ${jobId}] Job execution failed STACK:`, error.stack || error);
         const status = error.code === 'OPERATION_STALE' ? 'STALE' : error.code === 'OPERATION_CANCELED' ? 'CANCELED' : 'FAILED';
         await prisma.projectOperation.updateMany({where:{id:operation.id,status:{in:ACTIVE_PROJECT_OPERATIONS}},data:{status}}).catch(()=>{});
         const jobFinalStatus = error.code === 'OPERATION_CANCELED' ? 'CANCELED' : 'FAILED';

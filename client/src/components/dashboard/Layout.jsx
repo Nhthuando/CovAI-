@@ -22,6 +22,7 @@ import QualityDashboard from "./QualityDashboard";
 import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import VersionControlWorkspace from "./VersionControlWorkspace";
+import LifecycleStatusSelect from "./portfolio/primitives/LifecycleStatusSelect";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
@@ -31,8 +32,10 @@ import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
 import Security from "./settings/Security";
 import Billing from "./settings/Billing";
+import Usage from "./settings/Usage";
 import { ToastProvider, useToast } from "./ToastContext";
 import MissingTestFilesModal from "./MissingTestFilesModal";
+import GlobalAiTokenPill from "./GlobalAiTokenPill";
 import PanelResizer from "./PanelResizer";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ProjectExportDialog from "./ProjectExportDialog";
@@ -214,7 +217,7 @@ function LayoutInner() {
     }
   }, [location.search, showToast]);
 
-  const allowedSettings = ["profile", "appearance", "security", "notifications", "billing", "members"];
+  const allowedSettings = ["profile", "appearance", "security", "notifications", "usage", "billing", "members"];
   const selectedSetting = searchParams.get("setting");
   const activeSetting = allowedSettings.includes(selectedSetting) ? selectedSetting : "profile";
   const membersTab = searchParams.get("membersTab") === "pending" ? "pending" : "members";
@@ -408,8 +411,10 @@ function LayoutInner() {
         const response = await getProjectJobsApi(projectId);
         const jobs = response.jobs || [];
         const targetSnapshotId =
-          project.snapshots?.[0]?.id ||
+          searchParams.get("snapshotId") ||
+          project.activeSnapshotId ||
           project.latestSnapshotId ||
+          project.snapshots?.[0]?.id ||
           localStorage.getItem(`latestSnapshot_${projectId}`);
         const latest =
           jobs
@@ -640,6 +645,36 @@ function LayoutInner() {
     window.addEventListener("covai:project-event", refreshTree);
     return () => { alive = false; window.removeEventListener("covai:project-event", refreshTree); };
   }, [project?.id, user?.id]);
+
+  useEffect(() => {
+    const handleStatusUpdated = (event) => {
+      const { projectId, lifecycleStatus, isPinned } = event.detail || {};
+      if (!projectId) return;
+
+      if (project?.id === projectId && lifecycleStatus !== undefined) {
+        setProject((prev) => (prev ? { ...prev, lifecycleStatus } : prev));
+      }
+
+      setProjects((prev) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map((p) => {
+          if (p.id === projectId) {
+            return {
+              ...p,
+              ...(lifecycleStatus !== undefined && { lifecycleStatus }),
+              ...(isPinned !== undefined && { isPinned }),
+            };
+          }
+          return p;
+        });
+      });
+    };
+
+    window.addEventListener("covai:project-status-updated", handleStatusUpdated);
+    return () => {
+      window.removeEventListener("covai:project-status-updated", handleStatusUpdated);
+    };
+  }, [project?.id]);
 
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
@@ -1022,6 +1057,30 @@ function LayoutInner() {
               >
                 {project.name}
               </span>
+              {project?.id && (
+                <LifecycleStatusSelect
+                  projectId={project.id}
+                  currentStatus={project.lifecycleStatus || "NOT_STARTED"}
+                  onStatusChange={(newStatus) => {
+                    setProject((prev) =>
+                      prev ? { ...prev, lifecycleStatus: newStatus } : prev
+                    );
+                    setProjects((prev) =>
+                      (prev || []).map((p) =>
+                        p.id === project.id ? { ...p, lifecycleStatus: newStatus } : p
+                      )
+                    );
+                    queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
+                      if (!Array.isArray(old)) return old;
+                      return old.map((p) =>
+                        p.id === project.id ? { ...p, lifecycleStatus: newStatus } : p
+                      );
+                    });
+                    queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
+                  }}
+                  className="ml-1"
+                />
+              )}
               {filePathSegments.map((segment, idx) => {
                 const isLast = idx === filePathSegments.length - 1;
                 return (
@@ -1114,6 +1173,8 @@ function LayoutInner() {
             projectName={currentProjectName}
             onGenerate={handleGenerateTests}
           />
+
+          <GlobalAiTokenPill />
 
           {!isMobile && (
             <button
@@ -1307,6 +1368,7 @@ function LayoutInner() {
             {activeSetting === "appearance" && <Appearance />}
             {activeSetting === "security" && <Security />}
             {activeSetting === "notifications" && <NotificationsSettings />}
+            {activeSetting === "usage" && <Usage isActive={activeActivity === "settings"} />}
             {activeSetting === "billing" && <Billing />}
             {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
           </div>
@@ -1429,7 +1491,7 @@ function LayoutInner() {
 
           <div className={!isFullWidthWorkspace && activeActivity !== "settings" ? "w-full h-full" : "hidden"}>
                 <Editor
-                  key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
+                  key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
                   tabs={tabs}
                   activeTabId={activeTabId}
                   onSelectTab={(tabId) => {
@@ -1442,8 +1504,10 @@ function LayoutInner() {
                   isLoadingTree={isLoadingTree}
                   projectId={project?.id}
                   snapshotId={
-                    project?.snapshots?.[0]?.id ||
+                    searchParams.get("snapshotId") ||
+                    project?.activeSnapshotId ||
                     project?.latestSnapshotId ||
+                    project?.snapshots?.[0]?.id ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
                       : null) ||
@@ -1503,12 +1567,14 @@ function LayoutInner() {
                 }
               >
                 <AIPanel
-                  key={`${user?.id}:${project?.id}`}
+                  key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || ""}`}
                   screenContext={screenContext}
                   projectId={project?.id}
                   snapshotId={
-                    project?.snapshots?.[0]?.id ||
+                    searchParams.get("snapshotId") ||
+                    project?.activeSnapshotId ||
                     project?.latestSnapshotId ||
+                    project?.snapshots?.[0]?.id ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
                       : null) ||

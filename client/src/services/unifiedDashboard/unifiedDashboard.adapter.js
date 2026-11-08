@@ -47,12 +47,15 @@ export function adaptUnit(raw, unifiedUnit = null) {
       (totalTests > 0 ? Math.round(durationMs / totalTests) : 0);
 
     const cov = unifiedUnit.coverageMetrics || {};
-    const coverageMetrics = {
-      lines: toFixedPct(cov.lines),
-      branches: toFixedPct(cov.branches),
-      functions: toFixedPct(cov.functions),
-      statements: toFixedPct(cov.statements),
-    };
+    const coverageMetrics =
+      totalTests > 0
+        ? {
+            lines: toFixedPct(cov.lines),
+            branches: toFixedPct(cov.branches),
+            functions: toFixedPct(cov.functions),
+            statements: toFixedPct(cov.statements),
+          }
+        : { lines: 0, branches: 0, functions: 0, statements: 0 };
 
     const lowCoverageItems = Array.isArray(unifiedUnit.lowCoverageItems)
       ? unifiedUnit.lowCoverageItems.slice(0, 4).map((f) => ({
@@ -128,12 +131,15 @@ export function adaptUnit(raw, unifiedUnit = null) {
 
   // Coverage percentages
   const cov = summary?.coverage || {};
-  const coverageMetrics = {
-    lines: toFixedPct(cov.lines ?? cov.line),
-    branches: toFixedPct(cov.branches ?? cov.branch),
-    functions: toFixedPct(cov.functions ?? cov.function),
-    statements: toFixedPct(cov.statements ?? cov.statement),
-  };
+  const coverageMetrics =
+    totalTests > 0
+      ? {
+          lines: toFixedPct(cov.lines ?? cov.line),
+          branches: toFixedPct(cov.branches ?? cov.branch),
+          functions: toFixedPct(cov.functions ?? cov.function),
+          statements: toFixedPct(cov.statements ?? cov.statement),
+        }
+      : { lines: 0, branches: 0, functions: 0, statements: 0 };
 
   // Top 4 lowest branch coverage files
   const validFiles = Array.isArray(files)
@@ -197,14 +203,16 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     const passRate = getPassRate(passedTests, failedTests) ?? Number(unifiedIntegration.passRate ?? 0);
 
     const cov = unifiedIntegration.coverageMetrics || {};
+    const totalApis = Number(cov.totalApis ?? 0);
+    const hasIntExecuted = totalTests > 0;
     const coverageMetrics = {
-      lines: toFixedPct(cov.lines),
-      branches: toFixedPct(cov.branches),
-      functions: toFixedPct(cov.functions),
-      statements: toFixedPct(cov.statements),
-      apiEndpoint: toFixedPct(cov.apiEndpoint),
+      lines: hasIntExecuted ? toFixedPct(cov.lines) : 0,
+      branches: hasIntExecuted ? toFixedPct(cov.branches) : 0,
+      functions: hasIntExecuted ? toFixedPct(cov.functions) : 0,
+      statements: hasIntExecuted ? toFixedPct(cov.statements) : 0,
+      apiEndpoint: hasIntExecuted && totalApis > 0 ? toFixedPct(cov.apiEndpoint) : 0,
       uncoveredApis: Number(cov.uncoveredApis ?? 0),
-      totalApis: Number(cov.totalApis ?? 0),
+      totalApis,
     };
 
     const fd = unifiedIntegration.failureDistribution || {};
@@ -293,9 +301,8 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     wsSummary.totalTests ?? wsSummary.executedApis ?? passedTests + failedTests + skippedTests
   );
   const totalApis = Number(wsSummary.totalApis ?? wsSummary.totalEndpoints ?? (endpoints.length || executedTests));
-  const uncoveredApis = Number(
-    wsSummary.uncoveredApis ?? Math.max(0, totalApis - passedTests - failedTests)
-  );
+  const coveredApis = executedTests > 0 ? passedTests : 0;
+  const uncoveredApis = Math.max(0, totalApis - coveredApis);
 
   const flakyTests = 0;
   const durationMs = Number(wsSummary.durationMs ?? 0);
@@ -305,18 +312,18 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
   // API Coverage metrics
   const epMetrics = wsSummary.endpointCoverageMetrics || {};
   const apiEndpointPct =
-    epMetrics.endpointCoveragePct !== undefined
+    executedTests <= 0 || totalApis <= 0
+      ? 0
+      : epMetrics.endpointCoveragePct !== undefined
       ? toFixedPct(epMetrics.endpointCoveragePct)
-      : totalApis > 0
-      ? toFixedPct((passedTests / totalApis) * 100)
-      : 0;
+      : toFixedPct((passedTests / totalApis) * 100);
 
   const codeCov = wsSummary.codeCoverage || coverageSummary?.coverage || {};
   const coverageMetrics = {
-    lines: toFixedPct(codeCov.line?.pct ?? codeCov.line ?? codeCov.lines),
-    branches: toFixedPct(codeCov.branch?.pct ?? codeCov.branch ?? codeCov.branches),
-    functions: toFixedPct(codeCov.function?.pct ?? codeCov.function ?? codeCov.functions),
-    statements: toFixedPct(codeCov.statement?.pct ?? codeCov.statement ?? codeCov.statements),
+    lines: executedTests > 0 ? toFixedPct(codeCov.line?.pct ?? codeCov.line ?? codeCov.lines) : 0,
+    branches: executedTests > 0 ? toFixedPct(codeCov.branch?.pct ?? codeCov.branch ?? codeCov.branches) : 0,
+    functions: executedTests > 0 ? toFixedPct(codeCov.function?.pct ?? codeCov.function ?? codeCov.functions) : 0,
+    statements: executedTests > 0 ? toFixedPct(codeCov.statement?.pct ?? codeCov.statement ?? codeCov.statements) : 0,
     apiEndpoint: apiEndpointPct,
     uncoveredApis,
     totalApis,
@@ -408,7 +415,7 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
       (totalTests > 0 ? Math.round(durationMs / totalTests) : 0);
 
     const cov = unifiedSystem.coverageMetrics || {};
-    const flowPct = toFixedPct(cov.flow ?? cov.lines);
+    const flowPct = totalTests > 0 ? toFixedPct(cov.flow ?? cov.lines) : 0;
 
     const fd = unifiedSystem.failureDistribution || {};
     const failureDistribution = {
@@ -484,11 +491,11 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
   // Flow coverage
   const frontendCounters = s.coverageSummary?.frontend?.counters || {};
   const flowCoveragePct =
-    frontendCounters.lines?.pct !== undefined
+    totalTests <= 0
+      ? 0
+      : frontendCounters.lines?.pct !== undefined
       ? toFixedPct(frontendCounters.lines.pct)
-      : totalTests > 0
-      ? toFixedPct(passRate)
-      : 0;
+      : toFixedPct(passRate);
 
   // Failure categories: strictly 0 when failedTests === 0
   const failureDistribution = {

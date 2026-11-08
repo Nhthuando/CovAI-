@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { containedPath } from './fullSystemConfig.service.js';
 import { collectSystemGenerationContext } from './systemGenerationContext.service.js';
 import { generateText } from './gemini.service.js';
+import { withGeminiChannel } from './geminiTokenTracker.service.js';
 import { validateGeneratedTestCode } from '../validators/aiTestCode.validator.js';
 import { preserveTestIntent, analyzeSystemTestFile, walkAst, validateAdditionalTestQuality } from './systemTestStaticAnalysis.service.js';
 import { ServiceError } from '../utils/serviceError.js';
@@ -33,7 +34,7 @@ export const optimizeSystemTest = async ({ rootDir, filePath, mode = 'BOOST_COVE
     let response;
     try {
         const provider=dependencies.generate || generateText;
-        const generate=model ? (prompt,instruction,config)=>provider(prompt,model,instruction,config) : provider;
+        const generate=model ? (prompt,instruction,config)=>withGeminiChannel("E2E_TEST", () => provider(prompt,model,instruction,config)) : ((...args) => withGeminiChannel("E2E_TEST", () => provider(...args)));
         response = await generate(budget.prompt, `${mode === 'BOOST_COVERAGE' ? 'Return JSON {"additionalTests":"only new test declarations"}. Do not repeat the existing file or imports. Add at most 3 focused tests using the existing imports.' : 'Return JSON {"optimizedCode":"full corrected file"}.'}
 ${systemTestPromptRules({executionMode: (()=>{try{return JSON.parse(instruction).executionMode;}catch{return 'frontend';}})(),repair:mode==='FIX_BREAKPOINT'})}
 Return one to three independent new tests for distinct supplied gaps. Use existing imports and preserve baseline code. Runtime evidence may inform locator mechanics, never redefine Expected.`, { temperature: 0.2, maxOutputTokens: mode === 'BOOST_COVERAGE' ? 5000 : 12000, responseMimeType:'application/json',maxAttempts:2,totalTimeoutMs:150000 });

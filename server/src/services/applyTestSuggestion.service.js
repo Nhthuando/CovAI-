@@ -44,6 +44,7 @@ import {
     ensureWorkspaceNodeModulesLinked,
     cleanupWorkspaceNodeModulesLinks
 } from "./dependencyResolution.service.js";
+import { extractExecutionDurationMs } from "./testResultParser.service.js";
 export { resolveSnapshotRootDir };
 
 export const activeApplyLocks = new Set();
@@ -3163,6 +3164,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
 
     // Track execution start timestamp for provenance & freshness verification
     const runExecutionStartTime = Date.now();
+    let runnerElapsedMs = 0;
     let testExecutionError = null;
     let runnerExitCode = 0;
     let rawOutput = "";
@@ -3189,6 +3191,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         testExecutionError = runErr.message;
         runnerExitCode = 1;
         rawOutput += "\n" + runErr.message;
+    } finally {
+        runnerElapsedMs += Math.max(1, Date.now() - runExecutionStartTime);
     }
 
     // Read test execution results from output files if generated
@@ -3309,6 +3313,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         testResults = null;
         testExecutionError = null;
         rawOutput = "";
+        const retryStartTime = Date.now();
         try {
             if (typeof runCoverageFn === "function") {
                 await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: healIterations });
@@ -3328,6 +3333,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 runnerExitCode = retryRes.exitCode;
                 rawOutput += "\n" + (retryRes.stderr || "") + "\n" + (retryRes.stdout || "");
             }
+            runnerElapsedMs += Math.max(1, Date.now() - retryStartTime);
             for (const p of candidateResults) {
                 if (fs.existsSync(p)) {
                     try {
@@ -3776,14 +3782,30 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             };
         }
 
+        const runTotalTests = testResults?.numTotalTests ?? testResults?.totalTests ?? (anyPassed ? 1 : 0);
+        const runPassedTests = testResults?.numPassedTests ?? testResults?.passedTests ?? (anyPassed ? 1 : 0);
+        const runFailedTests = testResults?.numFailedTests ?? testResults?.failedTests ?? (anyPassed ? 0 : 1);
+        const runStatusUpper = (runFailedTests === 0 && anyPassed) ? "PASSED" : "FAILED";
+
         // Execute BOTH CoverageFile and CoverageSummary updates within a single atomic Prisma transaction
         try {
             const executeDbUpdates = async (tx) => {
                 if (durableTx && durableTx.txId && typeof tx.projectSnapshot?.update === "function") {
-                    await tx.projectSnapshot.update({
+                    const snap = await tx.projectSnapshot.findUnique({
                         where: { id: snapshotId },
-                        data: { commitSha: `appliedTx:${durableTx.txId}` }
+                        select: { id: true, label: true, versionNumber: true, commitSha: true }
                     });
+                    const updateData = {};
+                    if (!snap?.label) {
+                        const vNum = snap?.versionNumber != null ? `#${snap.versionNumber}` : `#1`;
+                        updateData.label = `${vNum} (AI Applied)`;
+                    }
+                    if (Object.keys(updateData).length > 0) {
+                        await tx.projectSnapshot.update({
+                            where: { id: snapshotId },
+                            data: updateData
+                        });
+                    }
                 }
                 for (const item of coverageFilesToPersist) {
                     await tx.coverageFile.upsert({
@@ -3810,6 +3832,49 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                             ...summaryMetrics
                         }
                     });
+                    if (typeof tx.testRun?.findFirst === "function") {
+                        const resolvedDurationMs = extractExecutionDurationMs(testResults, runnerElapsedMs);
+                        const existingUnitRun = await tx.testRun.findFirst({
+                            where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+                            orderBy: { createdAt: "desc" },
+                        });
+                        if (existingUnitRun?.id) {
+                            await tx.testRun.update({
+                                where: { id: existingUnitRun.id },
+                                data: {
+                                    totalTests: Math.max(Number(existingUnitRun.totalTests || 0), runTotalTests),
+                                    passedTests: Math.max(Number(existingUnitRun.passedTests || 0), runPassedTests),
+                                    failedTests: runFailedTests,
+                                    durationMs: resolvedDurationMs > 0 ? resolvedDurationMs : Number(existingUnitRun.durationMs || 0),
+                                    status: runStatusUpper,
+                                    coverageLinesPct: summaryMetrics.linesPct,
+                                    coverageBranchesPct: summaryMetrics.branchesPct,
+                                    coverageFunctionsPct: summaryMetrics.funcsPct,
+                                    coverageStatementsPct: summaryMetrics.stmtsPct,
+                                    finishedAt: new Date(),
+                                },
+                            });
+                        } else if (typeof tx.testRun?.create === "function") {
+                            await tx.testRun.create({
+                                data: {
+                                    snapshotId,
+                                    type: "JEST",
+                                    totalTests: Math.max(1, runTotalTests),
+                                    passedTests: Math.max(anyPassed ? 1 : 0, runPassedTests),
+                                    failedTests: runFailedTests,
+                                    skippedTests: 0,
+                                    durationMs: resolvedDurationMs,
+                                    status: runStatusUpper,
+                                    coverageLinesPct: summaryMetrics.linesPct,
+                                    coverageBranchesPct: summaryMetrics.branchesPct,
+                                    coverageFunctionsPct: summaryMetrics.funcsPct,
+                                    coverageStatementsPct: summaryMetrics.stmtsPct,
+                                    startedAt: new Date(),
+                                    finishedAt: new Date(),
+                                },
+                            });
+                        }
+                    }
                 }
             };
 
@@ -3837,10 +3902,21 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             parseFinalCoverageFunctions(null, snapshotId, projectId, userId, coverageDir)
         ]);
 
-        // Cache invalidation strictly occurs ONLY after transaction commit succeeds
+        // Cache invalidation & lifecycle auto-transition strictly occur ONLY after transaction commit succeeds
         try {
-            const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
-            invalidateCoverageCache(snapshotId);
+            const { autoTransitionProjectToDoingIfNeeded, invalidateAllDashboardCaches } = await import("./job.service.js");
+            if (projectId) await autoTransitionProjectToDoingIfNeeded(projectId);
+            await invalidateAllDashboardCaches(snapshotId, userId);
+            const { emitPortfolioRunCompleted } = await import("../realtime/portfolioSocket.emitter.js");
+            const resolvedDurationMs = extractExecutionDurationMs(testResults, runnerElapsedMs);
+            emitPortfolioRunCompleted({
+                projectId,
+                snapshotId,
+                jobType: "RUN_TESTS",
+                status: runStatusUpper === "PASSED" ? "SUCCESS" : "FAILED",
+                durationMs: resolvedDurationMs,
+                userId,
+            });
         } catch (_) { }
 
         // Clean up durable journal once committed and DB persistence succeeded

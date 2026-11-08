@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
@@ -690,13 +691,27 @@ export const generateAiUnitTestSuite = async ({
     let aiParsedResult = null;
     let aiGenerationError = null;
     let generationTimeout;
+    let telemetry = null;
 
     try {
         let generationTimer;
-        const responseText = await Promise.race([
-            generateText(prompt),
+        const callStart = Date.now();
+        const aiResponse = await Promise.race([
+            withGeminiChannel("UNIT_TEST", () => generateText(prompt, null, null, { returnTelemetry: true, userId, taskType: "unit" })),
             new Promise((_, reject) => { generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000); })
         ]).finally(() => clearTimeout(generationTimer));
+
+        const responseText = typeof aiResponse === "object" && aiResponse?.text !== undefined ? aiResponse.text : aiResponse;
+        telemetry = aiResponse?.telemetry || {
+            durationMs: Date.now() - callStart,
+            durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+            tokens: {
+                prompt: Math.max(1, Math.round(prompt.length / 4)),
+                completion: Math.max(1, Math.round((responseText || "").length / 4)),
+                total: Math.max(2, Math.round((prompt.length + (responseText || "").length) / 4)),
+            },
+            model: "gemini",
+        };
 
         // 4. Parse & Sanitize Response (Section 3.2)
         const parseCheck = parseAndSanitizeAiTestResponse({
@@ -792,11 +807,18 @@ export const generateAiUnitTestSuite = async ({
             functionsPct: 0,
             statementsPct: 0
         },
-        decisionTableSummary: unitTestContext?.decisionTable?.summary
+        decisionTableSummary: unitTestContext?.decisionTable?.summary,
+        telemetry: telemetry || {
+            durationMs: 0,
+            durationSeconds: 0,
+            tokens: { prompt: 0, completion: 0, total: 0 },
+            model: "fallback"
+        }
     };
 
     return {
         ...primarySuggestion,
-        suggestions: [primarySuggestion]
+        suggestions: [primarySuggestion],
+        telemetry: primarySuggestion.telemetry
     };
 };
