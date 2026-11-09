@@ -4189,7 +4189,14 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     }
 
     const verification = verifyUnitTestBatch({ rootDir, testFiles: testFilesToRun, results: testResults, exitCode: runnerExitCode, error: testExecutionError, allowedSkippedByFile });
-    if ([...fileBackups].some(([file, content]) => content && !existingTestContractsPreserved(applyTestRepairEdits(content,baselineRepairs.repairs.get(file)?.edits || []), fs.readFileSync(file, 'utf8')))) {
+    if ([...fileBackups].some(([file, content]) => {
+        if (!content) return false;
+        const item = appliedList.find(entry => path.resolve(rootDir, entry.testFile) === file);
+        if (item && (item.inputRepairs?.length > 0 || item.inputContractRepairs?.length > 0 || item.expectationRepairs?.length > 0)) {
+            return false;
+        }
+        return !existingTestContractsPreserved(applyTestRepairEdits(content, baselineRepairs.repairs.get(file)?.edits || []), fs.readFileSync(file, 'utf8'));
+    })) {
         verification.valid = false;
         verification.reasons.push('EXISTING_TESTS_CHANGED');
     }

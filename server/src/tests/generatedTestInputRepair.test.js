@@ -33,7 +33,9 @@ describe("source-aware generated test input repair", () => {
     let rootDir, testFile, suggestion, failedReport;
     beforeEach(() => {
         generateText.mockReset();
-        rootDir = fs.mkdtempSync(path.join(serverDir, ".input-repair-runtime-"));
+        const tempBase = path.join(serverDir, ".covai-temp");
+        fs.mkdirSync(tempBase, { recursive: true });
+        rootDir = fs.mkdtempSync(path.join(tempBase, "input-repair-runtime-"));
         fs.mkdirSync(path.join(rootDir, "src"));
         fs.mkdirSync(path.join(rootDir, "tests"));
         fs.writeFileSync(path.join(rootDir, "src/number.js"), source);

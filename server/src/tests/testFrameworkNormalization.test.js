@@ -11,7 +11,9 @@ import { parseAndSanitizeAiTestResponse } from "../services/unitTestGenerator.se
 const serverDir = fileURLToPath(new URL("../../", import.meta.url));
 const fixtures = [];
 const fixture = () => {
-    const dir = fs.mkdtempSync(path.join(serverDir, ".framework-runtime-"));
+    const tempBase = path.join(serverDir, ".covai-temp");
+    fs.mkdirSync(tempBase, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(tempBase, "framework-runtime-"));
     fixtures.push(dir);
     return dir;
 };

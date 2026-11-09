@@ -98,7 +98,8 @@ export async function repairGeneratedTestInputs({ rootDir, suggestions, testResu
         const generated = suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code;
         if (!generated) continue;
         const generatedBlocks = testBlocks(generated);
-        const originalBlocks = testBlocks(existingTestsByFile?.get(testFile) || '');
+        const originalRaw = existingTestsByFile?.get(testFile) || '';
+        const originalBlocks = originalRaw.trim() === generated.trim() ? [] : testBlocks(originalRaw);
         const suite = testResults?.testResults?.find(s => {
             const name = (s.name || "").replace(/\\/g, "/");
             const rel = path.relative(rootDir, testFile).replace(/\\/g, "/");
