@@ -106,6 +106,7 @@ jest.unstable_mockModule('../services/fileCoverage.service.js', () => ({
     getFileCoverageDetails: jest.fn(),
     normalizePath: (p) => (p ? p.replace(/\\/g, '/') : p),
     findAssociatedTestFile: jest.fn(),
+    findAllAssociatedTestFiles: jest.fn(() => ({ primaryTestFile: { found: false }, linkedTestFiles: [] })),
     cleanRelativePath: (p) => p,
     matchesFilePath: jest.fn(),
 }));

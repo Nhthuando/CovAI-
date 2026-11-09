@@ -74,6 +74,7 @@ await jest.unstable_mockModule("../services/fileCoverage.service.js", () => ({
         filePath: null,
         suggestedFilePath: rawSourceFilePath ? `tests/${path.basename(rawSourceFilePath, path.extname(rawSourceFilePath))}.test.js` : null,
     })),
+    findAllAssociatedTestFiles: jest.fn(() => ({ primaryTestFile: { found: false }, linkedTestFiles: [] })),
     getFileCoverageDetails: jest.fn().mockImplementation(async (snapshotId, filePath) => {
         return {
             lines: { 5: 0, 10: 1 },

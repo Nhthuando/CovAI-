@@ -4917,164 +4917,35 @@ export const generateColdStartSystemTestsController = async (req, res) => {
       });
     }
 
-    const { snapshotId } = req.params;
-    if (!snapshotId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "snapshotId is required." });
-    }
-
-    const snapshot = await prisma.projectSnapshot.findUnique({
-      where: { id: snapshotId },
-      include: { project: true },
-    });
-
-    if (!snapshot) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Snapshot not found." });
-    }
-    const generationAccess = await resolveProjectAccess({
-      projectId: snapshot.projectId,
-      userId,
-      capability: "ai.use",
-    });
-
-    const rootDir = snapshot.rootDir;
-    if (!rootDir || !fs.existsSync(rootDir)) {
-      return res.status(409).json({
-        success: false,
-        message: "Snapshot repository is not available on disk.",
-      });
-    }
-
-    const rawFramework =
-      req.body?.framework || req.body?.runner || "playwright";
-    // const framework =
-    //   String(rawFramework).toLowerCase() === "cypress"
-    //     ? "cypress"
-    //     : "playwright";
-    // const targetRoutes = Array.isArray(req.body?.targetRoutes)
-    //   ? req.body.targetRoutes
-    //   : Array.isArray(req.body?.routes)
-    //     ? req.body.routes
-    //     : [];
-
-    // const executionMode =
-    //   req.body?.executionMode === "full" ? "full" : "frontend";
-
-    let aiTest;
-    const generationResult = await withPreparedProjectWorkspace(
-      {
-        projectId: snapshot.projectId,
-        snapshotId,
-        userId,
-        capability: "ai.use",
-        expectedWorkspaceRevision: generationAccess.project.workspaceRevision,
-        type: "AI_COLDSTART",
-        input: {
-          framework,
-          targetRoutes,
-          executionMode,
-          model: requestedAiModel(req) || null,
-        },
-      },
-      async (context) => {
-        const result = await generateColdStartSystemTests({
-          model: requestedAiModel(req),
-          rootDir: path.join(context.rootDir, context.analysisRelative),
-          framework,
-          targetRoutes,
-          executionMode,
-        });
-        await stagePreparedPublication(async (tx) => {
-          aiTest = await tx.aiTest.create({
-            data: {
-              projectId: snapshot.projectId,
-              snapshotId,
-              filePath: result.filePath,
-              content: result.code,
-              status: "VERIFIED",
-              mode: framework === "cypress" ? "CYPRESS_E2E" : "PLAYWRIGHT_E2E",
-              metaJson: JSON.stringify({
-                coldStart: true,
-                applied: true,
-                suiteCount: result.suiteCount,
-                scenarioCount: result.scenarioCount,
-                suites: result.suites,
-                scenarios: result.scenarios,
-                configCreated: result.configCreated,
-                configPath: result.configPath,
-                proposalBase: {
-                  snapshotId,
-                  workspaceRevision: context.workspaceRevision,
-                },
-                telemetry: result.telemetry || null,
-              }),
-            },
-          });
-          // SystemTestFile belongs to an actual TestRun, not a snapshot.
-          // Generation metadata stays in AiTest; execution creates its own
-          // file rows without inventing a successful run here.
-        });
-        return result;
-      },
+    const { createSystemGenerationDraft } = await import(
+      "../services/systemGenerationProposal.service.js"
     );
-
-    // Refresh framework detection for snapshot to update hasTestFiles and isZeroTestProject
-    invalidateCoverageCache(snapshotId);
-    let frameworks = null;
-    try {
-      frameworks = await detectSystemTestFrameworksForSnapshot(
-        snapshotId,
-        snapshot,
-      );
-    } catch (_) {}
-
-    // Automatically sync scenario catalog so scenarios are immediately available in Scenario Library
-    if (prisma?.systemScenario) {
-      try {
-        const { syncSystemScenarioCatalog } =
-          await import("../services/systemScenarioCatalog.service.js");
-        await syncSystemScenarioCatalog({
-          client: prisma,
-          snapshotId,
-          rootDir: snapshot.rootDir,
-        });
-      } catch (syncErr) {
-        console.warn(
-          "[generateColdStartSystemTestsController] Auto-sync catalog notice:",
-          syncErr.message,
-        );
-      }
-    }
-
-    return res.status(200).json({
+    const data = await createSystemGenerationDraft({
+      snapshotId: req.params.snapshotId,
+      userId: req.user.id,
+      framework,
+      targetRoutes,
+      executionMode,
+      model: requestedAiModel(req),
+      signal: AbortSignal.any([
+        cancellation.signal,
+        AbortSignal.timeout(10 * 60 * 1000),
+      ]),
+    });
+    return res.json({
       success: true,
-      message: `Successfully generated ${generationResult.framework} system tests with ${generationResult.scenarioCount} scenarios.`,
-      data: {
-        aiTestId: aiTest.id,
-        snapshotId,
-        workspaceRevision: generationResult.workspaceRevision,
-        applied: true,
-        framework: generationResult.framework,
-        filePath: generationResult.filePath,
-        configCreated: generationResult.configCreated,
-        configPath: generationResult.configPath,
-        suiteCount: generationResult.suiteCount,
-        scenarioCount: generationResult.scenarioCount,
-        suites: generationResult.suites,
-        scenarios: generationResult.scenarios,
-        frameworks,
-        telemetry: generationResult.telemetry || null,
-      },
+      data,
+      message: "Draft generated. Review the tests before applying.",
     });
   } catch (error) {
-    console.error("[generateColdStartSystemTestsController] Error:", error);
     return res.status(error.statusCode || 500).json({
       success: false,
-      message: error.message || "Failed to generate system tests.",
+      message: error.statusCode
+        ? error.message
+        : "System Test generation failed. Check the job log and try again.",
     });
+  } finally {
+    req.off?.("aborted", onAbort);
   }
 };
 
