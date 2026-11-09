@@ -4,15 +4,24 @@ import { generateText } from "./gemini.service.js";
 import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
-import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
 import {
-    computeRelativeImportPath,
-    formatLineRanges,
-    generateFallbackUnitTests,
-    findExistingTestFile,
-    sanitizeSourceFilePath
+  assembleUnitTestContext,
+  buildIsolationMockContracts,
+} from "./unitTestContextEngineering.service.js";
+import {
+  computeRelativeImportPath,
+  formatLineRanges,
+  generateFallbackUnitTests,
+  findExistingTestFile,
+  sanitizeSourceFilePath,
 } from "./unitTestSuggestion.service.js";
-import { cleanAndDeduplicateTestContent, STATEMENT_SEPARATION_EXCLUSIONS, safeDecoupleInlineStatements, healBrokenCommentSplits, balanceTestFileBracesAndParens } from "./testSanitizer.service.js";
+import {
+  cleanAndDeduplicateTestContent,
+  STATEMENT_SEPARATION_EXCLUSIONS,
+  safeDecoupleInlineStatements,
+  healBrokenCommentSplits,
+  balanceTestFileBracesAndParens,
+} from "./testSanitizer.service.js";
 import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
 
 /**
@@ -38,51 +47,90 @@ import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
  * @returns {string} Fully engineered 6-part prompt
  */
 export const buildStandardUnitTestPrompt = ({
-    framework = "jest",
-    cleanSource,
-    testFileInfo,
-    cleanImportPath,
-    coverageDetails,
-    sourceCode,
-    unitTestContext
+  framework = "jest",
+  cleanSource,
+  testFileInfo,
+  cleanImportPath,
+  coverageDetails,
+  sourceCode,
+  unitTestContext,
 }) => {
-    const isVitest = framework === "vitest";
-    const isTest = Boolean(testFileInfo.found);
-    const runnerContract = isVitest
-        ? "Use ESM imports from 'vitest' and vi.fn/vi.spyOn/vi.mock. Never require('vitest') or use jest.*. Keep runner imports as ESM even when the source module uses CommonJS."
-        : "For ESM tests import { jest } from '@jest/globals' before using jest.*. For CommonJS tests use the injected jest global without redeclaring it.";
-    const pathContract = "Trace each input through normalization, validation/regex guards and early returns BEFORE choosing a later branch's expected result. An input rejected by an earlier guard cannot test a downstream result-type/error branch. Use an input accepted by all preceding guards, or isolate the real dependency with a supported mock. Never mock the function under test. Derive exact error messages from the reached return statement, not from the test title. Do not invent a passing test or weaken an assertion just to claim coverage of an unreachable branch.";
+  const isVitest = framework === "vitest";
+  const isTest = Boolean(testFileInfo.found);
+  const runnerContract = isVitest
+    ? "Use ESM imports from 'vitest' and vi.fn/vi.spyOn/vi.mock. Never require('vitest') or use jest.*. Keep runner imports as ESM even when the source module uses CommonJS."
+    : "For ESM tests import { jest } from '@jest/globals' before using jest.*. For CommonJS tests use the injected jest global without redeclaring it.";
+  const pathContract =
+    "Trace each input through normalization, validation/regex guards and early returns BEFORE choosing a later branch's expected result. An input rejected by an earlier guard cannot test a downstream result-type/error branch. Use an input accepted by all preceding guards, or isolate the real dependency with a supported mock. Never mock the function under test. Derive exact error messages from the reached return statement, not from the test title. Do not invent a passing test or weaken an assertion just to claim coverage of an unreachable branch.";
 
-    const exportedSymbols = unitTestContext?.astMetadata?.exportedSymbolNames || [];
-    const exportedSymbolsStr = exportedSymbols.length > 0 ? exportedSymbols.join(", ") : "All exported module members";
-    const unexportedWarning = unitTestContext?.indirectTesting?.indirectGuidancePrompt || "";
-    const mockInstructionsStr = unitTestContext?.mockContracts?.mockInstructions || "";
-    const decisionTableMarkdown = unitTestContext?.decisionTable?.decisionTableMarkdown || "";
-    const decisionGuidanceStr = unitTestContext?.coverageGaps?.guidanceSummary || "No complex branching detected";
-    const cyclomaticComplexity = unitTestContext?.decisionTable?.summary?.cyclomaticComplexity ||
-        unitTestContext?.astMetadata?.cyclomaticComplexity ||
-        (1 + (unitTestContext?.astMetadata?.decisionPoints || []).length);
+  const exportedSymbols =
+    unitTestContext?.astMetadata?.exportedSymbolNames || [];
+  const exportedSymbolsStr =
+    exportedSymbols.length > 0
+      ? exportedSymbols.join(", ")
+      : "All exported module members";
+  const unexportedWarning =
+    unitTestContext?.indirectTesting?.indirectGuidancePrompt || "";
+  const mockInstructionsStr =
+    unitTestContext?.mockContracts?.mockInstructions || "";
+  const decisionTableMarkdown =
+    unitTestContext?.decisionTable?.decisionTableMarkdown || "";
+  const decisionGuidanceStr =
+    unitTestContext?.coverageGaps?.guidanceSummary ||
+    "No complex branching detected";
+  const cyclomaticComplexity =
+    unitTestContext?.decisionTable?.summary?.cyclomaticComplexity ||
+    unitTestContext?.astMetadata?.cyclomaticComplexity ||
+    1 + (unitTestContext?.astMetadata?.decisionPoints || []).length;
 
-    const uncoveredLinesStr = formatLineRanges(coverageDetails?.uncoveredLines || []);
-    const failedLinesStr = (coverageDetails?.failedLines || []).map(l => `Line ${l}: ${coverageDetails?.lines?.[l]?.error || "failed assertion"}`).join("\n") || "None";
+  const uncoveredLinesStr = formatLineRanges(
+    coverageDetails?.uncoveredLines || [],
+  );
+  const failedLinesStr =
+    (coverageDetails?.failedLines || [])
+      .map(
+        (l) =>
+          `Line ${l}: ${coverageDetails?.lines?.[l]?.error || "failed assertion"}`,
+      )
+      .join("\n") || "None";
 
-    const branches = coverageDetails?.branches || coverageDetails?.branchFlow || [];
-    const uncoveredBranches = branches.filter(b => b.status !== "fully_covered" || b.totalHits === 0);
-    const branchDetailsStr = uncoveredBranches.length > 0
-        ? uncoveredBranches.slice(0, 35).map(b => {
-            const missingPaths = (b.paths || []).filter(p => !p.covered).map(p => `${p.type} branch`).join(" & ");
-            return `- Line ${b.line} (${b.type}): condition "${b.condition || 'branch'}" -> MISSING: ${missingPaths || b.status}`;
-        }).join("\n")
-        : "All branches currently covered";
+  const branches =
+    coverageDetails?.branches || coverageDetails?.branchFlow || [];
+  const uncoveredBranches = branches.filter(
+    (b) => b.status !== "fully_covered" || b.totalHits === 0,
+  );
+  const branchDetailsStr =
+    uncoveredBranches.length > 0
+      ? uncoveredBranches
+          .slice(0, 35)
+          .map((b) => {
+            const missingPaths = (b.paths || [])
+              .filter((p) => !p.covered)
+              .map((p) => `${p.type} branch`)
+              .join(" & ");
+            return `- Line ${b.line} (${b.type}): condition "${b.condition || "branch"}" -> MISSING: ${missingPaths || b.status}`;
+          })
+          .join("\n")
+      : "All branches currently covered";
 
-    const functions = coverageDetails?.functions || coverageDetails?.functionFlow || [];
-    const uncoveredFunctions = functions.filter(f => !f.covered || f.hits === 0);
-    const functionDetailsStr = uncoveredFunctions.length > 0
-        ? uncoveredFunctions.slice(0, 30).map(f => `- Function "${f.realName || f.name}" (line ${f.line}) - 0 test invocations`).join("\n")
-        : "All functions currently invoked";
+  const functions =
+    coverageDetails?.functions || coverageDetails?.functionFlow || [];
+  const uncoveredFunctions = functions.filter(
+    (f) => !f.covered || f.hits === 0,
+  );
+  const functionDetailsStr =
+    uncoveredFunctions.length > 0
+      ? uncoveredFunctions
+          .slice(0, 30)
+          .map(
+            (f) =>
+              `- Function "${f.realName || f.name}" (line ${f.line}) - 0 test invocations`,
+          )
+          .join("\n")
+      : "All functions currently invoked";
 
-    return isTest
-        ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
+  return isTest
+    ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
 We need to improve and add new unit test cases to the EXISTING test file: ${testFileInfo.relativePath}
 which tests the source file: ${cleanSource}
 
@@ -114,11 +162,15 @@ ${decisionGuidanceStr}
 ${failedLinesStr}
 
 ### 4. SOURCE CODE & EXISTING TESTS
-${sourceCode ? `SOURCE CODE UNDER TEST:
+${
+  sourceCode
+    ? `SOURCE CODE UNDER TEST:
 \`\`\`javascript
 ${sourceCode.slice(0, 25000)}
 \`\`\`
-` : ""}
+`
+    : ""
+}
 
 EXISTING TEST CODE IN ${testFileInfo.relativePath}:
 \`\`\`javascript
@@ -182,7 +234,7 @@ Format your output strictly in JSON (ensure valid JSON syntax: values MUST be st
   "fullUpdatedContent": "// complete test file content to be written"
 }
 `
-        : `You are an expert ${framework.toUpperCase()} unit testing engineer.
+    : `You are an expert ${framework.toUpperCase()} unit testing engineer.
 We need to generate a comprehensive unit test suite to achieve >=90% to 100% coverage across all 4 metrics (Statements, Branches, Functions, Lines) and fix failed assertions for this source file.
 
 ### 1. ROLE DEFINITION & PROJECT CONTEXT
@@ -272,123 +324,146 @@ Format your output strictly in JSON:
  * Repairs missing semicolons at line:col, missing commas in objects/arrays,
  * unclosed blocks/braces, unseparated statements, and runs deep sanitization.
  */
-export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "", maxRetries = 6 } = {}) => {
-    if (!codeString || typeof codeString !== "string") {
-        return { success: false, code: codeString, error: "Empty code" };
+export const autoHealAstSyntax = (
+  codeString,
+  { framework = "jest", filePath = "", maxRetries = 6 } = {},
+) => {
+  if (!codeString || typeof codeString !== "string") {
+    return { success: false, code: codeString, error: "Empty code" };
+  }
+  let currentCode = codeString;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (typeof balanceTestFileBracesAndParens === "function") {
+      try {
+        currentCode = balanceTestFileBracesAndParens(currentCode);
+      } catch (_) {}
     }
-    let currentCode = codeString;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        if (typeof balanceTestFileBracesAndParens === "function") {
-            try {
-                currentCode = balanceTestFileBracesAndParens(currentCode);
-            } catch (_) {}
-        }
-        if (typeof cleanAndDeduplicateTestContent === "function") {
-            try {
-                currentCode = cleanAndDeduplicateTestContent(currentCode, "", filePath, { framework });
-            } catch (_) {}
-        if (typeof deduplicateAstDeclarations === 'function') {
-            try {
-                const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
-                if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
-            } catch (_) {}
-        }
-        }
-
-        const parsed = parseJavaScriptCode(currentCode);
-        if (parsed.success) {
-            return { success: true, code: currentCode, ast: parsed.ast };
-        }
-
-        const msg = parsed.error || "";
-
-        // 1. Missing semicolon at line:col (e.g. Missing semicolon. (2:15))
-        const semiMatch = msg.match(/Missing semicolon\. \((\d+):(\d+)\)/);
-        if (semiMatch) {
-            const lineNum = parseInt(semiMatch[1], 10);
-            const colNum = parseInt(semiMatch[2], 10);
-            const lines = currentCode.split("\n");
-            if (lineNum <= lines.length) {
-                const line = lines[lineNum - 1];
-                const before = line.slice(0, colNum);
-                const after = line.slice(colNum);
-                lines[lineNum - 1] = `${before};\n${after.trimStart()}`;
-                currentCode = lines.join("\n");
-                continue;
-            }
-        }
-
-        // 2. Unexpected token (e.g. Unexpected token, expected "," (76:154) or Unexpected token ';')
-        const unexpectedMatch = msg.match(/Unexpected token(?:, expected [",']?(.*?)[",']?)? \((\d+):(\d+)\)/);
-        if (unexpectedMatch) {
-            const expectedToken = unexpectedMatch[1] || "";
-            const lineNum = parseInt(unexpectedMatch[2], 10);
-            const colNum = parseInt(unexpectedMatch[3], 10);
-            const lines = currentCode.split("\n");
-            if (lineNum > 0 && lineNum <= lines.length) {
-                const targetLine = lines[lineNum - 1];
-                const stripped = targetLine
-                    .replace(/\/\/.*$/, "")
-                    .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "");
-
-                let pOpen = 0, pClose = 0;
-                for (const ch of stripped) {
-                    if (ch === "(") pOpen++;
-                    else if (ch === ")") pClose++;
-                }
-
-                // If line has unclosed parentheses before semicolon, heal parentheses first!
-                if (pOpen > pClose) {
-                    const semiIdx = targetLine.lastIndexOf(";");
-                    if (semiIdx !== -1) {
-                        lines[lineNum - 1] = targetLine.slice(0, semiIdx) + ")".repeat(pOpen - pClose) + targetLine.slice(semiIdx);
-                        currentCode = lines.join("\n");
-                        continue;
-                    }
-                }
-
-                if (expectedToken === ",") {
-                    const before = targetLine.slice(0, colNum);
-                    const after = targetLine.slice(colNum);
-                    lines[lineNum - 1] = `${before}, ${after.trimStart()}`;
-                    currentCode = lines.join("\n");
-                    continue;
-                }
-            }
-        }
-
-        // 3. Balance unclosed braces at EOF
-        const openBraces = (currentCode.match(/{/g) || []).length;
-        const closeBraces = (currentCode.match(/}/g) || []).length;
-        if (openBraces > closeBraces) {
-            let diff = openBraces - closeBraces;
-            let suffix = "";
-            while (diff > 0) {
-                suffix += "\n});";
-                diff--;
-            }
-            currentCode = currentCode.trim() + suffix;
-            continue;
-        }
-
-        // 4. Decouple glued inline statements safely
-        const decoupled = safeDecoupleInlineStatements(currentCode);
-        if (decoupled !== currentCode) {
-            currentCode = decoupled;
-            continue;
-        }
-
-        // 5. Check if trailing closing delimiter is needed at EOF
-        if (!currentCode.trim().endsWith("}") && !currentCode.trim().endsWith(");")) {
-            currentCode = currentCode.trim() + "\n});";
-            continue;
-        }
-
-        return { success: false, code: currentCode, error: msg };
+    if (typeof cleanAndDeduplicateTestContent === "function") {
+      try {
+        currentCode = cleanAndDeduplicateTestContent(
+          currentCode,
+          "",
+          filePath,
+          { framework },
+        );
+      } catch (_) {}
+      if (typeof deduplicateAstDeclarations === "function") {
+        try {
+          const dedupRes = deduplicateAstDeclarations(currentCode, {
+            filePath,
+          });
+          if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
+        } catch (_) {}
+      }
     }
 
-    return { success: false, code: currentCode, error: "Exceeded AST self-healing retries" };
+    const parsed = parseJavaScriptCode(currentCode);
+    if (parsed.success) {
+      return { success: true, code: currentCode, ast: parsed.ast };
+    }
+
+    const msg = parsed.error || "";
+
+    // 1. Missing semicolon at line:col (e.g. Missing semicolon. (2:15))
+    const semiMatch = msg.match(/Missing semicolon\. \((\d+):(\d+)\)/);
+    if (semiMatch) {
+      const lineNum = parseInt(semiMatch[1], 10);
+      const colNum = parseInt(semiMatch[2], 10);
+      const lines = currentCode.split("\n");
+      if (lineNum <= lines.length) {
+        const line = lines[lineNum - 1];
+        const before = line.slice(0, colNum);
+        const after = line.slice(colNum);
+        lines[lineNum - 1] = `${before};\n${after.trimStart()}`;
+        currentCode = lines.join("\n");
+        continue;
+      }
+    }
+
+    // 2. Unexpected token (e.g. Unexpected token, expected "," (76:154) or Unexpected token ';')
+    const unexpectedMatch = msg.match(
+      /Unexpected token(?:, expected [",']?(.*?)[",']?)? \((\d+):(\d+)\)/,
+    );
+    if (unexpectedMatch) {
+      const expectedToken = unexpectedMatch[1] || "";
+      const lineNum = parseInt(unexpectedMatch[2], 10);
+      const colNum = parseInt(unexpectedMatch[3], 10);
+      const lines = currentCode.split("\n");
+      if (lineNum > 0 && lineNum <= lines.length) {
+        const targetLine = lines[lineNum - 1];
+        const stripped = targetLine
+          .replace(/\/\/.*$/, "")
+          .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "");
+
+        let pOpen = 0,
+          pClose = 0;
+        for (const ch of stripped) {
+          if (ch === "(") pOpen++;
+          else if (ch === ")") pClose++;
+        }
+
+        // If line has unclosed parentheses before semicolon, heal parentheses first!
+        if (pOpen > pClose) {
+          const semiIdx = targetLine.lastIndexOf(";");
+          if (semiIdx !== -1) {
+            lines[lineNum - 1] =
+              targetLine.slice(0, semiIdx) +
+              ")".repeat(pOpen - pClose) +
+              targetLine.slice(semiIdx);
+            currentCode = lines.join("\n");
+            continue;
+          }
+        }
+
+        if (expectedToken === ",") {
+          const before = targetLine.slice(0, colNum);
+          const after = targetLine.slice(colNum);
+          lines[lineNum - 1] = `${before}, ${after.trimStart()}`;
+          currentCode = lines.join("\n");
+          continue;
+        }
+      }
+    }
+
+    // 3. Balance unclosed braces at EOF
+    const openBraces = (currentCode.match(/{/g) || []).length;
+    const closeBraces = (currentCode.match(/}/g) || []).length;
+    if (openBraces > closeBraces) {
+      let diff = openBraces - closeBraces;
+      let suffix = "";
+      while (diff > 0) {
+        suffix += "\n});";
+        diff--;
+      }
+      currentCode = currentCode.trim() + suffix;
+      continue;
+    }
+
+    // 4. Decouple glued inline statements safely
+    const decoupled = safeDecoupleInlineStatements(currentCode);
+    if (decoupled !== currentCode) {
+      currentCode = decoupled;
+      continue;
+    }
+
+    // 5. Check if trailing closing delimiter is needed at EOF
+    if (
+      !currentCode.trim().endsWith("}") &&
+      !currentCode.trim().endsWith(");")
+    ) {
+      currentCode = currentCode.trim() + "\n});";
+      continue;
+    }
+
+    return { success: false, code: currentCode, error: msg };
+  }
+
+  return {
+    success: false,
+    code: currentCode,
+    error: "Exceeded AST self-healing retries",
+  };
 };
 
 /**
@@ -409,208 +484,297 @@ export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "
  * @returns {object} { success: boolean, parsed: object, syntaxValid: boolean, errors: string[] }
  */
 export const parseAndSanitizeAiTestResponse = ({
-    rawResponse = "",
-    framework = "jest",
-    cleanSource = ""
+  rawResponse = "",
+  framework = "jest",
+  cleanSource = "",
 }) => {
-    const errors = [];
-    if (!rawResponse || typeof rawResponse !== "string") {
-        return { success: false, parsed: null, syntaxValid: false, errors: ["Empty AI response received"] };
-    }
-
-    let cleanText = rawResponse.trim();
-
-    // 1. Strip markdown code fence blocks
-    if (cleanText.includes("```json")) {
-        cleanText = cleanText.replace(/^[\s\S]*?```json\s*/i, "").replace(/```[\s\S]*$/, "").trim();
-    } else if (cleanText.includes("```javascript") || cleanText.includes("```js")) {
-        cleanText = cleanText.replace(/^[\s\S]*?```(?:javascript|js)\s*/i, "").replace(/```[\s\S]*$/, "").trim();
-    } else if (cleanText.includes("```")) {
-        cleanText = cleanText.replace(/^[\s\S]*?```\s*/, "").replace(/```[\s\S]*$/, "").trim();
-    }
-
-    // 2. Extract JSON payload
-    let parsedJson = null;
-
-    // 2.1 Direct regex extraction for LLM outputs that wrap code in backticks (`...`) instead of JSON string quotes
-    const extractBacktickField = (fieldName, text) => {
-        const match = text.match(new RegExp(`["']${fieldName}["']\\s*:\\s*\`([\\s\\S]*?)\`\\s*(?:,|\\n|\\r|\\})`, "m"));
-        return match ? match[1] : null;
-    };
-
-    const btTestCode = extractBacktickField("suggestedTestCode", cleanText);
-    const btFullContent = extractBacktickField("fullUpdatedContent", cleanText);
-    const btExplanation = extractBacktickField("explanation", cleanText);
-
-    if (btTestCode || btFullContent) {
-        parsedJson = {
-            explanation: btExplanation || "Targeted unit test cases for uncovered branches",
-            suggestedTestCode: btTestCode || btFullContent || "",
-            fullUpdatedContent: btFullContent || btTestCode || ""
-        };
-    }
-
-    if (!parsedJson) {
-        try {
-            const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                parsedJson = JSON.parse(jsonMatch[0]);
-            } else {
-                parsedJson = JSON.parse(cleanText);
-            }
-        } catch (parseErr) {
-            // Attempt mild JSON repair (e.g. unescaped newlines, backticks, or trailing commas)
-            try {
-                let repaired = cleanText
-                    .replace(/:\s*`([\s\S]*?)`\s*([,}])/g, (m, val, post) => `: ${JSON.stringify(val)}${post}`)
-                    .replace(/,\s*([}\]])/g, "$1") // trailing commas
-                    .replace(/\r?\n/g, "\\n");
-                const match = repaired.match(/\{[\s\S]*\}/);
-                if (match) parsedJson = JSON.parse(match[0]);
-            } catch (_) {
-                // 2.2 Direct code extraction fallback from markdown code blocks or cleanText
-                const codeBlockMatch = rawResponse.match(/```(?:javascript|js|typescript|ts)?\r?\n([\s\S]*?)```/);
-                const candidateCode = codeBlockMatch ? codeBlockMatch[1] : cleanText;
-                if (candidateCode && (candidateCode.includes("test(") || candidateCode.includes("it(") || candidateCode.includes("describe("))) {
-                    parsedJson = {
-                        explanation: "Extracted test suite from code block response",
-                        suggestedTestCode: candidateCode.trim(),
-                        fullUpdatedContent: candidateCode.trim()
-                    };
-                } else {
-                    errors.push(`JSON parsing error: ${parseErr.message}`);
-                }
-            }
-        }
-    }
-
-    if (!parsedJson) {
-        return { success: false, parsed: null, syntaxValid: false, errors };
-    }
-
-    // 3. Anti-skip sanitization
-    const unskipCode = (code) => {
-        if (!code || typeof code !== "string") return code;
-        return code
-            .replace(/\b(test|it)\.skip\s*\(/g, "$1(")
-            .replace(/\bdescribe\.skip\s*\(/g, "describe(")
-            .replace(/\bxit\s*\(/g, "it(")
-            .replace(/\bxtest\s*\(/g, "test(")
-            .replace(/\bxdescribe\s*\(/g, "describe(");
-    };
-
-    if (parsedJson.suggestedTestCode) {
-        parsedJson.suggestedTestCode = unskipCode(parsedJson.suggestedTestCode);
-    }
-    if (parsedJson.fullUpdatedContent) {
-        parsedJson.fullUpdatedContent = unskipCode(parsedJson.fullUpdatedContent);
-    }
-
-    // 3.4. Decouple glued inline statements safely
-    if (parsedJson.suggestedTestCode) {
-        parsedJson.suggestedTestCode = safeDecoupleInlineStatements(parsedJson.suggestedTestCode);
-    }
-    if (parsedJson.fullUpdatedContent) {
-        parsedJson.fullUpdatedContent = safeDecoupleInlineStatements(parsedJson.fullUpdatedContent);
-    }
-
-    // 3.5. Self-assignment sanitization (e.g. const path = path; -> const path = require('path'); or removal)
-    const sanitizeSelfAssignments = (code) => {
-        if (!code || typeof code !== "string") return code;
-        const NODE_BUILTIN_MODULES = new Set([
-            "path", "fs", "crypto", "http", "https", "os", "url", "util", "events", "stream",
-            "child_process", "buffer", "zlib", "net", "tls", "cluster", "readline", "vm", "worker_threads"
-        ]);
-        const isTs = framework === "vitest" || /\bimport\s+/.test(code);
-        return code.replace(
-            /(?:^[ \t]*|\n[ \t]*)(const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\2\s*;?[ \t]*(?:\r?\n|$)/gm,
-            (match, kind, varName) => {
-                if (NODE_BUILTIN_MODULES.has(varName)) {
-                    return isTs
-                        ? `\nimport ${varName} from '${varName}';\n`
-                        : `\nconst ${varName} = require('${varName}');\n`;
-                }
-                return "\n";
-            }
-        );
-    };
-
-    if (parsedJson.suggestedTestCode) {
-        parsedJson.suggestedTestCode = sanitizeSelfAssignments(parsedJson.suggestedTestCode);
-    }
-    if (parsedJson.fullUpdatedContent) {
-        parsedJson.fullUpdatedContent = sanitizeSelfAssignments(parsedJson.fullUpdatedContent);
-    }
-
-    // 4. Placeholder detection & reconciliation
-    const isPlaceholderCode = (str) => {
-        if (!str || typeof str !== "string") return true;
-        const t = str.trim();
-        if (t.length < 30) return true;
-        if (
-            t.includes("N/A") ||
-            t.includes("Providing full file content below") ||
-            t.includes("No additional snippets needed") ||
-            t.includes("fullUpdatedContent below") ||
-            t.includes("next block")
-        ) return true;
-        if (t.startsWith("//") && !t.includes("test(") && !t.includes("it(")) return true;
-        if (t.startsWith("N/A") || t.startsWith("None") || t.startsWith("No ")) return true;
-        if (!t.includes("test(") && !t.includes("it(")) return true;
-        return false;
-    };
-
-    if (isPlaceholderCode(parsedJson.suggestedTestCode) && !isPlaceholderCode(parsedJson.fullUpdatedContent)) {
-        parsedJson.suggestedTestCode = parsedJson.fullUpdatedContent;
-    } else if (isPlaceholderCode(parsedJson.fullUpdatedContent) && !isPlaceholderCode(parsedJson.suggestedTestCode)) {
-        parsedJson.fullUpdatedContent = parsedJson.suggestedTestCode;
-    }
-
-    if (isPlaceholderCode(parsedJson.suggestedTestCode) && isPlaceholderCode(parsedJson.fullUpdatedContent)) {
-        errors.push("Both suggestedTestCode and fullUpdatedContent contain placeholder comments or lack executable test blocks");
-        return { success: false, parsed: parsedJson, syntaxValid: false, errors };
-    }
-
-    // Enforce runner imports before previewing or applying AI-generated code.
-    for (const field of ["suggestedTestCode", "fullUpdatedContent"]) {
-        if (parsedJson[field]) {
-            parsedJson[field] = normalizeTestFrameworkCode(parsedJson[field], { framework });
-        }
-    }
-
-    // 5. AST Syntax Validation & Universal Self-Healing via Babel Parser (Rule 5 & Rule 9)
-    let codeToValidate = parsedJson.fullUpdatedContent || parsedJson.suggestedTestCode;
-    const healResult = autoHealAstSyntax(codeToValidate, { framework, filePath: cleanSource });
-    let syntaxValid = healResult.success;
-
-    if (syntaxValid) {
-        if (parsedJson.fullUpdatedContent) {
-            const healedFull = autoHealAstSyntax(parsedJson.fullUpdatedContent, { framework, filePath: cleanSource });
-            if (healedFull.success) parsedJson.fullUpdatedContent = healedFull.code;
-        }
-        if (parsedJson.suggestedTestCode) {
-            const healedSuggested = autoHealAstSyntax(parsedJson.suggestedTestCode, { framework, filePath: cleanSource });
-            if (healedSuggested.success) parsedJson.suggestedTestCode = healedSuggested.code;
-        }
-    } else {
-        errors.push(`AST syntax validation failed: ${healResult.error || "Syntax error in generated test code"}`);
-    }
-
-    // 6. Ensure real assertions exist
-    const hasAssertions = /expect\s*\(/.test(parsedJson.suggestedTestCode || parsedJson.fullUpdatedContent);
-    if (!hasAssertions) {
-        errors.push("Generated test code lacks expect(...) assertions");
-    }
-
-    const success = syntaxValid && errors.length === 0;
-
+  const errors = [];
+  if (!rawResponse || typeof rawResponse !== "string") {
     return {
-        success,
-        parsed: parsedJson,
-        syntaxValid,
-        hasAssertions,
-        errors
+      success: false,
+      parsed: null,
+      syntaxValid: false,
+      errors: ["Empty AI response received"],
     };
+  }
+
+  let cleanText = rawResponse.trim();
+
+  // 1. Strip markdown code fence blocks
+  if (cleanText.includes("```json")) {
+    cleanText = cleanText
+      .replace(/^[\s\S]*?```json\s*/i, "")
+      .replace(/```[\s\S]*$/, "")
+      .trim();
+  } else if (
+    cleanText.includes("```javascript") ||
+    cleanText.includes("```js")
+  ) {
+    cleanText = cleanText
+      .replace(/^[\s\S]*?```(?:javascript|js)\s*/i, "")
+      .replace(/```[\s\S]*$/, "")
+      .trim();
+  } else if (cleanText.includes("```")) {
+    cleanText = cleanText
+      .replace(/^[\s\S]*?```\s*/, "")
+      .replace(/```[\s\S]*$/, "")
+      .trim();
+  }
+
+  // 2. Extract JSON payload
+  let parsedJson = null;
+
+  // 2.1 Direct regex extraction for LLM outputs that wrap code in backticks (`...`) instead of JSON string quotes
+  const extractBacktickField = (fieldName, text) => {
+    const match = text.match(
+      new RegExp(
+        `["']${fieldName}["']\\s*:\\s*\`([\\s\\S]*?)\`\\s*(?:,|\\n|\\r|\\})`,
+        "m",
+      ),
+    );
+    return match ? match[1] : null;
+  };
+
+  const btTestCode = extractBacktickField("suggestedTestCode", cleanText);
+  const btFullContent = extractBacktickField("fullUpdatedContent", cleanText);
+  const btExplanation = extractBacktickField("explanation", cleanText);
+
+  if (btTestCode || btFullContent) {
+    parsedJson = {
+      explanation:
+        btExplanation || "Targeted unit test cases for uncovered branches",
+      suggestedTestCode: btTestCode || btFullContent || "",
+      fullUpdatedContent: btFullContent || btTestCode || "",
+    };
+  }
+
+  if (!parsedJson) {
+    try {
+      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedJson = JSON.parse(jsonMatch[0]);
+      } else {
+        parsedJson = JSON.parse(cleanText);
+      }
+    } catch (parseErr) {
+      // Attempt mild JSON repair (e.g. unescaped newlines, backticks, or trailing commas)
+      try {
+        let repaired = cleanText
+          .replace(
+            /:\s*`([\s\S]*?)`\s*([,}])/g,
+            (m, val, post) => `: ${JSON.stringify(val)}${post}`,
+          )
+          .replace(/,\s*([}\]])/g, "$1") // trailing commas
+          .replace(/\r?\n/g, "\\n");
+        const match = repaired.match(/\{[\s\S]*\}/);
+        if (match) parsedJson = JSON.parse(match[0]);
+      } catch (_) {
+        // 2.2 Direct code extraction fallback from markdown code blocks or cleanText
+        const codeBlockMatch = rawResponse.match(
+          /```(?:javascript|js|typescript|ts)?\r?\n([\s\S]*?)```/,
+        );
+        const candidateCode = codeBlockMatch ? codeBlockMatch[1] : cleanText;
+        if (
+          candidateCode &&
+          (candidateCode.includes("test(") ||
+            candidateCode.includes("it(") ||
+            candidateCode.includes("describe("))
+        ) {
+          parsedJson = {
+            explanation: "Extracted test suite from code block response",
+            suggestedTestCode: candidateCode.trim(),
+            fullUpdatedContent: candidateCode.trim(),
+          };
+        } else {
+          errors.push(`JSON parsing error: ${parseErr.message}`);
+        }
+      }
+    }
+  }
+
+  if (!parsedJson) {
+    return { success: false, parsed: null, syntaxValid: false, errors };
+  }
+
+  // 3. Anti-skip sanitization
+  const unskipCode = (code) => {
+    if (!code || typeof code !== "string") return code;
+    return code
+      .replace(/\b(test|it)\.skip\s*\(/g, "$1(")
+      .replace(/\bdescribe\.skip\s*\(/g, "describe(")
+      .replace(/\bxit\s*\(/g, "it(")
+      .replace(/\bxtest\s*\(/g, "test(")
+      .replace(/\bxdescribe\s*\(/g, "describe(");
+  };
+
+  if (parsedJson.suggestedTestCode) {
+    parsedJson.suggestedTestCode = unskipCode(parsedJson.suggestedTestCode);
+  }
+  if (parsedJson.fullUpdatedContent) {
+    parsedJson.fullUpdatedContent = unskipCode(parsedJson.fullUpdatedContent);
+  }
+
+  // 3.4. Decouple glued inline statements safely
+  if (parsedJson.suggestedTestCode) {
+    parsedJson.suggestedTestCode = safeDecoupleInlineStatements(
+      parsedJson.suggestedTestCode,
+    );
+  }
+  if (parsedJson.fullUpdatedContent) {
+    parsedJson.fullUpdatedContent = safeDecoupleInlineStatements(
+      parsedJson.fullUpdatedContent,
+    );
+  }
+
+  // 3.5. Self-assignment sanitization (e.g. const path = path; -> const path = require('path'); or removal)
+  const sanitizeSelfAssignments = (code) => {
+    if (!code || typeof code !== "string") return code;
+    const NODE_BUILTIN_MODULES = new Set([
+      "path",
+      "fs",
+      "crypto",
+      "http",
+      "https",
+      "os",
+      "url",
+      "util",
+      "events",
+      "stream",
+      "child_process",
+      "buffer",
+      "zlib",
+      "net",
+      "tls",
+      "cluster",
+      "readline",
+      "vm",
+      "worker_threads",
+    ]);
+    const isTs = framework === "vitest" || /\bimport\s+/.test(code);
+    return code.replace(
+      /(?:^[ \t]*|\n[ \t]*)(const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\2\s*;?[ \t]*(?:\r?\n|$)/gm,
+      (match, kind, varName) => {
+        if (NODE_BUILTIN_MODULES.has(varName)) {
+          return isTs
+            ? `\nimport ${varName} from '${varName}';\n`
+            : `\nconst ${varName} = require('${varName}');\n`;
+        }
+        return "\n";
+      },
+    );
+  };
+
+  if (parsedJson.suggestedTestCode) {
+    parsedJson.suggestedTestCode = sanitizeSelfAssignments(
+      parsedJson.suggestedTestCode,
+    );
+  }
+  if (parsedJson.fullUpdatedContent) {
+    parsedJson.fullUpdatedContent = sanitizeSelfAssignments(
+      parsedJson.fullUpdatedContent,
+    );
+  }
+
+  // 4. Placeholder detection & reconciliation
+  const isPlaceholderCode = (str) => {
+    if (!str || typeof str !== "string") return true;
+    const t = str.trim();
+    if (t.length < 30) return true;
+    if (
+      t.includes("N/A") ||
+      t.includes("Providing full file content below") ||
+      t.includes("No additional snippets needed") ||
+      t.includes("fullUpdatedContent below") ||
+      t.includes("next block")
+    )
+      return true;
+    if (t.startsWith("//") && !t.includes("test(") && !t.includes("it("))
+      return true;
+    if (t.startsWith("N/A") || t.startsWith("None") || t.startsWith("No "))
+      return true;
+    if (!t.includes("test(") && !t.includes("it(")) return true;
+    return false;
+  };
+
+  if (
+    isPlaceholderCode(parsedJson.suggestedTestCode) &&
+    !isPlaceholderCode(parsedJson.fullUpdatedContent)
+  ) {
+    parsedJson.suggestedTestCode = parsedJson.fullUpdatedContent;
+  } else if (
+    isPlaceholderCode(parsedJson.fullUpdatedContent) &&
+    !isPlaceholderCode(parsedJson.suggestedTestCode)
+  ) {
+    parsedJson.fullUpdatedContent = parsedJson.suggestedTestCode;
+  }
+
+  if (
+    isPlaceholderCode(parsedJson.suggestedTestCode) &&
+    isPlaceholderCode(parsedJson.fullUpdatedContent)
+  ) {
+    errors.push(
+      "Both suggestedTestCode and fullUpdatedContent contain placeholder comments or lack executable test blocks",
+    );
+    return { success: false, parsed: parsedJson, syntaxValid: false, errors };
+  }
+
+  // Enforce runner imports before previewing or applying AI-generated code.
+  for (const field of ["suggestedTestCode", "fullUpdatedContent"]) {
+    if (parsedJson[field]) {
+      parsedJson[field] = normalizeTestFrameworkCode(parsedJson[field], {
+        framework,
+      });
+    }
+  }
+
+  // 5. AST Syntax Validation & Universal Self-Healing via Babel Parser (Rule 5 & Rule 9)
+  let codeToValidate =
+    parsedJson.fullUpdatedContent || parsedJson.suggestedTestCode;
+  const healResult = autoHealAstSyntax(codeToValidate, {
+    framework,
+    filePath: cleanSource,
+  });
+  let syntaxValid = healResult.success;
+
+  if (syntaxValid) {
+    if (parsedJson.fullUpdatedContent) {
+      const healedFull = autoHealAstSyntax(parsedJson.fullUpdatedContent, {
+        framework,
+        filePath: cleanSource,
+      });
+      if (healedFull.success) parsedJson.fullUpdatedContent = healedFull.code;
+    }
+    if (parsedJson.suggestedTestCode) {
+      const healedSuggested = autoHealAstSyntax(parsedJson.suggestedTestCode, {
+        framework,
+        filePath: cleanSource,
+      });
+      if (healedSuggested.success)
+        parsedJson.suggestedTestCode = healedSuggested.code;
+    }
+  } else {
+    errors.push(
+      `AST syntax validation failed: ${healResult.error || "Syntax error in generated test code"}`,
+    );
+  }
+
+  // 6. Ensure real assertions exist
+  const hasAssertions = /expect\s*\(/.test(
+    parsedJson.suggestedTestCode || parsedJson.fullUpdatedContent,
+  );
+  if (!hasAssertions) {
+    errors.push("Generated test code lacks expect(...) assertions");
+  }
+
+  const success = syntaxValid && errors.length === 0;
+
+  return {
+    success,
+    parsed: parsedJson,
+    syntaxValid,
+    hasAssertions,
+    errors,
+  };
 };
 
 /**
@@ -634,196 +798,260 @@ export const parseAndSanitizeAiTestResponse = ({
  * @returns {Promise<object>} Suggestion result object
  */
 export const generateAiUnitTestSuite = async ({
-    userId,
-    framework = "jest",
-    snapshot,
+  userId,
+  framework = "jest",
+  snapshot,
+  sourceFileToInspect,
+  sourceCode,
+  coverageDetails,
+  isTest,
+  filePath,
+}) => {
+  const cleanSource = sanitizeSourceFilePath(
+    snapshot?.rootDir,
     sourceFileToInspect,
+  );
+  const ext = path.extname(cleanSource) || ".js";
+  const baseName = path
+    .basename(cleanSource, ext)
+    .replace(/\.(test|spec)$/i, "");
+
+  const testFileInfo = isTest
+    ? {
+        found: true,
+        relativePath: filePath,
+        suggestedFilePath: filePath,
+        absolutePath: path.join(snapshot.rootDir, filePath),
+        fileName: path.basename(filePath),
+        content: fs.existsSync(path.join(snapshot.rootDir, filePath))
+          ? fs.readFileSync(path.join(snapshot.rootDir, filePath), "utf8")
+          : "",
+        framework,
+      }
+    : findExistingTestFile(snapshot.rootDir, cleanSource, framework);
+
+  let proposalBase = {};
+  if (userId && snapshot?.projectId && snapshot?.id) {
+    const { captureProjectProposalBase } =
+      await import("./projectProposalBase.service.js");
+    proposalBase = await captureProjectProposalBase({
+      projectId: snapshot.projectId,
+      snapshotId: snapshot.id,
+      userId,
+      path: testFileInfo.relativePath,
+    });
+    testFileInfo.content = proposalBase.existingContent;
+    testFileInfo.found = proposalBase.isExisting;
+  }
+  const cleanImportPath = computeRelativeImportPath(
+    testFileInfo.relativePath,
+    cleanSource,
+    snapshot?.rootDir,
+  );
+
+  // 1. Assemble Phase 1 AST & Phase 2 Context Engineering
+  const unitTestContext = assembleUnitTestContext({
     sourceCode,
     coverageDetails,
-    isTest,
-    filePath
-}) => {
-    const cleanSource = sanitizeSourceFilePath(snapshot?.rootDir, sourceFileToInspect);
-    const ext = path.extname(cleanSource) || ".js";
-    const baseName = path.basename(cleanSource, ext).replace(/\.(test|spec)$/i, "");
+    framework,
+    existingTestCode: testFileInfo.content || "",
+  });
 
-    const testFileInfo = isTest
-        ? {
-            found: true,
-            relativePath: filePath,
-            suggestedFilePath: filePath,
-            absolutePath: path.join(snapshot.rootDir, filePath),
-            fileName: path.basename(filePath),
-            content: fs.existsSync(path.join(snapshot.rootDir, filePath)) ? fs.readFileSync(path.join(snapshot.rootDir, filePath), "utf8") : "",
-            framework
-        }
-        : findExistingTestFile(snapshot.rootDir, cleanSource, framework);
+  // 2. Build Standard 6-Part Prompt (Section 3.1)
+  const prompt = buildStandardUnitTestPrompt({
+    framework,
+    cleanSource,
+    testFileInfo,
+    cleanImportPath,
+    coverageDetails,
+    sourceCode,
+    unitTestContext,
+  });
 
-    let proposalBase = {};
-    if (userId && snapshot?.projectId && snapshot?.id) {
-        const { captureProjectProposalBase } = await import("./projectProposalBase.service.js");
-        proposalBase = await captureProjectProposalBase({ projectId: snapshot.projectId, snapshotId: snapshot.id, userId, path: testFileInfo.relativePath });
-        testFileInfo.content = proposalBase.existingContent;
-        testFileInfo.found = proposalBase.isExisting;
-    }
-    const cleanImportPath = computeRelativeImportPath(testFileInfo.relativePath, cleanSource, snapshot?.rootDir);
+  // 3. Invoke LLM with 90s Timeout
+  let aiParsedResult = null;
+  let aiGenerationError = null;
+  let generationTimeout;
+  let telemetry = null;
 
-    // 1. Assemble Phase 1 AST & Phase 2 Context Engineering
-    const unitTestContext = assembleUnitTestContext({
-        sourceCode,
-        coverageDetails,
-        framework,
-        existingTestCode: testFileInfo.content || ""
-    });
+  try {
+    let generationTimer;
+    const callStart = Date.now();
+    const aiResponse = await Promise.race([
+      generateText(prompt, null, null, {
+        returnTelemetry: true,
+        userId,
+        taskType: "unit",
+      }),
+      new Promise((_, reject) => {
+        generationTimer = setTimeout(
+          () =>
+            reject(new Error("AI generation timed out (90s limit reached)")),
+          90000,
+        );
+      }),
+    ]).finally(() => clearTimeout(generationTimer));
 
-    // 2. Build Standard 6-Part Prompt (Section 3.1)
-    const prompt = buildStandardUnitTestPrompt({
-        framework,
-        cleanSource,
-        testFileInfo,
-        cleanImportPath,
-        coverageDetails,
-        sourceCode,
-        unitTestContext
-    });
-
-    // 3. Invoke LLM with 90s Timeout
-    let aiParsedResult = null;
-    let aiGenerationError = null;
-    let generationTimeout;
-    let telemetry = null;
-
-    try {
-        let generationTimer;
-<<<<<<< Updated upstream
-        const responseText = await Promise.race([
-            withGeminiChannel("UNIT_TEST", () => generateText(prompt)),
-=======
-        const callStart = Date.now();
-        const aiResponse = await Promise.race([
-            generateText(prompt, null, null, { returnTelemetry: true, userId, taskType: "unit" }),
->>>>>>> Stashed changes
-            new Promise((_, reject) => { generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000); })
-        ]).finally(() => clearTimeout(generationTimer));
-
-        const responseText = typeof aiResponse === "object" && aiResponse?.text !== undefined ? aiResponse.text : aiResponse;
-        telemetry = aiResponse?.telemetry || {
-            durationMs: Date.now() - callStart,
-            durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
-            tokens: {
-                prompt: Math.max(1, Math.round(prompt.length / 4)),
-                completion: Math.max(1, Math.round((responseText || "").length / 4)),
-                total: Math.max(2, Math.round((prompt.length + (responseText || "").length) / 4)),
-            },
-            model: "gemini",
-        };
-
-        // 4. Parse & Sanitize Response (Section 3.2)
-        const parseCheck = parseAndSanitizeAiTestResponse({
-            rawResponse: responseText,
-            framework,
-            cleanSource
-        });
-
-        if (parseCheck.success && parseCheck.parsed) {
-            aiParsedResult = parseCheck.parsed;
-        } else {
-            aiGenerationError = (parseCheck.errors || []).join("; ");
-            console.warn(`[unitTestGenerator] AI sanity check warning (${framework}): ${aiGenerationError}`);
-        }
-    } catch (aiErr) {
-        aiGenerationError = aiErr.message;
-        console.warn(`[unitTestGenerator] AI Generation fallback triggered (${framework}): ${aiErr.message}`);
-    } finally {
-        clearTimeout(generationTimeout);
-    }
-
-    // 5. Resilient Isolation Mock Fallback if AI output failed validation
-    if (!aiParsedResult) {
-        aiParsedResult = generateFallbackUnitTests({
-            framework,
-            sourceFile: cleanSource,
-            targetTestFile: testFileInfo.relativePath,
-            rootDir: snapshot?.rootDir,
-            baseName,
-            uncoveredLines: coverageDetails?.uncoveredLines || [],
-            existingContent: testFileInfo.content,
-            sourceCode
-        });
-    }
-
-    // 6. Format Final Primary Suggestion
-    const cleanRepoPath = (p) => {
-        if (!p) return "";
-        let norm = p.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
-        if (snapshot?.rootDir) {
-            const normRoot = snapshot.rootDir.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
-            if (norm.startsWith(normRoot)) norm = norm.slice(normRoot.length);
-        }
-        norm = norm.replace(/^.*\/repo\//, "");
-        return norm.replace(/^\/+/, "");
+    const responseText =
+      typeof aiResponse === "object" && aiResponse?.text !== undefined
+        ? aiResponse.text
+        : aiResponse;
+    telemetry = aiResponse?.telemetry || {
+      durationMs: Date.now() - callStart,
+      durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+      tokens: {
+        prompt: Math.max(1, Math.round(prompt.length / 4)),
+        completion: Math.max(1, Math.round((responseText || "").length / 4)),
+        total: Math.max(
+          2,
+          Math.round((prompt.length + (responseText || "").length) / 4),
+        ),
+      },
+      model: "gemini",
     };
 
-    const cleanSourceFile = cleanRepoPath(sourceFileToInspect);
-    const cleanTargetTest = cleanRepoPath(testFileInfo.relativePath || testFileInfo.fullPath);
+    // 4. Parse & Sanitize Response (Section 3.2)
+    const parseCheck = parseAndSanitizeAiTestResponse({
+      rawResponse: responseText,
+      framework,
+      cleanSource,
+    });
 
-    const branches = coverageDetails?.branches || coverageDetails?.branchFlow || [];
-    const uncoveredBranches = branches.filter(b => b.status !== "fully_covered" || b.totalHits === 0);
-    const targetBranchesList = uncoveredBranches.map(b => `${b.type}:${b.line}`);
-    const primaryTargetLines = coverageDetails?.uncoveredLines?.slice(0, 5) || [];
-    const primaryReason = uncoveredBranches.length > 0
-        ? `Branch ${uncoveredBranches[0].type} at line ${uncoveredBranches[0].line} (${uncoveredBranches[0].condition || "branch condition"}) was not executed`
-        : (primaryTargetLines.length > 0
-            ? `Lines ${primaryTargetLines.join(", ")} not tested in current suite`
-            : "Add test cases covering edge cases and logical conditions");
+    if (parseCheck.success && parseCheck.parsed) {
+      aiParsedResult = parseCheck.parsed;
+    } else {
+      aiGenerationError = (parseCheck.errors || []).join("; ");
+      console.warn(
+        `[unitTestGenerator] AI sanity check warning (${framework}): ${aiGenerationError}`,
+      );
+    }
+  } catch (aiErr) {
+    aiGenerationError = aiErr.message;
+    console.warn(
+      `[unitTestGenerator] AI Generation fallback triggered (${framework}): ${aiErr.message}`,
+    );
+  } finally {
+    clearTimeout(generationTimeout);
+  }
 
-    const primarySuggestion = {
-        ...proposalBase,
-        proposalBase: { ...proposalBase, existingContent: undefined },
-        suggestionId: `sug-${Date.now()}-1`,
-        sourceFile: cleanSourceFile,
-        testFile: cleanTargetTest,
-        targetTestFile: cleanTargetTest,
-        framework,
-        testType: "unit",
-        targetLines: primaryTargetLines,
-        targetBranches: targetBranchesList,
-        reason: primaryReason,
-        explanation: aiParsedResult.explanation || `Exhaustive ${framework.toUpperCase()} unit tests for ${cleanSourceFile}`,
-        generatedCode: aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent,
-        suggestedTestCode: aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent,
-        originalCode: testFileInfo.content || "",
-        fullUpdatedContent: aiParsedResult.fullUpdatedContent,
-        status: "GENERATED",
-        isExisting: testFileInfo.found,
-        uncoveredLines: coverageDetails?.uncoveredLines || [],
-        failedLines: coverageDetails?.failedLines || [],
-        summary: coverageDetails?.summary ? {
-            linesPct: coverageDetails.summary.linesPct ?? 0,
-            branchesPct: coverageDetails.summary.branchesPct ?? 0,
-            functionsPct: coverageDetails.summary.functionsPct ?? coverageDetails.summary.funcsPct ?? 0,
-            statementsPct: coverageDetails.summary.statementsPct ?? coverageDetails.summary.stmtsPct ?? 0,
-            funcsPct: coverageDetails.summary.functionsPct ?? coverageDetails.summary.funcsPct ?? 0,
-            stmtsPct: coverageDetails.summary.statementsPct ?? coverageDetails.summary.stmtsPct ?? 0,
-            ...coverageDetails.summary
-        } : {
-            linesPct: 0,
-            branchesPct: 0,
-            functionsPct: 0,
-            statementsPct: 0
+  // 5. Resilient Isolation Mock Fallback if AI output failed validation
+  if (!aiParsedResult) {
+    aiParsedResult = generateFallbackUnitTests({
+      framework,
+      sourceFile: cleanSource,
+      targetTestFile: testFileInfo.relativePath,
+      rootDir: snapshot?.rootDir,
+      baseName,
+      uncoveredLines: coverageDetails?.uncoveredLines || [],
+      existingContent: testFileInfo.content,
+      sourceCode,
+    });
+  }
+
+  // 6. Format Final Primary Suggestion
+  const cleanRepoPath = (p) => {
+    if (!p) return "";
+    let norm = p
+      .replace(/\\/g, "/")
+      .replace(/^\.?\//, "")
+      .trim();
+    if (snapshot?.rootDir) {
+      const normRoot = snapshot.rootDir
+        .replace(/\\/g, "/")
+        .replace(/^\.?\//, "")
+        .trim();
+      if (norm.startsWith(normRoot)) norm = norm.slice(normRoot.length);
+    }
+    norm = norm.replace(/^.*\/repo\//, "");
+    return norm.replace(/^\/+/, "");
+  };
+
+  const cleanSourceFile = cleanRepoPath(sourceFileToInspect);
+  const cleanTargetTest = cleanRepoPath(
+    testFileInfo.relativePath || testFileInfo.fullPath,
+  );
+
+  const branches =
+    coverageDetails?.branches || coverageDetails?.branchFlow || [];
+  const uncoveredBranches = branches.filter(
+    (b) => b.status !== "fully_covered" || b.totalHits === 0,
+  );
+  const targetBranchesList = uncoveredBranches.map(
+    (b) => `${b.type}:${b.line}`,
+  );
+  const primaryTargetLines = coverageDetails?.uncoveredLines?.slice(0, 5) || [];
+  const primaryReason =
+    uncoveredBranches.length > 0
+      ? `Branch ${uncoveredBranches[0].type} at line ${uncoveredBranches[0].line} (${uncoveredBranches[0].condition || "branch condition"}) was not executed`
+      : primaryTargetLines.length > 0
+        ? `Lines ${primaryTargetLines.join(", ")} not tested in current suite`
+        : "Add test cases covering edge cases and logical conditions";
+
+  const primarySuggestion = {
+    ...proposalBase,
+    proposalBase: { ...proposalBase, existingContent: undefined },
+    suggestionId: `sug-${Date.now()}-1`,
+    sourceFile: cleanSourceFile,
+    testFile: cleanTargetTest,
+    targetTestFile: cleanTargetTest,
+    framework,
+    testType: "unit",
+    targetLines: primaryTargetLines,
+    targetBranches: targetBranchesList,
+    reason: primaryReason,
+    explanation:
+      aiParsedResult.explanation ||
+      `Exhaustive ${framework.toUpperCase()} unit tests for ${cleanSourceFile}`,
+    generatedCode:
+      aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent,
+    suggestedTestCode:
+      aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent,
+    originalCode: testFileInfo.content || "",
+    fullUpdatedContent: aiParsedResult.fullUpdatedContent,
+    status: "GENERATED",
+    isExisting: testFileInfo.found,
+    uncoveredLines: coverageDetails?.uncoveredLines || [],
+    failedLines: coverageDetails?.failedLines || [],
+    summary: coverageDetails?.summary
+      ? {
+          linesPct: coverageDetails.summary.linesPct ?? 0,
+          branchesPct: coverageDetails.summary.branchesPct ?? 0,
+          functionsPct:
+            coverageDetails.summary.functionsPct ??
+            coverageDetails.summary.funcsPct ??
+            0,
+          statementsPct:
+            coverageDetails.summary.statementsPct ??
+            coverageDetails.summary.stmtsPct ??
+            0,
+          funcsPct:
+            coverageDetails.summary.functionsPct ??
+            coverageDetails.summary.funcsPct ??
+            0,
+          stmtsPct:
+            coverageDetails.summary.statementsPct ??
+            coverageDetails.summary.stmtsPct ??
+            0,
+          ...coverageDetails.summary,
+        }
+      : {
+          linesPct: 0,
+          branchesPct: 0,
+          functionsPct: 0,
+          statementsPct: 0,
         },
-        decisionTableSummary: unitTestContext?.decisionTable?.summary,
-        telemetry: telemetry || {
-            durationMs: 0,
-            durationSeconds: 0,
-            tokens: { prompt: 0, completion: 0, total: 0 },
-            model: "fallback"
-        }
-    };
+    decisionTableSummary: unitTestContext?.decisionTable?.summary,
+    telemetry: telemetry || {
+      durationMs: 0,
+      durationSeconds: 0,
+      tokens: { prompt: 0, completion: 0, total: 0 },
+      model: "fallback",
+    },
+  };
 
-    return {
-        ...primarySuggestion,
-        suggestions: [primarySuggestion],
-        telemetry: primarySuggestion.telemetry
-    };
+  return {
+    ...primarySuggestion,
+    suggestions: [primarySuggestion],
+    telemetry: primarySuggestion.telemetry,
+  };
 };
