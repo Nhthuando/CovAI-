@@ -1,16 +1,81 @@
-# React + Vite
+# CovAI Client — Frontend Web Application
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Ứng dụng Frontend chính của nền tảng **CovAI**, được xây dựng trên nền tảng **React 19** và **Tailwind CSS v4** với giao diện kỹ thuật chuyên nghiệp (Developer Tool Style) lấy cảm hứng từ GitHub Primer, Linear và shadcn/ui.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🛠️ Công Nghệ & Thư Viện Cốt Lõi
 
-## React Compiler
+- **Core Framework**: [React 19](https://react.dev/) + [Vite](https://vite.dev/)
+- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/) (Hệ thống Design Token qua biến CSS trong `src/index.css`)
+- **Code Editor & Collaboration**: [Monaco Editor](https://microsoft.github.io/monaco-editor/) + [Yjs](https://yjs.dev/) (CRDT realtime coding)
+- **Icons**: [Lucide React](https://lucide.dev/)
+- **Data Fetching & State**: [@tanstack/react-query v5](https://tanstack.com/query) + [Axios](https://axios-http.com/)
+- **Realtime**: [Socket.IO Client](https://socket.io/)
+- **Routing**: [React Router v7](https://reactrouter.com/)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## 📁 Cấu Trúc Thư Mục (`client/src/`)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```text
+client/src/
+├── components/          # Toàn bộ UI components
+│   ├── auth/            # Form đăng nhập, đăng ký, quên mật khẩu
+│   ├── common/          # Button, Card, Badge, Modal, Popover dùng chung
+│   ├── dashboard/       # 8 phân hệ chuyên sâu của CovAI:
+│   │   ├── unified/     # Overview tổng hợp chất lượng, coverage và test pyramid
+│   │   ├── editor/      # Collaborative IDE & Code Lens
+│   │   ├── integration/ # API Integration Test (Supertest)
+│   │   ├── system/      # System / E2E Test (Playwright, Cypress)
+│   │   ├── trustworthiness/ # Đánh giá độ tin cậy AI Chatbot
+│   │   ├── portfolio/   # Quản lý chất lượng đa dự án
+│   │   ├── import/      # Tải lên ZIP & kết nối GitHub
+│   │   └── settings/    # Phân quyền thành viên & hạn ngạch AI
+│   └── (Landing)        # Hero, Navbar, Features, Workflow, Pricing, Footer
+├── contexts/            # React Contexts (Notification, RunningProcess, Theme)
+├── hooks/               # Custom React Hooks (useAuth, useSocket, useProjectAccess...)
+├── lib/                 # Cấu hình Monaco Editor, QueryClient, Draft storage
+├── pages/               # Các trang chính: LoginPage, DashboardPage, ProjectSelectionPage...
+├── services/            # API services gọi Backend Express
+├── utils/               # Tiện ích xử lý cây thư mục, tìm kiếm fuzzy
+├── App.jsx              # Định tuyến ứng dụng (App Router)
+├── main.jsx             # Entry point React DOM
+└── index.css            # Toàn bộ CSS variables và cấu hình Tailwind v4
+```
+
+---
+
+## 🚀 Khởi Chạy Local
+
+### 1. Cài đặt Dependencies:
+```bash
+npm install
+```
+
+### 2. Cấu hình Biến Môi Trường:
+Tạo file `.env` từ `.env.example`:
+```env
+VITE_API_URL=http://localhost:5000/api
+VITE_SOCKET_URL=http://localhost:5000
+```
+
+### 3. Chạy Development Server:
+```bash
+npm run dev
+```
+Truy cập ứng dụng tại: `http://localhost:5173`.
+
+### 4. Đóng Gói Production:
+```bash
+npm run build
+npm run preview
+```
+
+---
+
+## 📜 Quy Chuẩn Lập Trình Cho AI & Dev
+Vui lòng tham khảo tài liệu hướng dẫn bắt buộc:
+- [`client/AGENTS.md`](./AGENTS.md): Quy tắc chuyên biệt cho Frontend.
+- [`.agents/skills/covai-ui-components/SKILL.md`](../.agents/skills/covai-ui-components/SKILL.md): Mẫu component chuẩn.
+- [`docs/rules/COVAI_FRONTEND_AGENT_RULES.md`](../docs/rules/COVAI_FRONTEND_AGENT_RULES.md): Đặc tả màu sắc & Design Tokens.

@@ -89,3 +89,11 @@ Mọi chi tiết kiến trúc và kế hoạch đã được quy hoạch trong [
 - Quy chuẩn chi tiết UI/UX: [`docs/rules/COVAI_FRONTEND_AGENT_RULES.md`](file:///e:/Express/CovAI-/docs/rules/COVAI_FRONTEND_AGENT_RULES.md)
 - Kỹ thuật System / E2E Test: [`docs/system-testing/`](file:///e:/Express/CovAI-/docs/system-testing)
 - Kỹ thuật Unit Test: [`docs/unit-testing/`](file:///e:/Express/CovAI-/docs/unit-testing)
+
+---
+
+## 5. Quy Chuẩn Chuyên Biệt Theo Phân Hệ (Subsystem Guidelines)
+
+Khi thao tác sâu vào từng thư mục con, AI Agent bắt buộc tham khảo tài liệu chuyên biệt tương ứng:
+- **Frontend Guidelines**: Tham khảo [`client/AGENTS.md`](file:///e:/Express/CovAI-/client/AGENTS.md) và skill [`.agents/skills/covai-ui-components/SKILL.md`](file:///e:/Express/CovAI-/.agents/skills/covai-ui-components/SKILL.md).
+- **Backend Guidelines**: Tham khảo [`server/AGENTS.md`](file:///e:/Express/CovAI-/server/AGENTS.md).
