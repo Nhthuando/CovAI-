@@ -25,6 +25,18 @@ const createFixture = () => {
 };
 
 describe('system scenario catalog', () => {
+    it('executes an imported draft without confirming its business expectations',async()=>{
+        const fixture=createFixture();
+        try {
+            const synced=await syncSystemScenarioCatalog({client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir});
+            const row=synced.scenarios[0];
+            const args={client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir,testFiles:[fixture.filePath],scenarioIds:[row.id],executionMode:'full'};
+            expect(await evaluateRunReadiness({...args,reviewMode:'execution'})).toMatchObject({ready:true,blockers:[]});
+            expect(await evaluateRunReadiness({...args,reviewMode:'scenario'})).toMatchObject({ready:false,blockers:expect.arrayContaining([expect.objectContaining({code:'EXPECTED_UNCONFIRMED'})])});
+            expect([...fixture.rows.values()][0].reviewState).toBe('DRAFT');
+            expect(fixture.client.systemScenario.update).not.toHaveBeenCalled();
+        } finally {fs.rmSync(fixture.rootDir,{recursive:true,force:true});}
+    });
     it('blocks ambiguous duplicate titles before live evidence can be assigned to the wrong scenario', async () => {
         const fixture = createFixture();
         try {

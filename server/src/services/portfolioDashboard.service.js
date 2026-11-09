@@ -88,9 +88,12 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
       updatedAt: true,
       snapshots: {
         orderBy: { createdAt: "desc" },
-        take: 1,
+        take: 5,
         select: {
           id: true,
+          versionNumber: true,
+          label: true,
+          contentHash: true,
           checksum: true,
           commitSha: true,
           createdAt: true,
@@ -437,9 +440,7 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
               (coveredEpCount > 0 ? coveredEpCount : intPassed)
           )
         : 0;
-    const uncoveredApis = Number(
-      wsSummary.uncoveredApis ?? Math.max(0, totalApis - coveredEpCount - failedEpCount)
-    );
+    const uncoveredApis = Math.max(0, totalApis - coveredApis);
     const intDurationMs = Number(wsSummary.durationMs ?? intRun?.durationMs ?? 0);
     const intPassRate =
       intPassed + intFailed > 0
@@ -671,6 +672,13 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
         : "Unit"
       : null;
 
+    const activeSnapshot = (p.snapshots || []).find((s) => s.id === snapshotId) || p.snapshots?.[0];
+    const vNum = activeSnapshot?.versionNumber != null ? `#${activeSnapshot.versionNumber}` : (snapshotId ? `#1` : null);
+    const shortRef = activeSnapshot?.commitSha && !activeSnapshot.commitSha.startsWith("appliedTx:")
+      ? activeSnapshot.commitSha.slice(0, 7)
+      : (activeSnapshot?.contentHash ? activeSnapshot.contentHash.slice(0, 7) : (snapshotId ? snapshotId.slice(0, 7) : ""));
+    const snapshotLabel = activeSnapshot?.label || (vNum ? `${vNum} (${shortRef})` : shortRef);
+
     return {
       id: p.id,
       name: p.name,
@@ -678,6 +686,8 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
       repoUrl: p.repoUrl || null,
       branch: p.defaultBranch || "main",
       snapshotId,
+      snapshotLabel,
+      snapshotVersion: activeSnapshot?.versionNumber ?? null,
       lifecycleStatus,
       lifecycleUpdatedAt: p.lifecycleUpdatedAt || p.updatedAt,
       isPinned: Boolean(p.isPinned),

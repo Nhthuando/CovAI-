@@ -21,6 +21,17 @@ const generate = value => jest.fn().mockResolvedValue(JSON.stringify(value));
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root,{recursive:true,force:true}); });
 
 describe('automatic Full Stack setup', () => {
+    it('automatically prepares an API-only SQL runtime and reuses a supplied generated schema',async()=>{
+        const root=fs.mkdtempSync(path.join(os.tmpdir(),'covai-api-sql-'));roots.push(root);
+        write(root,'package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5',pg:'8'}}));
+        write(root,'index.js',"import express from 'express';const app=express();app.get('/orders',handler);db.query('SELECT id,title FROM orders');");
+        write(root,'.covai/generated-schema.sql','CREATE TABLE orders(id INT PRIMARY KEY, title TEXT);');
+        const provider=jest.fn();
+        const result=await ensureFullSystemSetup({rootDir:root,dependencies:{generate:provider}});
+        expect(result.config).toMatchObject({backendOnly:true,unified:true,database:{engine:'postgres',initSql:'.covai/generated-schema.sql'}});
+        expect(fs.readFileSync(path.join(root,'.covai/generated-schema.sql'),'utf8')).toBe('CREATE TABLE orders(id INT PRIMARY KEY, title TEXT);');
+        expect(provider).not.toHaveBeenCalled();
+    });
     it('uses an existing Prisma schema and real root route without asking AI for SQL or endpoints',async()=>{
         const root=fixture(),model=generate({backend:{healthPath:'/invented'}});
         write(root,'server/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5','@prisma/client':'6'},devDependencies:{prisma:'6'}}));
@@ -162,5 +173,18 @@ describe('automatic Full Stack setup', () => {
     });
     it.each(['CREATE DATABASE live;', 'CREATE TABLE x(id INT); INSERT INTO x VALUES(1);', 'CREATE TABLE x(id INT); GRANT ALL ON *.* TO user;', 'CREATE TABLE x(id INT); /*!50000 DROP TABLE x */'])('rejects non-schema SQL %s', sql => {
         expect(()=>validateGeneratedSchema(sql)).toThrow();
+    });
+    it('automatically derives full-stack SQL schema and config from source without AI when dependencies.generate is not injected', async () => {
+        const root = fixture();
+        const result = await ensureFullSystemSetup({ rootDir: root });
+        expect(result.generated).toBe(true);
+        expect(result.config).toMatchObject({
+            frontend: { directory: 'client' },
+            backend: { directory: 'server', healthPath: '/', readiness: 'http' },
+            database: { engine: 'mysql', initSql: '.covai/generated-schema.sql' },
+        });
+        const schema = fs.readFileSync(path.join(root, '.covai/generated-schema.sql'), 'utf8');
+        expect(schema).toContain('CREATE TABLE IF NOT EXISTS todos');
+        expect(schema).toContain('title VARCHAR(255)');
     });
 });

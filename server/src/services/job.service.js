@@ -474,7 +474,8 @@ export const createIngestJobForSnapshot = async ({
 const TEST_AND_AI_JOB_TYPES = new Set([
   'RUN_TESTS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'SUPERTEST_COVERAGE',
   'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT', 'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION',
-  'AI_TESTS', 'CYPRESS_SYSTEM_TEST', 'CYPRESS_SYSTEM_COVERAGE', 'PLAYWRIGHT_SYSTEM_TEST', 'PLAYWRIGHT_SYSTEM_COVERAGE'
+  'AI_TESTS', 'AI_SUGGEST', 'AI_INTEGRATION_RUN', 'AI_SYSTEM_GENERATE', 'SYSTEM_COLD_START_GENERATE',
+  'CYPRESS_SYSTEM_TEST', 'CYPRESS_SYSTEM_COVERAGE', 'PLAYWRIGHT_SYSTEM_TEST', 'PLAYWRIGHT_SYSTEM_COVERAGE'
 ]);
 
 export const autoTransitionProjectToDoingIfNeeded = async (projectId) => {
@@ -485,23 +486,33 @@ export const autoTransitionProjectToDoingIfNeeded = async (projectId) => {
       select: { id: true, lifecycleStatus: true, ownerId: true },
     });
     if (proj && proj.lifecycleStatus === 'NOT_STARTED') {
-      await prisma.project.update({
-        where: { id: projectId },
+      const updateResult = await prisma.project.updateMany({
+        where: { id: projectId, lifecycleStatus: 'NOT_STARTED' },
         data: { lifecycleStatus: 'DOING', lifecycleUpdatedAt: new Date() },
       });
-      try {
-        const { clearPortfolioCache } = await import('./portfolioDashboard.service.js');
-        clearPortfolioCache(proj.ownerId);
-      } catch (_) {}
-      try {
-        const { emitPortfolioProjectUpdated } = await import('../realtime/portfolioSocket.emitter.js');
-        emitPortfolioProjectUpdated({
-          projectId,
-          userId: proj.ownerId,
-          lifecycleStatus: 'DOING',
-          action: 'AUTO_TRANSITION',
-        });
-      } catch (_) {}
+      if (updateResult.count > 0) {
+        try {
+          const { clearPortfolioCache } = await import('./portfolioDashboard.service.js');
+          clearPortfolioCache(proj.ownerId);
+        } catch (_) {}
+        try {
+          const { clearUnifiedDashboardCache } = await import('./unifiedQualityDashboard.service.js');
+          clearUnifiedDashboardCache();
+        } catch (_) {}
+        try {
+          const { emitPortfolioProjectUpdated } = await import('../realtime/portfolioSocket.emitter.js');
+          emitPortfolioProjectUpdated({
+            projectId,
+            userId: proj.ownerId,
+            lifecycleStatus: 'DOING',
+            action: 'AUTO_TRANSITION',
+          });
+        } catch (_) {}
+        try {
+          const { emitDashboardMetricsUpdated } = await import('./dashboardEvents.service.js');
+          emitDashboardMetricsUpdated(projectId, { reason: 'project-status-updated', lifecycleStatus: 'DOING' }).catch(() => {});
+        } catch (_) {}
+      }
     }
   } catch (_) {}
 };

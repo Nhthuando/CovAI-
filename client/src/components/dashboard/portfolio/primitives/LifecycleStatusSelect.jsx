@@ -42,7 +42,7 @@ const LIFECYCLE_CONFIG = {
 
 const OPTIONS = [
   { value: "DOING", desc: "Active development (Included in KPIs)" },
-  { value: "NOT_STARTED", desc: "New / Backlog (Included in KPIs)" },
+  { value: "NOT_STARTED", desc: "New / Backlog (Auto-transitions to Doing on test activity)" },
   { value: "PAUSED", desc: "Temporarily on hold (Isolated from KPIs)" },
   { value: "COMPLETED", desc: "Delivered & verified (Isolated from KPIs)" },
   { value: "CANCELLED", desc: "Discarded / Archived (Isolated from KPIs)" },

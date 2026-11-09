@@ -32,6 +32,20 @@ const draftFromTest = (content, site, analysis) => {
     return { flowJson: actions, inputJson: actions.filter(action => /\.(?:fill|type|selectOption|check|press)\s*\(/.test(action)), expectedJson: assertions };
 };
 
+// Execution-only discovery does not update the owner's catalog or mark any
+// expected outcome as confirmed. It also works for generated, disposable tests.
+export const discoverExecutionScenarios = ({rootDir,testFiles}) => testFiles.flatMap(filePath=>{
+    const content=readTest(rootDir,filePath),analysis=analyzeSystemTestFile({content,filePath});
+    const occurrences=new Map();
+    return analysis.scenarioSites.map(site=>{
+        const occurrence=occurrences.get(site.title) || 0;
+        occurrences.set(site.title,occurrence+1);
+        const scenarioKey=scenarioIdentity(filePath,site.title,occurrence);
+        const row={id:scenarioKey,scenarioKey,filePath,title:site.title,reviewState:'DRAFT',criterionIds:[],requirementRevisionId:null,...draftFromTest(content,site,analysis),testHash:digest(content),assertionHashes:analysis.assertionSites.filter(assertion=>assertion.scenarioLine===site.line).map(assertion=>assertion.hash).sort()};
+        return {...row,scenarioHash:scenarioReviewHash(row)};
+    });
+});
+
 export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir }) => {
     const files = scanSystemTestFiles(rootDir).playwrightFiles.map(file => file.filePath);
     const seen = new Set(), unsupportedFeatures = [];
@@ -154,7 +168,7 @@ export const evaluateRunReadiness = async ({ client, snapshotId, rootDir, revisi
         catch (error) { blockers.push({filePath,code:'FULL_STACK_TEST_REQUIRED',message:`${filePath}: ${error.statusCode ? error.message : 'Test file could not be checked'}`}); }
     }
 
-    if (reviewMode === 'scenario') {
+    if (['scenario','execution'].includes(reviewMode)) {
         if (!scenarioIds.length) blockers.push({ code: 'NO_SELECTION', message: 'Select at least one scenario to run' });
         const all = await client.systemScenario.findMany({ where: { snapshotId, filePath: { in: testFiles } } });
         const selected = all.filter(scenario => scenarioIds.includes(scenario.id));
@@ -169,8 +183,8 @@ export const evaluateRunReadiness = async ({ client, snapshotId, rootDir, revisi
                 const fileRows = all.filter(scenario => scenario.filePath === filePath);
                 for (const scenario of fileRows.filter(item => scenarioIds.includes(item.id))) {
                     if (scenario.testHash !== hash || scenario.reviewState === 'STALE') blockers.push({ scenarioKey: scenario.scenarioKey, code: 'TEST_CHANGED', message: `Sync ${filePath} before running` });
-                    if (!scenario.expectedJson?.length || scenario.expectedJson.some(isVagueExpectedOutcome)) blockers.push({scenarioKey:scenario.scenarioKey,code:'EXPECTED_DESCRIPTION_REQUIRED',message:`Describe the expected item and state for ${scenario.title}`});
-                    if (!['EXPECTED_CONFIRMED', 'REVIEWED'].includes(scenario.reviewState)) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'EXPECTED_UNCONFIRMED', message: `Confirm the expected outcome for ${scenario.title}` });
+                    if (reviewMode==='scenario' && (!scenario.expectedJson?.length || scenario.expectedJson.some(isVagueExpectedOutcome))) blockers.push({scenarioKey:scenario.scenarioKey,code:'EXPECTED_DESCRIPTION_REQUIRED',message:`Describe the expected item and state for ${scenario.title}`});
+                    if (reviewMode==='scenario' && !['EXPECTED_CONFIRMED', 'REVIEWED'].includes(scenario.reviewState)) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'EXPECTED_UNCONFIRMED', message: `Confirm the expected outcome for ${scenario.title}` });
                     const matching = analysis.scenarioSites.filter(site => site.title === scenario.title);
                     if (matching.length !== 1 || !analysis.assertionSites.some(site => site.scenarioLine === matching[0]?.line && site.supported)) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'ASSERTION_REQUIRED', message: `A supported assertion is required for ${scenario.title}` });
                     if (fileRows.filter(item => item.title === scenario.title).length !== 1) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'AMBIGUOUS_SCENARIO', message: `Use unique scenario titles in ${filePath}` });

@@ -694,12 +694,18 @@ export function buildActionItems(pillars = {}, traceRows = [], limit = 8) {
     const uncovEndpoints = (pillars.integration?.lowCoverageItems || [])
       .map((item) => item.name)
       .filter(Boolean);
-    const endpointPreview = uncovEndpoints.length > 0 ? uncovEndpoints.slice(0, 3).join(", ") : `${uncovCount} Uncovered API(s)`;
-    const firstUncovEndpoint = uncovEndpoints[0] || "";
+    const traceUncovEndpoints = traceRows
+      .filter((r) => r.integration?.status === "untested" || r.integration?.status === "warn" || r.integration?.status === "none")
+      .map((r) => r.moduleName || r.id)
+      .filter(Boolean);
+    const resolvedEndpoints = uncovEndpoints.length > 0 ? uncovEndpoints : traceUncovEndpoints;
+    const endpointPreview = resolvedEndpoints.length > 0 ? resolvedEndpoints.slice(0, 3).join(", ") : `${uncovCount} Uncovered API(s)`;
+    const firstUncovEndpoint = resolvedEndpoints[0] || "";
+    const isZeroIntegration = (Number(pillars.integration?.totalTests) || 0) === 0;
 
     actions.push({
       id: "act-int-uncovered",
-      priority: "MEDIUM",
+      priority: isZeroIntegration ? "HIGH" : "MEDIUM",
       pillar: "integration",
       failureCategory: "uncovered",
       title: `Cover ${uncovCount} untested API endpoint(s)`,
@@ -718,7 +724,7 @@ export function buildActionItems(pillars = {}, traceRows = [], limit = 8) {
         scenarioName: "API Endpoint Discovery Audit",
         failedStep: "0 integration assertions executed for discovered route handlers",
         stackTrace: `Endpoint Coverage Audit:\n  Total Discovered Endpoints: ${pillars.integration.coverageMetrics.totalApis || uncovCount}\n  Covered Endpoints: ${pillars.integration.passedTests || 0}\n  Uncovered Endpoints: ${uncovCount}\n  Sample Uncovered Routes: ${endpointPreview}`,
-        testCases: uncovEndpoints.map((epName) => ({
+        testCases: resolvedEndpoints.map((epName) => ({
           name: `${epName} (Uncovered)`,
           status: "untested",
           durationMs: 0,

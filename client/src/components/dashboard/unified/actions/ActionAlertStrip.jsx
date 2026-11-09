@@ -23,6 +23,10 @@ export function ActionAlertStrip({
     P0: "bg-[var(--ud-fail)]/15 border-[var(--ud-fail)]/40 text-[var(--ud-fail)]",
     P1: "bg-[var(--ud-warn)]/15 border-[var(--ud-warn)]/40 text-[var(--ud-warn)]",
     P2: "bg-[var(--ud-surface-2)] border-[var(--ud-border)] text-[var(--ud-text-muted)]",
+    CRITICAL: "bg-[var(--ud-fail)]/15 border-[var(--ud-fail)]/40 text-[var(--ud-fail)]",
+    HIGH: "bg-[var(--ud-warn)]/15 border-[var(--ud-warn)]/40 text-[var(--ud-warn)]",
+    MEDIUM: "bg-blue-500/15 border-blue-500/40 text-blue-400",
+    LOW: "bg-[var(--ud-surface-2)] border-[var(--ud-border)] text-[var(--ud-text-muted)]",
   };
 
   return (
@@ -42,8 +46,8 @@ export function ActionAlertStrip({
 
       <div className="space-y-1.5">
         {topActions.map((action, idx) => {
-          const prio = action.priority || "P1";
-          const badgeClass = priorityColors[prio] || priorityColors.P1;
+          const prio = action.priority || "MEDIUM";
+          const badgeClass = priorityColors[prio] || priorityColors.MEDIUM || priorityColors.P1;
 
           return (
             <div

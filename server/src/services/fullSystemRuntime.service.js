@@ -38,7 +38,7 @@ export const prepareFullSystemPackage = async ({directory, repositoryRoot=direct
     }
     const pkg = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
     const run = async (command, label) => {
-        const result = await dockerRunner.run({snapshotPath:directory,command,jobId,forceHost:true,timeoutMs:600000,signal,
+        const result = await dockerRunner.run({snapshotPath:directory,command,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,
             env:{...env,NODE_ENV:'development',PATH:process.env.PATH || '',NODE_PATH:''}});
         if (!result.success) {
             let detail = [result.stderr,result.stdout].filter(Boolean).join('\n').replace(/\x1b\[[0-9;]*m/g,'').trim();

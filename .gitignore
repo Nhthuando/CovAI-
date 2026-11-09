@@ -73,6 +73,30 @@ docker-compose.collaboration-test.yml
 !/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
 !/docs/superpowers/specs/2026-10-28-project-collaboration-design.md
 !/docs/superpowers/specs/2026-11-04-collaborative-editor-design.md
+<<<<<<< HEAD
+=======
+
+# Disposable collaboration worker copies and generated test artifacts
+/server/.covai-temp/collaboration-operations/
+
+
+# Local system-assessment verification artifacts
+/temp/system-assessment-*
+/temp/system-scalability-*
+/temp/system-automatic-browser/
+/prototype/
+/client/.evidence-review/
+/client/evidence-preview.html
+/server/src/tests/fixtures/system-assessment/.covai-system-test/
+
+
+# Scratch directory & test results
+/scratch/
+/server/test-results/
+test-results/
+
+# Research documents and artifacts
+>>>>>>> cb2c5fc3b954bd831ee06959169f2fed62eaa1f0
 /docs/research/
 !/docs/research/*.md
 

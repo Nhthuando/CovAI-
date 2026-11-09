@@ -892,22 +892,115 @@ export const generateAiUnitTestSuite = async ({
       }),
     ]).finally(() => clearTimeout(generationTimer));
 
-    const responseText =
-      typeof aiResponse === "object" && aiResponse?.text !== undefined
-        ? aiResponse.text
-        : aiResponse;
-    telemetry = aiResponse?.telemetry || {
-      durationMs: Date.now() - callStart,
-      durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
-      tokens: {
-        prompt: Math.max(1, Math.round(prompt.length / 4)),
-        completion: Math.max(1, Math.round((responseText || "").length / 4)),
-        total: Math.max(
-          2,
-          Math.round((prompt.length + (responseText || "").length) / 4),
+    // 2. Build Standard 6-Part Prompt (Section 3.1)
+    const prompt = buildStandardUnitTestPrompt({
+      framework,
+      cleanSource,
+      testFileInfo,
+      cleanImportPath,
+      coverageDetails,
+      sourceCode,
+      unitTestContext,
+    });
+
+    // 3. Invoke LLM with 90s Timeout
+    let aiParsedResult = null;
+    let aiGenerationError = null;
+    let generationTimeout;
+    let telemetry = null;
+
+    try {
+      let generationTimer;
+      const callStart = Date.now();
+      const aiResponse = await Promise.race([
+        withGeminiChannel("UNIT_TEST", () =>
+          generateText(prompt, null, null, {
+            returnTelemetry: true,
+            userId,
+            taskType: "unit",
+          }),
         ),
-      },
-      model: "gemini",
+        new Promise((_, reject) => {
+          generationTimer = setTimeout(
+            () =>
+              reject(new Error("AI generation timed out (90s limit reached)")),
+            90000,
+          );
+        }),
+      ]).finally(() => clearTimeout(generationTimer));
+
+      const responseText =
+        typeof aiResponse === "object" && aiResponse?.text !== undefined
+          ? aiResponse.text
+          : aiResponse;
+      telemetry = aiResponse?.telemetry || {
+        durationMs: Date.now() - callStart,
+        durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+        tokens: {
+          prompt: Math.max(1, Math.round(prompt.length / 4)),
+          completion: Math.max(1, Math.round((responseText || "").length / 4)),
+          total: Math.max(
+            2,
+            Math.round((prompt.length + (responseText || "").length) / 4),
+          ),
+        },
+        model: "gemini",
+      };
+
+      // 4. Parse & Sanitize Response (Section 3.2)
+      const parseCheck = parseAndSanitizeAiTestResponse({
+        rawResponse: responseText,
+        framework,
+        cleanSource,
+      });
+
+      if (parseCheck.success && parseCheck.parsed) {
+        aiParsedResult = parseCheck.parsed;
+      } else {
+        aiGenerationError = (parseCheck.errors || []).join("; ");
+        console.warn(
+          `[unitTestGenerator] AI sanity check warning (${framework}): ${aiGenerationError}`,
+        );
+      }
+    } catch (aiErr) {
+      aiGenerationError = aiErr.message;
+      console.warn(
+        `[unitTestGenerator] AI Generation fallback triggered (${framework}): ${aiErr.message}`,
+      );
+    } finally {
+      clearTimeout(generationTimeout);
+    }
+
+    // 5. Resilient Isolation Mock Fallback if AI output failed validation
+    if (!aiParsedResult) {
+      aiParsedResult = generateFallbackUnitTests({
+        framework,
+        sourceFile: cleanSource,
+        targetTestFile: testFileInfo.relativePath,
+        rootDir: snapshot?.rootDir,
+        baseName,
+        uncoveredLines: coverageDetails?.uncoveredLines || [],
+        existingContent: testFileInfo.content,
+        sourceCode,
+      });
+    }
+
+    // 6. Format Final Primary Suggestion
+    const cleanRepoPath = (p) => {
+      if (!p) return "";
+      let norm = p
+        .replace(/\\/g, "/")
+        .replace(/^\.?\//, "")
+        .trim();
+      if (snapshot?.rootDir) {
+        const normRoot = snapshot.rootDir
+          .replace(/\\/g, "/")
+          .replace(/^\.?\//, "")
+          .trim();
+        if (norm.startsWith(normRoot)) norm = norm.slice(normRoot.length);
+      }
+      norm = norm.replace(/^.*\/repo\//, "");
+      return norm.replace(/^\/+/, "");
     };
 
     // 4. Parse & Sanitize Response (Section 3.2)

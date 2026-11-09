@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { prepareFullSystemPackage, readApplicationEnvironment, readAssessmentTestEnvironment } from './fullSystemRuntime.service.js';
+import { prepareFullSystemPackage, readAssessmentTestEnvironment } from './fullSystemRuntime.service.js';
 import { spawn } from 'node:child_process';
 import { startAutServer, stopAutServer, runSeedDataIfPresent } from './autLifecycle.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 
 import { containedPath } from './fullSystemConfig.service.js';
-import { ensureFullSystemSetup, inspectSystemSetupSource } from './fullSystemSetup.service.js';
+import { ensureFullSystemSetup, inspectSystemPackageSource } from './fullSystemSetup.service.js';
 import { validateStartupEnvironment, buildAutomaticTestEnvironment, managedEnvironmentNames } from './fullSystemEnvironment.service.js';
 import {provisionSystemResources} from './systemRuntimeResources.service.js';
 import {reserveSystemPorts} from './systemRuntimePorts.service.js';
@@ -32,11 +32,9 @@ export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPrepa
   rootDir=setup.rootDir;
   const config=setup.config;
   const original=environmentRoot || measurementPreparation?.workspace?.originalRoot;
-  const environment=directory=>original ? readAssessmentTestEnvironment(containedPath(original,directory)) : readApplicationEnvironment(containedPath(rootDir,directory));
+  const environment=directory=>readAssessmentTestEnvironment(containedPath(original || rootDir,directory));
   const backendDir=containedPath(rootDir,config.backend.directory),frontendDir=containedPath(rootDir,config.frontend.directory);
-  const source=inspectSystemSetupSource(backendDir);
-  const preliminary=buildAutomaticTestEnvironment({files:source.files,env:environment(config.backend.directory),port:4500});
-  validateStartupEnvironment({files:source.files,env:preliminary,directory:config.backend.directory,scripts:source.packages.find(pkg=>pkg.directory==='.')?.scripts,managedVariables:managedEnvironmentNames(source.files,config)});
+  const source=inspectSystemPackageSource(backendDir);
   const ports=await reserveSystemPorts(config.unified?1:2);
   const backendPort=ports[0].port,frontendPort=config.unified?backendPort:ports[1].port;
   const backendUrl=`http://127.0.0.1:${backendPort}`,frontendUrl=`http://127.0.0.1:${frontendPort}`;
@@ -50,41 +48,24 @@ export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPrepa
     if(failures.length)throw new ServiceError(failures.join('; '),500);
   };
   try {
+    const preliminary=buildAutomaticTestEnvironment({files:source.files,env:environment(config.backend.directory),port:backendPort,backendUrl,frontendUrl});
+    validateStartupEnvironment({files:source.files,env:preliminary,directory:config.backend.directory,scripts:source.packages.find(pkg=>pkg.directory==='.')?.scripts,managedVariables:managedEnvironmentNames(source.files,config),preferStart:!config.unified});
+    const frontendSource=config.unified?source:inspectSystemPackageSource(frontendDir);
+    const frontendEnv=config.unified?preliminary:buildAutomaticTestEnvironment({files:frontendSource.files,env:environment(config.frontend.directory),port:frontendPort,backendUrl,frontendUrl});
+    if(!config.unified)validateStartupEnvironment({files:frontendSource.files,env:frontendEnv,directory:config.frontend.directory,scripts:frontendSource.packages.find(pkg=>pkg.directory==='.')?.scripts,preferStart:false});
     await onProgress?.(26,'Preparing isolated application services and automatic test environment');
-    let effectiveDbEngine=config.database?.engine;
-    try {
-      resources=await provisionSystemResources({rootDir,database:config.database,services:config.services,signal});
-    } catch(resourceError) {
-      if((effectiveDbEngine==='mysql' || effectiveDbEngine==='postgres') && !config.services?.redis && ['SYSTEM_RUNTIME_INFRASTRUCTURE_UNAVAILABLE','SYSTEM_RUNTIME_SERVICE_START_FAILED','SYSTEM_RUNTIME_SERVICE_NOT_READY'].includes(resourceError?.code)) {
-        resources=await provisionSystemResources({rootDir,database:{...config.database,engine:'sqlite'},services:{},signal});
-        effectiveDbEngine='sqlite';
-        Object.assign(resources.environment,{
-          COVAI_SQLITE_FALLBACK_PATH:resources.environment.SQLITE_DB_PATH,
-          DB_HOST:'127.0.0.1',DB_PORT:'3306',DB_USER:'covai',DB_PASSWORD:'covai',DB_NAME:'covai_test',
-          PGHOST:'127.0.0.1',PGPORT:'5432',PGUSER:'covai',PGPASSWORD:'covai',PGDATABASE:'covai_test',
-        });
-      } else throw resourceError;
-    }
+    resources=await provisionSystemResources({rootDir,database:config.database,services:config.services,signal});
     const backendEnv=buildAutomaticTestEnvironment({files:source.files,env:preliminary,resources:resources.environment,port:backendPort,backendUrl,frontendUrl});
-    if(resources.environment?.COVAI_SQLITE_FALLBACK_PATH) {
-      backendEnv.COVAI_SQLITE_FALLBACK_PATH=resources.environment.COVAI_SQLITE_FALLBACK_PATH;
-    }
+    // Imported env cannot opt into substituting a different database driver.
+    delete backendEnv.COVAI_SQLITE_FALLBACK_PATH;
     const metadata=JSON.parse(fs.readFileSync(path.join(backendDir,'package.json'),'utf8'));
     const usesPrisma=Boolean(metadata.dependencies?.['@prisma/client'] || metadata.devDependencies?.['@prisma/client']);
     if(config.database?.prismaSchema && !usesPrisma)throw new ServiceError('Configured Prisma schema requires @prisma/client in the selected backend package',422);
     if(config.database?.initSql && !usesPrisma) {
       const sql=fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8');
-      if(effectiveDbEngine==='sqlite') {
+      if(config.database.engine==='sqlite') {
         if(/\b(?:ATTACH|DETACH|VACUUM|load_extension)\b/i.test(sql))throw new ServiceError('SQLite initialization cannot access files outside its owned test database',422);
-        const sqliteSql = config.database.engine === 'sqlite'
-          ? sql
-          : sql
-              .replace(/\bINT(?:EGER)?\s+(?:NOT\s+NULL\s+)?AUTO_INCREMENT\s+PRIMARY\s+KEY\b/gi, 'INTEGER PRIMARY KEY AUTOINCREMENT')
-              .replace(/\bSERIAL\s+PRIMARY\s+KEY\b/gi, 'INTEGER PRIMARY KEY AUTOINCREMENT')
-              .replace(/\bAUTO_INCREMENT\b/gi, '')
-              .replace(/\bTINYINT\s*\(\s*1\s*\)/gi, 'INTEGER')
-              .replace(/\bENGINE\s*=\s*\w+/gi, '');
-        const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(backendEnv.SQLITE_DB_PATH);try{db.exec(sqliteSql);}finally{db.close();}
+        const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(backendEnv.SQLITE_DB_PATH);try{db.exec(sql);}finally{db.close();}
       } else await writeSql(resources.sqlContainer,config.database.engine,backendEnv.DB_PASSWORD,sql);
     }
     await onProgress?.(28,'Installing application dependencies and preparing the isolated schema');
@@ -95,12 +76,10 @@ export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPrepa
     backendEnv.NODE_OPTIONS=`--require="${preload}"`;
     if(measurementPreparation?.backendPreload)backendEnv.NODE_OPTIONS+=` --require="${measurementPreparation.backendPreload.replaceAll('\\','/')}"`;
     await ports[0].release();
-    const backend=await startAutServer({snapshotDir:backendDir,repositoryRoot:rootDir,port:backendPort,jobId,healthPath:config.backend.healthPath,allowHttpNotFound:config.backend.readiness==='http',requireHealthy:true,env:backendEnv,preferStart:!config.unified,signal});
+    const backend=await startAutServer({snapshotDir:backendDir,repositoryRoot:rootDir,port:backendPort,jobId,healthPath:config.backend.healthPath,allowHttpNotFound:config.backend.readiness==='http',allowHttpClientError:config.backend.readiness==='http',requireHealthy:true,env:backendEnv,preferStart:!config.unified,signal});
     if(!backend.started)throw new ServiceError('No application start script found',422);
     handles.push(backend);
     if(!config.unified) {
-      const frontendSource=inspectSystemSetupSource(frontendDir);
-      const frontendEnv=buildAutomaticTestEnvironment({files:frontendSource.files,env:environment(config.frontend.directory),port:frontendPort,backendUrl,frontendUrl});
       await prepareFullSystemPackage({directory:frontendDir,repositoryRoot:rootDir,env:frontendEnv,jobId,signal});
       await ports[1].release();
       const frontend=await startAutServer({snapshotDir:frontendDir,repositoryRoot:rootDir,port:frontendPort,jobId,requireHealthy:true,env:frontendEnv,signal});

@@ -581,14 +581,19 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
 
   const formattedSnapshots = projectSnapshots.map((s, idx) => {
     const vNum = s.versionNumber != null ? `#${s.versionNumber}` : `#${projectSnapshots.length - idx}`;
-    const baseLabel = s.label || `${vNum} (${(s.commitSha || s.id).slice(0, 7)})`;
+    let displayCommit = s.commitSha;
+    if (displayCommit && displayCommit.startsWith("appliedTx:")) {
+      displayCommit = null;
+    }
+    const shortRef = displayCommit ? displayCommit.slice(0, 7) : (s.contentHash ? s.contentHash.slice(0, 7) : s.id.slice(0, 7));
+    const baseLabel = s.label || `${vNum} (${shortRef})`;
     const isActive = s.id === snapshot.id;
     return {
       id: s.id,
       versionNumber: s.versionNumber,
       contentHash: s.contentHash ? s.contentHash.slice(0, 12) : null,
-      commitSha: s.commitSha || s.id.slice(0, 7),
-      branch: s.commitSha ? `git:${s.commitSha.slice(0, 7)}` : "local",
+      commitSha: displayCommit,
+      branch: displayCommit ? `git:${displayCommit.slice(0, 7)}` : "local",
       createdAt: s.createdAt,
       label: isActive ? `${baseLabel} — Active` : baseLabel,
       isActive,
@@ -780,9 +785,8 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   const totalApis = Number(
     wsSummary.totalApis ?? wsSummary.discoveredApis ?? (endpoints.length || intTotalExecuted)
   );
-  const uncoveredApis = Number(
-    wsSummary.uncoveredApis ?? Math.max(0, totalApis - coveredEpCount - failedEpCount)
-  );
+  const coveredApis = intTotalExecuted > 0 ? (coveredEpCount > 0 ? coveredEpCount : intPassed) : 0;
+  const uncoveredApis = Math.max(0, totalApis - coveredApis);
   const intDurationMs = Number(wsSummary.durationMs ?? 0);
   const intAvgLatencyMs = Number(
     wsSummary.avgEndpointLatencyMs ?? wsSummary.avgRequestLatencyMs ?? 0

@@ -32,7 +32,9 @@ export const prepareProjectDependencies = async ({directory,repositoryRoot=direc
     const plan=resolvePackageRuntime({directory,repositoryRoot});
     const previous=pending.get(plan.installRoot);
     const task=(async()=>{
-        if(previous)await previous;
+        // A failed/canceled preparation must not poison another caller queued
+        // for the same install root. That caller has its own env and signal.
+        if(previous)await previous.catch(()=>{});
         if(signal?.aborted)throw new ServiceError('Dependency preparation canceled',409);
         const stamp=path.join(plan.installRoot,'.covai-system-test','runtime-dependencies.json');
         const fingerprint=runtimeDependencyFingerprint(plan.installRoot);
@@ -72,7 +74,7 @@ export const prepareProjectDependencies = async ({directory,repositoryRoot=direc
         }
         await log(jobId,'INFO',`Preparing ${plan.manager}${plan.version?'@'+plan.version:''} dependencies (${path.relative(repositoryRoot,plan.installRoot).replaceAll('\\','/') || '.'}); dev and optional runtime packages included.`);
         const run=dependencies.run || dockerRunner.run;
-        const options={snapshotPath:plan.installRoot,jobId,forceHost:true,timeoutMs:600000,signal,
+        const options={snapshotPath:plan.installRoot,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,
             env:{...env,...plan.env,PATH:process.env.PATH || '',NODE_OPTIONS:'',...(plan.manager==='npm'?{npm_config_yes:'true'}:{})}};
         let result=await run({...options,command:plan.install});
         if(!result.success && plan.repairInstall && /EUSAGE|package\.json.*(?:in sync|lock)|Missing:.*from lock file|Invalid:.*lock file/i.test((result.stderr || '')+(result.stdout || ''))) {

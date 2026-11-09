@@ -171,8 +171,11 @@ export function ProjectQualityCard({
                   {branch}
                 </span>
                 {snapshotId && (
-                  <span className="px-1.5 py-0.5 rounded bg-[#0d1117] border border-[#30363d]">
-                    {snapshotId.slice(0, 7)}
+                  <span
+                    className="px-1.5 py-0.5 rounded bg-[#0d1117] border border-[#30363d] truncate max-w-[120px]"
+                    title={`Active Snapshot ID: ${snapshotId}`}
+                  >
+                    {project.snapshotLabel || `#1 (${snapshotId.slice(0, 7)})`}
                   </span>
                 )}
                 {/* Detected Framework Tags */}

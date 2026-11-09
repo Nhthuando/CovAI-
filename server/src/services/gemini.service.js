@@ -382,8 +382,16 @@ export const generateMultimodalText = async (
           result.response.modelVersion || "N/A",
         );
       }
+      let rawText = "";
+      try {
+        rawText =
+          typeof result.response?.text === "function"
+            ? result.response.text()
+            : result.response?.text || "";
+      } catch (_) {
+        rawText = "";
+      }
 
-      const rawText = result.response.text();
       const usageMetadata = result.response?.usageMetadata;
       const promptTokens =
         usageMetadata?.promptTokenCount ||
@@ -393,6 +401,22 @@ export const generateMultimodalText = async (
         Math.max(1, Math.round((rawText || "").length / 4));
       const totalTokens =
         usageMetadata?.totalTokenCount || promptTokens + completionTokens;
+
+      try {
+        recordGeminiTokenUsage({
+          taskType,
+          apiKey: resolvedApiKey,
+          modelName: primaryModelName,
+          usageMetadata: result.response?.usageMetadata,
+          promptText: prompt,
+          responseText: rawText,
+        });
+      } catch (trackingErr) {
+        console.warn(
+          "[geminiTokenTracker] Error recording usage:",
+          trackingErr.message,
+        );
+      }
 
       const telemetry = {
         durationMs,
@@ -405,7 +429,7 @@ export const generateMultimodalText = async (
         model: primaryModelName,
       };
 
-      if (generationConfig.userId) {
+      if (generationConfig?.userId) {
         import("./aiQuota.service.js")
           .then(({ incrementTokenUsage }) => {
             incrementTokenUsage(generationConfig.userId, totalTokens).catch(
@@ -415,7 +439,7 @@ export const generateMultimodalText = async (
           .catch(() => {});
       }
 
-      if (generationConfig.returnTelemetry) {
+      if (generationConfig?.returnTelemetry) {
         return {
           text: rawText,
           telemetry,

@@ -578,6 +578,22 @@ export const activateProjectSnapshot = async ({ projectId, snapshotId, userId })
   });
 
   try {
+    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(project.ownerId);
+  } catch (_) {}
+  try {
+    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
+    clearUnifiedDashboardCache(snapshotId);
+  } catch (_) {}
+  try {
+    const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
+    emitPortfolioProjectUpdated({
+      projectId,
+      userId: project.ownerId,
+      action: "SNAPSHOT_ACTIVATED",
+    });
+  } catch (_) {}
+  try {
     const { emitDashboardMetricsUpdated } = await import("./dashboardEvents.service.js");
     emitDashboardMetricsUpdated(projectId, { snapshotId, reason: "snapshot-activated" }).catch(() => {});
   } catch (_) {}
@@ -834,6 +850,27 @@ export const createProjectCheckpoint = async ({
   const { newSnapshot } = committed;
   await deliverProjectEvent(committed.event).catch(() => {});
 
+  try {
+    const { autoTransitionProjectToDoingIfNeeded } = await import("./job.service.js");
+    void autoTransitionProjectToDoingIfNeeded(projectId);
+  } catch (_) {}
+
+  try {
+    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(project.ownerId);
+  } catch (_) {}
+  try {
+    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
+    clearUnifiedDashboardCache(newSnapshot.id);
+  } catch (_) {}
+  try {
+    const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
+    emitPortfolioProjectUpdated({
+      projectId,
+      userId: project.ownerId,
+      action: "SNAPSHOT_CREATED",
+    });
+  } catch (_) {}
   try {
     const { emitDashboardMetricsUpdated } = await import("./dashboardEvents.service.js");
     emitDashboardMetricsUpdated(projectId, { snapshotId: newSnapshot.id, reason: "snapshot-created" }).catch(() => {});
@@ -1230,6 +1267,14 @@ export const updateProjectLifecycleStatus = async ({
   });
 
   try {
+    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(userId);
+  } catch (_) {}
+  try {
+    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
+    clearUnifiedDashboardCache();
+  } catch (_) {}
+  try {
     const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
     emitPortfolioProjectUpdated({
       projectId,
@@ -1241,6 +1286,10 @@ export const updateProjectLifecycleStatus = async ({
   } catch (_err) {
     // Non-fatal if socket emitter not yet initialized
   }
+  try {
+    const { emitDashboardMetricsUpdated } = await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, { reason: "project-status-updated", lifecycleStatus: updatedProject.lifecycleStatus }).catch(() => {});
+  } catch (_) {}
 
   return updatedProject;
 };

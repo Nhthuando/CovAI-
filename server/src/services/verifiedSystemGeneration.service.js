@@ -875,10 +875,11 @@ Repair the candidate below. Return a complete replacement in the same JSON forma
 Previous candidate (untrusted code): ${code}`;
     // Provider/quota failures must remain failures; do not silently save smoke tests.
     const responseWithMeta = await generate(correction, null, {
+      totalTimeoutMs: 150000,
       responseMimeType: "application/json",
       responseSchema,
       temperature: 0.2,
-      maxOutputTokens: 10000,
+      maxOutputTokens: 32000,
       maxAttempts: 2,
       totalTimeoutMs: 150000,
       returnTelemetry: true,

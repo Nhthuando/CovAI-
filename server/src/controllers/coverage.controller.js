@@ -3234,6 +3234,18 @@ export const regenerateIntegrationScenarioController = async (req, res) => {
       requestId: req.get("Idempotency-Key"),
     });
 
+    try {
+      const snap = await prisma.projectSnapshot.findUnique({
+        where: { id: snapshotId },
+        select: { projectId: true },
+      });
+      if (snap?.projectId) {
+        const { autoTransitionProjectToDoingIfNeeded } =
+          await import("../services/job.service.js");
+        void autoTransitionProjectToDoingIfNeeded(snap.projectId);
+      }
+    } catch (_) {}
+
     return res.status(202).json({
       success: true,
       data: result,
@@ -3268,6 +3280,18 @@ export const updateIntegrationScenarioController = async (req, res) => {
       userId,
       updates,
     });
+
+    try {
+      const snap = await prisma.projectSnapshot.findUnique({
+        where: { id: snapshotId },
+        select: { projectId: true },
+      });
+      if (snap?.projectId) {
+        const { autoTransitionProjectToDoingIfNeeded } =
+          await import("../services/job.service.js");
+        void autoTransitionProjectToDoingIfNeeded(snap.projectId);
+      }
+    } catch (_) {}
 
     return res.status(200).json({
       success: true,
@@ -5105,6 +5129,12 @@ export const saveAiSystemTest = async (req, res) => {
         metaJson: JSON.stringify(meta),
       },
     });
+
+    try {
+      const { autoTransitionProjectToDoingIfNeeded } =
+        await import("../services/job.service.js");
+      void autoTransitionProjectToDoingIfNeeded(snapshot.projectId);
+    } catch (_) {}
 
     return res.status(200).json({
       success: true,

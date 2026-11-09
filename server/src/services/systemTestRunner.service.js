@@ -36,7 +36,7 @@ export const resolvePlaywrightCommand = (rootDir, command) => {
   return command.replace(/\bnpx(?: --yes)? playwright\b/g, `"${process.execPath}" "${cli}"`);
 };
 
-export const preparePlaywrightBrowsers = async (rootDir, jobId) => {
+export const preparePlaywrightBrowsers = async (rootDir, jobId, {signal}={}) => {
   const localCli = path.join(rootDir, "node_modules", "playwright", "cli.js");
   const cli = fs.existsSync(localCli) ? localCli : fileURLToPath(new URL("../../node_modules/playwright/cli.js", import.meta.url));
   const env = {
@@ -50,6 +50,8 @@ export const preparePlaywrightBrowsers = async (rootDir, jobId) => {
     timeoutMs: SYSTEM_TEST_TIMEOUT_MS,
     jobId,
     forceHost: true,
+    isolatedEnv: true,
+    signal,
     env,
   });
   if (!result.success) {
@@ -300,7 +302,7 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
         const config=resolveProjectPlaywrightConfig(runnerRoot,execution);
         ensurePlaywrightPrerequisites(runnerRoot,stack.frontendPort,{dependencyRoot:config ? path.dirname(config) : runnerRoot});
         await onPreparing?.(30, "Preparing Playwright browsers...");
-        const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId);
+        const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId, {signal});
         const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:stack.backendUrl,frontendPort:stack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:config,managedServer:true,measurementPreparation,assertionBindings,headed:Boolean(execution.headed)});
         const serverNodeModules = fileURLToPath(new URL("../../node_modules/", import.meta.url));
         const nodePath = [
@@ -310,11 +312,11 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
           path.join(runnerRoot, "server", "node_modules"),
         ].filter((p) => fs.existsSync(p)).join(path.delimiter);
         await onReady?.();
-        const result=await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,signal,env:{...browserEnv,NODE_PATH:nodePath,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}}));
+        const result=await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,isolatedEnv:true,signal,env:{...browserEnv,NODE_PATH:nodePath,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}}));
         return {...result,reportPath:managed.reportPath,autPort:stack.frontendPort,executionMode};
       } finally {await stack.cleanup();}
     } else if (execution.runner === "cypress") {
-      const stack = await startFullSystem({rootDir,jobId});
+      const stack = await startFullSystem({rootDir,jobId,onProgress:onPreparing,signal,environmentRoot});
       try {
         const runnerRoot = execution.rootDir || rootDir;
         ensureCypressPrerequisites(runnerRoot, stack.frontendPort);
@@ -327,6 +329,8 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
           jobId,
           image: RUNNER_IMAGES.cypress,
           forceHost: true,
+          isolatedEnv: true,
+          signal,
           env: {
             CYPRESS_BASE_URL: `http://127.0.0.1:${stack.frontendPort}`,
           },
@@ -371,7 +375,7 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
     if (execution.runner === "playwright") {
       ensurePlaywrightPrerequisites(rootDir, autPort,{dependencyRoot:configFile ? path.dirname(configFile) : autRoot});
       await onPreparing?.(30, "Preparing Playwright browsers...");
-      browserEnv = await preparePlaywrightBrowsers(rootDir, jobId);
+      browserEnv = await preparePlaywrightBrowsers(rootDir, jobId, {signal});
     } else if (execution.runner === "cypress") {
       ensureCypressPrerequisites(rootDir, autPort);
     }
@@ -429,6 +433,7 @@ export default {...config, testDir: path.resolve(root, config.testDir || '.'), o
       jobId,
       image: RUNNER_IMAGES[execution.runner],
       forceHost: true,
+      isolatedEnv: true,
       env: {
         ...browserEnv,
         NODE_PATH: nodePath,

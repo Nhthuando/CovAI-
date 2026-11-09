@@ -2,20 +2,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import crypto from 'node:crypto';
+import {parse as parseEnvironment} from 'dotenv';
 import { z } from 'zod';
 import prisma from '../config/prisma.js';
-import { resolveSnapshotAccess } from './projectAccess.service.js';
+import { resolveSnapshotAccess, withProjectGuard } from './projectAccess.service.js';
 import { projectEditableWorkspaceRoot } from './projectFileVersion.service.js';
 import { captureWorkspaceFiles } from './projectWorkspacePublish.service.js';
 import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.service.js';
 import { containedPath, readFullSystemConfig } from './fullSystemConfig.service.js';
 import { inspectSystemSetupSource } from './fullSystemSetup.service.js';
-import { inferFullSystemPlan } from './fullSystemPlan.service.js';
-import { discoverReadinessPaths } from './fullSystemReadiness.service.js';
+import { inferFullSystemPlan, systemPackageFiles } from './fullSystemPlan.service.js';
 import { requiredStartupEnvironment, startupEnvironmentFiles, referencedEnvironment, managedEnvironmentNames, buildAutomaticTestEnvironment } from './fullSystemEnvironment.service.js';
 import { readAssessmentTestEnvironment } from './fullSystemRuntime.service.js';
 import { suiteDigest } from './systemSuiteManifest.service.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { setupEnvironmentRequest } from '../validators/systemAssessment.validator.js';
 
 const exec = promisify(execFile);
 const relative = z.string().min(1).max(512).refine(value => !value.includes('\\') && !value.split('/').includes('..') && !/^(?:\/|[a-z]:|https?:)/i.test(value), 'Use a project-relative path');
@@ -39,12 +41,13 @@ export const inspectProjectTestEnvironment = ({rootDir,source,config}) => {
     for (const pkg of source.packages) {
         const prefix=pkg.directory==='.'?'':pkg.directory+'/';
         // A parent package must not claim a nested package's credential file.
-        const nested=source.packages.filter(other=>other.directory!==pkg.directory && other.directory.startsWith(prefix)).map(other=>other.directory+'/');
-        const files=source.files.filter(file=>file.path.startsWith(prefix) && !nested.some(name=>file.path.startsWith(name))).map(file=>({...file,path:file.path.slice(prefix.length)}));
-        const mandatory=requiredStartupEnvironment(startupEnvironmentFiles(files,pkg.scripts));
+        const files=systemPackageFiles(source,pkg).map(file=>({...file,path:file.path.slice(prefix.length)}));
+        const selected=config && [config.frontend.directory,config.backend.directory].includes(pkg.directory);
+        const preferStart=!!config && !config.unified && config.backend.directory===pkg.directory;
+        const mandatory=selected ? requiredStartupEnvironment(startupEnvironmentFiles(files,pkg.scripts,{preferStart})) : [];
         const sdk=requiredStartupEnvironment(files,{startupOnly:false});
         const references=[...referencedEnvironment(files),...sdk];
-        const managed=new Set([...managedEnvironmentNames(files,config),...Object.keys(buildAutomaticTestEnvironment({files,port:1,backendUrl:'http://127.0.0.1',frontendUrl:'http://127.0.0.1'}))]);
+        const managed=new Set([...managedEnvironmentNames(files,config?.backend.directory===pkg.directory?config:null),...Object.keys(buildAutomaticTestEnvironment({files,port:1,backendUrl:'http://127.0.0.1',frontendUrl:'http://127.0.0.1'}))]);
         const env=readAssessmentTestEnvironment(containedPath(rootDir,pkg.directory));
         for (const item of references) {
             const required=mandatory.some(row=>row.name===item.name);
@@ -60,35 +63,8 @@ export const inspectProjectTestEnvironment = ({rootDir,source,config}) => {
 
 const checkDocker = async required => {
     if (!required) return {status:'NOT_REQUIRED',required:false,message:'No container service is required by this setup.'};
-    try {await exec('docker',['info','--format','{{.ServerVersion}}'],{timeout:4000,windowsHide:true,maxBuffer:4096});return {status:'AVAILABLE',required:true,message:'Docker engine is responding.'};}
+    try {await exec('docker',['version','--format','{{.Server.Version}}'],{timeout:4000,windowsHide:true,maxBuffer:4096});return {status:'AVAILABLE',required:true,message:'Docker engine is responding.'};}
     catch {return {status:'UNAVAILABLE',required:true,message:'Start Docker Desktop on the CovAI server, wait for the engine, then check again.'};}
-};
-
-const inferRuntimeSqlPlan = (source, rootDir) => {
-    const startup = source.packages.filter(pkg => ['dev', 'preview', 'start', 'serve'].some(key => typeof pkg.scripts?.[key] === 'string'));
-    const frontends = startup.filter(pkg => ['vite', 'next', 'nuxt', 'astro', 'react-scripts', '@vue/cli-service', '@sveltejs/kit', '@angular/core', 'parcel'].some(name => pkg.dependencies?.[name]) || /\b(?:vite|next|nuxt|astro|react-scripts|vue-cli-service|ng serve|parcel)\b/.test(Object.values(pkg.scripts || {}).join(' ')));
-    const backends = startup.filter(pkg => ['express', 'fastify', '@nestjs/core', 'koa', '@hapi/hapi', 'hono'].some(key => pkg.dependencies?.[key]));
-    if (frontends.length !== 1 || backends.length !== 1) return null;
-    const backend = backends[0];
-    const mysql = Boolean(backend.dependencies?.mysql || backend.dependencies?.mysql2);
-    const postgres = Boolean(backend.dependencies?.pg || backend.dependencies?.postgres);
-    if (mysql === postgres) return null;
-    const prefix = backend.directory === '.' ? '' : backend.directory + '/';
-    const backendFiles = source.files.filter(file => file.path.startsWith(prefix));
-    const existingSql = ['.covai/generated-schema.sql', '.covai/system-test.sql'].find(file => fs.existsSync(containedPath(rootDir, file)))
-        || backendFiles.find(file => file.path.endsWith('.sql'))?.path
-        || source.files.find(file => file.path.endsWith('.sql'))?.path;
-    const hasQueries = Boolean(existingSql) || backendFiles.some(file => /\b(?:SELECT\b[\s\S]+?\bFROM|INSERT\s+INTO|UPDATE\s+["`\w]+\s+SET|CREATE\s+TABLE)\b/i.test(file.content));
-    if (!hasQueries) return null;
-    const readiness = discoverReadinessPaths(backendFiles);
-    const config = {
-        frontend: { directory: frontends[0].directory },
-        backend: { directory: backend.directory, ...(readiness.length ? { healthPath: readiness[0] } : { healthPath: '/', readiness: 'http' }) },
-        database: { engine: mysql ? 'mysql' : 'postgres', initSql: existingSql || '.covai/generated-schema.sql' },
-    };
-    if (frontends[0] === backend) config.unified = true;
-    if (['redis', 'ioredis', 'bullmq', 'bull'].some(name => backend.dependencies?.[name])) config.services = { redis: true };
-    return config;
 };
 
 export const inspectSystemSetup = async ({rootDir,workspaceRevision=0,dependencies={}}) => {
@@ -99,7 +75,7 @@ export const inspectSystemSetup = async ({rootDir,workspaceRevision=0,dependenci
         try {configured=systemSetupConfig.parse(readFullSystemConfig(rootDir));}
         catch {issues.push({code:'INVALID_SETUP',message:'The saved startup setup is invalid. Review the detected setup or edit the configuration below.'});}
     }
-    const inferred=source.packages.length ? (inferFullSystemPlan(source) || inferRuntimeSqlPlan(source, rootDir)) : null;
+    const inferred=source.packages.length ? inferFullSystemPlan(source,{allowSchemaDraft:true}) : null;
     const candidate=configured || (inferred && systemSetupConfig.safeParse(inferred).success ? inferred : null);
     if (!configured && !candidate && source.packages.length) issues.push({code:'SETUP_REQUIRED',message:'CovAI could not determine one unambiguous startup setup. Review the detected packages and supply the configuration, or generate a setup draft.'});
     if (!source.packages.length) issues.push({code:'UNSUPPORTED_STACK',message:'No supported Node.js application package was found. This runner needs a compatible package.json and startup scripts; other languages require an additional runtime adapter.'});
@@ -119,12 +95,49 @@ export const inspectSystemSetup = async ({rootDir,workspaceRevision=0,dependenci
     const docker=candidate ? await (dependencies.checkDocker||checkDocker)(dockerRequired) : {status:'NOT_CHECKED',required:null,message:'Choose startup setup before checking local services.'};
     if(missing.length)issues.push({code:'ENVIRONMENT_REQUIRED',message:`${missing.length} startup environment variable(s) need test values.`});
     if(docker.status==='UNAVAILABLE')issues.push({code:'DOCKER_REQUIRED',message:docker.message});
-    return {schemaVersion:1,ready:issues.length===0,status:!source.packages.length?'UNSUPPORTED':issues.length?'NEEDS_SETUP':'READY',workspaceRevision,sourceHash:await sourceHash(rootDir),setupHash:setupHash(rootDir),configured:!!configured,candidateConfig:candidate,packages:source.packages.map(pkg=>({directory:pkg.directory,startScripts:['dev','start','serve','preview'].filter(name=>typeof pkg.scripts[name]==='string')})),services:candidate?{frontend:candidate.frontend.directory,backend:candidate.backend.directory,healthPath:candidate.backend?.healthPath||'/',topology:candidate.frontendOnly?'UI application; no backend identified':candidate.backendOnly?'API application':candidate.unified?'Unified application':'Frontend and backend',database:candidate.database?.engine||'Not required',schema:candidate.database?.prismaSchema||candidate.database?.initSql||null,redis:!!candidate.services?.redis}:null,environment,docker,issues,limitations:['Checks inspect bounded source and test environment presence; they do not start the application or validate provider credentials.','Only .env.test is used for credentials in managed test runs. Production .env values are not reused.','Custom launchers, dynamic environment helpers and uninspected files can require additional configuration at runtime.']};
+    return {schemaVersion:1,ready:issues.length===0,status:!source.packages.length?'UNSUPPORTED':issues.length?'NEEDS_SETUP':'READY',workspaceRevision,sourceHash:await sourceHash(rootDir),setupHash:setupHash(rootDir),configured:!!configured,sourceInspection:source.inspection,candidateConfig:candidate,packages:source.packages.map(pkg=>({directory:pkg.directory,startScripts:['dev','start','serve','preview'].filter(name=>typeof pkg.scripts[name]==='string')})),services:candidate?{frontend:candidate.frontend.directory,backend:candidate.backend.directory,healthPath:candidate.backend?.healthPath||'/',topology:candidate.frontendOnly?'UI application; no backend identified':candidate.backendOnly?'API application':candidate.unified?'Unified application':'Frontend and backend',database:candidate.database?.engine||'Not required',schema:candidate.database?.prismaSchema||candidate.database?.initSql||null,redis:!!candidate.services?.redis}:null,environment,docker,issues,limitations:['Checks inspect bounded source and test environment presence; they do not start the application or validate provider credentials.','Only .env.test is used for credentials in managed test runs. Production .env values are not reused.','Custom launchers, dynamic environment helpers and uninspected files can require additional configuration at runtime.']};
 };
 
 export const systemSetupPreflight = async ({snapshotId,userId,db=prisma,dependencies={}}) => {
     const {snapshot,project}=await resolveSnapshotAccess({snapshotId,userId,capability:'project.read',db});
     return inspectSystemSetup({rootDir:projectEditableWorkspaceRoot(snapshot),workspaceRevision:project.workspaceRevision,dependencies});
+};
+
+// Credentials are written only to the owned project's .env.test files. They
+// never enter project versions, operation payloads, job logs or AI context.
+export const saveSystemTestEnvironment = async ({snapshotId,userId,input,db=prisma,dependencies={}}) => {
+    input=setupEnvironmentRequest.parse(input);
+    const {snapshot}=await resolveSnapshotAccess({snapshotId,userId,capability:'evidence.approve',db});
+    return withProjectGuard({projectId:snapshot.projectId,userId,capability:'evidence.approve',db},async(tx,access)=>{
+        if(access.project.workspaceRevision!==input.expectedWorkspaceRevision)throw new ServiceError('Project changed. Check setup again before saving test values.',409);
+        if(await tx.job.findFirst({where:{projectId:snapshot.projectId,status:{in:['QUEUED','RUNNING']}}}))throw new ServiceError('Wait for active project jobs before changing test values.',409);
+        const rootDir=projectEditableWorkspaceRoot(snapshot);
+        const report=await inspectSystemSetup({rootDir,dependencies:{...dependencies,checkDocker:async()=>({status:'NOT_CHECKED'})}});
+        const allowed=new Set(report.environment.filter(row=>row.required && row.status!=='MANAGED').map(row=>`${row.envFile}:${row.name}`));
+        const groups=new Map();
+        for(const variable of input.variables) {
+            if(!allowed.has(`${variable.envFile}:${variable.name}`))throw new ServiceError('Only detected required external test variables can be saved. Check setup again.',422);
+            if(!groups.has(variable.envFile))groups.set(variable.envFile,readAssessmentTestEnvironment(path.dirname(containedPath(rootDir,variable.envFile))));
+            groups.get(variable.envFile)[variable.name]=variable.value;
+        }
+        const writes=[...groups].map(([name,values])=>{
+            const content=Object.entries(values).map(([key,value])=>{
+                const quote=['"',"'",'`'].find(quote=>!value.includes(quote));
+                if(!quote)throw new ServiceError('A test value contains an unsupported combination of quote characters.',422);
+                return `${key}=${quote}${value}${quote}`;
+            }).join('\n')+'\n';
+            if(Buffer.byteLength(content)>64*1024)throw new ServiceError('Test environment values cannot be encoded in a file up to 64 KiB.',422);
+            const decoded=parseEnvironment(content);
+            if(Object.entries(values).some(([key,value])=>decoded[key]!==value))throw new ServiceError('Test environment values cannot be encoded without changing their contents.',422);
+            return {file:containedPath(rootDir,name),content};
+        });
+        for(const {file,content} of writes) {
+            const temporary=file+'.'+crypto.randomUUID()+'.tmp';
+            try {fs.writeFileSync(temporary,content,{flag:'wx',mode:0o600});fs.renameSync(temporary,file);}
+            finally {if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
+        }
+        return {saved:input.variables.length};
+    });
 };
 
 export const applySystemSetup = async ({snapshotId,userId,input,db=prisma,dependencies={}}) => {

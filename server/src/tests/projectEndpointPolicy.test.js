@@ -15,6 +15,7 @@ it.each([
     ["coverage", "POST", "/s1/system/catalog/c1/confirm-expected", {}, "evidence.approve"],
     ["coverage", "GET", "/s1/system/setup", {}, "project.read"],
     ["coverage", "POST", "/s1/system/setup/apply", {}, "evidence.approve"],
+    ["coverage", "POST", "/s1/system/setup/environment", {}, "evidence.approve"],
     ["coverage", "POST", "/s1/system/proposals/p1/apply", {}, "evidence.approve"],
     ["coverage", "POST", "/s1/system/generation-drafts/d1/apply", {}, "evidence.approve"],
     ["coverage", "POST", "/s1/system/versions", {}, "evidence.approve"],

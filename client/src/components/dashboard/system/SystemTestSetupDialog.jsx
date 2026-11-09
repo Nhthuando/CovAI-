@@ -47,12 +47,15 @@ export default function SystemTestSetupDialog({
   onClose,
   onChanged,
   onStatus,
+  onReady,
   onGenerate,
   runtimeMessage,
 }) {
   const dialog = useRef(null);
   const request = useRef(null);
   const edited = useRef(false);
+  const readyCallback = useRef(onReady);
+  useEffect(() => { readyCallback.current = onReady; }, [onReady]);
   const access = useProjectAccess(projectId);
 
   const [report, setReport] = useState(null);
@@ -62,6 +65,7 @@ export default function SystemTestSetupDialog({
   const [configEdited, setConfigEdited] = useState(false);
   const [configText, setConfigText] = useState('');
   const [reviewed, setReviewed] = useState(false);
+  const [environmentValues, setEnvironmentValues] = useState({});
 
   const load = useCallback(async () => {
     request.current?.abort();
@@ -77,6 +81,7 @@ export default function SystemTestSetupDialog({
       if (controller.signal.aborted) return;
       setReport(data);
       onStatus?.(data);
+      if (data.ready) readyCallback.current?.(data);
       if (!edited.current) {
         setConfigText(
           data.candidateConfig
@@ -161,6 +166,18 @@ export default function SystemTestSetupDialog({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const saveEnvironment = async () => {
+    const variables=report.environment.filter(row=>row.required && row.status!=='MANAGED' && environmentValues[`${row.envFile}:${row.name}`]?.trim()).map(row=>({envFile:row.envFile,name:row.name,value:environmentValues[`${row.envFile}:${row.name}`]}));
+    if(!variables.length)return;
+    setSaving(true);setError('');
+    try {
+      await systemEvidenceRequest(snapshotId,'setup/environment',{method:'POST',data:{expectedWorkspaceRevision:report.workspaceRevision,variables}});
+      setEnvironmentValues({});
+      await load();
+    } catch(err) {setError(failureMessage(err));}
+    finally {setSaving(false);}
+  };
+
   const external =
     report?.environment.filter((row) => row.status !== 'MANAGED') || [];
   const managed =
@@ -168,7 +185,7 @@ export default function SystemTestSetupDialog({
   const showSetupEditor =
     Boolean(report) &&
     report.status !== 'UNSUPPORTED' &&
-    (!report.ready || !report.candidateConfig || configEdited);
+    (!report.candidateConfig || report.issues.some(issue=>['INVALID_SETUP','START_SCRIPT_REQUIRED','SCHEMA_REQUIRED','SETUP_REQUIRED'].includes(issue.code)) || configEdited);
 
   const dockerStatusLabel =
     report?.docker.status === 'AVAILABLE'
@@ -474,8 +491,8 @@ export default function SystemTestSetupDialog({
                     <code className="rounded bg-[var(--color-surface-secondary)] px-1 py-0.5 font-mono text-[11px]">
                       .env.test
                     </code>{' '}
-                    file in the imported project, then choose Check again.
-                    Values are never displayed here or sent to setup AI.
+                    file in the imported project, or enter required values below.
+                    Saved values are never returned here or sent to setup AI.
                   </p>
 
                   <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -544,6 +561,7 @@ export default function SystemTestSetupDialog({
                                   <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
                                     {row.guidance}
                                   </p>
+                                  {row.required && access.can('evidence.approve') && <input type="password" autoComplete="new-password" aria-label={`Test value for ${row.name} in ${row.envFile}`} value={environmentValues[`${row.envFile}:${row.name}`] || ''} disabled={saving} onChange={event=>setEnvironmentValues(values=>({...values,[`${row.envFile}:${row.name}`]:event.target.value}))} placeholder="Enter test or sandbox value" className="mt-2 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-xs" />}
                                 </td>
                               </tr>
                             ))}
@@ -597,6 +615,7 @@ export default function SystemTestSetupDialog({
                       </details>
                     )}
                   </div>
+                  {Object.values(environmentValues).some(value=>value.trim()) && <button type="button" disabled={loading || saving || !access.can('evidence.approve')} onClick={saveEnvironment} className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white disabled:opacity-40">{saving?'Saving test values...':'Save test environment'}</button>}
                 </section>
 
                 {/* Section 3: Review startup setup */}

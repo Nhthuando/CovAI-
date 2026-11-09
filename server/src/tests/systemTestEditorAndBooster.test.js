@@ -378,7 +378,7 @@ test.describe('Updated suite', () => {
                 snapshotId: 'snap-1',
                 userId: 'u-1',
                 runner: 'playwright',
-                executionMode: 'frontend',
+                executionMode: 'full',
                 testFile: 'tests/e2e/menu.spec.js',
             });
             expect(mockAddJobToQueue).toHaveBeenCalledWith(

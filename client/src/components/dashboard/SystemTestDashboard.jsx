@@ -95,6 +95,8 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   const [setupOpen, setSetupOpen] = useState(false);
   const [setupReport, setSetupReport] = useState(null);
   const [checkingSetup, setCheckingSetup] = useState(false);
+  const runRequestRef = useRef(false);
+  const pendingRunRef = useRef(null);
   const [inspectedScenario, setInspectedScenario] = useState(null);
   const [editorTarget, setEditorTarget] = useState(null); // { filePath, scenarioId, initialMode }
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
@@ -184,7 +186,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       setActiveJobId(null);
       if (status === "FAILED") {
         setError(`System test job failed: ${payload.errorMessage || payload.message || "Execution error"}`);
-        if(/environment|\.env\.test|Full Stack.*config|api.?key|test credential/i.test(payload.errorMessage || payload.message || ''))setSetupOpen(true);
+        if(/requires test environment configuration|SYSTEM_TEST_ENVIRONMENT_REQUIRED/i.test(payload.errorMessage || payload.message || ''))setSetupOpen(true);
       } else if (status === "CANCELED" || status === "CANCELLED") {
         setError("System test job was canceled.");
       }
@@ -265,13 +267,21 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       return;
     }
 
-    if (checkingSetup) return;
+    if (runRequestRef.current || activeJobRef.current) return;
+    runRequestRef.current = true;
     setCheckingSetup(true); setError(null);
     try {
       const setup = await systemEvidenceRequest(snapshotId, 'setup');
       setSetupReport(setup);
-      if (!setup.ready) { setSetupOpen(true); return; }
-    } catch (err) { setError(err.response?.data?.message || err.message || 'Could not check project setup.'); setSetupOpen(true); return; }
+      if (!setup.ready) {
+        runRequestRef.current = false;
+        if (setup.issues.some(issue => issue.code === 'ENVIRONMENT_REQUIRED')) {
+          pendingRunRef.current = { onlyScenario, selectedScenarios };
+          setSetupOpen(true);
+        } else setError(setup.issues.map(issue => issue.message).join(' '));
+        return;
+      }
+    } catch (err) { runRequestRef.current = false; setError(err.response?.data?.message || err.message || 'Could not check project setup.'); return; }
     finally { setCheckingSetup(false); }
 
     setActiveSubTab("live");
@@ -284,10 +294,6 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       const capabilities = activeFramework === 'playwright' ? await systemEvidenceRequest(snapshotId, 'capabilities') : null;
       const res = activeFramework === 'playwright' && capabilities?.enabled && capabilities.coverageEnabled
         ? await (async () => {
-            const discovered = await systemEvidenceRequest(snapshotId, `discovery?executionMode=${executionMode}`);
-            const revisions = await systemEvidenceRequest(snapshotId, 'requirements');
-            const requirementRevisionId = revisions.find(row => row.status === 'CONFIRMED')?.id;
-
             let scenarioIds = [];
             let selectedFiles = [];
 
@@ -303,25 +309,13 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             }
 
             if (!scenarioIds.length) {
-              const synced = await systemEvidenceRequest(snapshotId, 'catalog/sync', { method: 'POST' });
-              const compatible = (synced?.scenarios || []).filter(
-                s => s.filePath && s.fullStackCompatible !== false
-              );
-              const confirmedRows = compatible.filter(s =>
-                ['EXPECTED_CONFIRMED', 'REVIEWED'].includes(s.reviewState)
-              );
-              const fallbackRows = confirmedRows.length > 0 ? confirmedRows : compatible;
-              scenarioIds = fallbackRows.map(s => s.id);
-              selectedFiles = [...new Set(fallbackRows.map(s => s.filePath))];
+              const data = await systemEvidenceRequest(snapshotId, 'assessments', {method:'POST',data:{autoDiscover:true,runner:'playwright',executionMode,allowGenerate:projectAccess.can('ai.use'),headed:headedMode}});
+              return {data};
             }
 
-            if (!scenarioIds.length) {
-              setActiveSubTab("scenarios");
-              throw new Error("Select at least one scenario to run.");
-            }
-
+            const discovered = await systemEvidenceRequest(snapshotId, `discovery?executionMode=${executionMode}`);
             const query = new URLSearchParams({
-              reviewMode: 'scenario',
+              reviewMode: 'execution',
               scenarioIds: scenarioIds.join(','),
               testFiles: selectedFiles.join(','),
             });
@@ -336,10 +330,9 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
               data: {
                 ...discovered,
                 testFiles: selectedFiles,
-                reviewMode: 'scenario',
+                reviewMode: 'execution',
                 scenarioIds,
                 headed: headedMode,
-                ...(requirementRevisionId ? {requirementRevisionId} : {}),
               },
             });
             return { data };
@@ -363,16 +356,16 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       }
     } catch (err) {
       setRunningTests(false);
-      if(/environment|\.env\.test|Full Stack.*config|api.?key/i.test(err.response?.data?.message || err.message || ''))setSetupOpen(true);
+      if(err.response?.data?.code === 'SYSTEM_TEST_ENVIRONMENT_REQUIRED' || /requires test environment configuration/i.test(err.response?.data?.message || err.message || ''))setSetupOpen(true);
       setJobProgress(null);
       setError(
         err.response?.data?.message ||
           err.message ||
           "Failed to start system test execution."
       );
-    }
+    } finally { runRequestRef.current = false; }
   };
-  const setupDialog = setupOpen ? <SystemTestSetupDialog projectId={projectId} snapshotId={snapshotId} onClose={() => setSetupOpen(false)} onChanged={refreshData} onStatus={setSetupReport} runtimeMessage={error} onGenerate={() => {setSetupOpen(false);setIsGeneratorOpen(true);}} /> : null;
+  const setupDialog = setupOpen ? <SystemTestSetupDialog projectId={projectId} snapshotId={snapshotId} onClose={() => {pendingRunRef.current=null;setSetupOpen(false);}} onChanged={refreshData} onStatus={setSetupReport} onReady={() => {const pending=pendingRunRef.current;if(pending){pendingRunRef.current=null;setSetupOpen(false);void handleRunTests(pending.onlyScenario,pending.selectedScenarios);}}} runtimeMessage={error} onGenerate={() => {pendingRunRef.current=null;setSetupOpen(false);setIsGeneratorOpen(true);}} /> : null;
 
   const entryState = systemTestEntryState({discovery:frameworksData,error:discoveryError,activeJob:runningTests || !!activeJobId});
   const hasNoTests = entryState === 'empty';
@@ -393,7 +386,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   }
 
   // Zero-State: When no test files exist in the project, show clean AI generator view
-  if (hasNoTests) {
+  if (hasNoTests && !workspace.assessment) {
     return (
       <div className="system-test-workspace flex w-full min-h-full flex-col items-center justify-center gap-4 bg-[var(--color-bg)] p-4 font-sans text-[var(--color-text)] sm:p-6">
         <style>{`@media (prefers-reduced-motion: reduce) { .system-test-workspace *, .system-test-workspace *::before { animation: none!important; transition: none!important; scroll-behavior: auto!important; } }`}</style>
@@ -408,6 +401,8 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
         />
 
         <button type="button" className="text-xs underline" onClick={() => setSetupOpen(true)}>Check project setup</button>
+        <Button icon={Play} loading={checkingSetup} disabled={!projectAccess.can('tests.run') || !projectAccess.can('ai.use') || checkingSetup} onClick={() => handleRunTests()}>Run automatically</Button>
+        <p className="max-w-md text-center text-xs text-[var(--color-text-secondary)]">Detect services, generate missing tests and execute in an isolated workspace. Business expectations remain unreviewed.</p>
         {/* Cold-Start Test Generator Modal */}
         {isGeneratorOpen && (
           <SystemTestGeneratorModal
@@ -518,11 +513,11 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             size="sm"
             icon={runningTests ? Loader2 : Play}
             loading={runningTests || checkingSetup}
-            disabled={!projectAccess.can("tests.run") || !snapshotId || loading || runningTests || checkingSetup || (hasNoTests && !workflowReady?.scenarioIds?.length)}
-            onClick={() => workflowReady.ready || activeFramework === 'cypress' ? handleRunTests() : setActiveSubTab('scenarios')}
+            disabled={!projectAccess.can("tests.run") || !snapshotId || loading || runningTests || checkingSetup}
+            onClick={() => handleRunTests()}
             className="text-xs h-9 font-semibold"
           >
-            {checkingSetup ? "Checking setup..." : runningTests ? "Running System Tests..." : (workflowReady.ready || activeFramework === 'cypress' ? "Run selected" : "Review scenarios")}
+            {checkingSetup ? "Checking setup..." : runningTests ? "Running System Tests..." : "Run system tests"}
           </Button>
         </div>
       </div>

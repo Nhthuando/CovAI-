@@ -4,6 +4,8 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '../src/lib/queryClient';
 import SystemTestDashboard from '../src/components/dashboard/SystemTestDashboard.jsx';
 import '../src/index.css';
 
@@ -13,4 +15,4 @@ function Fixture() {
   return <BrowserRouter><button type="button" onClick={() => setVisible(value => !value)} className="m-4 rounded border px-3 py-2 text-sm">{visible ? 'Leave test dashboard' : 'Return to test dashboard'}</button>{visible ? <SystemTestDashboard projectId={query.get('projectId')} snapshotId={query.get('snapshotId')} /> : <p className="m-4">Another workspace view</p>}</BrowserRouter>;
 }
 document.documentElement.dataset.theme = 'dark';
-createRoot(document.getElementById('root')).render(<Fixture />);
+createRoot(document.getElementById('root')).render(<QueryClientProvider client={queryClient}><Fixture /></QueryClientProvider>);

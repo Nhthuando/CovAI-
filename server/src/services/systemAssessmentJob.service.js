@@ -16,7 +16,7 @@ import { analyzeSystemTestFile, digest } from './systemTestStaticAnalysis.servic
 import { buildSystemAssessment } from './systemAssessment.service.js';
 import { runSystemTests } from './systemTestRunner.service.js';
 import { parseSystemTestResult } from './systemTestResultParser.service.js';
-import { containedPath } from './fullSystemConfig.service.js';
+import { containedPath, readFullSystemConfig } from './fullSystemConfig.service.js';
 import { getJobById, markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, addJobLog } from './job.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { enumerateMutations } from './systemMutation.service.js';
@@ -57,7 +57,7 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
             if (input.runner !== 'playwright') throw new ServiceError('Managed evidence execution currently supports Playwright only; Cypress needs a verified adapter', 422);
             const reportDirectory = path.join(workspace.rootDir, '.covai-system-test');
             fs.mkdirSync(reportDirectory, { recursive: true });
-            const execution = { runner: 'playwright', rootDir: workspace.rootDir, testDirectory: 'tests', selectedFiles: input.testFiles.map(file => containedPath(workspace.rootDir, file)), selectedTitles: input.reviewMode === 'scenario' ? catalog.map(scenario => scenario.title) : undefined, command: 'npx playwright test --reporter=json', reportDirectory, reportPath: path.join(reportDirectory, 'results.json'), headed: Boolean(input.headed) };
+            const execution = { runner: 'playwright', rootDir: workspace.rootDir, testDirectory: 'tests', selectedFiles: input.testFiles.map(file => containedPath(workspace.rootDir, file)), selectedTitles: ['scenario','execution'].includes(input.reviewMode) ? catalog.map(scenario => scenario.title) : undefined, command: 'npx playwright test --reporter=json', reportDirectory, reportPath: path.join(reportDirectory, 'results.json'), headed: Boolean(input.headed) };
             const startedAt = new Date();
             const result = await (dependencies.run || runSystemTests)({ rootDir: workspace.rootDir, jobId, execution, executionMode: input.executionMode, measurementPreparation: preparation, assertionBindings: bindings, signal, onEvent: event => onEvent({ runIndex: index + 1, ...event }), onPreparing: (progress, message) => onProgress(`Run ${index + 1}/${input.repeatRuns}: ${message}`, baseProgress + Math.min(25, progress * 0.7)), onReady: () => onProgress(`Run ${index + 1}/${input.repeatRuns}: executing ${input.testFiles.length} test file(s)`, baseProgress + 30) });
             const testRun = parseSystemTestResult({ runner: 'playwright', resultPath: result.reportPath, startedAt, finishedAt: new Date(), rootDir: workspace.rootDir, stderr: result.stderr });
@@ -113,6 +113,13 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
     }
     coverage.status = Object.values(coverage.tiers).every(tier => tier.status === 'MEASURED') ? 'MEASURED' : 'PARTIAL';
     const report = buildSystemAssessment({ identity, coverage, revision, bindings, staticAnalysis, runs });
+    if(input.executionMode==='full') {
+        const config=readFullSystemConfig(rootDir,{allowMissing:true});
+        if(config) {
+            report.runtimeSetup={databaseEngine:config.database?.engine || null,schemaSource:config.database?.initSql==='.covai/generated-schema.sql'?'INFERRED_FROM_QUERIES':config.database?.prismaSchema?'PRISMA_SCHEMA':config.database?.initSql?'PROJECT_SQL':null};
+            if(report.runtimeSetup.schemaSource==='INFERRED_FROM_QUERIES')report.limitations.push('The disposable SQL schema was inferred from application queries. These runs do not verify production schema constraints, indexes or migrations.');
+        }
+    }
     report.runtimeHash = runs[0].runtimeHash;
     if (runs.some(run => run.runtimeHash !== report.runtimeHash)) throw new ServiceError('Dependency/runtime versions changed between independent runs', 409);
     const backend = input.coverageScope.backend;
@@ -134,6 +141,9 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
     let preparationUsage;
     let emit;
     let historical;
+    let automaticCatalog;
+    let generatedTests;
+    let workspaceIdentity;
     try {
         await withOperationPublishGuard(tx=>tx.systemTestAssessment.update({where:{jobId},data:{status:'RUNNING'}}));
         const onProgress = async (message, progress = 30) => { await lease.assertHeld(); const current = await getJobById(jobId); if (current.status !== 'RUNNING') throw new ServiceError('Assessment canceled', 409); await updateJobProgress(jobId, Math.max(current.progress || 0, progress)); await addJobLog(jobId, 'INFO', `Assessment stage: ${message}`); };
@@ -143,8 +153,12 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
             input = historical.input;
         }
         if (input.autoDiscover) {
+            const beforePreparation=snapshotIdentity(job.snapshot.rootDir);
+            workspaceIdentity={sourceHash:beforePreparation.sourceHash,testHash:beforePreparation.testHash};
             const prepared = await prepareAutomaticAssessment({rootDir:job.snapshot.rootDir,input,onProgress,signal:lease.signal,jobId});
             input = prepared.input;
+            automaticCatalog=prepared.catalog;
+            generatedTests=prepared.generatedTests;
             preparationUsage=prepared.aiUsage;
             job.snapshot.rootDir = prepared.rootDir;
             const identity = snapshotIdentity(prepared.rootDir);
@@ -168,8 +182,8 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
         const revision = input.requirementRevisionId ? await prisma.systemRequirementRevision.findFirst({ where: { id: input.requirementRevisionId, snapshotId: job.snapshotId, status: 'CONFIRMED' }, include: { bindings: true } }) : null;
         const assessment = await prisma.systemTestAssessment.findUnique({ where: { jobId }, select: { id: true } });
         emit = await createSystemEventPublisher({ client: prisma, assessmentId: assessment.id, snapshotId: job.snapshotId, userId: job.userId });
-        const catalog = historical?.catalog || await prisma.systemScenario.findMany({ where: { snapshotId: job.snapshotId, filePath: { in: input.testFiles }, ...(input.reviewMode === 'scenario' ? { id: { in: input.scenarioIds } } : {}) }, select: { id: true, scenarioKey: true, filePath: true, title: true, reviewState: true, criterionIds: true, flowJson: true, inputJson: true, expectedJson: true, assertionHashes: true, requirementRevisionId: true } });
-        if (input.reviewMode === 'scenario' && catalog.length !== input.scenarioIds.length) throw new ServiceError('Selected scenarios changed before execution; review the catalog and retry', 409);
+        const catalog = automaticCatalog || historical?.catalog || await prisma.systemScenario.findMany({ where: { snapshotId: job.snapshotId, filePath: { in: input.testFiles }, ...(['scenario','execution'].includes(input.reviewMode) ? { id: { in: input.scenarioIds } } : {}) }, select: { id: true, scenarioKey: true, filePath: true, title: true, reviewState: true, criterionIds: true, flowJson: true, inputJson: true, expectedJson: true, assertionHashes: true, requirementRevisionId: true } });
+        if (['scenario','execution'].includes(input.reviewMode) && catalog.length !== input.scenarioIds.length) throw new ServiceError('Selected scenarios changed before execution; sync the catalog and retry', 409);
         const onEvent = async ({ runIndex, type, screenshotBody, frame, ...payload }) => {
             if (type === 'LIVE_FRAME' && frame) {
                 const framePayload = {
@@ -209,6 +223,12 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
             return emit({ runIndex, type, scenarioKey: matches.length === 1 ? matches[0].scenarioKey : null, payload });
         };
         const report = await withProjectDependencyCache(() => assessSystemWorkspace({ rootDir: job.snapshot.rootDir, input, jobId, signal:lease.signal, revision, bindings: revision?.bindings || [], catalog, onProgress, onEvent }));
+        if(automaticCatalog) {
+            report.executionOnly=true;
+            report.workspaceIdentity=workspaceIdentity;
+            report.limitations.push('Automatic technical execution does not confirm business requirements or approve expected outcomes. Generated tests and startup setup remain in the disposable operation workspace.');
+            if(generatedTests)report.generatedTests={...generatedTests,code:fs.readFileSync(containedPath(job.snapshot.rootDir,generatedTests.filePath),'utf8')};
+        }
         if(historical) {report.suiteVersionId=historical.version.id;report.limitations.push('Historical tests on current source. Requirement reviews are stale; this check does not restore application source.');}
         if(preparationUsage)report.aiUsage=preparationUsage;
         await lease.assertHeld();
@@ -227,7 +247,7 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
     } catch (error) {
         const current = await getJobById(jobId);
         const canceled = current.status === 'CANCELED' || error.code === 'SYSTEM_OPERATION_CANCELED';
-        await prisma.systemTestAssessment.updateMany({ where: { jobId }, data: { status: canceled ? 'CANCELED' : 'FAILED', reportJson: { input, error: canceled ? 'Assessment canceled' : error.statusCode ? error.message.replace(/[a-z]:[\\/][^\s"'<>]+/gi, '[internal path]') : 'Assessment failed; inspect the owned job log' } } });
+        await prisma.systemTestAssessment.updateMany({ where: { jobId }, data: { status: canceled ? 'CANCELED' : 'FAILED', reportJson: { input, errorCode:error.code || 'SYSTEM_ASSESSMENT_FAILED', error: canceled ? 'Assessment canceled' : error.statusCode ? error.message.replace(/[a-z]:[\\/][^\s"'<>]+/gi, '[internal path]') : 'Assessment failed; inspect the owned job log' } } });
         if (canceled) { try { await emit?.({ runIndex: 0, type: 'RUN_CANCELED' }); } catch { /* Job status remains the source of truth. */ } return; }
         await markJobFailed(jobId, error);
         throw error;
