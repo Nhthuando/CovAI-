@@ -9,6 +9,14 @@ import { isCollaborationLocalTest } from '../config/collaborationLocal.js';
 import { geminiConfiguration } from './geminiRouting.service.js';
 import { buildAgentInstruction } from '../agents/registry.js';
 import { chatThinkingConfig } from './chatResponsePolicy.service.js';
+import {
+  withGeminiChannel,
+  getCurrentGeminiChannel,
+  recordGeminiTokenUsage,
+  recordGeminiRateLimit,
+} from "./geminiTokenTracker.service.js";
+
+export { withGeminiChannel, getCurrentGeminiChannel };
 
 dotenv.config();
 
@@ -16,14 +24,20 @@ dotenv.config();
 export const TASK_KEY_MAP = {
   unit: ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
   "unit-test": ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
+  unit_test: ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
   integration: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
   "integration-test": ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  integration_test: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
   supertest: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
   e2e: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  "e2e-test": ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  e2e_test: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
   system: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
   "system-test": ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  system_test: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
   chatbox: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
   chat: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
+  chat_box: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
 };
 
 /**
@@ -46,7 +60,7 @@ export function validateGeminiKeys() {
   }
   if (!process.env.GEMINI_API_KEY && !process.env.GEMINI_KEY_INTEGRATION_TEST && !process.env.GEMINI_INTEGRATION_TEST_API_KEY) {
     console.warn(
-      "[Gemini API] CRITICAL: Neither GEMINI_KEY_INTEGRATION_TEST nor GEMINI_API_KEY is configured in environment."
+      "[Gemini API] CRITICAL: Neither GEMINI_KEY_INTEGRATION_TEST nor GEMINI_API_KEY is configured in environment.",
     );
   }
 }
@@ -81,13 +95,16 @@ const clientCache = new Map();
  * @param {string|null} explicitApiKey
  * @returns {GoogleGenerativeAI}
  */
-export function getGeminiClient(taskType = "integration", explicitApiKey = null) {
+export function getGeminiClient(
+  taskType = "integration",
+  explicitApiKey = null,
+) {
   const key = explicitApiKey || getGeminiApiKey(taskType);
   if (!key) {
     throw new Error(
       `Gemini API key is not configured for task '${taskType}'. Please set ${
         TASK_KEY_MAP[taskType?.toLowerCase()] || "GEMINI_KEY_INTEGRATION_TEST"
-      } or GEMINI_API_KEY in your environment.`
+      } or GEMINI_API_KEY in your environment.`,
     );
   }
   if (!clientCache.has(key)) {
@@ -138,7 +155,12 @@ function resolveModelName(requestedModel, configuration) {
  * @param {string|null} maybeInstruction - Optional system instruction if model name was provided as 2nd arg
  * @returns {Promise<string>} The generated text response
  */
-export const generateText = async (prompt, modelOrInstruction = null, maybeInstructionOrConfig = null, maybeConfig = {}) => {
+export const generateText = async (
+  prompt,
+  modelOrInstruction = null,
+  maybeInstructionOrConfig = null,
+  maybeConfig = {},
+) => {
   let modelName = null;
   let systemInstruction = null;
   let generationConfig = {};
@@ -150,16 +172,90 @@ export const generateText = async (prompt, modelOrInstruction = null, maybeInstr
 
   if (isModelName) {
     modelName = modelOrInstruction;
-    systemInstruction = maybeInstructionOrConfig;
-    generationConfig = maybeConfig || {};
+    if (
+      typeof maybeInstructionOrConfig === "object" &&
+      maybeInstructionOrConfig !== null
+    ) {
+      generationConfig = maybeInstructionOrConfig;
+      systemInstruction = null;
+    } else {
+      systemInstruction = maybeInstructionOrConfig;
+      generationConfig = maybeConfig || {};
+    }
+  } else if (
+    typeof modelOrInstruction === "object" &&
+    modelOrInstruction !== null
+  ) {
+    generationConfig = modelOrInstruction;
   } else {
     systemInstruction = modelOrInstruction;
-    if (maybeInstructionOrConfig && typeof maybeInstructionOrConfig === "object") {
+    if (
+      maybeInstructionOrConfig &&
+      typeof maybeInstructionOrConfig === "object"
+    ) {
       generationConfig = maybeInstructionOrConfig;
     }
   }
 
-  return generateMultimodalText(prompt, [], systemInstruction, modelName, generationConfig);
+  return generateMultimodalText(
+    prompt,
+    [],
+    systemInstruction,
+    modelName,
+    generationConfig,
+  );
+};
+
+export const generateTextWithTelemetry = async (
+  prompt,
+  modelOrInstruction = null,
+  maybeInstructionOrConfig = null,
+  maybeConfig = {},
+) => {
+  let modelName = null;
+  let systemInstruction = null;
+  let generationConfig = {};
+
+  if (
+    typeof modelOrInstruction === "string" &&
+    (modelOrInstruction.startsWith("gemini-") ||
+      modelOrInstruction.includes("/"))
+  ) {
+    modelName = modelOrInstruction;
+    if (
+      typeof maybeInstructionOrConfig === "object" &&
+      maybeInstructionOrConfig !== null
+    ) {
+      generationConfig = { ...maybeInstructionOrConfig, returnTelemetry: true };
+      systemInstruction = null;
+    } else {
+      systemInstruction = maybeInstructionOrConfig;
+      generationConfig = { ...(maybeConfig || {}), returnTelemetry: true };
+    }
+  } else if (
+    typeof modelOrInstruction === "object" &&
+    modelOrInstruction !== null
+  ) {
+    generationConfig = { ...modelOrInstruction, returnTelemetry: true };
+  } else {
+    systemInstruction = modelOrInstruction;
+    if (
+      maybeInstructionOrConfig &&
+      typeof maybeInstructionOrConfig === "object"
+    ) {
+      generationConfig = { ...maybeInstructionOrConfig, returnTelemetry: true };
+    } else {
+      generationConfig = { ...(maybeConfig || {}), returnTelemetry: true };
+    }
+  }
+
+  return generateMultimodalText(
+    prompt,
+    [],
+    systemInstruction,
+    modelName,
+    generationConfig,
+  );
 };
 
 /**
@@ -176,14 +272,23 @@ export const generateMultimodalText = async (
   images = [],
   systemInstruction = null,
   modelNameOrConfig = null,
-  maybeConfig = {}
+  maybeConfig = {},
 ) => {
   if (process.env.AI_PROVIDER_MODE === "fixture") {
     if (!isCollaborationLocalTest()) {
-      throw new ServiceError("Fixture AI is restricted to the isolated collaboration test environment", 503);
+      throw new ServiceError(
+        "Fixture AI is restricted to the isolated collaboration test environment",
+        503,
+      );
     }
-    if (String(prompt).startsWith("Extract only explicit durable USER requirements")) return '{"notes":[]}';
-    if (String(prompt).startsWith("Summarize stored chat DATA")) return "[LOCAL AI FIXTURE] Shared conversation context retained for the collaboration test.";
+    if (
+      String(prompt).startsWith(
+        "Extract only explicit durable USER requirements",
+      )
+    )
+      return '{"notes":[]}';
+    if (String(prompt).startsWith("Summarize stored chat DATA"))
+      return "[LOCAL AI FIXTURE] Shared conversation context retained for the collaboration test.";
     return "[LOCAL AI FIXTURE] Shared project chat response. This deterministic response verifies collaboration; no live Gemini request was made.";
   }
   const configuration = geminiConfiguration(undefined, { required: true });
@@ -202,7 +307,27 @@ export const generateMultimodalText = async (
     generationConfig = maybeConfig || {};
   }
 
-  const { requestTimeoutMs, totalTimeoutMs, maxAttempts, onRetry, onWait, retryBaseDelayMs, ...providerConfig } = generationConfig;
+  const taskType =
+    generationConfig.taskType || getCurrentGeminiChannel() || configuration.feature || "integration";
+  const resolvedApiKey = generationConfig.apiKey || configuration.apiKey || getGeminiApiKey(taskType);
+  if (generationConfig.apiKey) {
+    genAI = getGeminiClient(taskType, generationConfig.apiKey);
+  }
+
+  const {
+    requestTimeoutMs,
+    totalTimeoutMs,
+    maxAttempts,
+    onRetry,
+    onWait,
+    retryBaseDelayMs,
+    taskType: _taskType,
+    apiKey: _apiKey,
+    returnTelemetry: _returnTelemetry,
+    userId: _userId,
+    ...providerConfig
+  } = generationConfig;
+
   let primaryModelName = resolveModelName(modelName, configuration);
 
   const createModelInstance = (mName) => {
@@ -237,9 +362,12 @@ export const generateMultimodalText = async (
     primaryModelName = resolveModelName(modelName, configuration);
     const budget = currentAiJobBudget();
     await budget?.beforeRequest();
-    const requestSignal = budget?.signal ? AbortSignal.any([signal, budget.signal]) : signal;
+    const requestSignal = budget?.signal
+      ? AbortSignal.any([signal, budget.signal])
+      : signal;
     try {
       const model = createModelInstance(primaryModelName);
+      const callStartTime = Date.now();
       const result = await model.generateContent({
         contents: [{ role: "user", parts }],
         generationConfig: {
@@ -249,15 +377,93 @@ export const generateMultimodalText = async (
         },
       }, { signal: requestSignal });
       if (requestSignal.aborted) throw requestSignal.reason || new Error('AI request canceled');
+      const durationMs = Date.now() - callStartTime;
       await budget?.record(result.response?.usageMetadata);
-      console.log(`[Gemini API] feature=${configuration.feature} credential=${configuration.keyEnv} model=${primaryModelName}`);
+      console.log(`[Gemini API] feature=${configuration.feature} credential=${configuration.keyEnv} model=${primaryModelName} (${durationMs}ms)`);
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
       }
-      return result.response.text();
+      let rawText = "";
+      try {
+        rawText =
+          typeof result.response?.text === "function"
+            ? result.response.text()
+            : result.response?.text || "";
+      } catch (_) {
+        rawText = "";
+      }
+
+      const usageMetadata = result.response?.usageMetadata;
+      const promptTokens =
+        usageMetadata?.promptTokenCount ||
+        Math.max(1, Math.round(prompt.length / 4));
+      const completionTokens =
+        usageMetadata?.candidatesTokenCount ||
+        Math.max(1, Math.round((rawText || "").length / 4));
+      const totalTokens =
+        usageMetadata?.totalTokenCount || promptTokens + completionTokens;
+
+      try {
+        recordGeminiTokenUsage({
+          taskType,
+          apiKey: resolvedApiKey,
+          modelName: primaryModelName,
+          usageMetadata: result.response?.usageMetadata,
+          promptText: prompt,
+          responseText: rawText,
+        });
+      } catch (trackingErr) {
+        console.warn(
+          "[geminiTokenTracker] Error recording usage:",
+          trackingErr.message,
+        );
+      }
+
+      const telemetry = {
+        durationMs,
+        durationSeconds: Number((durationMs / 1000).toFixed(2)),
+        tokens: {
+          prompt: promptTokens,
+          completion: completionTokens,
+          total: totalTokens,
+        },
+        model: primaryModelName,
+      };
+
+      if (generationConfig?.userId) {
+        import("./aiQuota.service.js")
+          .then(({ incrementTokenUsage }) => {
+            incrementTokenUsage(generationConfig.userId, totalTokens).catch(
+              () => {},
+            );
+          })
+          .catch(() => {});
+      }
+
+      if (generationConfig?.returnTelemetry) {
+        return {
+          text: rawText,
+          telemetry,
+        };
+      }
+
+      return rawText;
     } catch (primaryErr) {
       if (signal.aborted) throw primaryErr;
       if (primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
+        try {
+          recordGeminiRateLimit({
+            taskType,
+            apiKey: resolvedApiKey,
+            modelName: primaryModelName,
+            error: primaryErr,
+          });
+        } catch (rateLimitErr) {
+          console.warn(
+            "[geminiTokenTracker] Error recording rate limit:",
+            rateLimitErr.message,
+          );
+        }
         if (isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName, primaryErr, configuration);
         throw geminiQuotaError(primaryErr, primaryModelName);
       }

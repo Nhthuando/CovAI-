@@ -1,5 +1,20 @@
 import jwt from 'jsonwebtoken';
-import * as decoding from 'lib0/decoding';
+// Native VarUint decoding (eliminates hard external dependency on lib0)
+const decoding = {
+    createDecoder: uint8Array => ({ arr: uint8Array, pos: 0 }),
+    readVarUint: decoder => {
+        let num = 0, mult = 1;
+        const len = decoder.arr.length;
+        while (decoder.pos < len) {
+            const r = decoder.arr[decoder.pos++];
+            num = num + (r & 127) * mult;
+            mult *= 128;
+            if (r < 128) return num;
+            if (num > Number.MAX_SAFE_INTEGER) throw new Error('Integer overflow');
+        }
+        return num;
+    }
+};
 import { modifyAwarenessUpdate } from 'y-protocols/awareness';
 import prisma from '../config/prisma.js';
 import { withProjectGuard, resolveProjectAccess } from '../services/projectAccess.service.js';

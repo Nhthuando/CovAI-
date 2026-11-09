@@ -15,7 +15,7 @@ export const validateFullSystemTest = (code) => {
   const ast=parse(code,{sourceType:'module',plugins:['typescript','jsx']});
   const visit=node => {
     if (!node || typeof node !== 'object') return;
-    if (node.type === 'CallExpression' && ['fulfill','abort','routeFromHAR','route','addInitScript'].includes(node.callee?.property?.name || node.callee?.property?.value)) {
+    if (node.type === 'CallExpression' && ['fulfill','abort','routeFromHAR','route','addInitScript','intercept'].includes(node.callee?.property?.name || node.callee?.property?.value)) {
       throw new ServiceError('Full-system tests must call the real backend. API mocks, request routes, HAR replay and init-script replacements are not allowed; regenerate tests in full-system mode.',422);
     }
     for(const value of Object.values(node)) {if(Array.isArray(value)) value.forEach(visit); else if(value?.type) visit(value);}
@@ -50,62 +50,78 @@ export const prepareSystemPlaywright = ({rootDir,execution,executionMode,backend
   const fixtureBody=`const backend=${JSON.stringify(backendUrl || null)};
 const test=base.extend({
   _covaiLiveStream: [async ({page}, use) => {
-    let cdp = null;
+    let cdp = null, frameTimer = null, capturing = false, closed = false;
     const frameFile = path.join(${JSON.stringify(directory)}, 'live-frame.b64');
     try {
       await page.addInitScript(() => {
         if (window.__covaiCursorInstalled) return;
         window.__covaiCursorInstalled = true;
-        const c = document.createElement('div');
-        c.id = 'covai-live-cursor';
-        c.style.cssText = 'position:fixed;top:0;left:0;width:22px;height:22px;border-radius:50%;background:#ef4444;border:2.5px solid #ffffff;box-shadow:0 0 12px rgba(239,68,68,0.8),0 0 4px rgba(0,0,0,0.5);pointer-events:none;z-index:2147483647;transition:transform 0.1s cubic-bezier(0.2,0.8,0.2,1),background 0.1s;transform:translate(-50px,-50px);';
-        document.documentElement.appendChild(c);
-        const ring = document.createElement('div');
-        ring.style.cssText = 'position:fixed;top:0;left:0;width:40px;height:40px;margin-left:-9px;margin-top:-9px;border-radius:50%;border:2px solid #ef4444;opacity:0;pointer-events:none;z-index:2147483646;transition:transform 0.25s ease-out,opacity 0.25s ease-out;transform:translate(-50px,-50px) scale(0.5);';
-        document.documentElement.appendChild(ring);
-        window.addEventListener('mousemove', e => {
-          c.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px)';
-          ring.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(0.5)';
-        }, { passive: true, capture: true });
-        window.addEventListener('mousedown', e => {
-          c.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(0.8)';
-          c.style.background = '#10b981';
-          ring.style.borderColor = '#10b981';
-          ring.style.opacity = '1';
-          ring.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(1.6)';
-        }, { passive: true, capture: true });
-        window.addEventListener('mouseup', e => {
-          c.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(1)';
-          c.style.background = '#ef4444';
-          ring.style.borderColor = '#ef4444';
-          ring.style.opacity = '0';
-          ring.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(0.5)';
-        }, { passive: true, capture: true });
+        const mount = () => {
+          const root = document.body || document.documentElement;
+          if (!root) {
+            window.addEventListener('DOMContentLoaded', mount, { once: true });
+            return;
+          }
+          if (document.getElementById('covai-live-cursor')) return;
+          const c = document.createElement('div');
+          c.id = 'covai-live-cursor';
+          c.style.cssText = 'position:fixed;top:0;left:0;width:22px;height:22px;border-radius:50%;background:#ef4444;border:2.5px solid #ffffff;box-shadow:0 0 12px rgba(239,68,68,0.8),0 0 4px rgba(0,0,0,0.5);pointer-events:none;z-index:2147483647;transition:transform 0.1s cubic-bezier(0.2,0.8,0.2,1),background 0.1s;transform:translate(-50px,-50px);';
+          root.appendChild(c);
+          const ring = document.createElement('div');
+          ring.style.cssText = 'position:fixed;top:0;left:0;width:40px;height:40px;margin-left:-9px;margin-top:-9px;border-radius:50%;border:2px solid #ef4444;opacity:0;pointer-events:none;z-index:2147483646;transition:transform 0.25s ease-out,opacity 0.25s ease-out;transform:translate(-50px,-50px) scale(0.5);';
+          root.appendChild(ring);
+          window.addEventListener('mousemove', e => {
+            c.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px)';
+            ring.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(0.5)';
+          }, { passive: true, capture: true });
+          window.addEventListener('mousedown', e => {
+            c.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(0.8)';
+            c.style.background = '#10b981';
+            ring.style.borderColor = '#10b981';
+            ring.style.opacity = '1';
+            ring.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(1.6)';
+          }, { passive: true, capture: true });
+          window.addEventListener('mouseup', e => {
+            c.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(1)';
+            c.style.background = '#ef4444';
+            ring.style.borderColor = '#ef4444';
+            ring.style.opacity = '0';
+            ring.style.transform = 'translate(' + (e.clientX - 11) + 'px,' + (e.clientY - 11) + 'px) scale(0.5)';
+          }, { passive: true, capture: true });
+        };
+        mount();
       }).catch(() => {});
     } catch {}
 
-    try {
-      cdp = await page.context().newCDPSession(page);
-      await cdp.send('Page.startScreencast', {
-        format: 'jpeg',
-        quality: 75,
-        maxWidth: 1280,
-        maxHeight: 720,
-        everyNthFrame: 1
-      });
-      cdp.on('Page.screencastFrame', async ({ data, sessionId }) => {
-        try {
-          await cdp.send('Page.screencastFrameAck', { sessionId });
-          fs.writeFileSync(frameFile, data, 'utf8');
-        } catch {}
-      });
-    } catch {}
+    const captureFrame = async () => {
+      if (closed || capturing || page.isClosed() || !/^https?:\\/\\//i.test(page.url() || '')) return;
+      capturing = true;
+      try {
+        if (!cdp) cdp = await page.context().newCDPSession(page);
+        const snap = await Promise.race([
+          cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 72 }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1200))
+        ]);
+        if (snap?.data) fs.writeFileSync(frameFile, snap.data, 'utf8');
+      } catch {} finally {
+        capturing = false;
+      }
+    };
+
+    const onLoad = () => { void captureFrame(); };
+    page.on('load', onLoad);
+    frameTimer = setInterval(() => { void captureFrame(); }, 240);
+    if (frameTimer.unref) frameTimer.unref();
 
     try {
       await use();
+      await captureFrame();
     } finally {
+      closed = true;
+      page.off('load', onLoad);
+      if (frameTimer) clearInterval(frameTimer);
       if (cdp) {
-        try { await cdp.send('Page.stopScreencast'); } catch {}
+        try { await cdp.detach(); } catch {}
       }
     }
   }, {auto:true}],
@@ -148,15 +164,20 @@ const test=base.extend({
   _covaiRealBackend: [async ({page, context}, use) => {
     if (backend) {
       ${measurementPreparation ? `page.on('response',response=>{if(new URL(response.url()).pathname.startsWith('/api/') && response.headers()['x-covai-measurement-id'] !== ${JSON.stringify(measurementPreparation.manifest.measurementId)}){fs.writeFileSync(path.join(${JSON.stringify(measurementPreparation.directory)},'runtime-integrity-'+crypto.randomUUID()+'.json'),JSON.stringify({tier:'backend',measurementId:${JSON.stringify(measurementPreparation.manifest.measurementId)},sourceHash:${JSON.stringify(measurementPreparation.manifest.sourceHash)},coverage:{},incompleteReasons:['AUT_IDENTITY_MISMATCH']}));}});` : ''}
-      await context.route('**/api/**', route => {const original=new URL(route.request().url());return route.continue({url:backend+original.pathname+original.search});});
+      await context.route('**/*', route => {
+        const original=new URL(route.request().url());
+        const isLocalBackend=['localhost','127.0.0.1'].includes(original.hostname) && original.port && Number(original.port)!==Number(${JSON.stringify(frontendPort)}) && ['fetch','xhr'].includes(route.request().resourceType());
+        if(original.pathname.startsWith('/api/') || isLocalBackend) return route.continue({url:backend+original.pathname+original.search});
+        return route.continue();
+      });
       const forbidden=()=>{throw new Error('API mocking is prohibited in full-system mode');};
       page.route=forbidden; context.route=forbidden; page.routeFromHAR=forbidden; context.routeFromHAR=forbidden;
     }
     ${measurementPreparation ? `const archiveKey=${JSON.stringify('__covaiCoverageArchive_' + measurementPreparation.manifest.measurementId)};
     await context.addInitScript(key=>{const documentId=Math.random().toString(36);globalThis.__covaiCoverageDocumentId=documentId;addEventListener('pagehide',()=>{try{const archive=JSON.parse(sessionStorage.getItem(key)||'{}');archive[documentId]=globalThis.__coverage__ || {};sessionStorage.setItem(key,JSON.stringify(archive));}catch{globalThis.__covaiCoverageArchiveFailed=true;}});},archiveKey);
-    const collect=async p=>{try{const sample=await p.evaluate(key=>({current:globalThis.__coverage__ || null,archive:JSON.parse(sessionStorage.getItem(key)||'{}'),failed:Boolean(globalThis.__covaiCoverageArchiveFailed),documentId:globalThis.__covaiCoverageDocumentId}),archiveKey);if(p.__covaiPreviousDocument && sample.documentId !== p.__covaiPreviousDocument && !sample.archive[p.__covaiPreviousDocument])sample.failed=true;p.__covaiPreviousDocument=sample.documentId;for(const coverage of [...Object.values(sample.archive),sample.current].filter(Boolean)){const file=path.join(${JSON.stringify(measurementPreparation.directory)},'runtime-frontend-'+crypto.randomUUID()+'.json');fs.writeFileSync(file,JSON.stringify({tier:'frontend',measurementId:${JSON.stringify(measurementPreparation.manifest.measurementId)},sourceHash:${JSON.stringify(measurementPreparation.manifest.sourceHash)},coverage,incompleteReasons:sample.failed ? ['NAVIGATION_ARCHIVE_FAILED'] : []}));}}catch{}};
-    const pending=new Set();const pages=new Set();const watch=p=>{pages.add(p);for(const method of ['goto','reload','close']){const original=p[method].bind(p);p[method]=async(...args)=>{await collect(p);return original(...args);};}const handler=()=>{const task=collect(p);pending.add(task);task.finally(()=>pending.delete(task));};p.on('framenavigated',handler);p.on('domcontentloaded',handler);};watch(page);context.on('page',watch);
-    try {await use();} finally {await Promise.all([...pages].map(collect));await Promise.all([...pending]);}` : 'await use();'}
+    const collect=async p=>{if(!p||p.isClosed()||!/^https?:\\/\\//i.test(p.url()||''))return;try{const sample=await Promise.race([p.evaluate(key=>({current:globalThis.__coverage__ || null,archive:JSON.parse(sessionStorage.getItem(key)||'{}'),failed:Boolean(globalThis.__covaiCoverageArchiveFailed),documentId:globalThis.__covaiCoverageDocumentId}),archiveKey),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),2500))]);if(p.__covaiPreviousDocument && sample.documentId !== p.__covaiPreviousDocument && !sample.archive[p.__covaiPreviousDocument])sample.failed=true;p.__covaiPreviousDocument=sample.documentId;for(const coverage of [...Object.values(sample.archive),sample.current].filter(Boolean)){const file=path.join(${JSON.stringify(measurementPreparation.directory)},'runtime-frontend-'+crypto.randomUUID()+'.json');fs.writeFileSync(file,JSON.stringify({tier:'frontend',measurementId:${JSON.stringify(measurementPreparation.manifest.measurementId)},sourceHash:${JSON.stringify(measurementPreparation.manifest.sourceHash)},coverage,incompleteReasons:sample.failed ? ['NAVIGATION_ARCHIVE_FAILED'] : []}));}}catch{}};
+    const pages=new Set();const watch=p=>{pages.add(p);for(const method of ['goto','reload','close']){const original=p[method].bind(p);p[method]=async(...args)=>{await collect(p);return original(...args);};}};watch(page);context.on('page',watch);
+    try {await use();} finally {await Promise.all([...pages].map(collect));}` : 'await use();'}
   }, {auto:true}]
 });`;
   const helperBody = measurementPreparation ? `async function __covaiAssertion(binding,callback){let outcome='passed';try{await callback();if(base.info().errors.length)outcome='failed';}catch(error){outcome='failed';throw error;}finally{fs.writeFileSync(path.join(${JSON.stringify(measurementPreparation.directory)},'assertion-'+crypto.randomUUID()+'.json'),JSON.stringify({...binding,measurementId:${JSON.stringify(measurementPreparation.manifest.measurementId)},outcome,scenarioTitle:base.info().title}));}}` : '';
@@ -244,7 +265,7 @@ const rebase=value=>Array.isArray(value)?value.map(rebase):typeof value==='strin
 const base={...original,globalSetup:rebase(original.globalSetup),globalTeardown:rebase(original.globalTeardown),snapshotDir:rebase(original.snapshotDir),tsconfig:rebase(original.tsconfig)||(fs.existsSync(path.join(originalRoot,'tsconfig.json'))?path.join(originalRoot,'tsconfig.json'):undefined),webServer:${managedServer ? 'undefined' : 'Array.isArray(original.webServer) ? original.webServer.map(server) : original.webServer ? server(original.webServer) : undefined'}};` : 'const base={};';
   const isHeaded = Boolean(headed || execution?.headed);
   fs.writeFileSync(config,`${inherited}
-const use={headless:${!isHeaded},launchOptions:{slowMo:450},...base.use,${!configPath || managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'};
+const use={headless:${!isHeaded},launchOptions:{slowMo:${isHeaded ? 450 : 0}},...base.use,${!configPath || managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'};
 export default {...base,testDir:'./specs',testMatch:'**/*.spec.*',grep:${grepPattern ? `new RegExp(${JSON.stringify(grepPattern)})` : 'base.grep'},workers:1,retries:${measurementPreparation || testFile ? 0 : 'base.retries ?? 1'},timeout:base.timeout || 30000,outputDir:'./artifacts',use,
 projects:base.projects?.map(project=>({...project,testDir:${JSON.stringify(specs)},testMatch:'**/*.spec.*',${grepPattern ? `grep:new RegExp(${JSON.stringify(grepPattern)}),` : ''}use:{...use,...project.use,${managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'}}))};`,'utf8');
   const reportPath=path.join(directory,'results.json');

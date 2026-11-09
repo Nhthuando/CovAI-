@@ -1,0 +1,2678 @@
+{
+  "schemaVersion": 1,
+  "method": "Current local import graph and System Test test inventory; excludes temp, env files and external packages. Inventory is not exhaustive dynamic dependency discovery or a claim of line-by-line verification.",
+  "summary": {
+    "entry": {
+      "files": 148,
+      "lines": 22606
+    },
+    "dependency": {
+      "files": 205,
+      "lines": 55200
+    },
+    "test": {
+      "files": 90,
+      "lines": 7930
+    }
+  },
+  "files": [
+    {
+      "filePath": "client/src/components/common/AnchoredPopover.jsx",
+      "kind": "dependency",
+      "lines": 49,
+      "sha256": "c8ba6304ede823e56f6e0588c75b5e2b3bfa30783c6a101fd87601f67c28a9a6"
+    },
+    {
+      "filePath": "client/src/components/common/Button.jsx",
+      "kind": "dependency",
+      "lines": 97,
+      "sha256": "7a32aeb868db6e394c8d1586cc3b833c8f13e0e3969baccefe90b290a0888fd7"
+    },
+    {
+      "filePath": "client/src/components/common/ConfirmDialog.jsx",
+      "kind": "dependency",
+      "lines": 180,
+      "sha256": "e83d573d9ec274fd559ee07448796efcb170a3bbafa8ccbd3dea2bd7e5d6f862"
+    },
+    {
+      "filePath": "client/src/components/dashboard/editor/CollaborativeCodeEditor.jsx",
+      "kind": "dependency",
+      "lines": 44,
+      "sha256": "4de2827b36f9c50ad3e8ae26a2dc9d885a1bc8a874c47a13de63d36b655a4fc5"
+    },
+    {
+      "filePath": "client/src/components/dashboard/editor/CollaboratorPresence.jsx",
+      "kind": "dependency",
+      "lines": 20,
+      "sha256": "c546c516b7bce08adb0f916467b0618227c7fc2e885f9b4d81445acf08b0a121"
+    },
+    {
+      "filePath": "client/src/components/dashboard/FileConflictDialog.jsx",
+      "kind": "dependency",
+      "lines": 40,
+      "sha256": "34532cfbb9660a5ce4ac99cfe4c9a7cd782ac884431279c67552ae3482a6a64b"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemAssessmentEvidence.jsx",
+      "kind": "entry",
+      "lines": 25,
+      "sha256": "041a8205d3829bd36ca63aef44df26991d8392a7ed4750f2ac8a90f85b7ed2ba"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemCoverageChart.jsx",
+      "kind": "entry",
+      "lines": 25,
+      "sha256": "ad3ff1c042b7e8fd7de59c0241c8d7955fc1a35593dc37c3d335d2b782e2e909"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemImprovementGoal.jsx",
+      "kind": "entry",
+      "lines": 27,
+      "sha256": "b22907efbbbee53964b7f08eb83161cdcd6c5d6be8cc93affd998941363525da"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemImprovementProgress.jsx",
+      "kind": "entry",
+      "lines": 37,
+      "sha256": "34e9575c44f1e7cee6dd6a378c7645f06a7b7afb43dbc3be8c575f3d0bcc144b"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemLiveRunModel.js",
+      "kind": "entry",
+      "lines": 12,
+      "sha256": "67609d422e7a40fdd4059e96f0f67daeb0d71066105467ac5c62ccf9f69d1a55"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemLiveRunModel.test.js",
+      "kind": "test",
+      "lines": 12,
+      "sha256": "639ee325b867965c8f58fc333808cb539c0007a9517b666f212a2a9e47b37d0d"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemMutationReview.jsx",
+      "kind": "entry",
+      "lines": 34,
+      "sha256": "f45fc9176beb8e9b2a9879c100fd12d516bf7943f376bd265e28fcd8081fb244"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemReportModel.js",
+      "kind": "entry",
+      "lines": 4,
+      "sha256": "e6f86f6e58ed56110411336d3cb342edff266ebc6105d0ed6bff5d7c98c4baab"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemRequirementReview.jsx",
+      "kind": "entry",
+      "lines": 42,
+      "sha256": "b3efc099af4e98ebbdfbc89ebf71696cd40add158f79529fd3a452e7268a85f0"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemScenarioReviewForm.jsx",
+      "kind": "entry",
+      "lines": 35,
+      "sha256": "5e2481a60a52aa617ea23db8bbae4693d40e6b0cb896db29aca25b91a0ac4e1c"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemScenarioReviewModel.js",
+      "kind": "entry",
+      "lines": 20,
+      "sha256": "e04930b45f292eca7ff168c85eea13815a6d64d0653ceb98195dac557079f8f6"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemScenarioReviewModel.test.js",
+      "kind": "test",
+      "lines": 21,
+      "sha256": "bbf384d2f0dca649757d08cf1010c4b73ed9643670a712b0388fb992a65ba555"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestAssessmentPanel.jsx",
+      "kind": "entry",
+      "lines": 472,
+      "sha256": "20d81476f239538f07c6312f713bc059ffe86ad9332cab9fafe4a391aa7fa2ce"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestBreakpointModal.jsx",
+      "kind": "entry",
+      "lines": 274,
+      "sha256": "d0e05ef0f75efc6bab4e422ea9137e5407e95d481b54aa63ce5caced3d27a6ec"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestCoverageComparison.jsx",
+      "kind": "entry",
+      "lines": 24,
+      "sha256": "5cf6b725521960436b928b2af36dc2d7fcb8d5b0bd1f7d4bfb158a03cf0dc5ca"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestDimensionsTable.jsx",
+      "kind": "entry",
+      "lines": 23,
+      "sha256": "4ae2c4cbddca78ca07a08049c7b379673c3c6dc3536005a7fbdf114caa0ba908"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestEditorModal.jsx",
+      "kind": "entry",
+      "lines": 465,
+      "sha256": "8b0e65e776aba58f416fdf2d1601f758821888ae6c35b4515b25a07c31f92634"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemTestEntryModel.js",
+      "kind": "entry",
+      "lines": 10,
+      "sha256": "596f19712401f2bf4a57ea64bfe452323c8b4e6e7c75c825ebe59e8928b57293"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemTestEntryModel.test.js",
+      "kind": "test",
+      "lines": 14,
+      "sha256": "d14e698f5b4cfd8256dc61b2706f4b1b5bc7a025e3247c1ad9fdccafcda3ff16"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestEvidencePreview.jsx",
+      "kind": "entry",
+      "lines": 70,
+      "sha256": "64258aa95b9d60913682b0ce653ade91228dec792a5b1e734645fa6e3540915a"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestExecutionDetail.jsx",
+      "kind": "entry",
+      "lines": 69,
+      "sha256": "5a011a21713bbf6a56eaab0515f11a021ad7f38fc72392df0c9ecc9ce70c7d8c"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemTestExecutionModel.js",
+      "kind": "entry",
+      "lines": 73,
+      "sha256": "3ba6feefd7700f5456e34abebf639a5aa8dde60fed392f23f95df3cb10061a45"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/systemTestExecutionModel.test.js",
+      "kind": "test",
+      "lines": 63,
+      "sha256": "f901d6f1fc8c8d58ae9b40cc59932396e28fad947e81a9ae01dad8991efccbf0"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestExecutionView.jsx",
+      "kind": "entry",
+      "lines": 73,
+      "sha256": "8f02d0d62920cc84ae3e7cf808379816949373515e90320458e7f84dd91c42a7"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestGapList.jsx",
+      "kind": "entry",
+      "lines": 11,
+      "sha256": "14deecc8743ed1a599558850b83595aa0978f837cf2b10650c56491ede48f7c6"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestGapNavigator.jsx",
+      "kind": "entry",
+      "lines": 186,
+      "sha256": "2379caa5c5629741c1044d7ca813e3a9d1c5483142612c9807fe1caaabfc3f89"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestGeneratorModal.jsx",
+      "kind": "entry",
+      "lines": 481,
+      "sha256": "bbd5e2afa86678bd63ebd787dadb9667d3f5ebc9d581da005c00592e59eab7d5"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestImprovementReview.jsx",
+      "kind": "entry",
+      "lines": 121,
+      "sha256": "94c615853b6ff4173f269e9322f650b7ea7bdb647c062eaadfa12431abca1c40"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestLiveRun.jsx",
+      "kind": "entry",
+      "lines": 481,
+      "sha256": "b610782420519f6a8e56b6ba45f4a15f8acbbf46bf448d90ae03b7c867801d85"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestMetricsCards.jsx",
+      "kind": "entry",
+      "lines": 129,
+      "sha256": "a8c0d76a6c163e3bacaadb1d1e7abb9c1f24d35d7867de0cd9cc230b5b85f317"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestProgress.jsx",
+      "kind": "entry",
+      "lines": 22,
+      "sha256": "e7b81320a77e6ff684896726ca028fff7580981efab2427ed43e1376b6ddfca0"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestReportCharts.jsx",
+      "kind": "entry",
+      "lines": 12,
+      "sha256": "4e6dc49351bd2e6aed4a074cff246ee5611f0fb5978f821369036a00e5a106cc"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestReportView.jsx",
+      "kind": "entry",
+      "lines": 49,
+      "sha256": "499ea29f77e364d8f0019c3accbb585c8ab2696dd7a5b9b833ca73e5a126fe45"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestScenarioLibrary.jsx",
+      "kind": "entry",
+      "lines": 27,
+      "sha256": "82254b79a1804b090985dfcab2077b250e0488ea3ab69a9a5c7cf6801be8b92c"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestScenarioList.jsx",
+      "kind": "entry",
+      "lines": 315,
+      "sha256": "b6212f463a53d60e96fe4473df2f9142877bfa87146ee07b5f336a62d9af344c"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestSetupDialog.jsx",
+      "kind": "entry",
+      "lines": 783,
+      "sha256": "704d87ce2854872cfc4a652f6f8f375ab342d4ea479139841ef0b58c46cc40cc"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestVersionDiff.jsx",
+      "kind": "entry",
+      "lines": 6,
+      "sha256": "ab4e06b38651155ad6fa4786fa1839ee8c63c72dc05cc3ee234fa809442c19e6"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestVersionHistory.jsx",
+      "kind": "entry",
+      "lines": 54,
+      "sha256": "c7a2930a714178b243763af412f54748609df61d8d7ba860b6c95a81a017b09a"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestWorkflow.jsx",
+      "kind": "entry",
+      "lines": 1035,
+      "sha256": "9cd736a0d6e8816f56a2b8507ec41e426df36fba3fb4df123ae0b2770f66f35e"
+    },
+    {
+      "filePath": "client/src/components/dashboard/system/SystemTestZeroStateBanner.jsx",
+      "kind": "entry",
+      "lines": 17,
+      "sha256": "d2fa0d93325599c0b97071b3bed186af12e3ad31e1408adfb5de0a9afac139c9"
+    },
+    {
+      "filePath": "client/src/components/dashboard/SystemTestDashboard.jsx",
+      "kind": "entry",
+      "lines": 904,
+      "sha256": "8ba8c204b0ed2e8611483d8d81a867de8d3334e0d54b945664731f6c81191a9b"
+    },
+    {
+      "filePath": "client/src/components/dashboard/SystemTestEvidence.jsx",
+      "kind": "entry",
+      "lines": 34,
+      "sha256": "33f067509d4e34b4ee6176878db49cbc118702a5d06369b2310096340ff5d833"
+    },
+    {
+      "filePath": "client/src/components/dashboard/SystemTestPanel.jsx",
+      "kind": "entry",
+      "lines": 148,
+      "sha256": "3f881bcfe85fa5f7fdf5b32bb7887ba02349173eced49e78523b1e4a27a8807a"
+    },
+    {
+      "filePath": "client/src/components/dashboard/unified/pillars/PillarCardShell.jsx",
+      "kind": "dependency",
+      "lines": 71,
+      "sha256": "9963371312dbd1af29f1f1fd387bd0412250caaa44929b2d84ca6902ce8308f2"
+    },
+    {
+      "filePath": "client/src/components/dashboard/unified/pillars/SystemPillarCard.jsx",
+      "kind": "entry",
+      "lines": 126,
+      "sha256": "a5dd692fe95f7135992e006da27b027c3989e38be32014d4e0fde090988f9288"
+    },
+    {
+      "filePath": "client/src/components/dashboard/unified/primitives/charts/HorizontalBarList.jsx",
+      "kind": "dependency",
+      "lines": 80,
+      "sha256": "6b796902ab4330301a8f42128e2adec340ba8b66395df90ed6d15b4ecd494a47"
+    },
+    {
+      "filePath": "client/src/components/dashboard/unified/primitives/PillarBadge.jsx",
+      "kind": "dependency",
+      "lines": 55,
+      "sha256": "59f3816d728c3a8f2ee209b05e15a3cd19b9ab23ee50099a1abc6aabe8ca30d3"
+    },
+    {
+      "filePath": "client/src/components/dashboard/unified/primitives/StatusPill.jsx",
+      "kind": "dependency",
+      "lines": 65,
+      "sha256": "9e4f386504fddbf736ebdccdaec4f7cce3850412277a38d913d8075a46504fec"
+    },
+    {
+      "filePath": "client/src/hooks/useAuth.js",
+      "kind": "dependency",
+      "lines": 81,
+      "sha256": "0ad0fe08a248fa02496ae80bae7a6ecf160b9402ca490f1cc66b50998016b937"
+    },
+    {
+      "filePath": "client/src/hooks/useCollaborativeFile.js",
+      "kind": "dependency",
+      "lines": 21,
+      "sha256": "9df147a5d1c19560c3716e642df5aeffd7ccfa9fbf9c9cd09120d811fb4c757b"
+    },
+    {
+      "filePath": "client/src/hooks/useProjectAccess.js",
+      "kind": "dependency",
+      "lines": 22,
+      "sha256": "c3049c5de562efbb12bd7b6a8153f8c37288ae4894c8efff677fee630b16e3ba"
+    },
+    {
+      "filePath": "client/src/hooks/useSystemTestWorkspace.js",
+      "kind": "entry",
+      "lines": 31,
+      "sha256": "d21d5f43f5595078220e29158580e50c6c17664c978611fd7204a0862415a1f7"
+    },
+    {
+      "filePath": "client/src/lib/authReturn.js",
+      "kind": "dependency",
+      "lines": 14,
+      "sha256": "623a67813d0523dac39641841ef59938b6915395cbd0fb4e69121a619a2afbce"
+    },
+    {
+      "filePath": "client/src/lib/editor/editorModelRegistry.js",
+      "kind": "dependency",
+      "lines": 32,
+      "sha256": "674ce47f413521f0c014a058cdfeda3b69738e6c6914cf5e1f9e267b013b9c7b"
+    },
+    {
+      "filePath": "client/src/lib/editor/editorRecovery.js",
+      "kind": "dependency",
+      "lines": 14,
+      "sha256": "29cd7d8be03f4f70f69e8f2edc558302ff2e74b9bcfa2f1c173af1f93f8ca076"
+    },
+    {
+      "filePath": "client/src/lib/editor/editorTransport.js",
+      "kind": "dependency",
+      "lines": 24,
+      "sha256": "9fd0b8d475d1e98571773741046b866245eea5625e4cf990e573d760b94d02a7"
+    },
+    {
+      "filePath": "client/src/lib/editor/ProjectEditorProvider.js",
+      "kind": "dependency",
+      "lines": 220,
+      "sha256": "970bf0e3b6a7d949101784520a37c3137f67dc41881f73ea16b05feaa41589b1"
+    },
+    {
+      "filePath": "client/src/lib/editor/registerLineHistoryHover.js",
+      "kind": "dependency",
+      "lines": 52,
+      "sha256": "868d7576c518cd22e7acbc51b43239edf9e0c5b6efd321a46ebccd8d3fe16af8"
+    },
+    {
+      "filePath": "client/src/lib/editorDraft.js",
+      "kind": "dependency",
+      "lines": 6,
+      "sha256": "f6dc4c8118bb4d5d1420da5b9e75bc6cf6adca45149979809e1b2a564e4370f9"
+    },
+    {
+      "filePath": "client/src/lib/monacoSetup.js",
+      "kind": "dependency",
+      "lines": 18,
+      "sha256": "cc7a0198649b5f109da8bf9ac1978831980b8248056763cce1e95a85103448b2"
+    },
+    {
+      "filePath": "client/src/lib/queryClient.js",
+      "kind": "dependency",
+      "lines": 34,
+      "sha256": "73a1df514f0ab55a68a8cde52dec0815dc48574334ee695a7c430d82bf93a9de"
+    },
+    {
+      "filePath": "client/src/services/aiModel.service.js",
+      "kind": "dependency",
+      "lines": 14,
+      "sha256": "70ec50d7920a060d3c49c8708ca8bb134b78f6fc734885ea62f0114e09923d7a"
+    },
+    {
+      "filePath": "client/src/services/collaborationHttp.js",
+      "kind": "dependency",
+      "lines": 29,
+      "sha256": "485f39f171a8c5b43d229921c8670a004980b03490a498a84e6c4a665901904d"
+    },
+    {
+      "filePath": "client/src/services/coverage.service.js",
+      "kind": "dependency",
+      "lines": 394,
+      "sha256": "296e78776b7f89938f0550b50fadbe83bf2c0170897e09c5f18c8c093f4b72dd"
+    },
+    {
+      "filePath": "client/src/services/editorAwareRequest.js",
+      "kind": "entry",
+      "lines": 11,
+      "sha256": "15490149a5cb7d0abf9f3ffa47e7c0f64f04dc7e32dd87f771534304c02d739c"
+    },
+    {
+      "filePath": "client/src/services/job.service.js",
+      "kind": "dependency",
+      "lines": 164,
+      "sha256": "4026dc7054462938e354459689682d9b99309efd16c573199597281eb8342834"
+    },
+    {
+      "filePath": "client/src/services/project.service.js",
+      "kind": "dependency",
+      "lines": 603,
+      "sha256": "913c7cb5639293d5f5b65262e7e4a864b79265eb773701bc27aee164a05830bf"
+    },
+    {
+      "filePath": "client/src/services/projectEditor.service.js",
+      "kind": "dependency",
+      "lines": 14,
+      "sha256": "75f6988984d023517aae35c80ed2b4c5211120d366880e577366d77a47d81595"
+    },
+    {
+      "filePath": "client/src/services/projectMember.service.js",
+      "kind": "dependency",
+      "lines": 8,
+      "sha256": "a67b3d8cca4031c0af66c2454d255857dccc65c672f3533a0de01e58e2ab2001"
+    },
+    {
+      "filePath": "client/src/services/systemTest.service.js",
+      "kind": "entry",
+      "lines": 226,
+      "sha256": "70e578457ecf6c1498a21c37d6c68d86b0336f96facbb0ea581b764236c12e93"
+    },
+    {
+      "filePath": "client/src/shared/aiModels.js",
+      "kind": "dependency",
+      "lines": 9,
+      "sha256": "3261bfece1ca2329368a32e69d45a33b46dd68de15b464c7c4df0d0162a293e9"
+    },
+    {
+      "filePath": "server/prisma/schema.prisma",
+      "kind": "entry",
+      "lines": 1285,
+      "sha256": "dd17b2826841c774c27f41c2855b228de8685d26e9a4b0a365e3ac0a68d968b2"
+    },
+    {
+      "filePath": "server/src/config/codeHygiene.config.js",
+      "kind": "dependency",
+      "lines": 14,
+      "sha256": "de874c6fea5cdd60aee35fb37b9621285f659f0e47d3c7d98a8ca2d7f150bead"
+    },
+    {
+      "filePath": "server/src/config/collaborationLocal.js",
+      "kind": "dependency",
+      "lines": 9,
+      "sha256": "d17dd2fdcd522c7bfc9eee0f9769098ac778ae71c9e16ba93a1fb86dcce52679"
+    },
+    {
+      "filePath": "server/src/config/firebase.js",
+      "kind": "dependency",
+      "lines": 37,
+      "sha256": "1cff70a4bad7132145c9162f3cbf582980dad972cbba39b91bf8bf32120fd4ee"
+    },
+    {
+      "filePath": "server/src/config/localProjectStorage.js",
+      "kind": "dependency",
+      "lines": 53,
+      "sha256": "c2d7a23edd1ada4adab8a91ce02515d7c3e0e1bceeed87e677e75b87de4bfc1b"
+    },
+    {
+      "filePath": "server/src/config/prisma.js",
+      "kind": "dependency",
+      "lines": 81,
+      "sha256": "2e03f47c8135e0f1fc2b373eb1307099d2fb97c56555ef4ada9da6d448f22b86"
+    },
+    {
+      "filePath": "server/src/constants/codeHygiene.constants.js",
+      "kind": "dependency",
+      "lines": 16,
+      "sha256": "a15bc9b58be7d6a2b46d0d210cba6ccdf2ba45025492bfa0133207998a8d2bb9"
+    },
+    {
+      "filePath": "server/src/controllers/coverage.controller.js",
+      "kind": "entry",
+      "lines": 4103,
+      "sha256": "509e0a1d03313defc72e7256c9488c786550d37b0f384ff339970ba38e794c8f"
+    },
+    {
+      "filePath": "server/src/controllers/systemAssessment.controller.js",
+      "kind": "entry",
+      "lines": 290,
+      "sha256": "a4950a2548c99c00afccc4fd9c8d4318637264a4b0f7808d296f356e60c6476c"
+    },
+    {
+      "filePath": "server/src/controllers/systemGeneration.controller.js",
+      "kind": "entry",
+      "lines": 16,
+      "sha256": "34c92175de9622e2fbff0bbd96ca4dd062526597c522e0e58f319d0ed24cb5af"
+    },
+    {
+      "filePath": "server/src/controllers/systemSetup.controller.js",
+      "kind": "entry",
+      "lines": 18,
+      "sha256": "a49bdf72d7db6c20bd76eb059f8bbce5599af06a95912df685060022598b1dc4"
+    },
+    {
+      "filePath": "server/src/controllers/systemSuiteVersion.controller.js",
+      "kind": "entry",
+      "lines": 53,
+      "sha256": "6f8c5b6a1a25a5042df6244dded8b6a72dce58dc321ecb4614a7518d94b43a3b"
+    },
+    {
+      "filePath": "server/src/middlewares/auth.middleware.js",
+      "kind": "dependency",
+      "lines": 46,
+      "sha256": "b276ffe770ca93df399c30fcc78f529275ca31f5bb0632897783fe6bab67ad57"
+    },
+    {
+      "filePath": "server/src/middlewares/projectEndpointPolicy.js",
+      "kind": "dependency",
+      "lines": 120,
+      "sha256": "6ab8f255dea22f4c11df7c38844b93f523b7c17554e20845edc38864b7451671"
+    },
+    {
+      "filePath": "server/src/realtime/projectEditor.gateway.js",
+      "kind": "dependency",
+      "lines": 206,
+      "sha256": "04d42c8a61186dd54687de40c1e5b5db0c412c00545945fb4ffb587b80339dcf"
+    },
+    {
+      "filePath": "server/src/routes/coverage.route.js",
+      "kind": "entry",
+      "lines": 142,
+      "sha256": "1b3b9681baecaf4e33de5acf0f7c2571fc32f79ee6bbd31bb659c55849562334"
+    },
+    {
+      "filePath": "server/src/routes/systemAssessment.route.js",
+      "kind": "entry",
+      "lines": 60,
+      "sha256": "aa0baa91fd7e36c0762433d1d079f5132248d7e9a9374e497558bbcc8874887c"
+    },
+    {
+      "filePath": "server/src/services/aiContextBuilder.service.js",
+      "kind": "dependency",
+      "lines": 250,
+      "sha256": "e1017ac65712a0d6502c2de730995623c6fd07dabb37c5a57361ff030218985c"
+    },
+    {
+      "filePath": "server/src/services/aiContextCache.service.js",
+      "kind": "dependency",
+      "lines": 110,
+      "sha256": "4cbea8a992f5ebbb93bee9bd65ea88fa4a62ff9e2f548aa355d637e0d22f0441"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/artifactStore.service.js",
+      "kind": "dependency",
+      "lines": 56,
+      "sha256": "05a938d89aec549d9bcf0bf84a19740339a302e918b69765a9f512949170c89f"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/common.js",
+      "kind": "dependency",
+      "lines": 66,
+      "sha256": "326b50dc708b301e4b38366c3d1f437b31e522614909f10d5d608589a328c899"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/contracts.js",
+      "kind": "dependency",
+      "lines": 97,
+      "sha256": "9e2761ae734e3107426919a403752abeb30b3653377f29d3abe6137d2e09cc82"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/evaluator.service.js",
+      "kind": "dependency",
+      "lines": 82,
+      "sha256": "df8bfdf02aa3277707c3e446fbb8d8e9aec4dad0167f4460b9bb91fb29d57e0d"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/gateway.service.js",
+      "kind": "dependency",
+      "lines": 74,
+      "sha256": "db2d3891aab7b0053f57cda3d18a2953d9ae39e8ef61079eb4c2f51bd37cd70d"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/httpJson.adapter.js",
+      "kind": "dependency",
+      "lines": 74,
+      "sha256": "21c11de4fbca1140e28e8bbfdadec2196f0643a2cfe9f2203de3eb0e2f54a48e"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/judge.service.js",
+      "kind": "dependency",
+      "lines": 36,
+      "sha256": "12fafd046f78629bb3370bd85256797506664b8314adacb63bdb3b35854e3521"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/knowledge.service.js",
+      "kind": "dependency",
+      "lines": 50,
+      "sha256": "1105812b886c19c034e12aca6de23f94ab98e1d8c81a95938f5a582df95d2fe3"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/management.service.js",
+      "kind": "dependency",
+      "lines": 161,
+      "sha256": "3fdd8f12b8d9f282bd41bdf090b8a54bef1e8b579937616f42620d75ba230144"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/mockRuntime.service.js",
+      "kind": "dependency",
+      "lines": 48,
+      "sha256": "bb43a014dd7122961dd150f98c583ed6535bdf518d3c289513fc8939e09af6ea"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/runner.service.js",
+      "kind": "dependency",
+      "lines": 185,
+      "sha256": "a63a17265f98c9106198090d1e498f34cdfefcd87038a6355071286d98297b33"
+    },
+    {
+      "filePath": "server/src/services/aiEvaluation/scoring.service.js",
+      "kind": "dependency",
+      "lines": 58,
+      "sha256": "63eee46caf547d01a65567a38a0f186eeceb77f5b40302c17589cec71ce0149a"
+    },
+    {
+      "filePath": "server/src/services/aiJobBudget.service.js",
+      "kind": "dependency",
+      "lines": 36,
+      "sha256": "eef27fdcb8556c9b25b869e41911bccbdb9ddf0cce263e5a08ec01c80b79c7bf"
+    },
+    {
+      "filePath": "server/src/services/aiPromptBuilder.service.js",
+      "kind": "dependency",
+      "lines": 307,
+      "sha256": "75b5482b09893d4ffa132b4dce748fbef9d47b005b0d62efe550759d17fd0315"
+    },
+    {
+      "filePath": "server/src/services/aiQuota.service.js",
+      "kind": "dependency",
+      "lines": 71,
+      "sha256": "f87dd2e52f6bf950980623b09c324c744f9d27d4958b90d6ed68b5d603979ed3"
+    },
+    {
+      "filePath": "server/src/services/aiSuggestionParser.service.js",
+      "kind": "dependency",
+      "lines": 176,
+      "sha256": "248bab542c76f7615e17d819a4b5a4bf8a8368d388799f6adafe5d0437bd0814"
+    },
+    {
+      "filePath": "server/src/services/aiSuggestJob.service.js",
+      "kind": "dependency",
+      "lines": 128,
+      "sha256": "d6360ce57662aed4da8c205078cc8bd1ca24549d8542e9f809e6a8502ec9f424"
+    },
+    {
+      "filePath": "server/src/services/aiTestsJob.service.js",
+      "kind": "dependency",
+      "lines": 1141,
+      "sha256": "0a12504b4ff2207e0d2e9fcbf1eb1e56a38d1f668dddd18f66a1504a8b8fc4b1"
+    },
+    {
+      "filePath": "server/src/services/aiTestStorage.service.js",
+      "kind": "dependency",
+      "lines": 201,
+      "sha256": "b0d2446a6daf3d93fa1f5918660898985c3b20ad8e5dd8e558d9f7a40d41c39b"
+    },
+    {
+      "filePath": "server/src/services/analysisJob.service.js",
+      "kind": "dependency",
+      "lines": 163,
+      "sha256": "f06d7b608eb01ed72f150a02618c61d0747c1ea1eaca014df5c582f2010400e7"
+    },
+    {
+      "filePath": "server/src/services/apiCoverageTracer.service.js",
+      "kind": "dependency",
+      "lines": 513,
+      "sha256": "cffb861ccacc4ed3c8266fb796dbec1cb804f0742066fb3d2b17421a4c894512"
+    },
+    {
+      "filePath": "server/src/services/apiEndpointParser.service.js",
+      "kind": "dependency",
+      "lines": 970,
+      "sha256": "0a3eb127e9436b089745a69502319b8366d2bfbe99945b43ff00529e68f76cbc"
+    },
+    {
+      "filePath": "server/src/services/applyTestSuggestion.service.js",
+      "kind": "dependency",
+      "lines": 4010,
+      "sha256": "967d30bd6e3e59fdcf09574c3506608bc5ed55bfcb9265ed76a868c40db2d5fa"
+    },
+    {
+      "filePath": "server/src/services/autLifecycle.service.js",
+      "kind": "entry",
+      "lines": 471,
+      "sha256": "9b2dcff36a161abd61865c3fa182f4f730c653ba578078807c00f9828483ed7a"
+    },
+    {
+      "filePath": "server/src/services/automaticSystemTests.service.js",
+      "kind": "entry",
+      "lines": 36,
+      "sha256": "7a4c89c722e2adddcd2e4656ca39d1cc8b51ed0085d86f2486d54e9d74d613e0"
+    },
+    {
+      "filePath": "server/src/services/babelParser.service.js",
+      "kind": "dependency",
+      "lines": 57,
+      "sha256": "fc5c6a440f70c878d2def35e0490420df62869b8b4a5ce47e4ecaaf8f7319c78"
+    },
+    {
+      "filePath": "server/src/services/buildCfg.service.js",
+      "kind": "dependency",
+      "lines": 103,
+      "sha256": "05b97f3d6837512dc33a61b5c6093e6d8a47b834f97af09a631d228c601023c5"
+    },
+    {
+      "filePath": "server/src/services/buildCfgJob.service.js",
+      "kind": "dependency",
+      "lines": 96,
+      "sha256": "5864445888eced9320643c7fe043f76af07a8a02b021d0ab46c9bf5b2afe6b28"
+    },
+    {
+      "filePath": "server/src/services/businessLogicAstAnalyzer.service.js",
+      "kind": "dependency",
+      "lines": 852,
+      "sha256": "d6841948ddf1d55441756c8917381dc87205b4b8fd3a6d3565be0b71dd168a21"
+    },
+    {
+      "filePath": "server/src/services/cfgBuilder.service.js",
+      "kind": "dependency",
+      "lines": 165,
+      "sha256": "15f0246b65de8a4778f7f3735d286379e9b84cc0333221ad89327d792eba46ad"
+    },
+    {
+      "filePath": "server/src/services/cfgStorage.service.js",
+      "kind": "dependency",
+      "lines": 74,
+      "sha256": "353cc28fedb7bd796fa6b8afb2a1dcae5355a121c6bc8da05c4b2fdfdab05607"
+    },
+    {
+      "filePath": "server/src/services/chatContext.service.js",
+      "kind": "dependency",
+      "lines": 151,
+      "sha256": "ff7c35bc06247d5acb492be018493635bd4a5891856e5857b5b78e083d5b8230"
+    },
+    {
+      "filePath": "server/src/services/chatMemoryMaintenance.service.js",
+      "kind": "dependency",
+      "lines": 92,
+      "sha256": "7b273385d5c9b0d60579d9d9d0410b4662f199bef6f7b73e78c8fc073ad24fad"
+    },
+    {
+      "filePath": "server/src/services/codeHygiene.orchestrator.js",
+      "kind": "dependency",
+      "lines": 44,
+      "sha256": "3b7ce6fb985b588debff412759b8d255353e98240e15a4b12a1b57e66767f638"
+    },
+    {
+      "filePath": "server/src/services/codeHygiene.service.js",
+      "kind": "dependency",
+      "lines": 40,
+      "sha256": "16eee92062fb50f1a117bc6f56a31651d164eaf7cbc6985e22f6fe412e39b54f"
+    },
+    {
+      "filePath": "server/src/services/codeHygieneJob.service.js",
+      "kind": "dependency",
+      "lines": 29,
+      "sha256": "4e9e8e80893d627ca6981d53acbc8d3a593d6ff9cd7e76dbf9e3bfaa0d9faa1c"
+    },
+    {
+      "filePath": "server/src/services/codeHygieneRuleRunner.js",
+      "kind": "dependency",
+      "lines": 42,
+      "sha256": "3f97eca899ec1ae3b4bb46d4193998b2ee9ead0991d97628adf280b2be7728fb"
+    },
+    {
+      "filePath": "server/src/services/codeHygieneSummary.service.js",
+      "kind": "dependency",
+      "lines": 22,
+      "sha256": "85970d8fea507eec41145808d7fc8119d7966b944ea52bc6636e938b37cc1874"
+    },
+    {
+      "filePath": "server/src/services/comparison.service.js",
+      "kind": "dependency",
+      "lines": 1562,
+      "sha256": "6788eb8f2c0328a2fa20af961a7dda16e53b124cbd4850c2b1ced32c487b58b7"
+    },
+    {
+      "filePath": "server/src/services/coverageFileParser.service.js",
+      "kind": "dependency",
+      "lines": 308,
+      "sha256": "6824bee6d999e43231ffc47e52cda92d86f0e83a53bf0ff8063db2f3682dc201"
+    },
+    {
+      "filePath": "server/src/services/coverageFramework.service.js",
+      "kind": "dependency",
+      "lines": 263,
+      "sha256": "fe2c14145e0aece475da51f4b48bd5184a1d03c41bc1325ca15934fde30a55d0"
+    },
+    {
+      "filePath": "server/src/services/coverageFunctionParser.service.js",
+      "kind": "dependency",
+      "lines": 264,
+      "sha256": "8f1023e555d5ee9906e5f88f0a1005c477a8577232d675ad14b7b0501e0c42a1"
+    },
+    {
+      "filePath": "server/src/services/coverageRunner.service.js",
+      "kind": "dependency",
+      "lines": 214,
+      "sha256": "68be0e45b3a61a7a64235eced610b6db353b6684d6112e85c878aa48eaaf71b4"
+    },
+    {
+      "filePath": "server/src/services/coverageStorage.service.js",
+      "kind": "dependency",
+      "lines": 154,
+      "sha256": "775ebd2f4c004263607d86673d8609270db0a6395d9841e30393a723427d7c71"
+    },
+    {
+      "filePath": "server/src/services/coverageSummaryParser.service.js",
+      "kind": "dependency",
+      "lines": 218,
+      "sha256": "31a5d03760eaa864ef44747d978e5295b6267bc1b8e076049da2b696c9917692"
+    },
+    {
+      "filePath": "server/src/services/cyclomaticCalculator.service.js",
+      "kind": "dependency",
+      "lines": 78,
+      "sha256": "3671bd89a736facf04caa420baa6dc1e5016ea0d144a6315fca8d59e76d4a5e7"
+    },
+    {
+      "filePath": "server/src/services/cyclomaticFunctionExtractor.service.js",
+      "kind": "dependency",
+      "lines": 82,
+      "sha256": "48532b61608d1bd657898cd017f2f7d48b51910a21f9a3e26f50e43f6c06b219"
+    },
+    {
+      "filePath": "server/src/services/cypressPostProcessor.service.js",
+      "kind": "dependency",
+      "lines": 305,
+      "sha256": "fabb2774aef7747d1931061ffeada102aa835994d8b5a9926af4927bc551e290"
+    },
+    {
+      "filePath": "server/src/services/cypressPromptBuilder.service.js",
+      "kind": "dependency",
+      "lines": 216,
+      "sha256": "b30601b15f97551beeea0b08698a3d690cc937e154a3dc1a456b58637932ecc5"
+    },
+    {
+      "filePath": "server/src/services/dashboardEvents.service.js",
+      "kind": "dependency",
+      "lines": 125,
+      "sha256": "ba5de95c34c56f47da6a534e64d0dc6b6b2f30476a4d1fd48609e56ebc632670"
+    },
+    {
+      "filePath": "server/src/services/databaseMockTemplate.service.js",
+      "kind": "dependency",
+      "lines": 991,
+      "sha256": "a3eda14ae14ecbdd54d3899e7c201edf142d56a530d3bea19fb6a4b986e766a7"
+    },
+    {
+      "filePath": "server/src/services/dependencyInstallation.service.js",
+      "kind": "dependency",
+      "lines": 63,
+      "sha256": "2b79540bcd92ef8ac346b5b2ebb07a8c719ba2fa1b0430761cebef66694a922b"
+    },
+    {
+      "filePath": "server/src/services/dependencyResolution.service.js",
+      "kind": "dependency",
+      "lines": 517,
+      "sha256": "ef0d1a9caae3c63e60e4b84eb41947ffb54801eb34eee769df57b3ddee52cac0"
+    },
+    {
+      "filePath": "server/src/services/dockerRunner.service.js",
+      "kind": "entry",
+      "lines": 347,
+      "sha256": "33a021f83f7d401d9aef781c2e9cd2dbc2accd1bc6b8f3675d26623ee1a0929e"
+    },
+    {
+      "filePath": "server/src/services/durableJournal.service.js",
+      "kind": "dependency",
+      "lines": 548,
+      "sha256": "f66839c8f91423604212dd09fe2074a264965db4b43dd3d84c3fba9bada7f29c"
+    },
+    {
+      "filePath": "server/src/services/failureBreakpointAnalyzer.service.js",
+      "kind": "dependency",
+      "lines": 223,
+      "sha256": "7b3faf19b5f77d4034ff2515b83611466b2200e617a09a5518669ab6022901f9"
+    },
+    {
+      "filePath": "server/src/services/fileCoverage.service.js",
+      "kind": "dependency",
+      "lines": 1418,
+      "sha256": "8cc517efc85412a8147708f30690355926c4c6ead39b733e48595b65220c035c"
+    },
+    {
+      "filePath": "server/src/services/fileDiscovery.service.js",
+      "kind": "dependency",
+      "lines": 87,
+      "sha256": "3e4e24a87ed7c0cfa8352c8abb7bda45d62d02e2912cf46316d044ff9d200612"
+    },
+    {
+      "filePath": "server/src/services/fullSystemConfig.service.js",
+      "kind": "entry",
+      "lines": 76,
+      "sha256": "d7f9b6416e9a11f3673ce4188e9408bc8f5b9f3d77ca6e562f97de6b21e4bc50"
+    },
+    {
+      "filePath": "server/src/services/fullSystemEnvironment.service.js",
+      "kind": "entry",
+      "lines": 164,
+      "sha256": "09692afa7108fcb94d9283fd2e28cefd073b6a0ab3a38c73d10caa1efbd8bcbf"
+    },
+    {
+      "filePath": "server/src/services/fullSystemExecutionPreparation.service.js",
+      "kind": "entry",
+      "lines": 58,
+      "sha256": "cf67d69ec76182d49b481ef8508879e689c93ba332c94c507fb5c08ab92147fb"
+    },
+    {
+      "filePath": "server/src/services/fullSystemLifecycle.service.js",
+      "kind": "entry",
+      "lines": 92,
+      "sha256": "1d1c7dc272c08b56166cf525c60fda4805f8b2200ef6cc7f8a0f182e8701dcbe"
+    },
+    {
+      "filePath": "server/src/services/fullSystemPlan.service.js",
+      "kind": "entry",
+      "lines": 57,
+      "sha256": "1da0b26e4b31a3e9d24958ebc7a43ae28fbd1f338f62955abe87d675ddc2bac6"
+    },
+    {
+      "filePath": "server/src/services/fullSystemReadiness.service.js",
+      "kind": "entry",
+      "lines": 89,
+      "sha256": "5c5f619a59d2414d51158f17043b99511180292794ee6289223278d1cbd5ea2f"
+    },
+    {
+      "filePath": "server/src/services/fullSystemRuntime.service.js",
+      "kind": "entry",
+      "lines": 77,
+      "sha256": "82f9bd5f1cd9ec7d58f03aa6934b5ee7769d4684ae1f741ee5bcdd75360a3e6b"
+    },
+    {
+      "filePath": "server/src/services/fullSystemSetup.service.js",
+      "kind": "entry",
+      "lines": 371,
+      "sha256": "4cc122e485c8e0ea67b343747ad99752265d935b24a12f5d8ee4a9a4d65d097e"
+    },
+    {
+      "filePath": "server/src/services/fullTestsPostProcessor.service.js",
+      "kind": "dependency",
+      "lines": 103,
+      "sha256": "4e97ad7649d050ef86dd40a644b982fefa0d646dbb886abc64bbc7a58e4d53e3"
+    },
+    {
+      "filePath": "server/src/services/functionExtraction.service.js",
+      "kind": "dependency",
+      "lines": 253,
+      "sha256": "98b2283001912fe5ec480b829c20c09d8deeea11bcc5573919dcbed3edfd4ca7"
+    },
+    {
+      "filePath": "server/src/services/gemini.service.js",
+      "kind": "dependency",
+      "lines": 261,
+      "sha256": "b4ddd242464850abcd62ec7da196e523727f4b511d207e1d85db671031c947f9"
+    },
+    {
+      "filePath": "server/src/services/geminiRequestPolicy.service.js",
+      "kind": "dependency",
+      "lines": 43,
+      "sha256": "2bd776833553f278653b69770ba49fa831d2c72c905a4bc0e57f703e5c44058b"
+    },
+    {
+      "filePath": "server/src/services/generatedTestInputRepair.service.js",
+      "kind": "dependency",
+      "lines": 194,
+      "sha256": "c5567750f64846241d43bd00c07de1e127be81ac99a42554cf3407c292d28514"
+    },
+    {
+      "filePath": "server/src/services/ingestJob.service.js",
+      "kind": "dependency",
+      "lines": 265,
+      "sha256": "49261e66055103e6bc88082f57c74582cffacd6b646fe3ea218c4b6ec1c66a03"
+    },
+    {
+      "filePath": "server/src/services/installDeps.service.js",
+      "kind": "dependency",
+      "lines": 342,
+      "sha256": "21ba69a11dc7f50454877f592fff7240f6e574cd011c2c780dcd7dbf2b561aef"
+    },
+    {
+      "filePath": "server/src/services/integrationAiTestGenerator.service.js",
+      "kind": "dependency",
+      "lines": 547,
+      "sha256": "a5df6cdbc42afda18ede6a49df5f9c0acb5e0cb4b1597f090487c0f225912cce"
+    },
+    {
+      "filePath": "server/src/services/integrationApiService.service.js",
+      "kind": "dependency",
+      "lines": 523,
+      "sha256": "488b748f1a06e77e1cd2563de2f87928beb28f7d178bed6f0599000342bf4a1a"
+    },
+    {
+      "filePath": "server/src/services/integrationDetection.service.js",
+      "kind": "dependency",
+      "lines": 469,
+      "sha256": "f0929bc692d365780d0da959e9fe84aeab988c119d2a8c6ea9461999b3eb780c"
+    },
+    {
+      "filePath": "server/src/services/integrationGuidance.service.js",
+      "kind": "dependency",
+      "lines": 881,
+      "sha256": "1fabb3009d59ae0c94acd8ae0c1e709f466ba74f1df3f811a1f6e8fbb11b1000"
+    },
+    {
+      "filePath": "server/src/services/integrationReport.service.js",
+      "kind": "dependency",
+      "lines": 445,
+      "sha256": "3b021da2c8d4ffd7ee0bf52ab5d27fb47cbab5582dd54d9bc1c151a47b55ddf7"
+    },
+    {
+      "filePath": "server/src/services/integrationVersionHistory.service.js",
+      "kind": "dependency",
+      "lines": 1176,
+      "sha256": "df7bccff32f3807b0fe06ee23eb7bd062c10055166fdaf3d59db0218b90bacbe"
+    },
+    {
+      "filePath": "server/src/services/integrationWorkspace.service.js",
+      "kind": "dependency",
+      "lines": 2535,
+      "sha256": "adab4abb8bea12fda72c348c19fbc9f467ed3a3a99e63b2431216b22527db03e"
+    },
+    {
+      "filePath": "server/src/services/job.service.js",
+      "kind": "dependency",
+      "lines": 889,
+      "sha256": "e78d6be3388afbb2bbc2d6d80336cfec6492ef02bd2e6301892cecceeebbe88a"
+    },
+    {
+      "filePath": "server/src/services/jobCancellation.service.js",
+      "kind": "dependency",
+      "lines": 99,
+      "sha256": "74628ed6c1152c98882c0e0c2c14ed775d23c16073d6b4cbb9a92e076e0549e6"
+    },
+    {
+      "filePath": "server/src/services/jobOutput.service.js",
+      "kind": "dependency",
+      "lines": 81,
+      "sha256": "52b717207601c4bee279c42dd8e8edf07f7c69ec43c2286c8edbcb17b1194034"
+    },
+    {
+      "filePath": "server/src/services/jobUpdate.service.js",
+      "kind": "dependency",
+      "lines": 163,
+      "sha256": "f95b97569c870d23bffd109dd632acea3161ad8e2299b56e10cc9568c1d74eeb"
+    },
+    {
+      "filePath": "server/src/services/notification.service.js",
+      "kind": "dependency",
+      "lines": 286,
+      "sha256": "b0d4878e36d7b12470110a9872a398812b0d98401e54dc25aeb2272ddd8b4f5f"
+    },
+    {
+      "filePath": "server/src/services/performance.repository.js",
+      "kind": "dependency",
+      "lines": 33,
+      "sha256": "02a4a375f3fae9b35db52855f34268ba8e6541723b2fee9cc889cfb6f513836b"
+    },
+    {
+      "filePath": "server/src/services/performance.service.js",
+      "kind": "dependency",
+      "lines": 19,
+      "sha256": "c66733cce169ffa4babf4434df921996d173d16d6818429f9053269b48618422"
+    },
+    {
+      "filePath": "server/src/services/performanceCalculator.service.js",
+      "kind": "dependency",
+      "lines": 78,
+      "sha256": "5b5f6f8b055ff69f81e93a462c3943f840bd7f1b9237850119249a0550a1954a"
+    },
+    {
+      "filePath": "server/src/services/performanceJob.service.js",
+      "kind": "dependency",
+      "lines": 35,
+      "sha256": "e0bcc52f94643275464de61b4ca720392019c65e83c91d2d021cb663f50672ee"
+    },
+    {
+      "filePath": "server/src/services/performancePipelineStage.service.js",
+      "kind": "dependency",
+      "lines": 47,
+      "sha256": "aabee3c63caea1cab40a703e37b478cfc2fe9907a1e9d210b4f63145309c13e6"
+    },
+    {
+      "filePath": "server/src/services/playwrightExecutionSteps.service.js",
+      "kind": "dependency",
+      "lines": 148,
+      "sha256": "05b8b74d9c71eb5a2fe726dd8e7146a244fe4da5b20a3ba3dec635d5df0744cb"
+    },
+    {
+      "filePath": "server/src/services/projectAccess.service.js",
+      "kind": "entry",
+      "lines": 62,
+      "sha256": "c459cb82e34844cc717f94c788cce71031ab5363153ab386989bd5c4cf8da18a"
+    },
+    {
+      "filePath": "server/src/services/projectArchitectureOverview.service.js",
+      "kind": "dependency",
+      "lines": 109,
+      "sha256": "81e36fed5ede8b2f7b378b3b9c25f42dbf05afd93ce10788528686b50c995d60"
+    },
+    {
+      "filePath": "server/src/services/projectDependencies.service.js",
+      "kind": "entry",
+      "lines": 106,
+      "sha256": "1c5c918a55df16860548dd19298591dd67f0b23e00d15b6b111bee9616b3baaa"
+    },
+    {
+      "filePath": "server/src/services/projectDependencyCache.service.js",
+      "kind": "entry",
+      "lines": 46,
+      "sha256": "022685de03585568ac2f1d8ba057940db46f690a68b767c15ac06b362c9edbfa"
+    },
+    {
+      "filePath": "server/src/services/projectEditorBridge.service.js",
+      "kind": "dependency",
+      "lines": 62,
+      "sha256": "37411a16e4b31d04fede1555abf6edb998fec53cb39aed134be441964d9e9ce4"
+    },
+    {
+      "filePath": "server/src/services/projectEditorCheckpoint.service.js",
+      "kind": "dependency",
+      "lines": 79,
+      "sha256": "9f66942cb48b99907d7523050eacae6cc3e17fe3088d0806f308a2af29156693"
+    },
+    {
+      "filePath": "server/src/services/projectEditorCheckpointStore.service.js",
+      "kind": "dependency",
+      "lines": 77,
+      "sha256": "05b356fb1f83502a4a2e220dd55043d456eb986dff468b6d15fd97d78bb568dd"
+    },
+    {
+      "filePath": "server/src/services/projectEditorDeliveryCache.service.js",
+      "kind": "dependency",
+      "lines": 23,
+      "sha256": "170af35ea6c5d7d38057f165889b1b3905acf839695f397885a95e8c29d4a0d1"
+    },
+    {
+      "filePath": "server/src/services/projectEditorDocument.service.js",
+      "kind": "dependency",
+      "lines": 158,
+      "sha256": "933e1ad54d271c8622bcb993bd63829a0dcde1f58b7ca97ce9cf0f650ad038d5"
+    },
+    {
+      "filePath": "server/src/services/projectEditorFastStore.service.js",
+      "kind": "dependency",
+      "lines": 103,
+      "sha256": "8020c297919059bc579c7241d29083e26f6c7f397d092a2b328b40e3e548e6dc"
+    },
+    {
+      "filePath": "server/src/services/projectEditorRequestContext.service.js",
+      "kind": "dependency",
+      "lines": 5,
+      "sha256": "e2abf235a55cc1115e23a8fab2efa2203d5d5933a8f2590679cb3755b8d69d49"
+    },
+    {
+      "filePath": "server/src/services/projectEditorUpdateStore.service.js",
+      "kind": "dependency",
+      "lines": 41,
+      "sha256": "ed4491811f057c8bb522601cc264f5b7e696f700ff781c800ce6246cd9824c89"
+    },
+    {
+      "filePath": "server/src/services/projectEvent.service.js",
+      "kind": "dependency",
+      "lines": 24,
+      "sha256": "db911137333e1ec46ac68323cfc643e9e557bd63bcaafd035088fa3e2bdb5c75"
+    },
+    {
+      "filePath": "server/src/services/projectFileReadCache.service.js",
+      "kind": "dependency",
+      "lines": 19,
+      "sha256": "852eacead75dfe7aceffb2d3f7bd60b90ee83ec33c01740225903fffb71201f3"
+    },
+    {
+      "filePath": "server/src/services/projectFileVersion.service.js",
+      "kind": "entry",
+      "lines": 202,
+      "sha256": "2a61adf8ac87af04479e0f89667dd332965751b65c03aee148672a5dceb460ea"
+    },
+    {
+      "filePath": "server/src/services/projectLineAttribution.service.js",
+      "kind": "dependency",
+      "lines": 27,
+      "sha256": "3c7e4cda70918d980dafa7c39915c0d854d7c3b063221ee504a34a6074c97df2"
+    },
+    {
+      "filePath": "server/src/services/projectMemory.service.js",
+      "kind": "dependency",
+      "lines": 107,
+      "sha256": "94b46e3e152a85ba5eec2969301542bf679bf009cf9430bd22d8461e628daca3"
+    },
+    {
+      "filePath": "server/src/services/projectMutation.service.js",
+      "kind": "dependency",
+      "lines": 152,
+      "sha256": "280129eea54c65dec24f688022c344e1a0806d2ab872130f9c359edb29a054cb"
+    },
+    {
+      "filePath": "server/src/services/projectMutationRecovery.service.js",
+      "kind": "dependency",
+      "lines": 133,
+      "sha256": "6bbefa8087b62fe26ab1e90a9d435df14e1661098e6d515f6bde2453ac1a72f1"
+    },
+    {
+      "filePath": "server/src/services/projectOperation.service.js",
+      "kind": "entry",
+      "lines": 83,
+      "sha256": "4fef459ee68dc65d5ae82cfd73205ffe1bf5bd43eb61576a70f2689bce106306"
+    },
+    {
+      "filePath": "server/src/services/projectOperationRecovery.service.js",
+      "kind": "entry",
+      "lines": 47,
+      "sha256": "bb361fcf97daae8475b78f34a39647ddf7f182087ae7cd927a71c12f969b9fa7"
+    },
+    {
+      "filePath": "server/src/services/projectOperationWorkspace.service.js",
+      "kind": "entry",
+      "lines": 172,
+      "sha256": "f87e58a9320e7d83c2f82fabe58cb19826c7e24e409f599f4984a1704251f234"
+    },
+    {
+      "filePath": "server/src/services/projectProposalBase.service.js",
+      "kind": "dependency",
+      "lines": 27,
+      "sha256": "d155b3c2740b6d2eab0139ad622c9520815a8df23724177c9d34ee067064e55f"
+    },
+    {
+      "filePath": "server/src/services/projectRuntimePlan.service.js",
+      "kind": "entry",
+      "lines": 109,
+      "sha256": "6907a02747944b7529c2a58b191e84bbb863e720f1d4bdbae3affcf01b092893"
+    },
+    {
+      "filePath": "server/src/services/projectStreamRegistry.service.js",
+      "kind": "dependency",
+      "lines": 26,
+      "sha256": "329db87e3bf09829f2d5ff4d5c96a56e08b270cb92dcdab1054a45f9f37b3126"
+    },
+    {
+      "filePath": "server/src/services/projectStructure.constants.js",
+      "kind": "dependency",
+      "lines": 30,
+      "sha256": "f73ba99f6b70f49fdbb197010161eee8d0cdcc1fc828206fffe88c850c2689cb"
+    },
+    {
+      "filePath": "server/src/services/projectStructureAnalyzer.service.js",
+      "kind": "dependency",
+      "lines": 114,
+      "sha256": "4c93de6493e68609b40a4e20b3d6176964d18e6bc8b1d0b31d5ace99751ed2af"
+    },
+    {
+      "filePath": "server/src/services/projectStructureDependencies.service.js",
+      "kind": "dependency",
+      "lines": 291,
+      "sha256": "f17441d67faaac44b05d1cb899648f02e5b28818ce05666fc23af9d2e6ebe354"
+    },
+    {
+      "filePath": "server/src/services/projectStructureRoles.service.js",
+      "kind": "dependency",
+      "lines": 130,
+      "sha256": "3e49652697671e56de9ae3555f6ee4ff76674a786b206c51628bf09ac9eeae7c"
+    },
+    {
+      "filePath": "server/src/services/projectStructureTree.service.js",
+      "kind": "dependency",
+      "lines": 40,
+      "sha256": "f32df44c07be15ecc4b7dfaccbcac6431410d4d8d12ca8affef38c473c413731"
+    },
+    {
+      "filePath": "server/src/services/projectSubscription.service.js",
+      "kind": "dependency",
+      "lines": 99,
+      "sha256": "bd33330fe949a93437317a7aa2fef7a2855001a0ae21228b7e51d8eebc6ade86"
+    },
+    {
+      "filePath": "server/src/services/projectSystemOperation.service.js",
+      "kind": "entry",
+      "lines": 32,
+      "sha256": "bf2aba4cc57141a5947f72c93a2c4df6b94d3741cec7815847071a3813d00e9d"
+    },
+    {
+      "filePath": "server/src/services/projectVitestWorkspace.service.js",
+      "kind": "dependency",
+      "lines": 16,
+      "sha256": "7005ec17cc275ad164d5f8c46ba57abd86b6812bda4221011928a4848ea82ea8"
+    },
+    {
+      "filePath": "server/src/services/projectWorkspacePreparation.service.js",
+      "kind": "entry",
+      "lines": 52,
+      "sha256": "187af4dde54f4d0ad177f43d75679fd00e6e2da5811ad8026d9a9392a3a15850"
+    },
+    {
+      "filePath": "server/src/services/projectWorkspacePublish.service.js",
+      "kind": "entry",
+      "lines": 163,
+      "sha256": "fb360922eaa2951ff8adb219eaea4310776166d22d4731a2b671728485a7d23c"
+    },
+    {
+      "filePath": "server/src/services/qualityAiAnalysis.service.js",
+      "kind": "dependency",
+      "lines": 221,
+      "sha256": "ef3e46a1144f07ac5e6ce5e84f037fbd3606ff23a53e68037b0a858a7fbb9be4"
+    },
+    {
+      "filePath": "server/src/services/qualityAnalysisJob.service.js",
+      "kind": "dependency",
+      "lines": 198,
+      "sha256": "e291585eb3c3d203b90f5c231e46e837184ff859e4a8d65f02001581c3870af5"
+    },
+    {
+      "filePath": "server/src/services/qualityScoring.service.js",
+      "kind": "dependency",
+      "lines": 202,
+      "sha256": "35ec03fa6d38eb52c7c996011d99f3c9babeafdc857e225e7afb1722ace5b6b3"
+    },
+    {
+      "filePath": "server/src/services/queue.service.js",
+      "kind": "entry",
+      "lines": 417,
+      "sha256": "44c6ed7b3939c2a9ad6e981a33d975527a13c6e8e22454a3c4b2d55156502c3a"
+    },
+    {
+      "filePath": "server/src/services/rules/console.rule.js",
+      "kind": "dependency",
+      "lines": 25,
+      "sha256": "c9df67fc9d336b4a43fc5efba429b6c3f8649da42bd7d18be61598840ca36e10"
+    },
+    {
+      "filePath": "server/src/services/rules/debugger.rule.js",
+      "kind": "dependency",
+      "lines": 20,
+      "sha256": "efc803f7fb78cf99d4d01ec757d23b0e0c624d72da80e5a55dbee3dfdb1341b1"
+    },
+    {
+      "filePath": "server/src/services/rules/index.js",
+      "kind": "dependency",
+      "lines": 10,
+      "sha256": "7f4cab97af3bfa9282b61bfa03f6f4fd848bbc74be039357ab47d474a7e4ebce"
+    },
+    {
+      "filePath": "server/src/services/rules/temporaryComment.rule.js",
+      "kind": "dependency",
+      "lines": 26,
+      "sha256": "72562bda2774fd5da7ff8ff7b080dc84854b9b24aaadbc58cfa4134609f97838"
+    },
+    {
+      "filePath": "server/src/services/runTestsJob.service.js",
+      "kind": "dependency",
+      "lines": 4405,
+      "sha256": "b8a8af8589b3810975ee2f1f18a31423619ae5706ad2e90e33b73dd679d5e993"
+    },
+    {
+      "filePath": "server/src/services/runVitestJob.service.js",
+      "kind": "dependency",
+      "lines": 73,
+      "sha256": "e57a2cecf8aa1937a2c223a08760cb910ba36be4be1243c1eb8389bd3e5bf61e"
+    },
+    {
+      "filePath": "server/src/services/scenarioManager.service.js",
+      "kind": "dependency",
+      "lines": 770,
+      "sha256": "d364ece9143dc339e7a954854cf96b81a9e4f7a9bb7bc215f3ac3a84a12dd436"
+    },
+    {
+      "filePath": "server/src/services/securityScanJob.service.js",
+      "kind": "dependency",
+      "lines": 87,
+      "sha256": "878a725a5e37c5eeab9812f23d66958d6b5365ce8a861093702bb51ac6a47cdd"
+    },
+    {
+      "filePath": "server/src/services/securityScanner.service.js",
+      "kind": "dependency",
+      "lines": 57,
+      "sha256": "124a01c27ad043c99e86e653ad8ca2e6abe3d6379030dbf037c4669b6cc2d18e"
+    },
+    {
+      "filePath": "server/src/services/skeletonPostProcessor.service.js",
+      "kind": "dependency",
+      "lines": 109,
+      "sha256": "8572ddd884f0fa7e0b585636ea0e9f61fab7d4191ed306c538b56bf4c7c3d807"
+    },
+    {
+      "filePath": "server/src/services/snapshotReuse.service.js",
+      "kind": "dependency",
+      "lines": 241,
+      "sha256": "ceac98548847715b18e5c5063ff98ef68556a9b5c862424ab02a6db9f7a8652e"
+    },
+    {
+      "filePath": "server/src/services/suitesReadiness.service.js",
+      "kind": "dependency",
+      "lines": 374,
+      "sha256": "92f5a2497d4c2007dd67b8a7d4465db7dc1ac62e5142fefe5ba4ef00b901c2fa"
+    },
+    {
+      "filePath": "server/src/services/supertestCoverageJob.service.js",
+      "kind": "dependency",
+      "lines": 515,
+      "sha256": "779be92130868b949738d15cf0cb39cb66fcc218e646545e5deb954be1f6800a"
+    },
+    {
+      "filePath": "server/src/services/supertestDetection.service.js",
+      "kind": "dependency",
+      "lines": 42,
+      "sha256": "8d8ad0c6a42065caa4ec2c95ddf550a97a1e5a61ccee2786819ed8178b28386a"
+    },
+    {
+      "filePath": "server/src/services/supertestPostProcessor.service.js",
+      "kind": "dependency",
+      "lines": 187,
+      "sha256": "f2dfa8d00f8ba8b9a0564b880891721072e763b7582710f7dfa3418ff2f2a2c5"
+    },
+    {
+      "filePath": "server/src/services/supertestPromptBuilder.service.js",
+      "kind": "dependency",
+      "lines": 375,
+      "sha256": "66b0a578e5d4c794e8933d2be96682c0b283d622178f9d07dfc3be86b6977c36"
+    },
+    {
+      "filePath": "server/src/services/supertestRunner.service.js",
+      "kind": "dependency",
+      "lines": 215,
+      "sha256": "4a3c9bfccb665062dea73cb392dadf496a51371ca9babc81c9e6bff1d39de6c8"
+    },
+    {
+      "filePath": "server/src/services/systemArtifactRetention.service.js",
+      "kind": "entry",
+      "lines": 14,
+      "sha256": "d3df5f580dbfed9dd78f2fec37c42de61aa338fe3f7b08ecea708c939687d4eb"
+    },
+    {
+      "filePath": "server/src/services/systemAssertionEvidence.service.js",
+      "kind": "entry",
+      "lines": 35,
+      "sha256": "9f956626e9b03964494a7b33217d4fe0fe4efce6bb2b1b0699c2fe329c2bc277"
+    },
+    {
+      "filePath": "server/src/services/systemAssessment.service.js",
+      "kind": "entry",
+      "lines": 34,
+      "sha256": "3239aa1526205fc4b906613eceb360c72606127da1351c95027908d24d659ce2"
+    },
+    {
+      "filePath": "server/src/services/systemAssessmentContract.service.js",
+      "kind": "entry",
+      "lines": 26,
+      "sha256": "c6a06129562707f09061f94ad700357627025b62a4f5a438fa51f1d383840553"
+    },
+    {
+      "filePath": "server/src/services/systemAssessmentDiscovery.service.js",
+      "kind": "entry",
+      "lines": 40,
+      "sha256": "2419f712994bd4f874651bc61fa2600124df45478e2c6eb3cfe6260985e43ce3"
+    },
+    {
+      "filePath": "server/src/services/systemAssessmentJob.service.js",
+      "kind": "entry",
+      "lines": 256,
+      "sha256": "6b0aa1114426c1fcbb648b31a9bedb7f2335595a0dfd624b639bf1da8c1cf5e9"
+    },
+    {
+      "filePath": "server/src/services/systemAssessmentPersistence.service.js",
+      "kind": "entry",
+      "lines": 82,
+      "sha256": "33591cd1f46acda4d226e1ef7b162ee31f4e108eeced2a05eb8be65893cdbf87"
+    },
+    {
+      "filePath": "server/src/services/systemAssessmentPreparation.service.js",
+      "kind": "entry",
+      "lines": 52,
+      "sha256": "434f628fd8dcc83c4e1fc0279e05dbe4e2845af0ca9f74eed521265c689bbac5"
+    },
+    {
+      "filePath": "server/src/services/systemAssessmentWorkspace.service.js",
+      "kind": "entry",
+      "lines": 117,
+      "sha256": "2818885bd35e10025c15ca2801109cf9a586c798890b1eb65697ac4e1e836bb5"
+    },
+    {
+      "filePath": "server/src/services/systemCandidateReview.service.js",
+      "kind": "entry",
+      "lines": 26,
+      "sha256": "8889a7d9bf37de357f958a1c91ebd45508b3fd6fa8af163c8a2bff40104bacb0"
+    },
+    {
+      "filePath": "server/src/services/systemCandidateVerification.service.js",
+      "kind": "entry",
+      "lines": 34,
+      "sha256": "eb6715256c2b751dea18020159ded8489afe3665f7da48c0d0518e5f3cdd9375"
+    },
+    {
+      "filePath": "server/src/services/systemCoverageCollector.service.js",
+      "kind": "entry",
+      "lines": 65,
+      "sha256": "204e796926e27af855c48ab58ef722be2b9260fa9490dc9cae4df581d57d6967"
+    },
+    {
+      "filePath": "server/src/services/systemCoverageEngine.service.js",
+      "kind": "entry",
+      "lines": 35,
+      "sha256": "785d0155d704043012db5f37d7370f80145db581d8e96e39fb104dbe6de5bb6f"
+    },
+    {
+      "filePath": "server/src/services/systemCoverageInstrumentation.service.js",
+      "kind": "entry",
+      "lines": 79,
+      "sha256": "a86abce8c9217977c670873c9bcecb92f2b6004a00ff31d76b85ce5abc12a4d6"
+    },
+    {
+      "filePath": "server/src/services/systemExecutionPolicy.service.js",
+      "kind": "entry",
+      "lines": 10,
+      "sha256": "652fe5de4331e838ec41847c529f26cae77aab07801854b61ee09ab4cf956c99"
+    },
+    {
+      "filePath": "server/src/services/systemExpectedOutcome.service.js",
+      "kind": "entry",
+      "lines": 102,
+      "sha256": "a320f15a532e5326fddbf0e7ff5eb6708c1414a0a5a24b4405e08f7304a787e4"
+    },
+    {
+      "filePath": "server/src/services/systemGenerationContext.service.js",
+      "kind": "entry",
+      "lines": 373,
+      "sha256": "55c2e9811b56510b1900337440d85be90356073f07e3366b3dd98a8332157dcf"
+    },
+    {
+      "filePath": "server/src/services/systemGenerationContract.service.js",
+      "kind": "entry",
+      "lines": 23,
+      "sha256": "9addd49dd84ca7d73cb15a0b5bf913b944d860e474027fdf370fee5f46349a63"
+    },
+    {
+      "filePath": "server/src/services/systemGenerationProposal.service.js",
+      "kind": "entry",
+      "lines": 106,
+      "sha256": "acf72d9e85b2ecef6c9144b4bbb2b879c3118e89bc2e9846295623a2d4da4e5d"
+    },
+    {
+      "filePath": "server/src/services/systemImprovementCandidates.service.js",
+      "kind": "entry",
+      "lines": 38,
+      "sha256": "d43812a9c5bd40558b2c264fc7be3542b24ca26875bc8ba7ac4683f7a201b631"
+    },
+    {
+      "filePath": "server/src/services/systemImprovementFailure.service.js",
+      "kind": "entry",
+      "lines": 12,
+      "sha256": "d494090e8e3e72894be4fa07b68381e9e1e7ab6ce9a7e492314bd6d0850756f8"
+    },
+    {
+      "filePath": "server/src/services/systemImprovementFeedback.service.js",
+      "kind": "entry",
+      "lines": 51,
+      "sha256": "66be157cc2d26f21907166599454890c6944e307bb2d6f2408e299896dccbbfa"
+    },
+    {
+      "filePath": "server/src/services/systemImprovementPolicy.service.js",
+      "kind": "entry",
+      "lines": 48,
+      "sha256": "44094bf1792185b2514e35639cd8dd05dd28c1469036343166b644c2be738dac"
+    },
+    {
+      "filePath": "server/src/services/systemImprovementProgress.service.js",
+      "kind": "entry",
+      "lines": 70,
+      "sha256": "f98de311d88daaea44b1c8643d0705044238e1b50cfebad74653792e83bb82b3"
+    },
+    {
+      "filePath": "server/src/services/systemImprovementTargets.service.js",
+      "kind": "entry",
+      "lines": 25,
+      "sha256": "49385f3f70589fc7a000358a03f494aa2d748a2073ee915e5125abbc84302b83"
+    },
+    {
+      "filePath": "server/src/services/systemLiveEvent.service.js",
+      "kind": "entry",
+      "lines": 55,
+      "sha256": "147834625862bbca9000077d4addad0988027bc51251284306830d629549001f"
+    },
+    {
+      "filePath": "server/src/services/systemMutation.service.js",
+      "kind": "entry",
+      "lines": 27,
+      "sha256": "2532308b9e23a76237b03caa3416cdcf56e5603531a0d458d1d334c07ed3676f"
+    },
+    {
+      "filePath": "server/src/services/systemMutationJob.service.js",
+      "kind": "entry",
+      "lines": 61,
+      "sha256": "d089bdabac29e4d2a6c6302d75014a583930eead2598954e5b4127fd5dc747ad"
+    },
+    {
+      "filePath": "server/src/services/systemOperationError.service.js",
+      "kind": "entry",
+      "lines": 7,
+      "sha256": "5243a61f0002b5c9a67fc1d1fed06e82afbbbccb47847315041f72c543f9aff5"
+    },
+    {
+      "filePath": "server/src/services/systemProposalReview.service.js",
+      "kind": "entry",
+      "lines": 65,
+      "sha256": "f6fb0a9f7276da5331008ee1a832156d8b24e05af1fcc090189add239d4cedd0"
+    },
+    {
+      "filePath": "server/src/services/systemReportProjection.service.js",
+      "kind": "entry",
+      "lines": 68,
+      "sha256": "6211634fda80a5185db4cce2a53107c8c8c85c07affc540c2703211ea19bc168"
+    },
+    {
+      "filePath": "server/src/services/systemRequirement.service.js",
+      "kind": "entry",
+      "lines": 55,
+      "sha256": "74152e4c882e949c3f3d4688408b804191e7b8213f3532adbc45743c6f971ea4"
+    },
+    {
+      "filePath": "server/src/services/systemRunArtifact.service.js",
+      "kind": "entry",
+      "lines": 76,
+      "sha256": "7539801fab0df3fe69991db5e110700328bd15e669d0b905a6a9bef61f3366fa"
+    },
+    {
+      "filePath": "server/src/services/systemRuntimePorts.service.js",
+      "kind": "entry",
+      "lines": 16,
+      "sha256": "99977c6102fde869f7832d73d1df55d3c171d790d2baaf52932d36536e6c51aa"
+    },
+    {
+      "filePath": "server/src/services/systemRuntimeResources.service.js",
+      "kind": "entry",
+      "lines": 129,
+      "sha256": "fab202bf12e15f6f5d413e8e33979d9f95d3877962024c97a2e85f182da3cab2"
+    },
+    {
+      "filePath": "server/src/services/systemScenarioCatalog.service.js",
+      "kind": "entry",
+      "lines": 221,
+      "sha256": "aa89bd1c3e0c469cb1f37d32f938fd577a46059e56b451cf3942b29c26a01bfb"
+    },
+    {
+      "filePath": "server/src/services/systemScenarioFeatures.service.js",
+      "kind": "entry",
+      "lines": 50,
+      "sha256": "4a33835b5a74c83e527b727c6ecab981ef784a28e302f0b5539ef8f89e7150d8"
+    },
+    {
+      "filePath": "server/src/services/systemScenarioVerdict.service.js",
+      "kind": "entry",
+      "lines": 62,
+      "sha256": "a1cecc385baf046aa837ad865d44be3f4fa0e5e841b41fb956c80ac8564790cd"
+    },
+    {
+      "filePath": "server/src/services/systemScreenshotPath.service.js",
+      "kind": "entry",
+      "lines": 15,
+      "sha256": "daf2b74f426a5c50a5ab63b8443011f30bd659c62a2385f29c1bcdec30944658"
+    },
+    {
+      "filePath": "server/src/services/systemSetupPreflight.service.js",
+      "kind": "entry",
+      "lines": 160,
+      "sha256": "6ef3f1bb11b2bd7360156a8c029ce620ba6e0cf4cd1e7d6790f1aaa74d3bf092"
+    },
+    {
+      "filePath": "server/src/services/systemSuiteApply.service.js",
+      "kind": "entry",
+      "lines": 47,
+      "sha256": "2fbd102405b57c1a9a2a3476bd0b1cf348ebe7e9593027a468f6ab6a8a50bd89"
+    },
+    {
+      "filePath": "server/src/services/systemSuiteAvailability.service.js",
+      "kind": "entry",
+      "lines": 12,
+      "sha256": "512ec090d19911126e68005cd7bffa754a17208efa83435b23bb4b4af7b41029"
+    },
+    {
+      "filePath": "server/src/services/systemSuiteManifest.service.js",
+      "kind": "entry",
+      "lines": 58,
+      "sha256": "e3213b3dacb85aceb751db5d0fae52c6ee68c96eb2c6fdaf2ff6ede08d63f21b"
+    },
+    {
+      "filePath": "server/src/services/systemSuiteVersion.service.js",
+      "kind": "entry",
+      "lines": 129,
+      "sha256": "b0513a13449e4ab0a5f43dfc939ea74a7e9ea756189dcecb05654eb4b5867980"
+    },
+    {
+      "filePath": "server/src/services/systemSuiteVersionRun.service.js",
+      "kind": "entry",
+      "lines": 29,
+      "sha256": "2784c6fccda9aef89e1533f57ffb112f09929a4f3852411a77e8b06ba3f33f14"
+    },
+    {
+      "filePath": "server/src/services/systemTestAnalysisJob.service.js",
+      "kind": "entry",
+      "lines": 471,
+      "sha256": "8a4135086a3a8ed6c5005344d831e95cf949b9f6ec58c6bbaa7af14531a5fc34"
+    },
+    {
+      "filePath": "server/src/services/systemTestBooster.service.js",
+      "kind": "entry",
+      "lines": 71,
+      "sha256": "7845a3bf2704040d57b457b0a8233c11841122cd4363e7e5c192bacf6b0b7c66"
+    },
+    {
+      "filePath": "server/src/services/systemTestDetection.service.js",
+      "kind": "entry",
+      "lines": 235,
+      "sha256": "feb0bc269b4d2cce045cedd678f7d24bce451d66e580200ecca3ab44209af1fb"
+    },
+    {
+      "filePath": "server/src/services/systemTestEnvironmentRoot.service.js",
+      "kind": "entry",
+      "lines": 13,
+      "sha256": "f225b0580dda02e08a39612383c52b0ec92f2740185657873bf9b9e4a0f62a12"
+    },
+    {
+      "filePath": "server/src/services/systemTestEvidence.service.js",
+      "kind": "entry",
+      "lines": 324,
+      "sha256": "23761a38d4ad85d159344f007afc9ed4e252c3ae726b3ccbf460afc2428a7f80"
+    },
+    {
+      "filePath": "server/src/services/systemTestExecutionDetails.service.js",
+      "kind": "entry",
+      "lines": 114,
+      "sha256": "3d3de5971df38dddc5679a3fadc271294f76434aff948364325c2a2c6c679eb1"
+    },
+    {
+      "filePath": "server/src/services/systemTestFrameworkDetection.service.js",
+      "kind": "entry",
+      "lines": 245,
+      "sha256": "9649ce83e940db0ff1dcafb85137813d4296d200a5d10fd69180f14f12005610"
+    },
+    {
+      "filePath": "server/src/services/systemTestImprovementJob.service.js",
+      "kind": "entry",
+      "lines": 245,
+      "sha256": "2daa010b019e794b42dea25233f25d6c85574c1adb6768f7a183d5e15cca8de7"
+    },
+    {
+      "filePath": "server/src/services/systemTestPdf.service.js",
+      "kind": "entry",
+      "lines": 95,
+      "sha256": "d95a1da0e2ab4bb572ac1de3f3d40d9a8427f79411ac63f78b97e00ed613d203"
+    },
+    {
+      "filePath": "server/src/services/systemTestPdfLayout.service.js",
+      "kind": "entry",
+      "lines": 5,
+      "sha256": "450cd1d5fad39c89ceb08d571a123a9e953350ad6dd22432f505f4747ab22a7b"
+    },
+    {
+      "filePath": "server/src/services/systemTestPrompt.service.js",
+      "kind": "entry",
+      "lines": 15,
+      "sha256": "973205f9cbf28b147713558a7d9412c38b99f6f6b700f1817c032bbb97915386"
+    },
+    {
+      "filePath": "server/src/services/systemTestPromptBudget.service.js",
+      "kind": "entry",
+      "lines": 53,
+      "sha256": "a74744023bd61491eba7e4a9245ab7c4aef925ee6a44872e8f6b174c143f6c27"
+    },
+    {
+      "filePath": "server/src/services/systemTestQuality.service.js",
+      "kind": "entry",
+      "lines": 71,
+      "sha256": "b941f07da8464a721a376659a9f436b499fc87c7633387cd19db166d307652ed"
+    },
+    {
+      "filePath": "server/src/services/systemTestResultParser.service.js",
+      "kind": "entry",
+      "lines": 350,
+      "sha256": "115102720e82af14221232ef6c44d09c0c63cc223071112165b7060a80c4c98d"
+    },
+    {
+      "filePath": "server/src/services/systemTestRunner.service.js",
+      "kind": "entry",
+      "lines": 452,
+      "sha256": "abbe15d0e1bbe917929820682c3641e4a04ac30b5144f3bfb2db92cad2da147c"
+    },
+    {
+      "filePath": "server/src/services/systemTestStaticAnalysis.service.js",
+      "kind": "entry",
+      "lines": 172,
+      "sha256": "0e86d0071e3def6973774a647f3e00b37954a2e7836571a3f21f81d78445607b"
+    },
+    {
+      "filePath": "server/src/services/systemTestStepPlan.service.js",
+      "kind": "entry",
+      "lines": 56,
+      "sha256": "4b232e049d6232c0a8374690d1bdea3118e08729bc6947935c85175e416b1d0d"
+    },
+    {
+      "filePath": "server/src/services/testDependencyResolver.service.js",
+      "kind": "dependency",
+      "lines": 265,
+      "sha256": "433a88816899f4a1c6d5f6356fd37f322f1a8478c0edfc520966efa8dac513f0"
+    },
+    {
+      "filePath": "server/src/services/testFrameworkNormalization.service.js",
+      "kind": "dependency",
+      "lines": 120,
+      "sha256": "3dd4dcfc91fe0a87e71aaf00c1bfbd5b33a35763a5230afb1c0c6b26be4ec5a6"
+    },
+    {
+      "filePath": "server/src/services/testHelperRegistry.service.js",
+      "kind": "dependency",
+      "lines": 655,
+      "sha256": "e1a6e76cdc13fdd7847b262c685a5a17ac39680e3db5ffa0756d92c52f280073"
+    },
+    {
+      "filePath": "server/src/services/testResultParser.service.js",
+      "kind": "dependency",
+      "lines": 329,
+      "sha256": "72eab9188052ef7c08ce969a115123524b99878dd3148eeed99de67c183227a4"
+    },
+    {
+      "filePath": "server/src/services/testSanitizer.service.js",
+      "kind": "dependency",
+      "lines": 3357,
+      "sha256": "236b7f651bed0fa95aed65713882bfd3891b793e7090f98c8c9324dd506d22c4"
+    },
+    {
+      "filePath": "server/src/services/testSourceParser.service.js",
+      "kind": "dependency",
+      "lines": 344,
+      "sha256": "33aa4f6d3e2d4c1fb570c008b293ab1ab6d201687f20a8ef11ade64ed8b8f23c"
+    },
+    {
+      "filePath": "server/src/services/unifiedCoverageEngine.service.js",
+      "kind": "dependency",
+      "lines": 396,
+      "sha256": "70fcfccc95a68598f89435b624acdcec13a95fc4cb86429dfd39c905daeb07d4"
+    },
+    {
+      "filePath": "server/src/services/unifiedQualityDashboard.service.js",
+      "kind": "dependency",
+      "lines": 1487,
+      "sha256": "bd24e9132da5cbc466a0339d4be74b13be3b773410288f107c283aacc7e56097"
+    },
+    {
+      "filePath": "server/src/services/unitTestContextEngineering.service.js",
+      "kind": "dependency",
+      "lines": 809,
+      "sha256": "0f36654c735a21865e2f5462f6d6bc47bab813a0e2bb8173a36b82d04e91316b"
+    },
+    {
+      "filePath": "server/src/services/unitTestGenerator.service.js",
+      "kind": "dependency",
+      "lines": 803,
+      "sha256": "5e0ee9c0733dd8db1030533c744d93a3319d10c1af3d4effc6d71f499fca0dd8"
+    },
+    {
+      "filePath": "server/src/services/unitTestSuggestion.service.js",
+      "kind": "dependency",
+      "lines": 1523,
+      "sha256": "accd4d17536c89e9d1bccaebc09cbcf8332bea5ef1ea3855890b9da61028d2ea"
+    },
+    {
+      "filePath": "server/src/services/verifiedSystemGeneration.service.js",
+      "kind": "dependency",
+      "lines": 567,
+      "sha256": "30f0023e074f37f3800d53db3fff131cd66a629cbc58b7a8a9b27fb62229c612"
+    },
+    {
+      "filePath": "server/src/services/vitestCoverageJob.service.js",
+      "kind": "dependency",
+      "lines": 170,
+      "sha256": "c61bab3cddb441edeff52393b567e4ec3a5005f86b2bc86657f3290a8d70fc2a"
+    },
+    {
+      "filePath": "server/src/services/vitestRunner.service.js",
+      "kind": "dependency",
+      "lines": 267,
+      "sha256": "fe542d9954d77e671a4d7833e00a12de073a5d575d331d3e131e3b8726d34c08"
+    },
+    {
+      "filePath": "server/src/services/zipExtraction.service.js",
+      "kind": "dependency",
+      "lines": 193,
+      "sha256": "7f6bd9b69cf7b0cfea15b4d4fc336d42e82af411f6b8d58bf1df6866c4aa8418"
+    },
+    {
+      "filePath": "server/src/tests/autLifecycle.service.test.js",
+      "kind": "test",
+      "lines": 252,
+      "sha256": "c6132897ca9f76bc07b637037b45bc852f1e020915b92535b44da48013e87a16"
+    },
+    {
+      "filePath": "server/src/tests/automaticSystemTests.test.js",
+      "kind": "test",
+      "lines": 26,
+      "sha256": "fd1b590799506159e0e2b7c1ca03f1e5f0544ef72e37d14ae42241c3bdb4bdc8"
+    },
+    {
+      "filePath": "server/src/tests/autStartupCommand.test.js",
+      "kind": "test",
+      "lines": 19,
+      "sha256": "130effdda94c4c09c44e3b2ef87757eb4d54c3774ed972ff8a1c6521e1ea0cf4"
+    },
+    {
+      "filePath": "server/src/tests/coldStartSystemGeneration.service.test.js",
+      "kind": "test",
+      "lines": 349,
+      "sha256": "d1a4debf60bdf3388494d00415f8773c7e28bbe7c8b3130c2bc9b2c432c3f0be"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/client/src/lazy.jsx",
+      "kind": "test",
+      "lines": 3,
+      "sha256": "84d67346476913fd16b5cb92290a958d423c33c138e821e6c52e777c808f1459"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/client/src/main.jsx",
+      "kind": "test",
+      "lines": 16,
+      "sha256": "9f9ed2c82f8a574d8c599e4ddf99c3e3e0331837ecdbeabf4175cdd983471aed"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/client/vite.config.js",
+      "kind": "test",
+      "lines": 2,
+      "sha256": "e3eaacc521073015c99d9dc320204ca6c77b01de0c37ddea6d6c4a86b22c0d2d"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/server/src/index.js",
+      "kind": "test",
+      "lines": 19,
+      "sha256": "3f42913c879bd7776712c5963acf08c1f16c3899c777ff9078c218c8b059e075"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/server/src/unvisited.js",
+      "kind": "test",
+      "lines": 2,
+      "sha256": "6e8f4424433a9089bac27eb152b083d4c5d6ed16385c7cc2621864141bee5714"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/server/src/valid.js",
+      "kind": "test",
+      "lines": 2,
+      "sha256": "64d14a06b20c86843c4c0dff9184cf006a20a1f580631b6c8c25de447ed146c2"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/tests/strong.spec.js",
+      "kind": "test",
+      "lines": 16,
+      "sha256": "9cea27a2b0d49e0c2b409ad8b9c239d0c4d960e47d9205f23071aa850f35d7ae"
+    },
+    {
+      "filePath": "server/src/tests/fixtures/system-assessment/tests/weak.spec.js",
+      "kind": "test",
+      "lines": 8,
+      "sha256": "30f89ff422115ffa33176be5eff6c63ac0810152ebf26a92e7cf059d3c068323"
+    },
+    {
+      "filePath": "server/src/tests/fullSystemEnvironment.test.js",
+      "kind": "test",
+      "lines": 73,
+      "sha256": "c2eb53c4da6385ad855ee4537c61dee2fb25d2b37ce0c1d4108215fdb089046b"
+    },
+    {
+      "filePath": "server/src/tests/fullSystemExecutionPreparation.service.test.js",
+      "kind": "test",
+      "lines": 57,
+      "sha256": "fa2d5e4faac06d14454c218b556a073e0bb63197856acd3b3fb9244ddf8f914b"
+    },
+    {
+      "filePath": "server/src/tests/fullSystemLifecycle.test.js",
+      "kind": "test",
+      "lines": 62,
+      "sha256": "3852d1c8532884c5796f5f62c538547f2734f6d24a30bec1a78adaf5f4980048"
+    },
+    {
+      "filePath": "server/src/tests/fullSystemPlan.test.js",
+      "kind": "test",
+      "lines": 54,
+      "sha256": "339bc7c09057c2f78ec6e250d81694031a0daad86946a875bd1fbf1ccc4f8785"
+    },
+    {
+      "filePath": "server/src/tests/fullSystemReadiness.test.js",
+      "kind": "test",
+      "lines": 30,
+      "sha256": "12871b1ddf6c0979bbcc891add409e59e97eba9c21abe07967d657c33e49de13"
+    },
+    {
+      "filePath": "server/src/tests/fullSystemRuntime.service.test.js",
+      "kind": "test",
+      "lines": 68,
+      "sha256": "107ff5cdb27964c3bf39d3719b28f92faf9455e728a298846a45f4b9b7e39b0d"
+    },
+    {
+      "filePath": "server/src/tests/fullSystemSetup.service.test.js",
+      "kind": "test",
+      "lines": 191,
+      "sha256": "b98a2d105e7539d98b3ca7382ff654b46560cecb1afa017ecebf9faf82348ce9"
+    },
+    {
+      "filePath": "server/src/tests/projectDependencies.test.js",
+      "kind": "test",
+      "lines": 149,
+      "sha256": "42cb91bcd62a88ef230a7a95b765bc23f6de75f0c1b6f9d0d8878a30b3158b75"
+    },
+    {
+      "filePath": "server/src/tests/projectEndpointPolicy.test.js",
+      "kind": "test",
+      "lines": 61,
+      "sha256": "53eeefc80f33d94a3fa43ae8b91ba7bc2a33c076af68be17ee5211027aa1238c"
+    },
+    {
+      "filePath": "server/src/tests/projectRuntimePlan.test.js",
+      "kind": "test",
+      "lines": 95,
+      "sha256": "41fb0cead133a6a5b9aa321f727e47dd4b09106311692c115b3fc7b3d6dee1d6"
+    },
+    {
+      "filePath": "server/src/tests/queue.service.test.js",
+      "kind": "test",
+      "lines": 499,
+      "sha256": "29a6c2c6925cdd1abc5ad026e77d2c7c2d21869f1442979006b74b4a7b410126"
+    },
+    {
+      "filePath": "server/src/tests/queueWorkerConfig.test.js",
+      "kind": "test",
+      "lines": 10,
+      "sha256": "d221d7f9e8f6ca3dd78ba64adcd3f2535f6445035ed8ada739fe8603427ea25b"
+    },
+    {
+      "filePath": "server/src/tests/systemAssessment.route.test.js",
+      "kind": "test",
+      "lines": 101,
+      "sha256": "383b64c59036bd97727a5a8c15eaba15d1c1d33010245a1d1e75bdcaa88c87c5"
+    },
+    {
+      "filePath": "server/src/tests/systemAssessment.service.test.js",
+      "kind": "test",
+      "lines": 37,
+      "sha256": "b3f7b719c3309bf16e30b1d722269d0ab652bb1ba8e6f1f5abfb7d3f74bde79c"
+    },
+    {
+      "filePath": "server/src/tests/systemAssessmentDiscovery.test.js",
+      "kind": "test",
+      "lines": 63,
+      "sha256": "d7f53efa8ad278718fdffe8e81a1c64a7d659cf325bed09787fdb6d8b89e802a"
+    },
+    {
+      "filePath": "server/src/tests/systemAssessmentPersistence.test.js",
+      "kind": "test",
+      "lines": 16,
+      "sha256": "da9a6271d090e224350266d6d21f1b76ada508d16fb0546ef9832e46e5d0c841"
+    },
+    {
+      "filePath": "server/src/tests/systemAssessmentPreparation.test.js",
+      "kind": "test",
+      "lines": 90,
+      "sha256": "c78a39341d8cfdc3d5e6c73d2a1a6127c38d3f89281b24ea7c0745302cf9fff0"
+    },
+    {
+      "filePath": "server/src/tests/systemAssessmentRepeat.test.js",
+      "kind": "test",
+      "lines": 30,
+      "sha256": "a3b6fcfed1e3e82267aab0c87b03284f42a3d9e5eff8a8be1841cc28b216b8b2"
+    },
+    {
+      "filePath": "server/src/tests/systemAssessmentWorkspace.test.js",
+      "kind": "test",
+      "lines": 50,
+      "sha256": "efd4584c6082878849185ef99e7cf813e3634c73caa6b8f08b9c119af4492bf2"
+    },
+    {
+      "filePath": "server/src/tests/systemAutomaticAdmission.test.js",
+      "kind": "test",
+      "lines": 48,
+      "sha256": "ba31751d186dde99b2e6f8d6de81d89b1d8b916e0e879bb14a82c2d3f1f81ba9"
+    },
+    {
+      "filePath": "server/src/tests/systemCoverageCollector.test.js",
+      "kind": "test",
+      "lines": 77,
+      "sha256": "a73084bdacab22f05b89b8ab5527809420089705efebd7d91411563f96e2f6ce"
+    },
+    {
+      "filePath": "server/src/tests/systemCoverageTruthfulness.test.js",
+      "kind": "test",
+      "lines": 21,
+      "sha256": "83bf0b28fda82d16fbdc54662701db5059e38e5d76b25d53415daba867781162"
+    },
+    {
+      "filePath": "server/src/tests/systemExecutionAndCoverageEngine.test.js",
+      "kind": "test",
+      "lines": 250,
+      "sha256": "53bdfdd0b4a87ee2b2b14ab8a1a5b27d083f6879508d857fa70b86372d0f5412"
+    },
+    {
+      "filePath": "server/src/tests/systemExecutionCancellation.test.js",
+      "kind": "test",
+      "lines": 18,
+      "sha256": "88997d109e0456dfe85a4f5f388705d853910c4fad36864c8b4b2b6f49026f19"
+    },
+    {
+      "filePath": "server/src/tests/systemExecutionPolicy.service.test.js",
+      "kind": "test",
+      "lines": 15,
+      "sha256": "30b9258dbe5e60c59a2a9e2edf50440b3bb1d08254c18a90b99657229075a193"
+    },
+    {
+      "filePath": "server/src/tests/systemExpectedOutcome.service.test.js",
+      "kind": "test",
+      "lines": 19,
+      "sha256": "91ff29486d5c0bcd6a1f9623e9cd9debbd208e620e7299d972e3e60b1b2fed01"
+    },
+    {
+      "filePath": "server/src/tests/systemGenerationContract.service.test.js",
+      "kind": "test",
+      "lines": 18,
+      "sha256": "3c236b827dddfd6b07ba196520426fbe64f5eb9bb9064f7e02d9a5c145f6da96"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementAutoApply.test.js",
+      "kind": "test",
+      "lines": 270,
+      "sha256": "6d4ab4a17ffe4a9971fa65b50612647cf4d8b75e71b75b2183dd1f694b293678"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementCandidates.test.js",
+      "kind": "test",
+      "lines": 22,
+      "sha256": "4ca8f12f57366099c4d9bb138d118d01d7e8cf04aa2c05f1202057d128b01da7"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementFailure.test.js",
+      "kind": "test",
+      "lines": 14,
+      "sha256": "42798b2e4030ff0845f5f00cab53b06f24f4eb30e40d2461d7a473593ee1b766"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementFeedback.test.js",
+      "kind": "test",
+      "lines": 25,
+      "sha256": "15e86d1e791efc5503639da7991096ebab5494d704425de2a2e6a667ba036ea9"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementPolicy.test.js",
+      "kind": "test",
+      "lines": 54,
+      "sha256": "df370a02c9498e47091cef41cd3f74f9fd051002de5b83084b2960d95925f29e"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementProgress.test.js",
+      "kind": "test",
+      "lines": 46,
+      "sha256": "57c9d90eec4dcf2206413f29b97185f0703b222e7cfdd72a63c56047051c386f"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementQuality.test.js",
+      "kind": "test",
+      "lines": 60,
+      "sha256": "b200ecc55664bebdaa32a50281cbf820437b8ec68f320b8e49c299f0704e9508"
+    },
+    {
+      "filePath": "server/src/tests/systemImprovementTargets.test.js",
+      "kind": "test",
+      "lines": 27,
+      "sha256": "9bd4567ddcb2236fa20bfa69be04734c93e6f2376322d0f340a04a6eafc16611"
+    },
+    {
+      "filePath": "server/src/tests/systemLiveEvent.service.test.js",
+      "kind": "test",
+      "lines": 20,
+      "sha256": "efa37f7f9d5269c1abcfbc37b969cedfc4d0dfdb65210f49f6c4b7b8c72356f2"
+    },
+    {
+      "filePath": "server/src/tests/systemLiveReporter.test.js",
+      "kind": "test",
+      "lines": 29,
+      "sha256": "2979d122143624121dfe345daa9bb056a800dc960d29859698f4bc5349f9ac60"
+    },
+    {
+      "filePath": "server/src/tests/systemOperationLease.test.js",
+      "kind": "test",
+      "lines": 16,
+      "sha256": "536e053f8ad7e728c611e4cfd65d86d22ca6092ae04928e1d389c2dd66fc7019"
+    },
+    {
+      "filePath": "server/src/tests/systemProposalReview.service.test.js",
+      "kind": "test",
+      "lines": 27,
+      "sha256": "caa170a02fbb2a87152befd34b840702e3bee81e2ed7fff0b50c7a404e9077ab"
+    },
+    {
+      "filePath": "server/src/tests/systemReportProjection.service.test.js",
+      "kind": "test",
+      "lines": 30,
+      "sha256": "8746f4f35dfa4ed19cdc13eaa62941dacc493941db402dc1221a0d1abe73bf5b"
+    },
+    {
+      "filePath": "server/src/tests/systemRunArtifact.service.test.js",
+      "kind": "test",
+      "lines": 24,
+      "sha256": "0c9489c49a1ac69771810ea5d16a22f52c16eefabef68448306099582f2687ad"
+    },
+    {
+      "filePath": "server/src/tests/systemRuntimeEnvironment.test.js",
+      "kind": "test",
+      "lines": 39,
+      "sha256": "b0b4778bbb721f0f4552fba0f566799e0c9c2fcfca5c2c3746a10dcdf0bd4a4f"
+    },
+    {
+      "filePath": "server/src/tests/systemRuntimePorts.test.js",
+      "kind": "test",
+      "lines": 12,
+      "sha256": "226c128584c7438c5cc2b3fbc85a0f1389a1f3cdfa9a91781d29af24f219ee5e"
+    },
+    {
+      "filePath": "server/src/tests/systemRuntimeResources.test.js",
+      "kind": "test",
+      "lines": 108,
+      "sha256": "e34eae1a29f85a5a6b033d30ab5fca6b11a9c5439ccf6d7c234c8ca9425f8571"
+    },
+    {
+      "filePath": "server/src/tests/systemScenarioCatalog.service.test.js",
+      "kind": "test",
+      "lines": 108,
+      "sha256": "a77f4879d0a89c029d80091dcb21ef59b7a589933d43b01e1d7985f643e8d853"
+    },
+    {
+      "filePath": "server/src/tests/systemScenarioVerdict.service.test.js",
+      "kind": "test",
+      "lines": 36,
+      "sha256": "7174beb5e154a6354b937440f955ed2793d2c7bb0e4166679833dc3aeae08323"
+    },
+    {
+      "filePath": "server/src/tests/systemScreenshotPath.test.js",
+      "kind": "test",
+      "lines": 30,
+      "sha256": "946ba69a70f247e3627949a70b548cc2916e7da2eda462743172420359511c69"
+    },
+    {
+      "filePath": "server/src/tests/systemSetupPreflight.service.test.js",
+      "kind": "test",
+      "lines": 140,
+      "sha256": "de2edf14b194c9445f6259ee3876d346e8173b8a2ec19f516f3b18d881bb0b58"
+    },
+    {
+      "filePath": "server/src/tests/systemSuiteManifest.service.test.js",
+      "kind": "test",
+      "lines": 30,
+      "sha256": "897a0e88db1345917e261854e5bc12c8e88db5eae8e7fd499eb335d0ecb0a573"
+    },
+    {
+      "filePath": "server/src/tests/systemTestAnalysisJob.service.test.js",
+      "kind": "test",
+      "lines": 161,
+      "sha256": "b94d26d49c80226148c2796966e84725fb094166d58cceb2402c16cf0a75197d"
+    },
+    {
+      "filePath": "server/src/tests/systemTestComprehensiveServices.test.js",
+      "kind": "test",
+      "lines": 342,
+      "sha256": "8768dd301a9a843d79ecbeeee310869097c53854691994bf7b010a0f51672292"
+    },
+    {
+      "filePath": "server/src/tests/systemTestDetection.service.test.js",
+      "kind": "test",
+      "lines": 108,
+      "sha256": "5054072ba79c0c761c810c33fd45501501a6bd2bc29f464c98af1f905814456e"
+    },
+    {
+      "filePath": "server/src/tests/systemTestE2EFlows.test.js",
+      "kind": "test",
+      "lines": 254,
+      "sha256": "0315bec1d5be7acf1b7d9317e70cfaf24a43bffe87df952110161a782dcab5a9"
+    },
+    {
+      "filePath": "server/src/tests/systemTestEditorAndBooster.test.js",
+      "kind": "test",
+      "lines": 516,
+      "sha256": "58a4d30a7848acfeda0640d25004aef339e70b12a0d1b5487caa2be7eec608cb"
+    },
+    {
+      "filePath": "server/src/tests/systemTestEndpoints.test.js",
+      "kind": "test",
+      "lines": 801,
+      "sha256": "f209a2f6ef2ab35899552cd0c38b2ad4ae0321ccdfb14dd89784804b3986e55b"
+    },
+    {
+      "filePath": "server/src/tests/systemTestEvidence.service.test.js",
+      "kind": "test",
+      "lines": 125,
+      "sha256": "4f920c5e8b4e67178c7f65f186b3e4f6ba40f9e4a510fb6443feda6ea58b7181"
+    },
+    {
+      "filePath": "server/src/tests/systemTestExecutionDetails.service.test.js",
+      "kind": "test",
+      "lines": 60,
+      "sha256": "d69cd872d4ee8478baa6b08df9c6a279f93534fa6737c92ba033a7db54a5fea7"
+    },
+    {
+      "filePath": "server/src/tests/systemTestFailure.test.js",
+      "kind": "test",
+      "lines": 13,
+      "sha256": "fa56a26ca4500b8d1a9d76cd05153782c940f876fb5022888f343ab6e2c010da"
+    },
+    {
+      "filePath": "server/src/tests/systemTestFrameworkDetection.service.test.js",
+      "kind": "test",
+      "lines": 186,
+      "sha256": "33f04f091fb3e12f3ca0453d7928f8d191b9cf01335ad5b063f993d68033f9ea"
+    },
+    {
+      "filePath": "server/src/tests/systemTestFrontendTarget.test.js",
+      "kind": "test",
+      "lines": 46,
+      "sha256": "5580fe056d8c7b843237a95df82f6cab4a6c672ae9db741a3eb85edcf6407353"
+    },
+    {
+      "filePath": "server/src/tests/systemTestMode.test.js",
+      "kind": "test",
+      "lines": 15,
+      "sha256": "6de6fdd3aa5647017d397ffc2071849e4b9f4f86729a98edf9704997ef671cea"
+    },
+    {
+      "filePath": "server/src/tests/systemTestNavigation.test.js",
+      "kind": "test",
+      "lines": 15,
+      "sha256": "fed1286d2ffb67fa5286e884882557a649934e24aa007a5bcd1aa99b0ed50da7"
+    },
+    {
+      "filePath": "server/src/tests/systemTestPdf.service.test.js",
+      "kind": "test",
+      "lines": 16,
+      "sha256": "492d2b07e41109ea8e583dfbeab301cf43aad0eb289aae9499e61eeab5a62f26"
+    },
+    {
+      "filePath": "server/src/tests/systemTestPromptBudget.test.js",
+      "kind": "test",
+      "lines": 30,
+      "sha256": "ec5d6f16df466d2f9f85f91548eb864e4b6ec9fa20c8b9a6fddf429b62e2554c"
+    },
+    {
+      "filePath": "server/src/tests/systemTestProposalApply.test.js",
+      "kind": "test",
+      "lines": 73,
+      "sha256": "4f05cb5174545221ca6116d9cd7a9c14381dcfefcfb9919e044b1500b975afc7"
+    },
+    {
+      "filePath": "server/src/tests/systemTestQuality.service.test.js",
+      "kind": "test",
+      "lines": 37,
+      "sha256": "5ade695a74c25af052d15593a9f5f7a8720ab6aaacd514fcbf192706ebc3349d"
+    },
+    {
+      "filePath": "server/src/tests/systemTestResultParser.service.test.js",
+      "kind": "test",
+      "lines": 200,
+      "sha256": "efb1c3ed438322b055b244210796be3c3e20d3ab70d1eb14fdbe248634f6f5bb"
+    },
+    {
+      "filePath": "server/src/tests/systemTestRunner.service.test.js",
+      "kind": "test",
+      "lines": 168,
+      "sha256": "89d736bdc109ac1a2d9fac14e024b4226bcc7b8f2a479e25de529adf31e26174"
+    },
+    {
+      "filePath": "server/src/tests/systemTestStepPlan.service.test.js",
+      "kind": "test",
+      "lines": 27,
+      "sha256": "3f4fc6a49d42d0646340bed8171ab6f37dd68893d751ace6f4dd34136267396a"
+    },
+    {
+      "filePath": "server/src/tests/systemTestSummary.route.test.js",
+      "kind": "test",
+      "lines": 251,
+      "sha256": "ed89b3fe6f7b9138e8ff537ddd0c9948afa44e67c23509267c26bf5ea8656526"
+    },
+    {
+      "filePath": "server/src/tests/systemWorkflowDatabase.integration.test.js",
+      "kind": "test",
+      "lines": 74,
+      "sha256": "a33764802cf31ece9bd1ff2c1794c1f1afe59fc2a522bc48ce74344f7d0619fc"
+    },
+    {
+      "filePath": "server/src/tests/systemWorkflowEndpoints.test.js",
+      "kind": "test",
+      "lines": 56,
+      "sha256": "90cca2cea7826e217da7045ec8b7a8865618f5a0feb0b53a061b19adb385b223"
+    },
+    {
+      "filePath": "server/src/tests/systemWorkflowRun.integration.test.js",
+      "kind": "test",
+      "lines": 79,
+      "sha256": "63939393c37753bba05ff59cf60f9394b4049463142c4ed09c90ea0291d6ab5a"
+    },
+    {
+      "filePath": "server/src/tests/verifiedSystemGeneration.test.js",
+      "kind": "test",
+      "lines": 84,
+      "sha256": "23e58e7d87b52ce6524efeeab297ca0707ee5d136bcf690f89ebbca4776507d9"
+    },
+    {
+      "filePath": "server/src/utils/apiFileDetector.js",
+      "kind": "dependency",
+      "lines": 18,
+      "sha256": "8f111e1dd78826f65248bc0250fd7498090b1c6197b9e8cb6538090e3878a6d7"
+    },
+    {
+      "filePath": "server/src/utils/autStartupCommand.js",
+      "kind": "entry",
+      "lines": 11,
+      "sha256": "6b5995f0a9c2eae60a24c60d45e5a647057b4805ed1a169c81e2c271108565e1"
+    },
+    {
+      "filePath": "server/src/utils/businessLogicFileDetector.js",
+      "kind": "dependency",
+      "lines": 176,
+      "sha256": "14bbec8e15a2777512c829b139ce7d726e55caeb5979061379bb3e5a26b2bb1b"
+    },
+    {
+      "filePath": "server/src/utils/collaborationDatabase.js",
+      "kind": "dependency",
+      "lines": 15,
+      "sha256": "ced4e2d59c843f5cd1ea497bd44ea9c54098f4f7a495d43d6c38b30d570063ae"
+    },
+    {
+      "filePath": "server/src/utils/crypto.js",
+      "kind": "dependency",
+      "lines": 62,
+      "sha256": "f9e7f3c7c63a5830b8e0457d0ebbf3b2bbbb436db098ed54ee3848204e68919e"
+    },
+    {
+      "filePath": "server/src/utils/cypressDetector.js",
+      "kind": "dependency",
+      "lines": 117,
+      "sha256": "9117585db5508de6db5c7bbf000a05fc1c79fa36fd585f3b50d508bbb7665628"
+    },
+    {
+      "filePath": "server/src/utils/eventDispatcher.js",
+      "kind": "dependency",
+      "lines": 9,
+      "sha256": "1a78e1f2ac69257aacd76476ca3952c8b7764d6dadec9a640ec5f443d47201ec"
+    },
+    {
+      "filePath": "server/src/utils/geminiQuota.js",
+      "kind": "dependency",
+      "lines": 24,
+      "sha256": "57618857f97a5bf7c6a525bd58bfca3e1f37e2be296610b258045cc6b5082ad5"
+    },
+    {
+      "filePath": "server/src/utils/isolatedProcessEnvironment.js",
+      "kind": "dependency",
+      "lines": 10,
+      "sha256": "31f54a3a7de7903c18b26de8868a2e720c71c7d7d991ee2032b24047c41f9ef6"
+    },
+    {
+      "filePath": "server/src/utils/languageDetector.js",
+      "kind": "dependency",
+      "lines": 310,
+      "sha256": "61432ad2cebf29345c5493785e09e31a9c101049046d2c1326013aad45b5fdbc"
+    },
+    {
+      "filePath": "server/src/utils/pathSanitizer.js",
+      "kind": "dependency",
+      "lines": 138,
+      "sha256": "17206bb62766072aeae2de48e34fceeddcf273024e3cb6a5b669e5cc0c188a20"
+    },
+    {
+      "filePath": "server/src/utils/playwrightDetector.js",
+      "kind": "dependency",
+      "lines": 89,
+      "sha256": "b625d20f3638c16bbf3bea04b9252f60bbcbfc80333e27b9fdd86b111bc60e24"
+    },
+    {
+      "filePath": "server/src/utils/projectOperationIdentity.js",
+      "kind": "entry",
+      "lines": 23,
+      "sha256": "36ae69daed603b61ac37ee63fe1fc99c57c917a64bd0cd1dc92ffe48208d7185"
+    },
+    {
+      "filePath": "server/src/utils/projectPrismaCli.js",
+      "kind": "dependency",
+      "lines": 19,
+      "sha256": "e8bf812da2c60c2e76ad97b054b42b42e254220c6e176b77003e31ea1078ece3"
+    },
+    {
+      "filePath": "server/src/utils/projectRootResolver.js",
+      "kind": "dependency",
+      "lines": 256,
+      "sha256": "2b7b5a0e9159ba86c01f52527921cb6e3e8aa11486946208171733211c3ff0df"
+    },
+    {
+      "filePath": "server/src/utils/projectStructureId.util.js",
+      "kind": "dependency",
+      "lines": 14,
+      "sha256": "c38145de116250244c8ee2a3f2fd74b3e19d133dce5f125459cd217e1eb94a4a"
+    },
+    {
+      "filePath": "server/src/utils/projectWorkspace.js",
+      "kind": "entry",
+      "lines": 23,
+      "sha256": "5ee10a599f8ff76a103263a724ffc0bbd741351d2039329b84e730a960cb22f5"
+    },
+    {
+      "filePath": "server/src/utils/queueWorkerConfig.js",
+      "kind": "entry",
+      "lines": 9,
+      "sha256": "35738c1725747c07fca1a1d07c209ee7b68991b2459c3673595fdc64e942c03c"
+    },
+    {
+      "filePath": "server/src/utils/selectedAiModel.js",
+      "kind": "dependency",
+      "lines": 8,
+      "sha256": "7df05543d2738e2de8886c94117e83e20fa177764183ccffb45fa4615d1087a6"
+    },
+    {
+      "filePath": "server/src/utils/serviceError.js",
+      "kind": "dependency",
+      "lines": 10,
+      "sha256": "27c00f3f741074b8b1c5e98f2e497f01514ef8ab812f5ee153d82719dbe7c1f7"
+    },
+    {
+      "filePath": "server/src/utils/snapshotWorkspace.js",
+      "kind": "dependency",
+      "lines": 104,
+      "sha256": "557ec93b96e89c56ace4593d400eb7fa978aa99c579d24042ef56645d5ff1312"
+    },
+    {
+      "filePath": "server/src/utils/systemTestFailure.js",
+      "kind": "entry",
+      "lines": 19,
+      "sha256": "af7d870f528762376e094d9a6a23fc3513d34c50fb3a4ee699b19cc5822d8745"
+    },
+    {
+      "filePath": "server/src/utils/systemTestNavigation.js",
+      "kind": "entry",
+      "lines": 25,
+      "sha256": "32fbb2942b5b52322a1a033ed53db3381ef6f9a837c95e804e9376bf00cf520e"
+    },
+    {
+      "filePath": "server/src/utils/testFileParser.js",
+      "kind": "dependency",
+      "lines": 211,
+      "sha256": "562bbeb54866bcf5da9f646d8eb95c116e2c2315b67ef030b8e6536f390cdd1d"
+    },
+    {
+      "filePath": "server/src/utils/testingFrameworkDetector.js",
+      "kind": "dependency",
+      "lines": 250,
+      "sha256": "7cca4fb08640e2bfa74dcff3c6fe2a0fc5c76015438c1cbf39befece709b96c3"
+    },
+    {
+      "filePath": "server/src/validators/aiContext.validation.js",
+      "kind": "dependency",
+      "lines": 22,
+      "sha256": "18019d9e2d9d86e70c64353968dba23faa575b049cdf3b191f02d15f52d9d6ed"
+    },
+    {
+      "filePath": "server/src/validators/aiTestCode.validator.js",
+      "kind": "dependency",
+      "lines": 528,
+      "sha256": "f1872d025cee4e18a7ad3dda506a362abf008439b2770f88b693705b4904c800"
+    },
+    {
+      "filePath": "server/src/validators/systemAssessment.validator.js",
+      "kind": "entry",
+      "lines": 30,
+      "sha256": "e9dcf75aa9465ba4c073b639afac0ae5e237a8acd67d1478aa1a9287a1b6dba6"
+    },
+    {
+      "filePath": "server/src/validators/systemSuiteVersion.validator.js",
+      "kind": "entry",
+      "lines": 5,
+      "sha256": "d78a170dc94e58ea7a5d2f28284d998dc6bd7b2f40c1e208dde3d29ef44cdce2"
+    },
+    {
+      "filePath": "server/src/validators/systemTestResultQuery.validator.js",
+      "kind": "entry",
+      "lines": 15,
+      "sha256": "74916c5b3df4fc01cb50c7dc25ea47bb0bfb6a04f22d039cec8c6a1d959af704"
+    },
+    {
+      "filePath": "shared/aiModels.js",
+      "kind": "dependency",
+      "lines": 8,
+      "sha256": "cca54d45aa393013258348e35002bfefb6a34b370699a642df297ce6bfdff1d9"
+    },
+    {
+      "filePath": "shared/editorBatchQueue.js",
+      "kind": "dependency",
+      "lines": 20,
+      "sha256": "ce6f84e7b0b767e6037c7ca61abeda7581c1a5dfacb403cac3c8275212d7f951"
+    },
+    {
+      "filePath": "shared/editorProtocol.js",
+      "kind": "dependency",
+      "lines": 11,
+      "sha256": "a63204beb8681dea1d8f8eeb178b2ef548473e7c9e5e082ef2f6485bf3ec8000"
+    },
+    {
+      "filePath": "shared/projectAccess.js",
+      "kind": "entry",
+      "lines": 18,
+      "sha256": "332fc7227c061d2fa55696d3cf35fdf4fa50990a64150d9aa325833f4fd3b2d1"
+    },
+    {
+      "filePath": "shared/projectRoles.js",
+      "kind": "dependency",
+      "lines": 5,
+      "sha256": "506de6a4b46619e59469ffcc64928fd6e352e00d7579d111391b4b95cd35418f"
+    },
+    {
+      "filePath": "shared/systemExpectedOutcome.js",
+      "kind": "entry",
+      "lines": 2,
+      "sha256": "a410d7b3d7441aa7fcf03925aad89686fadfbf4b92d7119224c25de6db9d377c"
+    },
+    {
+      "filePath": "shared/systemImprovement.js",
+      "kind": "entry",
+      "lines": 25,
+      "sha256": "36cc67495cd05270dbe17cc6e928d4aaf7ef05efa152e2e2844d307699f40da7"
+    }
+  ]
+}

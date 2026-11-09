@@ -49,6 +49,8 @@ import {
     getSimulationTrace,
     checkUnitTestEnvironment,
     saveUnitTestEnvironment,
+    getSuitesReadinessController,
+    confirmBatchSystemScenariosController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -57,6 +59,8 @@ router.use(authMiddleware, enforceProjectEndpointPolicy('coverage'));
 // Unified Quality Overview Dashboard (Single-Project Multi-Layer Aggregation)
 router.get("/:snapshotId/unified-dashboard", authMiddleware, getUnifiedQualityDashboardController);
 router.get("/:snapshotId/unified-dashboard/runs/:runId", authMiddleware, getUnifiedTestRunInspectionController);
+router.get("/:snapshotId/suites-readiness", authMiddleware, getSuitesReadinessController);
+router.post("/:snapshotId/system/scenarios/confirm-batch", authMiddleware, confirmBatchSystemScenariosController);
 
 // GET /api/coverage/:snapshotId/summary — fetch coverage summary result
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);
@@ -108,6 +112,7 @@ router.post("/:snapshotId/simulation/trace", authMiddleware, getSimulationTrace)
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);
 
+router.post("/:snapshotId/integration/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType);
 

@@ -85,13 +85,9 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
         }
     };
 
-    // Try resolving as standard local path first
-    const resolved = path.resolve(snapshotRoot);
-
-    // If local resolved path exists AND has package.json or source code, it's valid
-    if (hasCodeOrConfig(resolved)) {
-        return resolved;
-    }
+    // Strip any Windows drive letter prefix (e.g. D:\, C:/) on non-Windows platforms
+    const normalized = snapshotRoot.replace(/\\/g, '/');
+    const strippedDrive = normalized.replace(/^[a-zA-Z]:(?:\/|$)/, '/');
 
     // Determine current server root directory and potential base roots
     const serverRoot = process.cwd();
@@ -103,10 +99,27 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
     } catch (_) {}
     const baseCandidates = [serverRoot, path.resolve(serverRoot, 'server'), fileServerDir];
 
+    // On non-Windows platforms, always work with strippedDrive
+    const cleanRoot = process.platform !== 'win32' ? strippedDrive : snapshotRoot;
+
+    // Try resolving as standard local path if it exists
+    if (process.platform === 'win32' && (cleanRoot.startsWith('/') || cleanRoot.startsWith('\\'))) {
+        // Prevent path.resolve('/app/...') from attaching D:\app on Windows
+        const withoutRoot = strippedDrive.replace(/^\/+/, '');
+        for (const base of baseCandidates) {
+            const cand = path.resolve(base, withoutRoot);
+            if (hasCodeOrConfig(cand) || fs.existsSync(cand)) return cand;
+        }
+    } else {
+        const resolved = path.resolve(cleanRoot);
+        if (hasCodeOrConfig(resolved) || fs.existsSync(resolved)) {
+            return resolved;
+        }
+    }
+
     // Check if snapshotRoot is a Docker container path (/app/storage/... or /app/uploads/...)
-    const normalized = snapshotRoot.replace(/\\/g, '/');
-    if (normalized.startsWith('/app/') || normalized.startsWith('app/')) {
-        const sub = normalized.replace(/^\/?app\//, '');
+    if (strippedDrive.startsWith('/app/') || strippedDrive.startsWith('app/')) {
+        const sub = strippedDrive.replace(/^\/?app\//, '');
         for (const base of baseCandidates) {
             const candidate = path.resolve(base, sub);
             if (hasCodeOrConfig(candidate) || fs.existsSync(candidate)) {
@@ -117,9 +130,9 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
 
     // Check if snapshotRoot contains 'storage' or 'uploads'
     for (const marker of ['storage', 'uploads']) {
-        const idx = normalized.indexOf(marker);
+        const idx = strippedDrive.indexOf(marker);
         if (idx !== -1) {
-            const sub = normalized.slice(idx);
+            const sub = strippedDrive.slice(idx);
             for (const base of baseCandidates) {
                 const candidate = path.resolve(base, sub);
                 if (hasCodeOrConfig(candidate) || fs.existsSync(candidate)) {
@@ -129,7 +142,11 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
         }
     }
 
-    return resolved;
+    if (process.platform !== 'win32') {
+        return path.resolve(strippedDrive);
+    }
+    const clean = strippedDrive.replace(/^\/+/, '');
+    return path.resolve(fileServerDir, clean);
 };
 
 export const resolveProjectRoot = (snapshotRoot) => {

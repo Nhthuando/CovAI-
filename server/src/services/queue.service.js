@@ -1,6 +1,8 @@
+import fs from 'fs';
 import { operationTimeout, operationCanceled } from './systemOperationError.service.js';
 import { acquireSnapshotLease } from './systemAssessmentWorkspace.service.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { queueWorkerConfig } from '../utils/queueWorkerConfig.js';
 import { Queue, Worker, FlowProducer } from 'bullmq';
 import { processChatContextMaintenance } from './chatMemoryMaintenance.service.js';
 import IORedis from 'ioredis';
@@ -31,8 +33,10 @@ import prisma from '../config/prisma.js';
 import { runJobInOperationWorkspace } from './projectOperationWorkspace.service.js';
 import { runPreparedSystemJob } from './projectSystemOperation.service.js';
 import {failInterruptedProjectOperation} from './projectOperationRecovery.service.js';
+import { normalizeDiskPath } from '../utils/snapshotWorkspace.js';
 
 let isRedisConnected = false;
+export const QUEUE_NAME = process.env.QUEUE_NAME || 'covai-jobs-main';
 const durableOperationTypes = new Set(['RUN_TESTS', 'ANALYSIS', 'AI_TESTS', 'AI_SUGGEST',
   'SUPERTEST_COVERAGE', 'INSTALL_DEPS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'BUILD_CFG', 'PERFORMANCE_ANALYSIS', 'CODE_HYGIENE', 'QUALITY_ANALYSIS', 'SECURITY_ANALYSIS', 'COVERAGE', 'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT',
   'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION', 'AI_EVALUATION', 'AI_EVALUATION_PREPARE']);
@@ -76,7 +80,7 @@ if (connection && typeof connection.on === 'function') {
   });
 }
 
-export const jobQueue = new Queue('covai-jobs', { connection });
+export const jobQueue = new Queue(QUEUE_NAME, { connection });
 export const getSystemEvidenceRedis = () => {
   if(connection.status !== 'ready') throw new ServiceError('Redis must be ready for system evidence operations',503);
   return connection;
@@ -274,14 +278,33 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
 };
 
 // Initialize Worker
-const worker = new Worker(
-  'covai-jobs',
+const workerConfig = queueWorkerConfig();
+const worker = workerConfig.enabled ? new Worker(
+  QUEUE_NAME,
   async (job) => {
     const { type, jobId, ...customData } = job.data;
     console.log(`[Queue] ${type} BullMQ job started: bullJobId=${job.id}, prismaJobId=${jobId}`);
 
     try {
       console.log(`[Queue] job.data = ${JSON.stringify({ type, jobId, ...customData })}`);
+
+      // Worker Affinity Guard: If the snapshot files do not exist on this machine, do NOT fail the job.
+      if (jobId && !['SUPERTEST_COVERAGE_PIPELINE', 'COVERAGE_PIPELINE'].includes(type)) {
+        try {
+          const dbJob = await prisma.job.findUnique({
+            where: { id: jobId },
+            select: { snapshotId: true, snapshot: { select: { rootDir: true, storagePath: true } } }
+          });
+          if (dbJob?.snapshot?.rootDir) {
+            const localRoot = normalizeDiskPath(dbJob.snapshot.rootDir);
+            if (!localRoot || !fs.existsSync(localRoot)) {
+              console.warn(`[Queue Worker] Worker does not have local files for snapshot ${dbJob.snapshotId} (rootDir: ${dbJob.snapshot.rootDir}), skipping job ${jobId}`);
+              return;
+            }
+          }
+        } catch (_) {}
+      }
+
       if ((Number(job.attemptsStarted) > 1 || Number(job.stalledCounter) > 0)) {
         const recoveryIds = type === 'SUPERTEST_COVERAGE_PIPELINE'
           ? [customData.installJobId,customData.supertestJobId].filter(Boolean)
@@ -324,16 +347,16 @@ const worker = new Worker(
       throw error; // Let BullMQ know it failed
     }
   },
-  { connection },
-);
+  { connection, concurrency:workerConfig.concurrency },
+) : null;
 
-worker.on('failed', (job, err) => {
+worker?.on('failed', (job, err) => {
   console.error(
     `[Queue] BullMQ reported Job ${job?.data?.jobId} failed with error: ${err.message}`,
   );
 });
 
-worker.on('error', (err) => {
+worker?.on('error', (err) => {
   if (process.env.NODE_ENV !== 'test') {
     console.error('[BullMQ Worker Error]', err.message);
   }
@@ -383,7 +406,7 @@ export const addSupertestCoveragePipeline = async (installJobId, supertestJobId,
 
     const flow = await flowProducer.add({
       name: 'SUPERTEST_COVERAGE_PIPELINE',
-      queueName: 'covai-jobs',
+      queueName: QUEUE_NAME,
       data: {
         type: 'SUPERTEST_COVERAGE_PIPELINE',
         jobId: pipelineJobId,
@@ -397,7 +420,7 @@ export const addSupertestCoveragePipeline = async (installJobId, supertestJobId,
       children: [
         {
           name: 'INSTALL_DEPS',
-          queueName: 'covai-jobs',
+          queueName: QUEUE_NAME,
           data: {
             type: 'INSTALL_DEPS',
             jobId: installJobId,

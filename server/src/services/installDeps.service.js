@@ -13,6 +13,8 @@ import {
 import { saveJobOutput, appendJobOutput } from "./jobOutput.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { ensureWorkspaceNodeModulesLinked } from "./dependencyResolution.service.js";
+import { currentProjectOperation } from "./projectOperationWorkspace.service.js";
 
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -134,6 +136,14 @@ export const processInstallDepsJob = async (jobId) => {
         data: { rootDir: resolvedRootDir },
       })
       .catch(() => {});
+  }
+
+  const operation = currentProjectOperation();
+  const origRootDir = operation?.originalRootDir || job.snapshot.rootDir;
+  if (origRootDir && path.resolve(origRootDir) !== path.resolve(resolvedRootDir)) {
+    try {
+      ensureWorkspaceNodeModulesLinked(origRootDir, resolvedRootDir);
+    } catch (_) {}
   }
 
   try {
@@ -313,6 +323,15 @@ export const processInstallDepsJob = async (jobId) => {
       if (timedOut) return;
 
       if (code === 0) {
+        if (origRootDir && path.resolve(origRootDir) !== path.resolve(resolvedRootDir) && fs.existsSync(origRootDir)) {
+          try {
+            const origNm = path.join(origRootDir, "node_modules");
+            const workNm = path.join(resolvedRootDir, "node_modules");
+            if (!fs.existsSync(origNm) && fs.existsSync(workNm)) {
+              fs.cpSync(workNm, origNm, { recursive: true });
+            }
+          } catch (_) {}
+        }
         await finalize("success", { installExitCode: 0 });
       } else {
         const errSnippet =

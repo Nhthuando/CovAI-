@@ -128,6 +128,13 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
         ...(executionMode ? { executionMode } : {}),
         ...(isRestart ? { restart: true } : {}),
         ...(useHermeticMock ? { useHermeticMock: true } : {}),
+        ...(options?.targetEndpoint ? { targetEndpoint: options.targetEndpoint } : {}),
+        ...(Array.isArray(options?.targetTestNames) && options.targetTestNames.length > 0
+            ? { targetTestNames: options.targetTestNames }
+            : {}),
+        ...(Array.isArray(options?.selectedScenarioIds) && options.selectedScenarioIds.length > 0
+            ? { selectedScenarioIds: options.selectedScenarioIds }
+            : {}),
     };
     const hasBody = Object.keys(bodyPayload).length > 0;
     const url = isRestart
@@ -404,7 +411,29 @@ export async function getUnifiedTestRunInspection(snapshotId, runId) {
     return handleResponse(res);
 }
 
+export async function getSuitesReadiness(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suites-readiness`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
 
+export async function approveIntegrationScenarios(snapshotId, { approvedTestIds = [], approveAll = false } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/approve`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ approvedTestIds, approveAll }),
+    });
+    return handleResponse(res);
+}
+
+export async function confirmBatchSystemScenarios(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/confirm-batch`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
 
 export async function getUnitTestVersions(snapshotId, filePath = null) {
     const query = filePath ? `?filePath=${encodeURIComponent(filePath)}` : "";

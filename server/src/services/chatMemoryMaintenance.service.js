@@ -1,6 +1,7 @@
 import { z } from "zod";
 import prisma from "../config/prisma.js";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { hasCredential } from "../validators/aiContext.validation.js";
 import { memoryFingerprint } from "./projectMemory.service.js";
 import { boundHistory, messageOrder } from "./chatContext.service.js";

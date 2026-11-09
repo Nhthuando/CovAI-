@@ -1,6 +1,6 @@
 export async function prepareEditorRequest(url, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
-  if (method !== 'POST' || !/(?:run|analysis|generate|suggest|optimize|improvements|mutations|calculate|refresh|cfg\/build)/i.test(url) || /chat|ai-context/.test(url)) return options;
+  if (method !== 'POST' || !/(?:run|analysis|generate|suggest|optimize|improvements|mutations|assessments|calculate|refresh|cfg\/build)/i.test(url) || /chat|ai-context/.test(url)) return options;
   const { flushMatchingEditors } = await import('../lib/editor/editorModelRegistry');
   await flushMatchingEditors(url);
   return options;

@@ -1,3 +1,5 @@
+import { confirmationCandidates, confirmExpectedBatch } from './systemScenarioReviewModel.js';
+import { isVagueExpectedOutcome } from '../../../../../shared/systemExpectedOutcome.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
@@ -77,9 +79,7 @@ const parseExpectedOutcome = (expectedJson) => {
   if (!expectedJson || !Array.isArray(expectedJson)) return [];
   const cleanList = expectedJson.map(item => {
     let text = String(item).trim();
-    text = text.replace(/^The asserted value is\s+/i, '');
-    text = text.replace(/^The asserted value has\s+/i, '');
-    text = text.replace(/^The asserted value\s+/i, '');
+    if (isVagueExpectedOutcome(text)) return 'Describe the expected item and state.';
     return text.charAt(0).toUpperCase() + text.slice(1);
   });
   return [...new Set(cleanList)];
@@ -151,6 +151,7 @@ export default function SystemTestWorkflow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [bulkProgress, setBulkProgress] = useState(null);
   const [readiness, setReadiness] = useState({ ready: false, blockers: [] });
   const inFlightRefreshRef = useRef(null);
 
@@ -166,25 +167,12 @@ export default function SystemTestWorkflow({
         ]);
         const rows = nextCatalog.scenarios || [];
         setCatalog(rows);
-        const runnableRows = rows.filter(row => row.filePath);
+        const selectableRows = rows.filter(row => row.filePath);
         setSelectedIds(previous =>
           previous === null
-            ? runnableRows.map(row => row.id)
-            : previous.filter(id => runnableRows.some(row => row.id === id))
+            ? selectableRows.map(row => row.id)
+            : previous.filter(id => selectableRows.some(row => row.id === id))
         );
-
-        // Immediately inform parent so workflowReady is never empty
-        if (runnableRows.length > 0) {
-          const initIds = runnableRows.map(r => r.id);
-          const initFiles = [...new Set(runnableRows.map(r => r.filePath))];
-          onReadyChange?.({
-            ready: true,
-            blockers: [],
-            scenarioIds: initIds,
-            testFiles: initFiles,
-            selectedCount: initIds.length,
-          });
-        }
 
         const groups = nextFeatures.features || [];
         setFeatures(groups);
@@ -195,7 +183,7 @@ export default function SystemTestWorkflow({
     })();
     inFlightRefreshRef.current = task;
     return task;
-  }, [snapshotId, onReadyChange]);
+  }, [snapshotId]);
 
   useEffect(() => {
     let active = true;
@@ -203,12 +191,15 @@ export default function SystemTestWorkflow({
     return () => { active = false; };
   }, [refresh, refreshKey]);
 
-  const runnable = useMemo(() => catalog.filter(row => row.filePath), [catalog]);
-  const selectedRows = useMemo(() => runnable.filter(row => selectedIds?.includes(row.id)), [runnable, selectedIds]);
+  const selectable = useMemo(() => catalog.filter(row => row.filePath), [catalog]);
+  const selectedRows = useMemo(() => selectable.filter(row => selectedIds?.includes(row.id)), [selectable, selectedIds]);
   const selectedKey = selectedRows.map(row => row.id).join(',');
   const catalogKey = catalog.map(row => `${row.id}:${row.reviewState}:${row.testHash}:${row.scenarioHash}`).join('|');
   const testFiles = useMemo(() => [...new Set(selectedRows.map(row => row.filePath))], [selectedRows]);
   const fileKey = testFiles.join(',');
+  const incompatibleSelected = selectedRows.filter(row => row.fullStackCompatible === false).length;
+  const selectionReady = !incompatibleSelected && readiness.ready && readiness.selectionKey === selectedKey && readiness.catalogKey === catalogKey;
+  const incompatibleFiles = [...new Set(catalog.filter(row=>row.filePath && row.fullStackCompatible === false).map(row=>row.filePath))];
 
   useEffect(() => {
     if (!snapshotId) return;
@@ -232,8 +223,8 @@ export default function SystemTestWorkflow({
 
     queueMicrotask(() => {
       onReadyChange?.({
-        ready: true,
-        blockers: [],
+        ready: false,
+        blockers: [{ code: 'CHECKING', message: 'Checking selected scenarios' }],
         scenarioIds: currentScenarioIds,
         testFiles: currentTestFiles,
         selectedCount: currentScenarioIds.length,
@@ -241,11 +232,11 @@ export default function SystemTestWorkflow({
     });
 
     let active = true;
-    const query = new URLSearchParams({ reviewMode: 'scenario', scenarioIds: selectedKey, testFiles: fileKey });
+    const query = new URLSearchParams({ executionMode:'full', reviewMode: 'execution', scenarioIds: selectedKey, testFiles: fileKey });
     systemEvidenceRequest(snapshotId, `readiness?${query}`)
       .then(result => {
         if (active) {
-          setReadiness(result);
+          setReadiness({...result,selectionKey:selectedKey,catalogKey});
           onReadyChange?.({
             ...result,
             scenarioIds: currentScenarioIds,
@@ -265,10 +256,10 @@ export default function SystemTestWorkflow({
   const act = async (work, success, sync = false) => {
     setBusy(true); setError(''); setNotice('');
     try {
-      await work();
+      const result = await work();
       await refresh(sync);
       onChanged?.();
-      if (success) setNotice(success);
+      if (success) setNotice(typeof success === 'function' ? success(result) : success);
     } catch (err) {
       setError(message(err));
     } finally {
@@ -278,16 +269,9 @@ export default function SystemTestWorkflow({
 
   const confirm = row => act(
     () => systemEvidenceRequest(snapshotId, `catalog/${row.id}/confirm-expected`, { method: 'POST', data: { expectedScenarioHash: row.scenarioHash } }),
-    'Expected outcome confirmed.',
-    true
+    'Expected outcome confirmed.'
   );
 
-  const confirmAll = () => act(async () => {
-    const targets = catalog.filter(item => !confirmed(item) && item.expectedJson?.length && item.reviewState !== 'STALE');
-    for (const row of targets) {
-      await systemEvidenceRequest(snapshotId, `catalog/${row.id}/confirm-expected`, { method: 'POST', data: { expectedScenarioHash: row.scenarioHash } });
-    }
-  }, 'All eligible expected outcomes confirmed.', true);
 
   const saveExpected = row => {
     setEditingExpected(null);
@@ -339,7 +323,17 @@ export default function SystemTestWorkflow({
     });
   }, [catalog, filter, module, search]);
 
-  const allSelected = runnable.length > 0 && selectedRows.length === runnable.length;
+  const confirmAll = () => act(async () => {
+    try {
+      const result = await confirmExpectedBatch(visible, row => systemEvidenceRequest(snapshotId, `catalog/${row.id}/confirm-expected`, { method:'POST', data:{expectedScenarioHash:row.scenarioHash} }), setBulkProgress);
+      if (result.failures.length) setError(`${result.failures.length} confirmation(s) failed. ${result.failures[0].title}: ${result.failures[0].message}`);
+      return result;
+    } finally { setBulkProgress(null); }
+  }, result => result.confirmed ? `${result.confirmed} expected outcome(s) confirmed.${result.skipped ? ` ${result.skipped} need a specific Expected outcome first.` : ''}` : '');
+
+  const confirmableCount = confirmationCandidates(visible).length;
+  const pendingVisibleCount = visible.filter(row => !confirmed(row)).length;
+  const allSelected = selectable.length > 0 && selectedRows.length === selectable.length;
 
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs overflow-hidden font-sans">
@@ -368,6 +362,7 @@ export default function SystemTestWorkflow({
         </div>
       )}
 
+      {incompatibleFiles.length > 0 && <div role="status" className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] bg-amber-500/10 p-4 text-xs"><p>{incompatibleFiles.length} test file(s) need Full Stack regeneration. Frontend mocks cannot run against the real backend.</p><button type="button" onClick={onGenerate} className="font-medium underline">Generate Full Stack tests</button></div>}
       {/* Catalog Table Header & Modern Filter Bar */}
       <div className="p-5 border-b border-[var(--color-border)] space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -442,7 +437,7 @@ export default function SystemTestWorkflow({
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
               }`}
             >
-              Verified <span className="ml-1 text-[11px] opacity-70">({verifiedCount})</span>
+              Expected confirmed <span className="ml-1 text-[11px] opacity-70">({verifiedCount})</span>
             </button>
           </div>
 
@@ -486,6 +481,30 @@ export default function SystemTestWorkflow({
         </div>
       </div>
 
+      {error && (
+        <div role="alert" className="border-t border-rose-500/30 bg-rose-500/10 px-5 py-3 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={14} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button type="button" onClick={() => setError('')} className="underline text-[11px] cursor-pointer">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div role="status" className="border-t border-emerald-500/30 bg-emerald-500/10 px-5 py-2.5 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={14} className="shrink-0" />
+            <span>{notice}</span>
+          </div>
+          <button type="button" onClick={() => setNotice('')} className="underline text-[11px] cursor-pointer">
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Selection Action Bar with DIRECT RUN BUTTON */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 bg-[var(--color-surface-secondary)]/50 border-b border-[var(--color-border)] text-xs">
         <div className="flex items-center gap-2">
@@ -494,14 +513,15 @@ export default function SystemTestWorkflow({
               type="checkbox"
               aria-label="Select all scenarios"
               checked={allSelected}
-              onChange={event => setSelectedIds(event.target.checked ? runnable.map(r => r.id) : [])}
+              disabled={busy || !selectable.length}
+              onChange={event => setSelectedIds(event.target.checked ? selectable.map(r => r.id) : [])}
               className="accent-[var(--color-primary)] h-4 w-4 rounded cursor-pointer"
             />
             <span>
-              <strong>{selectedRows.length}</strong> of {runnable.length} selected
+              <strong>{selectedRows.length}</strong> of {selectable.length} selected
             </span>
           </label>
-          {selectedRows.length > 0 && (
+          {selectionReady && (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
               Ready
@@ -510,20 +530,21 @@ export default function SystemTestWorkflow({
         </div>
 
         <div className="flex items-center gap-2">
-          {unconfirmedCount > 0 && (
+          {pendingVisibleCount > 0 && (
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !confirmableCount}
+              title={!confirmableCount ? "Add specific Expected outcomes before confirming." : "Confirm the Expected outcomes currently shown, including stale reviews."}
               onClick={confirmAll}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md border border-amber-400 dark:border-amber-500/40 bg-amber-100/90 dark:bg-amber-500/20 text-amber-900 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-500/30 text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-40"
             >
-              <CheckSquare size={13} className="text-amber-800 dark:text-amber-300" /> Confirm All
+              <CheckSquare size={13} className="text-amber-800 dark:text-amber-300" /> {bulkProgress ? `Confirming ${bulkProgress.current}/${bulkProgress.total}...` : `Confirm All (${confirmableCount})`}
             </button>
           )}
 
           <button
             type="button"
-            disabled={!selectedRows.length || busy}
+            disabled={!selectedRows.length || !selectionReady || busy}
             onClick={() => {
               if (onRunSelected) onRunSelected(selectedRows);
               else onRunScenario?.(null, selectedRows);
@@ -535,6 +556,10 @@ export default function SystemTestWorkflow({
           </button>
         </div>
       </div>
+
+      {incompatibleSelected > 0 && <p role="status" className="border-b border-[var(--color-border)] bg-amber-500/10 px-5 py-3 text-xs text-[var(--color-text)]">{incompatibleSelected} selected scenario(s) need Full Stack updates. You can review them, but Run stays disabled. Use <button type="button" onClick={onGenerate} className="font-medium underline">Generate Full Stack tests</button> to replace mocked tests.</p>}
+
+      {pendingVisibleCount > 0 && !confirmableCount && <p role="status" className="border-b border-[var(--color-border)] px-5 py-3 text-xs text-[var(--color-text-secondary)]">Add a specific Expected outcome before confirming these scenarios.</p>}
 
       {/* Scenarios Table */}
       <div className="overflow-x-auto">
@@ -582,7 +607,7 @@ export default function SystemTestWorkflow({
                   }
                   onExpand={() => expand(row)}
                   onRun={() => onRunScenario?.(row)}
-                  canRun={framework === 'playwright' && Boolean(row.filePath) && confirmed(row) && !busy}
+                  canRun={framework === 'playwright' && Boolean(row.filePath) && row.fullStackCompatible !== false && confirmed(row) && !busy}
                   onConfirm={() => confirm(row)}
                   busy={busy}
                   editingExpected={editingExpected === row.id}
@@ -621,29 +646,7 @@ export default function SystemTestWorkflow({
         </div>
       )}
 
-      {error && (
-        <div role="alert" className="border-t border-rose-500/30 bg-rose-500/10 px-5 py-3 text-xs text-rose-300 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={14} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-          <button type="button" onClick={() => setError('')} className="underline text-[11px] cursor-pointer">
-            Dismiss
-          </button>
-        </div>
-      )}
 
-      {notice && (
-        <div role="status" className="border-t border-emerald-500/30 bg-emerald-500/10 px-5 py-2.5 text-xs text-emerald-300 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={14} className="shrink-0" />
-            <span>{notice}</span>
-          </div>
-          <button type="button" onClick={() => setNotice('')} className="underline text-[11px] cursor-pointer">
-            Dismiss
-          </button>
-        </div>
-      )}
     </section>
   );
 }
@@ -690,7 +693,7 @@ function ModernScenarioRow({
               type="checkbox"
               aria-label={`Select ${cleanTitle}`}
               checked={selected}
-              disabled={!row.filePath}
+              disabled={!row.filePath || busy}
               onChange={event => onSelect(event.target.checked)}
               className="mt-1 accent-[var(--color-primary)] h-4 w-4 rounded cursor-pointer"
             />
@@ -709,6 +712,7 @@ function ModernScenarioRow({
                 >
                   {cleanTitle}
                 </button>
+                {row.fullStackCompatible === false && <span className="text-[10px] font-medium text-amber-700 dark:text-amber-300">Full Stack update required</span>}
               </div>
               {row.filePath && (
                 <div className="mt-1 flex items-center gap-1 text-[11px] text-[var(--color-text-secondary)]/80 font-mono">
@@ -741,7 +745,8 @@ function ModernScenarioRow({
               }}
             />
           ) : (
-            <div
+            <button
+              type="button"
               onClick={onEdit}
               className="group/item flex items-center justify-between gap-2 p-1 rounded-md border border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-surface)]/70 transition-all cursor-pointer"
               title="Click to edit expected outcome"
@@ -753,18 +758,17 @@ function ModernScenarioRow({
                       key={idx}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200/90 dark:bg-zinc-800/60 dark:border-zinc-700/50 dark:text-zinc-200 transition-colors shadow-2xs"
                     >
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 shrink-0" />
-                      <span className="truncate max-w-[260px]">{item}</span>
+                      <span className="whitespace-normal break-words text-left">{item}</span>
                     </span>
                   ))
                 ) : (
                   <span className="text-xs text-[var(--color-text-secondary)]/60 italic">
-                    No assertions defined
+                    Expected outcome needs review
                   </span>
                 )}
               </div>
               <Edit2 size={12} className="text-[var(--color-text-secondary)] opacity-0 group-hover/item:opacity-100 transition-opacity shrink-0" />
-            </div>
+            </button>
           )}
         </td>
 
@@ -773,7 +777,7 @@ function ModernScenarioRow({
           {isVerified ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/25 whitespace-nowrap">
               <CheckCircle2 size={12} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
-              Verified
+              Expected confirmed
             </span>
           ) : (
             <button
@@ -872,7 +876,7 @@ function ScenarioInspectorView({
             <h3 className="text-sm font-bold text-[var(--color-text)]">{cleanTitle}</h3>
             {isVerified ? (
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
-                <CheckCircle2 size={12} /> Verified Journey
+                <CheckCircle2 size={12} /> Expected confirmed
               </span>
             ) : (
               <button
@@ -978,7 +982,7 @@ function ScenarioInspectorView({
               <ShieldCheck size={13} className="text-emerald-500 dark:text-emerald-400" />
               Verification &amp; Assertions
             </span>
-            <span className="text-[10px] font-mono text-[var(--color-text-secondary)]">Verified Checks</span>
+            <span className="text-[10px] font-mono text-[var(--color-text-secondary)]">Supported assertions</span>
           </div>
 
           {/* Expected Outcome Callout */}
@@ -1018,7 +1022,7 @@ function ScenarioInspectorView({
                 ))
               ) : (
                 <div className="p-2.5 rounded bg-slate-50 dark:bg-zinc-950/60 border border-slate-200 dark:border-zinc-800/50 text-xs text-[var(--color-text-secondary)] italic">
-                  Awaited assertions are verified through the spec file directly.
+                  No supported assertion details are available. Inspect the test file before confirming Expected.
                 </div>
               )}
             </div>

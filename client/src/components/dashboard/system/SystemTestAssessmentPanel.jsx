@@ -1,3 +1,5 @@
+import { useProjectAccess } from '../../../hooks/useProjectAccess';
+import SystemRequirementReview from './SystemRequirementReview.jsx';
 import { useEffect, useState, useId } from 'react';
 import {
   Loader2,
@@ -35,6 +37,7 @@ const selectImprovementGaps = gaps => {
 
 export default function SystemTestAssessmentPanel({
   projectId,
+  selectedAssessment,
   snapshotId,
   runner,
   executionMode,
@@ -43,12 +46,14 @@ export default function SystemTestAssessmentPanel({
   onOpenFile,
   onRerun,
 }) {
+  const access = useProjectAccess(projectId);
   const [expanded, setExpanded] = useState(true);
   const contentId = useId();
   const [capabilities, setCapabilities] = useState(null);
   const [assessment, setAssessment] = useState(null);
   const [proposal, setProposal] = useState(null);
   const [scenarios, setScenarios] = useState([]);
+  const [revisions, setRevisions] = useState([]);
   const [fileChoice, setFileChoice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -59,13 +64,15 @@ export default function SystemTestAssessmentPanel({
 
     Promise.all([
       systemEvidenceRequest(snapshotId, 'capabilities').catch(() => null),
-      systemEvidenceRequest(snapshotId, 'assessments')
+      (selectedAssessment ? Promise.resolve(selectedAssessment) : systemEvidenceRequest(snapshotId, `assessments?runner=${runner}&executionMode=${executionMode}&status=COMPLETED`))
         .then(latest => latest?.id ? systemEvidenceRequest(snapshotId, `assessments/${latest.id}`) : latest)
         .catch(() => null),
       systemEvidenceRequest(snapshotId, 'proposals').catch(() => null),
-      systemEvidenceRequest(snapshotId, 'scenarios').catch(() => []),
-    ]).then(([capability, latest, recovered, scns]) => {
+      systemEvidenceRequest(snapshotId, 'catalog').catch(() => ({scenarios:[]})),
+      systemEvidenceRequest(snapshotId, 'requirements').catch(() => []),
+    ]).then(([capability, latest, recovered, scns, requirementRevisions]) => {
       if (active) {
+        setRevisions(requirementRevisions);
         setCapabilities(capability);
         setAssessment(latest);
         setProposal(recovered);
@@ -77,7 +84,7 @@ export default function SystemTestAssessmentPanel({
     });
 
     return () => { active = false; };
-  }, [snapshotId, refreshKey]);
+  }, [snapshotId, refreshKey, selectedAssessment, runner, executionMode]);
 
   useEffect(() => {
     if (!assessment?.id || !['QUEUED', 'RUNNING'].includes(assessment.status)) return;
@@ -118,7 +125,7 @@ export default function SystemTestAssessmentPanel({
   }, [snapshotId, proposal?.id, proposal?.state, proposal?.jobStatus, proposal?.verificationJson?.autoApply]);
 
   const report = assessment?.reportJson?.schemaVersion ? assessment.reportJson : null;
-  const current = report?.runner === runner && report?.executionMode === executionMode ? report : (report || null);
+  const current = report?.runner === runner && report?.executionMode === executionMode ? report : null;
   const files = current?.staticAnalysis || [];
   const filePath = files.some(file => file.filePath === fileChoice) ? fileChoice : files[0]?.filePath;
   const running = ['QUEUED', 'RUNNING'].includes(assessment?.status);
@@ -210,6 +217,7 @@ export default function SystemTestAssessmentPanel({
       </div>
 
       <div id={contentId} hidden={!expanded} className="p-5 sm:p-6 space-y-6">
+        <SystemRequirementReview canApprove={access.can('evidence.approve')} snapshotId={snapshotId} filePath={filePath} revisions={revisions} onError={setError} onRefresh={async () => {setRevisions(await systemEvidenceRequest(snapshotId,'requirements'));onChanged?.();}} />
         {!!assessment?.reportJson?.input?.excludedTests?.length && (
           <details className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)]/50 p-3 rounded-lg border border-[var(--color-border)]">
             <summary className="cursor-pointer font-medium hover:text-[var(--color-text)]">
@@ -266,7 +274,7 @@ export default function SystemTestAssessmentPanel({
                       System Tests Not Executed Yet
                     </h4>
                     <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed mt-0.5">
-                      Execute the test suite to verify end-to-end user workflows and calculate 4-dimensional system coverage (requirements, user journeys, client routes, and API endpoints).
+                      Execute the test suite to verify end-to-end user workflows and capture scenario outcomes and source coverage where supported.
                     </p>
                   </div>
                 </div>
@@ -284,7 +292,7 @@ export default function SystemTestAssessmentPanel({
 
             {/* 1. System Test Coverage Dimensions Table (Replacing Line/Branch Charts) */}
             <SystemTestDimensionsTable
-              assessment={current}
+              assessment={current ? {...current, presentation: assessment?.presentation} : null}
               scenarios={scenarios}
               observedApiCalls={observedApiCalls}
             />
@@ -300,7 +308,7 @@ export default function SystemTestAssessmentPanel({
                     {hasExecuted ? `${current?.stability?.passedRuns || 0}/${current?.stability?.runs || 1}` : '-/-'}
                   </p>
                   <span className="text-[10px] text-[var(--color-text-muted)]">
-                    {hasExecuted ? 'Deterministic & zero flakiness' : 'Pending live execution'}
+                    {hasExecuted ? 'Observed results across independent runs' : 'Pending live execution'}
                   </span>
                 </div>
                 <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 dark:text-emerald-400">
@@ -316,7 +324,7 @@ export default function SystemTestAssessmentPanel({
                   <p className="text-2xl font-bold font-mono text-[var(--color-text)] tabular-nums">
                     {findings.length}
                   </p>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">Clean assertion binding syntax</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)]">Static findings require review</span>
                 </div>
                 <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-500 dark:text-indigo-400">
                   <CheckCircle2 size={20} />
@@ -330,14 +338,14 @@ export default function SystemTestAssessmentPanel({
                   </p>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold font-mono text-emerald-500 dark:text-emerald-400">
-                      {hasExecuted ? (current?.qualityScore?.status === 'CALCULATED' ? `${current.qualityScore.value}/100` : '95/100') : '-'}
+                      {hasExecuted ? (current?.qualityScore?.status === 'CALCULATED' ? `${current.qualityScore.value}/100` : 'Not calculated') : '-'}
                     </span>
                     <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-300 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/25">
-                      {hasExecuted ? (current?.qualityScore?.status === 'CALCULATED' ? 'AUDITED' : 'VERIFIED') : 'PENDING'}
+                      {hasExecuted ? (current?.qualityScore?.status === 'CALCULATED' ? 'CALCULATED' : 'UNAVAILABLE') : 'PENDING'}
                     </span>
                   </div>
                   <span className="text-[10px] text-[var(--color-text-muted)]">
-                    {hasExecuted ? 'Business criteria satisfied' : 'Awaiting test results'}
+                    {hasExecuted ? 'Reviewed criteria and captured evidence' : 'Awaiting test results'}
                   </span>
                 </div>
                 <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-500 dark:text-purple-400">
@@ -352,6 +360,7 @@ export default function SystemTestAssessmentPanel({
               scenarios={scenarios}
               verdicts={current?.scenarioVerdicts || []}
               runs={current?.runs || []}
+              presentation={assessment?.presentation}
               onRunScenario={onRerun}
               onOpenFile={onOpenFile}
               onEditScenario={active => onOpenFile?.(active.filePath)}
@@ -441,6 +450,7 @@ export default function SystemTestAssessmentPanel({
             snapshotId={snapshotId}
             proposal={proposal}
             gaps={current?.workflowGaps || gaps}
+            onProposalChanged={setProposal}
             onError={setError}
             onRetry={improve}
             onCanceled={() => setProposal(value => ({ ...value, state: 'CANCELED', jobStatus: 'CANCELED' }))}

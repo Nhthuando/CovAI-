@@ -1,6 +1,7 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { generateMultimodalText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { reserveAiQuota, consumeAiQuota, releaseAiQuota } from "./aiQuota.service.js";
 import { assembleChatContext, contextPreview, durableAttachments } from "./chatContext.service.js";
 import { captureProjectProposalBase } from "./projectProposalBase.service.js";

@@ -1,3 +1,4 @@
+import { preserveCandidateArtifacts } from './systemRunArtifact.service.js';
 import { operationAbortReason, operationTimeout, isStaleImprovementError } from './systemOperationError.service.js';
 import { withProjectDependencyCache } from './projectDependencyCache.service.js';
 import fs from 'node:fs';
@@ -28,6 +29,8 @@ import { retainPassedAdditionalTests } from './systemImprovementCandidates.servi
 export const processSystemImprovementJob = (jobId, lease) => withProjectDependencyCache(() => runSystemImprovementJob(jobId, lease));
 
 const runSystemImprovementJob = async (jobId, lease) => {
+    const admittedJob=await getJobById(jobId);
+    if(JSON.parse(admittedJob.payloadJson || '{}').reverifyReview)return (await import('./systemCandidateVerification.service.js')).processReviewedCandidateVerification(jobId,lease);
     await markJobRunning(jobId);
     const job=await getJobById(jobId),input=JSON.parse(job.payloadJson);
     const deadline=Date.now()+limits.timeLimitMs;
@@ -91,7 +94,7 @@ const runSystemImprovementJob = async (jobId, lease) => {
             let candidate,runtimeFeedback;
             await stage(`Round ${round}/${limits.maxRounds}: targeting ${limits.target}% coverage`,start);
             try {
-                const proposal=await optimize({model:input.model,rootDir:workspace.rootDir,filePath:input.filePath,instruction:JSON.stringify({gaps,instruction:input.instruction,executionMode:assessment.reportJson.input.executionMode,targetCoverage:limits.target,currentCoverage:coverageGoal(workingReport),round,maxRounds:limits.maxRounds,previousVerificationFailure:feedback})});
+                const proposal=await optimize({model:input.model,rootDir:workspace.rootDir,filePath:input.filePath,instruction:JSON.stringify({gaps,requirements:revision?.contentJson||null,instruction:input.instruction,executionMode:assessment.reportJson.input.executionMode,targetCoverage:limits.target,currentCoverage:coverageGoal(workingReport),round,maxRounds:limits.maxRounds,previousVerificationFailure:feedback})});
                 if(proposal.promptBudget)await addJobLog(jobId,'INFO',`Round ${round} AI prompt: ${proposal.promptBudget.characters} characters; ${proposal.promptBudget.selectedGaps} focused gaps (not billed tokens).`);
                 candidate=proposal.optimizedCode;
                 preserveTestIntent(workingContent,candidate,input.filePath);
@@ -121,6 +124,12 @@ const runSystemImprovementJob = async (jobId, lease) => {
                     verified=await verifyCandidate(5,2);
                 }
                 const evaluation=evaluateSystemImprovement({baseline:workingReport,candidate:verified});
+                if(evaluation.reasonCode==='NO_COVERAGE_GAIN' && !best && revision && baseline.requirements.criteria.some(criterion=>!criterion.verified)) {
+                    preserveCandidateArtifacts({rootDir:job.snapshot.rootDir,report:verified});
+                    verification={baseline,candidate:verified,...evaluation,state:'EXECUTION_VERIFIED_AWAITING_REVIEW',autoApply:false,quality:batch};
+                    await withOperationPublishGuard(tx=>tx.systemTestProposal.update({where:{jobId},data:{proposedContent:candidate,candidateTestHash:digest(candidate),state:verification.state,verificationJson:serial(verification)}}));
+                    stopReason='REVIEW_REQUIRED';break;
+                }
                 attempts.push({round,state:evaluation.state,reasonCode:evaluation.reasonCode,coverageDelta:evaluation.comparison.coverageDelta});
                 await addJobLog(jobId,'INFO',`Round ${round}/${limits.maxRounds} result: ${evaluation.reasonCode || 'VERIFIED_COVERAGE_GAIN'}`);
                 if(evaluation.accepted) {
@@ -168,6 +177,7 @@ const runSystemImprovementJob = async (jobId, lease) => {
         const current=snapshotIdentity(job.snapshot.rootDir);
         if(current.sourceHash!==identity.sourceHash || current.testHash!==identity.testHash)throw new ServiceError('Snapshot changed during proposal verification',409);
         if(!verification)verification={baseline,accepted:false,state:'NO_MEASURED_IMPROVEMENT',reasonCode:coverageGoal(baseline).reached?'TARGET_ALREADY_REACHED':'NO_COVERAGE_GAIN',autoApply:Boolean(input.autoApply)};
+        if(best)preserveCandidateArtifacts({rootDir:job.snapshot.rootDir,report:best.report});
         if(best)await withOperationPublishGuard(tx=>tx.systemTestProposal.update({where:{jobId},data:{proposedContent:best.content,candidateTestHash:digest(best.content)}}));
         await withOperationPublishGuard(tx=>tx.systemTestProposal.update({where:{jobId},data:{state:verification.state,verificationJson:serial(evidence())}}));
         if(input.autoApply && best) {

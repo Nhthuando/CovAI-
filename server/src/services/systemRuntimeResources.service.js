@@ -91,26 +91,37 @@ export const provisionSystemResources = async ({rootDir,database,services,signal
             const mysql=engine==='mysql';
             const result=await start({kind:engine,port:mysql?3306:5432,image:mysql?'mysql:8.4':'postgres:17',
                 env:mysql?['-e',`MYSQL_ROOT_PASSWORD=${password}`,'-e','MYSQL_DATABASE=covai_test','-e','MYSQL_USER=covai','-e',`MYSQL_PASSWORD=${password}`]:['-e','POSTGRES_DB=covai_test','-e','POSTGRES_USER=covai','-e',`POSTGRES_PASSWORD=${password}`],
+                command:mysql?['--innodb-buffer-pool-size=32M','--performance-schema=OFF','--skip-log-bin','--max-connections=50']:[],
                 probe:name=>mysql?['exec','-e',`MYSQL_PWD=${password}`,name,'mysql','-h127.0.0.1','-ucovai','covai_test','-e','SELECT 1']:['exec',name,'pg_isready','-h','127.0.0.1','-U','covai','-d','covai_test']});
             sqlContainer=result.name;
-            Object.assign(environment,{DATABASE_URL:`${mysql?'mysql':'postgresql'}://covai:${password}@127.0.0.1:${result.port}/covai_test`,DB_HOST:'127.0.0.1',DB_PORT:String(result.port),DB_USER:'covai',DB_PASSWORD:password,DB_NAME:'covai_test',PGHOST:'127.0.0.1',PGPORT:String(result.port),PGUSER:'covai',PGPASSWORD:password,PGDATABASE:'covai_test'});
+            const dbUrl=`${mysql?'mysql':'postgresql'}://covai:${password}@127.0.0.1:${result.port}/covai_test`;
+            const portStr=String(result.port);
+            Object.assign(environment,{
+                DATABASE_URL:dbUrl,DB_URI:dbUrl,DB_URL:dbUrl,DB_CONNECTION_STRING:dbUrl,
+                DB_HOST:'127.0.0.1',DB_PORT:portStr,DB_USER:'covai',DB_USERNAME:'covai',DB_PASSWORD:password,DB_PASS:password,DB_PASSWD:password,DB_NAME:'covai_test',DB_DATABASE:'covai_test',DB_DIALECT:mysql?'mysql':'postgres',DB_CLIENT:mysql?'mysql2':'pg',
+                MYSQL_HOST:'127.0.0.1',MYSQL_PORT:portStr,MYSQL_USER:'covai',MYSQL_USER_NAME:'covai',MYSQL_PASSWORD:password,MYSQL_PASS:password,MYSQL_ROOT_PASSWORD:password,MYSQL_DATABASE:'covai_test',MYSQL_DB:'covai_test',MYSQL_URL:dbUrl,MYSQL_URI:dbUrl,
+                PGHOST:'127.0.0.1',PGPORT:portStr,PGUSER:'covai',PGPASSWORD:password,PGDATABASE:'covai_test',
+                POSTGRES_HOST:'127.0.0.1',POSTGRES_PORT:portStr,POSTGRES_USER:'covai',POSTGRES_PASSWORD:password,POSTGRES_DB:'covai_test',POSTGRES_DATABASE:'covai_test',POSTGRES_URL:dbUrl,POSTGRES_URI:dbUrl,POSTGRESQL_URL:dbUrl,POSTGRESQL_URI:dbUrl,
+                TYPEORM_CONNECTION:mysql?'mysql':'postgres',TYPEORM_HOST:'127.0.0.1',TYPEORM_PORT:portStr,TYPEORM_USERNAME:'covai',TYPEORM_PASSWORD:password,TYPEORM_DATABASE:'covai_test',
+            });
         } else if(engine==='mongodb') {
             const result=await start({kind:'mongodb',port:27017,image:'mongo:7',command:['--replSet','covai_test','--bind_ip_all'],
                 probe:name=>['exec',name,'mongosh','--quiet','--eval','if(!db.adminCommand({ping:1}).ok)quit(1)'],
                 initialize:name=>['exec',name,'mongosh','--quiet','--eval','rs.initiate({_id:"covai_test",members:[{_id:0,host:"127.0.0.1:27017"}]});while(!db.hello().isWritablePrimary){sleep(100)}']});
             const url=`mongodb://127.0.0.1:${result.port}/covai_test?directConnection=true`;
-            Object.assign(environment,{DATABASE_URL:url,MONGO_URL:url,MONGO_URI:url,MONGODB_URI:url,MONGODB_URL:url});
+            Object.assign(environment,{DATABASE_URL:url,DB_URI:url,DB_URL:url,MONGO_URL:url,MONGO_URI:url,MONGODB_URI:url,MONGODB_URL:url,MONGO_CONNECTION_STRING:url,MONGODB_CONNECTION_STRING:url,MONGO_HOST:'127.0.0.1',MONGO_PORT:String(result.port),MONGO_DB:'covai_test',MONGO_DATABASE:'covai_test',MONGODB_DB:'covai_test',MONGODB_DATABASE:'covai_test',DB_NAME:'covai_test',DB_DATABASE:'covai_test'});
         } else if(engine==='sqlite') {
             const directory=path.join(rootDir,'.covai-system-test','database',crypto.randomUUID());fs.mkdirSync(directory,{recursive:true});sqliteDirectory=directory;
             const file=path.join(directory,'covai_test.db').replaceAll('\\','/');
             // Some Windows Prisma engines cannot create a missing SQLite file;
             // provision it explicitly instead of treating that as project ENV.
             fs.closeSync(fs.openSync(file,'wx'));
-            Object.assign(environment,{DATABASE_URL:'file:'+file,SQLITE_DB_PATH:file,DB_FILE:file,DB_PATH:file,SQLITE_PATH:file,SQLITE_FILE:file});
+            Object.assign(environment,{DATABASE_URL:'file:'+file,SQLITE_DB_PATH:file,DB_FILE:file,DB_PATH:file,SQLITE_PATH:file,SQLITE_FILE:file,DATABASE_PATH:file,DATABASE_FILE:file,STORAGE_PATH:file,DB_STORAGE:file,DB_NAME:file,DB_DATABASE:file});
         } else if(engine)throw new ServiceError(`No isolated runtime adapter exists for database engine ${engine}`,422);
         if(services?.redis) {
             const result=await start({kind:'redis',port:6379,image:'redis:7',command:['redis-server','--save','','--appendonly','no'],probe:name=>['exec',name,'redis-cli','ping']});
-            Object.assign(environment,{REDIS_URL:`redis://127.0.0.1:${result.port}`,REDIS_HOST:'127.0.0.1',REDIS_PORT:String(result.port)});
+            const redisUrl=`redis://127.0.0.1:${result.port}`;
+            Object.assign(environment,{REDIS_URL:redisUrl,REDIS_URI:redisUrl,CACHE_URL:redisUrl,REDIS_HOST:'127.0.0.1',REDIS_PORT:String(result.port)});
         }
         return {environment,sqlContainer,engine,cleanup};
     } catch(error){await cleanup().catch(()=>{});throw error;}

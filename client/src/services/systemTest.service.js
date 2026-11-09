@@ -34,7 +34,7 @@ export const getSystemTestFrameworks = async (projectId, snapshotId = null) => {
  */
 export const runSystemTest = async (
   snapshotId,
-  { framework = "playwright", executionMode = "frontend", testFile = null } = {}
+  { framework = "playwright", executionMode = "full", testFile = null } = {}
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -119,7 +119,7 @@ export const getSystemTestEvidence = async (
  */
 export const generateColdStartSystemTests = async (
   snapshotId,
-  { framework = "playwright", routes = ["/"], executionMode = "frontend" } = {}
+  { framework = "playwright", routes = ["/"], executionMode = "full" } = {}
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -172,7 +172,7 @@ export const runSingleSystemTest = async (
   snapshotId,
   filePath,
   framework = "playwright",
-  executionMode = "frontend"
+  executionMode = "full"
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -199,8 +199,8 @@ export const optimizeSystemTest = async (
   return response.data;
 };
 
-export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data } = {}) => {
-  const response = await axios({ url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
+export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data, signal } = {}) => {
+  const response = await axios({ signal, url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
   return response.data.data;
 };
 

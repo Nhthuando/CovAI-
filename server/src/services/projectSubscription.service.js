@@ -17,6 +17,7 @@ export const subscribeToProjectRoom = async (socket, {projectId, db} = {}) => {
             await socket.join(`project:${projectId}`);
             socket.data ||= {};
             socket.data.projectUserId = userId;
+            socket.data.projectAccessCheckedAt = Date.now();
             if (!projectSockets.has(projectId)) projectSockets.set(projectId, new Set());
             projectSockets.get(projectId).add(socket);
             return {ok:true,projectId,role:access.role,accessRevision:access.project.accessRevision};

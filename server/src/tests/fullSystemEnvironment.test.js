@@ -48,3 +48,25 @@ it('defers known database/cache variables to resource preparation and preserves 
     const files=[{path:'index.js',content:'if(!process.env.DATABASE_URL)throw Error();if(!process.env.EXTERNAL_TOKEN)throw Error();'}];
     expect(()=>validateStartupEnvironment({files,env:{},directory:'.',scripts:{start:'node index.js'},managedVariables:managedEnvironmentNames([],config)})).toThrow('EXTERNAL_TOKEN');
 });
+it('checks the script actually selected for unified frontend startup',()=>{
+    const files=[{path:'dev.js',content:'if(!process.env.DEV_PROVIDER_TOKEN)throw Error();'},{path:'prod.js',content:'if(!process.env.PROD_PROVIDER_TOKEN)throw Error();'}];
+    const options={files,env:{DEV_PROVIDER_TOKEN:'sandbox'},directory:'.',scripts:{start:'node prod.js',dev:'node dev.js'}};
+    expect(()=>validateStartupEnvironment({...options,preferStart:false})).not.toThrow();
+    expect(()=>validateStartupEnvironment({...options,preferStart:true})).toThrow('PROD_PROVIDER_TOKEN');
+});
+it('follows startup re-exports so a barrel module cannot hide a mandatory provider credential',()=>{
+    const files=[{path:'index.js',content:"import './config.js';"},{path:'config.js',content:"export * from './provider.js';"},{path:'provider.js',content:"import OpenAI from 'openai';export const ai=new OpenAI();"}];
+    expect(()=>validateStartupEnvironment({files,env:{},directory:'.',scripts:{start:'node index.js'}})).toThrow('OPENAI_API_KEY');
+});
+it('auto-provisions common DB, auth secret, and URL aliases without prompting the user',()=>{
+    const config={database:{engine:'mysql'},services:{redis:true}};
+    const managed=managedEnvironmentNames([],config);
+    expect(managed).toEqual(expect.arrayContaining(['MYSQL_HOST','MYSQL_DATABASE','DB_PASS','DB_USERNAME','POSTGRES_DB','REDIS_URI']));
+    const files=[{path:'index.js',content:'if(!process.env.TOKEN_SECRET)throw Error();if(!process.env.APP_SECRET)throw Error();if(!process.env.MYSQL_HOST)throw Error();console.log(process.env.VITE_BACKEND_URL,process.env.NEXTAUTH_URL);'}];
+    const env=buildAutomaticTestEnvironment({files,backendUrl:'http://127.0.0.1:4501',frontendUrl:'http://127.0.0.1:4174'});
+    expect(env.TOKEN_SECRET).toMatch(/^[a-f0-9]{64}$/);
+    expect(env.APP_SECRET).toMatch(/^[a-f0-9]{64}$/);
+    expect(env.VITE_BACKEND_URL).toBe('http://127.0.0.1:4501');
+    expect(env.NEXTAUTH_URL).toBe('http://127.0.0.1:4174');
+    expect(()=>validateStartupEnvironment({files,env,directory:'.',scripts:{start:'node index.js'},managedVariables:managed})).not.toThrow();
+});

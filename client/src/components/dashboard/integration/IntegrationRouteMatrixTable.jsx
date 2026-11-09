@@ -1,20 +1,15 @@
 import React, { useState, useMemo } from "react";
 import {
   Search,
-  Filter,
   CheckCircle2,
   XCircle,
-  AlertTriangle,
   Play,
   Zap,
-  Plus,
   ChevronDown,
   ChevronRight,
   FileCode,
   Layers,
-  Code2,
   RefreshCw,
-  ExternalLink,
   Network,
 } from "lucide-react";
 
@@ -50,8 +45,8 @@ export function getEndpointModule(path) {
 
 export default function IntegrationRouteMatrixTable({
   endpoints = [],
+  hasExecuted = false,
   onRunEndpoint = () => {},
-  onGenerateThisEndpoint = () => {},
   onOpenFile = () => {},
   onViewScenarioCode = () => {},
   onRetryScenario = () => {},
@@ -64,6 +59,7 @@ export default function IntegrationRouteMatrixTable({
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [moduleFilter, setModuleFilter] = useState("ALL");
   const [expandedEndpoints, setExpandedEndpoints] = useState({});
+  const [runningEpKey, setRunningEpKey] = useState(null);
 
   const toggleEndpointExpand = (key) => {
     setExpandedEndpoints((prev) => ({
@@ -93,26 +89,48 @@ export default function IntegrationRouteMatrixTable({
     return Array.from(set).sort();
   }, [endpoints]);
 
-  // Compute endpoint statuses and filter
+  // Compute endpoint statuses strictly from actual execution results
   const processedEndpoints = useMemo(() => {
     return endpoints.map((ep) => {
       const epKey = `${ep.method} ${ep.path}`;
       const scenarios = ep.scenarios || [];
-      const hasScenarios = scenarios.length > 0 || (ep.generatedCount || 0) > 0 || (ep.totalScenarios || 0) > 0 || ep.status === "Not Executed";
-      
-      const scFailed = scenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
-      const scPassed = scenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
+      const hasScenarios =
+        scenarios.length > 0 ||
+        (ep.generatedCount || 0) > 0 ||
+        (ep.totalScenarios || 0) > 0;
 
-      const failedCount = scenarios.length > 0 ? scFailed : (ep.failedCount || 0);
-      const passedCount = scenarios.length > 0 ? scPassed : (ep.passedCount || 0);
+      const scFailed = scenarios.filter(
+        (s) =>
+          s.status === "failed" ||
+          s.rawJestStatus === "failed" ||
+          s.executionVerdict === "FAIL" ||
+          s.executionVerdict === "SCRIPT_ERROR" ||
+          s.executionVerdict === "INFRA_FAILED"
+      ).length;
+      const scPassed = scenarios.filter(
+        (s) =>
+          s.status === "passed" ||
+          s.rawJestStatus === "passed" ||
+          s.executionVerdict === "PASS"
+      ).length;
+
+      const failedCount = scenarios.length > 0 ? scFailed : ep.failedCount || 0;
+      const passedCount = scenarios.length > 0 ? scPassed : ep.passedCount || 0;
 
       let status = "UNCOVERED";
-      if (failedCount > 0 || ep.status === "Partial" || ep.status === "failed") {
+      if (!hasExecuted) {
+        status = "NOT_RUN";
+      } else if (
+        failedCount > 0 ||
+        ep.status === "Partial" ||
+        ep.status === "Script Error" ||
+        ep.status === "failed"
+      ) {
         status = "FAIL";
-      } else if (passedCount > 0 || ep.status === "Covered" || ep.status === "passed") {
+      } else if (passedCount > 0 && failedCount === 0) {
         status = "PASS";
-      } else if (hasScenarios) {
-        status = "READY";
+      } else {
+        status = "UNCOVERED";
       }
 
       const mod = getEndpointModule(ep.path);
@@ -125,24 +143,36 @@ export default function IntegrationRouteMatrixTable({
         computedStatus: status,
         passedCount,
         failedCount,
-        totalScenarios: scenarios.length || ep.generatedCount || ep.totalScenarios || 0,
+        totalScenarios:
+          scenarios.length || ep.generatedCount || ep.totalScenarios || 0,
         module: mod,
       };
     });
-  }, [endpoints]);
+  }, [endpoints, hasExecuted]);
 
   const filteredEndpoints = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return processedEndpoints.filter((ep) => {
-      if (methodFilter !== "ALL" && (ep.method || "").toUpperCase() !== methodFilter.toUpperCase()) return false;
-      if (statusFilter !== "ALL" && ep.computedStatus !== statusFilter) return false;
+      if (
+        methodFilter !== "ALL" &&
+        (ep.method || "").toUpperCase() !== methodFilter.toUpperCase()
+      )
+        return false;
+      if (hasExecuted && statusFilter !== "ALL" && ep.computedStatus !== statusFilter)
+        return false;
       if (moduleFilter !== "ALL" && ep.module !== moduleFilter) return false;
 
       if (q) {
         const matchPath = (ep.path || "").toLowerCase().includes(q);
-        const matchHandler = (ep.controllerName || ep.handler || "").toLowerCase().includes(q);
-        const matchFile = (ep.sourceFile || ep.filePath || "").toLowerCase().includes(q);
-        const matchScenarios = (ep.scenarios || []).some((s) => (s.title || s.testName || "").toLowerCase().includes(q));
+        const matchHandler = (ep.controllerName || ep.handler || "")
+          .toLowerCase()
+          .includes(q);
+        const matchFile = (ep.sourceFile || ep.filePath || "")
+          .toLowerCase()
+          .includes(q);
+        const matchScenarios = (ep.scenarios || []).some((s) =>
+          (s.title || s.testName || "").toLowerCase().includes(q)
+        );
         if (!matchPath && !matchHandler && !matchFile && !matchScenarios) {
           return false;
         }
@@ -150,15 +180,27 @@ export default function IntegrationRouteMatrixTable({
 
       return true;
     });
-  }, [processedEndpoints, searchQuery, methodFilter, statusFilter, moduleFilter]);
+  }, [
+    processedEndpoints,
+    searchQuery,
+    methodFilter,
+    statusFilter,
+    moduleFilter,
+    hasExecuted,
+  ]);
 
   const stats = useMemo(() => {
     const total = processedEndpoints.length;
-    const passed = processedEndpoints.filter((ep) => ep.computedStatus === "PASS").length;
-    const failed = processedEndpoints.filter((ep) => ep.computedStatus === "FAIL").length;
-    const ready = processedEndpoints.filter((ep) => ep.computedStatus === "READY").length;
-    const uncovered = processedEndpoints.filter((ep) => ep.computedStatus === "UNCOVERED").length;
-    return { total, passed, failed, ready, uncovered };
+    const passed = processedEndpoints.filter(
+      (ep) => ep.computedStatus === "PASS"
+    ).length;
+    const failed = processedEndpoints.filter(
+      (ep) => ep.computedStatus === "FAIL"
+    ).length;
+    const uncovered = processedEndpoints.filter(
+      (ep) => ep.computedStatus === "UNCOVERED"
+    ).length;
+    return { total, passed, failed, uncovered };
   }, [processedEndpoints]);
 
   return (
@@ -175,7 +217,9 @@ export default function IntegrationRouteMatrixTable({
                 Endpoint Coverage Matrix
               </h3>
               <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
-                Discovered Express/Node AST routes with execution status and scenario details
+                {hasExecuted
+                  ? "Discovered Express/Node AST routes with verified execution status and scenario counts"
+                  : `Discovered ${stats.total} Express/Node API endpoints in project. Run All Tests to evaluate status and test coverage.`}
               </p>
             </div>
           </div>
@@ -188,20 +232,20 @@ export default function IntegrationRouteMatrixTable({
                 className="font-semibold text-[var(--color-text)] hover:underline cursor-pointer"
                 title="Show all routes"
               >
-                {stats.total} routes
+                {stats.total} {stats.total === 1 ? "endpoint" : "endpoints"}
               </button>
-              <span className="text-[var(--color-border)]">•</span>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("PASS")}
-                className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
-                title="Filter passed routes"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                {stats.passed} pass
-              </button>
-              {stats.failed > 0 && (
+              {hasExecuted && (
                 <>
+                  <span className="text-[var(--color-border)]">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter("PASS")}
+                    className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                    title="Filter passed routes"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    {stats.passed} pass
+                  </button>
                   <span className="text-[var(--color-border)]">•</span>
                   <button
                     type="button"
@@ -212,24 +256,6 @@ export default function IntegrationRouteMatrixTable({
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
                     {stats.failed} fail
                   </button>
-                </>
-              )}
-              {stats.ready > 0 && (
-                <>
-                  <span className="text-[var(--color-border)]">•</span>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter("READY")}
-                    className="text-sky-600 dark:text-sky-400 font-medium flex items-center gap-1 hover:underline cursor-pointer"
-                    title="Filter ready/pending test routes"
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-                    {stats.ready} ready
-                  </button>
-                </>
-              )}
-              {stats.uncovered > 0 && (
-                <>
                   <span className="text-[var(--color-border)]">•</span>
                   <button
                     type="button"
@@ -250,7 +276,10 @@ export default function IntegrationRouteMatrixTable({
         <div className="flex flex-col gap-2.5 pt-0.5">
           <div className="flex flex-wrap items-center justify-between gap-2.5">
             <div className="relative flex-1 min-w-[220px]">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
+              />
               <input
                 type="text"
                 value={searchQuery}
@@ -285,23 +314,25 @@ export default function IntegrationRouteMatrixTable({
                 </select>
               )}
 
-              <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-secondary)] pl-1">
-                <button
-                  type="button"
-                  onClick={expandAll}
-                  className="hover:text-[var(--color-text)] hover:underline cursor-pointer"
-                >
-                  Expand all
-                </button>
-                <span className="text-[var(--color-border)]">|</span>
-                <button
-                  type="button"
-                  onClick={collapseAll}
-                  className="hover:text-[var(--color-text)] hover:underline cursor-pointer"
-                >
-                  Collapse all
-                </button>
-              </div>
+              {hasExecuted && (
+                <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-secondary)] pl-1">
+                  <button
+                    type="button"
+                    onClick={expandAll}
+                    className="hover:text-[var(--color-text)] hover:underline cursor-pointer"
+                  >
+                    Expand all
+                  </button>
+                  <span className="text-[var(--color-border)]">|</span>
+                  <button
+                    type="button"
+                    onClick={collapseAll}
+                    className="hover:text-[var(--color-text)] hover:underline cursor-pointer"
+                  >
+                    Collapse all
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -323,28 +354,29 @@ export default function IntegrationRouteMatrixTable({
               ))}
             </div>
 
-            <div className="flex items-center gap-0.5 bg-[var(--color-surface-secondary)] p-0.5 rounded-[var(--radius-sm)] border border-[var(--color-border)] text-[11px]">
-              {[
-                { id: "ALL", label: "All" },
-                { id: "PASS", label: "Pass" },
-                { id: "FAIL", label: "Fail" },
-                { id: "READY", label: "Ready" },
-                { id: "UNCOVERED", label: "Uncovered" },
-              ].map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => setStatusFilter(s.id)}
-                  className={`px-2.5 py-0.5 rounded transition-colors cursor-pointer ${
-                    statusFilter === s.id
-                      ? "bg-[var(--color-surface)] text-[var(--color-text)] font-semibold shadow-xs border border-[var(--color-border)]"
-                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
-                  }`}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            {hasExecuted && (
+              <div className="flex items-center gap-0.5 bg-[var(--color-surface-secondary)] p-0.5 rounded-[var(--radius-sm)] border border-[var(--color-border)] text-[11px]">
+                {[
+                  { id: "ALL", label: "All" },
+                  { id: "PASS", label: "Pass" },
+                  { id: "FAIL", label: "Fail" },
+                  { id: "UNCOVERED", label: "Uncovered" },
+                ].map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setStatusFilter(s.id)}
+                    className={`px-2.5 py-0.5 rounded transition-colors cursor-pointer ${
+                      statusFilter === s.id
+                        ? "bg-[var(--color-surface)] text-[var(--color-text)] font-semibold shadow-xs border border-[var(--color-border)]"
+                        : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -359,22 +391,28 @@ export default function IntegrationRouteMatrixTable({
               <th className="py-2.5 px-3">Endpoint Path</th>
               <th className="py-2.5 px-3">Handler / Controller</th>
               <th className="py-2.5 px-3">Source File</th>
-              <th className="py-2.5 px-3 text-center w-28">Status</th>
-              <th className="py-2.5 px-3 text-center w-24">Scenarios</th>
-              <th className="py-2.5 px-3 text-right w-36">Actions</th>
+              {hasExecuted && (
+                <>
+                  <th className="py-2.5 px-3 text-center w-32">Status</th>
+                  <th className="py-2.5 px-3 text-center w-24">Scenarios</th>
+                  <th className="py-2.5 px-3 text-right w-24">Rerun</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]/60 font-sans">
             {filteredEndpoints.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-12 text-center text-xs">
+                <td colSpan={hasExecuted ? 8 : 5} className="py-12 text-center text-xs">
                   {endpoints.length === 0 ? (
                     <div className="max-w-md mx-auto space-y-3 py-4">
                       <div className="w-10 h-10 mx-auto rounded-full bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-muted)] shadow-xs">
                         <Network size={20} className="text-[var(--color-primary)]" />
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-[var(--color-text)]">No API Endpoints Detected</p>
+                        <p className="text-sm font-semibold text-[var(--color-text)]">
+                          No API Endpoints Detected
+                        </p>
                         <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto leading-relaxed">
                           No Express/Node routes found in this project. Run an AST scan to detect API endpoints from route files.
                         </p>
@@ -382,7 +420,9 @@ export default function IntegrationRouteMatrixTable({
                     </div>
                   ) : (
                     <div className="max-w-md mx-auto space-y-2 py-4">
-                      <p className="text-xs font-semibold text-[var(--color-text)]">No endpoints match current filters</p>
+                      <p className="text-xs font-semibold text-[var(--color-text)]">
+                        No endpoints match current filters
+                      </p>
                       <p className="text-xs text-[var(--color-text-muted)]">
                         Try clearing search query or resetting method/status filters.
                       </p>
@@ -405,10 +445,10 @@ export default function IntegrationRouteMatrixTable({
             ) : (
               filteredEndpoints.map((ep) => {
                 const isExpanded = Boolean(expandedEndpoints[ep.epKey]);
-                const methodBadgeClass = METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
+                const methodBadgeClass =
+                  METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
                 const isPass = ep.computedStatus === "PASS";
                 const isFail = ep.computedStatus === "FAIL";
-                const isUncovered = ep.computedStatus === "UNCOVERED";
 
                 return (
                   <React.Fragment key={ep.epKey}>
@@ -420,12 +460,18 @@ export default function IntegrationRouteMatrixTable({
                     >
                       {/* Expand Chevron */}
                       <td className="py-2.5 px-3 text-center text-[var(--color-text-muted)]">
-                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        {isExpanded ? (
+                          <ChevronDown size={14} />
+                        ) : (
+                          <ChevronRight size={14} />
+                        )}
                       </td>
 
                       {/* Method Tag */}
                       <td className="py-2.5 px-2">
-                        <span className={`w-14 text-center justify-center inline-flex py-0.5 rounded font-mono text-[10px] font-bold border tracking-wider ${methodBadgeClass}`}>
+                        <span
+                          className={`w-14 text-center justify-center inline-flex py-0.5 rounded font-mono text-[10px] font-bold border tracking-wider ${methodBadgeClass}`}
+                        >
                           {ep.method}
                         </span>
                       </td>
@@ -453,95 +499,139 @@ export default function IntegrationRouteMatrixTable({
                             title={ep.sourceFile || ep.filePath}
                           >
                             <FileCode size={12} />
-                            <span>{(ep.sourceFile || ep.filePath).split(/[\\/]/).slice(-2).join("/")}</span>
+                            <span>
+                              {(ep.sourceFile || ep.filePath)
+                                .split(/[\\/]/)
+                                .slice(-2)
+                                .join("/")}
+                            </span>
                           </button>
                         ) : (
                           "express-router"
                         )}
                       </td>
 
-                      {/* Status Badge */}
-                      <td className="py-2.5 px-3 text-center">
-                        {isPass ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            Passed
-                          </span>
-                        ) : isFail ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                            Failed ({ep.failedCount})
-                          </span>
-                        ) : ep.computedStatus === "READY" ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
-                            <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-                            Ready
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-zinc-600" />
-                            Uncovered
-                          </span>
-                        )}
-                      </td>
+                      {hasExecuted && (
+                        <>
+                          {/* Status Badge */}
+                          <td className="py-2.5 px-3 text-center">
+                            {isPass ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                Passed
+                              </span>
+                            ) : isFail ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                Failed ({ep.failedCount})
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-zinc-600" />
+                                Uncovered
+                              </span>
+                            )}
+                          </td>
 
-                      {/* Scenarios Count */}
-                      <td className="py-2.5 px-3 text-center font-mono text-xs">
-                        <span className={`px-2 py-0.5 rounded text-[11px] ${ep.totalScenarios > 0 ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold border border-[var(--color-border)]" : "text-[var(--color-text-muted)]"}`}>
-                          {ep.totalScenarios} {ep.totalScenarios === 1 ? "test" : "tests"}
-                        </span>
-                      </td>
+                          {/* Scenarios Count */}
+                          <td className="py-2.5 px-3 text-center font-mono text-xs">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] ${
+                                ep.totalScenarios > 0
+                                  ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold border border-[var(--color-border)]"
+                                  : "text-[var(--color-text-muted)]"
+                              }`}
+                            >
+                              {ep.totalScenarios}{" "}
+                              {ep.totalScenarios === 1 ? "test" : "tests"}
+                            </span>
+                          </td>
 
-                      {/* Actions */}
-                      <td className="py-2.5 px-3 text-right">
-                        <div className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => onRunEndpoint(ep)}
-                            disabled={isJobActive || ep.totalScenarios === 0}
-                            title={ep.totalScenarios === 0 ? "No test scenarios available to run" : "Run tests for this endpoint"}
-                            className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed shadow-2xs"
-                          >
-                            <Play size={12} fill="currentColor" />
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => onGenerateThisEndpoint(`${ep.method} ${ep.path}`)}
-                            disabled={isJobActive}
-                            title="Generate AI scenarios for this endpoint"
-                            className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-primary)] border border-[var(--color-border)] transition-colors cursor-pointer disabled:opacity-30 shadow-2xs"
-                          >
-                            <Zap size={12} />
-                          </button>
-                        </div>
-                      </td>
+                          {/* Actions: Rerun Single Endpoint Only (No Generate Button here) */}
+                          <td className="py-2.5 px-3 text-right">
+                            <div
+                              className="inline-flex items-center gap-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setRunningEpKey(ep.epKey);
+                                  try {
+                                    await onRunEndpoint(ep);
+                                  } finally {
+                                    setRunningEpKey(null);
+                                  }
+                                }}
+                                disabled={isJobActive || ep.totalScenarios === 0}
+                                title={
+                                  ep.totalScenarios === 0
+                                    ? "No test scenarios available for this endpoint"
+                                    : `Rerun only tests for ${ep.epKey}`
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed shadow-2xs text-[11px] font-medium"
+                              >
+                                <RefreshCw
+                                  size={11}
+                                  className={
+                                    isJobActive && runningEpKey === ep.epKey
+                                      ? "animate-spin text-[var(--color-primary)]"
+                                      : ""
+                                  }
+                                />
+                                <span>Rerun</span>
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      )}
                     </tr>
 
                     {/* Inline Expanded Detail Row */}
                     {isExpanded && (
                       <tr className="bg-[var(--color-surface-secondary)]/20">
-                        <td colSpan={8} className="p-4 border-b border-[var(--color-border)]">
+                        <td
+                          colSpan={hasExecuted ? 8 : 5}
+                          className="p-4 border-b border-[var(--color-border)]"
+                        >
                           <div className="space-y-3 pl-4 border-l-2 border-[var(--color-primary)]/40">
                             {/* Endpoint Meta Banner */}
                             <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
                               <div className="flex items-center gap-2 font-mono">
-                                <span className="font-bold text-[var(--color-text)]">{ep.method} {ep.path}</span>
-                                <span className="text-[var(--color-text-muted)]">• Module: {ep.module}</span>
+                                <span className="font-bold text-[var(--color-text)]">
+                                  {ep.method} {ep.path}
+                                </span>
+                                <span className="text-[var(--color-text-muted)]">
+                                  • Module: {ep.module}
+                                </span>
                               </div>
                             </div>
 
                             {/* Scenarios Under This Endpoint */}
-                            {ep.scenarios && ep.scenarios.length > 0 ? (
+                            {!hasExecuted ? (
+                              <div className="p-3 rounded border border-dashed border-[var(--color-border)] text-xs text-[var(--color-text-muted)] font-mono">
+                                Run All Tests to evaluate test scenarios and status for this endpoint. To generate or manage test scenarios, open the <strong>Test Scenarios</strong> tab.
+                              </div>
+                            ) : ep.scenarios && ep.scenarios.length > 0 ? (
                               <div className="space-y-2">
                                 <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
                                   Test Scenarios ({ep.scenarios.length}):
                                 </div>
                                 <div className="grid grid-cols-1 gap-2">
                                   {ep.scenarios.map((sc, idx) => {
-                                    const cat = CATEGORY_LABELS[sc.category] || CATEGORY_LABELS.HAPPY_PATH;
-                                    const isScPass = sc.status === "passed" || sc.rawJestStatus === "passed" || sc.executionVerdict === "PASS";
-                                    const isScFail = sc.status === "failed" || sc.rawJestStatus === "failed" || sc.executionVerdict === "FAIL";
+                                    const cat =
+                                      CATEGORY_LABELS[sc.category] ||
+                                      CATEGORY_LABELS.HAPPY_PATH;
+                                    const isScPass =
+                                      sc.status === "passed" ||
+                                      sc.rawJestStatus === "passed" ||
+                                      sc.executionVerdict === "PASS";
+                                    const isScFail =
+                                      sc.status === "failed" ||
+                                      sc.rawJestStatus === "failed" ||
+                                      sc.executionVerdict === "FAIL" ||
+                                      sc.executionVerdict === "SCRIPT_ERROR" ||
+                                      sc.executionVerdict === "INFRA_FAILED";
 
                                     return (
                                       <div
@@ -550,23 +640,42 @@ export default function IntegrationRouteMatrixTable({
                                       >
                                         <div className="flex items-center gap-2.5 min-w-0">
                                           {isScPass ? (
-                                            <CheckCircle2 size={15} className="text-[var(--color-success)] shrink-0" />
+                                            <CheckCircle2
+                                              size={15}
+                                              className="text-[var(--color-success)] shrink-0"
+                                            />
                                           ) : isScFail ? (
-                                            <XCircle size={15} className="text-[var(--color-danger)] shrink-0" />
+                                            <XCircle
+                                              size={15}
+                                              className="text-[var(--color-danger)] shrink-0"
+                                            />
                                           ) : (
                                             <div className="w-3.5 h-3.5 rounded-full border border-[var(--color-border)] shrink-0" />
                                           )}
                                           <div>
                                             <div className="font-semibold text-xs text-[var(--color-text)]">
-                                              {sc.title || sc.testName || `Scenario #${idx + 1}`}
+                                              {sc.title ||
+                                                sc.testName ||
+                                                `Scenario #${idx + 1}`}
                                             </div>
                                             <div className="flex items-center gap-2 mt-0.5 text-[11px] font-mono text-[var(--color-text-secondary)]">
-                                              <span className={`px-1.5 py-0.2 rounded text-[10px] border ${cat.color}`}>
+                                              <span
+                                                className={`px-1.5 py-0.2 rounded text-[10px] border ${cat.color}`}
+                                              >
                                                 {cat.label}
                                               </span>
-                                              <span>Expected HTTP {sc.expectedStatus || 200}</span>
+                                              <span>
+                                                Expected HTTP{" "}
+                                                {sc.expectedStatus || 200}
+                                              </span>
                                               {sc.actualStatus && (
-                                                <span className={isScFail ? "text-[var(--color-danger)] font-bold" : "text-[var(--color-success)]"}>
+                                                <span
+                                                  className={
+                                                    isScFail
+                                                      ? "text-[var(--color-danger)] font-bold"
+                                                      : "text-[var(--color-success)]"
+                                                  }
+                                                >
                                                   Received HTTP {sc.actualStatus}
                                                 </span>
                                               )}
@@ -575,33 +684,28 @@ export default function IntegrationRouteMatrixTable({
                                         </div>
 
                                         <div className="flex items-center gap-1.5 text-xs">
-                                          {isScFail && (
-                                            <button
-                                              type="button"
-                                              onClick={() => onAIFixScenario(ep, sc)}
-                                              title="Fix this scenario with AI"
-                                              className="flex items-center gap-1 px-2 py-1 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/25 hover:bg-rose-500/20 transition-colors cursor-pointer"
-                                            >
-                                              <Zap size={11} />
-                                              <span>Fix with AI</span>
-                                            </button>
-                                          )}
                                           <button
                                             type="button"
                                             onClick={() => onRetryScenario(ep, sc)}
-                                            title="Rerun this scenario"
-                                            className="flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
+                                            disabled={isJobActive}
+                                            title="Rerun only this scenario"
+                                            className="flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer disabled:opacity-40"
                                           >
-                                            <Play size={11} fill="currentColor" />
+                                            <RefreshCw size={11} />
                                             <span>Rerun</span>
                                           </button>
                                           <button
                                             type="button"
-                                            onClick={() => onViewScenarioCode(sc, ep)}
+                                            onClick={() =>
+                                              onViewScenarioCode(sc, ep)
+                                            }
                                             title="View this scenario in source code"
                                             className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer shadow-2xs font-medium"
                                           >
-                                            <FileCode size={12} className="text-[var(--color-primary)]" />
+                                            <FileCode
+                                              size={12}
+                                              className="text-[var(--color-primary)]"
+                                            />
                                             <span>View Code</span>
                                           </button>
                                         </div>
@@ -612,7 +716,7 @@ export default function IntegrationRouteMatrixTable({
                               </div>
                             ) : (
                               <div className="p-4 rounded border border-dashed border-[var(--color-border)] text-center text-xs text-[var(--color-text-muted)] font-mono">
-                                No test scenarios generated for this route yet. Click "Add Scenario" or "Generate AI Tests".
+                                Uncovered route (0 test scenarios). Go to the <strong>Test Scenarios</strong> tab to generate or add test cases for this endpoint.
                               </div>
                             )}
                           </div>

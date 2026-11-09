@@ -13,8 +13,14 @@ describe('System Test verdict and score', () => {
         const report = { requirements, runs, gaps: [], staticAnalysis: [] };
         expect(buildSystemGaps({ report, verdicts: [verdict] })[0].kind).toBe('FAILED_BEHAVIOR');
         const score = scoreSystemSuite({ report, catalog: [scenario], verdicts: [verdict], artifacts: [] });
-        expect(score.counts.requiredArtifacts).toBe(3);
+        expect(score.counts.requiredArtifacts).toBe(4);
         expect(score.components.evidence).toBe(0);
+    });
+    it('requires evidence from each independent run and excludes live checkpoints',()=>{
+        const runs=[run(1,'passed'),run(2,'passed')],verdict=deriveScenarioVerdict({scenario,runs,requirements});
+        const artifact={filePath:scenario.filePath,title:scenario.title,kind:'SCREENSHOT',runIndex:1,sha256:'one',purpose:'FINAL'};
+        const score=scoreSystemSuite({report:{requirements,runs},catalog:[scenario],verdicts:[verdict],artifacts:[artifact,{...artifact,sha256:'two'},{...artifact,runIndex:2,purpose:'CHECKPOINT'}]});
+        expect(score.counts).toMatchObject({capturedArtifacts:1,requiredArtifacts:2});
     });
     it('marks a fail followed by pass as weak and keeps both attempts', () => {
         const verdict = deriveScenarioVerdict({ scenario, runs: [run(1, 'failed'), run(2, 'passed')], requirements });

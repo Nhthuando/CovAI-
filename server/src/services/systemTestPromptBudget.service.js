@@ -1,3 +1,5 @@
+import { SYSTEM_PROMPT_VERSION } from './systemTestPrompt.service.js';
+const requestRequirements = instruction => {try{return JSON.parse(instruction)?.requirements || null;}catch{return null;}};
 import path from 'node:path';
 import { buildAgentInstruction, getAgentManifest } from '../agents/registry.js';
 
@@ -17,13 +19,16 @@ export const focusTestContext = (context, instruction, maxCharacters = 60000) =>
     }
     const source=context.sourceCode || [];
     const files=new Map(source.map(file=>[file.path,file]));
-    const priorities=[...new Set(selectedGaps.map(gap=>gap.filePath).filter(file=>files.has(file)))];
+    const routes=Array.isArray(request.routes)?request.routes:[];
+    const references=Array.isArray(request.references)?request.references:[];
+    const routeFiles=source.filter(file=>routes.some(route=>route!=='/' && file.content.includes(route)) || references.includes(file.path)).map(file=>file.path);
+    const priorities=[...new Set([...selectedGaps.map(gap=>gap.filePath).filter(file=>files.has(file)),...routeFiles])];
     const queue=[...priorities];
     for(let index=0;index<queue.length && index<30;index++) {
         const file=files.get(queue[index]);
         for(const match of file?.content.matchAll(/(?:from\s*|import\s*\(|require\s*\()\s*['"](\.[^'"]+)['"]/g)||[]) {
             const base=path.posix.normalize(path.posix.join(path.posix.dirname(file.path),match[1]));
-            const dependency=[base,...['.js','.jsx','.ts','.tsx','/index.js','/index.jsx'].map(extension=>base+extension)].find(candidate=>files.has(candidate));
+            const dependency=[base,...['.js','.jsx','.ts','.tsx','/index.js','/index.jsx','/index.ts','/index.tsx'].map(extension=>base+extension)].find(candidate=>files.has(candidate));
             if(dependency && !queue.includes(dependency)) queue.push(dependency);
         }
     }
@@ -42,7 +47,7 @@ export const focusTestContext = (context, instruction, maxCharacters = 60000) =>
 export const buildBudgetedTestPrompt = ({filePath,existingCode,instruction,scenarioData,context,mode}) => {
     const focused=focusTestContext(context,instruction);
     const agent={...getAgentManifest('system-test'),instruction:buildAgentInstruction('system-test',{phase:mode === 'FIX_BREAKPOINT' ? 'repair' : 'generation'})};
-    const payload={agent,filePath,mode,existingCode,instruction:focused.instruction,failure:scenarioData,configuration:context.configuration,sourceCode:focused.sourceCode,omittedFiles:focused.omittedFiles};
+    const payload={agent,filePath,mode,existingCode,instruction:focused.instruction,failure:scenarioData,configuration:context.configuration,requirements:context.requirements||requestRequirements(instruction),promptVersion:SYSTEM_PROMPT_VERSION,sourceCode:focused.sourceCode,omittedFiles:focused.omittedFiles};
     const prompt=JSON.stringify(payload);
     if(prompt.length>120000) throw new Error('The test and required context exceed the AI prompt budget. Select a smaller test file.');
     return {prompt,...focused,promptCharacters:prompt.length};

@@ -1,4 +1,5 @@
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { parseAiResponse } from "./aiSuggestionParser.service.js";
 
 /**
@@ -191,7 +192,7 @@ export const runQualityAiAnalysis = async (context) => {
         const prompt = buildQualityPrompt(context);
 
         const systemInstruction = "You are a code quality analyst. Respond ONLY with valid JSON. Do not include any text outside the JSON block.";
-        const responseText = await generateText(prompt, systemInstruction);
+        const responseText = await withGeminiChannel("UNIT_TEST", () => generateText(prompt, systemInstruction));
 
         if (!responseText) {
             return {

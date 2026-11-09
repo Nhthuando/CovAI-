@@ -112,6 +112,7 @@ export function useUnifiedDashboard({
   snapshots = EMPTY_SNAPSHOTS,
 }) {
   const effectiveSnapshotId = snapshotId || snapshots[0]?.id || "";
+  const isEnabled = Boolean(effectiveSnapshotId && projectId);
   const isForceRefreshingRef = useRef(false);
 
   const query = useQuery({
@@ -121,10 +122,11 @@ export function useUnifiedDashboard({
       isForceRefreshingRef.current = false;
       return fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId, refresh: isRefresh });
     },
-    enabled: Boolean(effectiveSnapshotId),
+    enabled: isEnabled,
     placeholderData: (previousData, previousQuery) =>
       previousQuery?.queryKey?.[1] === effectiveSnapshotId ? previousData : undefined,
-    staleTime: 15 * 1000, // 15 seconds cache freshness for responsive tab switching
+    staleTime: 0,
+    refetchOnMount: "always",
     refetchOnWindowFocus: true,
     gcTime: 30 * 60 * 1000,
   });
@@ -140,18 +142,11 @@ export function useUnifiedDashboard({
   }, [effectiveSnapshotId, query]);
 
   const vm = useMemo(() => {
-    if (!effectiveSnapshotId) {
-      return adaptUnifiedDashboard({
-        context: {
-          projectId,
-          projectName,
-          snapshotId: "",
-          snapshots,
-        },
-      });
+    if (!effectiveSnapshotId || !projectId) {
+      return null;
     }
 
-    if (!query.data && query.isLoading) {
+    if (!query.data && (query.isLoading || query.isFetching)) {
       return null;
     }
 
@@ -188,9 +183,9 @@ export function useUnifiedDashboard({
   return {
     vm,
     errorsByLayer: query.data?.errorsByLayer || { unit: null, integration: null, system: null },
-    isLoading: Boolean(effectiveSnapshotId) ? query.isLoading : false,
-    isFetching: Boolean(effectiveSnapshotId) ? query.isFetching : false,
-    isError: Boolean(effectiveSnapshotId) ? query.isError : false,
+    isLoading: isEnabled ? query.isLoading : false,
+    isFetching: isEnabled ? query.isFetching : false,
+    isError: isEnabled ? query.isError : false,
     error: query.error,
     refetch: query.refetch,
     forceRefresh,

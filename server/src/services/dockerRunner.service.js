@@ -8,8 +8,10 @@ import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 import { appendJobOutput } from "./jobOutput.service.js";
 import { resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
+import { isolatedProcessEnvironment } from '../utils/isolatedProcessEnvironment.js';
 
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes default
+const MAX_CAPTURED_OUTPUT = 2 * 1024 * 1024;
 
 let hasPsBinary = null;
 export const isPsAvailable = () => {
@@ -73,13 +75,14 @@ export const dockerRunner = {
   run: params => withRunnerSlot(() => measureUnitTestPhase('processExecution', () => executeCommand(params))),
 };
 
-const executeCommand = async ({ snapshotPath, command, hostCommand = command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false, signal, projectId = null, inheritEnv = true, loadEnvExamples = true }) => {
+const executeCommand = async ({ snapshotPath, command, hostCommand = command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false, signal, projectId = null, inheritEnv = true, loadEnvExamples = true, isolatedEnv = false }) => {
     if (signal?.aborted) throw new ServiceError('Execution canceled', 409);
     return new Promise((resolve, reject) => {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
       let canceled = false;
+      let outputTruncated = false;
 
       // Docker run command:
       // --rm: Remove container after exit
@@ -104,17 +107,17 @@ const executeCommand = async ({ snapshotPath, command, hostCommand = command, ti
       const customPath = [nodeModulesBin, appModulesBin, currentPath].filter(Boolean).join(delimiter);
 
       const mergedEnv = {
-        ...(inheritEnv ? process.env : Object.fromEntries(['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'COMSPEC', 'PATHEXT'].filter(key => process.env[key]).map(key => [key, process.env[key]]))),
+        ...(isolatedEnv ? isolatedProcessEnvironment() : (inheritEnv ? process.env : Object.fromEntries(['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'COMSPEC', 'PATHEXT'].filter(key => process.env[key]).map(key => [key, process.env[key]])))),
         CI: "true",
         VITE_CJS_IGNORE_WARNING: "true",
         PATH: customPath,
         NODE_OPTIONS: "--experimental-vm-modules",
-        NODE_PATH: ["/app/node_modules", path.join(effectiveSnapshotPath, "node_modules"), process.env.NODE_PATH || ""].filter(Boolean).join(delimiter),
+        NODE_PATH: isolatedEnv ? '' : ["/app/node_modules", path.join(effectiveSnapshotPath, "node_modules"), process.env.NODE_PATH || ""].filter(Boolean).join(delimiter),
         ...env,
       };
 
       // Auto-load repo-level environment variables (.env.test, .env, .env.example) into mergedEnv
-      const repoEnvFiles = [".env.test", ".env", ...(loadEnvExamples ? [".env.example"] : [])];
+      const repoEnvFiles = isolatedEnv ? [] : [".env.test", ".env", ...(loadEnvExamples ? [".env.example"] : [])];
       for (const envFile of repoEnvFiles) {
         const envFilePath = path.join(effectiveSnapshotPath, envFile);
         if (fs.existsSync(envFilePath)) {
@@ -246,18 +249,20 @@ const executeCommand = async ({ snapshotPath, command, hostCommand = command, ti
 
       child.stdout.on("data", (data) => {
         const text = data.toString();
-        stdout += text;
+        if(stdout.length+text.length>MAX_CAPTURED_OUTPUT)outputTruncated=true;
+        stdout = (stdout + text).slice(-MAX_CAPTURED_OUTPUT);
         if (jobId) {
-          pendingStdout += text;
+          pendingStdout = (pendingStdout + text).slice(-MAX_CAPTURED_OUTPUT);
           scheduleFlush();
         }
       });
 
       child.stderr.on("data", (data) => {
         const text = data.toString();
-        stderr += text;
+        if(stderr.length+text.length>MAX_CAPTURED_OUTPUT)outputTruncated=true;
+        stderr = (stderr + text).slice(-MAX_CAPTURED_OUTPUT);
         if (jobId) {
-          pendingStderr += text;
+          pendingStderr = (pendingStderr + text).slice(-MAX_CAPTURED_OUTPUT);
           scheduleFlush();
         }
       });
@@ -308,6 +313,7 @@ const executeCommand = async ({ snapshotPath, command, hostCommand = command, ti
           exitCode: code,
           stdout,
           stderr,
+          outputTruncated,
         });
       });
     });

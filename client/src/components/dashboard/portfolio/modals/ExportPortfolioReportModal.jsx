@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { X, Download, Printer, FileText, Check, Copy } from "lucide-react";
+import { X, Download, Printer, FileText, Check, Copy, Table } from "lucide-react";
 import { Button } from "../../../common/Button.jsx";
+import { exportPortfolioReportApi } from "../../../../services/portfolio.service.js";
 
 export function ExportPortfolioReportModal({
   isOpen = false,
@@ -31,7 +32,7 @@ export function ExportPortfolioReportModal({
   const generateMarkdownReport = () => {
     const lines = [];
     lines.push("# CovAI Multi-Project Quality Portfolio Report");
-    lines.push(`Generated: ${new Date().toLocaleString()} | Account Telemetry Mode: ${vm?.dataMode || "live"}`);
+    lines.push(`Generated: ${new Date().toLocaleString()} | Data Source: PostgreSQL Live Telemetry`);
     lines.push("");
 
     if (sections.kpis) {
@@ -98,6 +99,21 @@ export function ExportPortfolioReportModal({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleDownloadCsv = async () => {
+    try {
+      const blob = await exportPortfolioReportApi({ format: "csv", scope: "active" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `covai_portfolio_telemetry_${Date.now()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Failed to export CSV:", err);
+    }
   };
 
   const handlePrint = () => {
@@ -189,6 +205,14 @@ export function ExportPortfolioReportModal({
               onClick={handlePrint}
             >
               Print / Save PDF
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={Table}
+              onClick={handleDownloadCsv}
+            >
+              CSV
             </Button>
             <Button
               variant="outline"

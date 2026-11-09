@@ -315,7 +315,7 @@ export const observeSystemApplication = async ({ rootDir, jobId, environmentRoot
   let browser;
   try {
     const {preparePlaywrightBrowsers}=await import('./systemTestRunner.service.js');
-    const browserEnv=await preparePlaywrightBrowsers(fileURLToPath(new URL('../../',import.meta.url)),jobId);
+    const browserEnv=await preparePlaywrightBrowsers(fileURLToPath(new URL('../../',import.meta.url)),jobId,{signal});
     const { chromium } = await import('@playwright/test');
     const executable=chromium.executablePath().split(path.sep),revision=executable.findIndex(part=>/^chromium-\d+$/.test(part));
     const executablePath=revision<0?chromium.executablePath():path.join(browserEnv.PLAYWRIGHT_BROWSERS_PATH,...executable.slice(revision));

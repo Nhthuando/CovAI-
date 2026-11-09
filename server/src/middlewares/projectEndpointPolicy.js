@@ -42,6 +42,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
             else if (/\/restore$/.test(path)) capability = "snapshot.restore";
             else if (["upload-zip", "import-github", "snapshots"].includes(parts[1])) capability = "integrations.write";
             else if (["file-content", "files", "folders", "entries"].includes(parts[1])) capability = "files.write";
+            else if (parts[1] === "status") capability = "files.write";
             else if (parts[1] === "ai-context") capability = parts[2] === "preview" ? "project.read" : method === "DELETE" && parts.length === 3 ? "chat.delete" : "memory.write";
             else if (parts[1] === "chat") capability = method === "DELETE" ? "chat.delete" : "chat.write";
             else if (parts[1] === "integration" && parts[2] === "install-dependencies") capability = "integrations.write";
@@ -56,7 +57,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
         }
         if (!read && /\/install-dependencies$/.test(path)) capability = "integrations.write";
         else if (!read && /\/apply-tests$/.test(path)) capability = "files.write";
-        else if (!read && (/\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path) || /\/system\/proposals\/[^/]+\/apply$/.test(path))) capability = "evidence.approve";
+        else if (!read && (/\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path) || /\/system\/proposals\/[^/]+\/apply$/.test(path) || /\/system\/versions\/[^/]+\/restore$/.test(path) || /\/system\/generation-drafts\/[^/]+\/apply$/.test(path) || /\/system\/setup\/(?:apply|environment)$/.test(path) || (method === "POST" && /\/system\/versions$/.test(path)))) capability = "evidence.approve";
         else if (!read && /\/(apply|apply-suggestion|save-ai-test|materialize|env)(?:\/|$)/.test(path)) capability = "files.write";
         else if (!read && /generate|suggest|optimize|regenerate|improvements/.test(path)) capability = "ai.use";
         else if (method === "PUT" || method === "PATCH" || method === "DELETE") capability = "files.write";
@@ -109,7 +110,7 @@ export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async
                 const rows = await editorDocumentsFor(db, { projectId, active: true });
                 if (rows.some(row => row.revision !== row.checkpointRevision)) throw new ServiceError('Save shared changes before changing the workspace or Git state.',409,'EDITOR_DRAFT_CONFLICT');
             }
-            if (['tests.run', 'ai.use'].includes(rule.capability) && /run|analysis|generate|suggest|optimize|improvements|mutations|calculate|refresh|cfg\/build/i.test(req.path)) {
+            if (['tests.run', 'ai.use'].includes(rule.capability) && /run|analysis|generate|suggest|optimize|improvements|mutations|assessments|calculate|refresh|cfg\/build/i.test(req.path)) {
                 const snapshotId = req.projectAccess.snapshot?.id || (await db.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}}))?.id;
                 if (snapshotId) {
                     const state = await editorSnapshotStatus({projectId,snapshotId,userId:req.user.id,db});

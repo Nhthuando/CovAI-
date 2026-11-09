@@ -11,6 +11,7 @@ import {
     ArrowRight,
     FileCode,
     Zap,
+    Clock,
     AlertCircle
 } from "lucide-react";
 
@@ -372,6 +373,35 @@ export default function InlineTestSuggestions({
                     >
                         {activeSuggestions.length} suggestion{activeSuggestions.length > 1 ? "s" : ""}
                     </span>
+
+                    {suggestions[0]?.telemetry && (
+                        <span
+                            style={{
+                                fontSize: 11,
+                                background: "rgba(99, 102, 241, 0.12)",
+                                border: "1px solid rgba(99, 102, 241, 0.25)",
+                                color: "#a5b4fc",
+                                padding: "2px 8px",
+                                borderRadius: 12,
+                                fontWeight: 600,
+                                fontFamily: "monospace",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                            }}
+                            title={`AI Generation Telemetry: ${suggestions[0].telemetry.durationSeconds || (suggestions[0].telemetry.durationMs / 1000).toFixed(1)}s, ${suggestions[0].telemetry.tokens?.total || 0} tokens`}
+                        >
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                <Clock size={11} className="text-indigo-400" />
+                                <span>{suggestions[0].telemetry.durationSeconds || (suggestions[0].telemetry.durationMs / 1000).toFixed(1)}s</span>
+                            </span>
+                            <span style={{ opacity: 0.4 }}>•</span>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#fbbf24" }}>
+                                <Zap size={11} />
+                                <span>{(suggestions[0].telemetry.tokens?.total || 0).toLocaleString()} tok</span>
+                            </span>
+                        </span>
+                    )}
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

@@ -10,6 +10,15 @@ const report = (covered = 4) => ({
 });
 
 describe('measured AI improvement acceptance',()=>{
+    it('accepts a newly verified confirmed criterion without a code-coverage increase',()=>{
+        const baseline=report(),candidate=report();
+        baseline.requirementRevisionId=candidate.requirementRevisionId='confirmed-revision';
+        baseline.requirements.criteria=[{id:'AUTH',verified:false}];
+        candidate.requirements.criteria=[{id:'AUTH',verified:true}];
+        expect(evaluateSystemImprovement({baseline,candidate})).toMatchObject({accepted:true,improvementKind:'REQUIREMENT',newlyVerifiedCriterionIds:['AUTH']});
+        candidate.requirementRevisionId='different-revision';
+        expect(evaluateSystemImprovement({baseline,candidate}).accepted).toBe(false);
+    });
     it('requires a real measured gain with no lost coverage',()=>{
         expect(evaluateSystemImprovement({baseline:report(),candidate:report()}).state).toBe('NO_MEASURED_IMPROVEMENT');
         const result=evaluateSystemImprovement({baseline:report(),candidate:report(5)});

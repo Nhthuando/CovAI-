@@ -2,9 +2,13 @@ import { z } from 'zod';
 import { ServiceError } from '../utils/serviceError.js';
 
 const relativePath = z.string().min(1).max(512).refine(value => !value.includes('\\') && !value.split('/').includes('..') && !/^(?:\/|[a-z]:|https?:)/i.test(value), 'Repository-relative path required');
+export const setupEnvironmentRequest = z.object({
+    expectedWorkspaceRevision:z.number().int().nonnegative(),
+    variables:z.array(z.object({envFile:relativePath,name:z.string().regex(/^[A-Za-z_]\w*$/).max(128),value:z.string().min(1).max(8192).refine(value=>!!value.trim()&&!value.includes('\0'),'Enter a test value')}).strict()).min(1).max(30),
+}).strict();
 const scope = z.object({ root: relativePath, sourceDirectory: relativePath }).strict();
-export const automaticAssessmentRequest = z.object({ autoDiscover: z.literal(true), runner: z.enum(['playwright', 'cypress']).default('playwright'), executionMode: z.enum(['full', 'frontend']).default('full'), model: z.string().optional() }).strict();
-export const assessmentRequest = z.object({ testFiles: z.array(relativePath).min(1).max(20), excludedTests: z.array(z.object({filePath:relativePath,reason:z.string()}).strict()).optional(), runner: z.enum(['playwright', 'cypress']).default('playwright'), executionMode: z.enum(['full', 'frontend']).default('full'), requirementRevisionId: z.string().optional(), reviewMode: z.enum(['legacy', 'scenario']).default('legacy'), scenarioIds: z.array(z.string().min(1)).max(100).default([]), coverageScope: z.object({ frontend: scope.optional(), backend: scope.optional() }).strict(), repeatRuns: z.literal(2).default(2), headed: z.boolean().optional() }).strict();
+export const automaticAssessmentRequest = z.object({ autoDiscover: z.literal(true), runner: z.enum(['playwright', 'cypress']).default('playwright'), executionMode: z.enum(['full', 'frontend']).default('full'), model: z.string().optional(),allowGenerate:z.boolean().default(false),headed:z.boolean().optional() }).strict();
+export const assessmentRequest = z.object({ testFiles: z.array(relativePath).min(1).max(20), excludedTests: z.array(z.object({filePath:relativePath,reason:z.string()}).strict()).optional(), runner: z.enum(['playwright', 'cypress']).default('playwright'), executionMode: z.enum(['full', 'frontend']).default('full'), requirementRevisionId: z.string().optional(), reviewMode: z.enum(['legacy', 'scenario','execution']).default('legacy'), scenarioIds: z.array(z.string().min(1)).max(100).default([]), coverageScope: z.object({ frontend: scope.optional(), backend: scope.optional() }).strict(), repeatRuns: z.literal(2).default(2), headed: z.boolean().optional() }).strict();
 const briefText = z.string().trim().max(4000);
 export const requirementsRequest = z.object({
     brief: z.object({ purpose: briefText, actors: z.array(briefText).max(30), flows: z.array(briefText).max(100), preconditions: z.array(briefText).max(50), dataConstraints: z.array(briefText).max(50) }).strict().optional(),
@@ -16,7 +20,7 @@ export const scenarioDraftRequest = z.object(scenarioDetails).strict();
 export const scenarioUpdateRequest = z.object({ ...scenarioDetails, expectedScenarioHash: z.string().length(64) }).strict();
 export const scenarioExpectedConfirmationRequest = z.object({ expectedScenarioHash: z.string().length(64) }).strict();
 export const scenarioReviewRequest = z.object({ expectedScenarioHash: z.string().length(64), revisionId: z.string().min(1), expectedRequirementHash: z.string().length(64), assertionIds: z.array(z.string().min(1)).min(1).max(100) }).strict();
-export const proposalReviewRequest = z.object({ expectedCandidateTestHash: z.string().length(64), expectedRequirementHash: z.string().length(64), scenarios: z.array(z.object({ ...scenarioDetails, assertionIds: z.array(z.string().min(1)).min(1).max(50) }).strict()).min(1).max(50) }).strict();
+export const proposalReviewRequest = z.object({ expectedCandidateTestHash: z.string().length(64), expectedRequirementHash: z.string().length(64).nullable().optional(), scenarios: z.array(z.object({ ...scenarioDetails, assertionIds: z.array(z.string().min(1)).min(1).max(50) }).strict()).min(1).max(50) }).strict();
 export const improvementRequest = z.object({ assessmentId: z.string(), model: z.string().optional(), filePath: relativePath, gapIds: z.array(z.string()).min(1).max(20), expectedTestHash: z.string(), instruction: z.string().max(2000).default(''), autoApply: z.boolean().default(false) }).strict();
 export const parseRequest = (schema, value) => {
     const parsed = schema.safeParse(value);

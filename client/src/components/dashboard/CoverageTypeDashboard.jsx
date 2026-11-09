@@ -1037,16 +1037,21 @@ export default function CoverageTypeDashboard({
           throw new Error(data?.message || data?.validation?.message || 'No test draft was returned for this file. Retry Suggest Tests.');
         }
 
+        const telemetry = data?.telemetry || finalSugs[0]?.telemetry || null;
         const mappedSugs = finalSugs.map((s, idx) => ({
           ...s,
           suggestionId: s.suggestionId || `${filePath}-sug-${idx + 1}`,
           status: s.status || "GENERATED",
+          telemetry: s.telemetry || telemetry,
         }));
 
         setInlineSuggestions((prev) => ({
           ...prev,
           [filePath]: mappedSugs,
         }));
+
+        // Notify global quota pill
+        window.dispatchEvent(new CustomEvent("covai:ai-usage-updated"));
         return mappedSugs;
       } catch (err) {
         console.error("Failed to generate test suggestions inline:", err);

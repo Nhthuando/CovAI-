@@ -11,7 +11,10 @@ import { sourceInputContracts } from './unitTestInputContracts.service.js';
 import { assertUnitTestTarget } from './unitTestFilePolicy.service.js';
 import { measureUnitTestPhase } from './unitTestWork.service.js';
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
-import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
+import {
+    assembleUnitTestContext,
+    buildIsolationMockContracts,
+} from "./unitTestContextEngineering.service.js";
 import {
     computeRelativeImportPath,
     formatLineRanges,
@@ -20,7 +23,13 @@ import {
     findSourceOnDisk,
     sanitizeSourceFilePath
 } from "./unitTestSuggestion.service.js";
-import { cleanAndDeduplicateTestContent, STATEMENT_SEPARATION_EXCLUSIONS, safeDecoupleInlineStatements, healBrokenCommentSplits, balanceTestFileBracesAndParens } from "./testSanitizer.service.js";
+import {
+  cleanAndDeduplicateTestContent,
+  STATEMENT_SEPARATION_EXCLUSIONS,
+  safeDecoupleInlineStatements,
+  healBrokenCommentSplits,
+  balanceTestFileBracesAndParens,
+} from "./testSanitizer.service.js";
 import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
 import {
     validateAndHealVitestTestCollection,
@@ -66,12 +75,13 @@ export const buildStandardUnitTestPrompt = ({
     unitTestContext,
     inputContractSummary = null
 }) => {
-    const isVitest = framework === "vitest";
-    const isTest = Boolean(testFileInfo.found);
-    const runnerContract = isVitest
-        ? "Use ESM imports from 'vitest' and vi.fn/vi.spyOn/vi.mock. Never require('vitest') or use jest.*. Keep runner imports as ESM even when the source module uses CommonJS."
-        : "For ESM tests import { jest } from '@jest/globals' before using jest.*. For CommonJS tests use the injected jest global without redeclaring it.";
-    const pathContract = "Trace each input through normalization, validation/regex guards and early returns BEFORE choosing a later branch's expected result. An input rejected by an earlier guard cannot test a downstream result-type/error branch. Use an input accepted by all preceding guards, or isolate the real dependency with a supported mock. Never mock the function under test. Derive exact error messages from the reached return statement, not from the test title. Do not invent a passing test or weaken an assertion just to claim coverage of an unreachable branch.";
+  const isVitest = framework === "vitest";
+  const isTest = Boolean(testFileInfo.found);
+  const runnerContract = isVitest
+    ? "Use ESM imports from 'vitest' and vi.fn/vi.spyOn/vi.mock. Never require('vitest') or use jest.*. Keep runner imports as ESM even when the source module uses CommonJS."
+    : "For ESM tests import { jest } from '@jest/globals' before using jest.*. For CommonJS tests use the injected jest global without redeclaring it.";
+  const pathContract =
+    "Trace each input through normalization, validation/regex guards and early returns BEFORE choosing a later branch's expected result. An input rejected by an earlier guard cannot test a downstream result-type/error branch. Use an input accepted by all preceding guards, or isolate the real dependency with a supported mock. Never mock the function under test. Derive exact error messages from the reached return statement, not from the test title. Do not invent a passing test or weaken an assertion just to claim coverage of an unreachable branch.";
 
     const exportedSymbols = unitTestContext?.astMetadata?.exportedSymbolNames || [];
     const exportedSymbolsStr = exportedSymbols.length > 0 ? exportedSymbols.join(", ") : "All exported module members";
@@ -105,23 +115,51 @@ export const buildStandardUnitTestPrompt = ({
         unitTestContext?.astMetadata?.cyclomaticComplexity ||
         (1 + (unitTestContext?.astMetadata?.decisionPoints || []).length);
 
-    const uncoveredLinesStr = formatLineRanges(coverageDetails?.uncoveredLines || []);
-    const failedLinesStr = (coverageDetails?.failedLines || []).map(l => `Line ${l}: ${coverageDetails?.lines?.[l]?.error || "failed assertion"}`).join("\n") || "None";
+  const uncoveredLinesStr = formatLineRanges(
+    coverageDetails?.uncoveredLines || [],
+  );
+  const failedLinesStr =
+    (coverageDetails?.failedLines || [])
+      .map(
+        (l) =>
+          `Line ${l}: ${coverageDetails?.lines?.[l]?.error || "failed assertion"}`,
+      )
+      .join("\n") || "None";
 
-    const branches = coverageDetails?.branches || coverageDetails?.branchFlow || [];
-    const uncoveredBranches = branches.filter(b => b.status !== "fully_covered" || b.totalHits === 0);
-    const branchDetailsStr = uncoveredBranches.length > 0
-        ? uncoveredBranches.slice(0, 35).map(b => {
-            const missingPaths = (b.paths || []).filter(p => !p.covered).map(p => `${p.type} branch`).join(" & ");
-            return `- Line ${b.line} (${b.type}): condition "${b.condition || 'branch'}" -> MISSING: ${missingPaths || b.status}`;
-        }).join("\n")
-        : "All branches currently covered";
+  const branches =
+    coverageDetails?.branches || coverageDetails?.branchFlow || [];
+  const uncoveredBranches = branches.filter(
+    (b) => b.status !== "fully_covered" || b.totalHits === 0,
+  );
+  const branchDetailsStr =
+    uncoveredBranches.length > 0
+      ? uncoveredBranches
+          .slice(0, 35)
+          .map((b) => {
+            const missingPaths = (b.paths || [])
+              .filter((p) => !p.covered)
+              .map((p) => `${p.type} branch`)
+              .join(" & ");
+            return `- Line ${b.line} (${b.type}): condition "${b.condition || "branch"}" -> MISSING: ${missingPaths || b.status}`;
+          })
+          .join("\n")
+      : "All branches currently covered";
 
-    const functions = coverageDetails?.functions || coverageDetails?.functionFlow || [];
-    const uncoveredFunctions = functions.filter(f => !f.covered || f.hits === 0);
-    const functionDetailsStr = uncoveredFunctions.length > 0
-        ? uncoveredFunctions.slice(0, 30).map(f => `- Function "${f.realName || f.name}" (line ${f.line}) - 0 test invocations`).join("\n")
-        : "All functions currently invoked";
+  const functions =
+    coverageDetails?.functions || coverageDetails?.functionFlow || [];
+  const uncoveredFunctions = functions.filter(
+    (f) => !f.covered || f.hits === 0,
+  );
+  const functionDetailsStr =
+    uncoveredFunctions.length > 0
+      ? uncoveredFunctions
+          .slice(0, 30)
+          .map(
+            (f) =>
+              `- Function "${f.realName || f.name}" (line ${f.line}) - 0 test invocations`,
+          )
+          .join("\n")
+      : "All functions currently invoked";
 
     const prompt = isTest
         ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
@@ -157,11 +195,15 @@ ${decisionGuidanceStr}
 ${failedLinesStr}
 
 ### 4. SOURCE CODE & EXISTING TESTS
-${sourceCode ? `SOURCE CODE UNDER TEST:
+${
+  sourceCode
+    ? `SOURCE CODE UNDER TEST:
 \`\`\`javascript
 ${escapePromptCode(sourceCode, 25000)}
 \`\`\`
-` : ""}
+`
+    : ""
+}
 
 EXISTING TEST CODE IN ${testFileInfo.relativePath}:
 \`\`\`javascript
@@ -241,7 +283,7 @@ Format your output strictly in JSON (ensure valid JSON syntax: values MUST be st
   "fullUpdatedContent": "// complete test file content to be written"
 }
 `
-        : `You are an expert ${framework.toUpperCase()} unit testing engineer.
+    : `You are an expert ${framework.toUpperCase()} unit testing engineer.
 We need to generate a comprehensive unit test suite to achieve >=90% to 100% coverage across all 4 metrics (Statements, Branches, Functions, Lines) and fix failed assertions for this source file.
 
 ### 1. ROLE DEFINITION & PROJECT CONTEXT
@@ -355,10 +397,13 @@ Write new test descriptions, comments, and explanations in English. Preserve exi
  * Repairs missing semicolons at line:col, missing commas in objects/arrays,
  * unclosed blocks/braces, unseparated statements, and runs deep sanitization.
  */
-export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "", maxRetries = 6 } = {}) => {
-    if (!codeString || typeof codeString !== "string") {
-        return { success: false, code: codeString, error: "Empty code" };
-    }
+export const autoHealAstSyntax = (
+  codeString,
+  { framework = "jest", filePath = "", maxRetries = 6 } = {},
+) => {
+  if (!codeString || typeof codeString !== "string") {
+    return { success: false, code: codeString, error: "Empty code" };
+  }
     let currentCode = codeString;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -371,12 +416,12 @@ export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "
             try {
                 currentCode = cleanAndDeduplicateTestContent(currentCode, "", filePath, { framework });
             } catch (_) {}
-        if (typeof deduplicateAstDeclarations === 'function') {
-            try {
-                const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
-                if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
-            } catch (_) {}
-        }
+            if (typeof deduplicateAstDeclarations === 'function') {
+                try {
+                    const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
+                    if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
+                } catch (_) {}
+            }
         }
 
         const parsed = parseJavaScriptCode(currentCode);
@@ -490,7 +535,11 @@ export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "
         return { success: false, code: currentCode, error: msg };
     }
 
-    return { success: false, code: currentCode, error: "Exceeded AST self-healing retries" };
+  return {
+    success: false,
+    code: currentCode,
+    error: "Exceeded AST self-healing retries",
+  };
 };
 
 /**
@@ -511,9 +560,9 @@ export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "
  * @returns {object} { success: boolean, parsed: object, syntaxValid: boolean, errors: string[] }
  */
 export const parseAndSanitizeAiTestResponse = ({
-    rawResponse = "",
-    framework = "jest",
-    cleanSource = ""
+  rawResponse = "",
+  framework = "jest",
+  cleanSource = "",
 }) => {
     const errors = [];
     if (!rawResponse || typeof rawResponse !== "string") {
@@ -731,7 +780,7 @@ export const parseAndSanitizeAiTestResponse = ({
         parsed: parsedJson,
         syntaxValid,
         hasAssertions,
-        errors
+        errors,
     };
 };
 
@@ -778,8 +827,10 @@ export const generateAiUnitTestSuite = async ({
             suggestedFilePath: filePath,
             absolutePath: path.join(snapshot.rootDir, filePath),
             fileName: path.basename(filePath),
-            content: fs.existsSync(path.join(snapshot.rootDir, filePath)) ? fs.readFileSync(path.join(snapshot.rootDir, filePath), "utf8") : "",
-            framework
+            content: fs.existsSync(path.join(snapshot.rootDir, filePath))
+                ? fs.readFileSync(path.join(snapshot.rootDir, filePath), "utf8")
+                : "",
+            framework,
         }
         : findExistingTestFile(snapshot.rootDir, cleanSource, framework);
 
@@ -813,16 +864,18 @@ export const generateAiUnitTestSuite = async ({
         coverageDetails,
         sourceCode,
         unitTestContext,
-        inputContractSummary:[...sourceInputContracts(sourceCode || '',{rootDir:snapshot.rootDir,sourceFile:path.join(snapshot.rootDir,cleanSource)}).functions.values()]
+        inputContractSummary: [...sourceInputContracts(sourceCode || '', { rootDir: snapshot.rootDir, sourceFile: path.join(snapshot.rootDir, cleanSource) }).functions.values()]
     });
 
     // 3. Invoke LLM with 90s Timeout
     let aiParsedResult = null;
     let aiGenerationError = null;
     let generationTimer = null;
+    let telemetry = null;
 
     try {
-        const responseText = await Promise.race([
+        const callStart = Date.now();
+        const aiResponse = await Promise.race([
             generateText(prompt, selectedAiModel),
             new Promise((_, reject) => {
                 generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000);
@@ -834,11 +887,26 @@ export const generateAiUnitTestSuite = async ({
             }
         });
 
+        const responseText =
+            typeof aiResponse === "object" && aiResponse?.text !== undefined
+                ? aiResponse.text
+                : aiResponse;
+        telemetry = aiResponse?.telemetry || {
+            durationMs: Date.now() - callStart,
+            durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+            tokens: {
+                prompt: Math.max(1, Math.round(prompt.length / 4)),
+                completion: Math.max(1, Math.round((responseText || "").length / 4)),
+                total: Math.max(2, Math.round((prompt.length + (responseText || "").length) / 4)),
+            },
+            model: "gemini",
+        };
+
         // 4. Parse & Sanitize Response (Section 3.2)
         const parseCheck = parseAndSanitizeAiTestResponse({
             rawResponse: responseText,
             framework,
-            cleanSource
+            cleanSource,
         });
 
         if (parseCheck.success && parseCheck.parsed) {
@@ -867,7 +935,7 @@ export const generateAiUnitTestSuite = async ({
             baseName,
             uncoveredLines: coverageDetails?.uncoveredLines || [],
             existingContent: testFileInfo.content,
-            sourceCode
+            sourceCode,
         });
     }
 
@@ -1001,7 +1069,13 @@ export const generateAiUnitTestSuite = async ({
             statementsPct: 0
         },
         decisionTableSummary: unitTestContext?.decisionTable?.summary,
-        scenarioMatrix
+        scenarioMatrix,
+        telemetry: telemetry || {
+            durationMs: 0,
+            durationSeconds: 0,
+            tokens: { prompt: 0, completion: 0, total: 0 },
+            model: "fallback",
+        },
     };
 
     return {
@@ -1011,6 +1085,7 @@ export const generateAiUnitTestSuite = async ({
         targetSourceFile: cleanSourceFile,
         targetTestFile: cleanTargetTest,
         scenarioMatrix,
-        suggestions: [primarySuggestion]
+        suggestions: [primarySuggestion],
+        telemetry: primarySuggestion.telemetry,
     };
 };

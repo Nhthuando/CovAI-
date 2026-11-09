@@ -3,6 +3,7 @@ import { fail, safeJson, VERSIONS } from './common.js';
 import { reserveAiQuota, consumeAiQuota } from '../aiQuota.service.js';
 import { buildAgentInstruction, getAgentManifest } from '../../agents/registry.js';
 import { geminiConfiguration } from '../geminiRouting.service.js';
+import { recordGeminiTokenUsage } from '../geminiTokenTracker.service.js';
 
 export async function providerJson(config, payload, { purpose, signal, provider, quota } = {}) {
     if (purpose === 'proposal' ? !config.generationConsent : !config.enabled || !config.judgingConsent) fail('CONSENT_REQUIRED', 'Explicit data-sharing consent is required');
@@ -17,7 +18,18 @@ export async function providerJson(config, payload, { purpose, signal, provider,
         if (!key) fail('JUDGE_NOT_CONFIGURED', 'Gemini API key is not configured', 503);
         const model = new GoogleGenerativeAI(key).getGenerativeModel({ model: config.model, systemInstruction: instruction });
         const response = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: JSON.stringify(prompt) }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: purpose === 'proposal' ? 8192 : 2048 } }, { signal, timeout: 60000 });
-        return { text: response.response.text(), actualModel: response.response.modelVersion || null, usage: response.response.usageMetadata || null };
+        const usage = response.response.usageMetadata || null;
+        try {
+            recordGeminiTokenUsage({
+                taskType: 'CHATBOX',
+                apiKey: key,
+                modelName: config.model,
+                usageMetadata: usage,
+                promptText: JSON.stringify(prompt),
+                responseText: response.response.text(),
+            });
+        } catch (_) {}
+        return { text: response.response.text(), actualModel: response.response.modelVersion || null, usage };
     });
     let last;
     for (let attempt = 0; attempt < 2; attempt++) {

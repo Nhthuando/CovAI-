@@ -213,6 +213,36 @@ COVAI provides an end-to-end, reproducible quality pipeline:
                    └──────────────────────────────────┘
 ```
 
+### 📁 Project Monorepo Structure
+
+```text
+CovAI-/
+├── .agents/                      # AI Agent workspace rules & specialized skills
+│   ├── rules/                    # Detailed frontend styling rules
+│   └── skills/                   # Component generator skills (shadcn/Linear style)
+├── client/                       # Frontend SPA (React 19, Vite, Tailwind CSS v4, Monaco)
+│   ├── src/                      # Components, contexts, hooks, pages, services
+│   └── public/                   # Static assets & public icons
+├── server/                       # Backend API (Node.js ES Modules, Express v5, Prisma, BullMQ)
+│   ├── src/                      # Controllers, services, routes, middlewares, realtime gateways
+│   ├── prisma/                   # Prisma schema, migrations, and database operations
+│   └── scripts/                  # Internal verification & maintenance scripts
+├── shared/                       # Shared modules (Roles, Permissions, AI Models, Protocols)
+├── docs/                         # Technical documentation & project knowledge base
+│   ├── README.md                 # Complete documentation index
+│   ├── plans/                    # Feature implementation plans & roadmaps
+│   ├── specs/                    # API specifications & architectural contracts
+│   ├── rules/                    # Frontend UI/UX agent design guidelines
+│   ├── system-testing/           # E2E & System test specifications (Playwright/Cypress)
+│   └── unit-testing/             # Unit test analysis & coverage pipeline docs
+├── .gitignore                    # Strict root whitelist configuration
+├── AGENTS.md                     # System-wide developer & AI pair programming guidelines
+├── api.http                      # REST Client testing collection
+├── docker-compose.yml            # Container orchestration for Server, Client, and Redis
+├── package.json                  # Root monorepo orchestrator (concurrent dev runners)
+└── README.md                     # Project overview and entry guide
+```
+
 ---
 
 ## 8. Technology Stack
@@ -357,8 +387,23 @@ GET  /api/projects/:id/ai/tests            # Retrieve generated tests
 
 ### 💻 Manual Local Development Setup
 
-#### 1. Backend Setup
+#### 1. One-Click Setup (From Monorepo Root)
 
+Install dependencies for both Client and Server in one command:
+
+```bash
+npm run install:all
+```
+
+Start both the Frontend (Vite) and Backend (Express) concurrently:
+
+```bash
+npm run dev
+```
+
+#### 2. Manual Step-by-Step Setup
+
+**Backend Setup:**
 ```bash
 cd server
 npm install
@@ -367,8 +412,7 @@ npx prisma db push
 npm run dev
 ```
 
-#### 2. Frontend Setup
-
+**Frontend Setup:**
 ```bash
 cd ../client
 npm install
@@ -376,6 +420,15 @@ npm run dev
 ```
 
 Visit `http://localhost:5173` to access the COVAI platform.
+
+---
+
+## 13. Documentation & Developer Guidelines
+
+- **Technical Documentation Hub**: Refer to [`docs/README.md`](docs/README.md) for architectural plans, API specs, and research runbooks.
+- **Developer & AI Working Guidelines**: Refer to [`AGENTS.md`](AGENTS.md) for architecture boundaries, strict root whitelisting, and UI/UX design standards.
+- **Frontend Guidelines**: Refer to [`client/AGENTS.md`](client/AGENTS.md) and [`client/README.md`](client/README.md).
+- **Backend Guidelines**: Refer to [`server/AGENTS.md`](server/AGENTS.md) and [`server/README.md`](server/README.md).
 
 ---
 

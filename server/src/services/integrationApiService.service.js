@@ -265,18 +265,31 @@ export const runIntegrationGenerationPipeline = async ({
     await updateJobStatus({ jobId, progress: 70 }).catch(() => {});
     await addJobLog(jobId, "INFO", "[Integration AI] Sending request to AI LLM model...").catch(() => {});
 
-    const aiResponseText = await generateText(
+    const callStart = Date.now();
+    const aiResponse = await generateText(
         prompt,
         model || process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
         {
             taskType: "integration",
             temperature: 0.2,
             maxOutputTokens: 1500,
+            returnTelemetry: true,
         }
     );
+    const aiResponseText = typeof aiResponse === "object" && aiResponse?.text !== undefined ? aiResponse.text : aiResponse;
     if (!aiResponseText || !aiResponseText.trim()) {
         throw new ServiceError("AI model returned empty response", 500);
     }
+    const telemetry = aiResponse?.telemetry || {
+        durationMs: Date.now() - callStart,
+        durationSeconds: Number(((Date.now() - callStart) / 1000).toFixed(2)),
+        tokens: {
+            prompt: Math.max(1, Math.round(prompt.length / 4)),
+            completion: Math.max(1, Math.round((aiResponseText || "").length / 4)),
+            total: Math.max(2, Math.round((prompt.length + (aiResponseText || "").length) / 4)),
+        },
+        model: model || "gemini-3.5-flash-lite",
+    };
 
     // 4. Extract and validate generated code
     await updateJobStatus({ jobId, progress: 85 }).catch(() => {});
@@ -307,6 +320,10 @@ export const runIntegrationGenerationPipeline = async ({
         path: r.path,
         expectedStatus: r.expectedStatus || 200,
         createdAt: new Date().toISOString(),
+        telemetry: {
+            durationSeconds: Number((telemetry.durationSeconds / Math.max(1, testRequests.length)).toFixed(2)),
+            tokens: Math.round(telemetry.tokens.total / Math.max(1, testRequests.length)),
+        },
     }));
 
     const plannedId = crypto.randomUUID();
@@ -323,6 +340,7 @@ export const runIntegrationGenerationPipeline = async ({
                 status: "DRAFT",
                 isValid: true,
                 requests: requestsMeta,
+                telemetry,
             }),
         },
     }),{id:plannedId});
@@ -336,6 +354,7 @@ export const runIntegrationGenerationPipeline = async ({
         aiTestId: createdAiTest.id,
         filePath: targetFilePath,
         scenariosCount: requestsMeta.length,
+        telemetry,
     };
 };
 

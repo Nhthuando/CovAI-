@@ -11,6 +11,7 @@ import {
   AlertOctagon,
   Edit3,
   Search,
+  Zap,
 } from "lucide-react";
 import Button from "../../common/Button.jsx";
 
@@ -246,7 +247,13 @@ export default function SystemTestScenarioList({
                                 <StatusBadge status={sc.status} />
                               </td>
                               <td className="py-2.5 px-4 text-[var(--color-text-secondary)] font-mono text-[11px]">
-                                {formatMs(sc.executionTimeMs || sc.durationMs)}
+                                <div>{formatMs(sc.executionTimeMs || sc.durationMs)}</div>
+                                {(sc.tokens || sc.telemetry?.tokens) && (
+                                  <div className="text-[10px] text-amber-400 font-mono flex items-center gap-1 mt-0.5">
+                                    <Zap size={9} />
+                                    <span>{(sc.tokens || sc.telemetry?.tokens?.total || sc.telemetry?.tokens).toLocaleString()} tok</span>
+                                  </div>
+                                )}
                               </td>
                               <td className="py-2.5 px-4 text-right font-mono text-[11px] text-[var(--color-primary)] font-medium">
                                 <SystemTestProgress scenario={sc} compact />

@@ -1,27 +1,55 @@
-.understand-anything/
-/.agents/
-/.specify/
-/specs/
-/AGENTS.md
+# ==============================================================================
+# 1. ROOT WHITELIST (Strict Lockdown - Cấm toàn bộ ngoại trừ danh sách dưới)
+# ==============================================================================
+# Bỏ qua toàn bộ file và folder ở thư mục root
+/*
+
+# Whitelist các FILE duy nhất được phép ở root
+!.gitignore
+!AGENTS.md
+!api.http
+!docker-compose.yml
+!docker-compose.production.yml
+!package.json
+!package-lock.json
+!README.md
+
+# Whitelist các THƯ MỤC duy nhất được phép ở root
+!.agents/
+!client/
+!docs/
+!server/
+!shared/
+
+# ==============================================================================
+# 2. QUY TẮC BỎ QUA NỘI BỘ (Bên trong client, server, shared, docs...)
+# ==============================================================================
+# Dependencies
+node_modules/
+.npm-cache/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Build Outputs
+dist/
+dist-ssr/
+*.local
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
+# Editor & OS Metadata
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
@@ -29,54 +57,27 @@ dist-ssr
 *.sln
 *.sw?
 
-.env
-.env.*
-
-AGENTS.md
-
-.agents
-.specify
-specs/
-
-# Local export verification artifacts and dependency cache
-/.npm-cache/
-/temp/npm-cache/
+# CovAI Runtime Temp & Test Artifacts
 .covai-temp/
-/.covai-temp/
-/server/.covai-temp/
-/tmp/
-/output/
+.covai-data/
+test-results/
+/client/.evidence-review/
+/client/evidence-preview.html
 
-# Keep the approved export design alongside its delivery plan
+# Office, Binary & Document Exports
+*.docx
+*.xlsx
+*.bak
+*.pdf
+
+# Research & Superpowers Spec Restrictions
+.understand-anything/
+/.specify/
+/specs/
 !/docs/superpowers/specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
 !/docs/superpowers/specs/2026-10-28-project-collaboration-design.md
 !/docs/superpowers/specs/2026-11-04-collaborative-editor-design.md
-
-# Disposable collaboration worker copies and generated test artifacts
-/server/.covai-temp/collaboration-operations/
-
-
-# Local system-assessment verification artifacts
-/temp/system-assessment-*
-/client/.evidence-review/
-/client/evidence-preview.html
-/server/src/tests/fixtures/system-assessment/.covai-system-test/
-
-
-# Scratch directory & test results
-/scratch/
-/server/test-results/
-test-results/
-
-# Research documents and artifacts
 /docs/research/
 !/docs/research/*.md
-
-# Audit reports and PDF artifacts
-*.pdf
-
-# Ad-hoc test and debug scripts
-/server/test_*.mjs
-/server/scripts/sync_latest.mjs

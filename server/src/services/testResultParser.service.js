@@ -4,6 +4,43 @@ import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
 
 /**
+ * Helper to extract real duration from test execution results JSON
+ */
+export const extractExecutionDurationMs = (raw, runnerElapsedMs = 0) => {
+    if (!raw || typeof raw !== "object") return Math.max(0, Math.round(runnerElapsedMs));
+    if (Number(raw.durationMs) > 0) return Math.round(Number(raw.durationMs));
+    if (Number(raw.duration) > 0) return Math.round(Number(raw.duration));
+
+    let duration = 0;
+    if (Array.isArray(raw.testResults)) {
+        for (const suite of raw.testResults) {
+            const perf = Number(suite?.perfStats?.runtime || suite?.perfStats?.duration || 0);
+            if (perf > 0) {
+                duration += perf;
+            } else if (suite.endTime && suite.startTime && suite.endTime > suite.startTime) {
+                duration += (suite.endTime - suite.startTime);
+            } else if (Array.isArray(suite.assertionResults)) {
+                for (const a of suite.assertionResults) {
+                    const d = Number(a?.duration || 0);
+                    if (d > 0) duration += d;
+                }
+            }
+        }
+    }
+
+    if (duration <= 0 && Number(raw.startTime) > 0 && Array.isArray(raw.testResults)) {
+        const maxEnd = raw.testResults.reduce((max, s) => Math.max(max, Number(s.endTime || 0)), 0);
+        if (maxEnd > raw.startTime) duration = maxEnd - raw.startTime;
+    }
+
+    if (duration <= 0 && runnerElapsedMs > 0) {
+        duration = runnerElapsedMs;
+    }
+
+    return Math.max(0, Math.round(duration));
+};
+
+/**
  * Helper to find a file by candidate names in either dir or dir's parent
  */
 const findExistingFile = (dir, names) => {
@@ -64,7 +101,7 @@ export const parseJestResults = (coverageDir, options = {}) => {
         }
 
         // Calculate duration
-        const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
+        const duration = extractExecutionDurationMs(raw, options.runnerElapsedMs);
 
         const scenarios = [];
         if (raw.testResults) {
@@ -188,7 +225,7 @@ export const parseJestResults = (coverageDir, options = {}) => {
             scenarios
         };
 
-        const scenariosPath = path.join(coverageDir, "integration-scenarios.json");
+        const scenariosPath = path.join(coverageDir, "unit-scenarios.json");
         fs.writeFileSync(scenariosPath, JSON.stringify(scenarios, null, 2), "utf8");
 
         console.log(`[TEST-RESULT] parsed ${scenarios.length} scenarios.`, {
@@ -291,7 +328,7 @@ export const parseVitestResults = (coverageDir, options = {}) => {
         }
 
         // Vitest JSON output format is highly compatible with Jest
-        const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
+        const duration = extractExecutionDurationMs(raw, options.runnerElapsedMs);
 
         const scenarios = [];
         if (raw.testResults) {

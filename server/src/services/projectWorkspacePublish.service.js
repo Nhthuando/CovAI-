@@ -63,7 +63,9 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
     if (total > (includeGitMetadata ? 256 : 16) * 1024 * 1024) throw projectFileError('MUTATION_TOO_LARGE','Prepared changes exceed the publication size limit',413);
     const fastCheckpoint = editorCheckpoint && checkpointRows && !!db.$queryRaw && !includeGitMetadata && capability === 'files.write';
     const guard = fastCheckpoint ? withCheckpointGuard : withProjectGuard;
-    const committed = await guard({projectId,snapshotId,userId,capability,documentIds:checkpointDocumentIds,db,maxWait:60000,timeout:120000},async(tx,access) => {
+    let committed;
+    try {
+    committed = await guard({projectId,snapshotId,userId,capability,documentIds:checkpointDocumentIds,db,maxWait:60000,timeout:120000},async(tx,access) => {
         const {assertProjectOperationActive} = await import('./projectOperationWorkspace.service.js');
         await assertProjectOperationActive(undefined,tx);
         const snapshot = fastCheckpoint ? access.checkpointSnapshot : await findEditableSnapshot(tx,projectId,snapshotId);
@@ -137,6 +139,19 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
             payload:{kind:'BULK_APPLY',paths:changes.map(change=>change.path)}});
         return {snapshotId,workspaceRevision:project.workspaceRevision,changedPaths:changes.map(change=>change.path),event,cleanup:[markerPath,...stagingNames.map(name=>path.join(journalDir,name))]};
     });
+    } catch (error) {
+        // Database rollback cannot undo renamed files. Replay the durable journal
+        // immediately, rather than leaving failed publication bytes until a later edit.
+        if (changes[0]?.root) {
+            try {
+                await withProjectGuard({projectId,userId,capability,db},async(tx,access)=>{
+                    const snapshot=await tx.projectSnapshot.findUnique({where:{id:snapshotId}});
+                    await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:changes[0].root});
+                });
+            } catch { /* Retain the journal for fail-closed recovery on the next operation. */ }
+        }
+        throw error;
+    }
     if (committed.cleanup) {
         for (const target of committed.cleanup) await fs.rm(target,{recursive:true,force:true}).catch(()=>{});
         // Source, receipt, file versions and event are already committed. Slow

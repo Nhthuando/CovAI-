@@ -51,7 +51,7 @@ describe('real system execution and evidence',()=>{
     expect(()=>validateFullSystemTest("await page.route('**/api/**', () => {});")).toThrow(/real backend/);
     expect(()=>validateFullSystemTest("await page.goto('/'); await page.reload();")).not.toThrow();
   });
-  it('fails explicitly when full-system configuration is absent',()=>{expect(()=>readFullSystemConfig(root())).toThrow(/Choose Frontend Dev Server/);});
+  it('fails explicitly when full-system configuration is absent',()=>{expect(()=>readFullSystemConfig(root())).toThrow(/Full Stack startup setup is missing|Generate and apply a Full Stack test draft/);});
   it('persists PNG evidence and rejects files outside the snapshot',()=>{
     const directory=root();const source=path.join(directory,'shot.png');
     fs.writeFileSync(source,Buffer.from([137,80,78,71,13,10,26,10,0]));

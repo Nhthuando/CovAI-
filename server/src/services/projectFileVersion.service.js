@@ -3,7 +3,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import prisma from '../config/prisma.js';
 import { ServiceError } from '../utils/serviceError.js';
-import { snapshotWorkspaceRoot } from '../utils/snapshotWorkspace.js';
+import { snapshotWorkspaceRoot, normalizeDiskPath } from '../utils/snapshotWorkspace.js';
+import { resolveSnapshotRootDir } from '../utils/projectRootResolver.js';
 import { resolveSystemRepositoryRoot } from './fullSystemConfig.service.js';
 import { withProjectGuard } from './projectAccess.service.js';
 import { rememberProjectFileRead } from './projectFileReadCache.service.js';
@@ -18,7 +19,11 @@ export const projectFileError = (code, message, statusCode = 409, details) =>
 export const projectEditableWorkspaceRoot = snapshot => {
     const root = snapshotWorkspaceRoot(snapshot);
     if (!root) throw projectFileError('SNAPSHOT_NOT_READY','Project snapshot is not ready',409);
-    return resolveSystemRepositoryRoot(root);
+    try {
+        return resolveSystemRepositoryRoot(root);
+    } catch (_) {
+        return root;
+    }
 };
 
 export const sanitizeRawProjectPath = (value) => {
@@ -61,16 +66,29 @@ export const resolveContainedProjectPath = async (snapshot, value, options = {})
     let relativePath = normalizeProjectPath(value,options);
     const rootDir = projectEditableWorkspaceRoot(snapshot);
     if (!rootDir) throw projectFileError('SNAPSHOT_NOT_READY', 'Project snapshot is not ready', 409);
-    const root = await fs.realpath(rootDir);
-    const analysis = await fs.realpath(snapshot.rootDir);
+    let root = rootDir;
+    try {
+        root = await fs.realpath(rootDir);
+    } catch (_) {
+        root = rootDir;
+    }
+    const rawAnalysisRoot = snapshot.rootDir;
+    const normalizedSnapRoot = normalizeDiskPath(rawAnalysisRoot) || resolveSnapshotRootDir(rawAnalysisRoot) || rawAnalysisRoot;
+    let analysis;
+    try {
+        analysis = await fs.realpath(normalizedSnapRoot);
+    } catch (_) {
+        analysis = root;
+    }
     if (analysis !== root && !options.canonicalPath) {
         const analysisRelative = path.relative(root,analysis).replaceAll('\\','/');
-        if (analysisRelative === '..' || analysisRelative.startsWith('../') || path.isAbsolute(analysisRelative)) throw projectFileError('INVALID_FILE_PATH','Analysis root is outside the project',400);
-        const exists = target => fs.lstat(target).then(()=>true,error=>{if(error.code === 'ENOENT')return false;throw error;});
-        const directExists = await exists(path.join(root,relativePath));
-        const legacyExists = await exists(path.join(analysis,relativePath));
-        const rootPrefixExists = await exists(path.join(root,relativePath.split('/')[0]));
-        if (!directExists && (legacyExists || snapshot.source !== 'GITHUB' && !rootPrefixExists)) relativePath = `${analysisRelative}/${relativePath}`;
+        if (!analysisRelative.startsWith('../') && analysisRelative !== '..' && !path.isAbsolute(analysisRelative)) {
+            const exists = target => fs.lstat(target).then(()=>true,error=>{if(error.code === 'ENOENT')return false;throw error;});
+            const directExists = await exists(path.join(root,relativePath));
+            const legacyExists = await exists(path.join(analysis,relativePath));
+            const rootPrefixExists = await exists(path.join(root,relativePath.split('/')[0]));
+            if (!directExists && (legacyExists || snapshot.source !== 'GITHUB' && !rootPrefixExists)) relativePath = `${analysisRelative}/${relativePath}`;
+        }
     }
     const exists = target => fs.lstat(target).then(()=>true,error=>{if(error.code === 'ENOENT')return false;throw error;});
     if (!(await exists(path.join(root, relativePath)))) {
@@ -104,9 +122,19 @@ export const resolveContainedProjectPath = async (snapshot, value, options = {})
 };
 
 export const findEditableSnapshot = async (tx, projectId, snapshotId) => {
+    let effectiveSnapshotId = snapshotId;
+    if (!effectiveSnapshotId) {
+        const project = await tx.project.findUnique({
+            where: { id: projectId },
+            select: { activeSnapshotId: true },
+        });
+        if (project?.activeSnapshotId) {
+            effectiveSnapshotId = project.activeSnapshotId;
+        }
+    }
     const snapshot = await tx.projectSnapshot.findFirst({
-        where: { projectId, ...(snapshotId ? { id: snapshotId } : {}) },
-        orderBy: snapshotId ? undefined : { createdAt: 'desc' },
+        where: { projectId, ...(effectiveSnapshotId ? { id: effectiveSnapshotId } : {}) },
+        orderBy: effectiveSnapshotId ? undefined : { createdAt: 'desc' },
     });
     if (!snapshot?.rootDir) throw projectFileError('SNAPSHOT_CHANGED', 'Project snapshot is unavailable; select it again', 409);
     return snapshot;
