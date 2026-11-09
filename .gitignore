@@ -63,6 +63,7 @@ pnpm-debug.log*
 test-results/
 /client/.evidence-review/
 /client/evidence-preview.html
+/.agents/teamwork/
 
 # Office, Binary & Document Exports
 *.docx
