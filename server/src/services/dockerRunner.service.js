@@ -1,7 +1,9 @@
 import fs from "fs";
 import { spawn, spawnSync } from "child_process";
 import path from "path";
-import treeKill from "tree-kill";
+import { terminateProcessTree, trackProcessTree } from './processTree.service.js';
+import { withRunnerSlot } from './collectionProcess.service.js';
+import { measureUnitTestPhase, recordUnitTestWork } from './unitTestWork.service.js';
 import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 import { appendJobOutput } from "./jobOutput.service.js";
@@ -25,38 +27,8 @@ export const isPsAvailable = () => {
   return hasPsBinary;
 };
 
-const killProcessTree = (proc) => {
-  if (!proc || !proc.pid) return;
-  if (process.platform === "win32") {
-    try {
-      const result = spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], {windowsHide:true});
-      if(result.status === 0) return;
-    } catch (_) { }
-  }
-
-  // If ps is not installed on Linux (e.g. node:20-slim Docker container),
-  // tree-kill spawns 'ps' without error listeners, causing unhandled 'error' event crash.
-  if (!isPsAvailable()) {
-    try {
-      process.kill(-proc.pid, "SIGKILL");
-      return;
-    } catch (_) { }
-    try {
-      proc.kill("SIGKILL");
-      return;
-    } catch (_) { }
-  }
-
-  try {
-    treeKill(proc.pid, "SIGKILL", (err) => {
-      if (err) {
-        try { proc.kill("SIGKILL"); } catch (_) { }
-      }
-    });
-  } catch {
-    try { proc.kill("SIGKILL"); } catch (_) { }
-  }
-};
+const ownedProcessGroups = new WeakSet();
+const killProcessTree = child => terminateProcessTree(child, ownedProcessGroups.has(child));
 
 /**
  * Auto-detect whether Docker CLI is available on this host.
@@ -98,7 +70,10 @@ export const dockerRunner = {
    * @param {string} [params.image] - Optional Docker image; ignored by direct-shell fallback
    * @returns {Promise<{ success: boolean, exitCode: number, stdout: string, stderr: string }>}
    */
-  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false, signal, projectId = null }) => {
+  run: params => withRunnerSlot(() => measureUnitTestPhase('processExecution', () => executeCommand(params))),
+};
+
+const executeCommand = async ({ snapshotPath, command, hostCommand = command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false, signal, projectId = null, inheritEnv = true, loadEnvExamples = true }) => {
     if (signal?.aborted) throw new ServiceError('Execution canceled', 409);
     return new Promise((resolve, reject) => {
       let stdout = "";
@@ -129,7 +104,7 @@ export const dockerRunner = {
       const customPath = [nodeModulesBin, appModulesBin, currentPath].filter(Boolean).join(delimiter);
 
       const mergedEnv = {
-        ...process.env,
+        ...(inheritEnv ? process.env : Object.fromEntries(['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'COMSPEC', 'PATHEXT'].filter(key => process.env[key]).map(key => [key, process.env[key]]))),
         CI: "true",
         VITE_CJS_IGNORE_WARNING: "true",
         PATH: customPath,
@@ -139,7 +114,7 @@ export const dockerRunner = {
       };
 
       // Auto-load repo-level environment variables (.env.test, .env, .env.example) into mergedEnv
-      const repoEnvFiles = [".env.test", ".env", ".env.example"];
+      const repoEnvFiles = [".env.test", ".env", ...(loadEnvExamples ? [".env.example"] : [])];
       for (const envFile of repoEnvFiles) {
         const envFilePath = path.join(effectiveSnapshotPath, envFile);
         if (fs.existsSync(envFilePath)) {
@@ -196,8 +171,11 @@ export const dockerRunner = {
         ];
         child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
       } else {
-        child = spawn(command, { shell: true, cwd: effectiveSnapshotPath, env: mergedEnv, stdio: ["pipe", "pipe", "pipe"] });
+        child = spawn(hostCommand, { shell: true, cwd: effectiveSnapshotPath, env: mergedEnv, detached: process.platform !== 'win32', windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+        if (process.platform !== 'win32') ownedProcessGroups.add(child);
       }
+      trackProcessTree(child, ownedProcessGroups.has(child));
+      if (child.pid) recordUnitTestWork('runnerStarts');
       try { child.stdin?.end(); } catch { }
       const abort = () => {
         canceled = true;
@@ -333,7 +311,6 @@ export const dockerRunner = {
         });
       });
     });
-  },
 };
 
 /**

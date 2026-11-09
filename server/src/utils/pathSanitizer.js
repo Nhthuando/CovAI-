@@ -3,6 +3,8 @@
  * Strips internal server/docker storage paths (e.g. /app/storage/projects/.../repo/ or Windows storage paths)
  * from file paths, error messages, stack traces, and test suites so they are never leaked to clients.
  */
+import fs from "fs";
+import path from "path";
 
 /**
  * Normalizes and sanitizes a file path to return a clean repository-relative path.
@@ -122,16 +124,68 @@ export const canonicalizeFilePath = (p, rootDir = "") => {
         if (normP.toLowerCase().startsWith(normRoot.toLowerCase() + "/")) {
             clean = normP.slice(normRoot.length + 1).replace(/^\/+/, "");
         }
-        const subPkgMatch = normRoot.match(/(?:^|\/)repo\/([^/]+)/i);
-        if (subPkgMatch) {
-            const subPkg = subPkgMatch[1];
-            const excludedSubPkgs = new Set(["src", "tests", "test", "__tests__", "lib", "dist", "build"]);
-            if (!excludedSubPkgs.has(subPkg.toLowerCase())) {
-                if (!clean.startsWith(subPkg + "/") && !clean.startsWith("repo/")) {
-                    clean = `${subPkg}/${clean}`;
+
+        const KNOWN_SUBPROJECTS = new Set(["server", "backend", "client", "frontend", "services", "api"]);
+        const CONTAINER_DIRS = new Set(["repo", "snapshots", "uploads", "storage", "projects", "app", ".covai-temp", "collaboration-operations"]);
+        const rootBaseName = path.basename(normRoot);
+        const parentBaseName = path.basename(path.dirname(normRoot));
+
+        if (rootBaseName && KNOWN_SUBPROJECTS.has(rootBaseName.toLowerCase())) {
+            if (parentBaseName && !CONTAINER_DIRS.has(parentBaseName.toLowerCase()) && clean.toLowerCase().startsWith(parentBaseName.toLowerCase() + "/")) {
+                clean = clean.slice(parentBaseName.length + 1).replace(/^\/+/, "");
+            }
+            if (clean.toLowerCase().startsWith(rootBaseName.toLowerCase() + "/")) {
+                clean = `${rootBaseName}/${clean.slice(rootBaseName.length + 1).replace(/^\/+/, "")}`;
+            } else if (!clean.startsWith("repo/")) {
+                clean = `${rootBaseName}/${clean}`;
+            }
+        } else {
+            // If clean starts with rootDir's folder name (e.g. "gemini_chatbox/server/src/..."), strip it
+            if (rootBaseName && clean.toLowerCase().startsWith(rootBaseName.toLowerCase() + "/")) {
+                clean = clean.slice(rootBaseName.length + 1).replace(/^\/+/, "");
+            }
+
+            const subPkgMatch = normRoot.match(/(?:^|\/)repo\/([^/]+)/i);
+            if (subPkgMatch) {
+                const subPkg = subPkgMatch[1];
+                if (KNOWN_SUBPROJECTS.has(subPkg.toLowerCase())) {
+                    if (!clean.toLowerCase().startsWith(subPkg.toLowerCase() + "/") && !clean.startsWith("repo/")) {
+                        clean = `${subPkg}/${clean}`;
+                    }
                 }
             }
         }
+
+        // If file does not exist directly at <rootDir>/<clean>, check if it exists in subprojects (e.g. server, backend, client, frontend, services)
+        try {
+            if (fs.existsSync(rootDir)) {
+                const directPath = path.join(rootDir, clean);
+                if (!fs.existsSync(directPath)) {
+                    const CANDIDATE_SUBPROJECTS = ["server", "backend", "client", "frontend", "services"];
+                    let resolved = false;
+                    for (const sub of CANDIDATE_SUBPROJECTS) {
+                        if (fs.existsSync(path.join(rootDir, sub, clean))) {
+                            clean = `${sub}/${clean}`;
+                            resolved = true;
+                            break;
+                        }
+                    }
+                    if (!resolved) {
+                        try {
+                            const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+                            for (const entry of entries) {
+                                if (entry.isDirectory() && !["node_modules", ".git", "coverage", "dist", "build", ".next", ".cache", ".covai-temp"].includes(entry.name)) {
+                                    if (fs.existsSync(path.join(rootDir, entry.name, clean))) {
+                                        clean = `${entry.name}/${clean}`;
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch { }
+                    }
+                }
+            }
+        } catch { }
     }
     return clean.replace(/\\/g, "/").replace(/^\.?\//, "");
 };

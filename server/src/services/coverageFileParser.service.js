@@ -52,7 +52,7 @@ const calculatePct = (section, isFileCovered = false) => {
   return null;
 };
 
-const extractFilePath = (entry, key, rootDir = "") => {
+export const extractFilePath = (entry, key, rootDir = "") => {
   let raw = null;
   if (entry.path && typeof entry.path === "string") {
     raw = entry.path;
@@ -66,10 +66,12 @@ const extractFilePath = (entry, key, rootDir = "") => {
   if (!raw || typeof raw !== "string") return null;
   if (rootDir && path.isAbsolute(raw)) {
     const relative = path.relative(rootDir, raw);
-    if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) raw = relative;
+    if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+      raw = relative;
+    }
   }
 
-  return canonicalizeFilePath(raw, rootDir);
+  return canonicalizeFilePath(raw, rootDir) || raw;
 };
 
 const calculateIstanbulPct = (map, isFileCovered = false) => {
@@ -297,7 +299,7 @@ export const parseCoverageFilesForSnapshot = async ({
     }
   };
   if (currentProjectOperation()?.preparedPublications) await stagePreparedPublication(persist);
-  else await prisma.$transaction(persist);
+  else await prisma.$transaction(persist, { maxWait: 15000, timeout: 30000 });
 
   return {
     totalFiles: formattedRows.length,

@@ -6,6 +6,57 @@ const runnerModule = node => node?.type === "CallExpression" &&
     node.callee?.type === "Identifier" && node.callee.name === "require" &&
     node.arguments?.length === 1 ? node.arguments[0]?.value : null;
 
+/**
+ * Finds the index in code where header elements (BOM, shebang, comments, directives)
+ * end and program code begins, ensuring runner imports do not dislocate them.
+ */
+export function findHeaderInsertionIndex(code) {
+    if (!code || typeof code !== "string") return 0;
+    let index = 0;
+    const len = code.length;
+
+    if (code.charCodeAt(0) === 0xFEFF) {
+        index = 1;
+    }
+
+    if (code.startsWith("#!", index)) {
+        const newlineIdx = code.indexOf("\n", index);
+        index = newlineIdx === -1 ? len : newlineIdx + 1;
+    }
+
+    while (index < len) {
+        while (index < len && /\s/.test(code[index])) {
+            index++;
+        }
+        if (index >= len) break;
+
+        if (code.slice(index, index + 2) === "//") {
+            const newlineIdx = code.indexOf("\n", index);
+            index = newlineIdx === -1 ? len : newlineIdx + 1;
+            continue;
+        }
+
+        if (code.slice(index, index + 2) === "/*") {
+            const endCommentIdx = code.indexOf("*/", index + 2);
+            index = endCommentIdx === -1 ? len : endCommentIdx + 2;
+            continue;
+        }
+
+        const directiveMatch = code.slice(index).match(/^(?:'([^'\r\n]+)'|"([^"\r\n]+)")\s*;?/);
+        if (directiveMatch) {
+            const text = directiveMatch[1] || directiveMatch[2];
+            if (/^(?:use\s+[a-z]+|@ts-[a-z]+)/i.test(text) || text === "use strict") {
+                index += directiveMatch[0].length;
+                continue;
+            }
+        }
+
+        break;
+    }
+
+    return index;
+}
+
 export function isVitestTestCode(code, { framework, filePath = "" } = {}) {
     if (framework?.toLowerCase() === "vitest" || /\.vitest\./i.test(filePath)) return true;
     if (!/(?:from\s*|require\s*\(\s*|import\s*\(\s*)['"]vitest['"]/.test(code)) return false;
@@ -115,5 +166,15 @@ export function normalizeTestFrameworkCode(code, options = {}) {
     for (const edit of outerEdits.sort((a, b) => b.start - a.start)) {
         result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
     }
-    return imports.size ? `${[...imports].join("\n")}\n${result}` : result;
+    if (!imports.size) return result;
+
+    const importBlock = [...imports].join("\n");
+    const insertIdx = findHeaderInsertionIndex(result);
+    if (insertIdx === 0) {
+        return `${importBlock}\n${result}`;
+    }
+    const header = result.slice(0, insertIdx);
+    const body = result.slice(insertIdx);
+    const separator = header.endsWith("\n") ? "" : "\n";
+    return `${header}${separator}${importBlock}\n${body}`;
 }

@@ -38,7 +38,7 @@ function inside(root, file) {
     return rel !== "" && !rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel);
 }
 
-function localFile(root, file) {
+export function localFile(root, file) {
     if (typeof file !== "string" || !file) return null;
     const resolved = path.resolve(root, file);
     if (!inside(root, resolved) || !fs.existsSync(resolved)) return null;
@@ -46,7 +46,7 @@ function localFile(root, file) {
     return inside(fs.realpathSync(root), real) && fs.statSync(real).isFile() ? resolved : null;
 }
 
-function testBlocks(code) {
+export function testBlocks(code) {
     const parsed = parseJavaScriptCode(code);
     if (!parsed.success) return [];
     const blocks = [];
@@ -67,7 +67,7 @@ function testBlocks(code) {
     return blocks;
 }
 
-function importedSource(call, testFile, root) {
+export function importedSource(call, testFile, root) {
     if (call.node.callee.type !== "Identifier") return null;
     const binding = call.scope.getBinding(call.node.callee.name);
     if (!binding || !(binding.path.isImportSpecifier() || binding.path.isImportDefaultSpecifier())) return null;
@@ -86,7 +86,7 @@ function importedSource(call, testFile, root) {
  * The model cannot edit assertions, test names, imports, mocks or application source.
  * The caller MUST run the tests again; a proposed input is never proof of a passing test.
  */
-export async function repairGeneratedTestInputs({ rootDir, suggestions, testResults, rawOutput = "" }) {
+export async function repairGeneratedTestInputs({ rootDir, suggestions, testResults, rawOutput = "", existingTestsByFile }) {
     if (!hasAssertionFailure(testResults, rawOutput)) return [];
     const candidates = [];
     const files = new Map();
@@ -98,6 +98,7 @@ export async function repairGeneratedTestInputs({ rootDir, suggestions, testResu
         const generated = suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code;
         if (!generated) continue;
         const generatedBlocks = testBlocks(generated);
+        const originalBlocks = testBlocks(existingTestsByFile?.get(testFile) || '');
         const suite = testResults?.testResults?.find(s => {
             const name = (s.name || "").replace(/\\/g, "/");
             const rel = path.relative(rootDir, testFile).replace(/\\/g, "/");
@@ -109,6 +110,7 @@ export async function repairGeneratedTestInputs({ rootDir, suggestions, testResu
         for (const failure of suite.assertionResults || []) {
             if (failure.status !== "failed" || !hasAssertionFailure({ testResults: [{ assertionResults: [failure] }] })) continue;
             const fullName = failure.fullName || [...(failure.ancestorTitles || []), failure.title].join(" ");
+            if (originalBlocks.some(block => block.fullName === fullName)) continue;
             const matches = blocks.filter(b => b.fullName === fullName && generatedBlocks.some(g =>
                 g.fullName === b.fullName && astSignature(g.callback.node) === astSignature(b.callback.node)));
             if (matches.length !== 1) continue;

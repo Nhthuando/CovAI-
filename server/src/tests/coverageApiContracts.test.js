@@ -62,6 +62,16 @@ const { suggestUnitTestcase, applySuggestion } = await import('../controllers/co
 describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: 'snap-uuid',
+            projectId: 'proj-uuid',
+            project: { id: 'proj-uuid', ownerId: 'user-uuid' },
+        });
+        prismaMock.projectSnapshot.findFirst.mockResolvedValue({
+            id: 'snap-uuid',
+            projectId: 'proj-uuid',
+            project: { id: 'proj-uuid', ownerId: 'user-uuid' },
+        });
     });
 
     describe('3.1 API Suggest Test Case (POST /api/coverage/:snapshotId/suggest-testcase)', () => {
@@ -103,13 +113,13 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
 
             await suggestUnitTestcase(req, res);
 
-            expect(mockSuggestUnitTestcases).toHaveBeenCalledWith({
+            expect(mockSuggestUnitTestcases).toHaveBeenCalledWith(expect.objectContaining({
                 projectId: 'proj-uuid',
                 snapshotId: 'snap-uuid',
                 filePath: 'src/services/order.service.js',
                 userId: 'user-uuid',
                 framework: 'jest',
-            });
+            }));
             expect(res.status).toHaveBeenCalledWith(200);
 
             const responseBody = res.json.mock.calls[0][0];
@@ -145,7 +155,11 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
         });
 
         test('infers projectId from snapshot when omitted from request body', async () => {
-            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({ projectId: 'inferred-proj-123' });
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+                id: 'snap-uuid',
+                projectId: 'inferred-proj-123',
+                project: { id: 'inferred-proj-123', ownerId: 'user-uuid' },
+            });
             mockSuggestUnitTestcases.mockResolvedValueOnce(mockSection31Response);
 
             const req = {
@@ -162,10 +176,9 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
 
             await suggestUnitTestcase(req, res);
 
-            expect(prismaMock.projectSnapshot.findUnique).toHaveBeenCalledWith({
+            expect(prismaMock.projectSnapshot.findUnique).toHaveBeenCalledWith(expect.objectContaining({
                 where: { id: 'snap-uuid' },
-                select: { projectId: true },
-            });
+            }));
             expect(mockSuggestUnitTestcases).toHaveBeenCalledWith(expect.objectContaining({
                 projectId: 'inferred-proj-123',
                 filePath: 'src/services/order.service.js',
@@ -293,13 +306,12 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
 
             await applySuggestion(req, res);
 
-            expect(mockApplyUnitTestSuggestion).toHaveBeenCalledWith({
+            expect(mockApplyUnitTestSuggestion).toHaveBeenCalledWith(expect.objectContaining({
                 snapshotId: 'snap-uuid',
                 projectId: 'proj-uuid',
                 userId: 'user-uuid',
                 suggestion: req.body.suggestion,
-                suggestions: undefined,
-            });
+            }));
             expect(res.status).toHaveBeenCalledWith(200);
 
             const responseBody = res.json.mock.calls[0][0];

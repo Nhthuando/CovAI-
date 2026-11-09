@@ -254,7 +254,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
         }
     };
     if (currentProjectOperation()?.preparedPublications) await stagePreparedPublication(persist);
-    else await prisma.$transaction(persist);
+    else await prisma.$transaction(persist, { maxWait: 15000, timeout: 30000 });
 
     return {
         totalFunctions: uniqueFunctionRows.length,

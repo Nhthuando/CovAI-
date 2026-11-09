@@ -1,4 +1,5 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useChatTestContext } from '../../hooks/useChatTestContext';
 import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
 import React, {
   useCallback,
@@ -315,6 +316,7 @@ function IntegrationCockpitSkeleton() {
 }
 
 export default function IntegrationWorkspace({
+  onChatContextChange,
   projectId,
   snapshotId,
   onGenerate,
@@ -334,6 +336,9 @@ export default function IntegrationWorkspace({
 
   const [workspace, setWorkspace] = useState(null);
   const [reportData, setReportData] = useState(null);
+  const chatExecution = reportData?.latestExecution;
+  const chatSnapshotId = reportData?.history?.executions?.find(row => row.testRunId === chatExecution?.testRunId)?.snapshotId || snapshotId;
+  useChatTestContext(onChatContextChange, { projectId, snapshotId: chatSnapshotId, testType: 'integration', testRunId: chatExecution?.testRunId || chatExecution?.id });
   const [detectionInfo, setDetectionInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

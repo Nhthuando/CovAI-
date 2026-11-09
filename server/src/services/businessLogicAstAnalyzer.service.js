@@ -35,6 +35,9 @@ import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js
  * - Routes and server entry points (routes/**, endpoints/**, app.js, server.js, index.js, main.js)
  */
 export const isBusinessLogicFile = (filePath = "", configExclusions = []) => {
+    if (!/(?:^|\/)(?:node_modules|dist|build|tests?|__tests__|__mocks__|fixtures)(?:\/|$)|\.(?:test|spec|d)\./i.test(filePath) &&
+        /(?:^|\/)(?:hooks|utils|helpers|services)\/[^/]+\.[jt]sx?$/i.test(filePath) &&
+        !configExclusions.some(exclusion => typeof exclusion === 'string' && filePath.includes(exclusion))) return true;
     if (typeof filePath === "string" && /(?:^|\/)(?:handlers|services|controllers|utils)\/[^/]+\.step\.[cm]?[jt]sx?$/i.test(filePath) && !/(?:tests?|__tests__|specs?|e2e)/i.test(filePath)) {
         return true;
     }

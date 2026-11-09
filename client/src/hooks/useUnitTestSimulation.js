@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   getUnitTestSimulationSources,
   getUnitTestSimulationTrace,
@@ -64,314 +64,6 @@ export const SIMULATION_PHASES = {
   ASSERTION: { label: "Assertion", color: "#22c55e", badge: "🎯 Assertion" },
 };
 
-/**
- * Synthesizes a realistic, project-accurate client-side fallback simulation trace
- * ensuring the studio is always interactive even during network delay or offline mode.
- */
-function synthesizeClientFallbackTrace(options = {}) {
-  const {
-    sourceFilePath = "source.js",
-    functionName = "execute",
-    category = "HAPPY_PATH",
-    testCaseTitle = null,
-    sourceCode = "",
-    testCode = "",
-  } = options || {};
-  const effectiveFn = (functionName && typeof functionName === "string") ? functionName : "execute";
-  const cat = (category && CATEGORY_METADATA[category]) ? CATEGORY_METADATA[category] : CATEGORY_METADATA.HAPPY_PATH;
-  const isErrorCat = (cat.id || category) === "ERROR_HANDLING";
-  const isBoundary = (cat.id || category) === "BOUNDARY_VALUES";
-
-  const defaultSource = sourceCode || `/**
- * Business Logic Service: ${effectiveFn}
- */
-export async function ${effectiveFn}(userId, items = []) {
-  if (!userId) {
-    throw new Error("User ID is required");
-  }
-  if (!Array.isArray(items) || items.length === 0) {
-    return { status: "EMPTY_CART", total: 0, count: 0 };
-  }
-  const total = items.reduce((sum, item) => sum + (item.price || 0), 0);
-  return { status: "PROCESSED", total, count: items.length };
-}`;
-
-  const defaultTest = testCode || `describe("${effectiveFn}", () => {
-  it("${testCaseTitle || `should execute ${cat.shortName} scenario`}", async () => {
-    // Universal RAM Mock Isolation
-    process.env.NODE_ENV = 'test';
-    const result = await ${effectiveFn}("usr_101", [{ price: 50 }, { price: 65 }]);
-    expect(result.total).toBe(115);
-  });
-});`;
-
-  const activeMocks = [
-    {
-      module: "PrismaClient",
-      method: "order.create",
-      status: "ISOLATED_IN_RAM",
-      returned: { id: "sim_ord_101", status: "COMPLETED" },
-    },
-    {
-      module: "AxiosClient",
-      method: "post",
-      status: "ISOLATED_IN_RAM",
-      returned: { status: 200, data: { success: true } },
-    },
-    {
-      module: "process.env",
-      method: "NODE_ENV",
-      status: "ISOLATED_IN_RAM",
-      returned: "test",
-    },
-  ];
-
-  const steps = [
-    {
-      stepIndex: 1,
-      stepNumber: 1,
-      phase: "SETUP_MOCKS",
-      title: "Universal RAM Mock Initialization",
-      description: "Dependencies isolated hermetically in RAM with zero disk writes.",
-      line: 3,
-      endLine: 4,
-      codeSnippet: "process.env.NODE_ENV = 'test';\njest.mock('@prisma/client');",
-      callStack: ["<test_suite>"],
-      variables: { NODE_ENV: "test", ramIsolationActive: true },
-      activeMocks,
-      educationalGuidance: {
-        stepTitle: "Universal RAM Mock Isolation (Rule 4)",
-        category: cat.id,
-        categoryExplanation: "External dependencies must be intercepted in-memory to guarantee pure hermetic execution.",
-        stepNarrative: "Before invoking the business logic, RAM mocks intercept database and HTTP drivers.",
-        logicRationale: "Ensures zero side effects on production databases and 100% deterministic test execution.",
-        developerTakeaway: "Always isolate downstream I/O in RAM before calling business functions.",
-      },
-    },
-    {
-      stepIndex: 2,
-      stepNumber: 2,
-      phase: "CALL_ENTRY",
-      title: `Call Graph Entry: ${effectiveFn}()`,
-      description: `Invoking ${effectiveFn} via public interface with test parameters.`,
-      line: 4,
-      endLine: 4,
-      codeSnippet: `const result = await ${effectiveFn}(${isErrorCat ? "null" : isBoundary ? '"usr_101", []' : '"usr_101", [{ price: 50 }, { price: 65 }]'});`,
-      callStack: ["<test_runner>", `${effectiveFn}()`],
-      variables: {
-        userId: isErrorCat ? null : "usr_101",
-        items: isErrorCat ? [] : isBoundary ? [] : [{ price: 50 }, { price: 65 }],
-      },
-      activeMocks,
-      educationalGuidance: {
-        stepTitle: "Public Entry Point Invocation",
-        category: cat.id,
-        categoryExplanation: `${cat.name}: Exercising target function via clean public API.`,
-        stepNarrative: `The unit test calls ${effectiveFn} with specific inputs tailored for ${cat.shortName}.`,
-        logicRationale: "Indirect testing invariant ensures helpers and member logic are reached through callers.",
-        developerTakeaway: "Provide explicitly typed valid parameters to trigger intended execution paths.",
-      },
-    },
-    {
-      stepIndex: 3,
-      stepNumber: 3,
-      phase: "EVAL_PARAMS",
-      title: "Parameter Precondition Validation",
-      description: "Evaluating function argument guards and nullish checks.",
-      line: 5,
-      endLine: 7,
-      codeSnippet: 'if (!userId) {\n  throw new Error("User ID is required");\n}',
-      callStack: [`${effectiveFn}()`],
-      variables: {
-        userId: isErrorCat ? null : "usr_101",
-        hasUserId: !isErrorCat,
-      },
-      activeMocks,
-      branchEvaluation: {
-        condition: "!userId",
-        evaluatedTo: isErrorCat,
-        branchTaken: isErrorCat ? "TRUE" : "FALSE",
-        explanation: isErrorCat
-          ? "Condition !userId evaluated to TRUE (userId is null). Guard block entered."
-          : "Condition !userId evaluated to FALSE (userId is 'usr_101'). Execution proceeds.",
-      },
-      educationalGuidance: {
-        stepTitle: isErrorCat ? "Error Guard Activated" : "Parameter Guard Passed",
-        category: cat.id,
-        categoryExplanation: "Parameter validation prevents corrupt state or unexpected null dereferences downstream.",
-        stepNarrative: isErrorCat
-          ? "Input validation detects missing userId and initiates early exception flow."
-          : "Input validation verifies userId is present and continues to business processing.",
-        logicRationale: "Early defensive guards protect the application core from invalid client inputs.",
-        developerTakeaway: "Cover both missing and valid arguments to achieve 100% parameter coverage.",
-      },
-    },
-    {
-      stepIndex: 4,
-      stepNumber: 4,
-      phase: "BRANCH_DECISION",
-      title: "Branch Decision Point Evaluation",
-      description: "Evaluating array boundary and conditional checks.",
-      line: 8,
-      endLine: 10,
-      codeSnippet: 'if (!Array.isArray(items) || items.length === 0) {\n  return { status: "EMPTY_CART", total: 0, count: 0 };\n}',
-      callStack: [`${effectiveFn}()`],
-      variables: {
-        itemsCount: isBoundary || isErrorCat ? 0 : 2,
-        isEmpty: isBoundary || isErrorCat,
-      },
-      activeMocks,
-      branchEvaluation: {
-        condition: "!Array.isArray(items) || items.length === 0",
-        evaluatedTo: isBoundary,
-        branchTaken: isBoundary ? "TRUE" : "FALSE",
-        explanation: isBoundary
-          ? "Condition evaluated to TRUE because items.length is 0. Returning empty cart response."
-          : "Condition evaluated to FALSE because items contains 2 elements. Proceeding to calculation.",
-      },
-      educationalGuidance: {
-        stepTitle: isBoundary ? "Boundary Branch: TRUE" : "Branch Decision: FALSE",
-        category: cat.id,
-        categoryExplanation: "Category C Branch Toggling: Verifying isolated execution of truthy vs falsy conditions.",
-        stepNarrative: isBoundary
-          ? "Empty collection boundary condition triggered early fallback return."
-          : "Non-empty collection bypassed fallback branch to perform full item aggregation.",
-        logicRationale: "Testing both true and false paths guarantees robust branch coverage without missing edges.",
-        developerTakeaway: "Always write separate test cases for empty arrays [] and populated arrays.",
-      },
-    },
-    {
-      stepIndex: 5,
-      stepNumber: 5,
-      phase: "MOCK_INTERACTION",
-      title: "Universal RAM Mock Resolution",
-      description: "Intercepted downstream I/O call in RAM with zero network latency.",
-      line: 11,
-      endLine: 11,
-      codeSnippet: "const total = items.reduce((sum, item) => sum + (item.price || 0), 0);",
-      callStack: [`${effectiveFn}()`],
-      variables: {
-        runningTotal: isBoundary ? 0 : 115,
-        itemsProcessed: isBoundary ? 0 : 2,
-      },
-      activeMocks,
-      educationalGuidance: {
-        stepTitle: "Deterministic In-Memory Resolution",
-        category: cat.id,
-        categoryExplanation: "Pure RAM execution ensures sub-millisecond execution and complete isolation.",
-        stepNarrative: "Computation executed entirely inside memory without mutating database records.",
-        logicRationale: "High test velocity requires tests to execute without disk writes or socket waits.",
-        developerTakeaway: "Mock database clients so unit tests remain ultrafast and idempotent.",
-      },
-    },
-    {
-      stepIndex: 6,
-      stepNumber: 6,
-      phase: isErrorCat ? "ERROR_THROW" : "RETURN_VALUE",
-      title: isErrorCat ? "Exception Thrown: Error('User ID is required')" : "Deterministic Return Value",
-      description: isErrorCat
-        ? "Guard clause threw anticipated exception."
-        : "Function successfully returned deterministic result object.",
-      line: isErrorCat ? 6 : 12,
-      endLine: isErrorCat ? 6 : 12,
-      codeSnippet: isErrorCat
-        ? 'throw new Error("User ID is required");'
-        : 'return { status: "PROCESSED", total, count: items.length };',
-      callStack: [`${effectiveFn}()`],
-      variables: isErrorCat
-        ? { error: "User ID is required" }
-        : isBoundary
-        ? { status: "EMPTY_CART", total: 0, count: 0 }
-        : { status: "PROCESSED", total: 115, count: 2 },
-      activeMocks,
-      educationalGuidance: {
-        stepTitle: isErrorCat ? "Handled Error Path" : "Computed State Return",
-        category: cat.id,
-        categoryExplanation: isErrorCat
-          ? "Category D Error Handling: Verifying graceful rejection of invalid data."
-          : "Category A Happy Path: Verifying computed return values match specification.",
-        stepNarrative: isErrorCat
-          ? "The function terminated execution via an explicit error throw."
-          : "The function returned the computed summary object to the caller.",
-        logicRationale: "Functions must produce consistent outputs for identical inputs.",
-        developerTakeaway: isErrorCat
-          ? "Always test error conditions with rejects.toThrow() to verify user-facing error messages."
-          : "Assert on explicit properties of returned objects.",
-      },
-    },
-    {
-      stepIndex: 7,
-      stepNumber: 7,
-      phase: "ASSERTION",
-      title: isErrorCat ? "Assertion: expect().rejects.toThrow()" : "Assertion: expect(result.total).toBe(115)",
-      description: "Verified actual outcome against expected test specification: PASSED.",
-      line: 8,
-      endLine: 8,
-      codeSnippet: isErrorCat
-        ? 'await expect(action).rejects.toThrow("User ID is required");'
-        : "expect(result.total).toBe(115);",
-      callStack: ["<test_runner>"],
-      variables: {
-        expected: isErrorCat ? "User ID is required" : 115,
-        actual: isErrorCat ? "User ID is required" : 115,
-      },
-      activeMocks,
-      assertionResult: {
-        matcher: isErrorCat ? "toThrow" : "toBe",
-        expected: isErrorCat ? "User ID is required" : 115,
-        actual: isErrorCat ? "User ID is required" : 115,
-        passed: true,
-      },
-      assertion: {
-        matcher: isErrorCat ? "toThrow" : "toBe",
-        expected: isErrorCat ? "User ID is required" : 115,
-        actual: isErrorCat ? "User ID is required" : 115,
-        passed: true,
-      },
-      educationalGuidance: {
-        stepTitle: "Contract Verification Check (✓ PASSED)",
-        category: cat.id,
-        categoryExplanation: "Assertions seal the contract, guaranteeing regressions will be detected immediately.",
-        stepNarrative: "The test assertion evaluated expected value against actual result and verified full match.",
-        logicRationale: "A passing assertion proves the business logic satisfies the specification for this scenario.",
-        developerTakeaway: "Use precise matchers (.toBe for primitives, .toEqual for objects, .toThrow for errors).",
-      },
-    },
-  ];
-
-  return {
-    id: `sim_${effectiveFn}_${(cat.id || "HAPPY_PATH").toLowerCase()}`,
-    sourceFilePath,
-    sourceCode: defaultSource,
-    testFilePath: "tests/simulation.test.js",
-    testCode: defaultTest,
-    isVirtualScenario: false,
-    testCase: {
-      id: "TC-01",
-      title: testCaseTitle || `Test ${cat.shortName} Execution`,
-      category: cat.id,
-      categoryName: cat.name,
-      targetFunction: effectiveFn,
-    },
-    summary: {
-      totalSteps: steps.length,
-      branchesToggled: [{ line: 8, condition: "!Array.isArray(items) || items.length === 0", outcome: isBoundary }],
-      assertionsCount: 1,
-      allAssertionsPassed: true,
-      outcome: "PASSED",
-      durationMs: 1.2,
-    },
-    initialMocks: activeMocks,
-    steps,
-  };
-}
-
-/**
- * Custom React Hook: useUnitTestSimulation
- *
- * Implements the deterministic state machine, API fetchers, client-side fallback synthesis,
- * playback timer, scrubber controls, and keyboard navigation.
- */
 export function useUnitTestSimulation({
   snapshotId,
   projectId = null,
@@ -425,7 +117,7 @@ export function useUnitTestSimulation({
   const [selectedTestCaseId, setSelectedTestCaseId] = useState(initialTestCaseId);
   const [selectedFunctionName, setSelectedFunctionName] = useState(defaultFn);
   const [selectedCategory, setSelectedCategory] = useState(initialCategory || "HAPPY_PATH");
-  const [activeCodeView, setActiveCodeView] = useState("source"); // "source" | "test" | "split"
+  const [activeCodeView, setActiveCodeView] = useState("split"); // "source" | "test" | "split"
 
   // Playback state
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -440,6 +132,7 @@ export function useUnitTestSimulation({
   const [traceError, setTraceError] = useState(null);
   const [isKeyboardEnabled, setIsKeyboardEnabled] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const traceRequestRef = useRef(0);
 
   // Sync propSources when they arrive asynchronously
   useEffect(() => {
@@ -528,16 +221,17 @@ export function useUnitTestSimulation({
     return () => {
       isMounted = false;
     };
-  }, [snapshotId, enabled, refreshTrigger]);
+  }, [snapshotId, enabled, refreshTrigger, selectedSourceFile]);
 
   // Load or synthesize simulation trace
   useEffect(() => {
     if (!enabled) return;
 
-    const targetFile = selectedSourceFile || initialSourceFile || sourcesData[0]?.filePath || propSources[0]?.filePath;
+    const targetFile = selectedSourceFile || initialSourceFile;
     if (!targetFile && !initialTestCode) return;
 
     let isMounted = true;
+    const request = ++traceRequestRef.current;
 
     const loadTrace = async () => {
       try {
@@ -556,7 +250,7 @@ export function useUnitTestSimulation({
 
           const res = await getUnitTestSimulationTrace(snapshotId, payload);
           const trace = res?.data || res;
-          if (isMounted && trace && Array.isArray(trace.steps) && trace.steps.length > 0) {
+          if (isMounted && request === traceRequestRef.current && trace && Array.isArray(trace.steps) && trace.steps.length > 0) {
             setSimulationTrace(trace);
             setCurrentStepIndex(0);
             setIsPlaying(false);
@@ -566,31 +260,19 @@ export function useUnitTestSimulation({
         }
         throw new Error("No trace returned from simulation endpoint");
       } catch (err) {
-        if (!isMounted) return;
-        console.info("Using client-side synthetic simulation trace fallback:", err.message);
-        // Graceful fallback simulation synthesis
-        const currentSrcObj = sourcesData.find((s) => s.filePath === targetFile) || propSources.find((s) => s.filePath === targetFile);
-        const existingSourceCode = currentSrcObj?.sourceCode || "";
-        const fallback = synthesizeClientFallbackTrace({
-          sourceFilePath: targetFile || "service.js",
-          functionName: selectedFunctionName || initialFunctionName || currentSrcObj?.functions?.[0]?.name || "execute",
-          category: selectedCategory || initialCategory || "HAPPY_PATH",
-          testCaseTitle: selectedTestCaseId || `Test ${(selectedCategory || "HAPPY_PATH").toLowerCase()} scenario`,
-          sourceCode: existingSourceCode,
-          testCode: initialTestCode || "",
-        });
-        setSimulationTrace(fallback);
-        setCurrentStepIndex(0);
+        if (!isMounted || request !== traceRequestRef.current) return;
+        setSimulationTrace(null);
         setIsPlaying(false);
-        setTraceError(null);
+        setTraceError(err.message || 'Unable to load the recording. Please try again.');
       } finally {
-        if (isMounted) setTraceLoading(false);
+        if (isMounted && request === traceRequestRef.current) setTraceLoading(false);
       }
     };
 
     loadTrace();
     return () => {
       isMounted = false;
+      traceRequestRef.current++;
     };
   }, [
     snapshotId,
@@ -729,18 +411,14 @@ export function useUnitTestSimulation({
   }, [enabled, isKeyboardEnabled, togglePlay, stepForward, stepBackward, reset, jumpToEnd]);
 
   // Custom test code state for interactive test authoring sandbox
-  const [customTestCode, setCustomTestCode] = useState(initialTestCode || "");
-
-  useEffect(() => {
-    if (simulationTrace?.testCode && !customTestCode) {
-      setCustomTestCode(simulationTrace.testCode);
-    }
-  }, [simulationTrace?.testCode]);
+  const [authoredTestCode, setCustomTestCode] = useState(initialTestCode || null);
+  const customTestCode = authoredTestCode ?? simulationTrace?.testCode ?? '';
 
   // Simulate custom user-authored test code
   const simulateCustomTest = useCallback(async (codeToSimulate) => {
     const code = codeToSimulate !== undefined ? codeToSimulate : customTestCode;
     if (!code || !code.trim()) return null;
+    const request = ++traceRequestRef.current;
     try {
       setTraceLoading(true);
       setTraceError(null);
@@ -756,6 +434,7 @@ export function useUnitTestSimulation({
         };
         const res = await getUnitTestSimulationTrace(snapshotId, payload);
         const trace = res?.data || res;
+        if (request !== traceRequestRef.current) return null;
         if (trace && Array.isArray(trace.steps) && trace.steps.length > 0) {
           setSimulationTrace(trace);
           setCurrentStepIndex(0);
@@ -766,21 +445,14 @@ export function useUnitTestSimulation({
       }
       throw new Error("No simulation steps returned for custom test code");
     } catch (err) {
+      if (request !== traceRequestRef.current) return null;
       console.warn("Failed to simulate custom test:", err);
-      const fallback = synthesizeClientFallbackTrace({
-        sourceFilePath: selectedSourceFile || initialSourceFile || "service.js",
-        functionName: selectedFunctionName || initialFunctionName || "execute",
-        category: selectedCategory || initialCategory || "HAPPY_PATH",
-        testCaseTitle: "Custom Authored Test",
-        testCode: code,
-      });
-      setSimulationTrace(fallback);
-      setCurrentStepIndex(0);
+      setSimulationTrace(null);
       setIsPlaying(false);
-      setTraceError(null);
-      return fallback;
+      setTraceError(err.message || 'Unable to illustrate this test.');
+      return null;
     } finally {
-      setTraceLoading(false);
+      if (request === traceRequestRef.current) setTraceLoading(false);
     }
   }, [
     snapshotId,
@@ -796,6 +468,30 @@ export function useUnitTestSimulation({
     initialCategory,
     customTestCode,
   ]);
+
+  const captureRuntimeTrace = useCallback(async (scope = 'test') => {
+    if (!snapshotId || !simulationTrace?.testFilePath || traceLoading) return;
+    setTraceLoading(true);
+    setTraceError(null);
+    setIsPlaying(false);
+    const request = ++traceRequestRef.current;
+    try {
+      const response = await getUnitTestSimulationTrace(snapshotId, {
+        sourceFilePath: selectedSourceFile || initialSourceFile,
+        testFilePath: simulationTrace.testFilePath,
+        testCaseTitle: simulationTrace.testCase?.fullTitle || simulationTrace.testCase?.title,
+        functionName: selectedFunctionName || initialFunctionName,
+        category: selectedCategory, capture: true, scope: scope === 'suite' ? 'suite' : 'test',
+      });
+      const trace = response?.data || response;
+      if (request !== traceRequestRef.current) return;
+      setSimulationTrace(trace);
+      setCurrentStepIndex(0);
+    } catch (error) {
+      if (request !== traceRequestRef.current) return;
+      setTraceError(error.message || 'Unable to record the test execution.');
+    } finally { if (request === traceRequestRef.current) setTraceLoading(false); }
+  }, [snapshotId, simulationTrace, traceLoading, selectedSourceFile, initialSourceFile, selectedFunctionName, initialFunctionName, selectedCategory]);
 
   return {
     // State
@@ -821,6 +517,7 @@ export function useUnitTestSimulation({
 
     // Actions
     actions: {
+      captureRuntimeTrace,
       play,
       pause,
       togglePlay,
@@ -834,6 +531,7 @@ export function useUnitTestSimulation({
       setCustomTestCode,
       simulateCustomTest,
       setSelectedSourceFile: (file) => {
+        setCustomTestCode(null);
         setSelectedSourceFile(file);
         const found =
           (Array.isArray(sourcesData) && sourcesData.find((s) => s.filePath === file)) ||

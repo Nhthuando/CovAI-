@@ -1,5 +1,6 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
+import { DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS } from '../../../shared/unitTestRuntime.js';
 const BASE_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -148,7 +149,7 @@ export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
 
 export async function installMissingDependency(snapshotId, packageName, isDev = false, rerunTests = true, importedFrom = null) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 35000);
+    const timer = setTimeout(() => controller.abort(), DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS);
     try {
         const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
             method: "POST",
@@ -159,7 +160,7 @@ export async function installMissingDependency(snapshotId, packageName, isDev = 
         return await handleResponse(res);
     } catch (err) {
         if (err.name === "AbortError") {
-            throw new Error(`Installation of '${packageName}' timed out after 35s. Test execution will proceed with universal RAM mock isolation.`, { cause: err });
+            throw new Error(`The installation request for '${packageName}' timed out. The server may still be finishing the installation; check the project status before retrying. No mock fallback has been enabled.`, { cause: err });
         }
         throw err;
     } finally {
@@ -177,20 +178,20 @@ export async function getFileCoverage(snapshotId, filePath) {
     return handleResponse(res);
 }
 
-export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null) {
+export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null, validationMode = 'fast') {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ filePath, projectId, ...(framework ? { framework } : {}) }),
+        body: JSON.stringify({ filePath, projectId, validationMode, ...(framework ? { framework } : {}) }),
     });
     return handleResponse(res);
 }
 
-export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase-all`, {
+export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null, validationMode = 'full' } = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase-all`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ filePaths, projectId, ...(framework ? { framework } : {}) }),
+        body: JSON.stringify({ filePaths, projectId, validationMode, ...(framework ? { framework } : {}) }),
     });
     return handleResponse(res);
 }
@@ -248,11 +249,11 @@ export async function getIntegrationWorkspace(snapshotId) {
     return handleResponse(res);
 }
 
-export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob } = {}) {
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, envVariables, requireCoverageGoal, requestId } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-test-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
+        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), envVariables, requireCoverageGoal, requestId }),
     });
     return handleResponse(res);
 }

@@ -5,6 +5,7 @@ import { readVersionedProjectFile } from '../services/projectFileVersion.service
 import { mutateProjectWorkspace } from '../services/projectMutation.service.js';
 import { snapshotWorkspaceRoot } from '../utils/snapshotWorkspace.js';
 import { requestedAiModel } from '../utils/selectedAiModel.js';
+import {scheduleUnitTestPostApplyAnalysis} from '../services/unitTestPostApplyAnalysis.service.js';
 import { resolveSystemScreenshot } from '../services/systemScreenshotPath.service.js';
 import { coverageSummaryFor } from '../services/systemAssessmentContract.service.js';
 import { parseSystemTestResultQuery } from '../validators/systemTestResultQuery.validator.js';
@@ -40,11 +41,11 @@ import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
 import { applyUnitTestSuggestion } from "../services/applyTestSuggestion.service.js";
 import {
-    saveUnitTestFileVersions,
-    getUnitTestVersions,
+    getCommittedUnitTestVersions,
     switchUnitTestVersion
 } from "../services/unitTestVersion.service.js";
 import { detectProjectEnvironment, saveWorkspaceEnv } from "../services/environmentDetection.service.js";
+import { captureUnitTestTrace, findRecordedUnitTestTrace } from '../services/unitTestRuntimeTrace.service.js';
 import { getAvailableSimulationSources, generateSimulationTrace } from "../services/unitTestSimulationEngine.service.js";
 
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
@@ -66,6 +67,43 @@ import { optimizeSystemTest } from "../services/systemTestBooster.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 import { extractSuitesAndScenarios } from "../utils/testFileParser.js";
 import { containedPath, readFullSystemConfig } from "../services/fullSystemLifecycle.service.js";
+
+// ── Canonical project-relative path resolution & matching ────────────────────
+export const resolveProjectRelativePath = (p, rootDir = "") => {
+    if (!p || typeof p !== "string") return "";
+    let clean = cleanStoragePath(p) || p;
+    clean = clean.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
+
+    if (rootDir) {
+        const normRoot = rootDir.replace(/\\/g, "/").replace(/^\.?\//, "").replace(/\/+$/, "");
+        if (clean.toLowerCase().startsWith(normRoot.toLowerCase() + "/")) {
+            clean = clean.slice(normRoot.length + 1).replace(/^\/+/, "");
+        }
+        // If file exists as-is relative to rootDir, it is already the canonical project-relative path
+        try {
+            if (fs.existsSync(path.join(rootDir, clean))) {
+                return clean;
+            }
+            // Check standard monorepo/subproject prefixes
+            const candidatePrefixes = ["server", "backend", "client", "frontend", "services", "src", "app", "api"];
+            for (const prefix of candidatePrefixes) {
+                if (!clean.startsWith(prefix + "/") && fs.existsSync(path.join(rootDir, prefix, clean))) {
+                    return `${prefix}/${clean}`;
+                }
+            }
+        } catch (_) {}
+    }
+    const canon = canonicalizeFilePath(clean, rootDir);
+    return canon || clean;
+};
+
+export const getNormalizedMatchKey = (p = "") => {
+    return (p || "")
+        .replace(/\\/g, "/")
+        .replace(/^\.?\//, "")
+        .replace(/^(?:server|backend|client|frontend|app|api)\//i, "")
+        .toLowerCase();
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -104,8 +142,8 @@ const findOwnedSnapshot = async (snapshotId, userId) => {
     if (!snapshotId) return null;
     let snapshot = null;
     const projectFilter = userId ? (typeof membershipWhere === "function" ? membershipWhere(userId) : { ownerId: userId }) : {};
-    if (typeof prisma?.projectSnapshot?.findUnique === "function") {
-        try {
+    try {
+        if (typeof prisma?.projectSnapshot?.findUnique === "function") {
             const uniqueSnap = await prisma.projectSnapshot.findUnique({
                 where: { id: snapshotId },
                 include: { project: true },
@@ -115,21 +153,29 @@ const findOwnedSnapshot = async (snapshotId, userId) => {
                     snapshot = uniqueSnap;
                 }
             }
+        }
+    } catch { }
+    if (!snapshot) {
+        try {
+            if (typeof prisma?.projectSnapshot?.findFirst === "function") {
+                snapshot = await prisma.projectSnapshot.findFirst({
+                    where: { id: snapshotId, ...(userId ? { project: projectFilter } : {}) },
+                    select: { id: true, projectId: true, rootDir: true, project: true },
+                });
+            }
         } catch { }
     }
-    if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
-        snapshot = await prisma.projectSnapshot.findFirst({
-            where: { id: snapshotId, ...(userId ? { project: projectFilter } : {}) },
-            select: { id: true, projectId: true, rootDir: true, project: true },
-        });
-    }
-    if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
-        // Fallback: check if snapshotId is actually a projectId
-        snapshot = await prisma.projectSnapshot.findFirst({
-            where: { projectId: snapshotId, ...(userId ? { project: projectFilter } : {}) },
-            orderBy: { createdAt: "desc" },
-            select: { id: true, projectId: true, rootDir: true, project: true },
-        });
+    if (!snapshot) {
+        try {
+            if (typeof prisma?.projectSnapshot?.findFirst === "function") {
+                // Fallback: check if snapshotId is actually a projectId
+                snapshot = await prisma.projectSnapshot.findFirst({
+                    where: { projectId: snapshotId, ...(userId ? { project: projectFilter } : {}) },
+                    orderBy: { createdAt: "desc" },
+                    select: { id: true, projectId: true, rootDir: true, project: true },
+                });
+            }
+        } catch { }
     }
     return snapshot;
 };
@@ -405,79 +451,103 @@ export const getCoverageSummary = async (req, res) => {
                 }
             } catch (_) {}
 
-            let raw = null;
+            let bestSummary = null;
+            let bestSummaryMtime = 0;
+            let bestHasNonZero = false;
+
             for (const summaryFile of candidateSummaryFiles) {
                 if (fs.existsSync(summaryFile)) {
                     try {
+                        const stat = fs.statSync(summaryFile);
                         const parsed = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
                         if (parsed && typeof parsed === "object") {
-                            raw = parsed;
-                            break;
+                            const hasNonZero = (parsed.total?.lines?.pct || 0) > 0 || (parsed.total?.statements?.pct || 0) > 0 ||
+                                Object.values(parsed).some(v => v !== parsed.total && typeof v === "object" && ((v.lines?.pct || 0) > 0 || (v.statements?.pct || 0) > 0));
+                            if (!bestSummary || (hasNonZero && !bestHasNonZero) || (hasNonZero === bestHasNonZero && stat.mtimeMs > bestSummaryMtime)) {
+                                bestSummary = parsed;
+                                bestSummaryMtime = stat.mtimeMs;
+                                bestHasNonZero = hasNonZero;
+                            }
                         }
                     } catch (_) {}
                 }
             }
+            let raw = bestSummary;
 
             if (raw) {
-                        if (typeFilter === "unit") {
-                            // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
-                            const thresholdExceptions = new Set();
+                if (typeFilter === "unit") {
+                    // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
+                    const thresholdExceptions = new Set();
+                    try {
+                        const { readProjectJestConfig } = await import("../services/runTestsJob.service.js");
+                        const projectJestConfig = await readProjectJestConfig(resolvedRootDir, snapshot.jestConfigPath);
+                        const coverageThreshold = projectJestConfig?.coverageThreshold;
+                        if (coverageThreshold && typeof coverageThreshold === "object") {
+                            for (const pattern of Object.keys(coverageThreshold)) {
+                                if (pattern === "global") continue;
+                                const normPattern = pattern.replace(/^\.\//, "").replace(/\\/g, "/").toLowerCase();
+                                thresholdExceptions.add(normPattern);
+                            }
+                        }
+                    } catch { }
+
+                    // Filter out non-business logic files (examples, configs, types, hooks, i18n, routes, frontend)
+                    const configExclusions = extractProjectCoverageExclusions(resolvedRootDir);
+                    const canonicalMap = new Map();
+                    const canonicalByMatchKey = new Map();
+                    for (const [filePath, data] of Object.entries(raw)) {
+                        if (filePath === "total" || !data) continue;
+                        const can = resolveProjectRelativePath(filePath, resolvedRootDir) || filePath;
+                        const norm = can.replace(/\\/g, "/").toLowerCase();
+                        const isThresholdException = Array.from(thresholdExceptions).some(exc => norm.endsWith(exc));
+                        if (isBusinessLogicSourceFile(can, configExclusions) && !isThresholdException) {
+                            const matchKey = getNormalizedMatchKey(can);
+                            const existingKey = canonicalMap.has(can) ? can : (canonicalByMatchKey.get(matchKey) || null);
+                            if (!existingKey || (canonicalMap.get(existingKey).statements?.total || 0) < (data.statements?.total || 0)) {
+                                if (existingKey && existingKey !== can) canonicalMap.delete(existingKey);
+                                canonicalMap.set(can, data);
+                                canonicalByMatchKey.set(matchKey, can);
+                            }
+                        }
+                    }
+
+                    // Ensure ALL project business logic files are accounted for in unit coverage totals
+                    const logicFiles = findLogicSourceFiles(resolvedRootDir);
+                    for (const lf of logicFiles) {
+                        const can = resolveProjectRelativePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
+                        const norm = can.replace(/\\/g, "/").toLowerCase();
+                        const isThresholdException = Array.from(thresholdExceptions).some(exc => norm.endsWith(exc));
+                        if (isThresholdException || !isBusinessLogicSourceFile(can, configExclusions)) continue;
+
+                        const matchKey = getNormalizedMatchKey(can);
+                        const existingKey = canonicalMap.has(can) ? can : (canonicalByMatchKey.get(matchKey) || null);
+
+                        if (!existingKey) {
+                            let content = "";
+                            try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
+                            const codeLines = content.split("\n");
+                            const totalLines = Math.max(1, codeLines.length);
+                            let funcs = [];
+                            try { funcs = extractFunctions(content) || []; } catch { funcs = []; }
+                            let branchList = [];
                             try {
-                                const { readProjectJestConfig } = await import("../services/runTestsJob.service.js");
-                                const projectJestConfig = await readProjectJestConfig(resolvedRootDir, snapshot.jestConfigPath);
-                                const coverageThreshold = projectJestConfig?.coverageThreshold;
-                                if (coverageThreshold && typeof coverageThreshold === "object") {
-                                    for (const pattern of Object.keys(coverageThreshold)) {
-                                        if (pattern === "global") continue;
-                                        const normPattern = pattern.replace(/^\.\//, "").replace(/\\/g, "/").toLowerCase();
-                                        thresholdExceptions.add(normPattern);
-                                    }
-                                }
-                            } catch { }
+                                branchList = extractBranches(content) || [];
+                            } catch { branchList = []; }
 
-                            // Filter out non-business logic files (examples, configs, types, hooks, i18n, routes, frontend)
-                            const configExclusions = extractProjectCoverageExclusions(resolvedRootDir);
-                            const canonicalMap = new Map();
-                            for (const [filePath, data] of Object.entries(raw)) {
-                                if (filePath === "total" || !data) continue;
-                                const can = canonicalizeFilePath(filePath, resolvedRootDir) || filePath;
-                                const norm = can.replace(/\\/g, "/").toLowerCase();
-                                const isThresholdException = Array.from(thresholdExceptions).some(exc => norm.endsWith(exc));
-                                if (isBusinessLogicSourceFile(can, configExclusions) && !isThresholdException) {
-                                    if (!canonicalMap.has(can) || (canonicalMap.get(can).statements?.total || 0) < (data.statements?.total || 0)) {
-                                        canonicalMap.set(can, data);
-                                    }
-                                }
-                            }
-
-                            // Ensure ALL project business logic files are accounted for in unit coverage totals
-                            const logicFiles = findLogicSourceFiles(resolvedRootDir);
-                            for (const lf of logicFiles) {
-                                const can = canonicalizeFilePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
-                                const norm = can.replace(/\\/g, "/").toLowerCase();
-                                const isThresholdException = Array.from(thresholdExceptions).some(exc => norm.endsWith(exc));
-                                if (isThresholdException || !isBusinessLogicSourceFile(can, configExclusions)) continue;
-
-                                if (!canonicalMap.has(can)) {
-                                    let content = "";
-                                    try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
-                                    const codeLines = content.split("\n");
-                                    const totalLines = Math.max(1, codeLines.length);
-                                    let funcs = [];
-                                    try { funcs = extractFunctions(content) || []; } catch { funcs = []; }
-                                    let branchList = [];
-                                    try {
-                                        branchList = extractBranches(content) || [];
-                                    } catch { branchList = []; }
-
-                                    canonicalMap.set(can, {
-                                        lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-                                        statements: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-                                        functions: { total: funcs.length, covered: 0, skipped: 0, pct: 0 },
-                                        branches: { total: branchList.reduce((s, b) => s + (b.locations?.length || 1), 0), covered: 0, skipped: 0, pct: 0 }
-                                    });
-                                }
-                            }
+                            canonicalMap.set(can, {
+                                lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+                                statements: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+                                functions: { total: funcs.length, covered: 0, skipped: 0, pct: 0 },
+                                branches: { total: branchList.reduce((s, b) => s + (b.locations?.length || 1), 0), covered: 0, skipped: 0, pct: 0 }
+                            });
+                            canonicalByMatchKey.set(matchKey, can);
+                        } else if (existingKey !== can) {
+                            const existingData = canonicalMap.get(existingKey);
+                            canonicalMap.delete(existingKey);
+                            canonicalMap.set(can, existingData);
+                            canonicalByMatchKey.set(matchKey, can);
+                        }
+                    }
 
                             const unitFileEntries = Array.from(canonicalMap.entries());
 
@@ -725,20 +795,25 @@ export const getCoverageSummary = async (req, res) => {
                     const bPct = dbSummary.branchesPct ?? 0;
                     const fPct = dbSummary.funcsPct ?? 0;
                     const lPct = dbSummary.linesPct ?? 0;
-                    rawTotals = {
-                        statements: { total: 0, covered: 0, pct: sPct },
-                        branches: { total: 0, covered: 0, pct: bPct },
-                        functions: { total: 0, covered: 0, pct: fPct },
-                        lines: { total: 0, covered: 0, pct: lPct },
-                    };
-                    coverage = {
-                        statements: sPct,
-                        branches: bPct,
-                        functions: fPct,
-                        lines: lPct,
-                    };
+                    const hasDbCoverage = sPct > 0 || lPct > 0 || fPct > 0 || bPct > 0;
+                    if (hasDbCoverage || !rawTotals) {
+                        rawTotals = {
+                            statements: { total: 100, covered: Math.round(sPct), pct: sPct },
+                            branches: { total: 100, covered: Math.round(bPct), pct: bPct },
+                            functions: { total: 100, covered: Math.round(fPct), pct: fPct },
+                            lines: { total: 100, covered: Math.round(lPct), pct: lPct },
+                        };
+                        coverage = {
+                            statements: sPct,
+                            branches: bPct,
+                            functions: fPct,
+                            lines: lPct,
+                        };
+                    }
                 }
-            } catch (_) {}
+            } catch (dbSummaryErr) {
+                console.warn("[CoverageSummary] DB summary fallback error:", dbSummaryErr.message);
+            }
         }
 
         // If integration test and no explicit summary file found, compute baseline 0% totals across all API route files
@@ -751,7 +826,7 @@ export const getCoverageSummary = async (req, res) => {
                 let branchesTotal = 0;
 
                 for (const lf of logicFiles) {
-                    const can = canonicalizeFilePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
+                    const can = resolveProjectRelativePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
                     if (!isApiFilePath(can)) continue;
 
                     let content = "";
@@ -785,7 +860,8 @@ export const getCoverageSummary = async (req, res) => {
         }
 
         // If unit test and no explicit summary file found, compute baseline 0% totals across all business logic files
-        if (typeFilter === "unit" && !rawTotals && resolvedRootDir) {
+        const hasActiveCoverage = (coverage.statements || 0) > 0 || (coverage.lines || 0) > 0 || (coverage.functions || 0) > 0;
+        if (typeFilter === "unit" && !rawTotals && !hasActiveCoverage && resolvedRootDir) {
             try {
                 const configExclusions = extractProjectCoverageExclusions(resolvedRootDir);
                 const logicFiles = findLogicSourceFiles(resolvedRootDir);
@@ -795,7 +871,7 @@ export const getCoverageSummary = async (req, res) => {
                 let branchesTotal = 0;
 
                 for (const lf of logicFiles) {
-                    const can = canonicalizeFilePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
+                    const can = resolveProjectRelativePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
                     if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
 
                     let content = "";
@@ -1253,7 +1329,7 @@ export const getCoverageFiles = async (req, res) => {
                 where,
                 orderBy: { [sortBy]: order },
                 skip: typeFilter === "unit" ? 0 : skip,
-                take: typeFilter === "unit" ? 2000 : limit,
+                take: typeFilter === "unit" ? undefined : limit,
                 select: {
                     id: true,
                     filePath: true,
@@ -1278,12 +1354,32 @@ export const getCoverageFiles = async (req, res) => {
 
             // Deduplicate, filter by genuine business logic, and canonicalize DB files
             const seen = new Map();
+            const seenByMatchKey = new Map();
+
             for (const f of files) {
-                const can = canonicalizeFilePath(f.filePath, effectiveRoot) || f.filePath;
+                const can = resolveProjectRelativePath(f.filePath, effectiveRoot) || f.filePath;
                 if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
 
-                if (!seen.has(can) || (seen.get(can).linesPct === 0 && (f.linesPct || 0) > 0)) {
+                const matchKey = getNormalizedMatchKey(can);
+                const existingKey = seen.has(can) ? can : (seenByMatchKey.get(matchKey) || null);
+
+                if (!existingKey) {
                     seen.set(can, { ...f, filePath: can });
+                    seenByMatchKey.set(matchKey, can);
+                } else {
+                    const existing = seen.get(existingKey);
+                    const currentHasCoverage = (f.linesPct || 0) > 0 || (f.stmtsPct || 0) > 0;
+                    const existingHasCoverage = (existing.linesPct || 0) > 0 || (existing.stmtsPct || 0) > 0;
+
+                    if ((!existingHasCoverage && currentHasCoverage) || (existingKey !== can && can.length > existingKey.length && !existingHasCoverage)) {
+                        seen.delete(existingKey);
+                        seen.set(can, { ...f, filePath: can });
+                        seenByMatchKey.set(matchKey, can);
+                    } else if (existingKey !== can && can.length > existingKey.length && existingHasCoverage && currentHasCoverage) {
+                        seen.delete(existingKey);
+                        seen.set(can, { ...existing, filePath: can });
+                        seenByMatchKey.set(matchKey, can);
+                    }
                 }
             }
 
@@ -1292,9 +1388,13 @@ export const getCoverageFiles = async (req, res) => {
                 const logicFiles = findLogicSourceFiles(effectiveRoot);
                 for (let idx = 0; idx < logicFiles.length; idx++) {
                     const lf = logicFiles[idx];
-                    const can = canonicalizeFilePath(lf.relativePath, effectiveRoot);
+                    const can = resolveProjectRelativePath(lf.relativePath, effectiveRoot);
                     if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
-                    if (!seen.has(can)) {
+
+                    const matchKey = getNormalizedMatchKey(can);
+                    const existingKey = seen.has(can) ? can : (seenByMatchKey.get(matchKey) || null);
+
+                    if (!existingKey) {
                         seen.set(can, {
                             id: `logic_${idx}_${path.basename(can)}`,
                             filePath: can,
@@ -1303,6 +1403,13 @@ export const getCoverageFiles = async (req, res) => {
                             funcsPct: 0,
                             stmtsPct: 0,
                         });
+                        seenByMatchKey.set(matchKey, can);
+                    } else if (existingKey !== can) {
+                        // The file exists under a shorter/legacy key in seen: upgrade its filePath to canonical relative path while preserving coverage
+                        const existing = seen.get(existingKey);
+                        seen.delete(existingKey);
+                        seen.set(can, { ...existing, filePath: can });
+                        seenByMatchKey.set(matchKey, can);
                     }
                 }
             }
@@ -1316,7 +1423,7 @@ export const getCoverageFiles = async (req, res) => {
                 }
                 valA = Number(valA || 0);
                 valB = Number(valB || 0);
-                return order === "desc" ? valB - valA : valA - valB;
+                return (order === "desc" ? valB - valA : valA - valB) || a.filePath.localeCompare(b.filePath);
             });
             total = files.length;
             files = files.slice(skip, skip + limit);
@@ -2094,9 +2201,10 @@ export const getCoverageFunctions = async (req, res) => {
             const existingFileFuncs = new Set();
             const validDbFunctions = [];
             for (const f of functions) {
-                const can = canonicalizeFilePath(f.filePath, effectiveRoot) || f.filePath;
+                const can = resolveProjectRelativePath(f.filePath, effectiveRoot) || f.filePath;
                 if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
                 existingFileFuncs.add(can);
+                existingFileFuncs.add(getNormalizedMatchKey(can));
                 validDbFunctions.push({ ...f, filePath: can });
             }
 
@@ -2105,12 +2213,12 @@ export const getCoverageFunctions = async (req, res) => {
                 const logicFiles = findLogicSourceFiles(effectiveRoot);
                 for (let i = 0; i < logicFiles.length; i++) {
                     const lf = logicFiles[i];
-                    const can = canonicalizeFilePath(lf.relativePath, effectiveRoot);
+                    const can = resolveProjectRelativePath(lf.relativePath, effectiveRoot);
                     if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
                     if (filePathFilter && !can.toLowerCase().includes(filePathFilter.toLowerCase())) continue;
 
                     // If file has no functions in DB, extract via AST
-                    if (!existingFileFuncs.has(can)) {
+                    if (!existingFileFuncs.has(can) && !existingFileFuncs.has(getNormalizedMatchKey(can))) {
                         let content = "";
                         try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
                         let extracted = [];
@@ -2464,6 +2572,18 @@ export const installMissingDependencyController = async (req, res) => {
             importedFrom: importedFrom || null
         });
 
+        if (!installResult.success) {
+            return res.status(installResult.timedOut ? 504 : 422).json({
+                success: false,
+                code: installResult.timedOut ? 'DEPENDENCY_INSTALL_TIMEOUT' : 'DEPENDENCY_INSTALL_FAILED',
+                message: installResult.timedOut
+                    ? `Installation of '${packageName}' exceeded ${Math.round(installResult.timeoutMs / 1000)} seconds. Check registry connectivity and retry.`
+                    : `Could not install '${packageName}'. ${installResult.stderr || 'Check the package manager output and retry.'}`,
+                installResult,
+                newJobId: null,
+            });
+        }
+
         let newJob = null;
         if (rerunTests) {
             const { createRunTestsJob } = await import("../services/job.service.js");
@@ -2476,16 +2596,6 @@ export const installMissingDependencyController = async (req, res) => {
                 mode: "FULL"
             });
             await addJobToQueue("RUN_TESTS", newJob.id);
-        }
-
-        if (!installResult.success) {
-            return res.status(200).json({
-                success: true,
-                message: `Package '${packageName}' could not be installed via npm (${installResult.timedOut ? "timeout 30s" : "offline"}), but tests will execute using hermetic universal mock isolation.`,
-                installResult,
-                fallbackMocked: true,
-                newJobId: newJob?.id || null
-            });
         }
 
         return res.status(200).json({
@@ -2644,7 +2754,8 @@ export const suggestUnitTestcase = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, filePath, framework } = req.body || {};
+        let { projectId, filePath, framework, validationMode = 'fast' } = req.body || {};
+        if (!['fast','full'].includes(validationMode)) return res.status(400).json({success:false,message:'Invalid suggestion validation mode.'});
 
         if (!filePath) return res.status(400).json({ success: false, message: "filePath is required in body." });
 
@@ -2652,12 +2763,16 @@ export const suggestUnitTestcase = async (req, res) => {
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
         const actualSnapshotId = snapshot.id;
-        const actualProjectId = projectId || snapshot.projectId;
+        const actualProjectId = projectId || snapshot.projectId || snapshot.project?.id;
+        if (!actualProjectId) {
+            return res.status(400).json({ success: false, message: "Valid projectId is required." });
+        }
 
         const result = await suggestUnitTestcases({
             projectId: actualProjectId,
             snapshotId: actualSnapshotId,
             filePath,
+            validationMode,
             userId,
             framework,
             selectedAiModel: requestedAiModel(req)
@@ -3748,7 +3863,12 @@ export const applySuggestion = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, suggestion, suggestions, skipBackgroundJob, triggerFullAnalysis } = req.body || {};
+        let { projectId, suggestion, suggestions, skipBackgroundJob, envVariables, requireCoverageGoal, requestId } = req.body || {};
+        if (requestId !== undefined && (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(requestId))) return res.status(400).json({success:false,message:'Invalid request ID'});
+        if (envVariables !== undefined && (!envVariables || typeof envVariables !== 'object' || Array.isArray(envVariables) ||
+            Object.entries(envVariables).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string'))) {
+            return res.status(400).json({ success: false, message: 'Invalid test environment configuration.' });
+        }
 
         if (!suggestion && (!suggestions || suggestions.length === 0)) {
             return res.status(400).json({ success: false, message: "suggestion or suggestions array is required." });
@@ -3758,48 +3878,36 @@ export const applySuggestion = async (req, res) => {
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
         const actualSnapshotId = snapshot.id;
-        const actualProjectId = projectId || snapshot.projectId;
+        const actualProjectId = projectId || snapshot.projectId || snapshot.project?.id;
+        if (!actualProjectId) {
+            return res.status(400).json({ success: false, message: "Valid projectId is required." });
+        }
 
         const result = await applyUnitTestSuggestion({
             snapshotId: actualSnapshotId,
             projectId: actualProjectId,
             userId,
             suggestion,
-            suggestions
+            suggestions,
+            envVariables,
+            requestId,
+            requireCoverageGoal: requireCoverageGoal === true
         });
 
-        // Only trigger a full project RUN_TESTS background job if explicitly requested or if incremental coverage was not already persisted
+        // Run one full analysis after publication, even when Apply measured coverage.
         let backgroundJob = null;
-        const hasAuthoritativeCoverage = Boolean(result && result.success && result.newCoverage && result.perFileResults);
-        if (!skipBackgroundJob && (triggerFullAnalysis === true || !hasAuthoritativeCoverage) && result && result.success && actualSnapshotId && actualProjectId) {
+        let postApplyAnalysisError = null;
+        if (actualSnapshotId && actualProjectId) {
             try {
-                const activeUnitJob = await prisma.job.findFirst({
-                    where: {
-                        projectId: actualProjectId,
-                        snapshotId: actualSnapshotId,
-                        type: "RUN_TESTS",
-                        status: { in: ["QUEUED", "RUNNING"] }
-                    }
-                });
-                if (!activeUnitJob) {
-                    const runJob = await createRunTestsJob({
-                        projectId: actualProjectId,
-                        snapshotId: actualSnapshotId,
-                        userId,
-                        mode: "FULL"
-                    });
-                    await addJobToQueue("RUN_TESTS", runJob.id);
-                    backgroundJob = { id: runJob.id, type: "RUN_TESTS", status: "QUEUED" };
-                    console.log(`[applySuggestion] Auto-triggered background unit test analysis job ${runJob.id} for snapshot ${actualSnapshotId}`);
-                } else {
-                    backgroundJob = { id: activeUnitJob.id, type: "RUN_TESTS", status: activeUnitJob.status };
-                }
+                backgroundJob = await scheduleUnitTestPostApplyAnalysis({result,projectId:actualProjectId,
+                    snapshotId:actualSnapshotId,userId,requestId,skipBackgroundJob});
             } catch (jobErr) {
+                postApplyAnalysisError = 'Tests were applied, but automatic analysis could not be queued. Run Analysis to refresh project coverage.';
                 console.warn("[applySuggestion] Warning auto-triggering background RUN_TESTS job:", jobErr.message);
             }
         }
 
-        return res.status(200).json({ success: true, data: { ...result, backgroundJob } });
+        return res.status(200).json({ success: true, data: { ...result, backgroundJob, ...(postApplyAnalysisError ? {postApplyAnalysisError} : {}) } });
     } catch (error) {
         console.error("[applySuggestion] Error:", error);
         return res.status(error.statusCode || 500).json({
@@ -4155,9 +4263,9 @@ export const getUnitTestVersionsController = async (req, res) => {
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
-        const versions = getUnitTestVersions({
-            snapshotId: snapshot.id,
-            rootDir: snapshot.rootDir,
+        const versions = await getCommittedUnitTestVersions({
+            snapshot,
+            userId,
             filePath: filePath ? String(filePath).trim() : null
         });
 
@@ -4201,21 +4309,77 @@ export const switchUnitTestVersionController = async (req, res) => {
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
+        const isAllFiles = Boolean(allFiles);
+        const cleanFilePath = filePath && typeof filePath === "string" && filePath.trim() ? filePath.trim() : null;
+
+        if (!isAllFiles && !cleanFilePath) {
+            return res.status(400).json({
+                success: false,
+                message: "Either filePath or allFiles: true is required."
+            });
+        }
+
+        const parsedTargetVersion = targetVersion != null ? Number(targetVersion) : null;
+
         const result = await switchUnitTestVersion({
             snapshotId: snapshot.id,
             projectId: projectId || snapshot.projectId,
             userId,
-            filePath,
+            filePath: cleanFilePath,
             targetVersionId,
-            targetVersion: targetVersion != null ? Number(targetVersion) : null,
-            allFiles: Boolean(allFiles),
+            targetVersion: parsedTargetVersion,
+            allFiles: isAllFiles,
             targetVersionType,
             runTests: Boolean(runTests)
         });
 
+        if (result && result.success === false) {
+            return res.status(422).json({
+                success: false,
+                targetVersion: result?.targetVersion ?? parsedTargetVersion,
+                message: result.message || "Failed to switch unit test version.",
+                verification: result.verification,
+                errorDetail: result.errorDetail,
+                data: result
+            });
+        }
+
+        const resolvedTargetVersion = result?.targetVersion ?? parsedTargetVersion ?? 1;
+
+        let coverage = result?.coverage || null;
+        if (!coverage) {
+            const summaryRecord = await prisma.coverageSummary.findUnique({
+                where: { snapshotId: snapshot.id }
+            });
+            if (summaryRecord) {
+                coverage = {
+                    statements: { pct: summaryRecord.stmtsPct },
+                    branches: { pct: summaryRecord.branchesPct },
+                    functions: { pct: summaryRecord.funcsPct },
+                    lines: { pct: summaryRecord.linesPct }
+                };
+            }
+        }
+
+        const message = result?.message || (
+            isAllFiles
+                ? (resolvedTargetVersion === 1
+                    ? "Successfully reverted all files to Version 1 (Baseline)."
+                    : `Successfully switched all files to Version ${resolvedTargetVersion}.`)
+                : `Successfully switched ${cleanFilePath || "file"} to Version ${resolvedTargetVersion}.`
+        );
+
         return res.status(200).json({
             success: true,
-            data: result
+            targetVersion: resolvedTargetVersion,
+            message,
+            coverage,
+            data: {
+                ...result,
+                targetVersion: resolvedTargetVersion,
+                message,
+                coverage
+            }
         });
     } catch (error) {
         console.error("[switchUnitTestVersionController] Error:", error);
@@ -4255,24 +4419,7 @@ export const saveUnitTestVersionsController = async (req, res) => {
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
-        const result = saveUnitTestFileVersions({
-            snapshotId: snapshot.id,
-            rootDir: snapshot.rootDir,
-            projectId: projectId || snapshot.projectId,
-            sourceFile,
-            testFile,
-            originalContent,
-            updatedContent,
-            framework,
-            summary,
-            isExisting: Boolean(isExisting),
-            status: status || "GENERATED"
-        });
-
-        return res.status(200).json({
-            success: true,
-            data: result
-        });
+        return res.status(409).json({ success: false, code: 'VERIFIED_BATCH_REQUIRED', message: 'Versions are created only after the complete Apply batch passes runner and coverage verification.' });
     } catch (error) {
         console.error("[saveUnitTestVersionsController] Error:", error);
         return res.status(error.statusCode || 500).json({
@@ -4293,18 +4440,26 @@ export const suggestUnitTestcaseAll = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, framework } = req.body || {};
+        let { projectId, framework, filePaths = [], validationMode = 'full' } = req.body || {};
+        if (!Array.isArray(filePaths) || filePaths.length > 2000 || filePaths.some(file => typeof file !== 'string' || !file.trim()) || !['fast','full'].includes(validationMode)) {
+            return res.status(400).json({success:false,message:'Invalid suggestion file list or validation mode.'});
+        }
 
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
         const actualSnapshotId = snapshot.id;
-        const actualProjectId = projectId || snapshot.projectId;
+        const actualProjectId = projectId || snapshot.projectId || snapshot.project?.id;
+        if (!actualProjectId) {
+            return res.status(400).json({ success: false, message: "Valid projectId is required." });
+        }
 
         const result = await suggestUnitTestcases({
             projectId: actualProjectId,
             snapshotId: actualSnapshotId,
             filePath: "all",
+            filePaths,
+            validationMode,
             userId,
             framework,
             selectedAiModel: requestedAiModel(req)
@@ -4325,27 +4480,13 @@ export const checkUnitTestEnvironment = async (req, res, next) => {
         const { snapshotId } = req.params;
         if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
 
-        let snapshot = null;
-        if (typeof prisma?.projectSnapshot?.findUnique === "function") {
-            try {
-                snapshot = await prisma.projectSnapshot.findUnique({
-                    where: { id: snapshotId },
-                    include: { project: true }
-                });
-            } catch (_) {}
-        }
-        if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
-            try {
-                snapshot = await prisma.projectSnapshot.findFirst({
-                    where: { id: snapshotId }
-                });
-            } catch (_) {}
-        }
+        if (!req.user?.id) return res.status(401).json({success:false,message:'Unauthorized.'});
+        const snapshot = await findOwnedSnapshot(snapshotId, req.user.id);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot root directory is not ready." });
 
         const data = await detectProjectEnvironment(snapshot.rootDir || snapshot);
-        return res.status(200).json({ success: true, data });
+        return res.status(200).json({ success: true, data: { ...data, existingVariables: {}, detectedVariables: data.detectedVariables.map(({ inferredMock, ...variable }) => variable) } });
     } catch (error) {
         if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });
         if (typeof next === 'function') return next(error);
@@ -4368,22 +4509,8 @@ export const saveUnitTestEnvironment = async (req, res, next) => {
             return res.status(400).json({ success: false, message: "envVariables must be an object of key-value pairs." });
         }
 
-        let snapshot = null;
-        if (typeof prisma?.projectSnapshot?.findUnique === "function") {
-            try {
-                snapshot = await prisma.projectSnapshot.findUnique({
-                    where: { id: snapshotId },
-                    include: { project: true }
-                });
-            } catch (_) {}
-        }
-        if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
-            try {
-                snapshot = await prisma.projectSnapshot.findFirst({
-                    where: { id: snapshotId }
-                });
-            } catch (_) {}
-        }
+        if (!req.user?.id) return res.status(401).json({success:false,message:'Unauthorized.'});
+        const snapshot = await findOwnedSnapshot(snapshotId, req.user.id);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
         const result = await saveWorkspaceEnv({
@@ -4414,10 +4541,10 @@ export const saveUnitTestEnvironment = async (req, res, next) => {
         return res.status(200).json({
             success: true,
             data: {
-                ...result,
+                workspaceRevision: result.workspaceRevision,
                 path: ".env",
                 persisted: true,
-                envVariables,
+                configuredVariables: Object.keys(envVariables),
                 runTriggered,
                 ...(jobId ? { jobId } : {})
             }
@@ -4438,10 +4565,8 @@ export const getSimulationSources = async (req, res, next) => {
         const { snapshotId } = req.params;
         if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
 
-        const snapshot = await prisma.projectSnapshot.findUnique({
-            where: { id: snapshotId },
-            include: { project: true }
-        });
+        if (!req.user?.id) return res.status(401).json({success:false,message:'Unauthorized.'});
+        const snapshot = await findOwnedSnapshot(snapshotId,req.user.id);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
 
         const options = {
@@ -4472,10 +4597,8 @@ export const getSimulationTrace = async (req, res, next) => {
             return res.status(400).json({ success: false, message: "sourceFilePath is required." });
         }
 
-        const snapshot = await prisma.projectSnapshot.findUnique({
-            where: { id: snapshotId },
-            include: { project: true }
-        });
+        if (!req.user?.id) return res.status(401).json({success:false,message:'Unauthorized.'});
+        const snapshot = await findOwnedSnapshot(snapshotId,req.user.id);
         if (!snapshot && typeof sourceCode !== "string") {
             return res.status(404).json({ success: false, message: "Snapshot not found." });
         }
@@ -4485,7 +4608,22 @@ export const getSimulationTrace = async (req, res, next) => {
             rootDir: snapshot?.rootDir,
             snapshot
         };
-        const result = await generateSimulationTrace(snapshotId, payload);
+        let result = await generateSimulationTrace(snapshotId, payload);
+        if (req.body?.capture === true) {
+            const owned = await findOwnedSnapshot(snapshotId, req.user?.id);
+            if (!req.user?.id || !owned) return res.status(404).json({ success: false, message: 'Snapshot not found or unauthorized.' });
+            const { resolveProjectAccess } = await import('../services/projectAccess.service.js');
+            await resolveProjectAccess({projectId:owned.projectId,userId:req.user.id,capability:'tests.run'});
+            result = await captureUnitTestTrace({ snapshotId, rootDir: owned.rootDir,
+                sourceFilePath: result.sourceFilePath, testFilePath: result.testFilePath,
+                testCaseTitle: result.testCase?.fullTitle || result.testCase?.title, category: result.testCase?.category,
+                workspaceRevision: owned.project?.workspaceRevision ?? null,
+                scope: req.body?.scope === 'suite' ? 'suite' : 'test' });
+        } else if (snapshot && !req.body?.sourceCode && !req.body?.testCode && !result.isVirtualScenario) {
+            result = findRecordedUnitTestTrace({ snapshotId, rootDir: snapshot.rootDir, sourceFilePath: result.sourceFilePath,
+                testFilePath: result.testFilePath, testCaseTitle: result.testCase?.fullTitle || result.testCase?.title,
+                workspaceRevision: snapshot.project?.workspaceRevision ?? null }) || result;
+        }
         return res.status(200).json({ success: true, data: result });
     } catch (error) {
         if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });

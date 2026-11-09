@@ -1336,6 +1336,60 @@ describe('prisma', () => { it('runs', () => expect(1).toBe(1)); });`;
             expect(result).toContain("{ virtual: true }");
             expect(result).toContain("jest.mock(_rp");
         });
+
+        test("healControllerFixturesWithAst heals null req.body overrides across describe and test blocks", () => {
+            const input = `
+describe('cartController tests', () => {
+    let req, res, next;
+    beforeEach(() => {
+        req = { body: {}, params: {}, query: {}, headers: {}, file: null };
+        res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+        next = jest.fn();
+    });
+
+    test('error path should not fail with null body destructuring', async () => {
+        req.body = null;
+        await checkout(req, res, next);
+    });
+
+    test('caller with null payload object', async () => {
+        const payload = { body: null, query: null, params: null };
+        await checkout(payload, res, next);
+    });
+});`;
+            const fixed = healControllerFixturesWithAst(input, "src/controllers/cartController.js");
+            expect(fixed).not.toContain("req.body = null");
+            expect(fixed).toContain("req.body = {}");
+            expect(fixed).not.toContain("body: null");
+            expect(fixed).toContain("body: {}");
+            const parsed = parseJavaScriptCode(fixed);
+            expect(parsed.success).toBe(true);
+        });
+
+        test("healControllerFixturesWithAst independently traverses and heals sibling describe blocks", () => {
+            const multiDescribeCode = `
+describe('Describe One', () => {
+    let req, res, next;
+    beforeEach(() => {
+        req = { body: {} };
+        res = {};
+    });
+    test('test one', () => {
+        req.body.name = 'one';
+    });
+});
+
+describe('Describe Two', () => {
+    test('test two', () => {
+        req.body.name = 'two';
+    });
+});`;
+            const fixed = healControllerFixturesWithAst(multiDescribeCode, "src/controllers/orderController.js");
+            // Describe Two must have beforeEach injected
+            expect(fixed).toMatch(/describe\s*\(\s*['"]Describe Two['"][\s\S]*?beforeEach\s*\(\s*\(\)\s*=>/);
+            const parsed = parseJavaScriptCode(fixed);
+            expect(parsed.success).toBe(true);
+        });
     });
 });
 

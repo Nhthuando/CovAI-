@@ -618,81 +618,85 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
         (filePath && /controller|middleware|route/i.test(filePath)) ||
         /describe\s*\(\s*['"][^'"]*controller/i.test(code) ||
         /let\s+req\s*,\s*res/i.test(code) ||
-        /\breq\.(file|body|params|query|headers)\b/.test(code);
+        /\breq\.(file|body|params|query|headers)\b/.test(code) ||
+        /\b(?:req|body)\b/.test(code);
 
     if (!isControllerContext) return code;
 
+    // Phase 1: AST-driven null req.body healing across describe and test blocks
+    let modified = code;
+    try {
+        const ast1 = parse(modified, {
+            sourceType: "unambiguous",
+            plugins: ["jsx", "typescript", "classProperties", "topLevelAwait"]
+        });
+        const nullReplacements = [];
+
+        traverse(ast1, {
+            AssignmentExpression(aPath) {
+                // req.body = null / req.body = undefined
+                if (
+                    aPath.node.left &&
+                    aPath.node.left.type === "MemberExpression" &&
+                    aPath.node.left.object &&
+                    aPath.node.left.object.name === "req" &&
+                    aPath.node.left.property &&
+                    aPath.node.left.property.name === "body" &&
+                    aPath.node.right &&
+                    (aPath.node.right.type === "NullLiteral" || (aPath.node.right.type === "Identifier" && aPath.node.right.name === "undefined"))
+                ) {
+                    nullReplacements.push({
+                        start: aPath.node.right.start,
+                        end: aPath.node.right.end,
+                        text: "{}"
+                    });
+                }
+            },
+            ObjectProperty(pPath) {
+                const keyName = pPath.node.key?.name || pPath.node.key?.value;
+                if (keyName === "body" && pPath.node.value?.type === "NullLiteral") {
+                    nullReplacements.push({
+                        start: pPath.node.value.start,
+                        end: pPath.node.value.end,
+                        text: "{}"
+                    });
+                }
+                if ((keyName === "query" || keyName === "params" || keyName === "headers") && pPath.node.value?.type === "NullLiteral") {
+                    const parentProps = pPath.parent?.properties;
+                    const hasBodySibling = Array.isArray(parentProps) && parentProps.some(p => (p.key?.name || p.key?.value) === "body");
+                    if (hasBodySibling) {
+                        nullReplacements.push({
+                            start: pPath.node.value.start,
+                            end: pPath.node.value.end,
+                            text: "{}"
+                        });
+                    }
+                }
+            }
+        });
+
+        if (nullReplacements.length > 0) {
+            nullReplacements.sort((a, b) => b.start - a.start);
+            for (const rep of nullReplacements) {
+                modified = modified.slice(0, rep.start) + rep.text + modified.slice(rep.end);
+            }
+        }
+    } catch (_) { }
+
+    // Phase 2: Traverse describe blocks and test blocks to inject missing controller fixtures
     let astObj;
     try {
-        astObj = parse(code, {
+        astObj = parse(modified, {
             sourceType: "unambiguous",
             plugins: ["jsx", "typescript", "classProperties", "topLevelAwait"]
         });
     } catch (_) {
-        return code;
+        return modified;
     }
 
-    // Check if req is already assigned in any beforeEach hook in the file
-    let fileHasReqInBeforeEach = false;
-    try {
-        traverse(astObj, {
-            CallExpression(cPath) {
-                if (cPath.node.callee && cPath.node.callee.name === "beforeEach") {
-                    cPath.traverse({
-                        AssignmentExpression(aPath) {
-                            if (aPath.node.left && aPath.node.left.name === "req") {
-                                fileHasReqInBeforeEach = true;
-                            }
-                        }
-                    });
-                }
-            }
-        });
-    } catch (_) { }
-
-    if (fileHasReqInBeforeEach) {
-        return code;
-    }
-
-    let modified = code;
     const insertions = [];
 
-    try {
-        traverse(astObj, {
-            CallExpression(path) {
-                if (path.node.callee && path.node.callee.name === "describe") {
-                    const hasParentDescribe = Boolean(path.findParent(p => p.isCallExpression() && p.node.callee && p.node.callee.name === "describe"));
-                    if (hasParentDescribe) return;
-
-                    const describeFn = path.node.arguments[1];
-                    if (!describeFn || !describeFn.body || describeFn.body.type !== "BlockStatement") return;
-
-                    let hasReqUsage = false;
-                    let foundBeforeEach = null;
-                    let hasReqAssignInBeforeEach = false;
-
-                    path.traverse({
-                        MemberExpression(mPath) {
-                            if (mPath.node.object && mPath.node.object.name === "req") {
-                                hasReqUsage = true;
-                            }
-                        },
-                        CallExpression(cPath) {
-                            if (cPath.node.callee && cPath.node.callee.name === "beforeEach") {
-                                foundBeforeEach = cPath.node;
-                                cPath.traverse({
-                                    AssignmentExpression(aPath) {
-                                        if (aPath.node.left && aPath.node.left.name === "req") {
-                                            hasReqAssignInBeforeEach = true;
-                                        }
-                                    }
-                                });
-                            }
-                        }
-                    });
-
-                    if (hasReqUsage && !hasReqAssignInBeforeEach) {
-                        const fixture = `
+    const fixture = `
     req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], cookies: {}, user: { id: 1, role: 'admin' } };
     res = {
       status: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
@@ -708,6 +712,69 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
     };
     next = (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))();`;
 
+    try {
+        traverse(astObj, {
+            CallExpression(path) {
+                if (path.node.callee && path.node.callee.name === "describe") {
+                    const describeFn = path.node.arguments[1];
+                    if (!describeFn || !describeFn.body || describeFn.body.type !== "BlockStatement") return;
+
+                    let hasReqUsage = false;
+                    let foundBeforeEach = null;
+                    let hasReqAssignInBeforeEach = false;
+
+                    path.traverse({
+                        MemberExpression(mPath) {
+                            if (mPath.node.object && mPath.node.object.name === "req") {
+                                hasReqUsage = true;
+                            }
+                        },
+                        Identifier(iPath) {
+                            if (iPath.node.name === "req" && iPath.parent && (iPath.parent.type === "CallExpression" || iPath.parent.type === "ArrayExpression")) {
+                                hasReqUsage = true;
+                            }
+                        },
+                        CallExpression(cPath) {
+                            if (cPath.node.callee && cPath.node.callee.name === "beforeEach") {
+                                const directParent = cPath.findParent(p => p.isCallExpression() && p.node.callee && p.node.callee.name === "describe");
+                                if (directParent === path) {
+                                    foundBeforeEach = cPath.node;
+                                    cPath.traverse({
+                                        AssignmentExpression(aPath) {
+                                            if (aPath.node.left && aPath.node.left.name === "req") {
+                                                hasReqAssignInBeforeEach = true;
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    });
+
+                    // Check if an enclosing ancestor describe already assigns req in a beforeEach
+                    let ancestorHasReq = false;
+                    let ancestorDescribe = path.findParent(p => p.isCallExpression() && p.node.callee && p.node.callee.name === "describe");
+                    while (ancestorDescribe) {
+                        ancestorDescribe.traverse({
+                            CallExpression(cPath) {
+                                if (cPath.node.callee && cPath.node.callee.name === "beforeEach") {
+                                    const directParent = cPath.findParent(p => p.isCallExpression() && p.node.callee && p.node.callee.name === "describe");
+                                    if (directParent === ancestorDescribe) {
+                                        cPath.traverse({
+                                            AssignmentExpression(aPath) {
+                                                if (aPath.node.left && aPath.node.left.name === "req") {
+                                                    ancestorHasReq = true;
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                        ancestorDescribe = ancestorDescribe.findParent(p => p.isCallExpression() && p.node.callee && p.node.callee.name === "describe");
+                    }
+
+                    if (hasReqUsage && !hasReqAssignInBeforeEach && !ancestorHasReq) {
                         if (foundBeforeEach && foundBeforeEach.arguments[0] && foundBeforeEach.arguments[0].body) {
                             const bodyNode = foundBeforeEach.arguments[0].body;
                             insertions.push({ pos: bodyNode.start + 1, text: fixture });
@@ -723,10 +790,10 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
             }
         });
     } catch (_) {
-        return code;
+        return modified;
     }
 
-    if (insertions.length === 0) return code;
+    if (insertions.length === 0) return modified;
 
     insertions.sort((a, b) => b.pos - a.pos);
     for (const ins of insertions) {
@@ -1223,47 +1290,113 @@ export const healMissingMockNamedExports = (code, rawOutput = "", options = {}) 
 
 
 /**
+ * Cleans inline comments, trailing commas, and TypeScript type prefixes from import specifiers.
+ */
+export const cleanNamedImportSpecs = (named) => {
+    if (!named || typeof named !== "string") return "";
+    const stripped = named
+        .replace(/\/\/[^\r\n]*/g, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+    return stripped
+        .split(",")
+        .map(s => {
+            const trimmed = s.trim();
+            if (!trimmed) return null;
+            const withoutType = trimmed.replace(/^type\s+/, "");
+            const parts = withoutType.split(/\s+as\s+/);
+            return parts.length === 2 ? `${parts[0].trim()}: ${parts[1].trim()}` : parts[0].trim();
+        })
+        .filter(Boolean)
+        .join(", ");
+};
+
+/**
  * Converts rogue ESM import statements into CommonJS require declarations in CJS test files.
  */
 export const convertEsmToCommonJs = (code) => {
-    if (!code || typeof code !== "string" || !code.includes("import ")) return code;
+    if (!code || typeof code !== "string" || !/\bimport\b/.test(code)) return code;
     // Runner ESM imports must survive even when the source under test uses require().
     if (isVitestTestCode(code) || /from\s*['"]@jest\/globals['"]/.test(code)) return code;
     // Only convert if the code already contains CommonJS require calls or module.exports
-    const hasCommonJs = /(?:const|let|var)\s+.*=\s*require\(|module\.exports\s*=/.test(code);
+    const hasCommonJs = /(?:const|let|var)\s+.*=\s*require\(|module\.exports\s*=|require\s*\(/.test(code);
     if (!hasCommonJs) return code;
+
+    // 1. Primary: AST-directed conversion when code is syntactically parseable
+    const parsed = parseJavaScriptCode(code);
+    if (parsed.success && parsed.ast?.program) {
+        const edits = [];
+        for (const node of parsed.ast.program.body) {
+            if (node.type !== "ImportDeclaration") continue;
+            const modSource = node.source?.value;
+            if (modSource === "vitest" || modSource === "@jest/globals") continue;
+
+            const modLiteral = code.slice(node.source.start, node.source.end);
+            const defaultSpec = node.specifiers.find(s => s.type === "ImportDefaultSpecifier");
+            const namespaceSpec = node.specifiers.find(s => s.type === "ImportNamespaceSpecifier");
+            const namedSpecs = node.specifiers.filter(s => s.type === "ImportSpecifier" && s.importKind !== "type");
+
+            const parts = [];
+            if (defaultSpec) {
+                parts.push(`const ${defaultSpec.local.name} = require(${modLiteral});`);
+            }
+            if (namespaceSpec) {
+                parts.push(`const ${namespaceSpec.local.name} = require(${modLiteral});`);
+            }
+            if (namedSpecs.length > 0) {
+                const specifiers = namedSpecs.map(s => {
+                    const imported = s.imported?.name || s.imported?.value;
+                    const local = s.local.name;
+                    return imported && imported !== local ? `${imported}: ${local}` : local;
+                }).join(", ");
+                parts.push(`const { ${specifiers} } = require(${modLiteral});`);
+            }
+            if (!defaultSpec && !namespaceSpec && namedSpecs.length === 0 && node.importKind !== "type") {
+                parts.push(`require(${modLiteral});`);
+            }
+
+            if (parts.length > 0) {
+                edits.push({ start: node.start, end: node.end, text: parts.join("\n") });
+            } else if (node.importKind === "type" || (node.specifiers.length > 0 && namedSpecs.length === 0)) {
+                edits.push({ start: node.start, end: node.end, text: "" });
+            }
+        }
+
+        if (edits.length > 0) {
+            let result = code;
+            for (const edit of edits.sort((a, b) => b.start - a.start)) {
+                result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
+            }
+            return result;
+        }
+    }
+
+    // 2. Secondary: Robust multiline regex fallback for unparseable raw code
     let result = code;
 
     // 1. import defaultExport, { named } from 'module';
-    result = result.replace(/^[ \t]*import\s+([a-zA-Z0-9_$]+)\s*,\s*\{([^}]+)\}\s+from\s+(['"][^'"]+['"]);?[ \t]*\r?$/gm, (m, def, named, mod) => {
-        const namedSpecs = named.split(',').map(s => {
-            const parts = s.trim().split(/\s+as\s+/);
-            return parts.length === 2 ? `${parts[0].trim()}: ${parts[1].trim()}` : parts[0].trim();
-        }).filter(Boolean).join(', ');
+    result = result.replace(/^[ \t]*import\s+([a-zA-Z0-9_$]+)\s*,\s*\{([\s\S]*?)\}\s*from\s*(['"][^'"]+['"]);?(?:[ \t]*\/\/[^\r\n]*)?\r?$/gm, (m, def, named, mod) => {
+        const namedSpecs = cleanNamedImportSpecs(named);
         return `const ${def} = require(${mod});\nconst { ${namedSpecs} } = require(${mod});`;
     });
 
     // 2. import * as name from 'module';
-    result = result.replace(/^[ \t]*import\s+\*\s+as\s+([a-zA-Z0-9_$]+)\s+from\s+(['"][^'"]+['"]);?[ \t]*\r?$/gm,
+    result = result.replace(/^[ \t]*import\s+\*\s*as\s+([a-zA-Z0-9_$]+)\s*from\s*(['"][^'"]+['"]);?(?:[ \t]*\/\/[^\r\n]*)?\r?$/gm,
         `const $1 = require($2);`
     );
 
     // 3. import { a, b as c } from 'module';
-    result = result.replace(/^[ \t]*import\s+\{([^}]+)\}\s+from\s+(['"][^'"]+['"]);?[ \t]*\r?$/gm, (m, named, mod) => {
-        const namedSpecs = named.split(',').map(s => {
-            const parts = s.trim().split(/\s+as\s+/);
-            return parts.length === 2 ? `${parts[0].trim()}: ${parts[1].trim()}` : parts[0].trim();
-        }).filter(Boolean).join(', ');
+    result = result.replace(/^[ \t]*import\s*\{([\s\S]*?)\}\s*from\s*(['"][^'"]+['"]);?(?:[ \t]*\/\/[^\r\n]*)?\r?$/gm, (m, named, mod) => {
+        const namedSpecs = cleanNamedImportSpecs(named);
         return `const { ${namedSpecs} } = require(${mod});`;
     });
 
     // 4. import defaultExport from 'module';
-    result = result.replace(/^[ \t]*import\s+([a-zA-Z0-9_$]+)\s+from\s+(['"][^'"]+['"]);?[ \t]*\r?$/gm,
+    result = result.replace(/^[ \t]*import\s+([a-zA-Z0-9_$]+)\s*from\s*(['"][^'"]+['"]);?(?:[ \t]*\/\/[^\r\n]*)?\r?$/gm,
         `const $1 = require($2);`
     );
 
     // 5. import 'module';
-    result = result.replace(/^[ \t]*import\s+(['"][^'"]+['"]);?[ \t]*\r?$/gm,
+    result = result.replace(/^[ \t]*import\s*(['"][^'"]+['"]);?(?:[ \t]*\/\/[^\r\n]*)?\r?$/gm,
         `require($1);`
     );
 
@@ -3310,7 +3443,7 @@ const { models } = { models: _mMod };`;
 
     // 16b. If createMockReqResNext is called in tests but not defined, inject it before describe
     if (cleaned.includes("createMockReqResNext") && !cleaned.includes("function createMockReqResNext") && !cleaned.includes("const createMockReqResNext") && !cleaned.includes("var createMockReqResNext")) {
-        const mockHelper = `const createMockReqResNext = (overrides = {}) => {\n  const innerReq = (overrides && overrides.req) || {};\n  const req = {\n    body: { ...innerReq.body, ...overrides.body },\n    query: { page: '1', limit: '10', ...innerReq.query, ...overrides.query },\n    params: { id: '1', ...innerReq.params, ...overrides.params },\n    headers: { authorization: 'Bearer test-token', ...innerReq.headers, ...overrides.headers },\n    user: { id: 1, role: 'admin', email: 'admin@example.com', ...innerReq.user, ...overrides.user },\n    file: innerReq.file || overrides.file || null,\n  };\n  const res = {\n    json: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    status: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    send: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    setHeader: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    write: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    end: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n  };\n  const next = (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))();\n  return { req, res, next };\n};\n\n`;
+        const mockHelper = `const createMockReqResNext = (overrides = {}) => {\n  const innerReq = (overrides && overrides.req) || {};\n  const safeBody = (overrides && overrides.body !== undefined && overrides.body !== null) ? overrides.body : (innerReq.body !== undefined && innerReq.body !== null ? innerReq.body : {});\n  const req = {\n    body: { items: [], ...safeBody }, // body: { ...overrides.body }\n    query: { page: '1', limit: '10', ...innerReq.query, ...(overrides && overrides.query) },\n    params: { id: '1', ...innerReq.params, ...(overrides && overrides.params) },\n    headers: { authorization: 'Bearer test-token', ...innerReq.headers, ...(overrides && overrides.headers) },\n    cookies: { ...(innerReq.cookies || (overrides && overrides.cookies)) },\n    user: { id: 1, role: 'admin', email: 'admin@example.com', ...innerReq.user, ...(overrides && overrides.user) },\n    file: innerReq.file || overrides?.file || null,\n    files: innerReq.files || overrides?.files || [],\n  };\n  const res = {\n    status: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    json: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    send: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    sendStatus: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    cookie: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    clearCookie: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    redirect: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    setHeader: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    write: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    end: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n  };\n  const next = (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))();\n  return { req, res, next };\n};\n\n`;
         const firstDescribe = cleaned.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
         if (firstDescribe !== -1) {
             cleaned = cleaned.slice(0, firstDescribe) + "\n" + mockHelper + cleaned.slice(firstDescribe);

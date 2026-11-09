@@ -91,7 +91,7 @@ export default function DiffReviewModal({
   const unappliedCount = files.filter((f) => !f.applied).length;
 
   const handleApplyCurrentFile = async () => {
-    if (isAnyApplying) return;
+    if (isAnyApplying || activeFile?.reviewError || activeFile?.hasChanges === false) return;
     setIsApplyingCurrent(true);
     try {
       await onApplyFile?.(activeFile, currentSuggestion);
@@ -103,7 +103,7 @@ export default function DiffReviewModal({
   };
 
   const handleApplyAllClick = async () => {
-    if (isAnyApplying) return;
+    if (isAnyApplying || files.some(file => file.reviewError)) return;
     setIsApplyingAllInternal(true);
     try {
       await onApplyAll?.();
@@ -128,16 +128,11 @@ export default function DiffReviewModal({
 
   if (!isOpen || !activeFile) return null;
 
-  const originalCode = currentSuggestion?.originalContent || activeFile?.originalContent || "";
-  const modifiedCode =
-    currentSuggestion?.fullUpdatedContent ||
-    currentSuggestion?.suggestedTestCode ||
-    activeFile?.fullUpdatedContent ||
-    activeFile?.suggestedTestCode ||
-    "";
+  const originalCode = activeFile.originalContent ?? currentSuggestion?.originalCode ?? '';
+  const modifiedCode = activeFile.fullUpdatedContent ?? originalCode;
 
   const isApplied = currentSuggestion?.applied ?? activeFile?.applied;
-  const anyUnapplied = files.some((f) => !f.applied);
+  const anyUnapplied = files.some((f) => !f.applied && f.hasChanges !== false);
   const anyApplied = files.some((f) => f.applied);
 
   return (
@@ -195,7 +190,7 @@ export default function DiffReviewModal({
                       border: "1px solid rgba(34, 197, 94, 0.3)",
                     }}
                   >
-                    +{activeFile.linesAdded || 0} lines
+                    +{activeFile.linesAdded || 0} / −{activeFile.linesRemoved || 0} lines
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-400 font-mono truncate max-w-md">
@@ -251,7 +246,7 @@ export default function DiffReviewModal({
               {!isApplied ? (
                 <button
                   type="button"
-                  disabled={isAnyApplying}
+                  disabled={isAnyApplying || Boolean(activeFile.reviewError) || activeFile.hasChanges === false}
                   onClick={handleApplyCurrentFile}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ${
                     isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
@@ -292,7 +287,7 @@ export default function DiffReviewModal({
               {anyUnapplied && files.length > 1 && (
                 <button
                   type="button"
-                  disabled={isAnyApplying}
+                  disabled={isAnyApplying || files.some(file => file.reviewError)}
                   onClick={handleApplyAllClick}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
@@ -364,7 +359,7 @@ export default function DiffReviewModal({
                 const isSelected = idx === activeIdx;
                 return (
                   <button
-                    key={file.targetTestFile || idx}
+                    key={`${file.targetTestFile || idx}:${file.framework}`}
                     type="button"
                     onClick={() => setActiveIdx(idx)}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer flex-shrink-0"
@@ -387,7 +382,7 @@ export default function DiffReviewModal({
                         color: "#4ade80",
                       }}
                     >
-                      +{file.linesAdded || 0}
+                      +{file.linesAdded || 0} / −{file.linesRemoved || 0}
                     </span>
                     {isApplyingCurrent && isSelected ? (
                       <Loader2 size={12} className="animate-spin text-purple-400" />
@@ -417,7 +412,7 @@ export default function DiffReviewModal({
                   disabled={activeIdx === files.length - 1}
                   onClick={() => setActiveIdx((prev) => Math.min(files.length - 1, prev + 1))}
                   className="p-1 rounded hover:text-white disabled:opacity-30 cursor-pointer"
-                  title="File sau"
+                  title="Next file"
                 >
                   <ChevronRight size={14} />
                 </button>
@@ -426,6 +421,8 @@ export default function DiffReviewModal({
           )}
 
           {/* ── Monaco Diff Editor Body ── */}
+          {activeFile.reviewError && <div role="alert" className="px-4 py-2 text-sm text-red-300">{activeFile.reviewError}</div>}
+          {activeFile.reviewNotice && <div role="status" className="px-4 py-2 text-sm text-slate-300">{activeFile.reviewNotice}</div>}
           <div className="flex-1 min-h-0 relative">
             <DiffEditor
               height="100%"

@@ -1,4 +1,7 @@
-import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { cleanStoragePath, cleanStorageText, canonicalizeFilePath } from "../utils/pathSanitizer.js";
 
 describe("pathSanitizer", () => {
     describe("cleanStoragePath", () => {
@@ -43,6 +46,71 @@ describe("pathSanitizer", () => {
         test("handles null or undefined safely", () => {
             expect(cleanStorageText(null)).toBe(null);
             expect(cleanStorageText("")).toBe("");
+        });
+    });
+
+    describe("canonicalizeFilePath", () => {
+        let tempDir;
+
+        beforeEach(() => {
+            tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-path-test-"));
+        });
+
+        afterEach(() => {
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            } catch (_) {}
+        });
+
+        test("strips project root basename if present in clean path", () => {
+            const rootBasename = path.basename(tempDir);
+            const subFile = path.join(tempDir, "server", "src", "index.js");
+            fs.mkdirSync(path.dirname(subFile), { recursive: true });
+            fs.writeFileSync(subFile, "console.log('hi');");
+
+            const inputPath = `${rootBasename}/server/src/index.js`;
+            const result = canonicalizeFilePath(inputPath, tempDir);
+            expect(result).toBe("server/src/index.js");
+        });
+
+        test("maps subproject relative path to project-relative path (e.g. src/... to server/src/...)", () => {
+            const serverSource = path.join(tempDir, "server", "src", "controllers", "chatController.js");
+            fs.mkdirSync(path.dirname(serverSource), { recursive: true });
+            fs.writeFileSync(serverSource, "export const chat = {};");
+
+            const result = canonicalizeFilePath("src/controllers/chatController.js", tempDir);
+            expect(result).toBe("server/src/controllers/chatController.js");
+        });
+
+        test("preserves direct file path when it exists at project root", () => {
+            const directSource = path.join(tempDir, "src", "app.js");
+            fs.mkdirSync(path.dirname(directSource), { recursive: true });
+            fs.writeFileSync(directSource, "export default {};");
+
+            const result = canonicalizeFilePath("src/app.js", tempDir);
+            expect(result).toBe("src/app.js");
+        });
+
+        test("preserves already canonical subproject paths", () => {
+            const serverSource = path.join(tempDir, "server", "src", "index.js");
+            fs.mkdirSync(path.dirname(serverSource), { recursive: true });
+            fs.writeFileSync(serverSource, "export const foo = 1;");
+
+            const result = canonicalizeFilePath("server/src/index.js", tempDir);
+            expect(result).toBe("server/src/index.js");
+        });
+
+        test("canonicalizes wrapper + subproject paths under /repo/<wrapper>/server to server/...", () => {
+            const subprojectRoot = "/app/storage/projects/cmut123/github/999/repo/gemini_chatbox/server";
+            expect(canonicalizeFilePath("server/src/config/env.js", subprojectRoot)).toBe("server/src/config/env.js");
+            expect(canonicalizeFilePath("gemini_chatbox/server/src/config/env.js", subprojectRoot)).toBe("server/src/config/env.js");
+            expect(canonicalizeFilePath("src/config/env.js", subprojectRoot)).toBe("server/src/config/env.js");
+        });
+
+        test("canonicalizes subproject paths under /uploads/snapshots/<id>/<wrapper>/server to server/...", () => {
+            const snapshotSubRoot = "/app/uploads/snapshots/snap123/gemini_chatbox/server";
+            expect(canonicalizeFilePath("server/src/config/env.js", snapshotSubRoot)).toBe("server/src/config/env.js");
+            expect(canonicalizeFilePath("src/config/env.js", snapshotSubRoot)).toBe("server/src/config/env.js");
         });
     });
 });

@@ -34,6 +34,7 @@ function UnitTestEnvVarModalDialog({
   onRunHermetic,
   isSaving = false,
   isLight = false,
+  operationOnly = false,
 }) {
   const initialFormValues = useMemo(() => {
     const initial = {};
@@ -41,7 +42,7 @@ function UnitTestEnvVarModalDialog({
       const existingVal = existingVariables?.[v.name];
       initial[v.name] = existingVal !== undefined && existingVal !== null && existingVal !== ""
         ? String(existingVal)
-        : (v.inferredMock || "");
+        : "";
     }
     return initial;
   }, [detectedVariables, existingVariables]);
@@ -121,7 +122,7 @@ function UnitTestEnvVarModalDialog({
     setSubmitError("");
     setIsSubmittingInternalSave(true);
     try {
-      await onSaveAndRun?.(formValues);
+      await onSaveAndRun?.(Object.fromEntries(Object.entries(formValues).filter(([, value]) => String(value).trim() !== '')));
       onClose?.();
     } catch (err) {
       console.error("[UnitTestEnvVarModal] Save error:", err);
@@ -431,6 +432,7 @@ function UnitTestEnvVarModalDialog({
               type="button"
               onClick={handleHermeticFallbackSubmit}
               disabled={isOperationBusy}
+              hidden={operationOnly}
               className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all border border-slate-700 bg-slate-800/90 text-slate-200 hover:bg-slate-700/80 hover:text-white disabled:opacity-50"
               title="Execute tests in RAM with clean mock data without modifying workspace files"
             >
@@ -466,7 +468,7 @@ function UnitTestEnvVarModalDialog({
               ) : (
                 <>
                   <Check size={14} />
-                  <span>Save to .env & Run Tests</span>
+                  <span>{operationOnly ? 'Use for This Test Run & Resume Apply' : 'Save to .env & Run Tests'}</span>
                 </>
               )}
             </button>
@@ -497,6 +499,7 @@ export default function UnitTestEnvVarModal({
   onRunHermetic,
   isSaving = false,
   isLight = false,
+  operationOnly = false,
 }) {
   const missingRequired = useMemo(() => {
     return propMissingRequired || data?.missingRequired || [];
@@ -524,6 +527,7 @@ export default function UnitTestEnvVarModal({
           onRunHermetic={handleHermeticAction}
           isSaving={isSaving}
           isLight={isLight}
+          operationOnly={operationOnly}
         />
       )}
     </AnimatePresence>

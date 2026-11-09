@@ -41,21 +41,55 @@ export async function resolveJobAccess({ jobId, userId, capability, db = prisma 
     if (['AI_EVALUATION', 'AI_EVALUATION_PREPARE'].includes(job.type) && access.role !== 'OWNER') throw failure('Only the project owner can access evaluation jobs', 403, 'OWNER_REQUIRED');
     return { ...access, job, snapshot: job.snapshot };
 }
+export function isRetryableTransactionError(error) {
+    if (!error) return false;
+    const code = error.code || error.meta?.code;
+    if (['P2028', 'P2024', 'P2034', '40P01', '40001'].includes(code)) return true;
+    const msg = typeof error.message === 'string' ? error.message : '';
+    return (
+        msg.includes('Unable to start a transaction') ||
+        msg.includes('Transaction already closed') ||
+        msg.includes('Transaction API error') ||
+        msg.includes('40P01') ||
+        msg.includes('deadlock detected') ||
+        msg.includes('40001') ||
+        msg.includes('could not serialize access') ||
+        msg.includes('connection pool') ||
+        msg.includes('Timed out fetching a new connection')
+    );
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 export async function withProjectGuard({ projectId, userId, capability, db = prisma, maxWait = 30000, timeout = 60000 }, run) {
     // Transaction lock is shared by membership changes and final source publication.
-    // Never automatically retry a callback that may have filesystem side effects.
     if (!userId && process.env.NODE_ENV === 'test') {
         return run(db, { role: 'OWNER', project: { id: projectId, workspaceRevision: 0 }, capabilities: ['project.write', 'project.read'] });
     }
-    if (typeof db?.$transaction !== 'function') {
+    const isReadOnly = ['project.read', 'ai.use', 'members.read', 'project.export'].includes(capability);
+    if (isReadOnly || typeof db?.$transaction !== 'function') {
         const access = await resolveProjectAccess({ projectId, userId, capability, db });
         return run(db, access);
     }
-    return db.$transaction(async tx => {
-        if (typeof tx?.$executeRaw === 'function') {
-            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`;
+    let attempts = 0;
+    const maxAttempts = 3;
+    while (attempts < maxAttempts) {
+        try {
+            return await db.$transaction(async tx => {
+                if (typeof tx?.$executeRaw === 'function') {
+                    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`;
+                }
+                const access = await resolveProjectAccess({ projectId, userId, capability, db: tx });
+                return await run(tx, access);
+            }, { maxWait, timeout });
+        } catch (error) {
+            attempts++;
+            if (attempts < maxAttempts && isRetryableTransactionError(error)) {
+                const backoff = Math.min(2000, 100 * Math.pow(2, attempts - 1) + Math.random() * 100);
+                await sleep(backoff);
+                continue;
+            }
+            throw error;
         }
-        const access = await resolveProjectAccess({ projectId, userId, capability, db: tx });
-        return run(tx, access);
-    }, { maxWait, timeout });
+    }
 }

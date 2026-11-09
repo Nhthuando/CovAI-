@@ -1,4 +1,5 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useChatTestContext } from '../../hooks/useChatTestContext';
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Play,
@@ -37,7 +38,7 @@ import {
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
-export default function SystemTestDashboard({ projectId, snapshotId, focusScenario = null, onOpenFile }) {
+export default function SystemTestDashboard({ projectId, snapshotId, focusScenario = null, onOpenFile, onChatContextChange }) {
   const projectAccess = useProjectAccess(projectId);
   // Current view: "dashboard" | "report"
   const [currentView, setCurrentView] = useState("dashboard");
@@ -82,6 +83,8 @@ export default function SystemTestDashboard({ projectId, snapshotId, focusScenar
   // Modals state
   const [isGeneratorOpen, setIsGeneratorOpen] = useState(false);
   const [inspectedScenario, setInspectedScenario] = useState(null);
+  useChatTestContext(onChatContextChange, { projectId, snapshotId, testType: 'system', testRunId: summary?.testRunId,
+    scenarioId: inspectedScenario?.testRunId === summary?.testRunId ? inspectedScenario.id : undefined });
   const [editorTarget, setEditorTarget] = useState(null); // { filePath, scenarioId, initialMode }
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
   const [latestAssessmentId, setLatestAssessmentId] = useState(null);

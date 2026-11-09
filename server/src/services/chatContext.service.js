@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { ServiceError } from "../utils/serviceError.js";
 import { requireContextOwner, ensureContextSettings, selectRelevantMemories } from "./projectMemory.service.js";
 import { withProjectGuard } from "./projectAccess.service.js";
+import { resolveChatWorkspaceContext, redactChatSecrets } from "./chatWorkspaceContext.service.js";
+import { chatContextMode } from './chatResponsePolicy.service.js';
 
 export const messageOrder = [{ createdAt: "asc" }, { id: "asc" }];
 export const requireOwnedSession = async (projectId, userId, sessionId, db = prisma) => {
@@ -12,7 +14,7 @@ export const requireOwnedSession = async (projectId, userId, sessionId, db = pri
     return session;
 };
 export const resolveContextSnapshot = async (projectId, snapshotId, db = prisma) => {
-    const row = await db.projectSnapshot.findFirst({ where: { projectId, ...(snapshotId ? { id: snapshotId } : {}) }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true, commitSha: true, createdAt: true, rootDir: true } });
+    const row = await db.projectSnapshot.findFirst({ where: { projectId, ...(snapshotId ? { id: snapshotId } : {}) }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true, commitSha: true, createdAt: true, rootDir: true, storagePath: true, source: true } });
     if (snapshotId && !row) throw new ServiceError("Snapshot not found", 404);
     return row;
 };
@@ -125,26 +127,33 @@ export const assembleChatContext = async (projectId, userId, options = {}) => {
     const coverage = snapshot ? await prisma.coverageSummary.findUnique({ where: { snapshotId: snapshot.id }, select: { linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true } }) : null;
     const files = snapshot && options.message?.trim().toLowerCase() === "analyze coverage" ? await prisma.coverageFile.findMany({ where: { snapshotId: snapshot.id }, select: { filePath: true, linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true }, take: 60, orderBy: { filePath: "asc" } }) : [];
     const screenContext = options.screenContext || null;
+    const needsEvidence = chatContextMode(options) === 'analysis' || screenContext?.testRunId || screenContext?.scenarioId;
     const types = { unit: ["JEST", "VITEST"], integration: ["SUPERTEST"], system: ["PLAYWRIGHT", "CYPRESS"] };
-    const testResults = snapshot && screenContext?.activity === "coverage" && types[screenContext.testType]
-        ? await prisma.testRun.findFirst({ where: { snapshotId: snapshot.id, type: { in: types[screenContext.testType] } }, orderBy: { createdAt: "desc" },
+    const testResults = needsEvidence && snapshot && screenContext?.activity === "coverage" && types[screenContext.testType]
+        ? await prisma.testRun.findFirst({ where: { snapshotId: snapshot.id, type: { in: types[screenContext.testType] }, ...(screenContext.testRunId ? { id: screenContext.testRunId } : {}), ...(screenContext.scenarioId ? { scenarios: { some: { id: screenContext.scenarioId } } } : {}) }, orderBy: { createdAt: "desc" },
             select: { id: true, type: true, status: true, executionMode: true, totalTests: true, passedTests: true, failedTests: true, skippedTests: true, finishedAt: true,
-                scenarios: { where: { status: "FAILED" }, take: 8, select: { title: true, testFile: true, failureMessages: true } } } }) : null;
-    if (screenContext?.testType && !testResults) warnings.push("No saved test run is available for the current screen. Do not infer results from conversation history.");
+                scenarios: { where: screenContext.scenarioId ? { id: screenContext.scenarioId } : { status: "FAILED" }, take: 8, select: { id: true, title: true, status: true, testFile: true, failureMessages: true } } } }) : null;
+    if ((screenContext?.testRunId || screenContext?.scenarioId) && !testResults) throw new ServiceError("Selected test result not found in this snapshot and test type.", 404);
+    if (needsEvidence && screenContext?.testType && !testResults) warnings.push("No saved test run is available for the current screen. Do not infer results from conversation history.");
     if (testResults?.scenarios) testResults.scenarios = testResults.scenarios.map(row => ({ ...row,
-        failureMessages: row.failureMessages.slice(0, 2).map(text => text.slice(0, 1500)) }));
+        failureMessages: row.failureMessages.slice(0, 2).map(text => redactChatSecrets(text).slice(0, 1500)) }));
+    const workspaceContext = await resolveChatWorkspaceContext({ projectId, snapshot, screenContext, message: options.message, attachments: options.attachments, project, isOwner: project.ownerId === userId });
+    warnings.push(...workspaceContext.warnings);
     const snapshotInfo = snapshot ? { id: snapshot.id, commitSha: snapshot.commitSha, createdAt: snapshot.createdAt,
         analysisPackage: snapshot.rootDir?.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || null } : null;
     const summary = history.cursorValid ? session?.summary?.slice(0, 8000) || "" : "";
     return { project, settings, session, messages, recent: history.recent, summary, selectedNotes, memoryEnabled, warnings,
-        screenContext, testResults, snapshot: snapshotInfo, coverage, files, omittedTurns: history.omitted };
+        screenContext, testResults, workspaceContext, snapshot: snapshotInfo, coverage, files, omittedTurns: history.omitted };
 };
 export const contextPreview = context => ({
     sessionId: context.session?.id || null, sourceSessionId: context.session?.sourceSessionId || null,
+    workspaceRevision: context.project.workspaceRevision ?? 0,
     snapshot: context.snapshot, memoryEnabled: context.memoryEnabled, guidance: context.settings.guidance,
     memories: context.selectedNotes.map(({ id, content, sourceMessageId }) => ({ id, content, sourceMessageId })),
     recentTurnCount: context.recent.length, omittedTurnCount: context.omittedTurns, summaryIncluded: Boolean(context.summary),
     summary: context.summary, maintenanceStatus: context.session?.contextStatus || "READY",
     screenContext: context.screenContext, testResults: context.testResults, coverage: context.coverage, files: context.files.map(row => row.filePath), warnings: context.warnings,
+    sources: (context.workspaceContext?.sources || []).map(({ content, ...source }) => source),
+    workspaceData: context.workspaceContext?.data || {},
     sizeUnit: "UTF-8 bytes (not exact model tokens)",
 });

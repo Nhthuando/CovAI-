@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import prisma from '../config/prisma.js';
+import { RESULT_PUBLICATION_TIMEOUT_MS } from '../config/projectTransactions.js';
+import { measureUnitTestPhase, recordUnitTestWork } from './unitTestWork.service.js';
 import { withProjectGuard, resolveProjectAccess } from './projectAccess.service.js';
 import { projectFileError,projectEditableWorkspaceRoot } from './projectFileVersion.service.js';
 import { runtimeIgnoredDirectories } from './projectRuntimePlan.service.js';
@@ -58,11 +60,7 @@ export const assertProjectOperationActive = async (context = contexts.getStore()
     const job = context.jobId ? await db.job.findUnique({where:{id:context.jobId}}) : null;
     if (!operation || !ACTIVE_PROJECT_OPERATIONS.includes(operation.status) || job?.status === 'CANCELED') throw projectFileError('OPERATION_CANCELED','Operation was canceled');
     if (project.workspaceRevision !== context.workspaceRevision) {
-        if (operation?.type === 'APPLY_UNIT_SUGGESTION') {
-            context.workspaceRevision = project.workspaceRevision;
-        } else {
-            throw projectFileError('OPERATION_STALE','Source changed while this operation was running');
-        }
+        throw projectFileError('OPERATION_STALE','Source changed while this operation was running');
     }
 };
 
@@ -70,13 +68,13 @@ export const withOperationPublishGuard = async run => {
     const context = contexts.getStore();
     if (!context) return run(prisma);
     if (context.flushingPreparedPublications && context.publicationTx) return run(context.publicationTx);
-    return withProjectGuard({projectId:context.projectId,userId:context.userId,capability:context.capability},async tx => {
+    return withProjectGuard({projectId:context.projectId,userId:context.userId,capability:context.capability,timeout:RESULT_PUBLICATION_TIMEOUT_MS},async tx => {
         await assertProjectOperationActive(context,tx);
         return run(tx);
     });
 };
 
-export const withOperationWorkspace = async (operationId,run,{includeGitMetadata = false,deferResults = false} = {}) => {
+export const withOperationWorkspace = async (operationId,run,{includeGitMetadata = false,deferResults = false,resumeWorkspace = false} = {}) => {
     const operation = await prisma.projectOperation.findUnique({where:{id:operationId}});
     if (!operation) throw projectFileError('RESOURCE_NOT_FOUND','Operation not found',404);
     const workspaceParent = path.join(serverRoot,'.covai-temp','collaboration-operations');
@@ -95,17 +93,24 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
         const originalRootDir = projectEditableWorkspaceRoot(snapshot);
         await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:originalRootDir});
         await fs.mkdir(workspaceParent,{recursive:true});
+        if (resumeWorkspace) {
+            const relative = path.relative(path.resolve(workspaceParent), path.resolve(rootDir));
+            if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw projectFileError('INVALID_OPERATION','Invalid resume workspace',400);
+            await fs.rm(rootDir,{recursive:true,force:true});
+        }
         try { await fs.access(rootDir); throw projectFileError('RECOVERY_REQUIRED','An interrupted operation workspace needs recovery'); }
         catch(error) { if (error.code !== 'ENOENT') throw error; }
-        await fs.cp(originalRootDir,rootDir,{recursive:true,dereference:false,errorOnExist:true,
+        recordUnitTestWork('workspaceCopies');
+        await measureUnitTestPhase('workspacePreparation', () => fs.cp(originalRootDir,rootDir,{recursive:true,dereference:false,errorOnExist:true,
             filter:async source => {
                 const name = path.basename(source);
                 const relative = path.relative(originalRootDir,source).replaceAll('\\','/');
                 const inGit = includeGitMetadata && (relative === '.git' || relative.startsWith('.git/'));
                 if (!inGit && source !== originalRootDir && (runtimeIgnoredDirectories.has(name) || name === '.env' || name.startsWith('.env.'))) return false;
                 const stat = await fs.lstat(source);
+                if (stat.isFile()) recordUnitTestWork('workspaceCopiedBytes',stat.size);
                 return !stat.isSymbolicLink();
-            }});
+            }}));
         context = {operationId,projectId:operation.projectId,snapshotId:snapshot.id,userId:operation.actorId,
             capability:operation.capability,jobId:operation.primaryJobId,workspaceRevision:operation.capturedWorkspaceRevision,
             rootDir,originalRootDir,analysisRelative:path.relative(originalRootDir,snapshot.rootDir)};
@@ -117,7 +122,7 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
             if (deferResults) beginPreparedPublications();
             const value = await run({...context,assertActive:()=>assertProjectOperationActive(context)});
             if (deferResults) {
-                await withProjectGuard({projectId:context.projectId,userId:context.userId,capability:context.capability,maxWait:30000,timeout:60000},async tx=>{
+                await withProjectGuard({projectId:context.projectId,userId:context.userId,capability:context.capability,maxWait:30000,timeout:RESULT_PUBLICATION_TIMEOUT_MS},async tx=>{
                     await assertProjectOperationActive(context,tx);
                     const before = await tx.job.findUnique({where:{id:context.jobId}});
                     await flushPreparedPublications(tx,{failureOnly:before?.status === 'FAILED'});

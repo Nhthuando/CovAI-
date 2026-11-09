@@ -1835,7 +1835,7 @@ export const generateSimulationTrace = async (snapshotId, payload = {}) => {
             selectedTestCase = tests.find(t => t.id === testCaseId || t.title === testCaseId || t.fullTitle === testCaseId);
         }
         if (!selectedTestCase && testCaseTitle) {
-            selectedTestCase = tests.find(t => t.title.toLowerCase().includes(testCaseTitle.toLowerCase()));
+            selectedTestCase = tests.find(t => t.fullTitle === testCaseTitle || t.title === testCaseTitle) || tests.find(t => t.title.toLowerCase().includes(testCaseTitle.toLowerCase()));
         }
         // Match both function AND requested category if category is specified
         if (!selectedTestCase && functionName && requestedCategory) {
@@ -2536,6 +2536,9 @@ export const generateSimulationTrace = async (snapshotId, payload = {}) => {
 
     return {
         id: `sim_${targetFnName}_${testCategory.toLowerCase()}`,
+        schemaVersion: 2,
+        mode: 'ILLUSTRATIVE',
+        completeness: 'UNVERIFIED',
         sourceFilePath: sourceFilePath || "source.js",
         sourceCode,
         testFilePath: actualTestFilePath,
@@ -2544,6 +2547,7 @@ export const generateSimulationTrace = async (snapshotId, payload = {}) => {
         testCase: {
             id: selectedTestCase.id || "TC-01",
             title: selectedTestCase.title,
+            fullTitle: selectedTestCase.fullTitle,
             category: testCategory,
             categoryName: CATEGORY_NAMES[testCategory] || testCategory,
             targetFunction: targetFnName,
@@ -2559,6 +2563,9 @@ export const generateSimulationTrace = async (snapshotId, payload = {}) => {
         },
         summary,
         initialMocks,
-        steps
+        steps: steps.map(step => ({ ...step,
+            sourceLocation: ['SETUP_MOCKS', 'ASSERTION'].includes(step.phase) ? null : { file: sourceFilePath, line: step.line, endLine: step.endLine || step.line, column: 0 },
+            testLocation: step.testLine || step.phase === 'ASSERTION' ? { file: actualTestFilePath, line: step.testLine || step.line, endLine: step.testLine || step.line, column: 0 } : null,
+        }))
     };
 };

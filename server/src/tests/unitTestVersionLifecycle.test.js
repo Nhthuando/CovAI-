@@ -3,6 +3,8 @@ import path from "path";
 import os from "os";
 import { describe, test, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
 
+let currentTempDir = null;
+
 const mockPrisma = {
     project: {
         findFirst: jest.fn(),
@@ -65,7 +67,35 @@ await jest.unstable_mockModule("../services/queue.service.js", () => ({
 }));
 
 await jest.unstable_mockModule("../services/projectWorkspacePreparation.service.js", () => ({
-    withPreparedProjectWorkspace: jest.fn(async (options, run) => run({}))
+    withPreparedProjectWorkspace: jest.fn(async (options, run) => run({
+        rootDir: currentTempDir || os.tmpdir(),
+        analysisRelative: ""
+    }))
+}));
+
+await jest.unstable_mockModule("../services/unitTestBatchRunner.service.js", () => ({
+    runUnitTestBatch: jest.fn(async ({ coverageDir, testFiles = [] }) => {
+        fs.mkdirSync(coverageDir, { recursive: true });
+        const testResults = testFiles.map(tf => ({
+            name: path.resolve(currentTempDir || os.tmpdir(), tf),
+            status: "passed",
+            assertionResults: [{ status: "passed", title: "baseline" }]
+        }));
+        fs.writeFileSync(path.join(coverageDir, "test-results.json"), JSON.stringify({
+            success: true,
+            numFailedTestSuites: 0,
+            testResults
+        }), "utf8");
+        fs.writeFileSync(path.join(coverageDir, "coverage-summary.json"), JSON.stringify({
+            total: {
+                statements: { total: 10, covered: 5, pct: 50.0 },
+                branches: { total: 10, covered: 5, pct: 50.0 },
+                functions: { total: 10, covered: 5, pct: 50.0 },
+                lines: { total: 10, covered: 5, pct: 50.0 }
+            }
+        }), "utf8");
+        return { exitCode: 0, stdout: "PASS", stderr: "" };
+    })
 }));
 
 await jest.unstable_mockModule("../services/dependencyInstallation.service.js", () => ({
@@ -106,6 +136,7 @@ const {
 
 const {
     saveUnitTestFileVersions,
+    saveVerifiedUnitTestBatch,
     getUnitTestVersions,
     switchUnitTestVersion,
     clearManifestCache,
@@ -127,6 +158,7 @@ describe("Unit Test Version History Lifecycle, File Persistence, and Rollback", 
     beforeEach(() => {
         clearManifestCache();
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-lifecycle-test-"));
+        currentTempDir = tempDir;
         jest.clearAllMocks();
 
         const mockSnapshot = {
@@ -258,7 +290,34 @@ describe("Unit Test Version History Lifecycle, File Persistence, and Rollback", 
                     const unitDir = path.join(coverageDir, "unit");
                     fs.mkdirSync(unitDir, { recursive: true });
                     fs.writeFileSync(path.join(unitDir, "coverage-summary.json"), JSON.stringify(sumData), "utf8");
-                    return { success: true, exitCode: 0, numTotalTests: 2, numPassedTests: 2, numFailedTests: 0, totalTests: 2, passedTests: 2, failedTests: 0 };
+                    const testResultsData = {
+                        success: true,
+                        numFailedTestSuites: 0,
+                        numPassedTestSuites: 1,
+                        testResults: [
+                            {
+                                name: path.join(tempDir, "tests/services/order.service.test.js"),
+                                status: "passed",
+                                assertionResults: [
+                                    { status: "passed", title: "calculateTotal with tax" },
+                                    { status: "passed", title: "calculateTotal without tax" }
+                                ]
+                            }
+                        ]
+                    };
+                    fs.writeFileSync(path.join(coverageDir, "test-results.json"), JSON.stringify(testResultsData), "utf8");
+                    fs.writeFileSync(path.join(unitDir, "test-results.json"), JSON.stringify(testResultsData), "utf8");
+                    return {
+                        success: true,
+                        exitCode: 0,
+                        numTotalTests: 2,
+                        numPassedTests: 2,
+                        numFailedTests: 0,
+                        totalTests: 2,
+                        passedTests: 2,
+                        failedTests: 0,
+                        ...testResultsData
+                    };
                 }
             });
 
@@ -536,6 +595,122 @@ describe("Unit Test Version History Lifecycle, File Persistence, and Rollback", 
             expect(fs.existsSync(childDir)).toBe(false);
             expect(fs.existsSync(parentDir)).toBe(true);
             expect(fs.existsSync(siblingFile)).toBe(true);
+        });
+    });
+
+    describe("R2 & R3: Bulk Version Rollback to Baseline (Version 1) Full Lifecycle", () => {
+        it("applies a verified batch (Version 2) and bulk reverts to Version 1 (Baseline) with test verification and metric recalculation", async () => {
+            // 1. Setup repository layout: 2 source files, 1 pre-existing baseline test
+            const srcDir = path.join(tempDir, "src", "services");
+            const testsDir = path.join(tempDir, "tests");
+            fs.mkdirSync(srcDir, { recursive: true });
+            fs.mkdirSync(testsDir, { recursive: true });
+
+            fs.writeFileSync(path.join(srcDir, "auth.service.js"), "module.exports = { login: () => true };", "utf8");
+            fs.writeFileSync(path.join(srcDir, "payment.service.js"), "module.exports = { charge: () => true };", "utf8");
+
+            const existingTestPath = path.join(testsDir, "auth.test.js");
+            const baselineTestContent = "// Baseline Auth Test v1\ndescribe('auth', () => { it('baseline', () => {}); });";
+            fs.writeFileSync(existingTestPath, baselineTestContent, "utf8");
+
+            // Initial baseline coverage in database
+            mockPrisma.coverageSummary.findUnique.mockResolvedValue({
+                snapshotId,
+                stmtsPct: 50.0,
+                branchesPct: 50.0,
+                funcsPct: 50.0,
+                linesPct: 50.0
+            });
+
+            // 2. Apply a batch of suggestions (moves project to Version 2)
+            const updatedAuthContent = `${baselineTestContent}\n// v2 enhanced`;
+            const newPaymentTestPath = path.join(testsDir, "payment.test.js");
+            const newPaymentContent = "// Brand new payment test v2\ndescribe('payment', () => { it('charges', () => {}); });";
+
+            fs.writeFileSync(existingTestPath, updatedAuthContent, "utf8");
+            fs.writeFileSync(newPaymentTestPath, newPaymentContent, "utf8");
+
+            const v2Batch = saveVerifiedUnitTestBatch({
+                snapshotId,
+                rootDir: tempDir,
+                projectId,
+                runId: "lifecycle_batch_run_001",
+                files: [
+                    {
+                        testFile: "tests/auth.test.js",
+                        sourceFile: "src/services/auth.service.js",
+                        originalContent: baselineTestContent,
+                        updatedContent: updatedAuthContent,
+                        framework: "jest"
+                    },
+                    {
+                        testFile: "tests/payment.test.js",
+                        sourceFile: "src/services/payment.service.js",
+                        originalContent: null, // newly created test file
+                        updatedContent: newPaymentContent,
+                        framework: "jest"
+                    }
+                ],
+                verification: { valid: true },
+                coverage: {
+                    total: {
+                        statements: { pct: 92.5, total: 20, covered: 18, skipped: 0 },
+                        branches: { pct: 88.0, total: 10, covered: 9, skipped: 0 },
+                        functions: { pct: 95.0, total: 6, covered: 6, skipped: 0 },
+                        lines: { pct: 92.5, total: 20, covered: 18, skipped: 0 }
+                    }
+                }
+            });
+
+            expect(v2Batch.version).toBe(2);
+            expect(fs.existsSync(newPaymentTestPath)).toBe(true);
+
+            // Verify Version 2 active state in manifest
+            const manifestAfterBatch = JSON.parse(fs.readFileSync(path.join(tempDir, VERSIONS_DIR_NAME, MANIFEST_FILE_NAME), "utf8"));
+            expect(manifestAfterBatch.schemaVersion).toBe(2);
+            expect(manifestAfterBatch.activeBatchId).toBe("batch_lifecycle_batch_run_001");
+            expect(manifestAfterBatch.files["tests/auth.test.js"].currentVersion).toBe(2);
+            expect(manifestAfterBatch.files["tests/payment.test.js"].currentVersion).toBe(2);
+
+            // 3. Trigger bulk revert to Version 1 (Baseline) with { allFiles: true, targetVersion: 1 }
+            const rollbackResult = await switchUnitTestVersion({
+                snapshotId,
+                projectId,
+                userId,
+                allFiles: true,
+                targetVersion: 1,
+                runTests: true
+            });
+
+            expect(rollbackResult.success).toBe(true);
+            expect(rollbackResult.targetVersion).toBe(1);
+
+            // 4. Invariant: All test files restored to baseline (or newly created unlinked)
+            // Pre-existing auth.test.js restored to exact baseline content
+            expect(fs.existsSync(existingTestPath)).toBe(true);
+            expect(fs.readFileSync(existingTestPath, "utf8")).toBe(baselineTestContent);
+            expect(fs.readFileSync(existingTestPath, "utf8")).not.toContain("v2 enhanced");
+
+            // Newly created payment.test.js completely unlinked from disk
+            expect(fs.existsSync(newPaymentTestPath)).toBe(false);
+
+            // 5. Invariant: Test verification re-run and baseline coverage metrics recalculated & persisted
+            // Check that manifest updated to baseline
+            const manifestAfterRollback = JSON.parse(fs.readFileSync(path.join(tempDir, VERSIONS_DIR_NAME, MANIFEST_FILE_NAME), "utf8"));
+            expect(manifestAfterRollback.activeBatchId).toBeNull();
+            expect(manifestAfterRollback.files["tests/auth.test.js"].currentVersion).toBe(1);
+            expect(manifestAfterRollback.files["tests/payment.test.js"].currentVersion).toBe(1);
+
+            // Invariant: Active version badge returns to Version 1
+            const authV1 = manifestAfterRollback.files["tests/auth.test.js"].versions.find(v => v.version === 1);
+            const authV2 = manifestAfterRollback.files["tests/auth.test.js"].versions.find(v => v.version === 2);
+            expect(authV1.isActive).toBe(true);
+            expect(authV2.isActive).toBe(false);
+
+            const paymentV1 = manifestAfterRollback.files["tests/payment.test.js"].versions.find(v => v.version === 1);
+            const paymentV2 = manifestAfterRollback.files["tests/payment.test.js"].versions.find(v => v.version === 2);
+            expect(paymentV1.isActive).toBe(true);
+            expect(paymentV2.isActive).toBe(false);
         });
     });
 });

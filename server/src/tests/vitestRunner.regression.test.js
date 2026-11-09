@@ -12,8 +12,14 @@ describe("Vitest multi-version compatibility and self-healing", () => {
     let rootDir;
     beforeEach(() => {
         rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-vitest-runner-"));
-        fs.mkdirSync(path.join(rootDir, "node_modules/vitest"), { recursive: true });
-        fs.mkdirSync(path.join(rootDir, "node_modules/@vitest/coverage-v8"), { recursive: true });
+        fs.writeFileSync(path.join(rootDir, "package.json"), JSON.stringify({ name: "test-pkg" }));
+        const vitestDir = path.join(rootDir, "node_modules/vitest");
+        fs.mkdirSync(vitestDir, { recursive: true });
+        fs.writeFileSync(path.join(vitestDir, "package.json"), JSON.stringify({ name: "vitest", version: "3.2.7" }));
+        fs.writeFileSync(path.join(vitestDir, "vitest.mjs"), "export default {};");
+        const v8Dir = path.join(rootDir, "node_modules/@vitest/coverage-v8");
+        fs.mkdirSync(v8Dir, { recursive: true });
+        fs.writeFileSync(path.join(v8Dir, "package.json"), JSON.stringify({ name: "@vitest/coverage-v8", version: "3.2.7" }));
         run.mockReset();
     });
     afterEach(() => fs.rmSync(rootDir, { recursive: true, force: true }));
@@ -98,7 +104,11 @@ describe("Vitest multi-version compatibility and self-healing", () => {
 
     test.each([false, true])("preserves isolated output and globals in fallback (backend: %s)", async backend => {
         if (backend) {
-            fs.mkdirSync(path.join(rootDir, "backend"));
+            fs.mkdirSync(path.join(rootDir, "backend/node_modules/vitest"), { recursive: true });
+            fs.mkdirSync(path.join(rootDir, "backend/node_modules/@vitest/coverage-v8"), { recursive: true });
+            fs.writeFileSync(path.join(rootDir, "backend/node_modules/vitest/package.json"), JSON.stringify({ name: "vitest", version: "3.2.7" }));
+            fs.writeFileSync(path.join(rootDir, "backend/node_modules/vitest/vitest.mjs"), "export default {};");
+            fs.writeFileSync(path.join(rootDir, "backend/node_modules/@vitest/coverage-v8/package.json"), JSON.stringify({ name: "@vitest/coverage-v8", version: "3.2.7" }));
             fs.writeFileSync(path.join(rootDir, "backend/package.json"), "{}");
         }
         const coverageDir = path.join(rootDir, "coverage/runs/current-run");
@@ -131,6 +141,11 @@ describe("Vitest multi-version compatibility and self-healing", () => {
     test("does not import stale backend results into an isolated failed run", async () => {
         const legacyDir = path.join(rootDir, "backend/coverage");
         fs.mkdirSync(legacyDir, { recursive: true });
+        fs.mkdirSync(path.join(rootDir, "backend/node_modules/vitest"), { recursive: true });
+        fs.mkdirSync(path.join(rootDir, "backend/node_modules/@vitest/coverage-v8"), { recursive: true });
+        fs.writeFileSync(path.join(rootDir, "backend/node_modules/vitest/package.json"), JSON.stringify({ name: "vitest", version: "3.2.7" }));
+        fs.writeFileSync(path.join(rootDir, "backend/node_modules/vitest/vitest.mjs"), "export default {};");
+        fs.writeFileSync(path.join(rootDir, "backend/node_modules/@vitest/coverage-v8/package.json"), JSON.stringify({ name: "@vitest/coverage-v8", version: "3.2.7" }));
         fs.writeFileSync(path.join(rootDir, "backend/package.json"), "{}");
         fs.writeFileSync(path.join(legacyDir, "vitest-results.json"), JSON.stringify({ success: true, numPassedTests: 10 }));
         run.mockResolvedValueOnce({ success: true, exitCode: 0, stdout: "No report generated" });

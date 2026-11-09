@@ -246,9 +246,12 @@ export const formatScenariosForPrisma = (scenarios) => {
 /**
  * Parse Vitest JSON output file
  * @param {string} coverageDir
+ * @param {Object} [options]
+ * @param {Array} [options.aiTests] List of AiTest records with filePath and metaJson
+ * @param {string} [options.rootDir] Root directory of project snapshot
  * @return {Object|null}
  */
-export const parseVitestResults = (coverageDir) => {
+export const parseVitestResults = (coverageDir, options = {}) => {
     const resultsPath = findExistingFile(coverageDir, ["vitest-results.json", "test-results.json", "test-result.json"]);
     console.log(`[TEST-RESULT] parsing Vitest results from: ${resultsPath || coverageDir}`);
 
@@ -294,7 +297,7 @@ export const parseVitestResults = (coverageDir) => {
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
                 const cleanedSuiteFile = cleanStoragePath(suite.name);
-                if (suite.assertionResults) {
+                if (suite.assertionResults && suite.assertionResults.length > 0) {
                     suite.assertionResults.forEach(assertion => {
                         scenarios.push({
                             title: assertion.title,
@@ -305,19 +308,120 @@ export const parseVitestResults = (coverageDir) => {
                             testFile: cleanedSuiteFile
                         });
                     });
+                } else if (suite.status === "failed" || suite.message) {
+                    // Test suite failed at module load or syntax phase
+                    const suiteFailMsg = suite.message ? cleanStorageText(suite.message) : "Test suite failed to run";
+
+                    // Recover registered scenarios for this test file
+                    let registeredScenarios = [];
+
+                    // 1. Match against options.aiTests if available
+                    if (Array.isArray(options.aiTests)) {
+                        const matchedAiTest = options.aiTests.find(t => {
+                            if (!t.filePath) return false;
+                            const normT = t.filePath.replace(/\\/g, '/');
+                            const normSuite = (cleanedSuiteFile || "").replace(/\\/g, '/');
+                            return normSuite.endsWith(normT) || normT.endsWith(normSuite);
+                        });
+
+                        if (matchedAiTest) {
+                            if (matchedAiTest.metaJson) {
+                                try {
+                                    const meta = typeof matchedAiTest.metaJson === 'string' ? JSON.parse(matchedAiTest.metaJson) : matchedAiTest.metaJson;
+                                    if (Array.isArray(meta.requests) && meta.requests.length > 0) {
+                                        registeredScenarios = meta.requests.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+
+                            if (registeredScenarios.length === 0 && matchedAiTest.content) {
+                                try {
+                                    const reqs = extractTestRequests(matchedAiTest.content, cleanedSuiteFile);
+                                    if (Array.isArray(reqs) && reqs.length > 0) {
+                                        registeredScenarios = reqs.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId || null,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+                        }
+                    }
+
+                    // 2. Fallback: Parse test file directly from disk if not yet recovered
+                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                        try {
+                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            if (Array.isArray(reqs) && reqs.length > 0) {
+                                registeredScenarios = reqs.map(r => ({
+                                    title: r.testName,
+                                    suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                    scenarioId: r.scenarioId || null,
+                                    testId: null
+                                }));
+                            }
+                        } catch (_) {}
+                    }
+
+                    // 3. Emit registered scenarios with TEST_SCRIPT_ERROR failure details
+                    if (registeredScenarios.length > 0) {
+                        for (const sc of registeredScenarios) {
+                            scenarios.push({
+                                title: sc.title,
+                                suiteName: sc.suiteName,
+                                status: "failed",
+                                duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                                failureMessages: [suiteFailMsg],
+                                testFile: cleanedSuiteFile || null,
+                                scenarioId: sc.scenarioId || null,
+                                testId: sc.testId || null,
+                                isSuiteLevelFailure: true
+                            });
+                        }
+                    } else {
+                        // Fallback: suite-level placeholder only if no scenarios could be identified
+                        scenarios.push({
+                            title: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            suiteName: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            status: "failed",
+                            duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                            failureMessages: [suiteFailMsg],
+                            testFile: cleanedSuiteFile || null,
+                            isSuiteLevelFailure: true
+                        });
+                    }
                 }
             });
         }
 
+        const totalTests = Math.max(raw.numTotalTests || 0, scenarios.length);
+        const failedTests = Math.max(raw.numFailedTests || 0, scenarios.filter(s => s.status === 'failed').length);
+        const passedTests = raw.numPassedTests || scenarios.filter(s => s.status === 'passed').length;
+        const skippedTests = raw.numPendingTests || scenarios.filter(s => s.status === 'pending').length;
+
         const results = {
-            totalTests: raw.numTotalTests || 0,
-            passedTests: raw.numPassedTests || 0,
-            failedTests: raw.numFailedTests || 0,
-            skippedTests: raw.numPendingTests || 0,
+            totalTests,
+            passedTests,
+            failedTests,
+            skippedTests,
             durationMs: duration,
-            status: raw.success ? "PASSED" : "FAILED",
+            status: (raw.success && failedTests === 0) ? "PASSED" : "FAILED",
             scenarios
         };
+
+        try {
+            const targetDir = fs.existsSync(coverageDir) && fs.statSync(coverageDir).isDirectory() ? coverageDir : path.dirname(resultsPath);
+            const scenariosPath = path.join(targetDir, "integration-scenarios.json");
+            fs.writeFileSync(scenariosPath, JSON.stringify(scenarios, null, 2), "utf8");
+        } catch (_) {}
 
         console.log(`[TEST-RESULT] parsed:`, results);
         return results;

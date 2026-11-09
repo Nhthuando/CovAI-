@@ -1,10 +1,15 @@
 import fs from "fs";
+import { createHash } from 'node:crypto';
 import { withAgentContext } from '../agents/registry.js';
 import path from "path";
 import { generateText as generateFeatureText } from './gemini.service.js';
 import { withGeminiFeature } from './geminiRouting.service.js';
-const generateText = (...args) => withGeminiFeature('unit-test', () => generateFeatureText(...args));
+const generateText = (...args) => measureUnitTestPhase('ai', () => withGeminiFeature('unit-test', () => generateFeatureText(...args)));
 import { parseJavaScriptCode } from "./babelParser.service.js";
+import { assembleUnitTestCandidate, removeGeneratedNoCheckDirective } from './unitTestChangeSet.service.js';
+import { sourceInputContracts } from './unitTestInputContracts.service.js';
+import { assertUnitTestTarget } from './unitTestFilePolicy.service.js';
+import { measureUnitTestPhase } from './unitTestWork.service.js';
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
 import {
@@ -12,6 +17,7 @@ import {
     formatLineRanges,
     generateFallbackUnitTests,
     findExistingTestFile,
+    findSourceOnDisk,
     sanitizeSourceFilePath
 } from "./unitTestSuggestion.service.js";
 import { cleanAndDeduplicateTestContent, STATEMENT_SEPARATION_EXCLUSIONS, safeDecoupleInlineStatements, healBrokenCommentSplits, balanceTestFileBracesAndParens } from "./testSanitizer.service.js";
@@ -57,7 +63,8 @@ export const buildStandardUnitTestPrompt = ({
     cleanImportPath,
     coverageDetails,
     sourceCode,
-    unitTestContext
+    unitTestContext,
+    inputContractSummary = null
 }) => {
     const isVitest = framework === "vitest";
     const isTest = Boolean(testFileInfo.found);
@@ -70,6 +77,27 @@ export const buildStandardUnitTestPrompt = ({
     const exportedSymbolsStr = exportedSymbols.length > 0 ? exportedSymbols.join(", ") : "All exported module members";
     const unexportedWarning = unitTestContext?.indirectTesting?.indirectGuidancePrompt || "";
     const mockInstructionsStr = unitTestContext?.mockContracts?.mockInstructions || "";
+    const hasPrisma = Boolean(
+        unitTestContext?.mockContracts?.detectedDependencies?.includes("prisma-db") ||
+        /prisma|@prisma\/client/i.test(sourceCode || "") ||
+        /prisma|@prisma\/client/i.test(testFileInfo?.content || "")
+    );
+
+    let prismaMockDirective = "";
+    if (hasPrisma) {
+        const preambleCode = unitTestContext?.mockContracts?.mockPreambleCode || "";
+        const fallbackMock = isVitest
+            ? `// 2. Universal Prisma Proxy Mock (Universal In-Memory Prisma Client Mock for Vitest, Prisma v7 Compatible)\nconst { mockPrismaClientInstance } = vi.hoisted(() => {\n  const defaultData = { id: 1, name: 'Sample', status: 'ACTIVE', email: 'sample@example.com', createdAt: new Date(), updatedAt: new Date() };\n  const _createModelMock = () => {\n    const baseModel = {\n      findUnique: vi.fn().mockResolvedValue(defaultData),\n      findFirst: vi.fn().mockResolvedValue(defaultData),\n      findMany: vi.fn().mockResolvedValue([defaultData]),\n      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n      createMany: vi.fn().mockResolvedValue({ count: 1 }),\n      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n      updateMany: vi.fn().mockResolvedValue({ count: 1 }),\n      upsert: vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.create || args?.update || {}) })),\n      delete: vi.fn().mockResolvedValue({ id: 1 }),\n      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),\n      count: vi.fn().mockResolvedValue(1),\n      aggregate: vi.fn().mockResolvedValue({ _count: 1, _sum: {}, _avg: {}, _min: {}, _max: {} }),\n      groupBy: vi.fn().mockResolvedValue([])\n    };\n    return new Proxy(baseModel, {\n      get(target, prop) {\n        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n        if (prop in target) return target[prop];\n        if (typeof prop === 'string') {\n          if (prop.includes('OrThrow') || prop.startsWith('findUnique') || prop.startsWith('findFirst')) target[prop] = vi.fn().mockResolvedValue(defaultData);\n          else if (prop.startsWith('find') || prop.includes('Many') || prop.includes('Return')) target[prop] = vi.fn().mockResolvedValue([defaultData]);\n          else if (prop.startsWith('count')) target[prop] = vi.fn().mockResolvedValue(1);\n          else if (prop.startsWith('create') || prop.startsWith('update') || prop.startsWith('upsert') || prop.startsWith('delete')) target[prop] = vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || args?.create || args?.update || {}) }));\n          else target[prop] = vi.fn().mockResolvedValue(defaultData);\n          return target[prop];\n        }\n        return undefined;\n      }\n    });\n  };\n  const _createPrismaProxyMock = () => {\n    const models = new Map();\n    let clientProxy;\n    clientProxy = new Proxy({\n      $connect: vi.fn().mockResolvedValue(undefined),\n      $disconnect: vi.fn().mockResolvedValue(undefined),\n      $transaction: vi.fn(async (args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(clientProxy) : Promise.resolve())),\n      $queryRaw: vi.fn().mockResolvedValue([]),\n      $queryRawUnsafe: vi.fn().mockResolvedValue([]),\n      $executeRaw: vi.fn().mockResolvedValue(1),\n      $executeRawUnsafe: vi.fn().mockResolvedValue(1),\n      $extends: vi.fn().mockReturnThis()\n    }, {\n      get(target, prop) {\n        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n        if (prop in target) return target[prop];\n        if (!models.has(prop)) models.set(prop, _createModelMock());\n        return models.get(prop);\n      }\n    });\n    return clientProxy;\n  };\n  const _createClientMock = _createPrismaProxyMock;\n  const clientProxy = _createPrismaProxyMock();\n  if (typeof globalThis !== 'undefined') {\n    globalThis.__mockPrisma = clientProxy;\n  }\n  return { mockPrismaClientInstance: clientProxy };\n});\nvi.mock('@prisma/client', () => ({\n  PrismaClient: vi.fn(() => mockPrismaClientInstance),\n  default: { PrismaClient: vi.fn(() => mockPrismaClientInstance) }\n}));`
+            : `// 2. Universal Prisma Proxy Mock (Universal In-Memory Prisma Client Mock for Jest, Prisma v7 Compatible)\njest.mock('@prisma/client', () => {\n  const defaultData = { id: 1, name: 'Sample', status: 'ACTIVE', email: 'sample@example.com', createdAt: new Date(), updatedAt: new Date() };\n  const _createModelMock = () => {\n    const baseModel = {\n      findUnique: jest.fn().mockResolvedValue(defaultData),\n      findFirst: jest.fn().mockResolvedValue(defaultData),\n      findMany: jest.fn().mockResolvedValue([defaultData]),\n      create: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n      createMany: jest.fn().mockResolvedValue({ count: 1 }),\n      update: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n      updateMany: jest.fn().mockResolvedValue({ count: 1 }),\n      upsert: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.create || args?.update || {}) })),\n      delete: jest.fn().mockResolvedValue({ id: 1 }),\n      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),\n      count: jest.fn().mockResolvedValue(1),\n      aggregate: jest.fn().mockResolvedValue({ _count: 1, _sum: {}, _avg: {}, _min: {}, _max: {} }),\n      groupBy: jest.fn().mockResolvedValue([])\n    };\n    return new Proxy(baseModel, {\n      get(target, prop) {\n        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n        if (prop in target) return target[prop];\n        if (typeof prop === 'string') {\n          if (prop.includes('OrThrow') || prop.startsWith('findUnique') || prop.startsWith('findFirst')) target[prop] = jest.fn().mockResolvedValue(defaultData);\n          else if (prop.startsWith('find') || prop.includes('Many') || prop.includes('Return')) target[prop] = jest.fn().mockResolvedValue([defaultData]);\n          else if (prop.startsWith('count')) target[prop] = jest.fn().mockResolvedValue(1);\n          else if (prop.startsWith('create') || prop.startsWith('update') || prop.startsWith('upsert') || prop.startsWith('delete')) target[prop] = jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || args?.create || args?.update || {}) }));\n          else target[prop] = jest.fn().mockResolvedValue(defaultData);\n          return target[prop];\n        }\n        return undefined;\n      }\n    });\n  };\n  const _createPrismaProxyMock = () => {\n    const models = new Map();\n    let clientProxy;\n    clientProxy = new Proxy({\n      $connect: jest.fn().mockResolvedValue(undefined),\n      $disconnect: jest.fn().mockResolvedValue(undefined),\n      $transaction: jest.fn(async (args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(clientProxy) : Promise.resolve())),\n      $queryRaw: jest.fn().mockResolvedValue([]),\n      $queryRawUnsafe: jest.fn().mockResolvedValue([]),\n      $executeRaw: jest.fn().mockResolvedValue(1),\n      $executeRawUnsafe: jest.fn().mockResolvedValue(1),\n      $extends: jest.fn().mockReturnThis()\n    }, {\n      get(target, prop) {\n        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n        if (prop in target) return target[prop];\n        if (!models.has(prop)) models.set(prop, _createModelMock());\n        return models.get(prop);\n      }\n    });\n    return clientProxy;\n  };\n  const _createClientMock = _createPrismaProxyMock;\n  const sharedMock = (typeof globalThis !== 'undefined' && globalThis.__mockPrisma) || _createPrismaProxyMock();\n  if (typeof globalThis !== 'undefined') globalThis.__mockPrisma = sharedMock;\n  return { __esModule: true, PrismaClient: jest.fn(() => sharedMock), default: { PrismaClient: jest.fn(() => sharedMock) } };\n}, { virtual: true });\njest.mock('../config/prisma', () => {\n  const p = (typeof globalThis !== 'undefined' && globalThis.__mockPrisma) || new Proxy({}, { get: (t, prop) => (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') ? undefined : (t[prop] || (t[prop] = jest.fn().mockResolvedValue({ id: 1, name: 'Sample' }))) });\n  return { __esModule: true, prisma: p, default: p };\n}, { virtual: true });`;
+
+        const codeToEmbed = (preambleCode && preambleCode.includes("PrismaClient")) ? preambleCode.trim() : fallbackMock;
+
+        prismaMockDirective = `\n   - CRITICAL DATABASE ISOLATION CONTRACT (PRISMA v7):\n` +
+            `     * NEVER connect to a real database or allow unmocked 'new PrismaClient()' instantiation.\n` +
+            `     * In Prisma v7 environments, unconfigured 'new PrismaClient()' will immediately throw PrismaClientInitializationError during module evaluation.\n` +
+            `     * Top-level mock mandate: You MUST mock '@prisma/client' and local DB singletons (e.g. '../config/prisma', '../lib/prisma') at top-level before controller/service imports.\n` +
+            `     * Use this self-contained in-memory proxy mock template at the very top of your test file:\n\`\`\`javascript\n${codeToEmbed}\n\`\`\``;
+    }
     const decisionTableMarkdown = unitTestContext?.decisionTable?.decisionTableMarkdown || "";
     const deltaDecisionTableMarkdown = unitTestContext?.decisionTable?.deltaDecisionTableMarkdown || decisionTableMarkdown;
     const decisionGuidanceStr = unitTestContext?.coverageGaps?.guidanceSummary || "No complex branching detected";
@@ -115,6 +143,7 @@ ${unexportedWarning}
 - CUCUMBER / GHERKIN AST FIXTURE INVARIANT: When testing Cucumber/Gherkin functions or AST code-generation (e.g. ParsedFeature, ParsedScenario, ParsedStep), NEVER pass incomplete mock step or scenario objects. Every step object MUST contain { lineNumber, stepText: string, keyword: 'Given'|'When'|'Then' }. Every scenario object MUST contain { lineNumber, title: string, steps: ParsedStep[] }.
 
 ### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS
+- Target: 100% Statements, Branches, Functions and Lines where reachable. Prioritize uncovered branch outcomes and meaningful behavior assertions. Static expectations are estimates until a real runner verifies them. Never change existing skips, source code, expected behavior or coverage exclusions to reach the target. Required secrets must be reported, not invented.
 - Current Coverage: Lines ${coverageDetails?.summary?.linesPct ?? 0}%, Branches ${coverageDetails?.summary?.branchesPct ?? 0}%, Functions ${coverageDetails?.summary?.funcsPct ?? 0}%, Statements ${coverageDetails?.summary?.stmtsPct ?? 0}%
 - Control Flow Graph Complexity: Cyclomatic Complexity (CC) = ${cyclomaticComplexity} (Basis Paths = ${cyclomaticComplexity})
 - Uncovered Lines in Source: ${uncoveredLinesStr}
@@ -153,10 +182,20 @@ ${unexportedWarning}
    - Follow this targeted DELTA Decision Table (Scenarios remaining to cover, excluding already tested paths and infeasible code):
 ${deltaDecisionTableMarkdown}
    - You MUST include test cases addressing remaining unfulfilled business logic testing categories:
-   - Category A (Happy Path): Standard valid invocations verifying expected business output.
-   - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
-   - Category C (Branch Toggling): For EVERY conditional statement (if/else, ternary ? :, switch/case, ||, &&, ??, ?.), write test cases testing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
-   - Category D (Error & Exception Handling): Force invalid parameters, test every 'throw' statement, and mock asynchronous dependency failures (rejected promises) to ensure 'catch' blocks are 100% executed.
+   - Category A (Happy Path - CORE LOGIC PATH TRAVERSAL):
+     * MANDATORY POPULATED MULTI-ELEMENT FIXTURES: If a function accepts an array, collection, or list parameter (e.g. 'history', 'items', 'messages', 'data', 'turns'), you MUST pass a fully populated, valid multi-element fixture (minimum 2 to 3 distinct items) with all required fields populated.
+     * NEVER pass empty arrays '[]' or empty objects '{}' in Category A! Empty collections trip early-return guards and fail to execute core business logic.
+     * MULTI-ITEM TRANSFORMATIONS: To test loops, transformations, filtering, sorting, or merging, pass diverse collections (e.g. multiple items with different roles/types/statuses, consecutive matching items, and leading/trailing items) so all core logic loops and branches (e.g., L14-L55) are completely traversed and executed.
+   - Category B (Boundary Values - GUARD VERIFICATION):
+     * Test genuine boundary limits (0, -1, empty array '[]', empty string '""', empty object '{}', max bounds).
+     * Recognize that empty collections '[]' test guard clauses only; verify that the function handles them gracefully (e.g. returns empty array without throwing).
+     * DO NOT use empty collections for Category A or for testing downstream branches.
+   - Category C (Branch Toggling - GUARD CLAUSE PRECEDENCE INVARIANT):
+     * For internal conditional branches located AFTER early-return guards, you MUST provide valid outer inputs (e.g. populated multi-element collections) that satisfy all preceding guards, and ONLY vary the specific target property or element field to exercise the True and False paths.
+     * NEVER pass top-level null, undefined, or empty arrays to test downstream internal branches, because doing so immediately trips early return guards and leaves internal branches unreached.
+   - Category D (Error & Exception Handling):
+     * Test error handling and schema violations while respecting the non-null body guarantee.
+     * For pure collection normalizers without throw statements, test tolerance for malformed elements within a populated collection.
    - CRITICAL NON-DUPLICATION INVARIANT:
    - Carefully review the EXISTING TEST CODE in ${testFileInfo.relativePath}.
    - Do NOT regenerate or duplicate test cases that already exist in the test file!
@@ -170,7 +209,7 @@ ${deltaDecisionTableMarkdown}
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
-${mockInstructionsStr}
+${mockInstructionsStr}${prismaMockDirective}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
    - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
@@ -181,12 +220,18 @@ ${mockInstructionsStr}
    - ALWAYS ensure 'req', 'res', and 'next' are properly initialized as objects before tests execute!
    - In beforeEach or within the test block:
      req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], user: { id: 1, role: 'admin' } };
-     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis(), end: jest.fn().mockReturnThis() };
-     next = jest.fn();
+     res = { status: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, json: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, send: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, sendStatus: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, cookie: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, clearCookie: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, redirect: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, setHeader: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, write: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, end: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"} };
+     next = ${isVitest ? "vi.fn()" : "jest.fn()"};
    - NEVER access properties like 'req.file = ...' or 'req.body = ...' without ensuring 'req' is an object.
+   - NON-NULL BODY GUARANTEE: In Express controller tests, 'req.body' MUST NEVER BE NULL OR UNDEFINED, even in Category D (Error Handling) test cases!
+     Controllers routinely destructure 'const { a, b, items } = req.body;'. Passing 'req.body = null' causes fatal 'TypeError: Cannot destructure property ... of req.body as it is null'.
+     To test missing/invalid input in Category D, pass an empty object 'req.body = {}' or empty fields, NEVER null.
+   - STRUCTURED PAYLOADS: If the controller accesses or destructures 'req.body.items', 'req.body.data', etc., initialize them with valid collection types (e.g. 'items: []' or 'items: [{ id: 1, name: "Sample" }]') rather than primitive strings or missing keys.
 10. RUNNER COMPATIBILITY (JEST & VITEST):
    - In Jest environments, use 'jest.fn()', 'jest.mock()', 'jest.spyOn()'.
    - NEVER access 'vi.fn()' in Jest suites unless 'vi' is explicitly imported or aliased to 'jest'.
+11. HERMETIC TEST TEARDOWN:
+   - You MUST include afterEach(() => { vi.restoreAllMocks(); }); (Vitest) or afterEach(() => { jest.restoreAllMocks(); }); (Jest) in every test suite to prevent mock/spy leakage. NEVER use vi.mock() or jest.mock() on local constant files, schemas, or data fixtures.
 
 ### 6. OUTPUT FORMAT
 Format your output strictly in JSON (ensure valid JSON syntax: values MUST be strings enclosed in double quotes "...", never backtick characters):
@@ -242,10 +287,20 @@ ${unexportedWarning}
    - Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
 ${deltaDecisionTableMarkdown || decisionTableMarkdown}
    - You MUST include test cases addressing all 4 essential business logic testing categories:
-   - Category A (Happy Path): Standard valid invocations verifying expected business output.
-   - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
-   - Category C (Branch Toggling): For EVERY conditional statement (if/else, switch, ternary, ||, &&, ??, ?.), craft test inputs executing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
-   - Category D (Error & Exception Handling): Force invalid parameters, test every 'throw' statement, and mock asynchronous dependency failures (rejected promises) to ensure 'catch' blocks are 100% executed.
+   - Category A (Happy Path - CORE LOGIC PATH TRAVERSAL):
+     * MANDATORY POPULATED MULTI-ELEMENT FIXTURES: If a function accepts an array, collection, or list parameter (e.g. 'history', 'items', 'messages', 'data', 'turns'), you MUST pass a fully populated, valid multi-element fixture (minimum 2 to 3 distinct items) with all required fields populated.
+     * NEVER pass empty arrays '[]' or empty objects '{}' in Category A! Empty collections trip early-return guards and fail to execute core business logic.
+     * MULTI-ITEM TRANSFORMATIONS: To test loops, transformations, filtering, sorting, or merging, pass diverse collections (e.g. multiple items with different roles/types/statuses, consecutive matching items, and leading/trailing items) so all core logic loops and branches (e.g., L14-L55) are completely traversed and executed.
+   - Category B (Boundary Values - GUARD VERIFICATION):
+     * Test genuine boundary limits (0, -1, empty array '[]', empty string '""', empty object '{}', max bounds).
+     * Recognize that empty collections '[]' test guard clauses only; verify that the function handles them gracefully (e.g. returns empty array without throwing).
+     * DO NOT use empty collections for Category A or for testing downstream branches.
+   - Category C (Branch Toggling - GUARD CLAUSE PRECEDENCE INVARIANT):
+     * For internal conditional branches located AFTER early-return guards, you MUST provide valid outer inputs (e.g. populated multi-element collections) that satisfy all preceding guards, and ONLY vary the specific target property or element field to exercise the True and False paths.
+     * NEVER pass top-level null, undefined, or empty arrays to test downstream internal branches, because doing so immediately trips early return guards and leaves internal branches unreached.
+   - Category D (Error & Exception Handling):
+     * Test error handling and schema violations while respecting the non-null body guarantee.
+     * For pure collection normalizers without throw statements, test tolerance for malformed elements within a populated collection.
    - Never generate fake or placeholder assertions like expect(true).toBe(true) for unreachable or environment-dependent code.
 5. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
    - DO NOT write placeholder assertions like expect(true).toBe(true) or expect(1).toBe(1).
@@ -255,7 +310,7 @@ ${deltaDecisionTableMarkdown || decisionTableMarkdown}
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
    - "fullUpdatedContent" MUST contain the complete, standalone test file ready to execute.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
-${mockInstructionsStr}
+${mockInstructionsStr}${prismaMockDirective}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
    - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
@@ -266,12 +321,18 @@ ${mockInstructionsStr}
    - ALWAYS ensure 'req', 'res', and 'next' are properly initialized as objects before tests execute!
    - In beforeEach or within the test block:
      req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], user: { id: 1, role: 'admin' } };
-     res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis(), end: jest.fn().mockReturnThis() };
-     next = jest.fn();
+     res = { status: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, json: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, send: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, sendStatus: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, cookie: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, clearCookie: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, redirect: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, setHeader: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, write: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}, end: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"} };
+     next = ${isVitest ? "vi.fn()" : "jest.fn()"};
    - NEVER access properties like 'req.file = ...' or 'req.body = ...' without ensuring 'req' is an object.
+   - NON-NULL BODY GUARANTEE: In Express controller tests, 'req.body' MUST NEVER BE NULL OR UNDEFINED, even in Category D (Error Handling) test cases!
+     Controllers routinely destructure 'const { a, b, items } = req.body;'. Passing 'req.body = null' causes fatal 'TypeError: Cannot destructure property ... of req.body as it is null'.
+     To test missing/invalid input in Category D, pass an empty object 'req.body = {}' or empty fields, NEVER null.
+   - STRUCTURED PAYLOADS: If the controller accesses or destructures 'req.body.items', 'req.body.data', etc., initialize them with valid collection types (e.g. 'items: []' or 'items: [{ id: 1, name: "Sample" }]') rather than primitive strings or missing keys.
 10. RUNNER COMPATIBILITY (JEST & VITEST):
    - In Jest environments, use 'jest.fn()', 'jest.mock()', 'jest.spyOn()'.
    - NEVER access 'vi.fn()' in Jest suites unless 'vi' is explicitly imported or aliased to 'jest'.
+11. HERMETIC TEST TEARDOWN:
+   - You MUST include afterEach(() => { vi.restoreAllMocks(); }); (Vitest) or afterEach(() => { jest.restoreAllMocks(); }); (Jest) in every test suite to prevent mock/spy leakage. NEVER use vi.mock() or jest.mock() on local constant files, schemas, or data fixtures.
 
 ### 6. OUTPUT FORMAT
 Format your output strictly in JSON:
@@ -281,7 +342,12 @@ Format your output strictly in JSON:
 "fullUpdatedContent": "// complete test file content to be written"
 }
 `;
-    return withAgentContext(prompt, 'unit-test');
+    return withAgentContext(`${prompt}
+EXPECTED-VALUE REVIEW: Trace each concrete input through the COMPLETE function before writing an assertion, including cleanup loops after the behavior named by the test. Derive the final returned value, not an intermediate state. For sequences, check filtering, role conversion, merging, leading/trailing pruning and appending in their actual execution order. Keep the current message's caller role; never invent a model response. Compare all generated cases with one another and with existing tests; identical inputs must not have contradictory expected outputs. Preserve existing test contracts. If source behavior conflicts with a documented requirement, report the conflict instead of silently changing that requirement.
+INPUT CONTRACTS: ${JSON.stringify(inputContractSummary || [...sourceInputContracts(sourceCode || '').functions.values()])}
+Use function-specific boundary fixtures. A string parameter still requires strings for unknown-key or boundary scenarios; do not pass objects, arrays or numbers and assume a graceful default. Respect nested interface field types and optional/nullable unions. Type assertions such as "as any" do not convert runtime values. Never sweep the same list of invalid inputs across unrelated exports. Test out-of-contract input only when the rejection behavior is established, with an explicit error assertion; do not invent validation or catch errors to claim coverage.
+PRESERVATION: Keep correct existing tests, license headers, comments, type imports, helpers, hooks and deliberate skip states. Return additions rather than replacing the suite. Existing test defects require a baseline failure and a documented contract before a scoped repair; never weaken an assertion to match faulty source behavior. Do not introduce @ts-nocheck, @ts-ignore or blanket type-checking suppressions.
+Write new test descriptions, comments, and explanations in English. Preserve existing identifiers and expected application strings exactly.`, 'unit-test');
 };
 
 /**
@@ -698,7 +764,8 @@ export const generateAiUnitTestSuite = async ({
     coverageDetails,
     isTest,
     filePath,
-    selectedAiModel = null
+    selectedAiModel = null,
+    validateCollection = true
 }) => {
     const cleanSource = sanitizeSourceFilePath(snapshot?.rootDir, sourceFileToInspect);
     const ext = path.extname(cleanSource) || ".js";
@@ -716,6 +783,7 @@ export const generateAiUnitTestSuite = async ({
         }
         : findExistingTestFile(snapshot.rootDir, cleanSource, framework);
 
+    const targetPolicy = assertUnitTestTarget(snapshot.rootDir, testFileInfo.relativePath, framework);
     let proposalBase = {};
     if (userId && snapshot?.projectId && snapshot?.id) {
         const { captureProjectProposalBase } = await import("./projectProposalBase.service.js");
@@ -730,7 +798,10 @@ export const generateAiUnitTestSuite = async ({
         sourceCode,
         coverageDetails,
         framework,
-        existingTestCode: testFileInfo.content || ""
+        existingTestCode: testFileInfo.content || "",
+        sourceFile: cleanSource,
+        targetTestFile: testFileInfo.relativePath,
+        rootDir: snapshot?.rootDir
     });
 
     // 2. Build Standard 6-Part Prompt (Section 3.1)
@@ -741,7 +812,8 @@ export const generateAiUnitTestSuite = async ({
         cleanImportPath,
         coverageDetails,
         sourceCode,
-        unitTestContext
+        unitTestContext,
+        inputContractSummary:[...sourceInputContracts(sourceCode || '',{rootDir:snapshot.rootDir,sourceFile:path.join(snapshot.rootDir,cleanSource)}).functions.values()]
     });
 
     // 3. Invoke LLM with 90s Timeout
@@ -799,9 +871,24 @@ export const generateAiUnitTestSuite = async ({
         });
     }
 
-    // 5.1 Dedicated Vitest Test Collection Validation & Self-Healing Stage (Requirement R3)
-    if (framework === "vitest" || testFileInfo.relativePath?.includes("vitest")) {
-        const candidateCode = aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent || "";
+    const assembleCandidate = () => {
+        const changeSet = assembleUnitTestCandidate({ original: testFileInfo.content || '',
+            proposed: removeGeneratedNoCheckDirective(aiParsedResult.fullUpdatedContent || aiParsedResult.suggestedTestCode || '',testFileInfo.relativePath), testFile: testFileInfo.relativePath });
+        aiParsedResult.fullUpdatedContent = changeSet.content;
+        aiParsedResult.suggestedTestCode = changeSet.content;
+        aiParsedResult.changeSet = changeSet;
+        if (changeSet.content === testFileInfo.content) aiParsedResult.explanation = 'The original suite is preserved. No executable additions were assembled; review the remaining coverage gaps or test diagnostics.';
+    };
+    try { assembleCandidate(); }
+    catch (error) {
+        if (!testFileInfo.content) throw error;
+        aiParsedResult = { explanation: error.message, suggestedTestCode: testFileInfo.content, fullUpdatedContent: testFileInfo.content,
+            changeSet: { needsReview: [{ reason: error.message }], additions: [], repairs: [] } };
+    }
+
+    // Collection validates the complete assembled suite, never a delta snippet.
+    if (validateCollection && (framework === "vitest" || testFileInfo.relativePath?.includes("vitest"))) {
+        const candidateCode = aiParsedResult.fullUpdatedContent || "";
         if (candidateCode) {
             const vitestValidation = await validateAndHealVitestTestCollection({
                 testCode: candidateCode,
@@ -811,8 +898,8 @@ export const generateAiUnitTestSuite = async ({
             });
 
             if (vitestValidation.success && vitestValidation.code) {
-                aiParsedResult.suggestedTestCode = vitestValidation.code;
                 aiParsedResult.fullUpdatedContent = vitestValidation.code;
+                assembleCandidate();
             } else if (!vitestValidation.success) {
                 console.warn(`[unitTestGenerator] Vitest collection validation failed after retries: ${vitestValidation.error}`);
                 aiParsedResult = generateFallbackUnitTests({
@@ -825,7 +912,8 @@ export const generateAiUnitTestSuite = async ({
                     existingContent: testFileInfo.content,
                     sourceCode
                 });
-                const fallbackCandidate = aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent || "";
+                assembleCandidate();
+                const fallbackCandidate = aiParsedResult.fullUpdatedContent || "";
                 const fallbackValidation = await validateAndHealVitestTestCollection({
                     testCode: fallbackCandidate,
                     rootDir: snapshot?.rootDir,
@@ -833,8 +921,8 @@ export const generateAiUnitTestSuite = async ({
                     maxRetries: 2
                 });
                 if (fallbackValidation.code) {
-                    aiParsedResult.suggestedTestCode = fallbackValidation.code;
                     aiParsedResult.fullUpdatedContent = fallbackValidation.code;
+                    assembleCandidate();
                 }
             }
         }
@@ -854,6 +942,8 @@ export const generateAiUnitTestSuite = async ({
 
     const cleanSourceFile = cleanRepoPath(sourceFileToInspect);
     const cleanTargetTest = cleanRepoPath(testFileInfo.relativePath || testFileInfo.fullPath);
+    const effectiveSourceCode = sourceCode || (snapshot?.rootDir && sourceFileToInspect ? findSourceOnDisk(snapshot.rootDir, sourceFileToInspect).content : "");
+    const computedSourceSha256 = effectiveSourceCode ? createHash('sha256').update(effectiveSourceCode).digest('hex') : undefined;
 
     const branches = coverageDetails?.branches || coverageDetails?.branchFlow || [];
     const uncoveredBranches = branches.filter(b => b.status !== "fully_covered" || b.totalHits === 0);
@@ -869,10 +959,13 @@ export const generateAiUnitTestSuite = async ({
     const scenarioMatrix = unitTestContext?.decisionTable?.matrixEntries || [];
 
     const primarySuggestion = {
+        targetPolicy,
+        targetCandidates: testFileInfo.targetCandidates,
         ...proposalBase,
         proposalBase: { ...proposalBase, existingContent: undefined },
         suggestionId: `sug-${Date.now()}-1`,
         sourceFile: cleanSourceFile,
+        sourceSha256: computedSourceSha256,
         targetSourceFile: cleanSourceFile,
         testFile: cleanTargetTest,
         targetTestFile: cleanTargetTest,
@@ -887,10 +980,12 @@ export const generateAiUnitTestSuite = async ({
         testCode: resolvedTestCode,
         originalCode: testFileInfo.content || "",
         fullUpdatedContent: aiParsedResult.fullUpdatedContent,
+        changeSet: aiParsedResult.changeSet,
         status: "GENERATED",
         isExisting: testFileInfo.found,
         uncoveredLines: coverageDetails?.uncoveredLines || [],
         failedLines: coverageDetails?.failedLines || [],
+        uncoverageDiagnostics: coverageDetails?.uncoverageDiagnostics || null,
         summary: coverageDetails?.summary ? {
             linesPct: coverageDetails.summary.linesPct ?? 0,
             branchesPct: coverageDetails.summary.branchesPct ?? 0,
@@ -911,6 +1006,7 @@ export const generateAiUnitTestSuite = async ({
 
     return {
         ...primarySuggestion,
+        targetPolicy,
         testCode: resolvedTestCode,
         targetSourceFile: cleanSourceFile,
         targetTestFile: cleanTargetTest,

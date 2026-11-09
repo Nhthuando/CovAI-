@@ -54,7 +54,7 @@ export default function UnitTestPackageInstaller({
     try {
       const res = await onInstallDependency(
         missingDependency.packageName,
-        false,
+        /^(?:@testing-library\/|@types\/|@vitest\/|vitest$|jest(?:-|$)|jsdom$|happy-dom$)/.test(missingDependency.packageName),
         missingDependency.importedFrom || null
       );
       if (res?.installResult) {

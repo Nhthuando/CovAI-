@@ -8,6 +8,7 @@ import { currentAiJobBudget } from './aiJobBudget.service.js';
 import { isCollaborationLocalTest } from '../config/collaborationLocal.js';
 import { geminiConfiguration } from './geminiRouting.service.js';
 import { buildAgentInstruction } from '../agents/registry.js';
+import { chatThinkingConfig } from './chatResponsePolicy.service.js';
 
 dotenv.config();
 
@@ -206,7 +207,7 @@ export const generateMultimodalText = async (
 
   const createModelInstance = (mName) => {
     const modelOptions = { model: mName };
-    const specialist = configuration.feature === 'general' ? '' : buildAgentInstruction(configuration.feature);
+    const specialist = ['general', 'chatbox'].includes(configuration.feature) ? '' : buildAgentInstruction(configuration.feature);
     if (specialist || systemInstruction) {
       modelOptions.systemInstruction = [specialist, systemInstruction].filter(Boolean).join('\n');
     }
@@ -244,6 +245,7 @@ export const generateMultimodalText = async (
         generationConfig: {
           maxOutputTokens: 65536,
           ...providerConfig,
+          ...(configuration.feature === 'chatbox' && chatThinkingConfig(primaryModelName) ? { thinkingConfig: chatThinkingConfig(primaryModelName) } : {}),
         },
       }, { signal: requestSignal });
       if (requestSignal.aborted) throw requestSignal.reason || new Error('AI request canceled');

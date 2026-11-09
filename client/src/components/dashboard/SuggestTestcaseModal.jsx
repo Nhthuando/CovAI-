@@ -31,6 +31,12 @@ import {
   Scale,
 } from "lucide-react";
 import Editor from "@monaco-editor/react";
+import {
+  resolveTargetTestFile,
+  cleanDisplayPath,
+  computeRelativeImport,
+  checkSyntaxSanity,
+} from "../../services/unitTestResolution.js";
 
 /**
  * 4-Category Decision Table Matrix definitions with educational explanations (English)
@@ -114,30 +120,6 @@ const TRIPLE_A_GUIDE = [
   },
 ];
 
-/**
- * Helper to normalize and strip storage/container prefixes
- */
-function cleanPath(p = "") {
-  if (!p) return "";
-  return p
-    .replace(/\\/g, "/")
-    .replace(/^\.?\//, "")
-    .replace(/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*?\/(?:repo\/)?)/i, "")
-    .replace(/(?:^|\/)uploads\/snapshots\/[^/]+\/[^/]+\//i, "")
-    .trim();
-}
-
-/**
- * Computes a sensible relative import path from tests/ to the source file
- */
-function computeRelativeImport(filePath = "") {
-  if (!filePath) return "../src/services/sample";
-  const clean = cleanPath(filePath).replace(/\.[cm]?[jt]sx?$/, "");
-  if (clean.startsWith("src/")) {
-    return `../${clean}`;
-  }
-  return `../../${clean}`;
-}
 
 /**
  * Generates annotated boilerplate unit test code from real business logic function & file
@@ -146,15 +128,16 @@ function generateAnnotatedTestTemplate({
   framework = "vitest",
   functionName = "",
   filePath = "",
+  targetTestFile = "",
   category = "HAPPY_PATH",
 }) {
   const isVitest = framework === "vitest";
-  const cleanModName = filePath ? cleanPath(filePath).split("/").pop().replace(/\.[^.]+$/, "") : "sample";
+  const cleanModName = filePath ? cleanDisplayPath(filePath).split("/").pop().replace(/\.[^.]+$/, "") : "sample";
   const fallbackFn = cleanModName && cleanModName !== "sample"
     ? `run${cleanModName.charAt(0).toUpperCase() + cleanModName.slice(1)}`
     : "processAction";
   const cleanFn = (functionName || fallbackFn).replace(/[^a-zA-Z0-9_$]/g, "") || "processAction";
-  const relativeImport = computeRelativeImport(filePath);
+  const relativeImport = computeRelativeImport(filePath, targetTestFile);
 
   if (isVitest) {
     let scenarioSnippet = "";
@@ -219,7 +202,7 @@ function generateAnnotatedTestTemplate({
 
     return `import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// 1. Import target function from source code (${cleanPath(filePath) || 'business logic'})
+// 1. Import target function from source code (${cleanDisplayPath(filePath) || 'business logic'})
 import { ${cleanFn} } from '${relativeImport}';
 
 describe('${cleanFn} - Unit Test Suite', () => {
@@ -292,7 +275,7 @@ ${scenarioSnippet}
   });`;
   }
 
-  return `// 1. Import target function from source code (${cleanPath(filePath) || 'business logic'})
+  return `// 1. Import target function from source code (${cleanDisplayPath(filePath) || 'business logic'})
 const { ${cleanFn} } = require('${relativeImport}');
 
 describe('${cleanFn} - Unit Test Suite', () => {
@@ -306,49 +289,6 @@ ${jestScenarioSnippet}
 `;
 }
 
-/**
- * Lightweight JavaScript bracket balance & syntax sanity checker
- */
-function checkSyntaxSanity(code) {
-  if (!code || typeof code !== "string") return { valid: true, error: null };
-  const stack = [];
-  const lines = code.split("\n");
-
-  for (let l = 0; l < lines.length; l++) {
-    const line = lines[l];
-    for (let c = 0; c < line.length; c++) {
-      const char = line[c];
-      if (char === "{" || char === "(" || char === "[") {
-        stack.push({ char, line: l + 1, col: c + 1 });
-      } else if (char === "}" || char === ")" || char === "]") {
-        if (stack.length === 0) {
-          return {
-            valid: false,
-            error: `Unexpected closing '${char}' at line ${l + 1}, column ${c + 1}.`,
-          };
-        }
-        const top = stack.pop();
-        const expected = top.char === "{" ? "}" : top.char === "(" ? ")" : "]";
-        if (char !== expected) {
-          return {
-            valid: false,
-            error: `Mismatched bracket: Opened '${top.char}' at line ${top.line} but found '${char}' at line ${l + 1}.`,
-          };
-        }
-      }
-    }
-  }
-
-  if (stack.length > 0) {
-    const top = stack[stack.length - 1];
-    return {
-      valid: false,
-      error: `Unclosed bracket '${top.char}' opened at line ${top.line}, column ${top.col}. Please add corresponding closing bracket.`,
-    };
-  }
-
-  return { valid: true, error: null };
-}
 
 export default function SuggestTestcaseModal({
   isOpen,
@@ -358,6 +298,7 @@ export default function SuggestTestcaseModal({
   targetFunctionsList = [],
   allBusinessFiles = [],
   allFunctions = [],
+  testSuites = [],
   defaultFramework = "vitest",
   onConfirmAi,
   onApplyManualTest,
@@ -379,7 +320,7 @@ export default function SuggestTestcaseModal({
     for (const f of allBusinessFiles) {
       const rawPath = f.filePath || f.path || (typeof f === "string" ? f : "");
       if (!rawPath) continue;
-      const cp = cleanPath(rawPath);
+      const cp = cleanDisplayPath(rawPath);
       if (cp && !seen.has(cp)) {
         seen.add(cp);
         const fileName = cp.split("/").pop();
@@ -401,14 +342,22 @@ export default function SuggestTestcaseModal({
     targetFilePath || cleanBusinessFiles[0]?.rawPath || ""
   );
 
+  // Dynamic associated test suite resolution
+  const associatedTestSuite = useMemo(() => {
+    if (!selectedFile) return null;
+    return resolveTargetTestFile(selectedFile, testSuites, {
+      framework: chosenFramework,
+    });
+  }, [selectedFile, testSuites, chosenFramework]);
+
   // Dynamic function list for the currently selected file
   const availableFunctionsForFile = useMemo(() => {
     if (!selectedFile) return targetFunctionsList || [];
-    const cleanTarget = cleanPath(selectedFile);
+    const cleanTarget = cleanDisplayPath(selectedFile);
     if (allFunctions && allFunctions.length > 0) {
       const matches = allFunctions.filter((fn) => {
         const fPath = fn.filePath || "";
-        return fPath === selectedFile || cleanPath(fPath) === cleanTarget;
+        return fPath === selectedFile || cleanDisplayPath(fPath) === cleanTarget;
       });
       if (matches.length > 0) return matches;
     }
@@ -438,7 +387,7 @@ export default function SuggestTestcaseModal({
 
       const fns = (allFunctions || []).filter((fn) => {
         const fPath = fn.filePath || "";
-        return fPath === initialFile || cleanPath(fPath) === cleanPath(initialFile);
+        return fPath === initialFile || cleanDisplayPath(fPath) === cleanDisplayPath(initialFile);
       });
       const resolvedFns = fns.length > 0 ? fns : targetFunctionsList || [];
       const initialFn = targetFunction || resolvedFns[0]?.functionName || resolvedFns[0]?.name || "";
@@ -470,12 +419,13 @@ export default function SuggestTestcaseModal({
         framework: chosenFramework,
         functionName: selectedFunc,
         filePath: selectedFile,
+        targetTestFile: associatedTestSuite,
         category: activeCategory,
       });
       setCodeContent(template);
       setSyntaxStatus(checkSyntaxSanity(template));
     }
-  }, [step, chosenFramework, selectedFunc, selectedFile, activeCategory]);
+  }, [step, chosenFramework, selectedFunc, selectedFile, associatedTestSuite, activeCategory]);
 
   // Live syntax check on editor changes
   const handleEditorChange = (value) => {
@@ -491,6 +441,7 @@ export default function SuggestTestcaseModal({
       framework: chosenFramework,
       functionName: selectedFunc,
       filePath: selectedFile,
+      targetTestFile: associatedTestSuite,
       category: catId,
     });
     setCodeContent(template);
@@ -500,10 +451,10 @@ export default function SuggestTestcaseModal({
   // Handle switching file from dropdown
   const handleFileChange = (newFile) => {
     setSelectedFile(newFile);
-    const cleanTarget = cleanPath(newFile);
+    const cleanTarget = cleanDisplayPath(newFile);
     const matchingFns = (allFunctions || []).filter((fn) => {
       const fPath = fn.filePath || "";
-      return fPath === newFile || cleanPath(fPath) === cleanTarget;
+      return fPath === newFile || cleanDisplayPath(fPath) === cleanTarget;
     });
     const nextFn = matchingFns[0]?.functionName || matchingFns[0]?.displayName || matchingFns[0]?.name || "";
     setSelectedFunc(nextFn);
@@ -515,6 +466,7 @@ export default function SuggestTestcaseModal({
       onConfirmAi?.({
         framework: chosenFramework,
         filePath: selectedFile || targetFilePath,
+        targetTestFile: associatedTestSuite || undefined,
       });
       onClose();
     } else {
@@ -531,6 +483,7 @@ export default function SuggestTestcaseModal({
     await onApplyManualTest?.({
       framework: chosenFramework,
       filePath: selectedFile || targetFilePath,
+      targetTestFile: associatedTestSuite || undefined,
       functionName: selectedFunc,
       generatedCode: codeContent,
     });
@@ -540,9 +493,9 @@ export default function SuggestTestcaseModal({
   if (!isOpen) return null;
 
   const displayFileName = selectedFile
-    ? cleanPath(selectedFile).split("/").pop()
+    ? cleanDisplayPath(selectedFile).split("/").pop()
     : targetFilePath
-      ? cleanPath(targetFilePath).split("/").pop()
+      ? cleanDisplayPath(targetFilePath).split("/").pop()
       : "Entire Project";
 
   return (

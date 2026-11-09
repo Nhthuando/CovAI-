@@ -1,5 +1,6 @@
+import { chatGreeting, chatScreenLabel, normalizeChatScreenContext } from '../../services/chatScreenContext';
 import { AI_MODELS } from "../../shared/aiModels.js";
-import { getSelectedAIModel, setSelectedAIModel } from "../../services/aiModel.service.js";
+import { getSelectedAIModel } from "../../services/aiModel.service.js";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -209,13 +210,14 @@ function groupSessionsByDate(sessions) {
   ].filter((g) => g.items.length > 0);
 }
 
-/* ── Initial conversation (English) ─────────────────────── */
+/* ── Initial conversation; the UI follows the current screen until the first send. ── */
 const INITIAL_MESSAGES = [
   {
     id: 1,
+    isGreeting: true,
     role: "assistant",
     content:
-      "Hello! I am **COV**, your AI testing assistant for TestCovAI.\n\nI can help you analyze code logic, discover edge cases, and automatically generate comprehensive test suites. How can I help you today?",
+      "How can I help with your project?",
     timestamp: new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
@@ -1341,6 +1343,12 @@ function ChatMessage({
 
 /* ── Typing Indicator ────────────────────────────────────── */
 function TypingIndicator() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -1368,8 +1376,8 @@ function TypingIndicator() {
         >
           COV
         </span>
-        <span style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>
-          thinking…
+        <span role="status" style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>
+          {elapsed >= 8 ? 'Still working on your response…' : 'Preparing your response…'} <span aria-hidden="true">{elapsed}s</span>
         </span>
       </div>
 
@@ -1409,14 +1417,11 @@ function TypingIndicator() {
 function ChatInput({
   onSend,
   isTyping,
-  selectedModel,
-  setSelectedModel,
   fileTree = [],
   projectId,
 }) {
   const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [attachments, setAttachments] = useState([]);
 
   // @ mention autocomplete state
@@ -1425,7 +1430,6 @@ function ChatInput({
   const [atMentionIndex, setAtMentionIndex] = useState(0);
 
   const textareaRef = useRef(null);
-  const menuRef = useRef(null);
   const atMenuRef = useRef(null);
   const fileInputRef = useRef(null);
   const selectedMentionItemRef = useRef(null);
@@ -1472,10 +1476,7 @@ function ChatInput({
   // Click outside to close menus
   useEffect(() => {
     const handleClickOutside = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setModelMenuOpen(false);
-      }
-      if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
+if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
         setAtMentionOpen(false);
       }
     };
@@ -1687,9 +1688,10 @@ function ChatInput({
     }
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isTyping) return;
-    onSend(input.trim(), attachments);
+    const sent = await onSend(input.trim(), attachments);
+    if (!sent) return;
     setInput("");
     setAttachments([]);
     setAtMentionOpen(false);
@@ -1827,126 +1829,6 @@ function ChatInput({
         )}
       </AnimatePresence>
 
-      {/* ── AI Model Selector Dropdown ── */}
-      <AnimatePresence>
-        {modelMenuOpen && (
-          <motion.div
-            ref={menuRef}
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
-            style={{
-              position: "absolute",
-              bottom: "calc(100% - 2px)",
-              left: 14,
-              width: 270,
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              borderRadius: 12,
-              boxShadow: "var(--shadow-lg)",
-              padding: "6px",
-              zIndex: 50,
-            }}
-          >
-            <div
-              className="px-2.5 py-1.5 text-[10px] font-semibold tracking-wider uppercase flex items-center justify-between"
-              style={{
-                color: "var(--color-text-secondary)",
-                borderBottom: "1px solid var(--color-border)",
-              }}
-            >
-              <span>Select AI Model</span>
-              <span
-                style={{
-                  color: "var(--color-primary)",
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                COV Multi-LLM
-              </span>
-            </div>
-
-            <div className="flex flex-col gap-1 mt-1">
-              {AI_MODELS.map((model) => {
-                const isSelected = selectedModel?.id === model.id;
-                return (
-                  <button
-                    key={model.id}
-                    onClick={() => {
-                      setSelectedModel(model);
-                      if (typeof setSelectedAIModel === "function") setSelectedAIModel(model.id);
-                      setModelMenuOpen(false);
-                    }}
-                    className="flex items-start gap-2.5 p-2 rounded-lg text-left transition-colors cursor-pointer"
-                    style={{
-                      background: isSelected
-                        ? "rgba(109, 93, 251, 0.12)"
-                        : "transparent",
-                      border: isSelected
-                        ? "1px solid var(--color-primary)"
-                        : "1px solid transparent",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isSelected)
-                        e.currentTarget.style.background = "var(--color-bg)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isSelected)
-                        e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: "var(--color-text)",
-                          }}
-                        >
-                          {model.name}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 700,
-                            padding: "0 5px",
-                            borderRadius: 4,
-                            background: `${model.badgeColor}20`,
-                            color: model.badgeColor,
-                            border: `1px solid ${model.badgeColor}40`,
-                          }}
-                        >
-                          {model.badge}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 10.5,
-                          color: "var(--color-text-secondary)",
-                          marginTop: 2,
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        {model.desc}
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <Check
-                        size={14}
-                        style={{ color: "var(--color-primary)" }}
-                        className="flex-shrink-0 mt-0.5"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* ── Main Input Box ── */}
       <div
         className="relative rounded-2xl transition-all duration-200"
@@ -2068,46 +1950,7 @@ function ChatInput({
               <Plus size={15} strokeWidth={2.4} />
             </motion.button>
 
-            {/* Model Selector Button */}
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setModelMenuOpen(!modelMenuOpen)}
-              type="button"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all"
-              style={{
-                background: modelMenuOpen
-                  ? "var(--color-surface)"
-                  : "var(--color-bg)",
-                border: modelMenuOpen
-                  ? "1px solid var(--color-primary)"
-                  : "1px solid var(--color-border)",
-                fontSize: 11,
-                color: "var(--color-text)",
-              }}
-              title="Switch AI Model"
-            >
-              <Sparkles
-                size={11}
-                style={{
-                  color: selectedModel?.badgeColor || "var(--color-primary)",
-                }}
-              />
-              <span
-                style={{ fontWeight: 500 }}
-                className="truncate max-w-[120px]"
-              >
-                {selectedModel?.name || AI_MODELS[0]?.name || "Gemini 3.5 Flash Lite"}
-              </span>
-              <ChevronDown
-                size={12}
-                style={{
-                  color: "var(--color-text-secondary)",
-                  transform: modelMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.2s ease",
-                }}
-              />
-            </motion.button>
+            <span className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-[var(--color-text-secondary)]"><Sparkles size={11} />COV Assistant</span>
           </div>
 
           {/* Right: Send Button */}
@@ -2142,6 +1985,7 @@ function ChatInput({
 
 /* ── AI Agent Panel — Main Export ────────────────────────── */
 export default function AIPanel({
+  onClose,
   projectId,
   snapshotId,
   screenContext,
@@ -2174,7 +2018,7 @@ export default function AIPanel({
 
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(() => {
+  const [selectedModel] = useState(() => {
     const curId = typeof getSelectedAIModel === "function" ? getSelectedAIModel() : null;
     return AI_MODELS.find((m) => m.id === curId) || AI_MODELS[0];
   });
@@ -2422,7 +2266,7 @@ export default function AIPanel({
       }),
     };
 
-    setMessages((m) => [...m, userMsg]);
+    setMessages((m) => [...m.map(message => message.isGreeting ? { ...message, isGreeting: false, content: chatGreeting(screenContext) } : message), userMsg]);
     setIsTyping(true);
 
     try {
@@ -3188,7 +3032,7 @@ export default function AIPanel({
     }
   };
 
-  const handleSend = async (text, attachments = []) => {
+  const handleSend = async (text, attachments = [], retryContext = null) => {
     if (sendRef.current || isRestoring || isLoadingSession || isTyping) return;
     if (!projectId) {
       showToast({
@@ -3203,6 +3047,7 @@ export default function AIPanel({
       id: getNextId(),
       role: "user",
       content: text,
+      requestContext: retryContext || { sessionId: activeSessionId, snapshotId, model: selectedModel.id, useMemory: useProjectMemory, screenContext: normalizeChatScreenContext(screenContext), clientRequestId: crypto.randomUUID() },
       attachments: attachments || [],
       timestamp: new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
@@ -3224,11 +3069,12 @@ export default function AIPanel({
         selectedModel.id,
         attachments || [],
         activeSessionId,
-        { snapshotId, useMemory: useProjectMemory, screenContext },
+        userMsg.requestContext,
       );
       if (requestScope !== contextRequestRef.current) return;
 
       if (res?.data?.sessionId) {
+        setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID(), sessionId: res.data.sessionId, screenContext: { ...userMsg.requestContext.screenContext, workspaceRevision: res.data.context?.workspaceRevision } } } : message));
         setActiveSessionId(res.data.sessionId);
         setContextInfo(res.data.context || null);
         if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: res.data.sessionId, useMemory: useProjectMemory }));
@@ -3245,13 +3091,17 @@ export default function AIPanel({
             minute: "2-digit",
           }),
           content: res.data.reply,
+          usedContext: res.data.context?.screenContext,
         },
       ]);
+      return true;
     } catch (err) {
       if (requestScope !== contextRequestRef.current) return;
-      console.error(err);
+      // A transport failure can hide a committed reply: reuse its ID to replay it.
+      // A definite HTTP failure requires a new ID because failed requests are immutable.
+      if (err.status) setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID() } } : message));
       const isQuotaError =
-        err.message && err.message.includes("QUOTA_EXCEEDED");
+        err.code === 'AI_QUOTA_EXCEEDED' || (err.message && err.message.includes("QUOTA_EXCEEDED"));
 
       if (isQuotaError) {
         setMessages((m) => [
@@ -3264,13 +3114,13 @@ export default function AIPanel({
               minute: "2-digit",
             }),
             content:
-              "🛑 **Daily Limit Reached**\n\nYou have used all free chat requests for today. Please check back tomorrow or upgrade your plan in **Settings > Billing**.",
+              "The project assistant has reached its usage limit. Please try again later. Your draft is still here.",
           },
         ]);
       } else {
         showToast({
           type: "error",
-          title: "AI Error",
+          title: "Unable to respond",
           message: err.message || "Could not complete the AI request.",
         });
         setMessages((m) => [
@@ -3283,10 +3133,11 @@ export default function AIPanel({
               minute: "2-digit",
             }),
             content:
-              `❌ **Request not completed**\n\n${err.message || "Could not complete the AI request. Please try again."}`,
+              `I couldn’t respond just now.\n\n${err.message || "Please try again in a moment. Your draft is still here."}`,
           },
         ]);
       }
+      return false;
     } finally {
       sendRef.current = false;
       setIsTyping(false);
@@ -3434,16 +3285,22 @@ export default function AIPanel({
             <Plus size={12} />
             <span>New</span>
           </motion.button>
+          {onClose && <button type="button" onClick={onClose} aria-label="Close AI Chatbot" title="Close AI Chatbot" className="p-1 rounded cursor-pointer hover:bg-[var(--color-bg)]"><X size={16} /></button>}
         </div>
       </div>
 
       {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
         <span>{isRestoring ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
-        <span>Current screen: {screenContext?.testType ? `${({ unit: 'Unit', integration: 'Integration', system: 'System' })[screenContext.testType]} Test` : ({ explorer: 'Code', jobs: 'Run history', architecture: 'Architecture', settings: 'Settings' })[screenContext?.activity] || 'Project'}</span>
+        <span className="break-all">Current screen: {chatScreenLabel(screenContext)}</span>
+        <span className="w-full text-xs">{chatGreeting(screenContext)}</span>
+        {contextInfo && <details className="w-full"><summary className="cursor-pointer">Response context</summary>
+          {contextInfo.screenContext && <div>{chatScreenLabel(contextInfo.screenContext)}</div>}
+          {contextInfo.sources?.map(source => <div key={source.path} className="break-all">{source.path}{source.truncated ? ' · shortened' : ''}</div>)}
+          {contextInfo.warnings?.map(warning => <div key={warning}>{warning}</div>)}
+        </details>}
         <label className="flex items-center gap-1" title={memoryAvailable ? 'Use saved preferences in this chat' : 'Optional: enable memory in What AI knows. AI follows your screen even when memory is off.'}><input type="checkbox" aria-label="Use memory in this chat" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Use memory</label>
         <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>View context</button>
-        {contextInfo?.warnings?.map(warning => <span key={warning} className="w-full">{warning}</span>)}
       </div>
       <AnimatePresence>
         {isHistoryOpen && (
@@ -4466,7 +4323,7 @@ export default function AIPanel({
           {messages.map((msg, index) => (
             <ChatMessage
               key={msg.id}
-              msg={msg}
+              msg={msg.isGreeting ? { ...msg, content: chatGreeting(screenContext) } : msg}
               onApplySuggestion={handleApplySuggestion}
               onUndoSuggestion={handleUndoSuggestion}
               onApplyAllSuggestions={handleApplyAllSuggestions}
@@ -4489,7 +4346,7 @@ export default function AIPanel({
                         }
                       }
                       if (userMsg) {
-                        handleSend(userMsg.content);
+                        handleSend(userMsg.content, userMsg.attachments || [], userMsg.requestContext || null);
                       }
                     }
                   : null
@@ -4505,8 +4362,6 @@ export default function AIPanel({
       <ChatInput
         onSend={handleSend}
         isTyping={isTyping || isRestoring || isLoadingSession}
-        selectedModel={selectedModel}
-        setSelectedModel={setSelectedModel}
         fileTree={internalTree}
         projectId={projectId}
       />

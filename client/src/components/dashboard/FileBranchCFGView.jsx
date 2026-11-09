@@ -323,19 +323,26 @@ export default function FileBranchCFGView({
 
                 {/* Missing Branch Warning & Suggest Button */}
                 {hasActionableUncovered ? (
-                  <div className="mt-2.5 flex items-center gap-2">
-                    <span className="text-xs text-[var(--color-danger)]">
-                      ⚠️ Uncovered branches remain
-                    </span>
-                    {onSuggestTestcase && (
-                      <button
-                        onClick={() => onSuggestTestcase(filePath)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs cursor-pointer font-medium transition-colors border-none"
-                      >
-                        <Sparkles size={11} />
-                        <span>Suggest testcase</span>
-                      </button>
+                  <div className="mt-2.5 flex flex-col items-center gap-1.5">
+                    {(branch.uncoverageReason || branch.reason) && (
+                      <div className="px-2.5 py-1 rounded-[var(--radius-sm)] bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] max-w-[520px] text-center">
+                        <b>Why uncovered:</b> {branch.uncoverageReason || branch.reason}
+                      </div>
                     )}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[var(--color-danger)]">
+                        ⚠️ Uncovered branches remain
+                      </span>
+                      {onSuggestTestcase && (
+                        <button
+                          onClick={() => onSuggestTestcase(filePath)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs cursor-pointer font-medium transition-colors border-none"
+                        >
+                          <Sparkles size={11} />
+                          <span>Suggest testcase</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : hasInfeasibleOnly ? (
                   <div className="mt-2.5 flex items-center gap-2 px-2.5 py-1 rounded-[var(--radius-sm)] bg-purple-500/10 border border-purple-500/20 text-purple-700 dark:text-purple-300 text-xs">

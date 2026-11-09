@@ -18,7 +18,7 @@ const snapshotVersionsCache = new Map();
  */
 export function clearManifestCache(snapshotId = null) {
     if (snapshotId) {
-        snapshotVersionsCache.delete(snapshotId);
+        for (const key of snapshotVersionsCache.keys()) if (key.startsWith(`${snapshotId}:`)) snapshotVersionsCache.delete(key);
     } else {
         snapshotVersionsCache.clear();
     }
@@ -66,9 +66,6 @@ function atomicWriteJsonSync(filePath, data) {
     const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
     const content = JSON.stringify(data, null, 2);
     fs.writeFileSync(tmpPath, content, "utf8");
-    if (fs.existsSync(filePath)) {
-        try { fs.unlinkSync(filePath); } catch (_) {}
-    }
     fs.renameSync(tmpPath, filePath);
 }
 
@@ -84,14 +81,14 @@ function sanitizeManifestObject(manifest) {
                 for (const v of f.versions) {
                     if (v.label && typeof v.label === "string") {
                         v.label = v.label
-                            .replace("Version 1 (Gốc - Chưa có file)", "Version 1 (Baseline - File not present)")
-                            .replace("Version 1 (Gốc)", "Version 1 (Baseline)")
-                            .replace("Version 2 (Đã áp dụng)", "Version 2 (Applied)");
+                            .replace("Version 1 (G\u1ed1c - Ch\u01b0a c\u00f3 file)", "Version 1 (Baseline - File not present)")
+                            .replace("Version 1 (G\u1ed1c)", "Version 1 (Baseline)")
+                            .replace("Version 2 (\u0110\u00e3 \u00e1p d\u1ee5ng)", "Version 2 (Applied)");
                     }
                     if (v.summary && typeof v.summary === "string") {
                         v.summary = v.summary
-                            .replace("File chưa tồn tại trước khi AI suggest", "Test file did not exist prior to AI test generation")
-                            .replace("Bộ unit tests được AI tạo cho các nhánh và logic chưa phủ", "AI-generated unit test suite covering untested branches and logic");
+                            .replace("File ch\u01b0a t\u1ed3n t\u1ea1i tr\u01b0\u1edbc khi AI suggest", "Test file did not exist prior to AI test generation")
+                            .replace("B\u1ed9 unit tests \u0111\u01b0\u1ee3c AI t\u1ea1o cho c\u00e1c nh\u00e1nh v\u00e0 logic ch\u01b0a ph\u1ee7", "AI-generated unit test suite covering untested branches and logic");
                     }
                 }
             }
@@ -105,19 +102,17 @@ function sanitizeManifestObject(manifest) {
  */
 export function loadManifest({ snapshotId, rootDir }) {
     if (!snapshotId) return null;
-    if (snapshotVersionsCache.has(snapshotId)) {
-        return sanitizeManifestObject(snapshotVersionsCache.get(snapshotId));
-    }
-
     let actualRoot = resolveActualPath(rootDir);
     if (!actualRoot) return null;
+    const cacheKey = `${snapshotId}:${path.resolve(actualRoot)}`;
+    if (snapshotVersionsCache.has(cacheKey)) return sanitizeManifestObject(snapshotVersionsCache.get(cacheKey));
 
     const manifestPath = path.join(actualRoot, VERSIONS_DIR_NAME, MANIFEST_FILE_NAME);
     if (fs.existsSync(manifestPath)) {
         try {
             const raw = fs.readFileSync(manifestPath, "utf8");
             const parsed = sanitizeManifestObject(JSON.parse(raw));
-            snapshotVersionsCache.set(snapshotId, parsed);
+            snapshotVersionsCache.set(cacheKey, parsed);
             return parsed;
         } catch (err) {
             console.warn(`[unitTestVersion] Error reading manifest for ${snapshotId}:`, err.message);
@@ -132,8 +127,6 @@ export function loadManifest({ snapshotId, rootDir }) {
  */
 export function persistManifest({ snapshotId, rootDir, manifest }) {
     if (!snapshotId || !manifest) return;
-    snapshotVersionsCache.set(snapshotId, manifest);
-
     const actualRoot = resolveActualPath(rootDir);
     if (!actualRoot) return;
 
@@ -141,6 +134,7 @@ export function persistManifest({ snapshotId, rootDir, manifest }) {
         const versionsDir = path.join(actualRoot, VERSIONS_DIR_NAME);
         const manifestPath = path.join(versionsDir, MANIFEST_FILE_NAME);
         atomicWriteJsonSync(manifestPath, manifest);
+        snapshotVersionsCache.set(`${snapshotId}:${path.resolve(actualRoot)}`, manifest);
     } catch (err) {
         console.warn(`[unitTestVersion] Warning writing manifest for ${snapshotId}:`, err.message);
     }
@@ -312,6 +306,77 @@ export function saveUnitTestFileVersions({
     return manifest.files[cleanTestFile];
 }
 
+/** Publishes every file's active pointer with one manifest rename. Called only
+ * after the server has verified the entire batch, inside the prepared workspace.
+ * The outer workspace publisher journals this manifest together with test files. */
+export function saveVerifiedUnitTestBatch({ snapshotId, rootDir, projectId, runId, files, verification, coverage }) {
+    if (!verification?.valid || !runId || !files?.length) throw new ServiceError('The complete test batch must pass before creating a version', 409);
+    const previous = loadManifest({ snapshotId, rootDir });
+    const manifest = structuredClone(previous || { snapshotId, projectId, files: {} });
+    const now = new Date().toISOString();
+    const contentKey = hashContent(JSON.stringify(files.map(file => [normalizePathKey(file.testFile), hashContent(file.updatedContent)]).sort()));
+    const active = manifest.batches?.find(batch => batch.batchId === manifest.activeBatchId);
+    const unchanged = files.every(file => manifest.files[normalizePathKey(file.testFile)]?.versions?.find(version => version.isActive)?.sha256 === hashContent(file.updatedContent));
+    if (active && (active.contentKey === contentKey || unchanged)) return { ...active, reused: true };
+    const version = Math.max(1, ...(manifest.batches || []).map(batch => batch.version || 0),
+        ...Object.values(manifest.files).flatMap(file => (file.versions || []).map(item => item.version || 0))) + 1;
+    const batchId = `batch_${runId}`;
+    const batch = { batchId, runId, version, contentKey, createdAt: now, status: 'APPLIED', verified: true,
+        files: files.map(file => normalizePathKey(file.testFile)), coverage };
+    for (const file of files) {
+        const key = normalizePathKey(file.testFile);
+        const isActuallyNew = file.originalContent === null || file.originalContent === undefined;
+        let record = manifest.files[key];
+        if (!record) {
+            const v1 = {
+                version: 1,
+                versionId: `v1_${hashContent(key).slice(0, 12)}`,
+                type: 'ORIGINAL',
+                status: 'BASELINE',
+                label: 'Version 1: Baseline / Initial State',
+                summary: isActuallyNew ? 'Pre-suggestion empty baseline state' : 'Original pre-existing test suite before AI generation',
+                content: file.originalContent || '',
+                sha256: hashContent(file.originalContent || ''),
+                createdAt: now,
+                isActive: false,
+                isNewFile: isActuallyNew
+            };
+            record = {
+                sourceFile: file.sourceFile,
+                testFile: key,
+                framework: file.framework || 'jest',
+                currentVersion: version,
+                isNewFile: isActuallyNew,
+                baseline: { exists: !isActuallyNew, content: file.originalContent || '', sha256: hashContent(file.originalContent || '') },
+                versions: [v1]
+            };
+        } else {
+            record.versions.forEach(item => { item.isActive = false; });
+        }
+        record.versions.push({ version, versionId: `${batchId}_${hashContent(key).slice(0, 12)}`, batchId, runId,
+            type: 'APPLIED', status: 'APPLIED', verified: true, label: `Version ${version} (Applied)`,
+            content: file.updatedContent, sha256: hashContent(file.updatedContent), createdAt: now, isActive: true, isNewFile: false });
+        record.currentVersion = version;
+        record.versions = record.versions.slice(-MAX_VERSIONS_PER_FILE);
+        manifest.files[key] = record;
+    }
+    manifest.schemaVersion = 2;
+    batch.fileVersions = Object.fromEntries(Object.entries(manifest.files).map(([key,record]) => [key,record.versions.find(item => item.isActive)?.versionId]).filter(([,id]) => id));
+    manifest.activeBatchId = batchId;
+    manifest.batches = [...(manifest.batches || []), batch];
+    manifest.updatedAt = now;
+    // Do not update the cache before the durable write succeeds.
+    atomicWriteJsonSync(path.join(resolveActualPath(rootDir), VERSIONS_DIR_NAME, MANIFEST_FILE_NAME), manifest);
+    snapshotVersionsCache.set(`${snapshotId}:${path.resolve(resolveActualPath(rootDir))}`, manifest);
+    return batch;
+}
+
+export function persistVerifiedManifest({ snapshotId, rootDir, manifest }) {
+    const actualRoot = resolveActualPath(rootDir);
+    atomicWriteJsonSync(path.join(actualRoot,VERSIONS_DIR_NAME,MANIFEST_FILE_NAME),manifest);
+    snapshotVersionsCache.set(`${snapshotId}:${path.resolve(actualRoot)}`,manifest);
+}
+
 /**
  * Retrieves unit test versions for a snapshot or a specific file.
  *
@@ -330,7 +395,7 @@ export function getUnitTestVersions({ snapshotId, rootDir, filePath = null }) {
     }
 
     if (!filePath) {
-        return manifest.files;
+        return manifest.schemaVersion === 2 ? Object.fromEntries(Object.entries(manifest.files).map(([key,record]) => [key,{...record,activeBatchId:manifest.activeBatchId}])) : manifest.files;
     }
 
     const cleanPath = normalizePathKey(filePath);
@@ -355,6 +420,19 @@ export function getUnitTestVersions({ snapshotId, rootDir, filePath = null }) {
     }
 
     return null;
+}
+
+// Readers take the same project guard as publication and recover an interrupted
+// filesystem/DB commit before exposing an active pointer from the manifest.
+export async function getCommittedUnitTestVersions({ snapshot, userId, filePath = null }) {
+    const { withProjectGuard } = await import('./projectAccess.service.js');
+    const { recoverProjectMutationMarkers } = await import('./projectMutationRecovery.service.js');
+    const { projectEditableWorkspaceRoot } = await import('./projectFileVersion.service.js');
+    return withProjectGuard({ projectId:snapshot.projectId,userId,capability:'project.read' }, async (tx,access) => {
+        await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:projectEditableWorkspaceRoot(snapshot)});
+        clearManifestCache(snapshot.id);
+        return getUnitTestVersions({snapshotId:snapshot.id,rootDir:snapshot.rootDir,filePath});
+    });
 }
 
 /**
@@ -451,6 +529,25 @@ export async function switchUnitTestVersion({
     const manifest = loadManifest({ snapshotId, rootDir: actualRootDir });
     if (!manifest || !manifest.files || Object.keys(manifest.files).length === 0) {
         throw new ServiceError("No unit test versions found for this snapshot", 404);
+    }
+
+    if (!filePath && !allFiles) {
+        throw new ServiceError("Either filePath or allFiles: true is required", 400);
+    }
+
+    if (manifest.schemaVersion === 2) {
+        const { switchVerifiedUnitTestBatch } = await import('./unitTestVersionRollback.service.js');
+        return switchVerifiedUnitTestBatch({
+            snapshot,
+            projectId: actualProjectId,
+            userId,
+            filePath,
+            targetVersionId,
+            targetVersion,
+            allFiles: Boolean(allFiles),
+            targetVersionType,
+            runTests: Boolean(runTests)
+        });
     }
 
     // Determine target files to switch

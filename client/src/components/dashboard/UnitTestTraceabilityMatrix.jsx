@@ -182,6 +182,7 @@ export default function UnitTestTraceabilityMatrix({
   onSuggestTestcase,
   inlineSuggestions = {},
   loadingSuggestions = {},
+  suggestionErrors = {},
   applyingSuggestionIds = new Set(),
   applyResultsByFile = {},
   onApplySuggestion,
@@ -358,10 +359,16 @@ export default function UnitTestTraceabilityMatrix({
     const sourceMetaMap = new Map();
     for (const s of (sourceFiles || [])) {
       if (s.filePath) {
-        sourceMetaMap.set(s.filePath, s);
-        sourceMetaMap.set(s.filePath.replace(/\\/g, "/"), s);
+        const setSafe = (key) => {
+          const ex = sourceMetaMap.get(key);
+          if (!ex || ((ex.linesPct || 0) === 0 && (s.linesPct || 0) > 0)) {
+            sourceMetaMap.set(key, s);
+          }
+        };
+        setSafe(s.filePath);
+        setSafe(s.filePath.replace(/\\/g, "/"));
         const cleaned = cleanDisplayPath(s.filePath);
-        if (cleaned) sourceMetaMap.set(cleaned, s);
+        if (cleaned) setSafe(cleaned);
       }
     }
 
@@ -528,7 +535,11 @@ export default function UnitTestTraceabilityMatrix({
     const sourceMetaByNorm = new Map();
     for (const s of (sourceFiles || [])) {
       if (!s?.filePath) continue;
-      sourceMetaByNorm.set(norm(s.filePath), s);
+      const key = norm(s.filePath);
+      const existing = sourceMetaByNorm.get(key);
+      if (!existing || ((existing.linesPct || 0) === 0 && (s.linesPct || 0) > 0)) {
+        sourceMetaByNorm.set(key, s);
+      }
     }
 
     for (const fn of (functionTraceability || [])) {
@@ -763,9 +774,16 @@ export default function UnitTestTraceabilityMatrix({
     if (fileCov?.lines) {
       for (let l = startLine; l <= endLine; l++) {
         if (fileCov.lines[l]) {
-          linesInRange.push({ line: l, hits: fileCov.lines[l].hits || 0, status: fileCov.lines[l].status });
+          const lineInfo = fileCov.lines[l];
+          linesInRange.push({
+            line: l,
+            hits: lineInfo.hits || 0,
+            status: lineInfo.status,
+            reason: lineInfo.uncoverageReason || lineInfo.reason || "",
+            reasonCategory: lineInfo.reasonCategory || "",
+          });
           linesTotalCount++;
-          if (fileCov.lines[l].hits > 0) linesCoveredCount++;
+          if (lineInfo.hits > 0) linesCoveredCount++;
         }
       }
     }
@@ -784,6 +802,52 @@ export default function UnitTestTraceabilityMatrix({
 
     const uncoveredLines = linesInRange.filter((l) => (l.hits || 0) === 0 || l.status === "uncovered" || l.status === "failed");
     const uncoveredBranches = branchesInRange.filter((b) => b.status === "uncovered" || b.status === "partially_covered" || (Array.isArray(b.counts) && b.counts.some((c) => (c || 0) === 0)));
+
+    // Build function-scoped uncoverage diagnostics
+    const rawDiagItems = Array.isArray(fileCov?.uncoverageDiagnostics?.items)
+      ? fileCov.uncoverageDiagnostics.items.filter((d) => d.line >= startLine && d.line <= endLine)
+      : [];
+    const uncoverageDiagnostics = rawDiagItems.length > 0
+      ? rawDiagItems
+      : [
+          ...uncoveredBranches.map((b) => {
+            const bCounts = Array.isArray(b.counts) ? b.counts : [];
+            const tHits = bCounts[0] ?? 0;
+            const fHits = bCounts[1] ?? 0;
+            return {
+              kind: "branch",
+              line: b.line,
+              condition: b.condition || "",
+              reasonCategory: b.reasonCategory || (b.isInfeasible ? "UNREACHABLE_CODE" : "UNEXERCISED_BRANCH"),
+              reason:
+                b.uncoverageReason ||
+                b.reason ||
+                (tHits > 0 && fHits === 0
+                  ? `False branch of '${b.condition || "condition"}' was never executed (inputs always satisfied the condition or triggered an early return).`
+                  : tHits === 0 && fHits > 0
+                    ? `True branch of '${b.condition || "condition"}' was never executed (inputs never satisfied the condition).`
+                    : `Branch condition '${b.condition || "condition"}' was not reached by test inputs.`),
+            };
+          }),
+          ...uncoveredLines
+            .filter((l) => !uncoveredBranches.some((b) => b.line === l.line))
+            .map((l) => {
+              const matchingStmt = stmtsInRange.find((s) => s.startLine === l.line && (s.hits || 0) === 0);
+              return {
+                kind: "line",
+                line: l.line,
+                snippet: matchingStmt?.codeSnippet || "",
+                reasonCategory: l.reasonCategory || matchingStmt?.reasonCategory || (fnHit === 0 ? "UNEXERCISED_FUNCTION" : "DEFENSIVE_EARLY_EXIT"),
+                reason:
+                  l.reason ||
+                  matchingStmt?.uncoverageReason ||
+                  matchingStmt?.reason ||
+                  (fnHit === 0
+                    ? `Line ${l.line} was not executed because function '${fn.cleanName || fn.name}()' was never called.`
+                    : `Line ${l.line} was bypassed because preceding branch/guard returned early before reaching this statement.`),
+              };
+            }),
+        ];
 
     // Infeasible branch and statement detection
     const infeasibleBranches = branchesInRange.filter((b) => Boolean(
@@ -842,6 +906,7 @@ export default function UnitTestTraceabilityMatrix({
       linesInRange,
       uncoveredLines,
       uncoveredBranches,
+      uncoverageDiagnostics,
       infeasibleBranches,
       infeasibleStatements,
       actionableUncoveredBranches,
@@ -1447,6 +1512,21 @@ export default function UnitTestTraceabilityMatrix({
                       ) : null}
 
                       {/* Prominent File-Level 4-Metric Proof Button */}
+                      {!isFileFullyCovered && !isSuggesting && onSuggestTestcase && (
+                        <button
+                          onClick={e => { e.stopPropagation(); onSuggestTestcase(group.filePath); }}
+                          disabled={isApplying || isBulkApplying}
+                          title={suggestionErrors[group.filePath] || 'Generate tests for remaining coverage gaps'}
+                          style={{padding: '3px 9px', borderRadius: 4, border: '1px solid #a78bfa', color: '#7c3aed', fontSize: 11, cursor: 'pointer'}}
+                        >
+                          {suggestionErrors[group.filePath] ? 'Retry Suggest Tests' : 'Suggest Tests'}
+                        </button>
+                      )}
+                      {suggestionErrors[group.filePath] && (
+                        <span role="alert" title={suggestionErrors[group.filePath]} style={{color: '#ef4444', fontSize: 11, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+                          {suggestionErrors[group.filePath]}
+                        </span>
+                      )}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1805,13 +1885,23 @@ export default function UnitTestTraceabilityMatrix({
                                           <b>Formula:</b> ({proofData.stmtsCoveredCount} / {proofData.stmtsTotalCount}) × 100% = {proofData.stmtsPct}%. {proofData.stmtsCoveredCount >= proofData.stmtsTotalCount ? "All AST statements in function executed." : `${proofData.stmtsTotalCount - proofData.stmtsCoveredCount} statement(s) not executed.`}
                                         </div>
                                         {proofData?.stmtsInRange?.length > 0 && (
-                                          <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
-                                            {proofData.stmtsInRange.slice(0, 5).map((s, idx) => (
-                                              <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
-                                                <span style={{ color: isLight ? "#334155" : "#cbd5e1" }}>L{s.startLine}: {s.codeSnippet || s.type}</span>
-                                                <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>{s.hits}×</span>
-                                              </div>
-                                            ))}
+                                          <div style={{ maxHeight: 110, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                                            {proofData.stmtsInRange.slice(0, 8).map((s, idx) => {
+                                              const stmtReason = s.uncoverageReason || s.reason || (s.hits === 0 ? "Bypassed by earlier return/branch guard" : "");
+                                              return (
+                                                <div key={idx} title={stmtReason || undefined} style={{ display: "flex", flexDirection: "column", gap: 1, background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
+                                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                                                    <span style={{ color: isLight ? "#334155" : "#cbd5e1" }}>L{s.startLine}: {s.codeSnippet || s.type}</span>
+                                                    <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700, flexShrink: 0 }}>{s.hits}×</span>
+                                                  </div>
+                                                  {s.hits === 0 && stmtReason && (
+                                                    <div style={{ fontSize: 9, fontFamily: "var(--font-sans)", color: isLight ? "#b45309" : "#fcd34d" }}>
+                                                      ↳ Why uncovered: {stmtReason}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
                                           </div>
                                         )}
                                       </div>
@@ -1884,15 +1974,20 @@ export default function UnitTestTraceabilityMatrix({
                                               const isFullyCovered = b.status === "fully_covered" || (trueHits > 0 && falseHits > 0) || (meta?.branchesPct ?? 0) >= 100;
 
                                               return (
-                                                <div key={idx} style={{ background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
+                                                <div key={idx} style={{ background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "3px 5px", borderRadius: 3 }}>
                                                   <div style={{ color: isLight ? "#334155" : "#cbd5e1" }}>L{b.line}: <code>{b.condition}</code></div>
-                                                  <div style={{ display: "flex", gap: 8, fontSize: 9.5, marginTop: 1 }}>
+                                                  <div style={{ display: "flex", gap: 8, fontSize: 9.5, marginTop: 1, flexWrap: "wrap" }}>
                                                     <span style={{ color: trueHits > 0 ? "#10b981" : "#ef4444" }}>True: {trueHits}×</span>
                                                     <span style={{ color: falseHits > 0 ? "#10b981" : "#ef4444" }}>False: {falseHits}×</span>
                                                     <span style={{ color: b.isInfeasible ? "#8b5cf6" : isFullyCovered ? "#10b981" : "#f59e0b", fontWeight: 700 }}>
                                                       {b.isInfeasible ? "[🛡️ Guard Justified]" : isFullyCovered ? "✓ Fully Covered" : "⚠️ Partial"}
                                                     </span>
                                                   </div>
+                                                  {!isFullyCovered && !b.isInfeasible && (
+                                                    <div style={{ fontSize: 9, fontFamily: "var(--font-sans)", color: isLight ? "#b45309" : "#fcd34d", marginTop: 2 }}>
+                                                      ↳ {b.uncoverageReason || b.reason || (trueHits > 0 && falseHits === 0 ? `False branch not taken: all test inputs satisfied '${b.condition}'` : trueHits === 0 && falseHits > 0 ? `True branch not taken: no test input satisfied '${b.condition}'` : `Branch not reached by test inputs`)}
+                                                    </div>
+                                                  )}
                                                 </div>
                                               );
                                             })}
@@ -1962,11 +2057,18 @@ export default function UnitTestTraceabilityMatrix({
                                           <b>Formula:</b> ({proofData.linesCoveredCount} / {proofData.linesTotalCount}) × 100% = {proofData.linesPct}%. {proofData.linesCoveredCount >= proofData.linesTotalCount ? "All executable lines received hits." : `${proofData.linesTotalCount - proofData.linesCoveredCount} line(s) missing hits.`}
                                         </div>
                                         {proofData?.linesInRange?.length > 0 && (
-                                          <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
-                                            {proofData.linesInRange.slice(0, 6).map((l, idx) => (
-                                              <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
-                                                <span>Line {l.line}</span>
-                                                <span style={{ color: l.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>{l.hits} hits</span>
+                                          <div style={{ maxHeight: 110, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                                            {proofData.linesInRange.slice(0, 8).map((l, idx) => (
+                                              <div key={idx} title={l.hits === 0 ? (l.reason || "Line not reached by current tests") : undefined} style={{ display: "flex", flexDirection: "column", gap: 1, background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                                  <span>Line {l.line}</span>
+                                                  <span style={{ color: l.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>{l.hits} hits</span>
+                                                </div>
+                                                {l.hits === 0 && l.reason && (
+                                                  <div style={{ fontSize: 9, fontFamily: "var(--font-sans)", color: isLight ? "#b45309" : "#fcd34d" }}>
+                                                    ↳ {l.reason}
+                                                  </div>
+                                                )}
                                               </div>
                                             ))}
                                           </div>
@@ -2118,6 +2220,80 @@ export default function UnitTestTraceabilityMatrix({
                                 {/* Guidance & Suggest Action Footer */}
                                 {!proofData.isFullyCovered && !proofData.isFeasibleLogicCovered ? (
                                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                    {proofData.uncoverageDiagnostics?.length > 0 && (
+                                      <div
+                                        style={{
+                                          padding: "10px 12px",
+                                          borderRadius: 6,
+                                          background: isLight ? "#f8fafc" : "rgba(15, 23, 42, 0.45)",
+                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                          fontSize: 11,
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          gap: 6,
+                                        }}
+                                      >
+                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                          <span style={{ fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc", display: "flex", alignItems: "center", gap: 5 }}>
+                                            <Info size={13} style={{ color: "#0284c7" }} />
+                                            Uncoverage Diagnostics — Why Lines / Branches / Statements Were Not Covered ({proofData.uncoverageDiagnostics.length})
+                                          </span>
+                                        </div>
+                                        <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                                          {proofData.uncoverageDiagnostics.slice(0, 12).map((diag, dIdx) => {
+                                            const cat = diag.reasonCategory || "UNEXERCISED_BRANCH";
+                                            const badgeColor =
+                                              cat === "DEFENSIVE_EARLY_EXIT"
+                                                ? { fg: "#d97706", bg: "rgba(245, 158, 11, 0.14)" }
+                                                : cat === "UNREACHABLE_CODE"
+                                                  ? { fg: "#7c3aed", bg: "rgba(139, 92, 246, 0.14)" }
+                                                  : cat === "EXCEPTION_PATH"
+                                                    ? { fg: "#dc2626", bg: "rgba(239, 68, 68, 0.14)" }
+                                                    : { fg: "#0284c7", bg: "rgba(2, 132, 199, 0.14)" };
+                                            return (
+                                              <div
+                                                key={dIdx}
+                                                style={{
+                                                  padding: "5px 8px",
+                                                  borderRadius: 4,
+                                                  background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
+                                                  border: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.05)",
+                                                  display: "flex",
+                                                  flexDirection: "column",
+                                                  gap: 2,
+                                                }}
+                                              >
+                                                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 750, fontSize: 10, color: isLight ? "#334155" : "#e2e8f0" }}>
+                                                    L{diag.line}
+                                                  </span>
+                                                  <span
+                                                    style={{
+                                                      fontSize: 9.5,
+                                                      fontWeight: 700,
+                                                      padding: "1px 6px",
+                                                      borderRadius: 4,
+                                                      background: badgeColor.bg,
+                                                      color: badgeColor.fg,
+                                                    }}
+                                                  >
+                                                    {cat.replace(/_/g, " ")}
+                                                  </span>
+                                                  {(diag.condition || diag.snippet) && (
+                                                    <code style={{ fontSize: 10, color: isLight ? "#475569" : "#94a3b8" }}>
+                                                      {diag.condition || diag.snippet}
+                                                    </code>
+                                                  )}
+                                                </div>
+                                                <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1", lineHeight: 1.35 }}>
+                                                  {diag.reason}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
                                     <div
                                       style={{
                                         padding: "8px 12px",
@@ -2767,13 +2943,20 @@ export default function UnitTestTraceabilityMatrix({
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
                         {fileCov?.statements?.length ? (
                           fileCov.statements.map((s, idx) => (
-                            <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
-                              <span style={{ fontFamily: "var(--font-mono)", color: isLight ? "#1e293b" : "#e2e8f0" }}>
-                                L{s.startLine}: {s.codeSnippet || s.type}
-                              </span>
-                              <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
-                                {s.hits} hits ({s.hits > 0 ? "✓ Covered" : "Uncovered"})
-                              </span>
+                            <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 2, padding: "4px 8px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <span style={{ fontFamily: "var(--font-mono)", color: isLight ? "#1e293b" : "#e2e8f0" }}>
+                                  L{s.startLine}: {s.codeSnippet || s.type}
+                                </span>
+                                <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
+                                  {s.hits} hits ({s.hits > 0 ? "✓ Covered" : "Uncovered"})
+                                </span>
+                              </div>
+                              {s.hits === 0 && (s.uncoverageReason || s.reason) && (
+                                <div style={{ fontSize: 10, color: isLight ? "#b45309" : "#fcd34d" }}>
+                                  <b>Reason:</b> {s.uncoverageReason || s.reason}
+                                </div>
+                              )}
                             </div>
                           ))
                         ) : (
@@ -2814,11 +2997,15 @@ export default function UnitTestTraceabilityMatrix({
                                   </div>
                                 );
                               })()}
-                              {b.isInfeasible && (
+                              {b.isInfeasible ? (
                                 <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 4, background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.1)", color: isLight ? "#6d28d9" : "#c4b5fd", fontSize: 10 }}>
                                   <b>Justification:</b> {b.infeasibleMeta?.actionableJustification || b.infeasibleMeta?.justification || "Production or environment guard. Authentic statistics preserved without fake assertions."}
                                 </div>
-                              )}
+                              ) : b.status !== "fully_covered" && (b.uncoverageReason || b.reason) ? (
+                                <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 4, background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.1)", color: isLight ? "#b45309" : "#fcd34d", fontSize: 10 }}>
+                                  <b>Uncoverage Reason ({b.reasonCategory || "UNEXERCISED_BRANCH"}):</b> {b.uncoverageReason || b.reason}
+                                </div>
+                              ) : null}
                             </div>
                           ))
                         ) : (

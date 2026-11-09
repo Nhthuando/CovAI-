@@ -1,12 +1,12 @@
 import fs from "fs";
 import path from "path";
+import { unitTestInventory } from './unitTestFilePolicy.service.js';
 
 /**
  * In-memory cache for test dependency maps keyed by rootDir.
  * Stores { timestamp, testMap, testFiles }
  */
 const dependencyCache = new Map();
-const CACHE_TTL_MS = 15000; // 15 seconds cache TTL
 
 /**
  * Normalizes file path to forward slashes with no leading slash or dot.
@@ -69,40 +69,7 @@ export const extractModuleSpecifiers = (content = "") => {
  */
 export const discoverAllTestFiles = (rootDir) => {
     if (!rootDir || !fs.existsSync(rootDir)) return [];
-
-    const testFiles = [];
-    const ignoredDirs = new Set([
-        "node_modules", ".git", "coverage", "dist", "build", ".next",
-        ".turbo", "out", ".vite", "storage"
-    ]);
-
-    const scan = (dir, depth = 0) => {
-        if (depth > 8) return;
-        let entries;
-        try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-        } catch {
-            return;
-        }
-
-        for (const entry of entries) {
-            if (ignoredDirs.has(entry.name)) continue;
-            const fullPath = path.join(dir, entry.name);
-
-            if (entry.isDirectory()) {
-                scan(fullPath, depth + 1);
-            } else if (entry.isFile()) {
-                const isTestName = /\.(test|spec|steps?)\.[cm]?[jt]sx?$/i.test(entry.name);
-                const isInTestDir = /(^|\/)(tests?|__tests__|specs?)\//i.test(normalizePath(path.relative(rootDir, fullPath)));
-                if (isTestName || (isInTestDir && /\.[cm]?[jt]sx?$/i.test(entry.name) && !entry.name.endsWith(".d.ts"))) {
-                    testFiles.push(normalizePath(path.relative(rootDir, fullPath)));
-                }
-            }
-        }
-    };
-
-    scan(rootDir);
-    return testFiles;
+    return unitTestInventory(rootDir).tests.map(test => test.filePath);
 };
 
 /**
@@ -167,7 +134,8 @@ export const buildProjectTestDependencyMap = (rootDir, forceRefresh = false) => 
 
     const cached = dependencyCache.get(rootDir);
     const now = Date.now();
-    if (!forceRefresh && cached && (now - cached.timestamp < CACHE_TTL_MS)) {
+    const inventory = fs.existsSync(rootDir) ? unitTestInventory(rootDir) : null;
+    if (!forceRefresh && cached && cached.identity === inventory?.identity) {
         return cached.testMap;
     }
 
@@ -175,21 +143,16 @@ export const buildProjectTestDependencyMap = (rootDir, forceRefresh = false) => 
         return new Map();
     }
 
-    const testFiles = discoverAllTestFiles(rootDir);
+    const testFiles = inventory.tests.map(file => file.filePath);
     const testMap = new Map(); // sourceNoExt -> Array<TestFileInfo>
 
-    for (const testRel of testFiles) {
-        const fullTestPath = path.join(rootDir, testRel);
-        let content = "";
-        try {
-            content = fs.readFileSync(fullTestPath, "utf8");
-        } catch {
-            continue;
-        }
+    for (const test of inventory.tests) {
+        const testRel = test.filePath;
+        const content = test.content;
 
         const specifiers = extractModuleSpecifiers(content);
         const testCount = countTestCases(content);
-        const framework = content.includes("vitest") ? "vitest" : "jest";
+        const framework = test.framework;
 
         for (const spec of specifiers) {
             const resolvedRel = resolveSpecifierToRelativePath(rootDir, testRel, spec);
@@ -221,9 +184,11 @@ export const buildProjectTestDependencyMap = (rootDir, forceRefresh = false) => 
 
     dependencyCache.set(rootDir, {
         timestamp: now,
+        identity: inventory.identity,
         testMap,
         testFiles
     });
+    while (dependencyCache.size > 12) dependencyCache.delete(dependencyCache.keys().next().value);
 
     return testMap;
 };

@@ -632,6 +632,27 @@ export default function InlineTestSuggestions({
                             </div>
 
                             {/* Reason / Explanation */}
+                            {sug.testRepairs?.edits?.length > 0 && <details style={{ fontSize: 12, marginBottom: 8 }}>
+                                <summary>Repair existing tests ({sug.testRepairs.edits.length})</summary>
+                                {sug.testRepairs.edits.map((repair,index) => <div key={index} style={{ marginTop: 6 }}><strong>{repair.testName}</strong><div>{repair.reason}</div></div>)}
+                            </details>}
+                            {sug.changeSet?.needsReview?.length > 0 && <div role="status" style={{ fontSize: 12, marginBottom: 8 }}>Existing cases were preserved. {sug.changeSet.needsReview.length} proposed changes need review.</div>}
+                            {sug.validation && <div role="status" style={{ padding: '8px 10px', marginBottom: 8, border: '1px solid #64748b40', borderRadius: 6, fontSize: 12 }}>
+                                <strong>{sug.validation.status === 'VERIFIED_DRAFT' ? 'Batch verified by the test runner' : sug.validation.status === 'DRAFT' ? 'Draft ready for review' : 'Draft verification is incomplete'}</strong>
+                                {sug.validation.draftCoverage && <div>{Object.entries(sug.validation.draftCoverage).map(([key, value]) => `${key}: ${Number(value).toFixed(1)}%`).join(' · ')}</div>}
+                                <div>{sug.validation.coverageGoalStatus === 'MET' ? 'The measured scope meets the 100% coverage goal.' : sug.validation.message || 'Coverage is confirmed only after an actual test run.'}</div>
+                                {sug.validation.expectationRepairs?.length > 0 && <details style={{ marginTop: 6 }}>
+                                    <summary>Generated expectations reviewed against source ({sug.validation.expectationRepairs.length})</summary>
+                                    {sug.validation.expectationRepairs.map((repair, index) => <div key={index} style={{ marginTop: 6 }}>
+                                        <strong>{repair.testName}</strong> · {repair.status === 'VERIFIED' ? 'Verified by rerun' : 'Verification incomplete'}
+                                        <div>{repair.reason}</div>
+                                    </div>)}
+                                </details>}
+                                {sug.validation.inputContractRepairs?.length > 0 && <details style={{ marginTop: 6 }}>
+                                    <summary>Generated input contract repairs ({sug.validation.inputContractRepairs.length})</summary>
+                                    {sug.validation.inputContractRepairs.map((repair,index)=><div key={index} style={{ marginTop: 6 }}><strong>{repair.testName}</strong> · {repair.status === 'VERIFIED' ? 'Verified by rerun' : 'Verification incomplete'}<div>{repair.reason}</div></div>)}
+                                </details>}
+                            </div>}
                             {(sug.reason || sug.explanation) && (
                                 <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.4 }}>
                                     <span style={{ color: "#94a3b8", fontWeight: 500 }}>Reason: </span>

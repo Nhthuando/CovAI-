@@ -1,12 +1,10 @@
 import fs from "fs";
 import path from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { runCollectionProcess, withCollectionSlot } from './collectionProcess.service.js';
 import traverseModule from "@babel/traverse";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { autoHealAstSyntax } from "./unitTestGenerator.service.js";
 
-const pExecFile = promisify(execFile);
 const traverse = traverseModule.default || traverseModule;
 
 /**
@@ -214,7 +212,9 @@ export const healVitestCode = (code = "", { filePath = "", collectionError = "" 
  * but executes zero test bodies. Any collection error, syntax error, or import resolution error
  * will immediately fail this check.
  */
-export const runVitestCollectionDryRun = async ({ testCode, rootDir, filePath = "test.vitest.test.js", timeoutMs = 8000 }) => {
+export const runVitestCollectionDryRun = options => withCollectionSlot(() => collectVitestTests(options));
+
+const collectVitestTests = async ({ testCode, rootDir, filePath = "test.vitest.test.js", timeoutMs = 8000, signal }) => {
     if (!rootDir || !fs.existsSync(rootDir)) {
         return { success: true, skipped: true, reason: "No valid rootDir provided for collection dry-run" };
     }
@@ -229,7 +229,8 @@ export const runVitestCollectionDryRun = async ({ testCode, rootDir, filePath = 
         fs.mkdirSync(targetDir, { recursive: true });
     } catch (_) {}
 
-    const tempFileName = `__collect_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.vitest.test.js`;
+    const extension = /\.[cm]?[jt]sx?$/.test(filePath) ? path.extname(filePath) : '.js';
+    const tempFileName = `__collect_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.vitest.test${extension}`;
     const tempFilePath = path.join(targetDir, tempFileName);
 
     try {
@@ -240,21 +241,27 @@ export const runVitestCollectionDryRun = async ({ testCode, rootDir, filePath = 
             "run",
             relTestPath,
             "--testNamePattern=__covai_collection_dry_run_non_existent__",
-            "--passWithNoTests"
+            "--passWithNoTests",
+            "--maxWorkers=1",
+            "--minWorkers=1",
+            "--fileParallelism=false",
+            "--coverage.enabled=false"
         ];
 
         const isMjs = vitestBin.endsWith(".mjs") || vitestBin.endsWith(".js");
         const execCmd = isMjs ? process.execPath : vitestBin;
         const execArgs = isMjs ? [vitestBin, ...args] : args;
 
-        const { stdout, stderr } = await pExecFile(execCmd, execArgs, {
+        const { stdout, stderr } = await runCollectionProcess(execCmd, execArgs, {
             cwd: rootDir,
-            timeout: timeoutMs,
-            shell: !isMjs || process.platform === "win32",
+            timeoutMs,
+            signal,
+            shell: !isMjs && process.platform === "win32",
             env: {
                 ...process.env,
                 NODE_ENV: "test",
-                VITEST: "true"
+                VITEST: "true",
+                NODE_OPTIONS: `${(process.env.NODE_OPTIONS || '').replace(/--max[-_]old[-_]space[-_]size(?:=|\s+)\d+/g, '')} --max-old-space-size=512`.trim()
             }
         });
 
@@ -275,6 +282,7 @@ export const runVitestCollectionDryRun = async ({ testCode, rootDir, filePath = 
         return {
             success: false,
             isCollectionFailure: true,
+            retryable: !['COLLECTION_TIMEOUT', 'COLLECTION_OUTPUT_LIMIT', 'COLLECTION_CANCELED'].includes(runErr.code),
             output: combinedOutput,
             error: extractedError || runErr.message || "Vitest collection failed"
         };
@@ -329,6 +337,7 @@ export const validateAndHealVitestTestCollection = async ({
             }
 
             lastError = dryRunResult.error || dryRunResult.output;
+            if (dryRunResult.retryable === false) break;
             currentCode = healVitestCode(currentCode, { filePath, collectionError: lastError });
         } else {
             // If no rootDir available for runner dry-run, rely on AST validation

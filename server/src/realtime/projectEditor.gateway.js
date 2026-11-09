@@ -44,7 +44,7 @@ async function deliver(projectId, event, data, predicate = () => true) {
                 }
                 else { socket.emit('editor:access-changed', { projectId, revoked: true }); socket.disconnect(true); }
             }
-        });
+        }, { maxWait: 10000, timeout: 15000 });
         return;
     }
     await Promise.all(candidates.map(async socket => {

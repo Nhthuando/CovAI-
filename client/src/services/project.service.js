@@ -1,4 +1,5 @@
 import { editorAwareFetch } from './editorAwareRequest';
+import { normalizeChatScreenContext, chatErrorMessage } from './chatScreenContext';
 import { getAIModelHeaders } from './aiModel.service.js';
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -332,12 +333,22 @@ export async function sendAiChatMessageApi(
   sessionId = null,
   context = {},
 ) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat`, {
+  let res;
+  try { res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat`, {
     method: "POST",
+    signal: AbortSignal.timeout(35000),
     headers: getAuthHeaders(),
-    body: JSON.stringify({ message, model, attachments, sessionId, ...context }),
-  });
-  return handleResponse(res);
+    body: JSON.stringify({ message, model, attachments, sessionId, clientRequestId: crypto.randomUUID(), ...context, screenContext: normalizeChatScreenContext(context.screenContext) }),
+  }); } catch (error) {
+    const code = ['TimeoutError', 'AbortError'].includes(error.name) ? 'AI_REQUEST_TIMEOUT' : 'CHAT_CONNECTION_ERROR';
+    throw Object.assign(new Error(chatErrorMessage({ code })), { code });
+  }
+  let result;
+  try { result = await handleResponse(res); }
+  catch (error) { throw Object.assign(new Error(chatErrorMessage(error)), { code: error.code, status: error.status, retryAt: error.retryAt, resetAt: error.resetAt }); }
+  if (result.data?.processing) throw Object.assign(new Error(chatErrorMessage({ code: 'CHAT_BUSY' })), { code: 'CHAT_BUSY' });
+  if (typeof result.data?.reply !== 'string') throw new Error(chatErrorMessage());
+  return result;
 }
 
 export async function getChatSessionsApi(projectId) {

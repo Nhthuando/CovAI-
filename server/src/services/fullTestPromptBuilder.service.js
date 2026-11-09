@@ -56,7 +56,11 @@ export const buildFullTestPrompt = ({
   prompt +=
     "- Use mocks for all external dependencies and side effects (API calls, filesystem, etc.).\n";
   prompt +=
-    "- Follow Jest best practices (e.g., use `describe`, `it`, `expect`, `beforeEach` correctly).\n";
+    "- DATABASE CLIENT MOCKING: External database clients (including `@prisma/client` and database connection singletons like `../config/prisma`, `../lib/prisma`) MUST be mocked at top-level before controller or service imports using in-memory proxies. Never attempt real database connections or unmocked `new PrismaClient()` instantiation in unit tests, while strictly preserving local constant files, schemas, and data fixtures without mocking.\n";
+  prompt +=
+    "- Follow Jest best practices (e.g., use `describe`, `it`, `expect`, `beforeEach` correctly, and mandate `afterEach(() => jest.restoreAllMocks())` / `afterEach(() => vi.restoreAllMocks())` for hermetic test isolation).\n";
+  prompt +=
+    "- NEVER use jest.mock() or vi.mock() on local constant files, schemas, or data fixtures.\n";
   prompt += "- Output ONLY valid JavaScript code for the test file.\n";
   prompt +=
     "- Do NOT provide explanations, analysis, or conversational text outside the code block.\n";

@@ -30,13 +30,13 @@ function sanitizeSummary(summary, version) {
       : "AI-generated unit test suite covering untested branches and logic";
   }
   if (typeof summary !== "string") return "";
-  if (summary.includes("Bộ unit tests") || summary.includes("chưa phủ") || summary.includes("AI tạo")) {
+  if (summary.includes("B\u1ed9 unit tests") || summary.includes("ch\u01b0a ph\u1ee7") || summary.includes("AI t\u1ea1o")) {
     return "AI-generated unit test suite covering untested branches and logic";
   }
-  if (summary.includes("File chưa tồn tại") || summary.includes("Chưa có file")) {
+  if (summary.includes("File ch\u01b0a t\u1ed3n t\u1ea1i") || summary.includes("Ch\u01b0a c\u00f3 file")) {
     return "Test file did not exist prior to AI test generation (created as new)";
   }
-  if (summary.includes("Gốc") || summary.includes("ban đầu")) {
+  if (summary.includes("G\u1ed1c") || summary.includes("ban \u0111\u1ea7u")) {
     return "Baseline / Original repository unit test suite";
   }
   return summary;
@@ -50,8 +50,8 @@ function formatDetailedDateTime(isoStr) {
   try {
     const d = new Date(isoStr);
     if (isNaN(d.getTime())) return "Initial (Baseline)";
-    const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    const dateStr = d.toLocaleDateString([], { year: "numeric", month: "2-digit", day: "2-digit" });
+    const timeStr = d.toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const dateStr = d.toLocaleDateString('en-US', { year: "numeric", month: "2-digit", day: "2-digit" });
 
     // Relative time calculation
     const now = Date.now();
@@ -106,16 +106,12 @@ export default function UnitTestVersionHistoryView({
   const totalFiles = filesList.length;
 
   // Aggregate all versions into structured timeline data
-  const { versionsTimeline, currentDominantVersion, anyOnV2, anyOnV1WithV2 } = useMemo(() => {
+  const { versionsTimeline, currentDominantVersion, canRevertToBaseline, canSwitchToV2 } = useMemo(() => {
     const map = {}; // verNum -> { version, label, files: [], count, activeCount, latestTime, summaries: Set, isBaseline }
-    let v2Count = 0;
-    let v1WithV2Count = 0;
 
     for (const fileRec of filesList) {
       const vers = fileRec.versions || [];
       const curVer = fileRec.currentVersion || 1;
-      if (curVer >= 2) v2Count++;
-      if (curVer === 1 && vers.length > 1) v1WithV2Count++;
 
       for (const v of vers) {
         const num = Number(v.version);
@@ -162,18 +158,72 @@ export default function UnitTestVersionHistoryView({
       }
     }
 
+    // Ensure Baseline Version 1 is always present and accounts for all files
+    if (totalFiles > 0) {
+      if (!map[1]) {
+        map[1] = {
+          version: 1,
+          label: "Version 1: Baseline / Initial State",
+          isBaseline: true,
+          type: "ORIGINAL",
+          status: "BASELINE",
+          files: [],
+          count: 0,
+          activeCount: 0,
+          latestTime: "",
+          summaries: new Set(["Baseline unit test suite captured before AI suggestions"])
+        };
+      }
+      const existingV1FileKeys = new Set(map[1].files.map(f => f.testFile || f.sourceFile));
+      for (const fileRec of filesList) {
+        const key = fileRec.testFile || fileRec.sourceFile;
+        if (!existingV1FileKeys.has(key)) {
+          const curVer = fileRec.currentVersion || 1;
+          const v1Record = (fileRec.versions || []).find(v => Number(v.version) === 1);
+          map[1].files.push({
+            sourceFile: fileRec.sourceFile,
+            testFile: fileRec.testFile,
+            framework: fileRec.framework || "jest",
+            isNewFile: v1Record ? v1Record.isNewFile : false,
+            isActive: curVer === 1,
+            status: "BASELINE",
+            createdAt: v1Record?.createdAt || fileRec.baseline?.createdAt || "",
+            summary: v1Record?.summary || "Baseline / Original repository unit test suite",
+          });
+          map[1].count++;
+          if (curVer === 1) {
+            map[1].activeCount++;
+          }
+        }
+      }
+    }
+
     const sortedTimeline = Object.values(map).sort((a, b) => b.version - a.version);
 
-    let dominant = 1;
-    if (v2Count > 0 && v2Count >= (totalFiles / 2)) {
-      dominant = 2;
+    // Compute dominant version dynamically based on file version frequencies
+    const versionFreq = {};
+    for (const fileRec of filesList) {
+      const curVer = fileRec.currentVersion || 1;
+      versionFreq[curVer] = (versionFreq[curVer] || 0) + 1;
     }
+    let dominant = 1;
+    let maxFreq = 0;
+    for (const [vStr, freq] of Object.entries(versionFreq)) {
+      const vNum = Number(vStr);
+      if (freq > maxFreq || (freq === maxFreq && vNum > dominant)) {
+        maxFreq = freq;
+        dominant = vNum;
+      }
+    }
+
+    const canRevertToBaseline = filesList.some(file => (file.currentVersion || 1) > 1) || dominant > 1;
+    const canSwitchToV2 = sortedTimeline.some(v => v.version === 2) && (dominant !== 2 || filesList.some(file => (file.currentVersion || 1) !== 2));
 
     return {
       versionsTimeline: sortedTimeline,
       currentDominantVersion: dominant,
-      anyOnV2: v2Count > 0,
-      anyOnV1WithV2: v1WithV2Count > 0
+      canRevertToBaseline,
+      canSwitchToV2
     };
   }, [filesList, totalFiles]);
 
@@ -255,7 +305,7 @@ export default function UnitTestVersionHistoryView({
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <button
               type="button"
-              disabled={isSwitchingVersion || !anyOnV2}
+              disabled={isSwitchingVersion || !canRevertToBaseline}
               onClick={() => onSwitchVersion({ allFiles: true, targetVersion: 1 })}
               style={{
                 padding: "8px 14px",
@@ -265,8 +315,8 @@ export default function UnitTestVersionHistoryView({
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                cursor: (!anyOnV2 || isSwitchingVersion) ? "not-allowed" : "pointer",
-                opacity: (!anyOnV2 || isSwitchingVersion) ? 0.55 : 1,
+                cursor: (!canRevertToBaseline || isSwitchingVersion) ? "not-allowed" : "pointer",
+                opacity: (!canRevertToBaseline || isSwitchingVersion) ? 0.55 : 1,
                 background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)",
                 border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)",
                 color: isLight ? "#e11d48" : "#fb7185",
@@ -284,7 +334,7 @@ export default function UnitTestVersionHistoryView({
 
             <button
               type="button"
-              disabled={isSwitchingVersion || !anyOnV1WithV2}
+              disabled={isSwitchingVersion || !canSwitchToV2}
               onClick={() => onSwitchVersion({ allFiles: true, targetVersion: 2 })}
               style={{
                 padding: "8px 14px",
@@ -294,8 +344,8 @@ export default function UnitTestVersionHistoryView({
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                cursor: (!anyOnV1WithV2 || isSwitchingVersion) ? "not-allowed" : "pointer",
-                opacity: (!anyOnV1WithV2 || isSwitchingVersion) ? 0.55 : 1,
+                cursor: (!canSwitchToV2 || isSwitchingVersion) ? "not-allowed" : "pointer",
+                opacity: (!canSwitchToV2 || isSwitchingVersion) ? 0.55 : 1,
                 background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.12)",
                 border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)",
                 color: isLight ? "#7c3aed" : "#c4b5fd",
@@ -525,45 +575,58 @@ export default function UnitTestVersionHistoryView({
                         <span>Current Version</span>
                       </div>
                     ) : onSwitchVersion && (
-                      <button
-                        type="button"
-                        disabled={isSwitchingVersion}
-                        onClick={() => onSwitchVersion({ allFiles: true, targetVersion: verItem.version })}
-                        style={{
-                          padding: "8px 18px",
-                          borderRadius: 7,
-                          fontSize: 12.5,
-                          fontWeight: 700,
-                          cursor: isSwitchingVersion ? "wait" : "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          background: verItem.version >= 2
-                            ? "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)"
-                            : (isLight ? "#e11d48" : "#f43f5e"),
-                          border: "none",
-                          color: "#ffffff",
-                          boxShadow: verItem.version >= 2
-                            ? "0 2px 6px rgba(139, 92, 246, 0.3)"
-                            : "0 2px 6px rgba(244, 63, 94, 0.3)",
-                          transition: "all 0.15s ease",
-                        }}
-                        className="hover:opacity-95 active:scale-[0.98]"
-                        title={`Revert entire project to Version ${verItem.version}`}
-                      >
-                        {isAllSwitching ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : verItem.version >= 2 ? (
-                          <Zap size={13} />
-                        ) : (
-                          <RotateCcw size={13} />
-                        )}
-                        <span>
-                          {verItem.version === 1
-                            ? "Revert to Version 1 (Baseline)"
-                            : `Switch to Version ${verItem.version}`}
-                        </span>
-                      </button>
+                      (() => {
+                        const isBaseline = verItem.version === 1;
+                        const isHistorical = verItem.version < currentDominantVersion;
+                        const isRevert = isBaseline || isHistorical;
+                        const buttonLabel = isBaseline
+                          ? "Revert all files to Version 1 (Baseline)"
+                          : isHistorical
+                            ? "Revert all files to this version"
+                            : `Switch to Version ${verItem.version}`;
+
+                        return (
+                          <button
+                            type="button"
+                            disabled={isSwitchingVersion}
+                            onClick={() => onSwitchVersion({ allFiles: true, targetVersion: verItem.version })}
+                            style={{
+                              padding: "8px 18px",
+                              borderRadius: 7,
+                              fontSize: 12.5,
+                              fontWeight: 700,
+                              cursor: isSwitchingVersion ? "wait" : "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              background: isRevert
+                                ? (isBaseline
+                                    ? (isLight ? "#e11d48" : "#f43f5e")
+                                    : (isLight ? "#d97706" : "#b45309"))
+                                : "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
+                              border: "none",
+                              color: "#ffffff",
+                              boxShadow: isRevert
+                                ? (isBaseline
+                                    ? "0 2px 6px rgba(244, 63, 94, 0.3)"
+                                    : "0 2px 6px rgba(217, 119, 6, 0.3)")
+                                : "0 2px 6px rgba(139, 92, 246, 0.3)",
+                              transition: "all 0.15s ease",
+                            }}
+                            className="hover:opacity-95 active:scale-[0.98]"
+                            title={`Revert entire project to Version ${verItem.version}`}
+                          >
+                            {isAllSwitching ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : isRevert ? (
+                              <RotateCcw size={13} />
+                            ) : (
+                              <Zap size={13} />
+                            )}
+                            <span>{buttonLabel}</span>
+                          </button>
+                        );
+                      })()
                     )}
                   </div>
                 </div>

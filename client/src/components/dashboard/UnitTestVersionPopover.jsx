@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
+import UnitTestBatchVersions from './UnitTestBatchVersions.jsx';
 import {
   History,
   RotateCcw,
@@ -23,13 +24,13 @@ function sanitizeSummary(summary, version) {
       : "AI-suggested unit tests covering untested branches and logic.";
   }
   if (typeof summary !== "string") return "";
-  if (summary.includes("Bộ unit tests") || summary.includes("chưa phủ") || summary.includes("AI tạo")) {
+  if (summary.includes("B\u1ed9 unit tests") || summary.includes("ch\u01b0a ph\u1ee7") || summary.includes("AI t\u1ea1o")) {
     return "AI-suggested unit tests covering untested branches and logic.";
   }
-  if (summary.includes("File chưa tồn tại") || summary.includes("Chưa có file")) {
+  if (summary.includes("File ch\u01b0a t\u1ed3n t\u1ea1i") || summary.includes("Ch\u01b0a c\u00f3 file")) {
     return "Test file did not exist prior to AI test generation (created as new).";
   }
-  if (summary.includes("Gốc") || summary.includes("ban đầu")) {
+  if (summary.includes("G\u1ed1c") || summary.includes("ban \u0111\u1ea7u")) {
     return "Original project test suite before AI suggestions.";
   }
   return summary;
@@ -43,7 +44,7 @@ function formatTimestamp(isoStr) {
   try {
     const d = new Date(isoStr);
     if (isNaN(d.getTime())) return "";
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " " + d.toLocaleDateString([], { month: "short", day: "numeric" });
+    return d.toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit" }) + " " + d.toLocaleDateString('en-US', { month: "short", day: "numeric" });
   } catch (_) {
     return "";
   }
@@ -168,6 +169,8 @@ export default function UnitTestVersionPopover({
   const activeBadgeBorder = isLight
     ? currentDominantVersion >= 2 ? "#ddd6fe" : "#bae6fd"
     : currentDominantVersion >= 2 ? "rgba(139, 92, 246, 0.35)" : "rgba(2, 132, 199, 0.35)";
+
+  if (filesList.some(file => file.activeBatchId)) return <UnitTestBatchVersions compact unitTestVersions={unitTestVersions} onSwitchVersion={onSwitchVersion} isSwitchingVersion={isSwitchingVersion} onReviewDiff={onReviewDiff} isLight={isLight} />;
 
   return (
     <div className={`relative inline-block ${className}`} ref={popoverRef}>

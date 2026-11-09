@@ -25,10 +25,14 @@ export const captureWorkspaceFiles = async (root,{includeGitMetadata = false} = 
             const relativePath = relative ? `${relative}/${entry.name}` : entry.name;
             if (entry.isDirectory()) await visit(file,relativePath);
             else if (entry.isFile()) {
+                const content = await fs.readFile(file);
+                if (/\.[cm]?[jt]sx?$/i.test(entry.name) && content.includes(Buffer.from('// [covai] auto-healed'))) {
+                    continue;
+                }
                 const stat = await fs.stat(file);
                 // A large unchanged source file is represented by its hash but
                 // cannot silently become a large mutation payload.
-                files.set(relativePath,{sha256:hashFileContent(await fs.readFile(file)),size:stat.size});
+                files.set(relativePath,{sha256:hashFileContent(content),size:stat.size});
                 if (files.size > 20000) throw projectFileError('WORKSPACE_TOO_LARGE','Workspace contains too many files for safe publication',413);
             }
         }
@@ -66,9 +70,7 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
         if (!snapshot?.rootDir) throw projectFileError('SNAPSHOT_CHANGED','Project snapshot is unavailable; select it again');
         const latest = fastCheckpoint ? { id: access.latestSnapshotId } : await tx.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}});
         if (latest?.id !== snapshotId || access.project.workspaceRevision !== expectedWorkspaceRevision) {
-            const currentOp = (await import('./projectOperationWorkspace.service.js')).currentProjectOperation?.();
-            if (!editorCheckpoint && currentOp?.type === 'APPLY_UNIT_SUGGESTION' && latest?.id === snapshotId) expectedWorkspaceRevision = access.project.workspaceRevision;
-            else throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
+            throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
         }
         if (beforeMutation) await beforeMutation(tx,access);
         if (!editorCheckpoint) await assertEditorReplacementAllowed({tx,projectId,snapshotId,paths:changes.map(change=>change.path)});

@@ -1,10 +1,12 @@
 import fs from "fs";
+import { classifyUnitTestPath } from './unitTestFilePolicy.service.js';
 import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { cleanStorageText, cleanStoragePath } from "../utils/pathSanitizer.js";
 import { analyzeSourceAst, mapCoverageGaps } from "./businessLogicAstAnalyzer.service.js";
 import { findTestsImportingSource, countTestCases } from "./testDependencyResolver.service.js";
+import { evaluateUncoverageDiagnostics } from "./uncoverageDiagnostic.service.js";
 
 /**
  * Normalizes file paths across Windows/Linux, stripping leading slashes and dot-slashes.
@@ -671,7 +673,7 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     }
 
     const normSource = cleanRelativePath(rootDir, rawSourceFilePath);
-    const isAlreadyTestFile = /(^|\/)(tests?|__tests__|specs?)\//i.test(normSource) || /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(normSource);
+    const isAlreadyTestFile = classifyUnitTestPath(rootDir, normSource, framework).writable;
     if (isAlreadyTestFile) {
         const fullTest = path.join(rootDir, normSource);
         const exists = fs.existsSync(fullTest);
@@ -728,6 +730,8 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     try {
         const astImports = findTestsImportingSource(rootDir, normSource);
         for (const match of astImports) {
+            if (!classifyUnitTestPath(rootDir, match.filePath, framework || match.framework).writable) continue;
+            if (framework && match.framework && match.framework !== framework) continue;
             if (framework === "vitest" && /\bjest\b|@jest\/globals/i.test(match.testCode || "") && !/\bvitest\b/i.test(match.testCode || "")) continue;
             linkedMap.set(match.filePath, {
                 found: true,
@@ -743,6 +747,11 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
             });
         }
     } catch (_) { }
+
+    if (linkedMap.size === 1) {
+        const primary = {...linkedMap.values().next().value,isPrimary:true};
+        return {primaryTestFile:primary,linkedTestFiles:[primary],suggestedNewTestPath:defaultNewTestPath,hasExecutingTests:true};
+    }
 
     // 2. TIER 2: SCAN EXISTING TEST FILES (NAMING & TEXT HEURISTICS)
     let bestImportMatch = null;
@@ -760,6 +769,7 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
             } else if (e.isFile() && /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(e.name)) {
                 try {
                     const rel = normalizePath(path.relative(rootDir, full));
+                    if (!classifyUnitTestPath(rootDir, rel, framework).writable) continue;
                     let score = 0;
                     const content = fs.readFileSync(full, "utf8");
 
@@ -931,7 +941,7 @@ const hasVitestInName = cand.includes(".vitest.") || cand.includes("vitest.test"
         }
     }
 
-    const linkedList = Array.from(linkedMap.values());
+    const linkedList = Array.from(linkedMap.values()).filter(item => classifyUnitTestPath(rootDir, item.filePath, framework || item.framework).writable);
     if (linkedList.length > 0) {
         for (const item of linkedList) {
             item.score = calculateTraceabilityScore(item, baseName, dirName);
@@ -974,7 +984,7 @@ const hasVitestInName = cand.includes(".vitest.") || cand.includes("vitest.test"
  */
 export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = null) => {
     const result = findAllAssociatedTestFiles(rootDir, rawSourceFilePath, framework);
-    return result.primaryTestFile;
+    return {...result.primaryTestFile,linkedTestFiles:result.linkedTestFiles,suggestedNewTestPath:result.suggestedNewTestPath};
 };
 
 /**
@@ -1376,6 +1386,16 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const uncoveredStatements = statements.filter(s => !s.covered);
     const uncoveredFunctionsList = functions.filter(f => !f.covered);
 
+    const uncoverageDiagnostics = evaluateUncoverageDiagnostics({
+        sourceCode,
+        statements,
+        branches,
+        functions,
+        lineCoverage,
+        astMetadata,
+        coverageGapAnalysis
+    });
+
     const decisionPoints = (astMetadata?.decisionPoints || []).map(dp => {
         const isLineUncovered = lineCoverage.uncoveredLines.includes(dp.line);
         const matchedBranch = uncoveredBranches.find(ub => Math.abs(ub.line - dp.line) <= 1);
@@ -1397,6 +1417,7 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         uncoveredBranches,
         uncoveredStatements,
         uncoveredFunctionsList,
+        uncoverageDiagnostics,
         decisionPoints,
         sourceCode,
         testFile,

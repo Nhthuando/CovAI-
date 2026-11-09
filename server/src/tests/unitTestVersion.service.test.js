@@ -382,5 +382,56 @@ describe("unitTestVersion.service", () => {
             // Verify empty tests directory was cleaned up
             expect(fs.existsSync(path.dirname(testDiskPath))).toBe(false);
         });
+
+        it("supports bulk rollback to Version 1 with filePath omitted or empty string when allFiles is true", async () => {
+            saveUnitTestFileVersions({
+                snapshotId,
+                rootDir: tempDir,
+                projectId,
+                sourceFile: "src/user.js",
+                testFile: "tests/user.test.js",
+                originalContent: "// User v1 baseline",
+                updatedContent: "// User v2 updated",
+                isExisting: true,
+                status: "APPLIED"
+            });
+
+            saveUnitTestFileVersions({
+                snapshotId,
+                rootDir: tempDir,
+                projectId,
+                sourceFile: "src/order.js",
+                testFile: "tests/order.test.js",
+                originalContent: "",
+                updatedContent: "// Order v2 new",
+                isExisting: false,
+                status: "APPLIED"
+            });
+
+            fs.mkdirSync(path.join(tempDir, "tests"), { recursive: true });
+            const userPath = path.join(tempDir, "tests/user.test.js");
+            const orderPath = path.join(tempDir, "tests/order.test.js");
+            fs.writeFileSync(userPath, "// User v2 updated", "utf8");
+            fs.writeFileSync(orderPath, "// Order v2 new", "utf8");
+
+            // Bulk revert with filePath passed as empty string ""
+            const res = await switchUnitTestVersion({
+                snapshotId,
+                projectId,
+                userId,
+                filePath: "",
+                allFiles: true,
+                targetVersion: 1,
+                runTests: false
+            });
+
+            expect(res.success).toBe(true);
+            expect(res.switchedCount).toBe(2);
+            expect(res.targetVersion).toBe(1);
+
+            // User restored to baseline, Order deleted
+            expect(fs.readFileSync(userPath, "utf8")).toBe("// User v1 baseline");
+            expect(fs.existsSync(orderPath)).toBe(false);
+        });
     });
 });

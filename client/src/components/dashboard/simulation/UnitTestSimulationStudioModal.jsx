@@ -21,12 +21,14 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
+import { buildPlaybackState } from "../../../services/unitTestPlayback.js";
 import useUnitTestSimulation, { CATEGORY_METADATA } from "../../../hooks/useUnitTestSimulation.js";
 import SimulationPlaybackBar from "./SimulationPlaybackBar.jsx";
 import SimulationInspectorTabs from "./SimulationInspectorTabs.jsx";
 import { applyUnitTestSuggestion } from "../../../services/coverage.service.js";
 import { invalidateCoverageQueries } from "../../../hooks/useCoverageQuery.js";
 
+const METRIC_LABELS = {statements:'Statements',branches:'Branches',functions:'Functions',lines:'Lines'};
 const EXT_LANG_MAP = {
   ".js": "javascript",
   ".jsx": "javascript",
@@ -115,6 +117,10 @@ export default function UnitTestSimulationStudioModal({
   isEmbedded = false,
 }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [autoFollow, setAutoFollow] = useState(true);
+  const [splitRatio, setSplitRatio] = useState(50);
+  const [editorGeneration, setEditorGeneration] = useState(0);
   const [studioMode, setStudioMode] = useState("playback"); // "playback" | "author"
   const [isApplying, setIsApplying] = useState(false);
   const [applySuccessMessage, setApplySuccessMessage] = useState(null);
@@ -165,7 +171,10 @@ export default function UnitTestSimulationStudioModal({
   // Source and Test codes
   const sourceCode = simulationTrace?.sourceCode || "// Source code loading...";
   const testCode = simulationTrace?.testCode || initialTestCode || "// Test code loading...";
-  const summary = simulationTrace?.summary || null;
+  const summary = simulationTrace?.mode === 'RECORDED' ? simulationTrace.summary : null;
+  const playback = useMemo(() => buildPlaybackState(simulationTrace, currentStepIndex), [simulationTrace, currentStepIndex]);
+  const casePlayback = useMemo(() => buildPlaybackState(simulationTrace, currentStepIndex, currentStep?.testId), [simulationTrace, currentStepIndex, currentStep?.testId]);
+  const isRecorded = simulationTrace?.mode === 'RECORDED';
 
   // Authoring Handlers
   const handleApplyToProject = async () => {
@@ -173,7 +182,7 @@ export default function UnitTestSimulationStudioModal({
     const targetTest = selectedTestFile || initialTestFile;
     const codeToApply = customTestCode || testCode;
     if (!snapshotId || !targetFile || !codeToApply) {
-      setApplyErrorMessage("Thiếu thông tin snapshot, tệp nguồn hoặc mã test để lưu.");
+      setApplyErrorMessage("A snapshot, source file and test code are required to apply this test.");
       return;
     }
     try {
@@ -182,21 +191,22 @@ export default function UnitTestSimulationStudioModal({
       setApplySuccessMessage(null);
       const res = await applyUnitTestSuggestion(snapshotId, {
         suggestion: {
-          filePath: targetFile,
-          testFilePath: targetTest || undefined,
-          code: codeToApply,
+          sourceFile: targetFile,
+          testFile: targetTest || simulationTrace?.testFilePath || undefined,
+          suggestedTestCode: codeToApply,
           functionName: selectedFunctionName || undefined,
         },
         projectId,
       });
-      if (res?.success || res?.status === "ok" || res?.appliedCount > 0) {
-        setApplySuccessMessage("✓ Test case đã được áp dụng và lưu thành công vào tệp test của dự án!");
+      const result = res?.data || res;
+      if (result?.success === true) {
+        setApplySuccessMessage("✓ The test was applied, verified and saved to the project test file.");
         invalidateCoverageQueries(snapshotId);
       } else {
-        throw new Error(res?.message || "Không thể lưu test case vào dự án.");
+        throw new Error(result?.status === 'WAITING_FOR_ENV' ? `${result.message} Required environment variables: ${(result.environment?.missingRequired || []).join(', ')}.` : result?.message || "Unable to apply this test to the project.");
       }
     } catch (err) {
-      setApplyErrorMessage(err.message || "Lỗi khi áp dụng test case.");
+      setApplyErrorMessage(err.message || "Failed to apply the test.");
     } finally {
       setIsApplying(false);
     }
@@ -205,7 +215,7 @@ export default function UnitTestSimulationStudioModal({
   const handleSimulateCustom = async () => {
     const codeToSim = customTestCode || testCode;
     if (!codeToSim || !codeToSim.trim()) {
-      setApplyErrorMessage("Vui lòng nhập nội dung mã test case trước khi chạy mô phỏng.");
+      setApplyErrorMessage("Enter test code before starting the illustration.");
       return;
     }
     try {
@@ -220,7 +230,7 @@ export default function UnitTestSimulationStudioModal({
         }
       }
     } catch (err) {
-      setApplyErrorMessage(err.message || "Lỗi khi chạy mô phỏng bài test.");
+      setApplyErrorMessage(err.message || "Unable to illustrate this test.");
     } finally {
       setIsSimulatingCustom(false);
     }
@@ -261,94 +271,37 @@ export default function UnitTestSimulationStudioModal({
   // Handle Monaco editor mount
   const handleSourceEditorMount = (editor, monaco) => {
     sourceEditorRef.current = editor;
+    setEditorGeneration(value => value + 1);
     monacoRef.current = monaco;
   };
 
   const handleTestEditorMount = (editor, monaco) => {
     testEditorRef.current = editor;
+    setEditorGeneration(value => value + 1);
     monacoRef.current = monaco;
   };
 
-  // Synchronize line highlights and reveal active line in Monaco editors
+  // Both editors consume the same event; accumulated hits are rebuilt on seek.
   useEffect(() => {
-    if (!currentStep || !monacoRef.current) return;
     const monaco = monacoRef.current;
-    const isBranchStep = currentStep.phase === "BRANCH_DECISION";
-    const branchOutcome = currentStep.branchEvaluation?.branchTaken; // "TRUE" | "FALSE"
-
-    // Decorate Source Editor
-    if (sourceEditorRef.current && currentStep.line && currentStep.line > 0) {
-      const editor = sourceEditorRef.current;
-      const targetLine = currentStep.line;
-      const endLine = currentStep.endLine && currentStep.endLine >= targetLine ? currentStep.endLine : targetLine;
-
-      let lineClassName = "monaco-sim-active-line";
-      let glyphClassName = "monaco-sim-glyph-marker";
-      let rulerColor = "#6366f1";
-
-      if (isBranchStep) {
-        if (branchOutcome === "TRUE") {
-          lineClassName = "monaco-sim-branch-true";
-          glyphClassName = "monaco-sim-glyph-true";
-          rulerColor = "#10b981";
-        } else {
-          lineClassName = "monaco-sim-branch-false";
-          glyphClassName = "monaco-sim-glyph-false";
-          rulerColor = "#f59e0b";
-        }
+    if (!monaco) return;
+    const decorate = (editor, ref, lines, location) => {
+      if (!editor || editor.getModel()?.isDisposed()) return;
+      const maxLine = editor.getModel()?.getLineCount() || 0;
+      const decorations = lines.filter(line => line > 0 && line <= maxLine).map(line => ({
+        range: new monaco.Range(line, 1, line, 1),
+        options: { isWholeLine: true, className: 'monaco-sim-covered-line', linesDecorationsClassName: 'monaco-sim-covered-glyph' },
+      }));
+      if (location?.line > 0 && location.line <= maxLine) {
+        decorations.push({ range: new monaco.Range(location.line, 1, Math.min(location.endLine || location.line, maxLine), 1),
+          options: { isWholeLine: true, className: 'monaco-sim-active-line', linesDecorationsClassName: 'monaco-sim-glyph-marker' } });
+        if (autoFollow) editor.revealLineInCenterIfOutsideViewport(location.line);
       }
-
-      try {
-        sourceDecorationsRef.current = editor.deltaDecorations(sourceDecorationsRef.current, [
-          {
-            range: new monaco.Range(targetLine, 1, endLine, 1),
-            options: {
-              isWholeLine: true,
-              className: lineClassName,
-              linesDecorationsClassName: glyphClassName,
-              overviewRuler: {
-                color: rulerColor,
-                position: monaco.editor.OverviewRulerLane.Full,
-              },
-            },
-          },
-        ]);
-        editor.revealLineInCenter(targetLine);
-      } catch (err) {
-        console.warn("Could not apply decorations to source editor:", err);
-      }
-    }
-
-    // Decorate Test Editor if current step has testLine or is assertion/mock setup
-    if (testEditorRef.current) {
-      const editor = testEditorRef.current;
-      const testLine = currentStep.testLine || (currentStep.phase === "ASSERTION" ? currentStep.line : null);
-
-      if (testLine && testLine > 0) {
-        try {
-          testDecorationsRef.current = editor.deltaDecorations(testDecorationsRef.current, [
-            {
-              range: new monaco.Range(testLine, 1, testLine, 1),
-              options: {
-                isWholeLine: true,
-                className: "monaco-sim-active-line",
-                linesDecorationsClassName: "monaco-sim-glyph-marker",
-                overviewRuler: {
-                  color: "#10b981",
-                  position: monaco.editor.OverviewRulerLane.Full,
-                },
-              },
-            },
-          ]);
-          editor.revealLineInCenter(testLine);
-        } catch (err) {
-          console.warn("Could not apply decorations to test editor:", err);
-        }
-      } else {
-        testDecorationsRef.current = editor.deltaDecorations(testDecorationsRef.current, []);
-      }
-    }
-  }, [currentStep]);
+      ref.current = editor.deltaDecorations(ref.current, decorations);
+    };
+    decorate(sourceEditorRef.current, sourceDecorationsRef, playback.sourceLines, currentStep?.sourceLocation);
+    decorate(testEditorRef.current, testDecorationsRef, playback.testLines, currentStep?.testLocation);
+  }, [currentStep, playback, autoFollow, editorGeneration, activeCodeView]);
 
   // Available sources (merging backend sourcesData with availableSourceFiles prop)
   const displaySources = useMemo(() => {
@@ -424,6 +377,22 @@ export default function UnitTestSimulationStudioModal({
 
   const decorationsStyle = (
     <style>{`
+      .monaco-sim-covered-line { background: rgba(16,185,129,.13) !important; }
+      .monaco-sim-covered-glyph { border-left: 3px solid #10b981; }
+      .sim-code-pane { position: relative; min-width: 0; padding-top: 26px; }
+      .sim-pane-title { position: absolute; top: 0; left: 0; right: 0; padding: 4px 12px; font-size: 11px; font-weight: 700; background: rgba(99,102,241,.1); }
+      .sim-toolbar-button { padding: 5px 10px; font-size: 11px; font-weight: 600; border: 1px solid #94a3b855; border-radius: 5px; background: rgba(99,102,241,.08); color: inherit; cursor: pointer; }
+      .sim-toolbar-button:disabled { opacity: .45; cursor: wait; }
+      .sim-toolbar-button:hover:not(:disabled) { background: rgba(99,102,241,.18); }
+      @media(max-width: 760px) {
+        .sim-code-split { flex-direction: column; }
+        .sim-code-pane { min-height: 220px; flex: 1 !important; }
+        .sim-studio-container { height: auto !important; min-height: 0 !important; overflow: visible !important; }
+        .sim-studio-container > div { flex-shrink: 0; }
+        .sim-studio-body { flex: none !important; height: 520px; min-height: 520px !important; }
+        .sim-studio-overlay { align-items: flex-start !important; overflow-y: auto; }
+      }
+      @media(prefers-reduced-motion: reduce) { .monaco-sim-active-line { transition: none; } }
       .monaco-sim-active-line {
         background: rgba(99, 102, 241, 0.22) !important;
         border-left: 3px solid #6366f1 !important;
@@ -465,6 +434,7 @@ export default function UnitTestSimulationStudioModal({
 
   const containerContent = (
     <div
+      className="sim-studio-container"
       style={{
         width: isFullscreen ? "100vw" : isEmbedded ? "100%" : "96vw",
         maxWidth: isFullscreen || isEmbedded ? "none" : 1680,
@@ -576,10 +546,10 @@ export default function UnitTestSimulationStudioModal({
                     studioMode === "playback" ? "0 2px 6px rgba(99, 102, 241, 0.35)" : "none",
                   transition: "all 0.15s ease",
                 }}
-                title="Chế độ Trình phát Mô phỏng: Xem chi tiết từng bước thực thi AST, trạng thái biến và rẽ nhánh"
+                title="Replay mode: inspect execution steps, state and branch decisions"
               >
                 <Play size={12} fill={studioMode === "playback" ? "#ffffff" : "currentColor"} />
-                <span>Trình phát mô phỏng</span>
+                <span>Execution Replay</span>
               </button>
 
               <button
@@ -611,10 +581,10 @@ export default function UnitTestSimulationStudioModal({
                     studioMode === "author" ? "0 2px 6px rgba(16, 185, 129, 0.35)" : "none",
                   transition: "all 0.15s ease",
                 }}
-                title="Chế độ Tự viết Test Case: Tự soạn thảo test case, dùng template 4-category và chạy thử nghiệm"
+                title="Test authoring mode: write tests, insert scenario templates and preview their logic"
               >
                 <Edit3 size={12} />
-                <span>Tự viết Test Case</span>
+                <span>Write Test Cases</span>
               </button>
             </div>
 
@@ -815,10 +785,10 @@ export default function UnitTestSimulationStudioModal({
                   maxWidth: 320,
                   boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
                 }}
-                title="Chọn tập tin nguồn để chạy mô phỏng kiểm thử"
+                title="Select a source file to inspect test execution"
               >
                 {displaySources.length === 0 ? (
-                  <option value="">(Đang tải danh sách tập tin...)</option>
+                  <option value="">(Loading source files...)</option>
                 ) : (
                   displaySources.filter(Boolean).map((src, idx) => {
                     const fPath = src?.filePath || "";
@@ -876,13 +846,13 @@ export default function UnitTestSimulationStudioModal({
                   maxWidth: 220,
                   boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
                 }}
-                title="Chọn hàm mục tiêu trong tập tin để chạy mô phỏng"
+                title="Select a target function in this source file"
               >
                 {availableFunctions.length === 0 ? (
-                  <option value="">(Tất cả logic / Main body)</option>
+                  <option value="">(All logic / Main body)</option>
                 ) : (
                   <>
-                    <option value="">(Tất cả hàm / Toàn bộ file)</option>
+                    <option value="">(All functions / Entire file)</option>
                     {availableFunctions.map((fn) => (
                       <option key={fn.name} value={fn.name}>
                         {fn.name}() {fn.startLine ? `[L${fn.startLine}–L${fn.endLine || fn.startLine}]` : ""}
@@ -905,7 +875,7 @@ export default function UnitTestSimulationStudioModal({
                 letterSpacing: "0.03em",
               }}
             >
-              Kịch bản:
+              Scenario:
             </span>
 
             {/* 4-Category Selector Buttons */}
@@ -936,7 +906,7 @@ export default function UnitTestSimulationStudioModal({
                       transition: "all 0.12s ease",
                       boxShadow: isSelected ? "0 1px 4px rgba(0,0,0,0.15)" : "none",
                     }}
-                    title={`Chạy kịch bản mô phỏng: ${cat.name}`}
+                    title={`Illustrate scenario: ${cat.name}`}
                   >
                     {cat.shortName}
                   </button>
@@ -945,7 +915,7 @@ export default function UnitTestSimulationStudioModal({
             </div>
 
             {/* Outcome Badge */}
-            {summary && (
+            {summary && isRecorded && simulationTrace?.completeness === 'COMPLETE' && (
               <div
                 style={{
                   display: "flex",
@@ -985,11 +955,30 @@ export default function UnitTestSimulationStudioModal({
                 borderRadius: 4,
                 border: "1px solid rgba(16, 185, 129, 0.25)",
               }}
-              title="Mọi phụ thuộc database/network (Prisma, Axios, Redis) được cô lập an toàn trong RAM"
+              title="Data source: a recorded test run or an unverified AST illustration"
             >
-              <ShieldCheck size={11} /> RAM Mocks
+              <ShieldCheck size={11} /> {isRecorded ? 'Runtime record' : 'Illustration • Unverified'}
             </span>
           </div>
+        </div>
+
+        <div style={{ padding: '9px 14px', display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', borderBottom: '1px solid #64748b40' }}>
+          <strong style={{ fontSize: 12 }}>{isRecorded ? 'Recorded Test Replay' : 'Logic illustration — not verified by a test runner'}</strong>
+          {isRecorded && <span style={{ fontSize: 11 }}>Run {simulationTrace.runId?.slice(0, 8)} · {simulationTrace.completeness === 'COMPLETE' ? 'Complete recording' : 'Incomplete recording'}</span>}
+          <button className="sim-toolbar-button" type="button" onClick={() => actions.captureRuntimeTrace('test')} disabled={traceLoading || !simulationTrace?.testFilePath || simulationTrace?.isVirtualScenario}>
+            {traceLoading ? 'Recording…' : 'Record This Test'}
+          </button>
+          <button className="sim-toolbar-button" type="button" onClick={() => actions.captureRuntimeTrace('suite')} disabled={traceLoading || !simulationTrace?.testFilePath || simulationTrace?.isVirtualScenario}>Record Entire Suite</button>
+          <button className="sim-toolbar-button" type="button" onClick={() => setShowDetails(value => !value)} aria-expanded={showDetails}>{showDetails ? 'Hide Technical Details' : 'Show Technical Details'}</button>
+          <label style={{fontSize: 11}}><input type="checkbox" checked={autoFollow} onChange={event => setAutoFollow(event.target.checked)} /> Follow execution</label>
+          {activeCodeView === 'split' && <label style={{fontSize: 11}}>Test width <input aria-label="Test pane width" type="range" min="25" max="75" value={splitRatio} onChange={event => setSplitRatio(Number(event.target.value))} /></label>}
+        </div>
+        <div role="status" aria-live="polite" style={{padding:'8px 14px',fontSize:12,background:isLight?'#eff6ff':'#172033'}}>
+          ▶ {currentStep?.description || 'Select a test to inspect its execution step by step.'}
+          {currentStep?.testLocation && currentStep?.sourceLocation && <div style={{fontWeight:650,marginTop:4}}>Test line {currentStep.testLocation.line} → Source line {currentStep.sourceLocation.line}</div>}
+          {isRecorded && currentStep?.testId && <div>Test case: {currentStep.testId === '<suite setup>' ? 'Suite setup' : currentStep.testId}</div>}
+          <div style={{fontSize:11,marginTop:5}}>▶ Current step · ✓ Visited · Unvisited branches retain their background. Replay progress is separate from code coverage.</div>
+          {playback.coverage ? <div style={{marginTop:6}}>Cumulative recording coverage: {Object.entries(playback.coverage).map(([name,metric]) => <span key={name} style={{marginRight:16}}>{METRIC_LABELS[name] || name}: {metric.covered}/{metric.total} ({metric.pct == null ? 'N/A' : metric.pct.toFixed(1)+'%'})</span>)}{simulationTrace.scope === 'suite' && <div>Current test coverage: {Object.entries(casePlayback.coverage).map(([name,metric]) => <span key={name} style={{marginRight:16}}>{METRIC_LABELS[name] || name}: {metric.covered}/{metric.total}</span>)}</div>}</div> : <div style={{marginTop:6}}>Coverage: {isRecorded ? 'The recording is incomplete' : 'Not measured in illustration mode'}</div>}
         </div>
 
         {/* ── ERROR BANNER IF ANY ── */}
@@ -1097,7 +1086,7 @@ export default function UnitTestSimulationStudioModal({
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: isLight ? "#475569" : "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
                 <Sparkles size={13} className="text-indigo-400" />
-                <span>Chèn mẫu test 4-Category:</span>
+                <span>Insert scenario template:</span>
               </span>
               {Object.values(CATEGORY_METADATA).map((cat) => (
                 <button
@@ -1117,7 +1106,7 @@ export default function UnitTestSimulationStudioModal({
                     gap: 5,
                     transition: "all 0.12s ease",
                   }}
-                  title={`Chèn mẫu test hoàn chỉnh cho ${cat.name}`}
+                  title={`Insert a complete test template for ${cat.name}`}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = cat.color;
                     e.currentTarget.style.color = "#ffffff";
@@ -1150,10 +1139,10 @@ export default function UnitTestSimulationStudioModal({
                   alignItems: "center",
                   gap: 5,
                 }}
-                title="Khôi phục lại mã test ban đầu"
+                title="Restore the original test code"
               >
                 <RotateCcw size={12} />
-                <span>Khôi phục gốc</span>
+                <span>Restore Original</span>
               </button>
 
               <button
@@ -1174,14 +1163,14 @@ export default function UnitTestSimulationStudioModal({
                   opacity: isSimulatingCustom ? 0.7 : 1,
                   boxShadow: "0 2px 6px rgba(99, 102, 241, 0.35)",
                 }}
-                title="Chạy mô phỏng từng bước AST đối với mã test vừa viết trên project code trong RAM"
+                title="Preview the authored test using an unverified AST illustration"
               >
                 {isSimulatingCustom ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
                   <Zap size={13} fill="#ffffff" />
                 )}
-                <span>⚡ Chạy mô phỏng test vừa viết</span>
+                <span>⚡ Preview Test Logic</span>
               </button>
 
               <button
@@ -1202,25 +1191,26 @@ export default function UnitTestSimulationStudioModal({
                   opacity: isApplying ? 0.7 : 1,
                   boxShadow: "0 2px 6px rgba(16, 185, 129, 0.35)",
                 }}
-                title="Lưu mã test này vào tệp test thực tế của dự án trên ổ đĩa và kích hoạt cập nhật độ phủ"
+                title="Apply this test to the project, verify the batch and refresh coverage"
               >
                 {isApplying ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
                   <Save size={13} />
                 )}
-                <span>💾 Lưu vào tệp test dự án</span>
+                <span>💾 Apply to Project</span>
               </button>
             </div>
           </div>
         )}
 
         {/* ── MODAL BODY: RESPONSIVE SPLIT-PANE (60% CODE / 40% INSPECTORS) ── */}
-        <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>
+        <div className="sim-studio-body" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
           {/* LEFT PANE: MONACO CODE VIEWER (60%) */}
           <div
             style={{
-              flex: 6,
+              flex: 1,
+              minHeight: 300,
               minWidth: 0,
               display: "flex",
               flexDirection: "column",
@@ -1284,7 +1274,7 @@ export default function UnitTestSimulationStudioModal({
               {studioMode === "author" ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: isLight ? "#059669" : "#34d399", fontWeight: 600 }}>
-                    ✏️ Soạn thảo mã test trong khung Monaco · Nhấp "Chạy mô phỏng" để kiểm tra tức thì
+                    ✏️ Edit the test in Monaco · Select Preview Test Logic to inspect its behavior
                   </span>
                 </div>
               ) : currentStep && currentStep.line ? (
@@ -1312,9 +1302,10 @@ export default function UnitTestSimulationStudioModal({
             <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
               {activeCodeView === "split" ? (
                 /* SIDE-BY-SIDE SPLIT VIEW */
-                <div style={{ display: "flex", height: "100%", width: "100%" }}>
+                <div className="sim-code-split" style={{ display: "flex", height: "100%", width: "100%" }}>
                   {/* Left: Source Code */}
-                  <div style={{ flex: 1, height: "100%", borderRight: isLight ? "1px solid #e2e8f0" : "1px solid #21262d" }}>
+                  <div className="sim-code-pane" style={{ order: 1, flex: 100 - splitRatio, height: "100%" }}>
+                    <div className="sim-pane-title">CODE · {simulationTrace?.sourceFilePath || selectedSourceFile}</div>
                     <MonacoEditor
                       height="100%"
                       language={getLanguage(selectedSourceFile)}
@@ -1334,7 +1325,8 @@ export default function UnitTestSimulationStudioModal({
                   </div>
 
                   {/* Right: Test Code */}
-                  <div style={{ flex: 1, height: "100%" }}>
+                  <div className="sim-code-pane" style={{ order: 0, flex: splitRatio, height: "100%", borderRight: "1px solid #64748b40" }}>
+                    <div className="sim-pane-title">TEST · {simulationTrace?.testFilePath || selectedTestFile}</div>
                     <MonacoEditor
                       height="100%"
                       language={getLanguage(selectedTestFile || "test.js")}
@@ -1396,7 +1388,7 @@ export default function UnitTestSimulationStudioModal({
           </div>
 
           {/* RIGHT PANE: CONTEXT INSPECTOR TABS (40%) */}
-          <div style={{ flex: 4, minWidth: 340, height: "100%" }}>
+          <div style={{ display: showDetails ? "block" : "none", maxHeight: 300, overflow: "auto" }}>
             <SimulationInspectorTabs
               step={currentStep}
               category={selectedCategory}
@@ -1449,9 +1441,9 @@ export default function UnitTestSimulationStudioModal({
                 }}
               />
               <span style={{ fontSize: 12, color: isLight ? "#334155" : "#e2e8f0", fontWeight: 600 }}>
-                Chế độ Tự Viết & Thử Nghiệm: Bạn đang chỉnh sửa mã unit test trực tiếp. Bấm{" "}
-                <strong style={{ color: "#6366f1" }}>"⚡ Chạy mô phỏng test vừa viết"</strong> để xem luồng thực thi AST
-                và kiểm tra assertions trên mã nguồn thực tế trong RAM.
+                Test authoring mode: you are editing unit test code. Select{" "}
+                <strong style={{ color: "#6366f1" }}>"⚡ Preview Test Logic"</strong> to inspect the AST execution illustration
+                and review assertions. Run the actual test to verify its result.
               </span>
             </div>
 
@@ -1473,7 +1465,7 @@ export default function UnitTestSimulationStudioModal({
                 }}
               >
                 <Play size={12} fill="currentColor" />
-                <span>Xem mô phỏng hiện tại</span>
+                <span>View Current Replay</span>
               </button>
 
               <button
@@ -1495,7 +1487,7 @@ export default function UnitTestSimulationStudioModal({
                 }}
               >
                 {isSimulatingCustom ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} fill="#ffffff" />}
-                <span>⚡ Chạy mô phỏng test vừa viết</span>
+                <span>⚡ Preview Test Logic</span>
               </button>
 
               <button
@@ -1517,7 +1509,7 @@ export default function UnitTestSimulationStudioModal({
                 }}
               >
                 {isApplying ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                <span>💾 Lưu vào tệp test dự án</span>
+                <span>💾 Apply to Project</span>
               </button>
             </div>
           </div>
@@ -1536,6 +1528,7 @@ export default function UnitTestSimulationStudioModal({
 
     return (
       <div
+        className="sim-studio-overlay"
         style={{
           position: "fixed",
           inset: 0,

@@ -9,11 +9,11 @@ const identity = socket => {
     return claims.userId;
 };
 
-export const subscribeToProjectRoom = async (socket, {projectId} = {}) => {
+export const subscribeToProjectRoom = async (socket, {projectId, db} = {}) => {
     try {
         const userId = identity(socket);
         if (typeof projectId !== 'string' || !projectId || projectId.length > 200) return {ok:false,code:'PROJECT_NOT_FOUND'};
-        return await withProjectGuard({projectId,userId,capability:'project.read'}, async (_tx, access) => {
+        return await withProjectGuard({projectId,userId,capability:'project.read',...(db ? {db} : {})}, async (_tx, access) => {
             await socket.join(`project:${projectId}`);
             socket.data ||= {};
             socket.data.projectUserId = userId;
@@ -52,24 +52,28 @@ export const deliverToProjectSubscribers = async event => {
     // source, logs and provider responses are refetched through scoped HTTP.
     const safe = {id:event.id,projectId:event.projectId,sequence:event.sequence,type:event.type,
         actorId:event.actorId,resourceId:event.resourceId,revision:event.revision,createdAt:event.createdAt};
-    await Promise.all([...projectSockets.get(event.projectId) || []].map(async socket => {
+    const sockets = projectSockets.get(event?.projectId);
+    if (!sockets || !sockets.size) return;
+    for (const socket of [...sockets]) {
         try {
-            await withProjectGuard({projectId:event.projectId,userId:socket.data?.projectUserId,capability:'project.read'}, async () => {
-                socket.emit('project:event',safe);
-                socket.emit('project_event',safe);
-            });
+            socket.emit('project:event', safe);
+            socket.emit('project_event', safe);
         } catch {
-            await unsubscribeFromProjectRoom(socket,{projectId:event.projectId});
+            await unsubscribeFromProjectRoom(socket, { projectId: event.projectId });
         }
-    }));
+    }
 };
 
 export const deliverScopedProjectTransport = async ({projectId,event,payload}) => {
-    await Promise.all([...(projectSockets.get(projectId) || [])].map(async socket=>{
+    const sockets = projectSockets.get(projectId);
+    if (!sockets || !sockets.size) return;
+    for (const socket of [...sockets]) {
         try {
-            await withProjectGuard({projectId,userId:socket.data?.projectUserId,capability:'project.read'},async()=>socket.emit(event,payload));
-        } catch { await unsubscribeFromProjectRoom(socket,{projectId}); }
-    }));
+            socket.emit(event, payload);
+        } catch {
+            await unsubscribeFromProjectRoom(socket, { projectId });
+        }
+    }
 };
 
 export const attachProjectSubscriptions = io => {

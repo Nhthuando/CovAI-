@@ -1,8 +1,18 @@
 import fs from "fs";
 import path from "path";
 import { dockerRunner } from "./dockerRunner.service.js";
-import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { resolveProjectRoot, resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { DEPENDENCY_INSTALL_TIMEOUT_MS } from '../../../shared/unitTestRuntime.js';
+
+export function resolvePackageManagerHostCommand(command, { platform = process.platform, nodeExecutable = process.execPath, exists = fs.existsSync } = {}) {
+  if (platform !== 'win32' || !command.startsWith('npm ')) return command;
+  const npmCli = path.win32.join(path.win32.dirname(nodeExecutable), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  // npm.cmd/npm.ps1 can point at a broken global prefix. Execute the known
+  // bundled CLI directly without changing system settings or global packages.
+  if (!exists(npmCli)) return command;
+  return `"${nodeExecutable}" "${npmCli}" ${command.slice(4)}`;
+}
 
 /**
  * Standard Node.js built-in modules that should never be installed from npm.
@@ -226,7 +236,7 @@ const declaresPackage = (pkgJsonPath, packageName) => {
  * @returns {string}
  */
 export const findTargetPackageDir = (rootDir, importedFrom = null, packageName = null) => {
-  const resolvedRoot = resolveProjectRoot(rootDir);
+  const resolvedRoot = rootDir ? path.resolve(resolveSnapshotRootDir(rootDir) || rootDir) : null;
   if (!resolvedRoot) return rootDir;
 
   const subpackageDirs = listWorkspacePackageDirs(resolvedRoot).filter(
@@ -272,7 +282,7 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
       let currentDir = path.dirname(resolvedSourceFile);
       while (
         currentDir &&
-        currentDir.startsWith(resolvedRoot) &&
+        !path.relative(resolvedRoot,currentDir).startsWith('..') &&
         currentDir !== path.dirname(resolvedRoot)
       ) {
         const pkgPath = path.join(currentDir, "package.json");
@@ -298,18 +308,6 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
     }
   }
 
-  // If importedFrom didn't exist directly (e.g. a virtual test path) and root package.json has 0 dependencies
-  // while a backend/server subpackage has dependencies, prefer the subpackage.
-  const rootPkgJson = path.join(resolvedRoot, "package.json");
-  if (!hasDeclaredDependencies(rootPkgJson) && subpackageDirs.length > 0) {
-    const subWithDeps = subpackageDirs.find((dir) =>
-      hasDeclaredDependencies(path.join(dir, "package.json"))
-    );
-    if (subWithDeps) {
-      return subWithDeps;
-    }
-  }
-
   // Fallback walk-up if importedFrom was provided even if file doesn't exist yet
   if (importedFrom) {
     const cleanRel = String(importedFrom)
@@ -331,7 +329,7 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
 
     while (
       currentDir &&
-      currentDir.startsWith(resolvedRoot) &&
+      !path.relative(resolvedRoot,currentDir).startsWith('..') &&
       currentDir !== path.dirname(resolvedRoot)
     ) {
       const pkgPath = path.join(currentDir, "package.json");
@@ -344,6 +342,11 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
     }
   }
 
+  // Use a package with dependencies only after resolving explicit target hints.
+  if (!hasDeclaredDependencies(path.join(resolvedRoot, 'package.json'))) {
+    const subWithDeps = subpackageDirs.find(dir => hasDeclaredDependencies(path.join(dir, 'package.json')));
+    if (subWithDeps) return subWithDeps;
+  }
   return resolvedRoot;
 };
 
@@ -532,24 +535,37 @@ export const installPackageInWorkspace = async ({
   isDev = false,
   importedFrom = null,
   jobId = null,
+  cacheDir = null,
+  version = null,
 }) => {
   if (!isValidNpmPackageName(packageName)) {
     throw new ServiceError(`Invalid or unsafe npm package name: '${packageName}'`, 400);
   }
+  packageName = packageName.trim();
+  if (version !== null && !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version)) throw new ServiceError('An exact package version is required for runtime alignment',400);
 
-  const effectiveRootDir = resolveProjectRoot(rootDir);
+  const effectiveRootDir = rootDir ? path.resolve(resolveSnapshotRootDir(rootDir) || rootDir) : null;
   if (!effectiveRootDir || !fs.existsSync(effectiveRootDir)) {
     throw new ServiceError(`Invalid project root directory: ${rootDir}`, 404);
   }
+  const rootRelative = path.relative(path.resolve(rootDir),path.resolve(effectiveRootDir));
+  if (rootRelative.startsWith('..') || path.isAbsolute(rootRelative)) throw new ServiceError('Dependency installation requires a package manifest inside the operation workspace',409);
 
   const targetDir = findTargetPackageDir(effectiveRootDir, importedFrom, packageName);
+  const targetRelative = path.relative(path.resolve(effectiveRootDir),path.resolve(targetDir));
+  if (targetRelative.startsWith('..') || path.isAbsolute(targetRelative)) throw new ServiceError('Dependency target escapes the operation workspace',400);
 
   // Detect package manager (npm, pnpm, yarn, bun)
   let pkgManager = "npm";
+  let packageManifest = {};
   const pkgJsonPath = path.join(targetDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) throw new ServiceError('Select a project package directory containing package.json before installing dependencies',409);
+  const realRelative = path.relative(fs.realpathSync(effectiveRootDir),fs.realpathSync(targetDir));
+  if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) throw new ServiceError('Dependency target resolves outside the project workspace',400);
   if (fs.existsSync(pkgJsonPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+      packageManifest = parsed;
       if (typeof parsed.packageManager === "string") {
         if (parsed.packageManager.startsWith("pnpm")) pkgManager = "pnpm";
         else if (parsed.packageManager.startsWith("yarn")) pkgManager = "yarn";
@@ -568,47 +584,88 @@ export const installPackageInWorkspace = async ({
   }
 
   let command;
-  if (pkgManager === "pnpm") {
-    command = `pnpm add ${isDev ? "-D" : ""} ${packageName}`;
+  let installSpecifier = version ? `${packageName}@${version}` : packageName;
+  if (!version && /^@vitest\/coverage-(?:v8|istanbul)$/.test(packageName)) {
+    try {
+      const runnerVersion = JSON.parse(fs.readFileSync(path.join(targetDir,'node_modules','vitest','package.json'),'utf8')).version;
+      if (/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(runnerVersion)) installSpecifier = `${packageName}@${runnerVersion}`;
+    } catch { /* Restore a declared version when an installed runner is absent. */ }
+  }
+  const declared = !version && Boolean(packageManifest.dependencies?.[packageName] || packageManifest.devDependencies?.[packageName]);
+  const managerRoot = [targetDir,effectiveRootDir].find(directory => ['package-lock.json','pnpm-lock.yaml','yarn.lock','bun.lock','bun.lockb'].some(file => fs.existsSync(path.join(directory,file)))) || targetDir;
+  const installDirectory = declared ? managerRoot : targetDir;
+  if (declared) {
+    if (pkgManager === 'pnpm') command = 'pnpm install --frozen-lockfile';
+    else if (pkgManager === 'yarn') command = /^yarn@[234]/.test(packageManifest.packageManager || '') ? 'yarn install --immutable' : 'yarn install --frozen-lockfile';
+    else if (pkgManager === 'bun') command = 'bun install --frozen-lockfile';
+    else command = `npm ${fs.existsSync(path.join(managerRoot,'package-lock.json')) ? 'ci' : 'install'} --no-audit --no-fund --progress=false`;
+  } else if (pkgManager === "pnpm") {
+    command = `pnpm add ${isDev ? "-D" : ""} ${installSpecifier}${version ? ' --save-exact' : ''}`;
   } else if (pkgManager === "yarn") {
-    command = `yarn add ${isDev ? "-D" : ""} ${packageName}`;
+    command = `yarn add ${isDev ? "-D" : ""} ${installSpecifier}${version ? ' --exact' : ''}`;
   } else if (pkgManager === "bun") {
-    command = `bun add ${isDev ? "-d" : ""} ${packageName}`;
+    command = `bun add ${isDev ? "-d" : ""} ${installSpecifier}${version ? ' --exact' : ''}`;
   } else {
     const saveFlag = isDev ? "--save-dev" : "--save";
-    command = `npm install ${saveFlag} ${packageName} --prefer-offline --prefer-cached --legacy-peer-deps --no-audit --no-fund --progress=false --maxsockets=4`;
+    command = `npm install ${saveFlag} ${installSpecifier}${version ? ' --save-exact' : ''} --prefer-offline --prefer-cached --no-audit --no-fund --progress=false --maxsockets=4`;
   }
 
-  const timeoutMs = jobId ? 60 * 1000 : 30 * 1000;
+  // A prepared workspace may borrow dependencies through directory junctions.
+  // Installation must never write through those junctions into its origin.
+  for (const directory of new Set([effectiveRootDir,targetDir,installDirectory])) {
+    const modules = path.join(directory,'node_modules');
+    if (!fs.existsSync(modules)) continue;
+    if (fs.lstatSync(modules).isSymbolicLink()) { fs.unlinkSync(modules); continue; }
+    for (const entry of fs.readdirSync(modules,{withFileTypes:true})) {
+      const target = path.join(modules,entry.name);
+      if (entry.isSymbolicLink()) fs.unlinkSync(target);
+      else if (entry.name.startsWith('@') && entry.isDirectory()) {
+        for (const child of fs.readdirSync(target,{withFileTypes:true})) if(child.isSymbolicLink())fs.unlinkSync(path.join(target,child.name));
+      }
+    }
+  }
+  const timeoutMs = DEPENDENCY_INSTALL_TIMEOUT_MS;
 
   let execResult;
   try {
     execResult = await dockerRunner.run({
-      snapshotPath: targetDir,
+      snapshotPath: installDirectory,
       command,
+      hostCommand: resolvePackageManagerHostCommand(command),
       timeoutMs,
       jobId,
+      inheritEnv: false,
+      loadEnvExamples: false,
+      env: cacheDir ? { NPM_CONFIG_CACHE: cacheDir } : {},
     });
   } catch (err) {
-    console.warn(`[installPackageInWorkspace] Package install timed out or failed for '${packageName}' (will fallback to universal RAM mock):`, err.message);
+    console.warn(`[installPackageInWorkspace] Package installation failed for '${packageName}':`, err.message);
     execResult = {
       success: false,
       stdout: "",
       stderr: err.message || `Timed out after ${Math.round(timeoutMs / 1000)}s`,
-      exitCode: 408,
-      timedOut: true,
+      exitCode: err.statusCode === 408 || /timed?\s*out|ETIMEDOUT/i.test(err.message || '') ? 408 : 1,
+      timedOut: err.statusCode === 408 || /timed?\s*out|ETIMEDOUT/i.test(err.message || ''),
     };
   }
 
-  // Enforce Storage Code Immutability Guard (Rule 8): Never mutate package.json on disk.
-  // Missing or sandbox-restricted packages are hermetically mocked in RAM.
+  // The caller supplies an isolated workspace. Declared packages retain their
+  // lockfile versions; newly added packages are reviewed with the test batch.
 
+  const installed = [targetDir,installDirectory,effectiveRootDir].some(directory => {
+    try { const pkg=JSON.parse(fs.readFileSync(path.join(directory,'node_modules',packageName,'package.json'),'utf8'));return pkg.name === packageName && (!version || pkg.version === version); }
+    catch { return false; }
+  }) || (pkgManager === 'yarn' && fs.existsSync(path.join(installDirectory,'.pnp.cjs')));
+  const verified = Boolean(execResult.success && installed);
   return {
-    success: execResult.success,
+    success: verified,
     stdout: execResult.stdout || "",
-    stderr: execResult.stderr || "",
+    stderr: execResult.stderr || (execResult.success && !installed ? `The package manager exited successfully, but '${packageName}' was not found in the target workspace.` : ""),
     targetDir,
     exitCode: execResult.exitCode,
     timedOut: Boolean(execResult.timedOut),
+    timeoutMs,
+    packageManager: pkgManager,
+    verified,
   };
 };

@@ -77,6 +77,7 @@ export const parseExistingTestAst = (testCode = "", filePath = "") => {
 
     if (parseRes.success && parseRes.ast) {
         const suiteStack = [];
+        const skippedSuiteStack = [];
 
         const extractStringVal = (node) => {
             if (!node) return "";
@@ -98,7 +99,8 @@ export const parseExistingTestAst = (testCode = "", filePath = "") => {
 
                 if (node.callee?.type === "Identifier") {
                     calleeName = node.callee.name;
-                    if (calleeName === "describe") isDescribe = true;
+                    if (["describe","xdescribe"].includes(calleeName)) isDescribe = true;
+                    if (calleeName === 'xdescribe') isSkipped = true;
                     if (["it", "test"].includes(calleeName)) isTest = true;
                     if (["xit", "xtest"].includes(calleeName)) {
                         isTest = true;
@@ -109,17 +111,18 @@ export const parseExistingTestAst = (testCode = "", filePath = "") => {
                     const propName = node.callee.property?.name;
                     if (objName === "describe") {
                         isDescribe = true;
-                        if (propName === "skip") isSkipped = true;
+                        if (['skip','todo'].includes(propName)) isSkipped = true;
                     }
                     if (["it", "test"].includes(objName)) {
                         isTest = true;
-                        if (propName === "skip") isSkipped = true;
+                        if (['skip','todo'].includes(propName)) isSkipped = true;
                     }
                 }
 
                 if (isDescribe) {
                     const title = extractStringVal(node.arguments?.[0]) || "describe";
                     suiteStack.push(title);
+                    skippedSuiteStack.push(isSkipped);
                     if (!suites.includes(title)) suites.push(title);
 
                     const callback = node.arguments?.[1];
@@ -127,10 +130,12 @@ export const parseExistingTestAst = (testCode = "", filePath = "") => {
                         walk(callback);
                     }
                     suiteStack.pop();
+                    skippedSuiteStack.pop();
                     return;
                 }
 
                 if (isTest) {
+                    isSkipped = isSkipped || skippedSuiteStack.some(Boolean);
                     const title = extractStringVal(node.arguments?.[0]) || "test";
                     const fullTitle = [...suiteStack, title].join(" > ");
                     const assertionTypes = [];
@@ -201,6 +206,7 @@ export const parseExistingTestAst = (testCode = "", filePath = "") => {
                     tests.push({
                         title,
                         fullTitle,
+                        runnerTitle: [...suiteStack,title].join(' '),
                         suite: suiteStack.join(" > "),
                         category,
                         assertionTypes: Array.from(new Set(assertionTypes)),
@@ -292,6 +298,48 @@ export const sanitizeTableCell = (val) => {
  * @param {string} [params.filePath] - Target file path
  * @returns {object} { matrixEntries, decisionTable, deltaDecisionTable, infeasibleSummaries, decisionTableMarkdown, deltaDecisionTableMarkdown, summary }
  */
+/**
+ * Synthesizes a valid multi-element collection fixture (>= 2 items)
+ * for functions accepting arrays or collections.
+ */
+export const synthesizeCollectionFixture = (paramName = "", paramContract = null, sourceCode = "") => {
+    const safeParam = String(paramName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const isCollection = Boolean(
+        paramContract?.kind === "array" ||
+        paramContract?.element ||
+        /history|items|list|rows|records|turns|messages|data|collection|entries|elements|tokens/i.test(paramName) ||
+        (sourceCode && new RegExp(`Array\\.isArray\\(\\s*${safeParam}\\s*\\)|for\\s*\\(\\s*(?:const|let|var)\\s+\\w+\\s+of\\s+${safeParam}\\s*\\)|${safeParam}\\.map\\(|${safeParam}\\.filter\\(|${safeParam}\\.length`, "i").test(sourceCode))
+    );
+
+    if (!isCollection) return null;
+
+    // Chat history / turn sequence specialization
+    if (/history|turn|message|dialogue/i.test(paramName) || /role|assistant|user|model/i.test(sourceCode)) {
+        return [
+            { role: "user", content: "Hello assistant", text: "Hello assistant" },
+            { role: "model", content: "Hello! How can I help you today?", text: "Hello! How can I help you today?" }
+        ];
+    }
+
+    // Generic collection with inferred element fields or standard properties
+    if (paramContract?.element?.fields) {
+        const fields = paramContract.element.fields;
+        const item1 = {};
+        const item2 = {};
+        for (const [key, prop] of Object.entries(fields)) {
+            item1[key] = prop.kind === "number" ? 100 : (prop.kind === "boolean" ? true : `sample_${key}_1`);
+            item2[key] = prop.kind === "number" ? 200 : (prop.kind === "boolean" ? false : `sample_${key}_2`);
+        }
+        return [item1, item2];
+    }
+
+    // Default 2-item valid collection
+    return [
+        { id: 1, name: "Item Alpha", status: "active", value: 100 },
+        { id: 2, name: "Item Beta", status: "pending", value: 200 }
+    ];
+};
+
 export const buildDecisionTableMatrix = ({
     astMetadata = null,
     coverageGaps = null,
@@ -375,16 +423,42 @@ export const buildDecisionTableMatrix = ({
 
     let counter = 1;
 
-    // --- CATEGORY A: HAPPY PATH (Standard Valid Flow) ---
+    // --- CATEGORY A: HAPPY PATH (Standard Valid Flow & Core Logic Path Traversal) ---
     for (const exp of exportedSymbols) {
         if (exp.type === "constant") continue;
         const isFnUncovered = uncoveredFunctions.some(uf => uf.name === exp.name);
+
+        // Check if function parameter expects a collection
+        const firstParam = (exp.params && exp.params[0]) || "input";
+        const collectionFixture = synthesizeCollectionFixture(firstParam, null, sourceCode);
+        const fixtureStr = collectionFixture ? JSON.stringify(collectionFixture) : null;
+
+        // Check if core lines (beyond initial guards) are uncovered
+        const fnStart = exp.startLine || exp.line || 1;
+        const fnEnd = exp.endLine || (fnStart + 30);
+        const fnTotalLines = Math.max(1, fnEnd - fnStart + 1);
+        const fnUncoveredLines = (coverageGaps?.uncoveredLines || []).filter(line => line >= fnStart && line <= fnEnd);
+        const hasUncoveredCoreLogic = Boolean(collectionFixture && fnUncoveredLines.length >= 6 && (fnUncoveredLines.length / fnTotalLines) > 0.4);
+
         const hasExistingHappyTest = existingTests.some(t =>
             !t.isSkipped &&
             t.category === "HAPPY_PATH" &&
             (t.targetFunction === exp.name || (t.calledFunctions && t.calledFunctions.includes(exp.name)) || t.fullTitle.toLowerCase().includes(exp.name.toLowerCase()))
         );
-        const isAlreadyTested = Boolean(hasExistingHappyTest);
+        // If collection function core logic lines are overwhelmingly uncovered, existing test only hit guard clause!
+        const isAlreadyTested = Boolean(hasExistingHappyTest && !hasUncoveredCoreLogic);
+
+        const happyCondition = collectionFixture
+            ? `Valid multi-element collection with complete item schema traversing past early-return guards`
+            : `Standard valid arguments & expected state`;
+
+        const happyInputScenario = collectionFixture
+            ? `MANDATORY: Pass a non-empty, fully populated array with >= 2 items: ${fixtureStr}. NEVER pass [] or {}.`
+            : `Provide valid payload with all standard required and optional fields`;
+
+        const happyExpected = collectionFixture
+            ? `Bypasses early-return guards and executes complete core business logic loops/transformations, returning populated result`
+            : `Executes cleanly, returns expected result or resolves successful promise`;
 
         matrixEntries.push({
             id: `TC-HAPPY-${String(counter++).padStart(2, "0")}`,
@@ -393,15 +467,42 @@ export const buildDecisionTableMatrix = ({
             targetFunction: exp.name,
             functionName: exp.name,
             targetLine: exp.line || 1,
-            condition: "Standard valid arguments & expected state",
-            scenario: "Standard valid arguments & expected state",
-            inputScenario: "Provide valid payload with all standard required and optional fields",
-            expectedBehavior: "Executes cleanly, returns expected result or resolves successful promise",
-            isCovered: !isFnUncovered,
+            condition: happyCondition,
+            scenario: happyCondition,
+            inputScenario: happyInputScenario,
+            expectedBehavior: happyExpected,
+            isCovered: !isFnUncovered && !hasUncoveredCoreLogic,
             isAlreadyTested,
             isInfeasible: false,
-            priority: isAlreadyTested ? "LOW" : (isFnUncovered ? "HIGH" : "NORMAL")
+            priority: isAlreadyTested ? "LOW" : ((isFnUncovered || hasUncoveredCoreLogic) ? "HIGH" : "NORMAL")
         });
+
+        // If collection processes multi-turn/merging/filtering, add sequential Happy Path scenario
+        if (collectionFixture && /merge|shift|pop|assistant|consecutive/i.test(sourceCode)) {
+            const sequentialFixture = [
+                { role: "model", content: "Greeting" },
+                { role: "user", content: "First query" },
+                { role: "assistant", content: "First answer" },
+                { role: "model", content: "Continued answer" },
+                { role: "user", content: "Trailing prompt" }
+            ];
+            matrixEntries.push({
+                id: `TC-HAPPY-${String(counter++).padStart(2, "0")}`,
+                category: "HAPPY_PATH",
+                categoryName: "A. Happy Path",
+                targetFunction: exp.name,
+                functionName: exp.name,
+                targetLine: exp.line || 1,
+                condition: "Multi-item sequence: role conversion, consecutive turn merging, and boundary trimming",
+                scenario: "Pass multi-item sequence with consecutive roles and transformable items",
+                inputScenario: `Pass multi-item array: ${JSON.stringify(sequentialFixture)} to execute role conversion, merging, and trimming loops`,
+                expectedBehavior: "Converts assistant to model, merges consecutive same-role turns, ensures start with user and end with model",
+                isCovered: false,
+                isAlreadyTested: false,
+                isInfeasible: false,
+                priority: "HIGH"
+            });
+        }
 
         // Deep member method iteration for classes, class-instances, and object dictionaries (Rule 8)
         const memberMethods = Array.isArray(exp.methods) && exp.methods.length > 0
@@ -503,7 +604,7 @@ export const buildDecisionTableMatrix = ({
             targetLine: exp.line || 1,
             condition: "Empty collections & empty string: [], \"\", {}",
             scenario: "Empty collections & empty string: [], \"\", {}",
-            inputScenario: "Pass empty array [], empty string \"\", or empty object {}",
+            inputScenario: "Pass empty array [], empty string \"\", or empty object {} to verify early-return boundary guard handles empty state without throw. (DO NOT use empty collection for Category A or for testing downstream branches!)",
             expectedBehavior: "Handles empty inputs without throwing unhandled TypeError/crash",
             isCovered: false,
             isAlreadyTested: Boolean(hasExistingB2),
@@ -611,6 +712,15 @@ export const buildDecisionTableMatrix = ({
             );
             const isTrueAlreadyTested = hasExistingBranchTrue && !missedTrue;
 
+            const matchedExp = exportedSymbols.find(e => e.name === targetFn);
+            const isInternalBranch = dp.line > ((matchedExp?.startLine || matchedExp?.line || 1) + 4);
+            const trueInputScenario = isInternalBranch
+                ? "Provide valid outer collection/payload satisfying all preceding guards, with target item property configured so condition is truthy"
+                : "Inputs satisfying condition as truthy";
+            const falseInputScenario = isInternalBranch
+                ? "Provide valid outer collection/payload satisfying all preceding guards, with target item property configured so condition is falsy"
+                : "Inputs evaluating condition to falsy / null / undefined";
+
             matrixEntries.push({
                 id: `TC-BRANCH-${String(counter++).padStart(2, "0")}`,
                 category: "BRANCH_TOGGLING",
@@ -620,7 +730,7 @@ export const buildDecisionTableMatrix = ({
                 targetLine: dp.line,
                 condition: `[TRUE] ${dp.text}`,
                 scenario: `[TRUE] ${dp.text}`,
-                inputScenario: "Inputs satisfying condition as truthy",
+                inputScenario: trueInputScenario,
                 expectedBehavior: "Executes consequent branch block",
                 isCovered: !missedTrue,
                 isAlreadyTested: isTrueAlreadyTested,
@@ -663,7 +773,7 @@ export const buildDecisionTableMatrix = ({
                 targetLine: dp.line,
                 condition: `[FALSE] ${dp.text}`,
                 scenario: `[FALSE] ${dp.text}`,
-                inputScenario: "Inputs evaluating condition to falsy / null / undefined",
+                inputScenario: falseInputScenario,
                 expectedBehavior: "Executes alternate branch or falls through",
                 isCovered: !missedFalse,
                 isAlreadyTested: isFalseAlreadyTested,
@@ -672,6 +782,11 @@ export const buildDecisionTableMatrix = ({
                 priority: isFalseInfeasible || isFalseAlreadyTested ? "LOW" : (missedFalse ? "HIGH" : "NORMAL")
             });
         } else if (dp.type.startsWith("logical") || dp.type.startsWith("optional-chaining")) {
+            const matchedExp = exportedSymbols.find(e => e.name === targetFn);
+            const isInternalFallback = dp.line > ((matchedExp?.startLine || matchedExp?.line || 1) + 4);
+            const fallbackInputScenario = isInternalFallback
+                ? "Provide valid outer collection/payload satisfying preceding guards, configuring target property as null / undefined to trigger fallback"
+                : "Pass null / undefined / false to trigger fallback expression";
             const hasExistingFallback = existingTests.some(t =>
                 !t.isSkipped &&
                 (t.targetFunction === targetFn || (t.calledFunctions && t.calledFunctions.includes(targetFn)) || t.fullTitle.toLowerCase().includes(targetFn.toLowerCase())) &&
@@ -687,7 +802,7 @@ export const buildDecisionTableMatrix = ({
                 targetLine: dp.line,
                 condition: `Nullish / Falsy fallback: ${dp.text}`,
                 scenario: `Nullish / Falsy fallback: ${dp.text}`,
-                inputScenario: "Pass null / undefined / false to trigger fallback expression",
+                inputScenario: fallbackInputScenario,
                 expectedBehavior: "Default fallback value is returned or executed",
                 isCovered: !isUncovered,
                 isAlreadyTested,
@@ -1178,56 +1293,249 @@ export const buildIsolationMockContracts = ({
     let prismaMockCode = "";
     if (usesPrisma) {
         detectedDependencies.push("prisma-db");
-        prismaMockCode = `// 2. Universal Prisma Proxy Mock (Resolves all models, queries, and transactions)\n` +
-            `const _createPrismaProxyMock = () => {\n` +
-            `  const _mockFn = () => (${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve({ id: 1, name: 'Sample Item', status: 'ACTIVE', title: 'Sample', email: 'test@example.com', createdAt: new Date(), updatedAt: new Date() })));\n` +
-            `  const _createModelProxy = () => new Proxy({}, {\n` +
-            `    get: (target, prop) => {\n` +
-            `      if (prop === 'then') return undefined;\n` +
-            `      if (!target[prop]) {\n` +
-            `        if (prop === 'findMany' || prop === 'findRaw') {\n` +
-            `          target[prop] = ${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve([{ id: 1, name: 'Sample', status: 'ACTIVE', title: 'Sample' }]));\n` +
-            `        } else if (prop === 'count') {\n` +
-            `          target[prop] = ${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve(1));\n` +
-            `        } else {\n` +
-            `          target[prop] = _mockFn();\n` +
-            `        }\n` +
-            `      }\n` +
-            `      return target[prop];\n` +
-            `    }\n` +
-            `  });\n` +
-            `  let _clientProxy;\n` +
-            `  _clientProxy = new Proxy({\n` +
-            `    $transaction: ${isVitest ? "vi.fn" : "jest.fn"}((args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(_clientProxy) : Promise.resolve())),\n` +
-            `    $queryRaw: ${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve([])),\n` +
-            `    $executeRaw: ${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve(1)),\n` +
-            `    $connect: ${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve()),\n` +
-            `    $disconnect: ${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve())\n` +
-            `  }, {\n` +
-            `    get: (target, prop) => (prop in target ? target[prop] : (!target[prop] ? target[prop] = _createModelProxy() : target[prop]))\n` +
-            `  });\n` +
-            `  return _clientProxy;\n` +
-            `};\n` +
-            `var mockPrisma = globalThis.__mockPrisma = _createPrismaProxyMock();\n` +
-            (isVitest
-                ? `vi.mock('@prisma/client', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { PrismaClient: vi.fn(() => p), default: { PrismaClient: vi.fn(() => p) } }; });\n\n`
-                : `jest.mock('@prisma/client', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { PrismaClient: jest.fn(() => p), default: { PrismaClient: jest.fn(() => p) } }; }, { virtual: true });\n` +
-                  `jest.mock('../lib/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../lib/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../src/lib/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../src/lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../src/lib/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../src/lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../config/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../config/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../src/config/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../src/config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../src/config/prisma', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n` +
-                  `jest.mock('../../src/config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; }, { virtual: true });\n\n`);
+        if (isVitest) {
+            prismaMockCode = `// 2. Universal Prisma Proxy Mock (Universal In-Memory Prisma Client Mock for Vitest, Prisma v7 Compatible)\n` +
+                `const { mockPrismaClientInstance } = vi.hoisted(() => {\n` +
+                `  const defaultData = { id: 1, name: 'Sample', status: 'ACTIVE', email: 'sample@example.com', createdAt: new Date(), updatedAt: new Date() };\n` +
+                `  const _createModelMock = () => {\n` +
+                `    const baseModel = {\n` +
+                `      findUnique: vi.fn().mockResolvedValue(defaultData),\n` +
+                `      findFirst: vi.fn().mockResolvedValue(defaultData),\n` +
+                `      findMany: vi.fn().mockResolvedValue([defaultData]),\n` +
+                `      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n` +
+                `      createMany: vi.fn().mockResolvedValue({ count: 1 }),\n` +
+                `      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n` +
+                `      updateMany: vi.fn().mockResolvedValue({ count: 1 }),\n` +
+                `      upsert: vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.create || args?.update || {}) })),\n` +
+                `      delete: vi.fn().mockResolvedValue({ id: 1 }),\n` +
+                `      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),\n` +
+                `      count: vi.fn().mockResolvedValue(1),\n` +
+                `      aggregate: vi.fn().mockResolvedValue({ _count: 1, _sum: {}, _avg: {}, _min: {}, _max: {} }),\n` +
+                `      groupBy: vi.fn().mockResolvedValue([])\n` +
+                `    };\n` +
+                `    return new Proxy(baseModel, {\n` +
+                `      get(target, prop) {\n` +
+                `        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `        if (prop in target) return target[prop];\n` +
+                `        if (typeof prop === 'string') {\n` +
+                `          if (prop.includes('OrThrow') || prop.startsWith('findUnique') || prop.startsWith('findFirst')) {\n` +
+                `            target[prop] = vi.fn().mockResolvedValue(defaultData);\n` +
+                `          } else if (prop.startsWith('find') || prop.includes('Many') || prop.includes('Return')) {\n` +
+                `            target[prop] = vi.fn().mockResolvedValue([defaultData]);\n` +
+                `          } else if (prop.startsWith('count')) {\n` +
+                `            target[prop] = vi.fn().mockResolvedValue(1);\n` +
+                `          } else if (prop.startsWith('create') || prop.startsWith('update') || prop.startsWith('upsert') || prop.startsWith('delete')) {\n` +
+                `            target[prop] = vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || args?.create || args?.update || {}) }));\n` +
+                `          } else {\n` +
+                `            target[prop] = vi.fn().mockResolvedValue(defaultData);\n` +
+                `          }\n` +
+                `          return target[prop];\n` +
+                `        }\n` +
+                `        return undefined;\n` +
+                `      }\n` +
+                `    });\n` +
+                `  };\n` +
+                `  const _createPrismaProxyMock = () => {\n` +
+                `    const models = new Map();\n` +
+                `    let clientProxy;\n` +
+                `    clientProxy = new Proxy({\n` +
+                `      $connect: vi.fn().mockResolvedValue(undefined),\n` +
+                `      $disconnect: vi.fn().mockResolvedValue(undefined),\n` +
+                `      $transaction: vi.fn(async (args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(clientProxy) : Promise.resolve())),\n` +
+                `      $queryRaw: vi.fn().mockResolvedValue([]),\n` +
+                `      $queryRawUnsafe: vi.fn().mockResolvedValue([]),\n` +
+                `      $executeRaw: vi.fn().mockResolvedValue(1),\n` +
+                `      $executeRawUnsafe: vi.fn().mockResolvedValue(1),\n` +
+                `      $extends: vi.fn().mockReturnThis()\n` +
+                `    }, {\n` +
+                `      get(target, prop) {\n` +
+                `        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `        if (prop in target) return target[prop];\n` +
+                `        if (!models.has(prop)) models.set(prop, _createModelMock());\n` +
+                `        return models.get(prop);\n` +
+                `      }\n` +
+                `    });\n` +
+                `    return clientProxy;\n` +
+                `  };\n` +
+                `  const _createClientMock = _createPrismaProxyMock;\n` +
+                `  const clientProxy = _createPrismaProxyMock();\n` +
+                `  if (typeof globalThis !== 'undefined') {\n` +
+                `    globalThis.__mockPrisma = clientProxy;\n` +
+                `  }\n` +
+                `  return { mockPrismaClientInstance: clientProxy };\n` +
+                `});\n\n` +
+                `vi.mock('@prisma/client', () => ({\n` +
+                `  PrismaClient: vi.fn(() => mockPrismaClientInstance),\n` +
+                `  default: { PrismaClient: vi.fn(() => mockPrismaClientInstance) }\n` +
+                `}));\n` +
+                [
+                    "../lib/prisma", "../lib/prisma.js",
+                    "../../lib/prisma", "../../lib/prisma.js",
+                    "../src/lib/prisma", "../src/lib/prisma.js",
+                    "../../src/lib/prisma", "../../src/lib/prisma.js",
+                    "../config/prisma", "../config/prisma.js",
+                    "../../config/prisma", "../../config/prisma.js",
+                    "../src/config/prisma", "../src/config/prisma.js",
+                    "../../src/config/prisma", "../../src/config/prisma.js",
+                    "@/lib/prisma", "@/lib/prisma.js",
+                    "@/config/prisma", "@/config/prisma.js"
+                ].map(p => `vi.mock('${p}', () => ({ __esModule: true, prisma: mockPrismaClientInstance, default: mockPrismaClientInstance }));`).join("\n") + "\n\n";
+        } else {
+            prismaMockCode = `// 2. Universal Prisma Proxy Mock (Universal In-Memory Prisma Client Mock for Jest, Prisma v7 Compatible)\n` +
+                `jest.mock('@prisma/client', () => {\n` +
+                `  const defaultData = { id: 1, name: 'Sample', status: 'ACTIVE', email: 'sample@example.com', createdAt: new Date(), updatedAt: new Date() };\n` +
+                `  const _createModelMock = () => {\n` +
+                `    const baseModel = {\n` +
+                `      findUnique: jest.fn().mockResolvedValue(defaultData),\n` +
+                `      findFirst: jest.fn().mockResolvedValue(defaultData),\n` +
+                `      findMany: jest.fn().mockResolvedValue([defaultData]),\n` +
+                `      create: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n` +
+                `      createMany: jest.fn().mockResolvedValue({ count: 1 }),\n` +
+                `      update: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n` +
+                `      updateMany: jest.fn().mockResolvedValue({ count: 1 }),\n` +
+                `      upsert: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.create || args?.update || {}) })),\n` +
+                `      delete: jest.fn().mockResolvedValue({ id: 1 }),\n` +
+                `      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),\n` +
+                `      count: jest.fn().mockResolvedValue(1),\n` +
+                `      aggregate: jest.fn().mockResolvedValue({ _count: 1, _sum: {}, _avg: {}, _min: {}, _max: {} }),\n` +
+                `      groupBy: jest.fn().mockResolvedValue([])\n` +
+                `    };\n` +
+                `    return new Proxy(baseModel, {\n` +
+                `      get(target, prop) {\n` +
+                `        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `        if (prop in target) return target[prop];\n` +
+                `        if (typeof prop === 'string') {\n` +
+                `          if (prop.includes('OrThrow') || prop.startsWith('findUnique') || prop.startsWith('findFirst')) {\n` +
+                `            target[prop] = jest.fn().mockResolvedValue(defaultData);\n` +
+                `          } else if (prop.startsWith('find') || prop.includes('Many') || prop.includes('Return')) {\n` +
+                `            target[prop] = jest.fn().mockResolvedValue([defaultData]);\n` +
+                `          } else if (prop.startsWith('count')) {\n` +
+                `            target[prop] = jest.fn().mockResolvedValue(1);\n` +
+                `          } else if (prop.startsWith('create') || prop.startsWith('update') || prop.startsWith('upsert') || prop.startsWith('delete')) {\n` +
+                `            target[prop] = jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || args?.create || args?.update || {}) }));\n` +
+                `          } else {\n` +
+                `            target[prop] = jest.fn().mockResolvedValue(defaultData);\n` +
+                `          }\n` +
+                `          return target[prop];\n` +
+                `        }\n` +
+                `        return undefined;\n` +
+                `      }\n` +
+                `    });\n` +
+                `  };\n\n` +
+                `  const _createPrismaProxyMock = () => {\n` +
+                `    const models = new Map();\n` +
+                `    let clientProxy;\n` +
+                `    clientProxy = new Proxy({\n` +
+                `      $connect: jest.fn().mockResolvedValue(undefined),\n` +
+                `      $disconnect: jest.fn().mockResolvedValue(undefined),\n` +
+                `      $transaction: jest.fn(async (args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(clientProxy) : Promise.resolve())),\n` +
+                `      $queryRaw: jest.fn().mockResolvedValue([]),\n` +
+                `      $queryRawUnsafe: jest.fn().mockResolvedValue([]),\n` +
+                `      $executeRaw: jest.fn().mockResolvedValue(1),\n` +
+                `      $executeRawUnsafe: jest.fn().mockResolvedValue(1),\n` +
+                `      $extends: jest.fn().mockReturnThis()\n` +
+                `    }, {\n` +
+                `      get(target, prop) {\n` +
+                `        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `        if (prop in target) return target[prop];\n` +
+                `        if (!models.has(prop)) models.set(prop, _createModelMock());\n` +
+                `        return models.get(prop);\n` +
+                `      }\n` +
+                `    });\n` +
+                `    return clientProxy;\n` +
+                `  };\n` +
+                `  const _createClientMock = _createPrismaProxyMock;\n\n` +
+                `  const sharedMock = (typeof globalThis !== 'undefined' && globalThis.__mockPrisma) || _createPrismaProxyMock();\n` +
+                `  if (typeof globalThis !== 'undefined') {\n` +
+                `    globalThis.__mockPrisma = sharedMock;\n` +
+                `  }\n` +
+                `  return {\n` +
+                `    __esModule: true,\n` +
+                `    PrismaClient: jest.fn().mockImplementation(() => sharedMock),\n` +
+                `    default: { PrismaClient: jest.fn().mockImplementation(() => sharedMock) }\n` +
+                `  };\n` +
+                `}, { virtual: true });\n` +
+                [
+                    "../lib/prisma", "../lib/prisma.js",
+                    "../../lib/prisma", "../../lib/prisma.js",
+                    "../src/lib/prisma", "../src/lib/prisma.js",
+                    "../../src/lib/prisma", "../../src/lib/prisma.js",
+                    "../config/prisma", "../config/prisma.js",
+                    "../../config/prisma", "../../config/prisma.js",
+                    "../src/config/prisma", "../src/config/prisma.js",
+                    "../../src/config/prisma", "../../src/config/prisma.js",
+                    "@/lib/prisma", "@/lib/prisma.js",
+                    "@/config/prisma", "@/config/prisma.js"
+                ].map(p =>
+                    `jest.mock('${p}', () => {\n` +
+                    `  const getPrisma = () => {\n` +
+                    `    if (typeof globalThis !== 'undefined' && globalThis.__mockPrisma) return globalThis.__mockPrisma;\n` +
+                    `    const defaultData = { id: 1, name: 'Sample', status: 'ACTIVE', email: 'sample@example.com', createdAt: new Date(), updatedAt: new Date() };\n` +
+                    `    const _createModel = () => {\n` +
+                    `      const base = {\n` +
+                    `        findUnique: jest.fn().mockResolvedValue(defaultData),\n` +
+                    `        findFirst: jest.fn().mockResolvedValue(defaultData),\n` +
+                    `        findMany: jest.fn().mockResolvedValue([defaultData]),\n` +
+                    `        create: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n` +
+                    `        createMany: jest.fn().mockResolvedValue({ count: 1 }),\n` +
+                    `        update: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || {}) })),\n` +
+                    `        updateMany: jest.fn().mockResolvedValue({ count: 1 }),\n` +
+                    `        upsert: jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.create || args?.update || {}) })),\n` +
+                    `        delete: jest.fn().mockResolvedValue({ id: 1 }),\n` +
+                    `        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),\n` +
+                    `        count: jest.fn().mockResolvedValue(1),\n` +
+                    `        aggregate: jest.fn().mockResolvedValue({ _count: 1, _sum: {}, _avg: {}, _min: {}, _max: {} }),\n` +
+                    `        groupBy: jest.fn().mockResolvedValue([])\n` +
+                    `      };\n` +
+                    `      return new Proxy(base, {\n` +
+                    `        get(t, prop) {\n` +
+                    `          if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                    `          if (prop in t) return t[prop];\n` +
+                    `          if (typeof prop === 'string') {\n` +
+                    `            if (prop.includes('OrThrow') || prop.startsWith('findUnique') || prop.startsWith('findFirst')) t[prop] = jest.fn().mockResolvedValue(defaultData);\n` +
+                    `            else if (prop.startsWith('find') || prop.includes('Many') || prop.includes('Return')) t[prop] = jest.fn().mockResolvedValue([defaultData]);\n` +
+                    `            else if (prop.startsWith('count')) t[prop] = jest.fn().mockResolvedValue(1);\n` +
+                    `            else if (prop.startsWith('create') || prop.startsWith('update') || prop.startsWith('upsert') || prop.startsWith('delete')) t[prop] = jest.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...(args?.data || args?.create || args?.update || {}) }));\n` +
+                    `            else t[prop] = jest.fn().mockResolvedValue(defaultData);\n` +
+                    `            return t[prop];\n` +
+                    `          }\n` +
+                    `          return undefined;\n` +
+                    `        }\n` +
+                    `      });\n` +
+                    `    };\n` +
+                    `    const models = new Map();\n` +
+                    `    let clientProxy;\n` +
+                    `    clientProxy = new Proxy({\n` +
+                    `      $connect: jest.fn().mockResolvedValue(undefined),\n` +
+                    `      $disconnect: jest.fn().mockResolvedValue(undefined),\n` +
+                    `      $transaction: jest.fn(async (args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(clientProxy) : Promise.resolve())),\n` +
+                    `      $queryRaw: jest.fn().mockResolvedValue([]),\n` +
+                    `      $queryRawUnsafe: jest.fn().mockResolvedValue([]),\n` +
+                    `      $executeRaw: jest.fn().mockResolvedValue(1),\n` +
+                    `      $executeRawUnsafe: jest.fn().mockResolvedValue(1),\n` +
+                    `      $extends: jest.fn().mockReturnThis()\n` +
+                    `    }, {\n` +
+                    `      get(target, prop) {\n` +
+                    `        if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                    `        if (prop in target) return target[prop];\n` +
+                    `        if (!models.has(prop)) models.set(prop, _createModel());\n` +
+                    `        return models.get(prop);\n` +
+                    `      }\n` +
+                    `    });\n` +
+                    `    if (typeof globalThis !== 'undefined') globalThis.__mockPrisma = clientProxy;\n` +
+                    `    return clientProxy;\n` +
+                    `  };\n` +
+                    `  const p = new Proxy({}, {\n` +
+                    `    get: (target, prop) => {\n` +
+                    `      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                    `      const client = getPrisma();\n` +
+                    `      return client[prop];\n` +
+                    `    }\n` +
+                    `  });\n` +
+                    `  return { __esModule: true, prisma: p, default: p };\n` +
+                    `}, { virtual: true });`
+                ).join("\n") + "\n\n";
+        }
     }
 
     // 2.1. Detect Mongoose / Mongo
@@ -1433,19 +1741,31 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         detectedDependencies.push("express-controller");
         controllerMockCode = `// 5. Express Controller Mock Generator (Provides chained res methods & rich req fields)\n` +
             `const createMockReqResNext = (overrides = {}) => {\n` +
+            `  const safeBody = (overrides && overrides.body !== undefined && overrides.body !== null)\n` +
+            `    ? overrides.body\n` +
+            `    : ((overrides && overrides.req && overrides.req.body !== undefined && overrides.req.body !== null) ? overrides.req.body : {});\n` +
             `  const req = {\n` +
-            `    body: { ...overrides.body },\n` +
-            `    query: { page: '1', limit: '10', ...overrides.query },\n` +
-            `    params: { id: '1', ...overrides.params },\n` +
-            `    headers: { authorization: 'Bearer test-token', ...overrides.headers },\n` +
-            `    user: { id: 1, role: 'admin', email: 'admin@example.com', ...overrides.user },\n` +
-            `    file: overrides.file || null\n` +
+            `    body: { items: [], ...safeBody }, // body: { ...overrides.body }\n` +
+            `    query: { page: '1', limit: '10', ...(overrides?.query || overrides?.req?.query || {}) },\n` +
+            `    params: { id: '1', ...(overrides?.params || overrides?.req?.params || {}) },\n` +
+            `    headers: { authorization: 'Bearer test-token', ...(overrides?.headers || overrides?.req?.headers || {}) },\n` +
+            `    cookies: { ...(overrides?.cookies || overrides?.req?.cookies || {}) },\n` +
+            `    user: { id: 1, role: 'admin', email: 'admin@example.com', ...(overrides?.user || overrides?.req?.user || {}) },\n` +
+            `    file: overrides?.file || overrides?.req?.file || null,\n` +
+            `    files: overrides?.files || overrides?.req?.files || [],\n` +
+            `    get: (header) => (overrides?.headers?.[header.toLowerCase()] || overrides?.req?.headers?.[header.toLowerCase()] || '')\n` +
             `  };\n` +
             `  const res = {\n` +
-            `    json: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
             `    status: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
+            `    json: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
             `    send: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
-            `    setHeader: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}\n` +
+            `    sendStatus: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
+            `    cookie: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
+            `    clearCookie: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
+            `    redirect: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
+            `    setHeader: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
+            `    write: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"},\n` +
+            `    end: ${isVitest ? "vi.fn().mockReturnThis()" : "jest.fn().mockReturnThis()"}\n` +
             `  };\n` +
             `  const next = ${isVitest ? "vi.fn()" : "jest.fn()"};\n` +
             `  return { req, res, next };\n` +
@@ -1640,7 +1960,8 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
     // 8. Detect Downstream Local Services & Models (Pure RAM Isolation)
     const localRequires = [...new Set([...sourceCode.matchAll(/(?:require\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"])/g)].map(m => m[1] || m[2]))]
         .filter(reqPath => !/(?:\/types\/|\.d\.ts$|definition)/i.test(reqPath))
-        .filter(reqPath => !/(?:utils?\/|helpers?\/|validators?\/|formatters?\/|math|evaluator|presets?\/|constants?\/|locales?\/|fixtures?\/|types?\/|schemas?\/|data\/|tier\d+)/i.test(reqPath));
+        .filter(reqPath => !/(?:^|[\\/])(?:utils?|helpers?|validators?|formatters?|math|evaluator|presets?|constants?|locales?|fixtures?|types?|schemas?|data|tier\d+)(?:[\\/]|$|\.|$)/i.test(reqPath))
+        .filter(reqPath => !usesPrisma || !/prisma/i.test(reqPath));
     let localServicesMockCode = "";
     if (localRequires.length > 0) {
         detectedDependencies.push("downstream-local-services");
@@ -1678,26 +1999,6 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
                 `    apply: () => Promise.resolve({ id: 1, name: 'Sample Item' })\n` +
                 `  };\n` +
                 `  const universalStub = new Proxy({}, handler);\n` +
-                `  try {\n` +
-                `    const { createRequire } = require('module');\n` +
-                `    const req = createRequire(process.cwd());\n` +
-                `    const Module = req('module');\n` +
-                `    const origLoad = Module._load;\n` +
-                `    Module._load = function(request, parent, isMain) {\n` +
-                `      if (request === 'bcrypt' || request === 'bcryptjs') {\n` +
-                `        return { hash: vi.fn(() => Promise.resolve('$2b$10$mockHashedPassword1234567890')), compare: vi.fn(() => Promise.resolve(true)), genSalt: vi.fn(() => Promise.resolve('$2b$10$salt')) };\n` +
-                `      }\n` +
-                `      if (request === 'mongoose') {\n` +
-                `        const _q = { populate: vi.fn().mockReturnThis(), sort: vi.fn().mockReturnThis(), select: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(), skip: vi.fn().mockReturnThis(), lean: vi.fn(() => Promise.resolve([{ id: 1, name: 'Sample' }])), exec: vi.fn(() => Promise.resolve([{ id: 1, name: 'Sample' }])) };\n` +
-                `        const _m = { find: vi.fn(() => _q), findOne: vi.fn(() => _q), findById: vi.fn(() => _q), findOneAndUpdate: vi.fn(() => _q), findByIdAndUpdate: vi.fn(() => _q), countDocuments: vi.fn(() => Promise.resolve(5)), create: vi.fn((d) => Promise.resolve({ id: 1, ...d })) };\n` +
-                `        return { Schema: class { static Types = { ObjectId: String }; index() {} pre() {} post() {} }, model: vi.fn(() => _m), connect: vi.fn(() => Promise.resolve()), connection: { on: vi.fn(), once: vi.fn() } };\n` +
-                `      }\n` +
-                `      if (request.includes('/models/') || request.includes('\\\\models\\\\') || request.endsWith('Product') || request.endsWith('User') || request.endsWith('Order') || request.endsWith('Category')) {\n` +
-                `        return universalStub;\n` +
-                `      }\n` +
-                `      return origLoad.apply(this, arguments);\n` +
-                `    };\n` +
-                `  } catch (_) {}\n` +
                 `  return {\n` +
                 `    mockCreateUniversalStub: () => universalStub,\n` +
                 `    setStubRejectMode: (mode) => { shouldReject = Boolean(mode); }\n` +
@@ -1806,7 +2107,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
     const mockInstructions = [
         "MANDATORY ISOLATION MOCK CONTRACTS:",
         "- All unit tests MUST execute purely in RAM without network, real database, or external processes.",
-        detectedDependencies.includes("prisma-db") ? "- Prisma DB: Re-use the Prisma Proxy Mock. Never connect to a real database." : null,
+        detectedDependencies.includes("prisma-db") ? "- Prisma DB: Re-use the Prisma Proxy Mock. Never connect to a real database. (Prisma DB: Re-use the self-contained in-memory Prisma Proxy Mock). Both '@prisma/client' and local database singletons ('../config/prisma', '../lib/prisma', etc.) MUST be mocked before any controller or service imports to prevent top-level 'new PrismaClient()' execution and PrismaClientInitializationError in Prisma v7 environments." : null,
         detectedDependencies.includes("mongoose-db") ? "- Mongoose DB: Mongoose models are mocked with in-memory proxy. Queries resolve mock documents without connecting to MongoDB." : null,
         detectedDependencies.includes("bcrypt-crypto") ? "- Password Hashing (Bcrypt): Bcrypt functions (hash, compare) are stubbed in RAM. Never run expensive native hashing in tests." : null,
         detectedDependencies.includes("sequelize-db") ? "- Sequelize DB: Sequelize models and queries are mocked in RAM. Queries resolve mock instances without DB connections." : null,
@@ -1836,7 +2137,10 @@ export const assembleUnitTestContext = ({
     sourceCode = "",
     coverageDetails = null,
     framework = "jest",
-    existingTestCode = ""
+    existingTestCode = "",
+    sourceFile = null,
+    targetTestFile = null,
+    rootDir = null
 }) => {
     // 1. Phase 1: AST Analysis & Coverage Gap Mapping
     const astMetadata = analyzeSourceAst(sourceCode);
@@ -1865,7 +2169,10 @@ export const assembleUnitTestContext = ({
     const mockContracts = buildIsolationMockContracts({
         sourceCode,
         existingTestCode,
-        framework
+        framework,
+        sourceFile,
+        targetTestFile,
+        rootDir
     });
 
     // 5. Build Engineered Context Prompt Block
@@ -1876,6 +2183,7 @@ export const assembleUnitTestContext = ({
         "",
         `### SECTION 2: ISOLATION MOCK CONTRACTS`,
         mockContracts.mockInstructions,
+        mockContracts.mockPreambleCode ? `\n#### MANDATORY ISOLATION MOCK PREAMBLE (MUST BE PLACED AT VERY TOP OF FILE BEFORE IMPORTS):\n\`\`\`javascript\n${mockContracts.mockPreambleCode.trim()}\n\`\`\`` : "",
         "",
         `### SECTION 3: MANDATORY DECISION TABLE TEST MATRIX & TARGETED DELTA (TARGETING >=90% TO 100% COVERAGE)`,
         `Total Test Scenarios Required: ${decisionTable.summary.totalTestCases} (Happy Path: ${decisionTable.summary.happyPathCount}, Boundary: ${decisionTable.summary.boundaryCount}, Branch: ${decisionTable.summary.branchTogglingCount}, Error: ${decisionTable.summary.errorHandlingCount})`,

@@ -12,7 +12,7 @@ import {
 import { saveJobOutput } from "./jobOutput.service.js";
 import { runVitestCoverage } from "./vitestRunner.service.js";
 import {prepareVitestOperationRoot} from "./projectVitestWorkspace.service.js";
-import { stagePreparedPublication,withOperationPublishGuard } from "./projectOperationWorkspace.service.js";
+import { stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
@@ -78,7 +78,7 @@ export const processVitestCoverageJob = async (jobId) => {
         }
 
         // 3. Parse global coverage summary
-        const summaryResult = await withOperationPublishGuard(()=>parseCoverageSummary(coverageDir, snapshotId));
+        const summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
 
         // 4. Parse test results
         const vitestResults = parseVitestResults(coverageDir);

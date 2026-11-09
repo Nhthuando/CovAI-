@@ -214,6 +214,26 @@ describe("findUnitFiles", () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
     });
+
+    it("strictly excludes root e2e directory and tier4-workloads.test.js from unit tests", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-e2e-filter-"));
+        try {
+            const e2eDir = path.join(tempDir, "e2e", "tests");
+            const unitDir = path.join(tempDir, "server", "tests");
+            fs.mkdirSync(e2eDir, { recursive: true });
+            fs.mkdirSync(unitDir, { recursive: true });
+
+            fs.writeFileSync(path.join(e2eDir, "tier4-workloads.test.js"), "const { test } = require('@playwright/test'); test('workload', () => {});");
+            fs.writeFileSync(path.join(unitDir, "sample.vitest.test.js"), "import { test, expect } from 'vitest'; test('math', () => expect(1+1).toBe(2));");
+
+            const result = findUnitFiles(tempDir);
+            expect(result.vitestFiles.some(f => f.includes("sample.vitest.test.js"))).toBe(true);
+            expect(result.jestFiles.some(f => f.includes("tier4-workloads.test.js"))).toBe(false);
+            expect(result.vitestFiles.some(f => f.includes("tier4-workloads.test.js"))).toBe(false);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe("findLogicSourceFiles & generateBaselineCoverage (projects with 0 tests)", () => {

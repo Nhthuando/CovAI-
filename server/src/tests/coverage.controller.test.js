@@ -108,6 +108,7 @@ jest.unstable_mockModule('../services/fileCoverage.service.js', () => ({
     cleanRelativePath: (rootDir, p) => p,
     matchesFilePath: (a, b) => true,
     findAssociatedTestFile: jest.fn(() => null),
+    findAllAssociatedTestFiles: jest.fn(() => ({ primaryTestFile: { found: false }, linkedTestFiles: [] })),
 }));
 
 const mockSuggestUnitTestcases = jest.fn();
@@ -117,6 +118,27 @@ jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     generateFallbackUnitTests: jest.fn(() => ({ suggestedTestCode: '', fullUpdatedContent: '' })),
     extractAstMetadata: jest.fn(() => ({ exportedSymbols: [], unexportedFunctions: [], decisionPoints: [] })),
     classifyFeasibleCoverage: jest.fn(() => ({ isFeasibleLogicCovered: false, actionableLines: [], actionableBranches: [], infeasibleBranches: [] })),
+}));
+
+export const mockSwitchUnitTestVersion = jest.fn();
+jest.unstable_mockModule('../services/unitTestVersion.service.js', () => ({
+    switchUnitTestVersion: mockSwitchUnitTestVersion,
+    getCommittedUnitTestVersions: jest.fn().mockResolvedValue({}),
+    getUnitTestVersions: jest.fn().mockReturnValue({}),
+    saveUnitTestFileVersions: jest.fn(),
+    saveVerifiedUnitTestBatch: jest.fn(),
+    clearManifestCache: jest.fn(),
+    loadManifest: jest.fn().mockReturnValue({ files: {}, batches: [] }),
+    persistManifest: jest.fn(),
+    persistVerifiedManifest: jest.fn(),
+    removeEmptyParentsRecursively: jest.fn(),
+    VERSIONS_DIR_NAME: ".covai_test_versions",
+    MANIFEST_FILE_NAME: "manifest.json",
+    MAX_VERSIONS_PER_FILE: 20,
+    hashContent: jest.fn(() => "mock-hash"),
+    resolveActualPath: jest.fn(p => p),
+    getVersionsDir: jest.fn(p => p),
+    normalizePathKey: jest.fn(p => p),
 }));
 
 const {
@@ -131,6 +153,9 @@ const {
     getTestExecution,
     runCoverageByType,
     classifyTestCategory,
+    resolveProjectRelativePath,
+    getNormalizedMatchKey,
+    switchUnitTestVersionController,
 } = await import('../controllers/coverage.controller.js');
 
 describe('coverage controller empty-state behavior', () => {
@@ -611,6 +636,139 @@ describe('coverage controller empty-state behavior', () => {
                     framework: 'playwright',
                     job: expect.objectContaining({ id: 'system-job-1', type: 'SYSTEM_TEST_ANALYSIS' })
                 })
+            }));
+        });
+    });
+
+    describe('Subproject path reconciliation helpers', () => {
+        test('getNormalizedMatchKey strips subproject prefixes and lowercases for match key', () => {
+            expect(getNormalizedMatchKey('server/src/controllers/chatController.js')).toBe('src/controllers/chatcontroller.js');
+            expect(getNormalizedMatchKey('backend/src/controllers/chatController.js')).toBe('src/controllers/chatcontroller.js');
+            expect(getNormalizedMatchKey('src/controllers/chatController.js')).toBe('src/controllers/chatcontroller.js');
+        });
+
+        test('resolveProjectRelativePath normalizes path and storage prefixes', () => {
+            expect(resolveProjectRelativePath('src/controllers/chatController.js')).toBe('src/controllers/chatController.js');
+            expect(resolveProjectRelativePath('/app/storage/projects/p1/repo/server/src/foo.js')).toBe('server/src/foo.js');
+        });
+    });
+
+    describe('switchUnitTestVersionController', () => {
+        test('successfully bulk reverts to Version 1 (Baseline) and returns targetVersion, message, and coverage', async () => {
+            mockSwitchUnitTestVersion.mockResolvedValueOnce({
+                success: true,
+                switchedCount: 2,
+                files: [
+                    { testFile: 'tests/auth.test.js', sourceFile: 'src/auth.js', switchedToVersion: 1 },
+                    { testFile: 'tests/payment.test.js', sourceFile: 'src/payment.js', switchedToVersion: 1 }
+                ],
+                targetVersion: 1,
+                activeBatchId: null
+            });
+
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+                id: 'snap-ver-1',
+                projectId: 'proj-1',
+                rootDir: '/tmp/repo',
+                project: { ownerId: 'user-1' }
+            });
+            prismaMock.coverageSummary.findUnique.mockResolvedValueOnce({
+                snapshotId: 'snap-ver-1',
+                stmtsPct: 65.0,
+                branchesPct: 55.0,
+                funcsPct: 70.0,
+                linesPct: 65.0
+            });
+
+            const req = {
+                user: { id: 'user-1' },
+                params: { snapshotId: 'snap-ver-1' },
+                body: {
+                    allFiles: true,
+                    targetVersion: 1,
+                    filePath: "" // Omitted or empty in bulk mode
+                }
+            };
+            const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+            await switchUnitTestVersionController(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(200);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: true,
+                targetVersion: 1,
+                message: expect.stringContaining("reverted all files to Version 1 (Baseline)"),
+                coverage: expect.objectContaining({
+                    statements: expect.objectContaining({ pct: 65.0 }),
+                    branches: expect.objectContaining({ pct: 55.0 }),
+                    functions: expect.objectContaining({ pct: 70.0 }),
+                    lines: expect.objectContaining({ pct: 65.0 })
+                }),
+                data: expect.objectContaining({
+                    targetVersion: 1
+                })
+            }));
+        });
+
+        test('returns 400 when neither filePath nor allFiles: true is provided', async () => {
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+                id: 'snap-ver-2',
+                projectId: 'proj-1',
+                rootDir: '/tmp/repo',
+                project: { ownerId: 'user-1' }
+            });
+
+            const req = {
+                user: { id: 'user-1' },
+                params: { snapshotId: 'snap-ver-2' },
+                body: {
+                    targetVersion: 1,
+                    allFiles: false,
+                    filePath: "   "
+                }
+            };
+            const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+            await switchUnitTestVersionController(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: false,
+                message: "Either filePath or allFiles: true is required."
+            }));
+        });
+
+        test('returns 422 when rollback verification fails', async () => {
+            mockSwitchUnitTestVersion.mockResolvedValueOnce({
+                success: false,
+                status: 'FAILED',
+                message: 'The target version failed verification; the active version is unchanged.',
+                targetVersion: 2
+            });
+
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+                id: 'snap-ver-3',
+                projectId: 'proj-1',
+                rootDir: '/tmp/repo',
+                project: { ownerId: 'user-1' }
+            });
+
+            const req = {
+                user: { id: 'user-1' },
+                params: { snapshotId: 'snap-ver-3' },
+                body: {
+                    allFiles: true,
+                    targetVersion: 2
+                }
+            };
+            const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+            await switchUnitTestVersionController(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(422);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+                success: false,
+                message: expect.stringContaining("failed verification")
             }));
         });
     });

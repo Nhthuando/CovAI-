@@ -37,6 +37,7 @@ import {
     cleanupWorkspaceNodeModulesLinks
 } from "./dependencyResolution.service.js";
 import { currentProjectOperation } from "./projectOperationWorkspace.service.js";
+import { resolveUnitTestDependency } from './unitTestPreflight.service.js';
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const JEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -270,6 +271,120 @@ export const readProjectJestConfig = async (repoRoot, explicitConfigPath = null)
         } catch { }
     }
     return {};
+};
+
+/**
+ * Pre-flight validation and filtering / auto-healing for Jest setupFiles and setupFilesAfterEnv.
+ * Normalizes array or string inputs, resolves <rootDir> and relative paths against baseDir,
+ * ignores bare npm package imports, and filters out missing files or generates stubs if autoStub is active.
+ *
+ * @param {string|string[]} setupList - Raw setupFiles or setupFilesAfterEnv value
+ * @param {string} baseDir - Target directory (subpackage or project directory)
+ * @param {Object} [options={}] - Options
+ * @param {string} [options.rootDir] - Workspace root directory (used for <rootDir> resolution if distinct from baseDir)
+ * @param {boolean} [options.autoStub=false] - Whether to create auto-healing stub files on disk
+ * @param {Set<string>} [options.createdHarnessFiles] - Optional set to track created stub files
+ * @returns {string[]} Sanitized list of valid or stubbed setup files
+ */
+export const filterExistingSetupFiles = (setupList, baseDir, options = {}) => {
+    if (!setupList) return [];
+    const entries = Array.isArray(setupList) ? setupList : (typeof setupList === "string" ? [setupList] : []);
+    if (!entries.length) return [];
+
+    const rootDir = options?.rootDir || baseDir;
+    const autoStub = options?.autoStub === true;
+    const createdHarnessFiles = options?.createdHarnessFiles;
+    const candidateExtensions = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"];
+    const result = [];
+
+    for (const rawEntry of entries) {
+        if (!rawEntry || typeof rawEntry !== "string") continue;
+        const entry = rawEntry.trim();
+        if (!entry) continue;
+
+        // Check if entry is a bare npm package import (e.g. '@testing-library/jest-dom', 'jest-extended')
+        const isBarePackage = !entry.startsWith(".") &&
+            !entry.startsWith("/") &&
+            !entry.startsWith("\\") &&
+            !entry.startsWith("<rootDir>") &&
+            !path.isAbsolute(entry) &&
+            !fs.existsSync(path.join(baseDir, entry.split("/")[0])) &&
+            !/^[^/]+\.[cm]?[jt]sx?$/.test(entry);
+
+        if (isBarePackage) {
+            result.push(entry);
+            continue;
+        }
+
+        // Resolve absolute path on disk
+        let absPath;
+        if (entry.startsWith("<rootDir>")) {
+            const rel = entry.replace(/^<rootDir>[/\\]?/, "");
+            absPath = path.resolve(baseDir, rel);
+        } else if (path.isAbsolute(entry)) {
+            absPath = entry;
+        } else {
+            absPath = path.resolve(baseDir, entry);
+        }
+
+        // Workspace boundary containment check
+        const relToRoot = path.relative(rootDir, absPath).replace(/\\/g, "/");
+        if (relToRoot.startsWith("..") || path.isAbsolute(relToRoot)) {
+            console.warn(`[filterExistingSetupFiles] Setup file '${entry}' resolves outside workspace root ('${absPath}'). Skipping.`);
+            continue;
+        }
+
+        // Check if file exists directly or with candidate extension
+        let found = false;
+        try {
+            if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+                found = true;
+            }
+        } catch { }
+
+        if (!found) {
+            for (const ext of candidateExtensions) {
+                const candidate = absPath + ext;
+                try {
+                    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                        found = true;
+                        break;
+                    }
+                } catch { }
+            }
+        }
+
+        if (found) {
+            result.push(entry);
+        } else if (autoStub) {
+            try {
+                const targetStubPath = path.extname(absPath) ? absPath : `${absPath}.js`;
+                const relStubToRoot = path.relative(rootDir, targetStubPath).replace(/\\/g, "/");
+                if (relStubToRoot.startsWith("..") || path.isAbsolute(relStubToRoot)) {
+                    console.warn(`[filterExistingSetupFiles] Target stub path '${targetStubPath}' escapes workspace root. Skipping.`);
+                    continue;
+                }
+                fs.mkdirSync(path.dirname(targetStubPath), { recursive: true });
+                if (!fs.existsSync(targetStubPath)) {
+                    fs.writeFileSync(
+                        targetStubPath,
+                        "// [covai] auto-healed missing test setup file\nmodule.exports = {};\n",
+                        "utf8"
+                    );
+                }
+                if (createdHarnessFiles && typeof createdHarnessFiles.add === "function") {
+                    createdHarnessFiles.add(targetStubPath);
+                }
+                result.push(entry);
+            } catch (err) {
+                console.warn(`[filterExistingSetupFiles] Failed to auto-stub missing setup file '${entry}':`, err.message);
+            }
+        } else {
+            console.warn(`[filterExistingSetupFiles] Omitted missing setup file '${entry}' (resolved to '${absPath}') to prevent Jest runner failure.`);
+        }
+    }
+
+    return result;
 };
 
 /**
@@ -829,7 +944,8 @@ export const findUnitFiles = (rootDir) => {
     const IGNORED_DIRS = new Set([
         "node_modules", ".git", "coverage", "dist", "build",
         ".next", ".vite", ".vitest", ".cache", "storage",
-        "client", "frontend", "ui", "web", "test-data", "test_data",
+        "client", "frontend", "ui", "web", "e2e", "system", "integration",
+        "cypress", "playwright", "test-data", "test_data",
         "fixtures", "mocks", "__mocks__"
     ]);
 
@@ -848,7 +964,12 @@ export const findUnitFiles = (rootDir) => {
             const lowerRel = relPath.toLowerCase();
 
             if (entry.isDirectory()) {
-                if (IGNORED_DIRS.has(entry.name) || lowerRel.includes("/client/") || lowerRel.includes("/frontend/")) {
+                const lowerName = entry.name.toLowerCase();
+                const isInsideTestDir = /(?:^|\/)(?:tests?|__tests__|unit)(?:\/|$)/i.test(lowerRel);
+                const isIgnoredDir = (IGNORED_DIRS.has(lowerName) && (!isInsideTestDir || !["integration", "system", "e2e"].includes(lowerName))) ||
+                    /(?:^|\/)(?:client|frontend|ui|web|cypress|playwright)(?:\/|$)/i.test(lowerRel) ||
+                    (!isInsideTestDir && /(?:^|\/)(?:e2e|system|integration)(?:[-_a-z0-9]*)?(?:\/|$)/i.test(lowerRel));
+                if (isIgnoredDir) {
                     continue;
                 }
                 walk(fullPath);
@@ -898,18 +1019,10 @@ export const findUnitFiles = (rootDir) => {
 
             // Strictly exclude integration, api contract, and E2E system files
             const isIntegrationOrSystem = (
-                lowerRel.includes("supertest") ||
-                lowerRel.includes("/integration/") ||
-                lowerRel.includes("\\integration\\") ||
-                lowerRel.includes("/routes/") ||
-                lowerRel.includes("\\routes\\") ||
-                lowerRel.includes("/e2e/") ||
-                lowerRel.includes("\\e2e\\") ||
-                lowerRel.includes("/system/") ||
-                lowerRel.includes("\\system\\") ||
-                lowerRel.includes("/cypress/") ||
-                lowerRel.includes("/playwright/") ||
-                /\b(integration|api|e2e|system)\.(test|spec)\.[cm]?[jt]s$/i.test(entry.name) ||
+                /(?:^|\/)(?:e2e|system|integration|cypress|playwright|routes)(?:[-_a-z0-9]*)?(?:\/|$)/i.test(lowerRel) ||
+                /(?:^|\.)(?:e2e|system|integration|cypress|playwright|supertest)\.(?:test|spec)\.[cm]?[jt]s$/i.test(entry.name) ||
+                /^(?:e2e|cypress|playwright)[-_]/i.test(entry.name) ||
+                /^tier\d+[-_]/i.test(entry.name) ||
                 lowerContent.includes("supertest") ||
                 lowerContent.includes("request(app)") ||
                 lowerContent.includes("request(server)") ||
@@ -943,6 +1056,10 @@ export const findUnitFiles = (rootDir) => {
 
             // Framework classification using classifyTestFile
             const fw = classifyTestFile(content, relPath, detectedUnit);
+            if (['playwright', 'cypress', 'supertest'].includes(fw)) {
+                skippedFiles.push(relPath);
+                continue;
+            }
             const isVitest = fw === "vitest" ||
                 lowerRel.includes(".vitest.") ||
                 lowerContent.includes("from 'vitest'") ||
@@ -1489,6 +1606,14 @@ export const getPackageForFile = (relFile, root) => {
         if (fs.existsSync(pkgPath)) {
             return currentDir.replace(/\\/g, "/");
         }
+        const hasTestConfig = [
+            'vitest.config.ts', 'vitest.config.js', 'vitest.config.mjs', 'vitest.config.cjs',
+            'vite.config.ts', 'vite.config.js', 'vite.config.mjs', 'vite.config.cjs',
+            'jest.config.js', 'jest.config.ts', 'jest.config.cjs', 'jest.config.mjs', 'jest.config.json'
+        ].some(cfg => fs.existsSync(path.join(root, currentDir, cfg)));
+        if (hasTestConfig) {
+            return currentDir.replace(/\\/g, "/");
+        }
         const parent = path.dirname(currentDir);
         if (parent === currentDir) break;
         currentDir = parent;
@@ -1804,8 +1929,20 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `    try {\n` +
         `      new prismaPkg.PrismaClient();\n` +
         `    } catch (pe) {\n` +
-        `      if (pe && pe.message && (pe.message.includes('did not initialize yet') || pe.message.includes('prisma generate'))) {\n` +
-        `        isStub = true;\n` +
+        `      if (pe) {\n` +
+        `        const pMsg = String(pe.message || '');\n` +
+        `        const pName = String(pe.name || '');\n` +
+        `        if (\n` +
+        `          pName === 'PrismaClientInitializationError' ||\n` +
+        `          pName === 'PrismaClientConstructorValidationError' ||\n` +
+        `          pMsg.includes('did not initialize yet') ||\n` +
+        `          pMsg.includes('prisma generate') ||\n` +
+        `          pMsg.includes('needs to be constructed with') ||\n` +
+        `          pMsg.includes('requires either "adapter"') ||\n` +
+        `          pMsg.toLowerCase().includes('constructor')\n` +
+        `        ) {\n` +
+        `          isStub = true;\n` +
+        `        }\n` +
         `      }\n` +
         `    }\n` +
         `    if (isStub) {\n` +
@@ -1814,14 +1951,90 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `          get(target, prop) {\n` +
         `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
         `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
-        `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve());\n` +
+        `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
+        `            if (prop === '$extends') return () => createPrismaProxy();\n` +
         `            return new Proxy(() => Promise.resolve({}), handler);\n` +
         `          },\n` +
         `          apply() { return Promise.resolve({}); }\n` +
         `        };\n` +
         `        return new Proxy({}, handler);\n` +
         `      };\n` +
-        `      prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
+        `      const OriginalPrismaClient = prismaPkg.PrismaClient;\n` +
+        `      function FallbackPrismaClient(...args) {\n` +
+        `        try {\n` +
+        `          if (args.length > 0 && args[0] && (args[0].adapter || args[0].accelerateUrl || args[0].datasources)) {\n` +
+        `            return new OriginalPrismaClient(...args);\n` +
+        `          }\n` +
+        `        } catch (_) {}\n` +
+        `        return createPrismaProxy();\n` +
+        `      }\n` +
+        `      FallbackPrismaClient.prototype = (OriginalPrismaClient && OriginalPrismaClient.prototype) || {};\n` +
+        `      if (OriginalPrismaClient) {\n` +
+        `        try { Object.assign(FallbackPrismaClient, OriginalPrismaClient); } catch (_) {}\n` +
+        `      }\n` +
+        `      prismaPkg.PrismaClient = FallbackPrismaClient;\n` +
+        `      // Compatibility fallback: prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
+        `    }\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
+        `    const createPrismaProxy = () => {\n` +
+        `      const handler = {\n` +
+        `        get(target, prop) {\n` +
+        `          if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+        `          if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
+        `          if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
+        `          if (prop === '$extends') return () => createPrismaProxy();\n` +
+        `          return new Proxy(() => Promise.resolve({}), handler);\n` +
+        `        },\n` +
+        `        apply() { return Promise.resolve({}); }\n` +
+        `      };\n` +
+        `      return new Proxy({}, handler);\n` +
+        `    };\n` +
+        `    const fn = (typeof jest !== 'undefined' && typeof jest.fn === 'function') ? jest.fn : ((impl) => { const f = (...args) => (impl ? impl(...args) : undefined); f.mockImplementation = () => f; return f; });\n` +
+        `    jest.mock('@prisma/client', () => {\n` +
+        `      return {\n` +
+        `        __esModule: true,\n` +
+        `        PrismaClient: fn().mockImplementation(() => createPrismaProxy()),\n` +
+        `        default: { PrismaClient: fn().mockImplementation(() => createPrismaProxy()) },\n` +
+        `        Prisma: {\n` +
+        `          PrismaClientKnownRequestError: class extends Error {},\n` +
+        `          PrismaClientUnknownRequestError: class extends Error {},\n` +
+        `          PrismaClientRustPanicError: class extends Error {},\n` +
+        `          PrismaClientInitializationError: class extends Error {},\n` +
+        `          PrismaClientValidationError: class extends Error {},\n` +
+        `          Decimal: Number,\n` +
+        `          empty: '',\n` +
+        `          join: () => '',\n` +
+        `          raw: (sql) => sql,\n` +
+        `          sql: (strings, ...values) => strings.join('?')\n` +
+        `        }\n` +
+        `      };\n` +
+        `    }, { virtual: true });\n` +
+        `    const _relPrismaPaths = [\n` +
+        `      '../lib/prisma', '../lib/prisma.js',\n` +
+        `      '../../lib/prisma', '../../lib/prisma.js',\n` +
+        `      '../src/lib/prisma', '../src/lib/prisma.js',\n` +
+        `      '../../src/lib/prisma', '../../src/lib/prisma.js',\n` +
+        `      '../config/prisma', '../config/prisma.js',\n` +
+        `      '../../config/prisma', '../../config/prisma.js',\n` +
+        `      '../src/config/prisma', '../src/config/prisma.js',\n` +
+        `      '../../src/config/prisma', '../../src/config/prisma.js'\n` +
+        `    ];\n` +
+        `    for (const _rp of _relPrismaPaths) {\n` +
+        `      try {\n` +
+        `        jest.mock(_rp, () => {\n` +
+        `          const client = createPrismaProxy();\n` +
+        `          return {\n` +
+        `            __esModule: true,\n` +
+        `            prisma: client,\n` +
+        `            prismaClient: client,\n` +
+        `            default: client,\n` +
+        `            setPrismaClient: () => {}\n` +
+        `          };\n` +
+        `        }, { virtual: true });\n` +
+        `      } catch (_) {}\n` +
         `    }\n` +
         `  }\n` +
         `} catch (_) {}\n` +
@@ -1918,7 +2131,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
     const rootFiles = packageGroups.has("") ? packageGroups.get("") : (packageGroups.size === 0 ? (specificFiles || []) : []);
     const shouldRunRoot = packageGroups.size === 0 ? true : (rootFiles.length > 0);
-    const createdHarnessFiles = new Set();
+    const createdHarnessFiles = options?.createdHarnessFiles || new Set();
 
     try {
         let overallExitCode = 0;
@@ -2385,6 +2598,17 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 }
             }
 
+            const filteredSetupFiles = filterExistingSetupFiles(
+                cleanProjectJestConfig?.setupFiles,
+                rootDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+            const filteredSetupFilesAfterEnv = filterExistingSetupFiles(
+                cleanProjectJestConfig?.setupFilesAfterEnv,
+                rootDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+
             try {
                 const tempConfig = {
                     ...cleanProjectJestConfig,
@@ -2395,11 +2619,11 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     testTimeout: 10000,
                     testPathIgnorePatterns: safeIgnorePatterns,
                     setupFiles: [
-                        ...(Array.isArray(cleanProjectJestConfig?.setupFiles) ? cleanProjectJestConfig.setupFiles : []),
+                        ...filteredSetupFiles,
                         `<rootDir>/${tempSetupName}`
                     ],
                     setupFilesAfterEnv: [
-                        ...(Array.isArray(cleanProjectJestConfig?.setupFilesAfterEnv) ? cleanProjectJestConfig.setupFilesAfterEnv : []),
+                        ...filteredSetupFilesAfterEnv,
                         `<rootDir>/${tempSetupAfterEnvName}`
                     ],
                     coveragePathIgnorePatterns: (Array.isArray(cleanProjectJestConfig?.coveragePathIgnorePatterns) && cleanProjectJestConfig.coveragePathIgnorePatterns.length > 0)
@@ -2556,8 +2780,13 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         }
 
         // ── Execute subpackages ──────────────────────────────────────────────────
+        let hasPassingSubpackages = false;
+        let anySubpackageAssertionFailed = false;
+        let subpackagesRun = 0;
+
         for (const [pkgDir, subFiles] of packageGroups.entries()) {
             if (!pkgDir || !Array.isArray(subFiles) || subFiles.length === 0) continue;
+            subpackagesRun++;
 
             const subSlug = pkgDir.replace(/[^a-zA-Z0-9_-]/g, "_");
             const subResultsName = `jest-results-${subSlug}.json`;
@@ -2675,6 +2904,17 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 }
             }
 
+            const filteredSubSetupFiles = filterExistingSetupFiles(
+                cleanPkgJestConfig?.setupFiles,
+                targetDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+            const filteredSubSetupFilesAfterEnv = filterExistingSetupFiles(
+                cleanPkgJestConfig?.setupFilesAfterEnv,
+                targetDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+
             try {
                 const subConfig = {
                     ...cleanPkgJestConfig,
@@ -2683,11 +2923,11 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     resolver: `<rootDir>/${tempSubResolverName}`,
                     roots: ["<rootDir>"],
                     setupFiles: [
-                        ...(Array.isArray(cleanPkgJestConfig?.setupFiles) ? cleanPkgJestConfig.setupFiles : []),
+                        ...filteredSubSetupFiles,
                         `<rootDir>/${tempSubSetupName}`
                     ],
                     setupFilesAfterEnv: [
-                        ...(Array.isArray(cleanPkgJestConfig?.setupFilesAfterEnv) ? cleanPkgJestConfig.setupFilesAfterEnv : []),
+                        ...filteredSubSetupFilesAfterEnv,
                         `<rootDir>/${tempSubSetupAfterEnvName}`
                     ],
                     moduleNameMapper: {
@@ -2774,6 +3014,11 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                         ...(options?.env || {}),
                     }
                 });
+            } catch (subErr) {
+                console.warn(`[runJestCoverage] Error executing Jest for subpackage ${pkgDir}:`, subErr.message);
+                overallStderr += `\n[${pkgDir}] ${subErr.message}`;
+                await addJobLog(jobId, "WARN", `[SCRUM-140] Jest failed for subpackage ${pkgDir}: ${subErr.message}`).catch(() => { });
+                subResult = { exitCode: 1, stdout: "", stderr: subErr.message };
             } finally {
                 if (tempSubConfigCreated && fs.existsSync(tempSubConfigPath)) {
                     try { fs.unlinkSync(tempSubConfigPath); } catch { }
@@ -2794,9 +3039,20 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
             // Merge subResults into main jest-results.json
             const rootJestResultsPath = path.join(covDir, "jest-results.json");
+            let subHasPassedTests = false;
+            let subHasFailedTests = false;
             if (fs.existsSync(subResultsPath)) {
                 try {
                     const subResultsData = JSON.parse(fs.readFileSync(subResultsPath, "utf8"));
+                    const failedCount = (subResultsData.numFailedTests || 0) + ((subResultsData.testResults || []).filter(s => s.status === 'failed').length);
+                    if (failedCount > 0 || (subResultsData.testResults || []).some(s => (s.assertionResults || []).some(a => a.status === 'failed'))) {
+                        subHasFailedTests = true;
+                        anySubpackageAssertionFailed = true;
+                    }
+                    const passedCount = (subResultsData.numPassedTests || 0) + ((subResultsData.testResults || []).filter(s => s.status === 'passed').length);
+                    if (passedCount > 0 || (subResult.exitCode === 0 && !subHasFailedTests)) {
+                        subHasPassedTests = true;
+                    }
                     if (fs.existsSync(rootJestResultsPath)) {
                         const rootResultsData = JSON.parse(fs.readFileSync(rootJestResultsPath, "utf8"));
                         const mergedResults = mergeTestResults(rootResultsData, subResultsData);
@@ -2807,6 +3063,12 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 } catch (err) {
                     console.warn(`[runJestCoverage] Error merging test results from ${pkgDir}:`, err.message);
                 }
+            } else if (subResult.exitCode === 0) {
+                subHasPassedTests = true;
+            }
+
+            if (subHasPassedTests && !subHasFailedTests) {
+                hasPassingSubpackages = true;
             }
 
             // Merge coverage-final.json
@@ -2819,7 +3081,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     if (fs.existsSync(rootCovFinal)) {
                         try { rootFinalData = JSON.parse(fs.readFileSync(rootCovFinal, "utf8")); } catch { }
                     }
-                    const mergedFinal = mergeCoverageFinal(rootFinalData, subFinalData);
+                    const mergedFinal = mergeCoverageFinal(rootFinalData, subFinalData, { rootDir });
                     fs.writeFileSync(rootCovFinal, JSON.stringify(mergedFinal, null, 2), "utf8");
                 } catch (err) {
                     console.warn(`[runJestCoverage] Error merging coverage-final from ${pkgDir}:`, err.message);
@@ -2836,7 +3098,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     if (fs.existsSync(rootCovSummary)) {
                         try { rootSummaryData = JSON.parse(fs.readFileSync(rootCovSummary, "utf8")); } catch { }
                     }
-                    const mergedSummary = mergeCoverageSummaries(rootSummaryData, subSummaryData);
+                    const mergedSummary = mergeCoverageSummaries(rootSummaryData, subSummaryData, { rootDir });
                     fs.writeFileSync(rootCovSummary, JSON.stringify(mergedSummary, null, 2), "utf8");
                 } catch (err) {
                     console.warn(`[runJestCoverage] Error merging coverage-summary from ${pkgDir}:`, err.message);
@@ -2867,6 +3129,27 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         // Exit code checking
         const summaryFile = path.join(covDir, "coverage-summary.json");
         const mainResultsPath = path.join(covDir, "jest-results.json");
+
+        if (fs.existsSync(mainResultsPath)) {
+            try {
+                const finalResults = JSON.parse(fs.readFileSync(mainResultsPath, "utf8"));
+                const totalTests = finalResults.numTotalTests || (finalResults.testResults || []).reduce((n, s) => n + (s.assertionResults?.length || 0), 0);
+                const failedTests = finalResults.numFailedTests || (finalResults.testResults || []).reduce((n, s) => n + (s.assertionResults || []).filter(a => a.status === 'failed').length, 0);
+
+                if (failedTests > 0 || anySubpackageAssertionFailed) {
+                    overallExitCode = 1;
+                } else if (hasPassingSubpackages || (totalTests > 0 && failedTests === 0)) {
+                    overallExitCode = 0;
+                }
+            } catch {
+                if (hasPassingSubpackages && !anySubpackageAssertionFailed) {
+                    overallExitCode = 0;
+                }
+            }
+        } else if (hasPassingSubpackages && !anySubpackageAssertionFailed) {
+            overallExitCode = 0;
+        }
+
         if (overallExitCode >= 2 && !fs.existsSync(summaryFile) && !fs.existsSync(mainResultsPath)) {
             const msg = `[SCRUM-140] jest exited with exit code ${overallExitCode} without generating coverage`;
             await addJobLog(jobId, "ERROR", msg).catch(() => { });
@@ -3576,7 +3859,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         const { loadWorkspaceEnv, generateHermeticMockEnvironment, detectProjectEnvironment } = await import("./environmentDetection.service.js");
         const workspaceEnv = await loadWorkspaceEnv(rootDir);
         const detected = await detectProjectEnvironment(rootDir, { existingVariables: workspaceEnv?.variables || {} });
-        hermeticMocks = generateHermeticMockEnvironment(detected?.detectedVariables || [], workspaceEnv?.variables || {});
+        hermeticMocks = useHermeticMock ? generateHermeticMockEnvironment(detected?.detectedVariables || [], workspaceEnv?.variables || {}) : (workspaceEnv?.variables || {});
 
         if (useHermeticMock) {
             await addJobLog(jobId, "INFO", "[RUNNER] Executing tests with hermetic mock environment in RAM (useHermeticMock=true)...").catch(() => {});
@@ -3704,7 +3987,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         ).catch(() => { });
 
         const attemptedDependencies = new Set();
-        const MAX_DEP_ATTEMPTS = 3;
+        const MAX_DEP_ATTEMPTS = 5;
         let runnerResult = { exitCode: 0 };
         const summaryCandidates = [
             path.join(unitCoverageDir, "coverage-summary.json"),
@@ -3766,7 +4049,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 let vf = {};
                 try { if (fs.existsSync(jestFinalPath)) jf = JSON.parse(fs.readFileSync(jestFinalPath, "utf8")); } catch { }
                 try { if (fs.existsSync(vitestFinalPath)) vf = JSON.parse(fs.readFileSync(vitestFinalPath, "utf8")); } catch { }
-                const mergedFinal = mergeCoverageFinal(jf, vf);
+                const mergedFinal = mergeCoverageFinal(jf, vf, { rootDir });
                 fs.writeFileSync(path.join(coverageDir, "coverage-final.json"), JSON.stringify(mergedFinal, null, 2), "utf8");
                 fs.writeFileSync(path.join(unitCoverageDir, "coverage-final.json"), JSON.stringify(mergedFinal, null, 2), "utf8");
             }
@@ -3996,9 +4279,8 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             const missingDep = modResError?.missingDependency || extractMissingDependency(fullOutput);
 
             // Automatic In-Flight Missing Dependency Resolution & Installation
-            if (!hasValidCoverage && missingDep && missingDep.packageName && isValidNpmPackageName(missingDep.packageName)) {
+            if (missingDep && missingDep.packageName && isValidNpmPackageName(missingDep.packageName)) {
                 if (!attemptedDependencies.has(missingDep.packageName) && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
-                    attemptedDependencies.add(missingDep.packageName);
                     await addJobLog(
                         jobId,
                         "INFO",
@@ -4007,31 +4289,9 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
                     let installSuccess = false;
                     try {
-                        const installBase = rawOrigRootDir || origRootDir || rootDir;
-                        const installRes = await installPackageInWorkspace({
-                            rootDir: installBase,
-                            packageName: missingDep.packageName,
-                            isDev: false,
-                            importedFrom: missingDep.importedFrom,
-                            jobId,
-                        });
-                        if (installRes?.success) {
+                        const installRes = await resolveUnitTestDependency({ rootDir, output: fullOutput, attempted: attemptedDependencies, jobId, maxPackages: MAX_DEP_ATTEMPTS });
+                        if (installRes?.resolved) {
                             installSuccess = true;
-                            if (rawOrigRootDir || origRootDir) {
-                                try {
-                                    const newLinks = ensureWorkspaceNodeModulesLinked(rawOrigRootDir || origRootDir, rootDir);
-                                    createdNodeModulesLinks.push(...newLinks);
-                                } catch (_) { }
-                            }
-                            if (installBase !== rootDir && !fs.existsSync(path.join(rootDir, "node_modules", missingDep.packageName))) {
-                                await installPackageInWorkspace({
-                                    rootDir,
-                                    packageName: missingDep.packageName,
-                                    isDev: false,
-                                    importedFrom: missingDep.importedFrom,
-                                    jobId,
-                                }).catch(() => ({}));
-                            }
                             await addJobLog(
                                 jobId,
                                 "INFO",
@@ -4070,7 +4330,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 || fullOutput.match(/Could not locate module ([^ \n\r]+) mapped as/i)
                 || fullOutput.match(/Cannot find module ['"]([^'"]+)['"]/i);
 
-            if (!hasValidCoverage && (missingModMatch || (missingDep && missingDep.packageName)) && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
+            if (useHermeticMock && !hasValidCoverage && (missingModMatch || (missingDep && missingDep.packageName)) && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
                 const missingTarget = missingModMatch ? missingModMatch[1] : (missingDep?.packageName || "dependency");
                 const healDepKey = `mock-dep:${missingTarget}`;
                 if (!attemptedDependencies.has(healDepKey)) {
@@ -4122,7 +4382,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
             // Automatic In-Flight Missing Mock Named Export Auto-Healing
             const mockExpMatch = fullOutput.match(/(?:\[vitest\]\s*)?No\s+["']([^"']+)["']\s+export is defined on the\s+["']([^"']+)["']\s+mock/i);
-            if (!hasValidCoverage && mockExpMatch && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
+            if (useHermeticMock && !hasValidCoverage && mockExpMatch && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
                 const missingExport = mockExpMatch[1];
                 const mockedModule = mockExpMatch[2];
                 const healKey = `mock:${mockedModule}:${missingExport}`;

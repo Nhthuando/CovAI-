@@ -12,6 +12,7 @@ import {
 import { getProjectCfgApi, getProjectsApi, getProjectTreeApi } from "../services/project.service.js";
 import { queryClient } from "../lib/queryClient.js";
 import { useAuth } from "./useAuth.js";
+import { loadSuggestionSourceFiles } from '../services/unitTestSuggestionQueue.js';
 
 /**
  * Fetch all coverage data for a given snapshot and coverage type in parallel.
@@ -21,12 +22,15 @@ export async function fetchCoverageDashboardData({ snapshotId, type, projectId }
 
   const promises = [
     getCoverageSummary(snapshotId, type).catch(() => ({ data: null })),
-    getCoverageFiles(snapshotId, {
+    (type === 'unit'
+      ? loadSuggestionSourceFiles(page => getCoverageFiles(snapshotId, {page, sortBy: 'linesPct', order: 'asc', limit: 200, type}))
+        .then(files => ({data: {files}}))
+      : getCoverageFiles(snapshotId, {
       sortBy: "linesPct",
       order: "asc",
       limit: 200,
       type,
-    }).catch(() => ({ data: { files: [] } })),
+    })).catch(() => ({ data: { files: [] } })),
     getTestExecution(snapshotId).catch(() => ({ data: {} })),
     getCoverageFrameworks(snapshotId).catch(() => ({ data: null })),
   ];

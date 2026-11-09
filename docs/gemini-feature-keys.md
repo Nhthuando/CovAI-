@@ -1,15 +1,16 @@
-# Gemini cho bốn tính năng COVAI
+# Gemini cho các tính năng COVAI
 
 | Luồng | Biến secret phía backend | Model mặc định riêng | Hướng dẫn và benchmark |
 | --- | --- | --- | --- |
+| AI Chatbot COV (hội thoại và bảo trì memory) | `GEMINI_CHATBOX_API_KEY` | `GEMINI_CHATBOX_MODEL` | Product guide và context resolver trong `server/src/services/chatWorkspaceContext.service.js` |
 | Unit Test | `GEMINI_UNIT_TEST_API_KEY` | `GEMINI_UNIT_TEST_MODEL` | `server/src/agents/unit-test/benchmark.json` |
 | Integration Test | `GEMINI_INTEGRATION_TEST_API_KEY` | `GEMINI_INTEGRATION_TEST_MODEL` | `server/src/agents/integration-test/benchmark.json` |
 | System Test | `GEMINI_SYSTEM_TEST_API_KEY` | `GEMINI_SYSTEM_TEST_MODEL` | `server/src/agents/system-test/benchmark.json` |
 | Đánh giá chatbot | `GEMINI_TRUSTWORTHINESS_API_KEY` | `AI_EVALUATION_JUDGE_MODEL` | `server/src/agents/chatbot-trustworthiness/benchmark.json` |
 
-Copy cấu hình từ `server/config-examples/gemini-features.env.example` vào `server/.env`, điền bốn key thật trên máy, rồi bật `GEMINI_REQUIRE_DEDICATED_KEYS=true`. Không nhập secret vào frontend, URL hoặc chat và không commit `.env` đã điền. Nếu chạy Compose, recreate backend để các biến `env_file` được nạp lại. Không recreate khi đang có job xử lý.
+Copy cấu hình từ `server/config-examples/gemini-features.env.example` vào `server/.env`, điền các key thật trên máy, rồi bật `GEMINI_REQUIRE_DEDICATED_KEYS=true`. Riêng AI Chatbot luôn yêu cầu `GEMINI_CHATBOX_API_KEY`, kể cả khi strict mode chưa bật; không mượn key chung hay key sinh test. Không nhập secret vào frontend, URL hoặc chat và không commit `.env` đã điền. Nếu chạy Compose, recreate backend và worker để các biến `env_file` được nạp lại. Không recreate khi đang có job xử lý.
 
-Trong giai đoạn chuyển đổi, `GEMINI_REQUIRE_DEDICATED_KEYS=false` cho phép dùng `GEMINI_API_KEY`/`GOOGLE_API_KEY` khi một key chuyên biệt còn thiếu. Chế độ này **chưa phải bốn credential độc lập**. Khi strict=true, thiếu key của luồng nào thì luồng đó báo `AI_KEY_NOT_CONFIGURED`; không mượn key của tính năng khác. Các chức năng chung như chat/architecture vẫn dùng key chung hiện có. Key chuyên biệt luôn được ưu tiên, không fallback khi key đã cấu hình bị lỗi hoặc hết quota.
+Trong giai đoạn chuyển đổi, `GEMINI_REQUIRE_DEDICATED_KEYS=false` cho phép các luồng test/evaluation dùng `GEMINI_API_KEY`/`GOOGLE_API_KEY` khi một key chuyên biệt còn thiếu. Chatbox không tham gia fallback này. Khi strict=true, thiếu key của luồng nào thì luồng đó báo `AI_KEY_NOT_CONFIGURED`; không mượn key của tính năng khác. Các chức năng chung như phân tích architecture vẫn dùng key chung hiện có. Key chuyên biệt luôn được ưu tiên, không fallback khi key đã cấu hình bị lỗi hoặc hết quota.
 
 Routing dùng context tách biệt theo async request, do code chọn tính năng; không đọc tên agent từ prompt/source người dùng để chọn key. Unit generation/repair/suggestion, Supertest/integration repair, Playwright/Cypress/system setup/assessment/repair và semantic judge/proposal được nối với nhóm tương ứng. Model do người dùng chọn cho generation vẫn được tôn trọng; nếu không chọn thì dùng model riêng của nhóm. Judge tiếp tục pin model trong profile/run, không đổi model ngầm.
 
@@ -21,6 +22,6 @@ Không log giá trị key. Log generation chỉ chứa feature, tên biến cấ
 
 ## Kiểm chứng
 
-`geminiRouting.service.test.js` kiểm tra song song bốn scope, không đổi credential theo prompt, strict mode, cách ly trạng thái quota và key/provenance của semantic evaluator. Các test configuration forwarding, agent profiles, unit generation/repair, system setup/booster và evaluation contract/workflow đã đạt với provider mock, không gọi Gemini live. Hai suite cũ `integrationApiEndpoints.test.js` và `aiTestsJob.playwright.test.js` còn lỗi fixture khởi tạo Prisma/mock export `isPsAvailable`; chúng chưa cung cấp bằng chứng regression đầy đủ cho hai đường đó.
+`geminiRouting.service.test.js` kiểm tra song song năm scope, không đổi credential theo prompt, strict mode, chatbox không fallback, cách ly trạng thái quota và key/provenance của semantic evaluator. Lần triển khai chatbot ngày 05/11/2026 đã chạy 74 kiểm thử backend thuộc tám suite chat/context/memory/authorization/Gemini; thêm hai kiểm thử helper frontend, một browser test desktop/mobile và build frontend đều đạt. Provider được mock, không gọi Gemini live. Các tệp JSX lớn vẫn có lỗi lint đã tồn tại trước thay đổi; các helper mới và AIContextDialog vượt lint.
 
-Tại thời điểm thay đổi, bốn biến key chuyên biệt trong `server/.env` chưa có giá trị. Backend vẫn hoạt động ở chế độ chuyển tiếp bằng key chung; không được xem đó là đã kích hoạt bốn API key độc lập. Sau khi chủ hệ thống điền key và bật strict mode cần kiểm tra lại generation/judging thực tế trên dữ liệu kiểm thử được phép chia sẻ.
+Các kiểm thử trên không xác minh giá trị credential trong `server/.env` và không chứng minh quota hay chất lượng trả lời của provider thật. Cấu hình key trên backend/worker rồi kiểm tra generation/judging thực tế bằng dữ liệu được phép chia sẻ. Xem `docs/context-aware-chatbot.md` để biết context và giới hạn từng màn hình.

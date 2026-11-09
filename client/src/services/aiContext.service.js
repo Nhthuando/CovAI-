@@ -1,3 +1,4 @@
+import { normalizeChatScreenContext } from './chatScreenContext';
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 async function contextRequest(projectId, suffix = "", method = "GET", body) {
@@ -20,5 +21,5 @@ export const addAiMemory = (projectId, input) => contextRequest(projectId, "/ai-
 export const editAiMemory = (projectId, id, input) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "PATCH", input);
 export const forgetAiMemory = (projectId, id) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "DELETE");
 export const clearAiMemories = projectId => contextRequest(projectId, "/ai-context/memories", "DELETE");
-export const previewAiContext = (projectId, input) => contextRequest(projectId, "/ai-context/preview", "POST", input);
+export const previewAiContext = (projectId, input) => contextRequest(projectId, "/ai-context/preview", "POST", { ...input, screenContext: normalizeChatScreenContext(input.screenContext) });
 export const branchAiConversation = (projectId, sessionId, input) => contextRequest(projectId, `/chat/sessions/${encodeURIComponent(sessionId)}/branch`, "POST", input);

@@ -101,6 +101,55 @@ describe("unitTestSuggestion.service unit tests", () => {
             expect(result.fullUpdatedContent).not.toContain("const fnRef: any = default;");
             expect(result.fullUpdatedContent).not.toContain("let target = default;");
         });
+
+        test("generates non-null req.body in Category D error handling tests for controllers", () => {
+            const controllerSource = `
+                export const checkout = async (req, res, next) => {
+                    const { items, paymentIntentId, totalPaid } = req.body;
+                    if (!items || items.length === 0) return res.status(400).json({ error: "Empty cart" });
+                    const mapped = items.map(i => i.id);
+                    return res.json({ success: true, count: mapped.length });
+                };
+            `;
+            const result = generateFallbackUnitTests({
+                framework: "jest",
+                sourceFile: "src/controllers/cart.controller.js",
+                baseName: "cart.controller",
+                sourceCode: controllerSource,
+                existingContent: ""
+            });
+
+            expect(result.fullUpdatedContent).toContain("[Category D: Error Handling]");
+            expect(result.fullUpdatedContent).not.toContain("body: null");
+            expect(result.fullUpdatedContent).toContain("body: {}");
+            // Standard payload provides array for items
+            expect(result.fullUpdatedContent).toContain('"items": [');
+            expect(result.fullUpdatedContent).toContain('"quantity": 1');
+        });
+
+        test("extracts parameter names with default values from req.body, req.query, and req.params safely", () => {
+            const controllerSource = `
+                export const getProducts = async (req, res) => {
+                    const { items = [], filter = 'all' } = req.body;
+                    const { page = 1, limit = 20 } = req.query;
+                    const { categoryId = '0' } = req.params;
+                    return res.json({ items, page, limit, categoryId });
+                };
+            `;
+            const result = generateFallbackUnitTests({
+                framework: "jest",
+                sourceFile: "src/controllers/product.controller.js",
+                baseName: "product.controller",
+                sourceCode: controllerSource,
+                existingContent: ""
+            });
+
+            expect(result.fullUpdatedContent).toContain('"items": [');
+            expect(result.fullUpdatedContent).toContain('"filter":');
+            expect(result.fullUpdatedContent).toContain('"page":');
+            expect(result.fullUpdatedContent).toContain('"limit":');
+            expect(result.fullUpdatedContent).toContain('"categoryId":');
+        });
     });
 
     describe("findAssociatedSourceFile", () => {

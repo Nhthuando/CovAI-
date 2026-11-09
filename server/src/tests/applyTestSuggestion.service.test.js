@@ -16,7 +16,10 @@ import {
     getTestRunnerFailure,
     resolveContainerOrHostTestPath,
     applyUnitTestSuggestion,
-    insertCodeIntoTestFile
+    insertCodeIntoTestFile,
+    sanitizePath,
+    resolveSourceFileOnDisk,
+    matchesSourceHash
 } from "../services/applyTestSuggestion.service.js";
 import { runJestCoverage } from "../services/runTestsJob.service.js";
 import { dockerRunner } from "../services/dockerRunner.service.js";
@@ -844,6 +847,41 @@ describe('service new tests', () => {
             expect(merged).toContain("describe('service new tests'");
             // Ensure no top-level return was created outside a function
             expect(merged).not.toMatch(/^if\s*\(prop === Symbol\.iterator\)\s*return/m);
+        });
+
+        test("resolveSourceFileOnDisk and sanitizePath resolve wrapper-prefixed, subproject-prefixed, and stripped source paths", () => {
+            const serverSrcDir = path.join(tempDir, "server", "src", "config");
+            fs.mkdirSync(serverSrcDir, { recursive: true });
+            const envFile = path.join(serverSrcDir, "env.js");
+            fs.writeFileSync(envFile, "export const PORT = 3000;\n", "utf8");
+
+            // 1. Wrapper-prefixed path when rootDir is an operation temp dir (not named gemini_chatbox)
+            expect(sanitizePath(tempDir, "gemini_chatbox/server/src/config/env.js")).toBe("server/src/config/env.js");
+            expect(resolveSourceFileOnDisk(tempDir, "gemini_chatbox/server/src/config/env.js")).toBe(envFile);
+
+            // 2. Unprefixed subproject path when rootDir is monorepo root
+            expect(sanitizePath(tempDir, "src/config/env.js")).toBe("server/src/config/env.js");
+            expect(resolveSourceFileOnDisk(tempDir, "src/config/env.js")).toBe(envFile);
+
+            // 3. Subproject-prefixed path when rootDir is already the subproject folder (<tempDir>/server)
+            const serverRoot = path.join(tempDir, "server");
+            expect(sanitizePath(serverRoot, "gemini_chatbox/server/src/config/env.js")).toBe("src/config/env.js");
+            expect(resolveSourceFileOnDisk(serverRoot, "server/src/config/env.js")).toBe(envFile);
+            expect(resolveSourceFileOnDisk(serverRoot, "gemini_chatbox/server/src/config/env.js")).toBe(envFile);
+        });
+
+        test("matchesSourceHash tolerates CRLF/LF differences and empty-hash fallbacks while rejecting modified content", async () => {
+            const crypto = await import("crypto");
+            const lfContent = "export const a = 1;\nexport const b = 2;\n";
+            const crlfContent = "export const a = 1;\r\nexport const b = 2;\r\n";
+            const lfHash = crypto.createHash("sha256").update(lfContent, "utf8").digest("hex");
+            const emptyHash = crypto.createHash("sha256").update("", "utf8").digest("hex");
+
+            expect(matchesSourceHash(Buffer.from(crlfContent, "utf8"), lfHash)).toBe(true);
+            expect(matchesSourceHash(Buffer.from(lfContent, "utf8"), emptyHash)).toBe(true);
+
+            const modifiedHash = crypto.createHash("sha256").update("export const a = 999;\n", "utf8").digest("hex");
+            expect(matchesSourceHash(Buffer.from(lfContent, "utf8"), modifiedHash)).toBe(false);
         });
     });
 });

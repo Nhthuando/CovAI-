@@ -235,14 +235,26 @@ function LayoutInner() {
   const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
   const [unifiedSummary, setUnifiedSummary] = useState(null);
+  const [project, setProject] = useState(null);
+  const [aiPanelOwner, setAiPanelOwner] = useState(null);
+  const aiPanelScope = `${user?.id}:${project?.id}`;
+  const isAiPanelVisible = aiPanelOpen && aiPanelOwner === aiPanelScope;
+  const [chatTestContext, setChatTestContext] = useState({});
+  const updateChatTestContext = useCallback(detail => {
+    setChatTestContext(previous => JSON.stringify(previous[detail.testType]) === JSON.stringify(detail) ? previous : { ...previous, [detail.testType]: detail });
+  }, []);
+  const selectedChatTest = chatTestContext[coverageType];
+  const activeChatTest = activeActivity === 'coverage' && selectedChatTest?.projectId === project?.id ? selectedChatTest : null;
   const screenContext = useMemo(
     () => ({
       activity: activeActivity,
       testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
       filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
       unifiedSummary: activeActivity === "overview" ? unifiedSummary : undefined,
+      testRunId: activeChatTest?.testRunId,
+      scenarioId: activeChatTest?.scenarioId,
     }),
-    [activeActivity, coverageType, activeTabId, unifiedSummary]
+    [activeActivity, coverageType, activeTabId, unifiedSummary, activeChatTest]
   );
   const isFullWidthWorkspace = [
     "architecture",
@@ -336,8 +348,28 @@ function LayoutInner() {
   }, []);
 
   const [projects, setProjects] = useState([]);
-  const [project, setProject] = useState(null);
   const projectAccess = useProjectAccess(project?.id);
+  useEffect(() => {
+    setAiPanelOpen(false);
+    setAiPanelOwner(`${user?.id}:${project?.id}`);
+    setPendingAiSuggestion(null);
+  }, [project?.id, user?.id]);
+  useEffect(() => {
+    if (!isAiPanelVisible) return;
+    const frame = requestAnimationFrame(() => document.querySelector('#covai-chatbot textarea')?.focus());
+    const onKey = event => {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        setAiPanelOpen(false);
+        document.getElementById('covai-chatbot-toggle')?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener('keydown', onKey); };
+  }, [isAiPanelVisible]);
+  const closeChatbot = () => {
+    setAiPanelOpen(false);
+    document.getElementById('covai-chatbot-toggle')?.focus();
+  };
   const [fileTree, setFileTree] = useState([]);
   const [treeVersion, setTreeVersion] = useState(null);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
@@ -1149,21 +1181,26 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => setAiPanelOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${aiPanelOpen
+              id="covai-chatbot-toggle"
+              aria-label="AI Chatbot"
+              aria-expanded={isAiPanelVisible}
+              aria-controls="covai-chatbot"
+              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer flex items-center gap-1 ${isAiPanelVisible
                   ? "text-[var(--color-primary)]"
                   : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }`}
               title={
-                aiPanelOpen
-                  ? "Collapse Assistant (Right)"
-                  : "Expand Assistant (Right)"
+                isAiPanelVisible
+                  ? "Close AI Chatbot"
+                  : "Open AI Chatbot"
               }
             >
-              {aiPanelOpen ? (
+              {isAiPanelVisible ? (
                 <PanelRightClose size={14} />
               ) : (
                 <PanelRightOpen size={14} />
               )}
+              <span className="hidden sm:inline text-[11px]">AI Chatbot</span>
             </button>
 
             <NotificationCenter userId={user?.id} size={14} />
@@ -1346,6 +1383,7 @@ function LayoutInner() {
             <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
               <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'unit'}>
               <UnitTestDashboard
+                onChatContextChange={updateChatTestContext}
                 snapshotId={
                   searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
@@ -1368,6 +1406,7 @@ function LayoutInner() {
             <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
               <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'integration'}>
               <IntegrationTestDashboard
+                onChatContextChange={updateChatTestContext}
                 snapshotId={
                   searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
@@ -1390,6 +1429,7 @@ function LayoutInner() {
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
               <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'system'}>
               <SystemTestDashboard
+                onChatContextChange={updateChatTestContext}
                 snapshotId={
                   searchParams.get("snapshotId") ||
                   project?.snapshots?.[0]?.id ||
@@ -1438,10 +1478,8 @@ function LayoutInner() {
                 />
               </div>
         </motion.div>
-        <AnimatePresence initial={false}>
-          {aiPanelOpen && (
-            <>
-              {!isMobile && (
+        <>
+              {isAiPanelVisible && !isMobile && (
                 <PanelResizer
                   onMouseDown={handleAiPanelResize}
                   isDragging={isDraggingAiPanel}
@@ -1453,7 +1491,10 @@ function LayoutInner() {
                 />
               )}
               <motion.div
-                key="ai-panel"
+                id="covai-chatbot"
+                aria-label="AI Chatbot"
+                role="complementary"
+                key={`ai-panel:${user?.id}:${project?.id}`}
                 initial={
                   isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
                 }
@@ -1475,18 +1516,23 @@ function LayoutInner() {
                       right: 0,
                       width: "100%",
                       maxWidth: 360,
+                      display: isAiPanelVisible ? undefined : "none",
                       overflow: "hidden",
                       zIndex: 35,
                       boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
                     }
-                    : { overflow: "hidden", flexShrink: 0 }
+                    : { overflow: "hidden", flexShrink: 0, display: isAiPanelVisible ? undefined : "none" }
                 }
               >
+                <RetainedPanel key={`${user?.id}:${project?.id}`} active={isAiPanelVisible}>
                 <AIPanel
+                  onClose={closeChatbot}
                   key={`${user?.id}:${project?.id}`}
                   screenContext={screenContext}
                   projectId={project?.id}
                   snapshotId={
+                    activeChatTest?.snapshotId ||
+                    searchParams.get("snapshotId") ||
                     project?.snapshots?.[0]?.id ||
                     project?.latestSnapshotId ||
                     (project?.id
@@ -1500,10 +1546,9 @@ function LayoutInner() {
                   onOpenFile={handleOpenFileByPath}
                   onRunAnalysis={handleTriggerRunAnalysis}
                 />
+                </RetainedPanel>
               </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+        </>
       </motion.div>
       <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--color-surface)] border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] font-mono whitespace-nowrap overflow-x-auto select-none">
         <div className="flex items-center gap-3 shrink-0">

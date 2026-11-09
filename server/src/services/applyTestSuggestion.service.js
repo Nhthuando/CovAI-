@@ -10,9 +10,11 @@ import {
 } from "./durableJournal.service.js";
 import crypto from "crypto";
 import fs from "fs";
+import { assertUnitTestTarget, assertUnitTestSource, classifyUnitTestPath } from './unitTestFilePolicy.service.js';
+import { withUnitTestTimings } from './unitTestWork.service.js';
 import path from "path";
 import prisma from "../config/prisma.js";
-import { currentProjectOperation, operationSnapshot, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
+import { currentProjectOperation, operationSnapshot, stagePreparedPublication, deferPreparedCommit, assertProjectOperationActive } from "./projectOperationWorkspace.service.js";
 import { withPreparedProjectWorkspace } from "./projectWorkspacePreparation.service.js";
 import { projectFileError } from "./projectFileVersion.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -32,8 +34,16 @@ import {
     getPackageForFile
 } from "./runTestsJob.service.js";
 import { runVitestCoverage } from "./vitestRunner.service.js";
+import { findVitestConfig } from "./vitestProjectGroups.service.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { hasAssertionFailure, repairGeneratedTestInputs } from "./generatedTestInputRepair.service.js";
+import { repairGeneratedTestExpectations } from './generatedTestExpectationRepair.service.js';
+import { upsertCoverageFileRows } from './coverageFilePersistence.service.js';
+import { assembleUnitTestCandidate, applyTestRepairEdits, testContentHash } from './unitTestChangeSet.service.js';
+import { prepareBaselineTestRepairs } from './unitTestBaselineRepair.service.js';
+import { hasTypedInputRuntimeFailure,repairGeneratedTestTypeErrors } from './generatedTestTypeRepair.service.js';
+
+const verifiedTestRepairs = Symbol('verifiedTestRepairs');
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile, cleanRelativePath, matchesFilePath } from "./fileCoverage.service.js";
 import { canonicalizeFilePath, cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 import { resolveProjectRoot, resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
@@ -46,7 +56,13 @@ import {
     ensureWorkspaceNodeModulesLinked,
     cleanupWorkspaceNodeModulesLinks
 } from "./dependencyResolution.service.js";
-import { saveUnitTestFileVersions } from "./unitTestVersion.service.js";
+import { saveVerifiedUnitTestBatch, clearManifestCache } from "./unitTestVersion.service.js";
+import { verifyUnitTestBatch, coverageGoalStatus, existingTestContractsPreserved } from './unitTestVerification.service.js';
+import { resolveUnitTestDependency, collectUnitTestEnvironmentFiles } from './unitTestPreflight.service.js';
+import { detectProjectEnvironment, loadWorkspaceEnv, serializeEnv } from './environmentDetection.service.js';
+import { parseExistingTestAst } from './unitTestContextEngineering.service.js';
+import { runUnitTestBatch } from './unitTestBatchRunner.service.js';
+import { detectTestingFrameworks, classifyTestFile } from '../utils/testingFrameworkDetector.js';
 export { resolveSnapshotRootDir };
 
 export const activeApplyLocks = new Set();
@@ -180,6 +196,70 @@ export function releaseAtomicMultiLocks(lockKeys = []) {
     }
 }
 
+export function readHeaderSnippet(filePath, maxBytes = 256) {
+    let fd;
+    try {
+        if (!filePath || !fs.existsSync(filePath)) return null;
+        fd = fs.openSync(filePath, "r");
+        const buffer = Buffer.alloc(maxBytes);
+        const bytesRead = fs.readSync(fd, buffer, 0, maxBytes, 0);
+        return buffer.toString("utf8", 0, bytesRead);
+    } catch {
+        return null;
+    } finally {
+        if (fd !== undefined) {
+            try { fs.closeSync(fd); } catch { }
+        }
+    }
+}
+
+export function isLegitimateSetupFilePath(rootDir, relPath) {
+    if (!relPath || typeof relPath !== "string") return false;
+    const norm = path.normalize(relPath).replace(/\\/g, "/").replace(/^\.\//, "");
+    if (norm.startsWith("../") || norm === ".." || path.isAbsolute(norm) || /^[a-zA-Z]:/.test(norm)) return false;
+    if (!/\.[cm]?[jt]sx?$/i.test(norm)) return false;
+
+    // 1. Immediately reject paths residing in known application source directories
+    if (/(?:^|\/)(?:controllers?|services?|routes?|models?|views?|middleware|handlers?|components?|pages?|api)\//i.test(norm)) {
+        return false;
+    }
+
+    // 2. Reject nested subdirectories in src/ that are not test directories
+    if (/(?:^|\/)src\//i.test(norm)) {
+        const isSrcRootFile = /(?:^|\/)src\/[^/]+$/i.test(norm);
+        const isInSrcTestDir = /(?:^|\/)src\/(?:tests?|__tests__|testing)\//i.test(norm);
+        if (!isSrcRootFile && !isInSrcTestDir) {
+            return false;
+        }
+    }
+
+    const base = path.basename(norm);
+    const isStandardSetupBasename = /^(?:setup(?:[-._]?tests?)?|global[-._]setup|(?:vitest|jest)[-._]setup)\.[cm]?[jt]sx?$/i.test(base);
+    const inTestDir = /(?:^|\/)(?:tests?|__tests__|testing)\//i.test(norm);
+    const isTestDirSetup = inTestDir && (/setup/i.test(base) || isStandardSetupBasename);
+
+    // If not in a test directory, it MUST match standard setup file naming conventions
+    if (!inTestDir && !isStandardSetupBasename) {
+        return false;
+    }
+
+    // 3. Role check via classifyUnitTestPath if rootDir is provided
+    if (rootDir) {
+        try {
+            const classification = classifyUnitTestPath(rootDir, norm);
+            // If outside a test directory, it must never be an application SOURCE module
+            if (!inTestDir && classification.role === "SOURCE") {
+                return false;
+            }
+            if (classification.role === "CONFIG") {
+                return true;
+            }
+        } catch { }
+    }
+
+    return isStandardSetupBasename || isTestDirSetup;
+}
+
 /**
  * Computes a map of relative file path -> SHA-256 hash for all source files in the project.
  * Excludes test files, node_modules, .git, coverage, dist, and build outputs.
@@ -194,12 +274,17 @@ export function computeSourceFilesHash(rootDir) {
             _integrityStatus: "FAILED"
         };
     }
+    // Purge any lingering auto-healed setup files or harness artifacts before establishing baseline
+    purgeCovaiHarnessFiles(rootDir);
+
     const hashes = {};
     const readErrors = [];
+    const transientStubs = new Set();
+    const policies = new Map();
     const realRoot = fs.existsSync(rootDir) ? fs.realpathSync(rootDir) : path.resolve(rootDir);
 
     const EXCLUDED_DIRS = new Set([
-        "node_modules", ".git", "coverage", "dist", "build", ".turbo", ".next", ".nuxt", ".cache", "tests", "__tests__", "test", ".covai_journal"
+        "node_modules", ".git", "coverage", "dist", "build", ".turbo", ".next", ".nuxt", ".cache", ".covai_journal"
     ]);
 
     const scanDir = (dir) => {
@@ -208,6 +293,11 @@ export function computeSourceFilesHash(rootDir) {
             for (const entry of entries) {
                 const fullP = path.join(dir, entry.name);
                 const rel = path.relative(rootDir, fullP).replace(/\\/g, "/");
+
+                // Prepared workspaces borrow dependencies through a symlink/junction.
+                // Exclude node_modules before inspecting links, just as for a real directory.
+                // Links anywhere in the protected source tree still undergo escape checks.
+                if (entry.name.toLowerCase() === "node_modules" && (entry.isDirectory() || entry.isSymbolicLink())) continue;
 
                 if (entry.isSymbolicLink()) {
                     try {
@@ -236,8 +326,20 @@ export function computeSourceFilesHash(rootDir) {
                 } else if (entry.isFile()) {
                     // Skip test files, log files, temp files, journal files, lockfiles, and CovAI runner harness files
                     if (/^covai[-_]|\.covai/i.test(entry.name)) continue;
-                    if (/\.(test|spec)\.[cm]?[jt]sx?$/i.test(entry.name)) continue;
-                    if (/(?:^|\/)(?:tests?|__tests__|spec|\.covai_journal)(?:\/|$)/i.test(rel)) continue;
+
+                    // Skip auto-healed setup stubs from baseline hash
+                    if (isLegitimateSetupFilePath(rootDir, rel)) {
+                        const snippet = readHeaderSnippet(fullP, 256);
+                        if (snippet && snippet.includes("// [covai] auto-healed")) {
+                            transientStubs.add(rel);
+                            continue;
+                        }
+                    }
+
+                    // Only runnable suites are mutable. Fixtures, setup files and
+                    // helpers remain protected even when they live under tests/.
+                    const sourceBuffer = /\.[cm]?[jt]sx?$/i.test(entry.name) ? fs.readFileSync(fullP) : null;
+                    if (sourceBuffer && classifyUnitTestPath(rootDir, rel, null, {content:sourceBuffer.toString('utf8'),policies}).writable) continue;
                     if (/\.(log|tmp|bak|stg)$/i.test(entry.name)) continue;
                     if (/^(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/i.test(entry.name)) continue;
 
@@ -256,7 +358,7 @@ export function computeSourceFilesHash(rootDir) {
                     }
 
                     try {
-                        const buf = fs.readFileSync(fullP);
+                        const buf = sourceBuffer || fs.readFileSync(fullP);
                         const hash = crypto.createHash("sha256").update(buf).digest("hex");
                         hashes[rel] = hash;
                     } catch (readErr) {
@@ -289,15 +391,55 @@ export function computeSourceFilesHash(rootDir) {
     sortedMap._hasIntegrityError = hasErrors;
     sortedMap._readErrors = readErrors;
     sortedMap._integrityStatus = hasErrors ? "FAILED" : "VERIFIED";
+    sortedMap._transientStubs = Array.from(transientStubs);
 
     return sortedMap;
 }
+
+export const purgeCovaiHarnessFiles = (dir) => {
+    try {
+        if (!dir || !fs.existsSync(dir)) return;
+        const EXCLUDED_DIRS = new Set([
+            "node_modules", ".git", "coverage", "dist", "build", ".turbo", ".next", ".nuxt", ".cache", ".covai_journal"
+        ]);
+        const sweep = (currentDir) => {
+            try {
+                const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+                for (const ent of entries) {
+                    const fullPath = path.join(currentDir, ent.name);
+                    if (ent.isDirectory()) {
+                        if (EXCLUDED_DIRS.has(ent.name.toLowerCase()) || /^covai[-_]|\.covai/i.test(ent.name)) {
+                            continue;
+                        }
+                        sweep(fullPath);
+                    } else if (ent.isFile()) {
+                        if (/^covai[-_]/i.test(ent.name) && (ent.name.endsWith(".cjs") || ent.name.endsWith(".json") || ent.name.endsWith(".js"))) {
+                            try { fs.unlinkSync(fullPath); } catch { }
+                        } else if (/\.[cm]?[jt]sx?$/i.test(ent.name)) {
+                            const rel = path.relative(dir, fullPath).replace(/\\/g, "/");
+                            if (isLegitimateSetupFilePath(dir, rel)) {
+                                const header = readHeaderSnippet(fullPath, 256);
+                                if (header && header.includes("// [covai] auto-healed")) {
+                                    try { fs.unlinkSync(fullPath); } catch { }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch { }
+        };
+        sweep(dir);
+    } catch { }
+};
 
 /**
  * Compares source file hashes before and after an operation to prove 100% source code immutability.
  * Strictly fail-closed: rejects if either baseline or post-operation check encountered errors.
  */
 export function verifySourceFilesUnchanged(rootDir, beforeHashes = {}) {
+    // Purge any lingering auto-healed setup files or harness artifacts before verification
+    purgeCovaiHarnessFiles(rootDir);
+
     // Fail-closed check on beforeHashes
     if (beforeHashes._hasIntegrityError || (beforeHashes._readErrors && beforeHashes._readErrors.length > 0) || !beforeHashes._compositeHash) {
         return {
@@ -330,6 +472,9 @@ export function verifySourceFilesUnchanged(rootDir, beforeHashes = {}) {
         if (/^covai[-_]|\.covai/i.test(path.basename(file))) continue;
         const hashAfter = afterHashes[file];
         if (hashAfter === undefined) {
+            if (beforeHashes._transientStubs && (Array.isArray(beforeHashes._transientStubs) ? beforeHashes._transientStubs.includes(file) : beforeHashes._transientStubs.has(file))) {
+                continue;
+            }
             changedFiles.push({ file, hashBefore, hashAfter: null, reason: "file deleted from source directory" });
         } else if (hashAfter !== hashBefore) {
             changedFiles.push({ file, hashBefore, hashAfter, reason: "file modified or altered" });
@@ -339,6 +484,18 @@ export function verifySourceFilesUnchanged(rootDir, beforeHashes = {}) {
         if (file.startsWith("_")) continue;
         if (/^covai[-_]|\.covai/i.test(path.basename(file))) continue;
         if (beforeHashes[file] === undefined) {
+            const fullP = path.join(rootDir, file);
+            let isTransientStub = false;
+            if (isLegitimateSetupFilePath(rootDir, file)) {
+                const header = readHeaderSnippet(fullP, 256);
+                if (header && header.includes("// [covai] auto-healed")) {
+                    isTransientStub = true;
+                    try { fs.unlinkSync(fullP); } catch { }
+                }
+            }
+            if (isTransientStub) {
+                continue;
+            }
             changedFiles.push({ file, hashBefore: null, hashAfter, reason: "new file in source directory" });
         } else if (typeof hashAfter === "string" && hashAfter.startsWith("ESCAPE:")) {
             changedFiles.push({ file, hashBefore: beforeHashes[file], hashAfter, reason: "symlink escape outside root directory" });
@@ -350,17 +507,16 @@ export function verifySourceFilesUnchanged(rootDir, beforeHashes = {}) {
     };
 }
 
-export const purgeCovaiHarnessFiles = (dir) => {
-    try {
-        if (!dir || !fs.existsSync(dir)) return;
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const ent of entries) {
-            if (ent.isFile() && /^covai[-_]/i.test(ent.name) && (ent.name.endsWith(".cjs") || ent.name.endsWith(".json") || ent.name.endsWith(".js"))) {
-                try { fs.unlinkSync(path.join(dir, ent.name)); } catch { }
-            }
-        }
-    } catch { }
-};
+export function sourceIntegrityError(check) {
+    const changedFiles = check.changedFiles || [];
+    const summary = changedFiles.slice(0, 10).map(({ file, reason }) => `${file}: ${reason}`).join('; ');
+    const remainder = changedFiles.length > 10 ? `; and ${changedFiles.length - 10} more files` : '';
+    return new ServiceError(
+        `Source integrity verification failed. The test draft cannot be published. ${check.error || 'Protected project files changed during test verification.'}${summary ? ` Files: ${summary}${remainder}.` : ''} Review these files before retrying.`,
+        403, 'SOURCE_INTEGRITY_FAILED',
+        { integrityError: check.error || null, changedFiles }
+    );
+}
 
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { healInvalidDynamicGetters, autoRepairTestSyntaxWithAst, validateTestCodeAst } from "../validators/aiTestCode.validator.js";
@@ -548,7 +704,7 @@ export function replaceBalancedExpectAssertion(body, targetMethods, replacement)
 /**
  * Clean relative path from repo root.
  */
-const sanitizePath = (rootDir, targetPath) => {
+export const sanitizePath = (rootDir, targetPath) => {
     if (!targetPath) return "";
     let norm = normalizePath(targetPath);
     if (rootDir) {
@@ -601,10 +757,40 @@ const sanitizePath = (rootDir, targetPath) => {
             norm = candidateStripped;
         }
 
+        // Handle wrapper prefix (e.g. "gemini_chatbox/server/..." when rootDir contains "server/" or rootDir IS ".../server")
+        const normParts = norm.replace(/^\/+/, "").split("/").filter(Boolean);
+        if (normParts.length >= 2) {
+            try {
+                const firstSegPath = path.join(rootDir, normParts[0]);
+                if (!fs.existsSync(firstSegPath)) {
+                    if (rootBase && normParts[1].toLowerCase() === rootBase.toLowerCase()) {
+                        const strippedBoth = normParts.slice(2).join("/");
+                        if (strippedBoth) norm = strippedBoth;
+                    } else if (fs.existsSync(path.join(rootDir, normParts[1]))) {
+                        norm = normParts.slice(1).join("/");
+                    }
+                }
+            } catch (_) {}
+        }
+
         // If target exists under rootDir after stripping, keep it!
         try {
             if (fs.existsSync(path.join(rootDir, norm))) {
                 return norm.replace(/^\/+/, "");
+            }
+            // Check if a stripped suffix or subproject prefix exists on disk
+            const parts = norm.replace(/^\/+/, "").split("/").filter(Boolean);
+            for (let i = 1; i < parts.length; i++) {
+                const suffix = parts.slice(i).join("/");
+                if (fs.existsSync(path.join(rootDir, suffix))) {
+                    return suffix;
+                }
+            }
+            const CANDIDATE_SUBPROJECTS = ["server", "backend", "client", "frontend", "services", "api"];
+            for (const sub of CANDIDATE_SUBPROJECTS) {
+                if (fs.existsSync(path.join(rootDir, sub, norm))) {
+                    return `${sub}/${norm.replace(/^\/+/, "")}`;
+                }
             }
         } catch (_) {}
 
@@ -624,12 +810,71 @@ const sanitizePath = (rootDir, targetPath) => {
     return norm.replace(/^\/+/, "");
 };
 
+const EMPTY_STRING_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+export const resolveSourceFileOnDisk = (rootDir, filePath) => {
+    if (!rootDir || !filePath) return null;
+    const sanitized = sanitizePath(rootDir, filePath);
+    const norm = normalizePath(filePath).replace(/^\/+/, "");
+    const candidates = new Set([
+        path.join(rootDir, sanitized),
+        path.join(rootDir, norm)
+    ]);
+
+    const SUBPROJECTS = ["server", "backend", "client", "frontend", "services", "api", "app"];
+    for (const base of [sanitized, norm].filter(Boolean)) {
+        const parts = base.split("/").filter(Boolean);
+        for (let i = 0; i < parts.length; i++) {
+            const suffix = parts.slice(i).join("/");
+            candidates.add(path.join(rootDir, suffix));
+            for (const sub of SUBPROJECTS) {
+                candidates.add(path.join(rootDir, sub, suffix));
+            }
+        }
+    }
+
+    const parentDir = path.dirname(rootDir);
+    const parentBase = path.basename(parentDir || "").toLowerCase();
+    const CONTAINER_DIRS = new Set(["uploads", "storage", "snapshots", "projects", "app", ".covai-temp", "collaboration-operations", "repo", "tmp", "temp"]);
+    if (parentDir && parentDir !== rootDir && !CONTAINER_DIRS.has(parentBase)) {
+        candidates.add(path.join(parentDir, sanitized));
+        candidates.add(path.join(parentDir, norm));
+    }
+
+    for (const cand of candidates) {
+        try {
+            if (cand && fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+                return cand;
+            }
+        } catch (_) {}
+    }
+    return null;
+};
+
+export const matchesSourceHash = (fileBuffer, expectedHash) => {
+    if (!expectedHash || expectedHash === EMPTY_STRING_SHA256) return true;
+    const rawHash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+    if (rawHash === expectedHash) return true;
+    try {
+        const text = fileBuffer.toString("utf8").replace(/^\uFEFF/, "");
+        const lfText = text.replace(/\r\n/g, "\n");
+        const crlfText = lfText.replace(/\n/g, "\r\n");
+        const variants = [text, lfText, crlfText, lfText.trimEnd(), crlfText.trimEnd()];
+        for (const v of variants) {
+            if (crypto.createHash("sha256").update(v, "utf8").digest("hex") === expectedHash) {
+                return true;
+            }
+        }
+    } catch (_) {}
+    return false;
+};
+
 /**
  * Sanitizes test code to ensure it executes reliably in standard Jest / Vitest runners.
  * If code was generated with Cucumber step destructuring `({ given, when, then })` or `({ given })`:
  * provides stub wrappers so the test body executes synchronously without error.
  */
-export const sanitizeSuggestedTestCode = (code, originalFileContent = "", options = { allowUnskip: true }) => {
+export const sanitizeSuggestedTestCode = (code, originalFileContent = "", options = { allowUnskip: false }) => {
     if (!code) return "";
     let sanitized = code.trim();
 
@@ -808,7 +1053,7 @@ export const getDeclaredTopLevelIdentifiers = (code) => {
 /**
  * Safely inserts new test code into an existing or new test file.
  */
-export const insertCodeIntoTestFile = (originalContent, codeToAdd, targetTestFile = "", options = { allowUnskip: true }) => {
+export const insertCodeIntoTestFile = (originalContent, codeToAdd, targetTestFile = "", options = { allowUnskip: false }) => {
     if (!originalContent || !originalContent.trim()) {
         return cleanAndDeduplicateTestContent(codeToAdd.trimEnd() + "\n", "", targetTestFile, options);
     }
@@ -1152,7 +1397,7 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
 
     // Only align with associated test file if rawTestFile is an ambiguous or generic placeholder path
     const isGenericTestName = /^(?:.*\/)?(?:sample|undefined|test|temp)\.(?:test|spec)\.[a-z0-9]+$/i.test(rawTestFile);
-    if (suggestion.sourceFile && isGenericTestName) {
+    if (suggestion.sourceFile && isGenericTestName && !suggestion.changeSet?.candidateHash) {
         const associated = findAssociatedTestFile(rootDir, suggestion.sourceFile);
         if (associated && associated.found) {
             rawTestFile = associated.filePath;
@@ -1172,17 +1417,13 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
     if (
         /^(?:package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.env|\.env\..*|tsconfig.*|vite\.config.*|jest\.config.*|docker-compose.*|Dockerfile|schema\.prisma)$/i.test(baseTarget) ||
         /(?:^|\/)(?:node_modules|dist|build|coverage|\.git|\.turbo|\.next)(?:$|\/)/i.test(cleanTarget) ||
-        (/(?:^|\/)src\//i.test(cleanTarget) && !/\.(test|spec)\.[cm]?[jt]sx?$/i.test(cleanTarget))
+        (/^src\//i.test(cleanTarget) && !/\.(?:test|spec)\.[a-z0-9]+$/i.test(cleanTarget) && !/(?:^|\/)__tests__\//i.test(cleanTarget))
     ) {
         throw new ServiceError(`Strict Storage Guard: Cannot write test code into source or configuration file "${cleanTarget}".`, 403);
     }
 
-    // Strict Test File naming pattern: must end with .(test|spec).[cm]?[jt]sx?
-    const isTestFileName = /\.(test|spec)\.[cm]?[jt]sx?$/i.test(cleanTarget) ||
-        (/(?:^|[\\/])(?:tests?|__tests__|spec)(?:[\\/]|$)/i.test(cleanTarget) && /\.[cm]?[jt]sx?$/i.test(cleanTarget));
-    if (!isTestFileName) {
-        throw new ServiceError(`Strict Storage Guard: Cannot write test code into source file "${cleanTarget}". All project source code is strictly immutable.`, 403);
-    }
+    // The shared policy also permits explicitly configured custom suite names.
+    assertUnitTestTarget(rootDir, cleanTarget, suggestion.framework || null);
 
     if (
         /(?:^|[\\/])storage(?:[\\/]|$)/i.test(cleanTarget) ||
@@ -1256,7 +1497,24 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
         }
     }
 
-    const frameworkOptions = { framework: suggestion.framework, filePath: relTestPath, allowUnskip: true };
+    const reviewedHash = suggestion.status !== 'EDITED' ? suggestion.changeSet?.candidateHash : null;
+    if (reviewedHash && (typeof suggestion.fullUpdatedContent !== 'string' || testContentHash(suggestion.fullUpdatedContent) !== reviewedHash ||
+        (suggestion.changeSet.baseHash && suggestion.changeSet.baseHash !== testContentHash(originalContent)))) {
+        throw new ServiceError('The reviewed draft or its base has changed. Regenerate and review it.', 409, 'TEST_DRAFT_CHANGED');
+    }
+
+    if (reviewedHash || suggestion.changeSet || suggestion.status === 'EDITED' || suggestion[verifiedTestRepairs]) {
+        const changes = assembleUnitTestCandidate({ original: originalContent,
+            proposed: reviewedHash ? suggestion.fullUpdatedContent : normalizeTestFrameworkCode(suggestion.fullUpdatedContent || suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code || '',{framework:suggestion.framework,filePath:relTestPath}),
+            testFile: relTestPath, repairs: suggestion[verifiedTestRepairs]?.edits || [],strictRepairs:suggestion.status === 'EDITED', preserveReviewedLayout: Boolean(reviewedHash) });
+        if (suggestion.status === 'EDITED' && changes.needsReview.length) throw new ServiceError('The edited candidate changes existing cases outside a verified repair. Review a scoped repair before applying.',409);
+        if (reviewedHash && changes.candidateHash !== reviewedHash) {
+            throw new ServiceError('The reviewed draft changes protected test content. Regenerate and review it.', 409, 'TEST_DRAFT_CHANGED');
+        }
+        fs.writeFileSync(fullTestPath,changes.content,'utf8');
+        return {targetTestFile:relTestPath,changed:changes.content !== originalContent,originalContent,newContent:changes.content,changeSet:changes};
+    }
+    const frameworkOptions = { framework: suggestion.framework, filePath: relTestPath, allowUnskip: false };
     let rawCodeToAdd = normalizeTestFrameworkCode(suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code || "", frameworkOptions);
     let sanitizedCodeToAdd = sanitizeSuggestedTestCode(rawCodeToAdd, originalContent, frameworkOptions);
     const fullContentProvided = normalizeTestFrameworkCode(suggestion.fullUpdatedContent, frameworkOptions);
@@ -1292,14 +1550,8 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
         }
     }
 
-    const isPlaceholderOrFallback = !fileExisted ||
-        !originalContent.trim() ||
-        originalContent.includes("// See full updated content below") ||
-        originalContent.includes("// No additional snippets needed") ||
-        (originalContent.includes("unit tests") && originalContent.includes("should execute without error"));
-
     let newContent = "";
-    if (hasValidFullContent && isPlaceholderOrFallback) {
+    if (hasValidFullContent) {
         newContent = sanitizeSuggestedTestCode(fullContentProvided.trimEnd() + "\n", originalContent, frameworkOptions);
     } else if (!fileExisted || !originalContent.trim()) {
         newContent = sanitizeSuggestedTestCode((hasValidFullContent ? fullContentProvided : sanitizedCodeToAdd).trimEnd() + "\n", originalContent, frameworkOptions);
@@ -1333,25 +1585,7 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
         newContent = `${importSnippet}${newContent.trimEnd()}\n\ndescribe('${baseName}', () => {\n  test('should initialize and execute without error', () => {\n    ${cleanImport ? "expect(mod).toBeDefined();" : "expect(true).toBe(true);"}  \n  });\n});\n`;
     }
 
-    // Ensure safe test environment defaults for any required env vars if not already present
-    if (suggestion.sourceFile && !newContent.includes("process.env.")) {
-        const srcFullPath = path.join(rootDir, sanitizePath(rootDir, suggestion.sourceFile));
-        if (fs.existsSync(srcFullPath)) {
-            try {
-                const srcContent = fs.readFileSync(srcFullPath, "utf8");
-                const envMatches = [...srcContent.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map(m => m[1]);
-                const uniqueEnvs = Array.from(new Set(envMatches)).filter(v => !["NODE_ENV", "PATH", "HOME", "USER"].includes(v));
-                if (uniqueEnvs.length > 0) {
-                    const envLines = [
-                        "// Test environment defaults for module under test",
-                        "process.env.NODE_ENV = 'test';",
-                        ...uniqueEnvs.map(v => `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`)
-                    ];
-                    newContent = envLines.join("\n") + "\n\n" + newContent;
-                }
-            } catch { }
-        }
-    }
+    // Required environment values are supplied by preflight, never invented here.
 
     newContent = cleanAndDeduplicateTestContent(newContent, "", relTestPath, frameworkOptions);
     newContent = healImportPathsInTestCode(newContent, relTestPath, rootDir);
@@ -1373,6 +1607,9 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
         }
     }
 
+    if (originalContent.trim() && !existingTestContractsPreserved(originalContent, newContent)) {
+        throw new ServiceError(`Existing test assertions or skip states changed in "${relTestPath}". Regenerate an additive suggestion.`, 409);
+    }
     fs.writeFileSync(fullTestPath, newContent, "utf8");
 
     // Verify file actually written and changed
@@ -1561,12 +1798,14 @@ export function resolveContainerOrHostTestPath(relOrAbs, rootDir) {
  */
 export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOutput = "", options = {}) => {
     let anyFileModified = false;
+    if (hasAssertionFailure(testResults,rawOutput) || hasTypedInputRuntimeFailure(testResults)) return false;
     if (!rootDir || isDirectStorageDirectory(rootDir)) {
         return false;
     }
 
     // Collect all candidate test files to inspect: testFilesToRun, failing suites, and rawOutput
     const candidateFiles = new Set((testFilesToRun || []).map(f => (path.isAbsolute(f) ? f : path.join(rootDir, f))));
+    const requestedFiles = new Set([...candidateFiles].map(file => path.resolve(file)));
 
     if (testResults && Array.isArray(testResults.testResults)) {
         for (const suite of testResults.testResults) {
@@ -1626,6 +1865,7 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
                 continue;
             }
         }
+        if (options.restrictToRequestedFiles && !requestedFiles.has(path.resolve(fullPath))) continue;
         if (!fs.existsSync(fullPath)) continue;
 
         let content = fs.readFileSync(fullPath, "utf8");
@@ -2044,8 +2284,15 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
         }
 
         // 3.6e. Fix TypeError: Cannot set properties of undefined (setting 'file' / 'body' / etc.)
-        if (rawOutput.includes("Cannot set properties of undefined")) {
-            const healedFixtures = healControllerFixturesWithAst(content, testFile);
+        // or TypeError: Cannot destructure property ... of 'req.body' as it is null
+        if (
+            rawOutput.includes("Cannot set properties of undefined") ||
+            rawOutput.includes("Cannot destructure property") ||
+            rawOutput.includes("of 'req.body' as it is null") ||
+            rawOutput.includes("of req.body as it is null") ||
+            rawOutput.includes("reading 'items'")
+        ) {
+            const healedFixtures = healControllerFixturesWithAst(content, fullPath);
             if (healedFixtures !== content) {
                 content = healedFixtures;
                 anyFileModified = true;
@@ -2143,10 +2390,7 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
             }
         }
 
-        // 3.10. Ensure TypeScript test files have @ts-nocheck to bypass strict compiler errors
-        if (isTs && !content.includes("@ts-nocheck")) {
-            content = "// @ts-nocheck\n" + content;
-        }
+        // Do not suppress TypeScript checking to hide generated-test errors.
 
         // 4. Inspect testResults assertionResults for failing assertions in target suites
         if (testResults && Array.isArray(testResults.testResults)) {
@@ -2866,6 +3110,9 @@ export const autoRefineCoverageGaps = async ({
     rawFinal,
     runCoverageFn = null,
     maxPasses: customMaxPasses = null
+    , allowedSkippedByFile = {}
+    , regressionTestFiles = null, frameworkByFile = {}
+    , coverageSourceFiles = null
 }) => {
     if (!rootDir || isDirectStorageDirectory(rootDir)) {
         return { currentSum: rawSum, currentFinal: rawFinal, passesRun: 0, refined: false };
@@ -2878,7 +3125,7 @@ export const autoRefineCoverageGaps = async ({
     const finalFile = path.join(activeCoverageDir, "coverage-final.json");
     const sharedSummaryFile = path.join(coverageDir, "coverage-summary.json");
     const sharedFinalFile = path.join(coverageDir, "coverage-final.json");
-    const targetSourceFiles = Array.from(sourceFilesInspected || []);
+    const targetSourceFiles = coverageSourceFiles || Array.from(sourceFilesInspected || []);
 
     const getFileMetrics = (sf, sumObj, finalObj) => {
         let fileCov = null;
@@ -2912,10 +3159,15 @@ export const autoRefineCoverageGaps = async ({
     let pass = 0;
     const maxPasses = typeof customMaxPasses === "number" && customMaxPasses > 0
         ? customMaxPasses
-        : (typeof runCoverageFn === "function" ? 3 : 1);
+        : 5;
     let anyTestEverUpdated = false;
+    let noProgressPasses = 0;
+    let stopReason = 'MAX_PASSES';
+    let lastExitCode = 0;
+    const startedAt = Date.now();
 
     while (pass < maxPasses) {
+        if (Date.now() - startedAt > 10 * 60 * 1000) { stopReason = 'TIME_BUDGET'; break; }
         pass++;
         const underCoveredFiles = [];
         let beforePassScore = 0;
@@ -2933,6 +3185,7 @@ export const autoRefineCoverageGaps = async ({
         }
 
         if (underCoveredFiles.length === 0) {
+            stopReason = 'COVERAGE_GOAL_MET';
             break; // All files have achieved 100% across all 4 criteria!
         }
 
@@ -2963,18 +3216,32 @@ export const autoRefineCoverageGaps = async ({
             const fullSourcePath = path.join(rootDir, sanitizePath(rootDir, sf));
             const sourceCode = fs.existsSync(fullSourcePath) ? fs.readFileSync(fullSourcePath, "utf8") : "";
 
-            const deltaCode = generateDeltaTestCode({
+            const deltaInput = {
                 sourceFile: sf,
                 targetTestFile: targetTestPath,
                 coverageData: matchedCoverageData,
                 sourceCode,
                 rootDir,
                 pass
-            });
+            };
+            let deltaCode;
+            if (typeof runCoverageFn === 'function') deltaCode = generateDeltaTestCode(deltaInput);
+            else {
+                if (Date.now() - startedAt > 10 * 60 * 1000) { stopReason = 'TIME_BUDGET'; break; }
+                const { generateAiUnitTestSuite } = await import('./unitTestGenerator.service.js');
+                const { extractSourceGapsAndDecisions } = await import('./unitTestSuggestion.service.js');
+                const gaps = extractSourceGapsAndDecisions({ sourceCode, fileCoverageData: matchedCoverageData });
+                const metrics = getFileMetrics(sf, currentSum, currentFinal);
+                const generated = await generateAiUnitTestSuite({ framework: frameworkByFile[targetTestPath] || (isVitest ? 'vitest' : 'jest'),
+                    snapshot: { ...snapshot, rootDir }, sourceFileToInspect: sf, sourceCode,
+                    coverageDetails: { ...gaps, fileCoverageData: matchedCoverageData, summary: metrics ? { stmtsPct:metrics.s,branchesPct:metrics.b,funcsPct:metrics.f,linesPct:metrics.l } : null },
+                    isTest: true, filePath: targetTestPath });
+                deltaCode = generated.suggestedTestCode;
+            }
 
             if (deltaCode && deltaCode.trim()) {
                 const currentTestContent = fs.readFileSync(fullTestPath, "utf8");
-                const updatedContent = insertCodeIntoTestFile(currentTestContent, deltaCode, targetTestPath);
+                const updatedContent = assembleUnitTestCandidate({original:currentTestContent,proposed:deltaCode,testFile:targetTestPath}).content;
                 if (updatedContent !== currentTestContent) {
                     fs.writeFileSync(fullTestPath, updatedContent, "utf8");
                     modifiedFiles.add(targetTestPath);
@@ -2985,6 +3252,7 @@ export const autoRefineCoverageGaps = async ({
         }
 
         if (!anyTestUpdated) {
+            stopReason = 'NO_NEW_TESTS';
             break;
         }
 
@@ -2994,8 +3262,7 @@ export const autoRefineCoverageGaps = async ({
             if (fs.existsSync(fullP)) {
                 try {
                     const orig = fs.readFileSync(fullP, "utf8");
-                    let cl = cleanAndDeduplicateTestContent(orig, "", fullP, { framework: isVitest ? "vitest" : "jest" });
-                    cl = healImportPathsInTestCode(cl, tf, rootDir);
+                    const cl = orig; // Existing bytes were already composed and parsed; sanitize only newly generated fragments.
                     if (cl !== orig) fs.writeFileSync(fullP, cl, "utf8");
                 } catch (_) { }
             }
@@ -3009,25 +3276,19 @@ export const autoRefineCoverageGaps = async ({
         }
 
         // Rerun tests with targeted coverage collection
-        const testFilesToRun = Array.from(modifiedFiles);
+        const testFilesToRun = regressionTestFiles || Array.from(modifiedFiles);
         let runnerOutput = "";
         try {
             if (typeof runCoverageFn === "function") {
-                await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir: activeCoverageDir, pass });
-            } else if (isVitest) {
-                const vRes = await runVitestCoverage(null, rootDir, snapshot?.vitestCommand, testFilesToRun, {
-                    coverageDir: activeCoverageDir,
-                    targetSourceFiles
-                });
-                runnerOutput = (vRes?.stderr || "") + "\n" + (vRes?.stdout || "");
+                const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir: activeCoverageDir, pass });
+                lastExitCode = result?.exitCode ?? 0;
             } else {
-                const jRes = await runJestCoverage(null, rootDir, snapshot?.jestConfigPath, testFilesToRun, null, {
-                    coverageDir: activeCoverageDir,
-                    targetSourceFiles
-                });
-                runnerOutput = (jRes?.stderr || "") + "\n" + (jRes?.stdout || "");
+                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:activeCoverageDir,frameworkByFile});
+                runnerOutput = result.stdout + '\n' + result.stderr;
+                lastExitCode = result.exitCode;
             }
         } catch (runErr) {
+            lastExitCode = 1;
             runnerOutput += "\n" + (runErr?.message || "");
         }
 
@@ -3046,10 +3307,14 @@ export const autoRefineCoverageGaps = async ({
                 try { latestTestResults = JSON.parse(fs.readFileSync(resPath, "utf8")); break; } catch { }
             }
         }
-        if (latestTestResults || runnerOutput) {
-            try {
-                autoHealTestFailures(rootDir, testFilesToRun, latestTestResults, runnerOutput, { framework: isVitest ? "vitest" : "jest" });
-            } catch (_) { }
+        // Never modify files after their verification run without another run.
+        if (latestTestResults && !verifyUnitTestBatch({ rootDir, testFiles: testFilesToRun, results: latestTestResults, exitCode: lastExitCode, allowedSkippedByFile }).valid) {
+            stopReason = 'REFINEMENT_TESTS_FAILED';
+            lastExitCode = 1;
+            break;
+        } else if (!latestTestResults && lastExitCode !== 0) {
+            stopReason = 'REFINEMENT_TESTS_FAILED';
+            break;
         }
 
         // Read fresh coverage results from either activeCoverageDir or shared coverageDir
@@ -3067,12 +3332,12 @@ export const autoRefineCoverageGaps = async ({
         }
 
         if (nextFinal && Object.keys(nextFinal).length > 0) {
-            currentFinal = currentFinal ? mergeCoverageFinal(currentFinal, nextFinal, { rootDir }) : nextFinal;
+            currentFinal = nextFinal;
         } else if (nextSum) {
             currentFinal = null;
         }
         if (nextSum || nextFinal) {
-            currentSum = mergeCoverageSummaries(currentSum || {}, nextSum || {}, {
+            currentSum = mergeCoverageSummaries({}, nextSum || {}, {
                 rootDir,
                 mergedFinal: currentFinal
             });
@@ -3093,6 +3358,7 @@ export const autoRefineCoverageGaps = async ({
             if (m) afterPassScore += m.s + m.b + m.f + m.l;
         }
         if (afterPassScore <= beforePassScore) {
+            stopReason = 'NO_PROGRESS';
             break;
         }
     }
@@ -3102,6 +3368,7 @@ export const autoRefineCoverageGaps = async ({
         currentFinal,
         passesRun: pass,
         refined: anyTestEverUpdated
+        , stopReason, exitCode: lastExitCode
     };
 };
 
@@ -3118,7 +3385,9 @@ export const autoRefineCoverageGaps = async ({
  * @param {Function} [params.runCoverageFn] - Optional custom coverage runner function
  * @returns {Promise<Object>}
  */
-export const applyUnitTestSuggestion = async input => {
+export const applyUnitTestSuggestion = input => withUnitTestTimings(() => applyUnitTestSuggestionInternal(input));
+
+const applyUnitTestSuggestionInternal = async input => {
     const items = input?.suggestions?.length ? input.suggestions : input?.suggestion ? [input.suggestion] : [];
     if (!items.length) throw projectFileError('INVALID_SUGGESTION','No suggestion provided to apply',400);
     if (currentProjectOperation() || typeof prisma?.projectOperation?.create !== 'function') return applyPreparedUnitTestSuggestion(input);
@@ -3127,15 +3396,14 @@ export const applyUnitTestSuggestion = async input => {
     const currentWorkspaceRevision = project?.workspaceRevision ?? 0;
 
     for (const item of items) {
-        item.proposalBase = {
-            snapshotId: input.snapshotId,
-            workspaceRevision: currentWorkspaceRevision
-        };
+        if (item.proposalBase && (item.proposalBase.snapshotId !== input.snapshotId || !input.requestId && item.proposalBase.workspaceRevision !== currentWorkspaceRevision)) {
+            throw projectFileError('OPERATION_STALE', 'Workspace changed; regenerate the test suggestion before applying', 409);
+        }
     }
 
     const foreignSnapshots = (actualProjectId && typeof prisma?.projectSnapshot?.findMany === 'function') ? await prisma.projectSnapshot.findMany({
         where: {
-            id: { in: items.map(i => i.proposalBase.snapshotId).filter(sId => sId && sId !== input.snapshotId) },
+            id: { in: items.map(i => i.proposalBase?.snapshotId).filter(sId => sId && sId !== input.snapshotId) },
             projectId: { not: actualProjectId }
         }
     }) : [];
@@ -3143,17 +3411,23 @@ export const applyUnitTestSuggestion = async input => {
         throw projectFileError('FILE_VERSION_REQUIRED','Regenerate suggestions for the currently selected snapshot',428);
     }
 
-    for (const item of items) {
-        item.proposalBase.snapshotId = input.snapshotId;
-    }
-
-    const expectedWorkspaceRevision = currentWorkspaceRevision;
+    const expectedWorkspaceRevision = items[0]?.proposalBase?.workspaceRevision ?? currentWorkspaceRevision;
 
     return withPreparedProjectWorkspace({projectId:actualProjectId,snapshotId:input.snapshotId,userId:input.userId,
-        expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION'},()=>applyPreparedUnitTestSuggestion(input));
+        expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION',publish: result => result?.success === true,
+        requestId:input.requestId, resume: Boolean(input.envVariables && Object.keys(input.envVariables).length),
+        validateSnapshot: snapshot => {
+            const root = resolveSnapshotRootDir(snapshot.rootDir);
+            for (const item of items) {
+                if (item.sourceFile) assertUnitTestSource(root, item.sourceFile, item.framework);
+                const target = item.testFile || item.targetTestFile;
+                if (target) assertUnitTestTarget(root, target, item.framework || null);
+            }
+        },
+        input: { suggestions: items, requireCoverageGoal: input.requireCoverageGoal === true }},()=>applyPreparedUnitTestSuggestion(input));
 };
 
-const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null }) => {
+const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null, envVariables = {}, requireCoverageGoal = false, validationOnly = false }) => {
     if (!snapshotId) {
         throw new ServiceError("snapshotId is required", 400);
     }
@@ -3175,16 +3449,24 @@ const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, 
             suggestion,
             suggestions,
             runCoverageFn,
+            envVariables,
+            requireCoverageGoal,
+            validationOnly,
             acquiredLocks
         });
     } finally {
         releaseAtomicMultiLocks(acquiredLocks);
+        const context = currentProjectOperation();
+        if (context) {
+            const envPath = path.join(context.rootDir,context.analysisRelative,'.env');
+            if (fs.existsSync(envPath)) fs.unlinkSync(envPath);
+        }
     }
 };
 
-const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null, acquiredLocks = null }) => {
+const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null, acquiredLocks = null, envVariables = {}, requireCoverageGoal = false, validationOnly = false }) => {
 
-    const itemsToApply = Array.isArray(suggestions) && suggestions.length > 0
+    let itemsToApply = Array.isArray(suggestions) && suggestions.length > 0
         ? suggestions
         : (suggestion ? [suggestion] : []);
 
@@ -3214,6 +3496,55 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     const rootDir = resolveSnapshotRootDir(activeSnapshot?.rootDir || snapshot.rootDir);
     if (!rootDir || !fs.existsSync(rootDir)) {
         throw new ServiceError("Project snapshot root directory not found on filesystem", 409);
+    }
+
+    const configuredEnv = await loadWorkspaceEnv(snapshot.rootDir);
+    for (const item of itemsToApply) {
+        if (item.sourceFile) {
+            const resolvedSourceRel = sanitizePath(rootDir, item.sourceFile);
+            assertUnitTestSource(rootDir, resolvedSourceRel || item.sourceFile, item.framework);
+        }
+        const target = item.testFile || item.targetTestFile;
+        if (target) {
+            const resolvedTargetRel = sanitizePath(rootDir, target);
+            assertUnitTestTarget(rootDir, resolvedTargetRel || target, item.framework || null);
+        }
+        for (const binding of item.sourceBindings || []) {
+            const file = resolveSourceFileOnDisk(rootDir, binding.filePath);
+            if (!file || !matchesSourceHash(fs.readFileSync(file), binding.hash)) {
+                throw new ServiceError('A bound source changed after the combined draft was generated. Regenerate the batch.', 409);
+            }
+        }
+        if (item.sourceSha256 && item.sourceFile && item.sourceFile !== (item.testFile || item.targetTestFile)) {
+            const file = resolveSourceFileOnDisk(rootDir, item.sourceFile);
+            if (!file || !matchesSourceHash(fs.readFileSync(file), item.sourceSha256)) {
+                throw new ServiceError('Source changed after the test draft was generated. Regenerate the suggestion.', 409);
+            }
+        }
+    }
+    const reviewedTargets = new Map();
+    itemsToApply = itemsToApply.filter(item => {
+        const target = item.testFile || item.targetTestFile;
+        if (!target) return true;
+        const key = normalizeLockKey('file',path.resolve(rootDir,target));
+        const identity = JSON.stringify([item.framework,item.originalCode ?? item.baseContent,
+            item.fullUpdatedContent || item.generatedCode || item.suggestedTestCode,item.testRepairs]);
+        if (!reviewedTargets.has(key)) { reviewedTargets.set(key,identity); return true; }
+        if (reviewedTargets.get(key) !== identity) throw new ServiceError('Conflicting proposals target the same test file. Review one combined candidate before applying the batch.',409);
+        return false;
+    });
+    const operationEnv = { ...(configuredEnv?.variables || {}), ...envVariables };
+    const envCheck = await detectProjectEnvironment(rootDir, { files: collectUnitTestEnvironmentFiles(rootDir, itemsToApply.map(item => item.sourceFile).filter(Boolean)), existingVariables: operationEnv });
+    const environmentBlocker = () => ({ success: false, status: 'WAITING_FOR_ENV', fileUpdated: false, newCoverage: null,
+            message: 'Configure the required test environment variables before applying the entire batch.',
+            environment: { missingRequired: envCheck.missingRequired, detectedVariables: envCheck.detectedVariables.map(({ inferredMock, ...variable }) => variable), existingVariables: {} } });
+    const draftCode = itemsToApply.map(item => [item.suggestedTestCode,item.generatedCode,item.fullUpdatedContent,item.originalCode].filter(Boolean).join('\n')).join('\n');
+    const hasEnvironmentIsolation = /\b(?:vi|jest)\.(?:mock|doMock|unstable_mockModule|stubEnv)\s*\(/.test(draftCode) ||
+        envCheck.missingRequired.every(name => draftCode.includes(`process.env.${name} =`) || draftCode.includes(`process.env.${name}=`));
+    if (envCheck.requiresPrompt && !hasEnvironmentIsolation) return environmentBlocker();
+    // Operation-only configuration is excluded by the workspace publisher.
+    if (Object.keys(operationEnv).length && path.resolve(rootDir) !== path.resolve(snapshot.rootDir)) {
+        fs.writeFileSync(path.join(rootDir, '.env'), serializeEnv('', operationEnv), { mode: 0o600 });
     }
 
     // Idempotent Crash Recovery: Automatically detect & recover any interrupted transactions on disk
@@ -3281,7 +3612,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         };
 
     // Record initial per-file coverage for each source file being tested in a single fast query
-    const sourceFilesInspected = new Set(itemsToApply.map(s => s.sourceFile).filter(Boolean));
+    const sourceFilesInspected = new Set(itemsToApply.flatMap(s => [s.sourceFile, ...(s.sourceFiles || []),
+        ...(s.sourceBindings || []).map(binding => binding.filePath)]).filter(Boolean));
     const initialFileCoverageMap = new Map();
     try {
         const allDbFiles = await prisma.coverageFile.findMany({
@@ -3326,13 +3658,6 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         if (tRel) targetFilesForJournal.push(sanitizePath(rootDir, tRel));
     }
 
-    // Self-heal and sanitize target test files prior to applying new suggestions
-    try {
-        sanitizeAllProjectTestFiles(rootDir, targetFilesForJournal);
-    } catch (sanErr) {
-        console.warn("[applyUnitTestSuggestion] Pre-apply sanitizeAllProjectTestFiles warning:", sanErr.message);
-    }
-
     // Purge any lingering CovAI runner harness files before establishing baseline hash
     purgeCovaiHarnessFiles(rootDir);
 
@@ -3358,8 +3683,12 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     const appliedList = [];
     const modifiedFiles = new Set();
     const fileBackups = new Map(); // targetFullPath -> originalContent | null
+    let baselineRepairs = {repairs:new Map(),baseline:null};
 
     try {
+        baselineRepairs = await prepareBaselineTestRepairs({rootDir,
+            originalRootDir:activeSnapshot?.originalRootDir || currentProjectOperation()?.originalRootDir,
+            snapshot,projectId:actualProjectId,suggestions:itemsToApply,review:false,sourceFingerprint:sourceHashesBefore._compositeHash,environment:operationEnv});
         for (const sug of itemsToApply) {
             const effectiveSug = { ...sug };
             if (!effectiveSug.testFile && !effectiveSug.targetTestFile && effectiveSug.sourceFile) {
@@ -3377,8 +3706,9 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 }
             }
 
-            const targetRel = sanitizePath(rootDir, effectiveSug.testFile);
+            const targetRel = sanitizePath(rootDir, effectiveSug.testFile || effectiveSug.targetTestFile);
             const targetFull = path.join(rootDir, targetRel);
+            effectiveSug[verifiedTestRepairs] = baselineRepairs.repairs.get(targetFull);
             if (!fileBackups.has(targetFull)) {
                 fileBackups.set(targetFull, fs.existsSync(targetFull) ? fs.readFileSync(targetFull, "utf8") : null);
             }
@@ -3389,10 +3719,12 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 suggestionId: sug.suggestionId || sug.id,
                 sourceFile: sug.sourceFile,
                 testFile: result.targetTestFile,
-                framework: sug.framework || "jest",
+                framework: ['jest','vitest'].includes(sug.framework) ? sug.framework : classifyTestFile(result.newContent,result.targetTestFile,detectTestingFrameworks(rootDir).detectedFrameworks),
                 targetLines: sug.targetLines || [],
                 targetBranches: sug.targetBranches || [],
                 changed: result.changed,
+                changeSet:result.changeSet,
+                testRepairs:effectiveSug[verifiedTestRepairs],
                 status: "APPLIED"
             });
 
@@ -3445,13 +3777,6 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         throw applyErr;
     }
 
-    // Self-heal and sanitize touched test files to guarantee valid syntax and imports
-    try {
-        sanitizeAllProjectTestFiles(rootDir, Array.from(modifiedFiles));
-    } catch (sanErr) {
-        console.warn("[applyUnitTestSuggestion] Post-apply sanitizeAllProjectTestFiles warning:", sanErr.message);
-    }
-
     const coverageDir = path.join(rootDir, "coverage");
     if (!fs.existsSync(coverageDir)) {
         try { fs.mkdirSync(coverageDir, { recursive: true }); } catch { }
@@ -3462,44 +3787,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     const origWorkspaceRoot = resolveSnapshotRootDir(rawOrigRoot) || resolveSnapshotRootDir(snapshot);
     const origCoverageDir = origWorkspaceRoot ? path.join(origWorkspaceRoot, "coverage") : null;
 
-    // Retain baseline coverage summaries before clearing runner files so partial test runs do not destroy overall project metrics
-    let baselineSummary = null;
-    let baselineFinal = null;
-    const summaryFile = path.join(coverageDir, "coverage-summary.json");
-    const finalFile = path.join(coverageDir, "coverage-final.json");
-    const origSummaryFile = origCoverageDir ? path.join(origCoverageDir, "coverage-summary.json") : null;
-    const origFinalFile = origCoverageDir ? path.join(origCoverageDir, "coverage-final.json") : null;
-
-    if (fs.existsSync(summaryFile)) {
-        try { baselineSummary = JSON.parse(fs.readFileSync(summaryFile, "utf8")); } catch (_) { }
-    } else if (origSummaryFile && fs.existsSync(origSummaryFile)) {
-        try { baselineSummary = JSON.parse(fs.readFileSync(origSummaryFile, "utf8")); } catch (_) { }
-    }
-
-    if (fs.existsSync(finalFile)) {
-        try { baselineFinal = JSON.parse(fs.readFileSync(finalFile, "utf8")); } catch (_) { }
-    } else if (origFinalFile && fs.existsSync(origFinalFile)) {
-        try { baselineFinal = JSON.parse(fs.readFileSync(origFinalFile, "utf8")); } catch (_) { }
-    }
-
-    // Fallback: If baseline summary is missing on disk, build from DB CoverageFile records
-    if (!baselineSummary) {
-        try {
-            const dbFiles = await prisma.coverageFile.findMany({ where: { snapshotId } });
-            if (dbFiles.length > 0) {
-                baselineSummary = {};
-                for (const df of dbFiles) {
-                    baselineSummary[df.filePath] = {
-                        _syntheticBaseline: true,
-                        lines: { total: 100, covered: Math.round(df.linesPct), skipped: 0, pct: df.linesPct },
-                        statements: { total: 100, covered: Math.round(df.stmtsPct), skipped: 0, pct: df.stmtsPct },
-                        functions: { total: 100, covered: Math.round(df.funcsPct), skipped: 0, pct: df.funcsPct },
-                        branches: { total: 100, covered: Math.round(df.branchesPct), skipped: 0, pct: df.branchesPct }
-                    };
-                }
-            }
-        } catch (_) { }
-    }
+    const summaryFile = path.join(coverageDir, 'coverage-summary.json');
+    const finalFile = path.join(coverageDir, 'coverage-final.json');
 
     // Invalidate old test results and coverage files to guarantee runner outputs fresh data
     const staleFiles = [
@@ -3523,9 +3812,56 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         }
     } catch (_) { }
 
-    // Determine testing framework
-    const testFilesToRun = Array.from(modifiedFiles);
-    const targetSourceFiles = Array.from(sourceFilesInspected);
+    // Filter helper to strictly exclude E2E, system, cypress, and integration test suites from unit test runs
+    const isE2EOrIntegrationSuite = (filePath) => {
+        if (!filePath || typeof filePath !== 'string') return false;
+        const norm = filePath.replace(/\\/g, '/').toLowerCase();
+        return (
+            /(?:^|\/)(?:e2e|system|cypress|playwright|integration)(?:[-_a-z0-9]*)?(?:\/|$)/i.test(norm) ||
+            /\b(?:e2e|system|cypress|playwright|supertest|integration)\.(?:test|spec)\.[cm]?[jt]s$/i.test(norm) ||
+            /(?:^|[._-])(?:e2e|system|cypress|playwright|supertest|integration)(?:[._-]|$)/i.test(path.basename(norm)) ||
+            /(?:^|\/)tier\d+[-_].*\.(?:test|spec)\.[cm]?[jt]s$/i.test(norm)
+        );
+    };
+
+    // Determine target subprojects/packages being modified
+    const targetPackages = new Set();
+    for (const file of modifiedFiles) {
+        targetPackages.add(getPackageForFile(file, rootDir));
+    }
+    for (const item of appliedList) {
+        if (item.testFile) targetPackages.add(getPackageForFile(item.testFile, rootDir));
+        if (item.sourceFile) targetPackages.add(getPackageForFile(item.sourceFile, rootDir));
+    }
+    for (const item of itemsToApply) {
+        if (item.testFile) targetPackages.add(getPackageForFile(item.testFile, rootDir));
+        if (item.sourceFile) targetPackages.add(getPackageForFile(item.sourceFile, rootDir));
+    }
+
+    // If specific subpackages exist (e.g. "server"), exclude root "" fallback
+    const nonRootPackages = new Set([...targetPackages].filter(Boolean));
+    const effectiveTargetPackages = nonRootPackages.size > 0 ? nonRootPackages : targetPackages;
+
+    // Determine testing framework and scope regression tests to target packages
+    const allRegressionFiles = detectTestingFrameworks(rootDir).testFiles
+        .filter(file => ['jest','vitest'].includes(file.framework))
+        .map(file => file.path)
+        .filter(file => !isE2EOrIntegrationSuite(file));
+    const regressionFiles = effectiveTargetPackages.size > 0
+        ? allRegressionFiles.filter(file => effectiveTargetPackages.has(getPackageForFile(file, rootDir)))
+        : allRegressionFiles;
+    const testFilesToRun = [...new Set([...modifiedFiles, ...regressionFiles])]
+        .filter(file => !isE2EOrIntegrationSuite(file));
+    const frameworkByFile = Object.fromEntries(testFilesToRun.map(file => [file,
+        appliedList.find(item => item.testFile === file)?.framework || classifyTestFile(fs.readFileSync(path.join(rootDir, file),'utf8'),file)]));
+    const allowedSkippedByFile = Object.fromEntries(testFilesToRun.map(file => [file,
+        parseExistingTestAst(fileBackups.get(path.join(rootDir, file)) ?? (!modifiedFiles.has(file) ? fs.readFileSync(path.join(rootDir,file),'utf8') : ''), file).tests.filter(test => test.isSkipped).map(test => test.runnerTitle || test.fullTitle || test.title)]));
+    const targetSourceFiles = [...new Set([...sourceFilesInspected, ...findLogicSourceFiles(rootDir, { bypassCache: true }).map(file =>
+        file.relativePath || (file.absolutePath ? path.relative(rootDir,file.absolutePath).replace(/\\/g,'/') : file.filePath)).filter(Boolean)])];
+    const hasTargetVitestConfig = Boolean(
+        findVitestConfig(rootDir) ||
+        Array.from(targetPackages).some(pkgDir => pkgDir && findVitestConfig(path.join(rootDir, pkgDir)))
+    );
     const hasVitestConfig = Boolean(
         fs.existsSync(path.join(rootDir, "vitest.config.ts")) ||
         fs.existsSync(path.join(rootDir, "vitest.config.js")) ||
@@ -3542,15 +3878,16 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     );
     const isVitest = itemsToApply.some(s => s.framework === "vitest") ||
         testFilesToRun.some(f => f.includes("vitest") || f.includes(".vitest.")) ||
-        (hasVitestConfig && !hasJestConfig);
+        (hasTargetVitestConfig && !hasJestConfig);
     const framework = isVitest ? "vitest" : "jest";
 
     // Use the selected runner when normalizing snippets that have no runner import.
     for (const tf of modifiedFiles) {
         const fullP = path.join(rootDir, tf);
+        if (fileBackups.get(fullP)?.trim() || appliedList.some(item => item.testFile === tf && item.changeSet?.candidateHash)) continue;
         if (fs.existsSync(fullP)) {
             const orig = fs.readFileSync(fullP, "utf8");
-            let cleaned = cleanAndDeduplicateTestContent(orig, "", fullP, { framework });
+            let cleaned = cleanAndDeduplicateTestContent(orig, "", fullP, { framework: frameworkByFile[tf] || framework });
             cleaned = healImportPathsInTestCode(cleaned, tf, rootDir);
             if (cleaned !== orig) fs.writeFileSync(fullP, cleaned, "utf8");
         }
@@ -3576,21 +3913,12 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
 
     try {
         if (typeof runCoverageFn === "function") {
-            await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: 0 });
-        } else if (isVitest) {
-            const vitestRes = await runVitestCoverage(null, rootDir, snapshot.vitestCommand, testFilesToRun, {
-                coverageDir: sealedRunDir,
-                targetSourceFiles
-            });
-            runnerExitCode = vitestRes.exitCode;
-            rawOutput = (vitestRes.stderr || "") + "\n" + (vitestRes.stdout || "");
+            const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: 0 });
+            runnerExitCode = result?.exitCode ?? 0;
         } else {
-            const jestRes = await runJestCoverage(null, rootDir, snapshot.jestConfigPath, testFilesToRun, null, {
-                coverageDir: sealedRunDir,
-                targetSourceFiles
-            });
-            runnerExitCode = jestRes.exitCode;
-            rawOutput = (jestRes.stderr || "") + "\n" + (jestRes.stdout || "");
+            const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile});
+            runnerExitCode = result.exitCode;
+            rawOutput = result.stdout + '\n' + result.stderr;
         }
     } catch (runErr) {
         testExecutionError = runErr.message;
@@ -3622,32 +3950,20 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         }
     }
 
-    // Check if target test suites ran and passed cleanly
-    const targetSuitesResults = [];
-    if (testResults && Array.isArray(testResults.testResults)) {
-        for (const suite of testResults.testResults) {
-            const suiteName = (suite.name || "").replace(/\\/g, "/");
-            const isTarget = testFilesToRun.some(tf => suiteName.includes(path.basename(tf.replace(/\\/g, "/"))));
-            if (isTarget) {
-                targetSuitesResults.push(suite);
-            }
-        }
-    }
-
-    const hasTargetPassingSuites = targetSuitesResults.length > 0 &&
-        targetSuitesResults.every(s => s.status === "passed" && (s.numFailingTests || 0) === 0);
-
     const reportFailed = () => Boolean(testResults && (
         testResults.success === false || testResults.numFailedTests > 0 ||
         testResults.numFailedTestSuites > 0 || testResults.failedTests > 0 ||
         testResults.testResults?.some(s => s.status === "failed")
     ));
-    let currentIsRealFailure = (runnerExitCode !== 0 || testExecutionError || reportFailed()) && !hasTargetPassingSuites;
+    let currentIsRealFailure = Boolean(runnerExitCode !== 0 || testExecutionError || reportFailed());
 
     // Auto-heal test failures if any target tests failed to run or assertions mismatched (up to 2 iterations in live runner, 5 in custom mock runner)
     let healIterations = 0;
-    const maxHealIterations = typeof runCoverageFn === "function" ? 5 : 2;
+    const maxHealIterations = 5;
     let inputRepairAttempted = false;
+    let expectationRepairAttempted = false;
+    let typeRepairAttempted = false;
+    let baselineReviewAttempted = false;
     let previousErrorFingerprint = null;
     const attemptedPackageInstalls = new Set();
     while (currentIsRealFailure && healIterations < maxHealIterations) {
@@ -3663,43 +3979,61 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         try {
             const combinedOutput = rawOutput + "\n" + collectTestResultErrors(testResults);
             const missingDep = extractMissingDependency(combinedOutput);
-            if (missingDep && !attemptedPackageInstalls.has(missingDep.packageName)) {
-                attemptedPackageInstalls.add(missingDep.packageName);
-                const installBaseRoot = origWorkspaceRoot || rootDir;
-                const depInspection = inspectWorkspaceDependency({
-                    rootDir: installBaseRoot,
-                    packageName: missingDep.packageName,
-                    importedFrom: missingDep.importedFrom
-                });
-                // If missing from node_modules and is a valid npm package name (in package.json or newly suggested like razorpay), install automatically
-                if (!depInspection.inNodeModules && isValidNpmPackageName(missingDep.packageName)) {
-                    const installRes = await installPackageInWorkspace({
-                        rootDir: installBaseRoot,
-                        packageName: missingDep.packageName,
-                        isDev: false,
-                        importedFrom: missingDep.importedFrom
-                    }).catch(() => ({ success: false }));
-                    if (installRes?.success) {
-                        if (origWorkspaceRoot && path.resolve(origWorkspaceRoot) !== path.resolve(rootDir)) {
-                            const newLinks = ensureWorkspaceNodeModulesLinked(origWorkspaceRoot, rootDir);
-                            createdNodeModulesLinks.push(...newLinks);
-                        }
-                        healed = true;
+            if (missingDep) healed = (await resolveUnitTestDependency({ rootDir, output: combinedOutput, attempted: attemptedPackageInstalls })).resolved;
+
+            const hasExistingFailure = testResults?.testResults?.some(suite => {
+                const original = fileBackups.get(path.resolve(rootDir,suite.name || suite.testFilePath || ''));
+                if (!original) return false;
+                const names = new Set(parseExistingTestAst(original,suite.name).tests.map(test => test.runnerTitle || test.fullTitle || test.title));
+                return suite.assertionResults?.some(test => test.status === 'failed' && names.has((test.fullName || [...(test.ancestorTitles || []),test.title].join(' ')).trim()));
+            });
+            if (!healed && validationOnly && !baselineReviewAttempted && hasExistingFailure) {
+                baselineReviewAttempted = true;
+                const candidates = new Map([...fileBackups.keys()].map(file => [file,fs.readFileSync(file,'utf8')]));
+                try {
+                    for (const [file,original] of fileBackups) {
+                        if (original === null) fs.unlinkSync(file);
+                        else fs.writeFileSync(file,original);
                     }
+                    baselineRepairs = await prepareBaselineTestRepairs({rootDir,originalRootDir:origWorkspaceRoot,snapshot,
+                        projectId:actualProjectId,suggestions:itemsToApply,review:true,sourceFingerprint:sourceHashesBefore._compositeHash,environment:operationEnv});
+                } finally {
+                    for (const [file,content] of candidates) fs.writeFileSync(file,content);
                 }
+                for (const [file,envelope] of baselineRepairs.repairs) {
+                    const changes = assembleUnitTestCandidate({original:fileBackups.get(file),proposed:candidates.get(file),
+                        repairs:envelope.edits,testFile:path.relative(rootDir,file)});
+                    fs.writeFileSync(file,changes.content);
+                    healed = true;
+                }
+            }
+
+            if (!healed && !typeRepairAttempted && hasTypedInputRuntimeFailure(testResults)) {
+                typeRepairAttempted = true;
+                const repairs = await repairGeneratedTestTypeErrors({rootDir,testResults,existingTestsByFile:fileBackups,
+                    suggestions:itemsToApply.map((s,index)=>({...s,testFile:appliedList[index]?.testFile}))});
+                healed = repairs.length > 0;
+                for (const item of appliedList) item.inputContractRepairs = repairs.filter(repair=>repair.testFile === item.testFile);
             }
 
             if (!healed && hasAssertionFailure(testResults, rawOutput)) {
                 if (!inputRepairAttempted) {
                     inputRepairAttempted = true;
-                    const repairs = await repairGeneratedTestInputs({ rootDir, testResults, rawOutput,
+                    const repairs = await repairGeneratedTestInputs({ rootDir, testResults, rawOutput, existingTestsByFile: fileBackups,
                         suggestions: itemsToApply.map((s, index) => ({ ...s, testFile: appliedList[index]?.testFile })) });
                     healed = repairs.length > 0;
                     for (const item of appliedList) item.inputRepairs = repairs.filter(r => r.testFile === item.testFile);
                 }
-            } else if (!healed) {
-                healed = autoHealTestFailures(rootDir, testFilesToRun, testResults,
-                    combinedOutput, { framework });
+                if (!healed && !expectationRepairAttempted) {
+                    expectationRepairAttempted = true;
+                    const repairs = await repairGeneratedTestExpectations({ rootDir, testResults, existingTestsByFile: fileBackups,
+                        suggestions: itemsToApply.map((s, index) => ({ ...s, testFile: appliedList[index]?.testFile })) });
+                    healed = repairs.length > 0;
+                    for (const item of appliedList) item.expectationRepairs = repairs.filter(r => r.testFile === item.testFile);
+                }
+            } else if (!healed && !missingDep && !hasTypedInputRuntimeFailure(testResults)) {
+                healed = autoHealTestFailures(rootDir, testFilesToRun.filter(file => modifiedFiles.has(file) && !fileBackups.get(path.join(rootDir,file))?.trim()), testResults,
+                    combinedOutput, { framework,restrictToRequestedFiles:true });
             }
         } catch (healErr) {
             console.error("[applyUnitTestSuggestion] autoHealTestFailures warning:", healErr);
@@ -3718,22 +4052,12 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         rawOutput = "";
         try {
             if (typeof runCoverageFn === "function") {
-                await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: healIterations });
-                runnerExitCode = 0;
-            } else if (isVitest) {
-                const retryRes = await runVitestCoverage(null, rootDir, snapshot.vitestCommand, testFilesToRun, {
-                    coverageDir: sealedRunDir,
-                    targetSourceFiles
-                });
-                runnerExitCode = retryRes.exitCode;
-                rawOutput += "\n" + (retryRes.stderr || "") + "\n" + (retryRes.stdout || "");
+                const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: healIterations });
+                runnerExitCode = result?.exitCode ?? 0;
             } else {
-                const retryRes = await runJestCoverage(null, rootDir, snapshot.jestConfigPath, testFilesToRun, null, {
-                    coverageDir: sealedRunDir,
-                    targetSourceFiles
-                });
-                runnerExitCode = retryRes.exitCode;
-                rawOutput += "\n" + (retryRes.stderr || "") + "\n" + (retryRes.stdout || "");
+                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile});
+                runnerExitCode = result.exitCode;
+                rawOutput = result.stdout + '\n' + result.stderr;
             }
             for (const p of candidateResults) {
                 if (fs.existsSync(p)) {
@@ -3744,23 +4068,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 }
             }
 
-            const retryTargetSuites = [];
-            if (testResults && Array.isArray(testResults.testResults)) {
-                for (const suite of testResults.testResults) {
-                    const suiteName = (suite.name || "").replace(/\\/g, "/");
-                    const isTarget = testFilesToRun.some(tf => suiteName.includes(path.basename(tf.replace(/\\/g, "/"))));
-                    if (isTarget) {
-                        retryTargetSuites.push(suite);
-                    }
-                }
-            }
-            const retryPassing = retryTargetSuites.length > 0 &&
-                retryTargetSuites.every(s => s.status === "passed" && (s.numFailingTests || 0) === 0);
-
-            if (retryPassing || (runnerExitCode === 0 && !reportFailed())) {
-                currentIsRealFailure = false;
-                break;
-            }
+            currentIsRealFailure = Boolean(runnerExitCode !== 0 || testExecutionError || reportFailed());
+            if (!currentIsRealFailure) break;
         } catch (retryErr) {
             testExecutionError = retryErr.message;
             runnerExitCode = 1;
@@ -3769,31 +4078,22 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         }
     }
 
-    // Re-evaluate target suites after potential auto-healing retry
-    const postHealingTargetSuites = [];
-    if (testResults && Array.isArray(testResults.testResults)) {
-        for (const suite of testResults.testResults) {
-            const suiteName = (suite.name || "").replace(/\\/g, "/");
-            const isTarget = testFilesToRun.some(tf => suiteName.includes(path.basename(tf.replace(/\\/g, "/"))));
-            if (isTarget) {
-                postHealingTargetSuites.push(suite);
-            }
-        }
-    }
-
-    const postHealingPassingSuites = postHealingTargetSuites.length > 0 &&
-        postHealingTargetSuites.every(s => s.status === "passed" && (s.numFailingTests || 0) === 0);
-
-    const finalRealFailure = (runnerExitCode !== 0 || testExecutionError || reportFailed()) && !postHealingPassingSuites;
+    const initialVerification = verifyUnitTestBatch({ rootDir, testFiles: testFilesToRun, results: testResults, exitCode: runnerExitCode, error: testExecutionError, allowedSkippedByFile });
+    const finalRealFailure = !initialVerification.valid;
 
     // If test failed or exited with non-zero
     if (finalRealFailure) {
+        if (durableTx) rollbackDurableTransaction({ rootDir, tx: durableTx });
         cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+        const diagnostics = collectTestResultErrors(testResults) + '\n' + rawOutput;
+        if (envCheck.requiresPrompt && (envCheck.missingRequired.some(name => diagnostics.includes(name)) || /secretOrPrivateKey must have a value|missing (?:required )?environment|environment variable.*required/i.test(diagnostics))) return environmentBlocker();
         const failureDetail = getTestRunnerFailure(testResults, rawOutput, runnerExitCode, testExecutionError);
         const modResError = parseModuleResolutionError(collectTestResultErrors(testResults) + "\n" + rawOutput, origWorkspaceRoot || rootDir);
         const missingDepPayload = modResError?.missingDependency || null;
         for (const item of appliedList) {
             item.status = "FAILED";
+            for (const repair of item.expectationRepairs || []) repair.status = 'FAILED_RERUN';
+            for (const repair of item.inputContractRepairs || []) repair.status = 'FAILED_RERUN';
             item.error = failureDetail;
             if (missingDepPayload) {
                 item.missingDependency = missingDepPayload;
@@ -3802,12 +4102,16 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
 
         return {
             success: false,
-            fileUpdated: true,
+            fileUpdated: false,
             status: "FAILED",
-            message: testExecutionError || "Test execution failed after applying suggestion",
+            message: testExecutionError || (baselineRepairs.baseline?.failedTests > 0
+                ? `The unchanged baseline already had ${baselineRepairs.baseline.failedTests} failing tests. Review baseline and candidate failures before applying.`
+                : "Test execution failed after applying suggestion"),
+            baseline:baselineRepairs.baseline,
             errorDetail: modResError ? modResError.actualError : failureDetail,
             moduleResolutionError: modResError,
             missingDependency: missingDepPayload,
+            verification: initialVerification,
             appliedSuggestions: appliedList,
             previousCoverage,
             newCoverage: null, // Strictly null: do not fake or keep old coverage
@@ -3842,7 +4146,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         } catch (_) { }
     }
 
-    // Auto-refine coverage gaps to guarantee >= 90% across Statements, Branches, Functions, Lines
+    // Refine measured gaps toward 100%, subject to the iteration/time budget.
+    let refinement = null;
     try {
         const refined = await autoRefineCoverageGaps({
             rootDir,
@@ -3855,7 +4160,12 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             rawSum,
             rawFinal,
             runCoverageFn
+            , allowedSkippedByFile
+            , regressionTestFiles: testFilesToRun, frameworkByFile
+            , coverageSourceFiles: targetSourceFiles
         });
+        refinement = refined;
+        if (refined?.refined) runnerExitCode = refined.exitCode;
         if (refined && refined.currentSum) rawSum = refined.currentSum;
         if (refined && refined.currentFinal) rawFinal = refined.currentFinal;
 
@@ -3872,47 +4182,19 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         console.warn("[applyUnitTestSuggestion] autoRefineCoverageGaps warning:", refineErr.message);
     }
 
-    // 1. Accurately verify each suggestion against actual test execution results
-    const isRunnerFailed = Boolean(runnerExitCode !== 0 || testExecutionError);
-    for (const item of appliedList) {
-        let itemFailed = isRunnerFailed;
-        let failureError = isRunnerFailed ? (testExecutionError || `Test runner failed with exit code ${runnerExitCode}`) : null;
-
-        if (testResults && Array.isArray(testResults.testResults)) {
-            let foundSuite = false;
-            for (const suite of testResults.testResults) {
-                const suiteName = (suite.name || "").replace(/\\/g, "/");
-                const targetTest = (item.testFile || "").replace(/\\/g, "/");
-                if (suiteName.includes(path.basename(targetTest))) {
-                    foundSuite = true;
-                    if (suite.status === "failed" || (suite.numFailingTests || 0) > 0) {
-                        itemFailed = true;
-                        const failedMsgs = (suite.assertionResults || [])
-                            .filter(a => a.status === "failed")
-                            .map(a => (a.failureMessages || []).join("\n") || a.title);
-                        failureError = failedMsgs.join("\n") || suite.message || "Test assertions failed";
-                        break;
-                    } else if (suite.status === "passed" && (suite.numFailingTests || 0) === 0) {
-                        itemFailed = false;
-                        failureError = null;
-                    }
-                }
-            }
-            if (!foundSuite && isRunnerFailed) {
-                itemFailed = true;
-                failureError = failureError || "Test suite did not execute or failed during initialization";
-            }
-        }
-
-        if (itemFailed) {
-            item.status = "FAILED";
-            item.error = failureError;
-        } else {
-            item.status = "PASSED";
-        }
+    const verification = verifyUnitTestBatch({ rootDir, testFiles: testFilesToRun, results: testResults, exitCode: runnerExitCode, error: testExecutionError, allowedSkippedByFile });
+    if ([...fileBackups].some(([file, content]) => content && !existingTestContractsPreserved(applyTestRepairEdits(content,baselineRepairs.repairs.get(file)?.edits || []), fs.readFileSync(file, 'utf8')))) {
+        verification.valid = false;
+        verification.reasons.push('EXISTING_TESTS_CHANGED');
     }
-
-    const anyPassed = appliedList.some(item => item.status === "PASSED");
+    const anyPassed = verification.valid;
+    for (const item of appliedList) {
+        for (const repair of item.expectationRepairs || []) repair.status = verification.valid ? 'VERIFIED' : 'FAILED_RERUN';
+        for (const repair of item.inputContractRepairs || []) repair.status = verification.valid ? 'VERIFIED' : 'FAILED_RERUN';
+        const file = verification.perFile.find(entry => entry.testFile === item.testFile);
+        item.status = file?.valid && verification.valid ? 'PASSED' : 'FAILED';
+        if (item.status === 'FAILED') item.error ||= file?.reason || verification.reasons.join(', ');
+    }
 
     // Seal runner output files into run-specific directory immediately
     const runManifestPath = path.join(sealedRunDir, "manifest.json");
@@ -3958,6 +4240,11 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         snapshotId,
         projectId: actualProjectId,
         sourceFilesCompositeHash: sourceHashesBefore?._compositeHash || null,
+        sourceFileHashes: Object.fromEntries([...sourceFilesInspected].map(file => {
+            const resolved = resolveSourceFileOnDisk(rootDir, file) || path.join(rootDir, sanitizePath(rootDir, file));
+            return [file, fs.existsSync(resolved) ? crypto.createHash('sha256').update(fs.readFileSync(resolved)).digest('hex') : null];
+        }).filter(([, hash]) => Boolean(hash))),
+        testFileHashes: Object.fromEntries(testFilesToRun.map(file => [file,crypto.createHash('sha256').update(fs.readFileSync(path.join(rootDir,file))).digest('hex')])),
         executionStartTime: runExecutionStartTime,
         completedAt: Date.now(),
         runnerExitCode,
@@ -4028,7 +4315,63 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     const isProvenanceValid = runManifest.snapshotId === snapshotId && runManifest.projectId === actualProjectId;
 
     const hasValidCoverageArtifact = (hasValidFinalFile && isFinalFresh) || (hasValidSummaryCoverage && isSummaryFresh);
-    const isCoverageAuthoritative = !isRunnerFailed && hasValidCoverageArtifact && anyPassed && isProvenanceValid;
+    const missingCoverageSources = targetSourceFiles.filter(sf =>
+        !Object.keys(rawFinal || {}).some(key => matchesFilePath(key, sf)) &&
+        !Object.keys(rawSum || {}).some(key => key !== 'total' && matchesFilePath(key, sf)));
+    if (!rawSum?.total && hasValidFinalFile) rawSum = mergeCoverageSummaries({}, {}, {rootDir,mergedFinal:rawFinal});
+    const goalStatus = coverageGoalStatus(rawSum?.total);
+    const invalidCoverageSources = targetSourceFiles.filter(sf => {
+        const metric = Object.entries(rawSum || {}).find(([key]) => key !== 'total' && matchesFilePath(key,sf))?.[1];
+        return coverageGoalStatus(metric) === 'UNAVAILABLE';
+    });
+    const regressedSources = [...sourceFilesInspected].filter(sf => {
+        const metric = Object.entries(rawSum || {}).find(([key]) => key !== 'total' && matchesFilePath(key,sf))?.[1];
+        const before = initialFileCoverageMap.get(sf);
+        return before && metric && ['statements','branches','functions','lines'].some(key => metric[key]?.total > 0 && metric[key].pct + 0.01 < (before[key] || 0));
+    });
+    const isCoverageAuthoritative = verification.valid && hasValidCoverageArtifact && isProvenanceValid && goalStatus !== 'UNAVAILABLE' && invalidCoverageSources.length === 0 && missingCoverageSources.length === 0 && regressedSources.length === 0 && (!requireCoverageGoal || goalStatus === 'MET');
+    if (!isCoverageAuthoritative) {
+        if (durableTx) rollbackDurableTransaction({ rootDir, tx: durableTx });
+        cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+        return { success: false, status: 'FAILED', fileUpdated: false, runId, verification,
+            coverageGoalStatus: goalStatus, missingCoverageSources, invalidCoverageSources, regressedSources, refinement,
+            message: !verification.valid ? 'The complete batch has not passed verification.' : 'The batch does not have complete, valid coverage or has not met the required coverage goal.',
+            appliedSuggestions: appliedList, previousCoverage, newCoverage: null, testResults };
+    }
+    purgeCovaiHarnessFiles(rootDir);
+    const draftIntegrity = verifySourceFilesUnchanged(rootDir,sourceHashesBefore);
+    if (!draftIntegrity.intact) {
+        if (durableTx) rollbackDurableTransaction({rootDir,tx:durableTx});
+        cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+        throw sourceIntegrityError(draftIntegrity);
+    }
+    await assertProjectOperationActive();
+    if (validationOnly) {
+        cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+        const metrics = rawSum?.total;
+        return { success: true, status: 'VERIFIED_DRAFT', fileUpdated: false, runId, verification,
+            coverageGoalStatus: goalStatus, refinement, previousCoverage, appliedSuggestions: appliedList, baseline:baselineRepairs.baseline,
+            newCoverage: metrics ? Object.fromEntries(Object.entries(metrics).map(([key, value]) => [key, value.pct])) : null,
+            validatedFiles: [...new Set(appliedList.map(item => item.testFile))].map(testFile => {
+                const content = fs.readFileSync(path.join(rootDir,testFile),'utf8');
+                return {testFile,content,testRepairs:baselineRepairs.repairs.get(path.join(rootDir,testFile)),
+                    changeSet:{...appliedList.find(item => item.testFile === testFile)?.changeSet,candidateHash:testContentHash(content)}};
+            }) };
+    }
+    if ([...fileBackups].every(([file,content]) => content !== null && fs.readFileSync(file,'utf8') === content)) {
+        cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+        return {success:true,status:'NO_CHANGES',fileUpdated:false,runId,verification,coverageGoalStatus:goalStatus,
+            message:'The existing suite is preserved; no test changes or new version were published.',appliedSuggestions:appliedList,
+            previousCoverage,newCoverage:null,testResults};
+    }
+    const versionBatch = saveVerifiedUnitTestBatch({ snapshotId, rootDir, projectId: actualProjectId, runId, verification,
+        coverage: rawSum?.total,
+        files: [...new Set(appliedList.map(item => item.testFile))].map(testFile => {
+            const item = appliedList.find(entry => entry.testFile === testFile);
+            const full = path.join(rootDir, testFile);
+            return { ...item, originalContent: fileBackups.get(full) ?? null, updatedContent: fs.readFileSync(full, 'utf8') };
+        }) });
+    deferPreparedCommit(() => clearManifestCache(snapshotId));
 
     // 3. Exact AST-Aware Coverage Merger & Per-File Coverage Extraction
     const coverageFilesToPersist = [];
@@ -4036,8 +4379,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     let mergedFinal = null;
     if (isCoverageAuthoritative) {
         const projectJestConfig = await readProjectJestConfig(rootDir, snapshot.jestConfigPath);
-        mergedFinal = mergeCoverageFinal(baselineFinal || {}, rawFinal || {}, { rootDir });
-        mergedSum = mergeCoverageSummaries(baselineSummary || {}, rawSum || {}, {
+        mergedFinal = mergeCoverageFinal({}, rawFinal || {}, { rootDir });
+        mergedSum = mergeCoverageSummaries({}, rawSum || {}, {
             projectJestConfig,
             rootDir,
             mergedFinal
@@ -4150,7 +4493,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     }
 
     // 4. Transactional Persistence of CoverageFile & CoverageSummary (Strictly atomic under Prisma $transaction)
-    if (isCoverageAuthoritative && mergedSum) {
+    if (!validationOnly && isCoverageAuthoritative && mergedSum) {
         try {
             fs.writeFileSync(summaryFile, JSON.stringify(mergedSum, null, 2), "utf8");
         } catch (_) { }
@@ -4162,7 +4505,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         } catch (_) { }
 
         // Sync merged coverage artifacts back to canonical origin workspace root
-        if (origWorkspaceRoot && path.resolve(origWorkspaceRoot) !== path.resolve(rootDir)) {
+        if (!currentProjectOperation() && origWorkspaceRoot && path.resolve(origWorkspaceRoot) !== path.resolve(rootDir)) {
             syncCoverageArtifactsToOrigin(rootDir, origWorkspaceRoot);
         }
 
@@ -4192,22 +4535,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                         data: { commitSha: `appliedTx:${durableTx.txId}` }
                     });
                 }
-                for (const item of coverageFilesToPersist) {
-                    await tx.coverageFile.upsert({
-                        where: {
-                            snapshotId_filePath: {
-                                snapshotId,
-                                filePath: item.cleanSfKey
-                            }
-                        },
-                        update: item.metrics,
-                        create: {
-                            snapshotId,
-                            filePath: item.cleanSfKey,
-                            ...item.metrics
-                        }
-                    });
-                }
+                await upsertCoverageFileRows(tx, coverageFilesToPersist.map(item => ({ snapshotId, filePath: item.cleanSfKey, ...item.metrics })));
                 if (summaryMetrics) {
                     await tx.coverageSummary.upsert({
                         where: { snapshotId },
@@ -4220,8 +4548,10 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 }
             };
 
-            if (typeof prisma.$transaction === "function") {
-                await prisma.$transaction(executeDbUpdates);
+            if (currentProjectOperation()) {
+                await stagePreparedPublication(executeDbUpdates);
+            } else if (typeof prisma.$transaction === "function") {
+                await prisma.$transaction(executeDbUpdates, { maxWait: 15000, timeout: 30000 });
             } else {
                 await executeDbUpdates(prisma);
             }
@@ -4245,10 +4575,12 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         ]);
 
         // Cache invalidation strictly occurs ONLY after transaction commit succeeds
-        try {
+        const invalidateAfterCommit = async () => { try {
             const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
             invalidateCoverageCache(snapshotId);
-        } catch (_) { }
+        } catch (_) { } };
+        if (currentProjectOperation()) deferPreparedCommit(invalidateAfterCommit);
+        else await invalidateAfterCommit();
 
         // Clean up durable journal once committed and DB persistence succeeded
         if (durableTx && durableTx.status === "COMMITTED") {
@@ -4258,9 +4590,9 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         }
     }
 
-    const totalTestsCount = testResults?.numTotalTests ?? testResults?.totalTests ?? (anyPassed ? 1 : 0);
-    const passedTestsCount = testResults?.numPassedTests ?? testResults?.passedTests ?? (anyPassed ? 1 : 0);
-    const failedTestsCount = testResults?.numFailedTests ?? testResults?.failedTests ?? (anyPassed ? 0 : 1);
+    const totalTestsCount = verification.totalTests;
+    const passedTestsCount = verification.passedTests;
+    const failedTestsCount = verification.failedTests;
     const testStatus = testResults?.status || (failedTestsCount === 0 && anyPassed ? "passed" : "failed");
 
     const normalizedTestResults = {
@@ -4295,52 +4627,25 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 rollbackFailures.push({ file: fp, error: rbErr.message });
             }
         }
-        throw new ServiceError(`Strict Storage Guard: Project source files were modified during test execution: ${immutabilityCheck.changedFiles.map(f => f.file).join(", ")}. All changes rolled back.`, 403);
+        throw sourceIntegrityError(immutabilityCheck);
     }
 
     const dodEvaluation = verifyQuantitativeDoD({
         coverage: finalNewCoverage,
         testResults: normalizedTestResults,
-        testCode: itemsToApply.map(s => s.suggestedTestCode || s.generatedCode || "").join("\n"),
+        testCode: [...new Set(appliedList.map(item => item.testFile))].map(file => fs.readFileSync(path.join(rootDir, file), 'utf8')).join('\n'),
         rootDir
     });
 
     const isOverallSuccess = anyPassed && isCoverageAuthoritative;
 
-    // Record versions only after test application and runner verification completes
-    if (appliedList.length > 0 && (isOverallSuccess || anyPassed)) {
-        const processedTestFiles = new Set();
-        for (const item of appliedList) {
-            const targetRel = item.testFile;
-            if (processedTestFiles.has(targetRel)) continue;
-            processedTestFiles.add(targetRel);
-            try {
-                const targetFull = path.join(rootDir, targetRel);
-                const finalDiskContent = fs.existsSync(targetFull) ? fs.readFileSync(targetFull, "utf8") : "";
-                const origBackup = fileBackups.get(targetFull);
-                const wasExisting = Boolean(origBackup != null && origBackup.trim().length > 0);
-
-                saveUnitTestFileVersions({
-                    snapshotId,
-                    rootDir,
-                    projectId: actualProjectId,
-                    sourceFile: item.sourceFile,
-                    testFile: targetRel,
-                    originalContent: origBackup || "",
-                    updatedContent: finalDiskContent,
-                    framework: item.framework || "jest",
-                    summary: "Applied unit test suite verified by runner",
-                    isExisting: wasExisting,
-                    status: "APPLIED"
-                });
-            } catch (vErr) {
-                console.warn("[applyUnitTestSuggestion] Post-verification version save warning:", vErr.message);
-            }
-        }
-    }
-
     return {
         success: isOverallSuccess,
+        verification,
+        versionBatch,
+        coverageScope: { type: 'UNIT_BUSINESS_LOGIC', sourceFiles: targetSourceFiles, testFiles: testFilesToRun },
+        coverageGoalStatus: goalStatus,
+        refinement,
         fileUpdated: true,
         status: (isCoverageAuthoritative && anyPassed) ? "PASSED" : "FAILED",
         runId,
