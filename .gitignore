@@ -1,12 +1,39 @@
+# ==============================================================================
+# 1. ROOT WHITELIST (Strict Lockdown - Cấm toàn bộ ngoại trừ danh sách dưới)
+# ==============================================================================
+# Bỏ qua toàn bộ file và folder ở thư mục root
+/*
+
+# Whitelist các FILE duy nhất được phép ở root
+!.gitignore
+!AGENTS.md
+!api.http
+!docker-compose.yml
+!docker-compose.production.yml
+!package.json
+!package-lock.json
+!README.md
+
+# Whitelist các THƯ MỤC duy nhất được phép ở root
+!.agents/
+!client/
+!docs/
+!server/
+!shared/
+
+# ==============================================================================
+# 2. QUY TẮC BỎ QUA NỘI BỘ (Bên trong client, server, shared, docs...)
+# ==============================================================================
+# Dependencies
+node_modules/
+.npm-cache/
+
 # Environment & Secrets
 .env
 .env.*
 !.env.example
 
-# Dependencies
-node_modules/
-
-# Production Build Outputs
+# Build Outputs
 dist/
 dist-ssr/
 *.local
@@ -19,7 +46,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Editor & OS files
+# Editor & OS Metadata
 .vscode/*
 !.vscode/extensions.json
 .idea/
@@ -30,33 +57,12 @@ pnpm-debug.log*
 *.sln
 *.sw?
 
-# Temporary, Scratch & Extraneous Folders
-/temp/
-/scratch/
-/outputs/
-/output/
-/tools/
-/.skills/
-/tmp/
-/.npm-cache/
-
 # CovAI Runtime Temp & Test Artifacts
 .covai-temp/
-/.covai-temp/
-/server/.covai-temp/
 .covai-data/
-/.covai-data/
-/server/.covai-data/
+test-results/
 /client/.evidence-review/
 /client/evidence-preview.html
-/server/src/tests/fixtures/system-assessment/.covai-system-test/
-test-results/
-/server/test-results/
-
-# Ad-hoc Test Profiles & Scripts
-docker-compose.collaboration-test.yml
-/server/test_*.mjs
-/server/scripts/sync_latest.mjs
 
 # Office, Binary & Document Exports
 *.docx
@@ -64,7 +70,7 @@ docker-compose.collaboration-test.yml
 *.bak
 *.pdf
 
-# Research & External Tool Directories
+# Research & Superpowers Spec Restrictions
 .understand-anything/
 /.specify/
 /specs/
@@ -73,32 +79,5 @@ docker-compose.collaboration-test.yml
 !/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
 !/docs/superpowers/specs/2026-10-28-project-collaboration-design.md
 !/docs/superpowers/specs/2026-11-04-collaborative-editor-design.md
-<<<<<<< HEAD
-=======
-
-# Disposable collaboration worker copies and generated test artifacts
-/server/.covai-temp/collaboration-operations/
-
-
-# Local system-assessment verification artifacts
-/temp/system-assessment-*
-/temp/system-scalability-*
-/temp/system-automatic-browser/
-/prototype/
-/client/.evidence-review/
-/client/evidence-preview.html
-/server/src/tests/fixtures/system-assessment/.covai-system-test/
-
-
-# Scratch directory & test results
-/scratch/
-/server/test-results/
-test-results/
-
-# Research documents and artifacts
->>>>>>> cb2c5fc3b954bd831ee06959169f2fed62eaa1f0
 /docs/research/
 !/docs/research/*.md
-
-#Test api
-api.http

@@ -13,10 +13,14 @@ Dự án CovAI được tổ chức theo mô hình Monorepo tinh gọn:
 - [`docs/`](file:///e:/Express/CovAI-/docs): Toàn bộ tài liệu kiến trúc, API specs, plans và nghiệm thu (tham khảo [`docs/README.md`](file:///e:/Express/CovAI-/docs/README.md)).
 
 ### ⛔ Quy tắc ranh giới tuyệt đối (Boundaries)
-1. **Không import chéo**: `server/` tuyệt đối KHÔNG import file từ `client/` và ngược lại.
-2. **Dùng module `shared/`**: Các hằng số, enum (vai trò `OWNER/EDITOR/VIEWER`, danh sách AI models, kích thước gói tin realtime) phải lấy từ `shared/`. Không định nghĩa lại cục bộ gây lệch pha.
-3. **Bảo toàn Comment & Docstring**: Giữ nguyên toàn bộ comment logic, license và chú thích hiện có. Không tự ý xóa code hoặc comment không thuộc phạm vi công việc.
-4. **Thư mục Root**: Giữ root luôn sạch sẽ. Không tự ý tạo thêm file `.md`, file nháp script hay ảnh tạm ra ngoài root.
+1. **Khóa cứng thư mục Root (Strict Root Whitelist)**:
+   - Thư mục root áp dụng cơ chế Whitelist tuyệt đối (`/*` và `!`).
+   - Chỉ duy nhất các thư mục sau được tồn tại ở root: `.agents/`, `client/`, `docs/`, `server/`, `shared/`.
+   - Chỉ duy nhất các file sau được tồn tại ở root: `.gitignore`, `AGENTS.md`, `api.http`, `docker-compose.yml`, `package.json`, `package-lock.json`, `README.md`.
+   - **CẤM TỰ Ý TẠO FILE/FOLDER MỚI Ở ROOT**: Mọi tài liệu mới phải đưa vào `docs/`, file tạm phải dọn dẹp, script test đưa vào `server/scripts/` hoặc `tests/`. Git sẽ tự động chặn mọi file ngoài danh sách trên.
+2. **Không import chéo**: `server/` tuyệt đối KHÔNG import file từ `client/` và ngược lại.
+3. **Dùng module `shared/`**: Các hằng số, enum (vai trò `OWNER/EDITOR/VIEWER`, danh sách AI models, kích thước gói tin realtime) phải lấy từ `shared/`. Không định nghĩa lại cục bộ gây lệch pha.
+4. **Bảo toàn Comment & Docstring**: Giữ nguyên toàn bộ comment logic, license và chú thích hiện có. Không tự ý xóa code hoặc comment không thuộc phạm vi công việc.
 
 ---
 
