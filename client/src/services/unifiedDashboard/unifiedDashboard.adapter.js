@@ -918,6 +918,10 @@ export function adaptUnifiedDashboard({
     context: {
       projectId: context.projectId || unifiedBackendRaw?.context?.projectId || "",
       projectName: context.projectName || unifiedBackendRaw?.context?.projectName || "CovAI Project",
+      lifecycleStatus:
+        unifiedBackendRaw?.context?.lifecycleStatus ||
+        context.lifecycleStatus ||
+        (execution.total > 0 ? "DOING" : null),
       snapshotId: activeSnapshotId,
       snapshots: effectiveSnapshots,
       updatedAt: unifiedBackendRaw?.context?.updatedAt || Date.now(),

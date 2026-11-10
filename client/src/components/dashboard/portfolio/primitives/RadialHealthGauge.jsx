@@ -1,10 +1,10 @@
 import { memo } from "react";
 
 function getGaugeColor(score, isTested) {
-  if (!isTested || score === 0) return "#484f58";
-  if (score >= 80) return "#3fb950";
-  if (score >= 65) return "#d29922";
-  return "#f85149";
+  if (!isTested || score === 0) return "var(--ud-neutral)";
+  if (score >= 80) return "var(--ud-pass)";
+  if (score >= 65) return "var(--ud-warn)";
+  return "var(--ud-fail)";
 }
 
 function RadialHealthGauge({
@@ -41,7 +41,7 @@ function RadialHealthGauge({
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke="#21262d"
+          stroke="var(--ud-border)"
           strokeWidth={strokeWidth}
           fill="none"
         />
@@ -64,7 +64,7 @@ function RadialHealthGauge({
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
         <span
           className="text-xs font-mono font-bold leading-none tracking-tight tabular-nums"
-          style={{ color: isTested ? "#f0f6fc" : "#8b949e" }}
+          style={{ color: isTested ? "var(--ud-text)" : "var(--ud-text-muted)" }}
         >
           {isTested ? clampedScore : "—"}
         </span>

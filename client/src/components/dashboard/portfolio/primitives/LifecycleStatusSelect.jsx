@@ -5,38 +5,38 @@ import { updateProjectLifecycleStatusApi } from "../../../../services/portfolio.
 const LIFECYCLE_CONFIG = {
   DOING: {
     label: "Doing",
-    dotColor: "bg-[#58a6ff]",
-    textColor: "text-[#58a6ff]",
-    borderColor: "border-[#1f6feb]/40",
-    bgBadge: "bg-[#388bfd]/10",
+    dotColor: "bg-[var(--ud-unit)]",
+    textColor: "text-[var(--ud-unit)]",
+    borderColor: "border-[var(--ud-unit)]/35",
+    bgBadge: "bg-[var(--ud-unit)]/10",
   },
   NOT_STARTED: {
     label: "Not Started",
-    dotColor: "bg-[#8b949e]",
-    textColor: "text-[#8b949e]",
-    borderColor: "border-[#30363d]",
-    bgBadge: "bg-[#21262d]",
+    dotColor: "bg-[var(--ud-neutral)]",
+    textColor: "text-[var(--ud-text-muted)]",
+    borderColor: "border-[var(--ud-border)]",
+    bgBadge: "bg-[var(--ud-surface-2)]",
   },
   PAUSED: {
     label: "Paused",
-    dotColor: "bg-[#d29922]",
-    textColor: "text-[#d29922]",
-    borderColor: "border-[#bb8009]/40",
-    bgBadge: "bg-[#bb8009]/10",
+    dotColor: "bg-[var(--ud-warn)]",
+    textColor: "text-[var(--ud-warn)]",
+    borderColor: "border-[var(--ud-warn)]/35",
+    bgBadge: "bg-[var(--ud-warn)]/10",
   },
   COMPLETED: {
     label: "Completed",
-    dotColor: "bg-[#3fb950]",
-    textColor: "text-[#3fb950]",
-    borderColor: "border-[#238636]/40",
-    bgBadge: "bg-[#238636]/10",
+    dotColor: "bg-[var(--ud-pass)]",
+    textColor: "text-[var(--ud-pass)]",
+    borderColor: "border-[var(--ud-pass)]/35",
+    bgBadge: "bg-[var(--ud-pass)]/10",
   },
   CANCELLED: {
     label: "Cancelled",
-    dotColor: "bg-[#f85149]",
-    textColor: "text-[#8b949e]",
-    borderColor: "border-[#30363d]",
-    bgBadge: "bg-[#21262d]",
+    dotColor: "bg-[var(--ud-fail)]",
+    textColor: "text-[var(--ud-text-muted)]",
+    borderColor: "border-[var(--ud-border)]",
+    bgBadge: "bg-[var(--ud-surface-2)]",
   },
 };
 
@@ -59,6 +59,10 @@ function LifecycleStatusSelect({
   const [optimisticStatus, setOptimisticStatus] = useState(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    setOptimisticStatus(null);
+  }, [currentStatus, projectId]);
 
   const selectedStatus = optimisticStatus || currentStatus;
 
@@ -89,6 +93,11 @@ function LifecycleStatusSelect({
     setIsOpen(false);
     setIsUpdating(true);
     onStatusChange?.(newStatus);
+    window.dispatchEvent(
+      new CustomEvent("covai:project-status-updated", {
+        detail: { projectId, lifecycleStatus: newStatus },
+      })
+    );
 
     try {
       await updateProjectLifecycleStatusApi(projectId, { lifecycleStatus: newStatus });
@@ -98,6 +107,11 @@ function LifecycleStatusSelect({
       // Revert optimistic update
       setOptimisticStatus(null);
       onStatusChange?.(currentStatus);
+      window.dispatchEvent(
+        new CustomEvent("covai:project-status-updated", {
+          detail: { projectId, lifecycleStatus: currentStatus },
+        })
+      );
     } finally {
       setIsUpdating(false);
     }
@@ -112,11 +126,11 @@ function LifecycleStatusSelect({
           e.stopPropagation();
           setIsOpen((prev) => !prev);
         }}
-        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${cfg.bgBadge} ${cfg.borderColor} ${cfg.textColor} hover:border-[#58a6ff]/50 disabled:opacity-50`}
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors duration-150 ${cfg.bgBadge} ${cfg.borderColor} ${cfg.textColor} hover:border-[var(--ud-unit)]/50 disabled:opacity-50 cursor-pointer`}
         title={`Status: ${cfg.label}. Click to switch.`}
       >
         {isUpdating ? (
-          <Loader2 className="w-2.5 h-2.5 animate-spin text-[#8b949e]" />
+          <Loader2 className="w-2.5 h-2.5 animate-spin text-[var(--ud-text-muted)]" />
         ) : (
           <span className={`w-1.5 h-1.5 rounded-full ${cfg.dotColor}`} />
         )}
@@ -127,10 +141,9 @@ function LifecycleStatusSelect({
       {isOpen && (
         <div
           role="menu"
-          className="absolute right-0 mt-1 w-56 bg-[#161b22] border border-[#30363d] rounded-md shadow-2xl z-50 py-1 overflow-hidden"
-          style={{ backdropFilter: "blur(12px)" }}
+          className="absolute right-0 mt-1 w-56 bg-[var(--ud-surface)] border border-[var(--ud-border)] rounded-md shadow-xl z-50 py-1 overflow-hidden"
         >
-          <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-[#8b949e] border-b border-[#21262d]">
+          <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-[var(--ud-text-muted)] border-b border-[var(--ud-border)] bg-[var(--ud-surface-2)]/50">
             Lifecycle State
           </div>
           {OPTIONS.map((opt) => {
@@ -144,17 +157,19 @@ function LifecycleStatusSelect({
                   e.stopPropagation();
                   handleSelect(opt.value);
                 }}
-                className={`w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 hover:bg-[#21262d] transition-colors ${
-                  isCurrent ? "bg-[#388bfd]/10 text-[#f0f6fc]" : "text-[#c9d1d9]"
+                className={`w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer ${
+                  isCurrent
+                    ? "bg-[var(--ud-unit)]/10 text-[var(--ud-text)]"
+                    : "text-[var(--ud-text)]"
                 }`}
               >
                 <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${optCfg.dotColor}`} />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium flex items-center justify-between">
                     <span>{optCfg.label}</span>
-                    {isCurrent && <Check className="w-3.5 h-3.5 text-[#58a6ff]" />}
+                    {isCurrent && <Check className="w-3.5 h-3.5 text-[var(--ud-unit)]" />}
                   </div>
-                  <div className="text-[10px] text-[#8b949e] leading-snug">{opt.desc}</div>
+                  <div className="text-[10px] text-[var(--ud-text-muted)] leading-snug">{opt.desc}</div>
                 </div>
               </button>
             );

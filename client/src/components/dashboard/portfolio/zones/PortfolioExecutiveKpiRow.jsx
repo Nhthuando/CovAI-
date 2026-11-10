@@ -44,10 +44,10 @@ export function PortfolioExecutiveKpiRow({
       className={`grid grid-cols-12 gap-4 ${className}`}
     >
       {/* ── Card 1: Portfolio Release Readiness & Health ─────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-lg border border-[#30363d] bg-[#161b22] p-4 flex flex-col justify-between shadow-sm transition-colors">
+      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
         <div>
           <div className="flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[#f0f6fc]">
+            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[var(--ud-text)]">
               <span>Release Readiness</span>
               <ContextualMetricTooltip
                 title="Release Readiness & Health"
@@ -60,12 +60,12 @@ export function PortfolioExecutiveKpiRow({
             <span
               className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                 card1.grade === "A"
-                  ? "bg-[#238636]/15 text-[#3fb950] border border-[#238636]/30"
+                  ? "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)] border border-[var(--ud-pass)]/30"
                   : card1.grade === "B"
-                  ? "bg-[#1f6feb]/15 text-[#58a6ff] border border-[#1f6feb]/30"
+                  ? "bg-[var(--ud-unit)]/15 text-[var(--ud-unit)] border border-[var(--ud-unit)]/30"
                   : card1.grade === "C"
-                  ? "bg-[#bb8009]/15 text-[#d29922] border border-[#bb8009]/30"
-                  : "bg-[#da3633]/15 text-[#f85149] border border-[#da3633]/30"
+                  ? "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border border-[var(--ud-warn)]/30"
+                  : "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)] border border-[var(--ud-fail)]/30"
               }`}
             >
               Grade {card1.grade || "—"}
@@ -73,42 +73,42 @@ export function PortfolioExecutiveKpiRow({
           </div>
 
           <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[#f0f6fc] tabular-nums">
+            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-text)] tabular-nums">
               {card1.avgHealthScore ?? 0}
             </span>
-            <span className="text-xs font-mono text-[#8b949e]">/ 100 Health</span>
-            <span className="ml-auto text-xs font-mono font-medium text-[#8b949e]">
+            <span className="text-xs font-mono text-[var(--ud-text-muted)]">/ 100 Health</span>
+            <span className="ml-auto text-xs font-mono font-medium text-[var(--ud-text-muted)]">
               {total} Active {total !== 1 ? "Projects" : "Project"}
             </span>
           </div>
 
           {/* Segmented Breakdown Bar */}
-          <div className="h-2 w-full rounded-full bg-[#21262d] overflow-hidden flex gap-0.5 mt-3 select-none">
+          <div className="h-2 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden flex gap-0.5 mt-3 select-none">
             {passedPct > 0 && (
               <div
                 style={{ width: `${passedPct}%` }}
-                className="bg-[#3fb950] transition-all"
+                className="bg-[var(--ud-pass)] transition-all"
                 title={`Passed: ${passed} (${passedPct}%)`}
               />
             )}
             {atRiskPct > 0 && (
               <div
                 style={{ width: `${atRiskPct}%` }}
-                className="bg-[#d29922] transition-all"
+                className="bg-[var(--ud-warn)] transition-all"
                 title={`At Risk: ${atRisk} (${atRiskPct}%)`}
               />
             )}
             {blockedPct > 0 && (
               <div
                 style={{ width: `${blockedPct}%` }}
-                className="bg-[#f85149] transition-all"
+                className="bg-[var(--ud-fail)] transition-all"
                 title={`Blocked: ${blocked} (${blockedPct}%)`}
               />
             )}
             {untestedPct > 0 && (
               <div
                 style={{ width: `${untestedPct}%` }}
-                className="bg-[#484f58] transition-all"
+                className="bg-[var(--ud-neutral)] transition-all"
                 title={`Untested: ${untested} (${untestedPct}%)`}
               />
             )}
@@ -117,15 +117,15 @@ export function PortfolioExecutiveKpiRow({
 
         {/* Legend counts (Clickable filters) */}
         <div>
-          <div className="grid grid-cols-4 gap-1 pt-3 mt-3 border-t border-[#30363d] text-center font-mono text-[11px]">
+          <div className="grid grid-cols-4 gap-1 pt-3 mt-3 border-t border-[var(--ud-border)] text-center font-mono text-[11px]">
             <button
               type="button"
               onClick={() => onSelectStatusFilter?.("PASSED")}
               className="hover:opacity-80 transition-opacity cursor-pointer"
               title="Filter by Passed"
             >
-              <div className="text-[#3fb950] font-bold">{passed}</div>
-              <div className="text-[10px] text-[#8b949e]">Passed</div>
+              <div className="text-[var(--ud-pass)] font-bold">{passed}</div>
+              <div className="text-[10px] text-[var(--ud-text-muted)]">Passed</div>
             </button>
             <button
               type="button"
@@ -133,8 +133,8 @@ export function PortfolioExecutiveKpiRow({
               className="hover:opacity-80 transition-opacity cursor-pointer"
               title="Filter by At Risk"
             >
-              <div className="text-[#d29922] font-bold">{atRisk}</div>
-              <div className="text-[10px] text-[#8b949e]">At Risk</div>
+              <div className="text-[var(--ud-warn)] font-bold">{atRisk}</div>
+              <div className="text-[10px] text-[var(--ud-text-muted)]">At Risk</div>
             </button>
             <button
               type="button"
@@ -142,8 +142,8 @@ export function PortfolioExecutiveKpiRow({
               className="hover:opacity-80 transition-opacity cursor-pointer"
               title="Filter by Blocked"
             >
-              <div className="text-[#f85149] font-bold">{blocked}</div>
-              <div className="text-[10px] text-[#8b949e]">Blocked</div>
+              <div className="text-[var(--ud-fail)] font-bold">{blocked}</div>
+              <div className="text-[10px] text-[var(--ud-text-muted)]">Blocked</div>
             </button>
             <button
               type="button"
@@ -151,12 +151,12 @@ export function PortfolioExecutiveKpiRow({
               className="hover:opacity-80 transition-opacity cursor-pointer"
               title="Filter by Untested"
             >
-              <div className="text-[#8b949e] font-bold">{untested}</div>
-              <div className="text-[10px] text-[#8b949e]">Untested</div>
+              <div className="text-[var(--ud-text-muted)] font-bold">{untested}</div>
+              <div className="text-[10px] text-[var(--ud-text-muted)]">Untested</div>
             </button>
           </div>
           {isolatedCount > 0 && (
-            <div className="text-[10px] text-[#8b949e] text-center mt-1.5 font-mono">
+            <div className="text-[10px] text-[var(--ud-text-muted)] text-center mt-1.5 font-mono">
               *{isolatedCount} completed/paused projects isolated
             </div>
           )}
@@ -164,10 +164,10 @@ export function PortfolioExecutiveKpiRow({
       </div>
 
       {/* ── Card 2: Global Unified Coverage Index ─────────────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-lg border border-[#30363d] bg-[#161b22] p-4 flex flex-col justify-between shadow-sm transition-colors">
+      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
         <div>
           <div className="flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[#f0f6fc]">
+            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[var(--ud-text)]">
               <span>Unified Coverage</span>
               <ContextualMetricTooltip
                 title="Unified Coverage Index"
@@ -177,60 +177,60 @@ export function PortfolioExecutiveKpiRow({
                 tip="Aim for 80%+ unified coverage for confident continuous deployment."
               />
             </div>
-            <span className="text-[10px] text-[#3fb950] font-bold">Target 80%+</span>
+            <span className="text-[10px] text-[var(--ud-pass)] font-bold">Target 80%+</span>
           </div>
 
           <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[#f0f6fc] tabular-nums">
+            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-text)] tabular-nums">
               {card2.unifiedCoveragePct ?? 0}%
             </span>
-            <span className="text-xs font-mono text-[#8b949e]">Weighted Avg</span>
+            <span className="text-xs font-mono text-[var(--ud-text-muted)]">Weighted Avg</span>
           </div>
         </div>
 
         {/* 3 Horizontal Mini Progress Bars */}
-        <div className="space-y-2 pt-3 mt-3 border-t border-[#30363d]">
+        <div className="space-y-2 pt-3 mt-3 border-t border-[var(--ud-border)]">
           <div className="space-y-1">
             <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-[#58a6ff] font-medium">Unit Line Cov</span>
-              <span className="text-[#f0f6fc] font-semibold tabular-nums">
+              <span className="text-[var(--ud-unit)] font-medium">Unit Line Cov</span>
+              <span className="text-[var(--ud-text)] font-semibold tabular-nums">
                 {card2.avgUnitCoveragePct ?? 0}%
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-[#21262d] overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden">
               <div
                 style={{ width: `${Math.min(100, card2.avgUnitCoveragePct ?? 0)}%` }}
-                className="h-full bg-[#58a6ff] transition-all"
+                className="h-full bg-[var(--ud-unit)] transition-all"
               />
             </div>
           </div>
 
           <div className="space-y-1">
             <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-[#bc8cff] font-medium">API Endpoint Cov</span>
-              <span className="text-[#f0f6fc] font-semibold tabular-nums">
+              <span className="text-[var(--ud-integration)] font-medium">API Endpoint Cov</span>
+              <span className="text-[var(--ud-text)] font-semibold tabular-nums">
                 {card2.avgIntegrationCoveragePct ?? 0}%
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-[#21262d] overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden">
               <div
                 style={{ width: `${Math.min(100, card2.avgIntegrationCoveragePct ?? 0)}%` }}
-                className="h-full bg-[#bc8cff] transition-all"
+                className="h-full bg-[var(--ud-integration)] transition-all"
               />
             </div>
           </div>
 
           <div className="space-y-1">
             <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-[#3fb950] font-medium">System Flow Cov</span>
-              <span className="text-[#f0f6fc] font-semibold tabular-nums">
+              <span className="text-[var(--ud-system)] font-medium">System Flow Cov</span>
+              <span className="text-[var(--ud-text)] font-semibold tabular-nums">
                 {card2.avgSystemCoveragePct ?? 0}%
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-[#21262d] overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden">
               <div
                 style={{ width: `${Math.min(100, card2.avgSystemCoveragePct ?? 0)}%` }}
-                className="h-full bg-[#3fb950] transition-all"
+                className="h-full bg-[var(--ud-system)] transition-all"
               />
             </div>
           </div>
@@ -238,10 +238,10 @@ export function PortfolioExecutiveKpiRow({
       </div>
 
       {/* ── Card 3: Execution Scale & Time Efficiency ─────────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-lg border border-[#30363d] bg-[#161b22] p-4 flex flex-col justify-between shadow-sm transition-colors">
+      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
         <div>
           <div className="flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[#f0f6fc]">
+            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[var(--ud-text)]">
               <span>Execution & Velocity</span>
               <ContextualMetricTooltip
                 title="Execution & Velocity Efficiency"
@@ -252,50 +252,50 @@ export function PortfolioExecutiveKpiRow({
               />
             </div>
             {speedup > 1 ? (
-              <span className="px-1.5 py-0.5 rounded bg-[#388bfd]/10 border border-[#1f6feb]/30 text-[10px] text-[#58a6ff] font-bold">
+              <span className="px-1.5 py-0.5 rounded bg-[var(--ud-unit)]/10 border border-[var(--ud-unit)]/30 text-[10px] text-[var(--ud-unit)] font-bold">
                 ⚡ {speedup}x Faster
               </span>
             ) : (
-              <span className="text-[10px] text-[#3fb950] font-bold">
+              <span className="text-[10px] text-[var(--ud-pass)] font-bold">
                 {card3.overallPassRatePct ?? 0}% Pass
               </span>
             )}
           </div>
 
           <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[#f0f6fc] tabular-nums">
+            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-text)] tabular-nums">
               {card3.totalExecutedTests ?? 0}
             </span>
-            <span className="text-xs font-mono text-[#8b949e]">Executed Tests</span>
+            <span className="text-xs font-mono text-[var(--ud-text-muted)]">Executed Tests</span>
           </div>
         </div>
 
         {/* 2x2 Sub-metrics Grid */}
-        <div className="grid grid-cols-2 gap-2 pt-3 mt-3 border-t border-[#30363d] font-mono text-xs">
-          <div className="p-1.5 rounded bg-[#0d1117] border border-[#21262d]">
-            <div className="text-[10px] text-[#8b949e]">Auto Runtime</div>
-            <div className="font-bold text-[#f0f6fc] truncate">{autoDuration}</div>
+        <div className="grid grid-cols-2 gap-2 pt-3 mt-3 border-t border-[var(--ud-border)] font-mono text-xs">
+          <div className="p-1.5 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+            <div className="text-[10px] text-[var(--ud-text-muted)]">Auto Runtime</div>
+            <div className="font-bold text-[var(--ud-text)] truncate">{autoDuration}</div>
           </div>
-          <div className="p-1.5 rounded bg-[#0d1117] border border-[#21262d]">
-            <div className="text-[10px] text-[#8b949e]">Manual Benchmark</div>
-            <div className="font-bold text-[#d29922] truncate">{manualDuration}</div>
+          <div className="p-1.5 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+            <div className="text-[10px] text-[var(--ud-text-muted)]">Manual Benchmark</div>
+            <div className="font-bold text-[var(--ud-warn)] truncate">{manualDuration}</div>
           </div>
-          <div className="p-1.5 rounded bg-[#0d1117] border border-[#21262d]">
-            <div className="text-[10px] text-[#8b949e]">Unit Passed</div>
-            <div className="font-bold text-[#f0f6fc]">{card3.unitPassedStr || "0/0"}</div>
+          <div className="p-1.5 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+            <div className="text-[10px] text-[var(--ud-text-muted)]">Unit Passed</div>
+            <div className="font-bold text-[var(--ud-text)]">{card3.unitPassedStr || "0/0"}</div>
           </div>
-          <div className="p-1.5 rounded bg-[#0d1117] border border-[#21262d]">
-            <div className="text-[10px] text-[#8b949e]">APIs Covered</div>
-            <div className="font-bold text-[#f0f6fc]">{card3.apiCoveredStr || "0/0"}</div>
+          <div className="p-1.5 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+            <div className="text-[10px] text-[var(--ud-text-muted)]">APIs Covered</div>
+            <div className="font-bold text-[var(--ud-text)]">{card3.apiCoveredStr || "0/0"}</div>
           </div>
         </div>
       </div>
 
       {/* ── Card 4: Global AI Impact & QA Hours Saved ─────────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-lg border border-[#30363d] bg-[#161b22] p-4 flex flex-col justify-between shadow-sm transition-colors">
+      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
         <div>
           <div className="flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[#f0f6fc]">
+            <div className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[var(--ud-text)]">
               <span>AI Impact & QA Saved</span>
               <ContextualMetricTooltip
                 title="AI Synthesis & Net QA Hours Saved"
@@ -305,38 +305,38 @@ export function PortfolioExecutiveKpiRow({
                 tip="Check Attention Queue to view uncovered endpoints needing AI test generation."
               />
             </div>
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#58a6ff]">
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--ud-unit)]">
               <Sparkles size={11} />
               COV AI
             </span>
           </div>
 
           <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[#3fb950] tabular-nums">
+            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-pass)] tabular-nums">
               +{totalQaHoursSaved.toFixed(1)}h
             </span>
-            <span className="text-xs font-mono text-[#8b949e]">Net QA Saved</span>
+            <span className="text-xs font-mono text-[var(--ud-text-muted)]">Net QA Saved</span>
           </div>
         </div>
 
         {/* Sub-metrics & Focus Link */}
-        <div className="pt-3 mt-3 border-t border-[#30363d] space-y-1.5 text-xs font-mono">
+        <div className="pt-3 mt-3 border-t border-[var(--ud-border)] space-y-1.5 text-xs font-mono">
           <div className="flex items-center justify-between">
-            <span className="text-[#8b949e]">AI Synthesized:</span>
-            <span className="font-bold text-[#f0f6fc]">{card4.totalAiTests ?? 0} tests</span>
+            <span className="text-[var(--ud-text-muted)]">AI Synthesized:</span>
+            <span className="font-bold text-[var(--ud-text)]">{card4.totalAiTests ?? 0} tests</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-[#8b949e]">Healed / Repaired:</span>
-            <span className="font-bold text-[#3fb950]">{card4.aiRepairedCount ?? 0} healed</span>
+            <span className="text-[var(--ud-text-muted)]">Healed / Repaired:</span>
+            <span className="font-bold text-[var(--ud-pass)]">{card4.aiRepairedCount ?? 0} healed</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-[#8b949e]">Remaining Gaps:</span>
-            <span className="font-bold text-[#d29922]">{card4.uncoveredGapsCount ?? 0} uncovered</span>
+            <span className="text-[var(--ud-text-muted)]">Remaining Gaps:</span>
+            <span className="font-bold text-[var(--ud-warn)]">{card4.uncoveredGapsCount ?? 0} uncovered</span>
           </div>
           <button
             type="button"
             onClick={() => onFocusAttentionQueue?.()}
-            className="w-full mt-1 pt-1 text-center text-[11px] font-sans text-[#58a6ff] hover:underline flex items-center justify-center gap-1 cursor-pointer"
+            className="w-full mt-1 pt-1 text-center text-[11px] font-sans text-[var(--ud-unit)] hover:underline flex items-center justify-center gap-1 cursor-pointer"
           >
             <span>View in Attention Queue</span>
             <ArrowDownRight size={12} />

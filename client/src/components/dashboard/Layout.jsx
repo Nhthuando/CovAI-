@@ -676,6 +676,36 @@ function LayoutInner() {
     };
   }, [project?.id]);
 
+  // Read-path synchronization: if Unified Dashboard reports an active/updated lifecycleStatus
+  // (e.g. self-healed to "DOING" when tests exist), sync it into Layout's project state & cache.
+  useEffect(() => {
+    const summaryStatus = unifiedSummary?.lifecycleStatus;
+    const summaryProjectId = unifiedSummary?.projectId;
+    if (!summaryProjectId || !summaryStatus || project?.id !== summaryProjectId) return;
+
+    const currentStatus = project?.lifecycleStatus || "NOT_STARTED";
+    if (currentStatus === "NOT_STARTED" && summaryStatus !== "NOT_STARTED") {
+      setProject((prev) =>
+        prev && prev.id === summaryProjectId
+          ? { ...prev, lifecycleStatus: summaryStatus }
+          : prev
+      );
+      setProjects((prev) =>
+        Array.isArray(prev)
+          ? prev.map((p) =>
+              p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
+            )
+          : prev
+      );
+      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((p) =>
+          p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
+        );
+      });
+    }
+  }, [unifiedSummary?.projectId, unifiedSummary?.lifecycleStatus, project?.id, project?.lifecycleStatus, queryClient]);
+
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
     setFileTree([]);
@@ -1060,7 +1090,13 @@ function LayoutInner() {
               {project?.id && (
                 <LifecycleStatusSelect
                   projectId={project.id}
-                  currentStatus={project.lifecycleStatus || "NOT_STARTED"}
+                  currentStatus={
+                    (project.lifecycleStatus && project.lifecycleStatus !== "NOT_STARTED"
+                      ? project.lifecycleStatus
+                      : unifiedSummary?.projectId === project.id && unifiedSummary?.lifecycleStatus
+                      ? unifiedSummary.lifecycleStatus
+                      : project.lifecycleStatus) || "NOT_STARTED"
+                  }
                   onStatusChange={(newStatus) => {
                     setProject((prev) =>
                       prev ? { ...prev, lifecycleStatus: newStatus } : prev
@@ -1070,6 +1106,11 @@ function LayoutInner() {
                         p.id === project.id ? { ...p, lifecycleStatus: newStatus } : p
                       )
                     );
+                    setUnifiedSummary((prev) =>
+                      prev && prev.projectId === project.id
+                        ? { ...prev, lifecycleStatus: newStatus }
+                        : prev
+                    );
                     queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
                       if (!Array.isArray(old)) return old;
                       return old.map((p) =>
@@ -1077,6 +1118,7 @@ function LayoutInner() {
                       );
                     });
                     queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
+                    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
                   }}
                   className="ml-1"
                 />

@@ -659,9 +659,27 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
       compactSeverity = "WARNING";
     }
 
-    // Default missing/null lifecycleStatus to DOING if tests exist, else NOT_STARTED
-    const lifecycleStatus =
-      p.lifecycleStatus || (totalExecuted > 0 ? "DOING" : "NOT_STARTED");
+    // Read-time self-healing: if lifecycleStatus is null or "NOT_STARTED"
+    // while the project already has execution, AI, coverage, or multi-snapshot activity, heal to "DOING"
+    const hasProjectActivity =
+      totalExecuted > 0 ||
+      totalAiSynthesized > 0 ||
+      aiRepairedCount > 0 ||
+      (p.snapshots?.length || 0) > 1 ||
+      runs.length > 0 ||
+      Boolean(cov);
+
+    let lifecycleStatus = p.lifecycleStatus || "NOT_STARTED";
+    if (lifecycleStatus === "NOT_STARTED" && hasProjectActivity) {
+      lifecycleStatus = "DOING";
+      p.lifecycleStatus = "DOING";
+      prisma.project
+        .updateMany({
+          where: { id: p.id, lifecycleStatus: "NOT_STARTED" },
+          data: { lifecycleStatus: "DOING", lifecycleUpdatedAt: new Date() },
+        })
+        .catch(() => {});
+    }
     const isExcludedFromActiveKpis = lifecycleStatus !== "DOING";
 
     const currentJobPillar = currentActiveJob

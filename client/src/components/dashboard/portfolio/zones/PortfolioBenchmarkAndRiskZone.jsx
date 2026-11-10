@@ -103,7 +103,7 @@ export function PortfolioBenchmarkAndRiskZone({
                     : "text-[var(--ud-text-muted)] hover:text-[var(--ud-text)]"
                 }`}
               >
-                <Zap size={12} className="text-[#58a6ff]" />
+                <Zap size={12} className="text-[var(--ud-unit)]" />
                 <span>Time & ROI</span>
               </button>
             </div>
