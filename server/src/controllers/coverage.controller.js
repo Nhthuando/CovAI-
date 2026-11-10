@@ -5934,9 +5934,11 @@ export const getSuitesReadinessController = async (req, res) => {
   try {
     const userId = req.user?.id;
     const { snapshotId } = req.params;
+    const onlyActiveJob =
+      req.query?.mode === "active-job-only" || req.query?.onlyActiveJob === "true";
     const { getSuitesReadinessService } =
       await import("../services/suitesReadiness.service.js");
-    const data = await getSuitesReadinessService({ snapshotId, userId });
+    const data = await getSuitesReadinessService({ snapshotId, userId, onlyActiveJob });
     return res.status(200).json({ success: true, data });
   } catch (error) {
     console.error("[getSuitesReadinessController] Error:", error);

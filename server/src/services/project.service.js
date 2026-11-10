@@ -221,17 +221,15 @@ export const healProjectLifecycleStatusIfNeeded = async (project, options = {}) 
   project.lifecycleUpdatedAt = now;
 
   if (project.id) {
-    try {
-      await prisma.project.updateMany({
+    prisma.project
+      .updateMany({
         where: { id: project.id, lifecycleStatus: "NOT_STARTED" },
         data: {
           lifecycleStatus: "DOING",
           lifecycleUpdatedAt: now,
         },
-      });
-    } catch (_) {
-      // Non-fatal in read path
-    }
+      })
+      .catch(() => {});
   }
 
   return "DOING";
@@ -280,52 +278,56 @@ export const listProjects = async (userId) => {
     },
   });
 
-  await Promise.all(projects.map((p) => healProjectLifecycleStatusIfNeeded(p)));
+  for (const p of projects) {
+    healProjectLifecycleStatusIfNeeded(p);
+  }
   return projects;
 };
 
 export const getProjectById = async (projectId, userId) => {
-  await resolveProjectAccess({projectId,userId,capability:"project.read"});
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    include: {
-      owner: {
-        select: {
-          id: true,
-          email: true,
-          name: true,
+  const [, project] = await Promise.all([
+    resolveProjectAccess({ projectId, userId, capability: "project.read" }),
+    prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        owner: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          },
         },
-      },
-      snapshots: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: {
-          id: true,
-          coverageSummaries: { select: { id: true } },
-          _count: {
-            select: {
-              testRuns: true,
-              systemScenarios: true,
+        snapshots: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            coverageSummaries: { select: { id: true } },
+            _count: {
+              select: {
+                testRuns: true,
+                systemScenarios: true,
+              },
             },
           },
         },
-      },
-      _count: {
-        select: {
-          snapshots: true,
-          jobs: true,
-          aiTests: true,
-          aiSuggestions: true,
+        _count: {
+          select: {
+            snapshots: true,
+            jobs: true,
+            aiTests: true,
+            aiSuggestions: true,
+          },
         },
       },
-    },
-  });
+    }),
+  ]);
 
   if (!project) {
     throw new ServiceError("Project not found", 404);
   }
 
-  await healProjectLifecycleStatusIfNeeded(project);
+  healProjectLifecycleStatusIfNeeded(project);
 
   return project;
 };
@@ -1292,36 +1294,147 @@ export const deleteProject = async (projectId, userId) => {
   }
 };
 
+const projectTreeCache = new Map();
+const projectTreeMetaCache = new Map();
+const TREE_CACHE_TTL_MS = 30_000;
+const TREE_META_CACHE_TTL_MS = 15_000;
+
+export const clearProjectTreeCache = (snapshotId = null) => {
+  projectTreeMetaCache.clear();
+  if (snapshotId) {
+    for (const key of projectTreeCache.keys()) {
+      if (key.startsWith(snapshotId)) {
+        projectTreeCache.delete(key);
+      }
+    }
+  } else {
+    projectTreeCache.clear();
+  }
+};
+
 export const getProjectTree = async (projectId, userId, options = {}) => {
-  const meta = await withProjectGuard({projectId,userId,capability:'project.read',maxWait:30000,timeout:60000}, async (tx,access) => {
-    const snapshot = await tx.projectSnapshot.findFirst({where:{projectId,...(options.snapshotId ? {id:options.snapshotId} : {})},orderBy:options.snapshotId ? undefined : {createdAt:'desc'}});
+  const metaCacheKey = `${projectId}:${options.snapshotId || "latest"}`;
+  const cachedMetaEntry = projectTreeMetaCache.get(metaCacheKey);
+  const { readMutationMarkers, recoverProjectMutationMarkers } = await import(
+    "./projectMutationRecovery.service.js"
+  );
+
+  let meta = null;
+  if (
+    cachedMetaEntry &&
+    Date.now() - cachedMetaEntry.cachedAt < TREE_META_CACHE_TTL_MS &&
+    cachedMetaEntry.allowedUsers?.has(userId)
+  ) {
+    const markers = await readMutationMarkers(cachedMetaEntry.meta.workspaceRoot);
+    if (markers.length === 0) {
+      meta = cachedMetaEntry.meta;
+    }
+  }
+
+  if (!meta) {
+    const [access, snapshot] = await Promise.all([
+      resolveProjectAccess({ projectId, userId, capability: "project.read" }),
+      prisma.projectSnapshot.findFirst({
+        where: {
+          projectId,
+          ...(options.snapshotId ? { id: options.snapshotId } : {}),
+        },
+        orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
+      }),
+    ]);
     if (!snapshot?.rootDir) throw new ServiceError("Project snapshot not ready", 202);
     const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
-    const {recoverProjectMutationMarkers} = await import('./projectMutationRecovery.service.js');
-    await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:workspaceRoot});
-    return { snapshotId: snapshot.id, workspaceRevision: access.project.workspaceRevision, workspaceRoot };
-  });
-  const tree = buildTree(meta.workspaceRoot);
-  return options.withMetadata ? {tree,snapshotId:meta.snapshotId,workspaceRevision:meta.workspaceRevision} : tree;
+    const markers = await readMutationMarkers(workspaceRoot);
+
+    if (markers.length > 0) {
+      meta = await withProjectGuard(
+        { projectId, userId, capability: "project.read", maxWait: 30000, timeout: 60000 },
+        async (tx, guardedAccess) => {
+          const guardedSnapshot = await tx.projectSnapshot.findFirst({
+            where: {
+              projectId,
+              ...(options.snapshotId ? { id: options.snapshotId } : {}),
+            },
+            orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
+          });
+          if (!guardedSnapshot?.rootDir)
+            throw new ServiceError("Project snapshot not ready", 202);
+          const guardedRoot = projectEditableWorkspaceRoot(guardedSnapshot);
+          await recoverProjectMutationMarkers({
+            tx,
+            project: guardedAccess.project,
+            snapshot: guardedSnapshot,
+            root: guardedRoot,
+          });
+          return {
+            snapshotId: guardedSnapshot.id,
+            workspaceRevision: guardedAccess.project.workspaceRevision,
+            workspaceRoot: guardedRoot,
+          };
+        }
+      );
+    } else {
+      meta = {
+        snapshotId: snapshot.id,
+        workspaceRevision: access.project.workspaceRevision,
+        workspaceRoot,
+      };
+    }
+
+    projectTreeMetaCache.set(metaCacheKey, {
+      meta,
+      cachedAt: Date.now(),
+      allowedUsers: new Set([userId, access.project?.ownerId].filter(Boolean)),
+    });
+  }
+
+  const cacheKey = `${meta.snapshotId}:${meta.workspaceRevision ?? 0}`;
+  let tree = null;
+  const cached = projectTreeCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < TREE_CACHE_TTL_MS) {
+    tree = cached.tree;
+  } else {
+    tree = buildTree(meta.workspaceRoot);
+    projectTreeCache.set(cacheKey, { tree, cachedAt: Date.now() });
+  }
+
+  return options.withMetadata
+    ? { tree, snapshotId: meta.snapshotId, workspaceRevision: meta.workspaceRevision }
+    : tree;
 };
 
 export const getFileContent = (projectId, userId, filePath, options = {}) =>
   readVersionedProjectFile({projectId,userId,path:filePath,snapshotId:typeof options === "string" ? options : options?.snapshotId});
 
-export const updateFileContent = (projectId, userId, filePath, content, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'WRITE_FILE',...options});
+export const updateFileContent = async (projectId, userId, filePath, content, options = {}) => {
+  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'WRITE_FILE',...options});
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const createProjectFile = (projectId, userId, filePath, content = '', options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'CREATE_FILE',...options});
+export const createProjectFile = async (projectId, userId, filePath, content = '', options = {}) => {
+  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'CREATE_FILE',...options});
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const createProjectFolder = (projectId, userId, filePath, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,kind:'CREATE_FOLDER',...options});
+export const createProjectFolder = async (projectId, userId, filePath, options = {}) => {
+  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,kind:'CREATE_FOLDER',...options});
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const renameProjectEntry = (projectId, userId, filePath, _content, newPath, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,newPath,kind:'RENAME_ENTRY',...options});
+export const renameProjectEntry = async (projectId, userId, filePath, _content, newPath, options = {}) => {
+  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,newPath,kind:'RENAME_ENTRY',...options});
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const deleteProjectEntry = (projectId, userId, filePath, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,kind:'DELETE_ENTRY',...options});
+export const deleteProjectEntry = async (projectId, userId, filePath, options = {}) => {
+  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,kind:'DELETE_ENTRY',...options});
+  projectTreeMetaCache.clear();
+  return res;
+};
 
 export const updateProjectLifecycleStatus = async ({
   projectId,

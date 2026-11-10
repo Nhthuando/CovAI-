@@ -21,7 +21,7 @@ import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
 import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
 import ContextualMetricTooltip from "../primitives/ContextualMetricTooltip.jsx";
 
-export function ProjectQualityCard({
+function ProjectQualityCardComponent({
   project,
   isPinned = false,
   isSelectedForCompare = false,
@@ -156,7 +156,7 @@ export function ProjectQualityCard({
               <div className="flex items-center gap-1.5 min-w-0">
                 <button
                   type="button"
-                  onClick={() => onOpenOverview?.(id)}
+                  onClick={() => onOpenOverview?.(id, project)}
                   className="text-sm font-bold text-[var(--ud-text)] hover:text-[var(--ud-unit)] transition-colors truncate text-left cursor-pointer tracking-tight"
                   title={name}
                 >
@@ -391,7 +391,7 @@ export function ProjectQualityCard({
         {/* Primary CTA: Open Unified Overview */}
         <button
           type="button"
-          onClick={() => onOpenOverview?.(id)}
+          onClick={() => onOpenOverview?.(id, project)}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--ud-unit)] hover:opacity-85 transition-opacity cursor-pointer group-hover:translate-x-0.5 transition-transform"
         >
           <span>Open Unified Overview</span>
@@ -430,7 +430,7 @@ export function ProjectQualityCard({
   );
 }
 
-export default memo(ProjectQualityCard, (prev, next) => {
+export const ProjectQualityCard = memo(ProjectQualityCardComponent, (prev, next) => {
   return (
     prev.isPinned === next.isPinned &&
     prev.isSelectedForCompare === next.isSelectedForCompare &&
@@ -445,3 +445,5 @@ export default memo(ProjectQualityCard, (prev, next) => {
     prev.project?.timeRoi?.speedupMultiplier === next.project?.timeRoi?.speedupMultiplier
   );
 });
+
+export default ProjectQualityCard;

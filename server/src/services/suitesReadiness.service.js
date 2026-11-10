@@ -44,11 +44,71 @@ function scanUnitTestFiles(dir, rootDir, testFiles = []) {
  * Evaluates the readiness of all 3 test suites (unit, integration, system)
  * for a specific snapshot and returns unified pre-flight checks and HITL actions.
  */
-export async function getSuitesReadinessService({ snapshotId, userId }) {
-  const snapshot = await prisma.projectSnapshot.findUnique({
-    where: { id: snapshotId },
-    include: { project: true }
-  });
+export async function getSuitesReadinessService({ snapshotId, userId, onlyActiveJob = false }) {
+  if (onlyActiveJob) {
+    const activeJob = await prisma.job.findFirst({
+      where: {
+        snapshotId,
+        type: { in: ['RUN_TESTS', 'INSTALL_DEPS', 'SUPERTEST_COVERAGE', 'SYSTEM_TEST_ANALYSIS'] },
+        status: { in: ['QUEUED', 'RUNNING'] }
+      },
+      orderBy: { createdAt: 'desc' }
+    }).catch(() => null);
+
+    const activeSuiteRun = activeJob ? {
+      jobId: activeJob.id,
+      type: activeJob.type,
+      pillar: activeJob.type === 'RUN_TESTS'
+        ? 'unit'
+        : (activeJob.type === 'SUPERTEST_COVERAGE' || activeJob.type === 'INSTALL_DEPS')
+          ? 'integration'
+          : 'system',
+      status: activeJob.status,
+      progress: activeJob.progress || 0,
+      stage: activeJob.stage || '',
+      startedAt: activeJob.startedAt || activeJob.createdAt
+    } : null;
+
+    return {
+      snapshotId,
+      projectId: activeJob?.projectId || null,
+      activeSuiteRun,
+    };
+  }
+
+  // Run all 5 database queries in a single parallel wave instead of 5 sequential round-trips
+  const [
+    snapshot,
+    pendingSuggestionsCount,
+    aiTests,
+    systemScenarios,
+    activeJob,
+  ] = await Promise.all([
+    prisma.projectSnapshot.findUnique({
+      where: { id: snapshotId },
+      include: { project: true }
+    }),
+    prisma.aiSuggestion.count({
+      where: {
+        snapshotId,
+        status: { in: ['PENDING', 'SUGGESTED', 'DRAFT'] }
+      }
+    }).catch(() => 0),
+    prisma.aiTest.findMany({
+      where: { snapshotId }
+    }).catch(() => []),
+    prisma.systemScenario.findMany({
+      where: { snapshotId }
+    }).catch(() => []),
+    prisma.job.findFirst({
+      where: {
+        snapshotId,
+        type: { in: ['RUN_TESTS', 'INSTALL_DEPS', 'SUPERTEST_COVERAGE', 'SYSTEM_TEST_ANALYSIS'] },
+        status: { in: ['QUEUED', 'RUNNING'] }
+      },
+      orderBy: { createdAt: 'desc' }
+    }).catch(() => null),
+  ]);
 
   if (!snapshot) {
     throw new ServiceError('Snapshot not found', 404);
@@ -71,12 +131,6 @@ export async function getSuitesReadinessService({ snapshotId, userId }) {
   } catch (_) {}
 
   unitTestFiles = scanUnitTestFiles(rootDir, rootDir);
-  const pendingSuggestionsCount = await prisma.aiSuggestion.count({
-    where: {
-      snapshotId: snapshot.id,
-      status: { in: ['PENDING', 'SUGGESTED', 'DRAFT'] }
-    }
-  }).catch(() => 0);
 
   const unitReady = unitTestFiles.length > 0;
   let unitStatus = 'READY';
@@ -135,10 +189,6 @@ export async function getSuitesReadinessService({ snapshotId, userId }) {
       details: { permutation: 'D' }
     };
   }
-
-  const aiTests = await prisma.aiTest.findMany({
-    where: { snapshotId: snapshot.id }
-  }).catch(() => []);
 
   let approvedScenariosCount = 0;
   let draftScenariosCount = 0;
@@ -244,10 +294,6 @@ export async function getSuitesReadinessService({ snapshotId, userId }) {
   };
 
   // ── 3. SYSTEM TEST SUITE READINESS ────────────────────────────────────────
-  const systemScenarios = await prisma.systemScenario.findMany({
-    where: { snapshotId: snapshot.id }
-  }).catch(() => []);
-
   let systemStatus = 'READY';
   let systemReady = false;
   const systemBlockers = [];
@@ -328,16 +374,6 @@ export async function getSuitesReadinessService({ snapshotId, userId }) {
   };
 
   // ── 4. ACTIVE SUITE RUN DETECTION (FOR F5 / NETWORK RECOVERY) ──────────────
-  const activeJob = await prisma.job.findFirst({
-    where: {
-      projectId: snapshot.projectId,
-      snapshotId: snapshot.id,
-      type: { in: ['RUN_TESTS', 'INSTALL_DEPS', 'SUPERTEST_COVERAGE', 'SYSTEM_TEST_ANALYSIS'] },
-      status: { in: ['QUEUED', 'RUNNING'] }
-    },
-    orderBy: { createdAt: 'desc' }
-  }).catch(() => null);
-
   const activeSuiteRun = activeJob ? {
     jobId: activeJob.id,
     type: activeJob.type,

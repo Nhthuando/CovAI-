@@ -38,7 +38,58 @@ function toFixedNum(val, fallback = 0) {
 
 // Cache for warm repeat responses
 const portfolioCache = new Map();
-const CACHE_TTL_MS = 20_000; // 20 seconds
+const inFlightPortfolioBuilds = new Map();
+const PORTFOLIO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes with DB fingerprint verification
+
+export async function getPortfolioFingerprint(userId) {
+  try {
+    const accessibleProjects = await prisma.project.findMany({
+      where: membershipWhere(userId),
+      select: {
+        id: true,
+        updatedAt: true,
+        lifecycleStatus: true,
+        lifecycleUpdatedAt: true,
+        activeSnapshotId: true,
+      },
+    });
+    if (!accessibleProjects || accessibleProjects.length === 0) return "empty";
+    const projectIds = accessibleProjects.map((p) => p.id);
+    const [latestRun, latestJob, activeJobCount, aiCount] = await Promise.all([
+      prisma.testRun.findFirst({
+        where: { snapshot: { projectId: { in: projectIds } } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, createdAt: true, durationMs: true },
+      }),
+      prisma.job.findFirst({
+        where: { projectId: { in: projectIds } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, createdAt: true },
+      }),
+      prisma.job.count({
+        where: {
+          projectId: { in: projectIds },
+          status: { in: ["QUEUED", "RUNNING"] },
+        },
+      }),
+      prisma.aiTest.count({
+        where: { projectId: { in: projectIds } },
+      }),
+    ]);
+
+    const projStr = accessibleProjects
+      .map(
+        (p) =>
+          `${p.id}:${p.updatedAt?.getTime() || 0}:${p.lifecycleStatus || ""}:${p.lifecycleUpdatedAt?.getTime() || 0}:${p.activeSnapshotId || ""}`
+      )
+      .join("|");
+
+    return `${projStr}__R:${latestRun?.id || ""}_${latestRun?.status || ""}_${latestRun?.createdAt?.getTime() || 0}__J:${latestJob?.id || ""}_${latestJob?.status || ""}_${activeJobCount}__AI:${aiCount}`;
+  } catch (err) {
+    console.warn("[getPortfolioFingerprint] Error calculating fingerprint:", err?.message);
+    return null;
+  }
+}
 
 export function invalidatePortfolioCache(userId = null) {
   if (userId) {
@@ -51,15 +102,33 @@ export function invalidatePortfolioCache(userId = null) {
 export const clearPortfolioCache = invalidatePortfolioCache;
 
 /**
- * Main Batch Aggregator for Portfolio Dashboard
+ * Main Batch Aggregator for Portfolio Dashboard (with Singleflight and Fingerprint Verification)
  */
 export async function buildPortfolioOverview({ userId, bypassCache = false }) {
   if (!userId) throw new Error("userId is required");
 
-  const cached = portfolioCache.get(userId);
-  if (!bypassCache && cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.data;
+  if (!bypassCache) {
+    const cached = portfolioCache.get(userId);
+    if (cached && Date.now() - cached.timestamp < PORTFOLIO_CACHE_TTL_MS) {
+      const currentFp = await getPortfolioFingerprint(userId);
+      if (currentFp && cached.fingerprint === currentFp) {
+        return cached.data;
+      }
+    }
   }
+
+  const flightKey = userId;
+  let buildPromise = inFlightPortfolioBuilds.get(flightKey);
+  if (!buildPromise) {
+    buildPromise = executeBuildPortfolioOverview({ userId, bypassCache }).finally(() => {
+      inFlightPortfolioBuilds.delete(flightKey);
+    });
+    inFlightPortfolioBuilds.set(flightKey, buildPromise);
+  }
+  return buildPromise;
+}
+
+async function executeBuildPortfolioOverview({ userId, bypassCache = false }) {
 
   // ── 1. Fetch all accessible Projects with latest snapshot ────────────────
   const rawProjects = await prisma.project.findMany({
@@ -167,7 +236,7 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
     coverageSummaries,
     allCoverageFiles,
     recentTestRuns,
-    systemAssessments,
+    systemRunMeasurements,
     aiTestsList,
     aiSuggestionsGroup,
     systemScenariosList,
@@ -209,7 +278,7 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
         })
       : Promise.resolve([]),
 
-    // 2c. TestRuns for all snapshots (including systemMeasurement for E2E coverage)
+    // 2c. TestRuns for all snapshots (omits heavy systemMeasurement for performance)
     snapshotIds.length > 0
       ? prisma.testRun.findMany({
           where: { snapshotId: { in: snapshotIds } },
@@ -230,23 +299,24 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
             coverageBranchesPct: true,
             coverageStatementsPct: true,
             coverageFunctionsPct: true,
-            systemMeasurement: true,
             createdAt: true,
           },
         })
       : Promise.resolve([]),
 
-    // 2d. System Assessments
+    // 2d. Latest system run measurements only (at most 1 per snapshot)
     snapshotIds.length > 0
-      ? prisma.systemTestAssessment.findMany({
-          where: { snapshotId: { in: snapshotIds } },
+      ? prisma.testRun.findMany({
+          where: {
+            snapshotId: { in: snapshotIds },
+            type: { in: ["PLAYWRIGHT", "CYPRESS"] },
+          },
           orderBy: { createdAt: "desc" },
+          distinct: ["snapshotId"],
           select: {
             id: true,
             snapshotId: true,
-            status: true,
-            reportJson: true,
-            createdAt: true,
+            systemMeasurement: true,
           },
         })
       : Promise.resolve([]),
@@ -328,19 +398,23 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
     }
   }
 
+  const sysMeasurementBySnapshot = new Map();
+  for (const sm of systemRunMeasurements) {
+    if (sm.systemMeasurement) {
+      sysMeasurementBySnapshot.set(sm.snapshotId, sm.systemMeasurement);
+    }
+  }
+
   const testRunsBySnapshot = new Map();
   for (const tr of recentTestRuns) {
     if (!testRunsBySnapshot.has(tr.snapshotId)) {
       testRunsBySnapshot.set(tr.snapshotId, []);
     }
-    testRunsBySnapshot.get(tr.snapshotId).push(tr);
-  }
-
-  const sysAssessmentBySnapshot = new Map();
-  for (const sa of systemAssessments) {
-    if (!sysAssessmentBySnapshot.has(sa.snapshotId)) {
-      sysAssessmentBySnapshot.set(sa.snapshotId, sa);
+    if ((tr.type === "PLAYWRIGHT" || tr.type === "CYPRESS") && !tr.systemMeasurement) {
+      const sm = sysMeasurementBySnapshot.get(tr.snapshotId);
+      if (sm) tr.systemMeasurement = sm;
     }
+    testRunsBySnapshot.get(tr.snapshotId).push(tr);
   }
 
   const integrationWsBySnapshot = new Map(
@@ -384,7 +458,6 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
     const runs = snapshotId ? testRunsBySnapshot.get(snapshotId) || [] : [];
     const cov = snapshotId ? covSummaryBySnapshot.get(snapshotId) || null : null;
     const unitFiles = snapshotId ? unitFilesBySnapshot.get(snapshotId) || [] : [];
-    const sysAssess = snapshotId ? sysAssessmentBySnapshot.get(snapshotId) || null : null;
     const integrationWs = snapshotId ? integrationWsBySnapshot.get(snapshotId) || null : null;
     const sysScenarios = snapshotId ? sysScenariosBySnapshot.get(snapshotId) || [] : [];
     const currentActiveJob = activeJobByProject.get(p.id) || null;
@@ -663,7 +736,7 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
     // while the project already has execution, AI, coverage, or multi-snapshot activity, heal to "DOING"
     const hasProjectActivity =
       totalExecuted > 0 ||
-      totalAiSynthesized > 0 ||
+      aiGeneratedCount > 0 ||
       aiRepairedCount > 0 ||
       (p.snapshots?.length || 0) > 1 ||
       runs.length > 0 ||
@@ -897,7 +970,8 @@ export async function buildPortfolioOverview({ userId, bypassCache = false }) {
     },
   };
 
-  portfolioCache.set(userId, { data: payload, timestamp: Date.now() });
+  const fingerprint = await getPortfolioFingerprint(userId);
+  portfolioCache.set(userId, { data: payload, timestamp: Date.now(), fingerprint });
   return payload;
 }
 

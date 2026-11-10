@@ -127,10 +127,12 @@ export function UnifiedDashboard({
     }
   }, [vm, onSummaryChange]);
 
-  // 2. Multi-Suite Sequential Run
+  // 2. Multi-Suite Sequential Run (reuses activeSuiteRun from unified-dashboard payload — 0 extra HTTP requests on mount)
   const runAllState = useRunAllSuites({
     snapshotId: effectiveSnapshotId,
     projectId,
+    initialActiveSuiteRun: vm?.context?.activeSuiteRun,
+    skipInitialFetch: true,
     onCompleted: () => refetch(),
   });
 

@@ -924,6 +924,10 @@ export function adaptUnifiedDashboard({
         (execution.total > 0 ? "DOING" : null),
       snapshotId: activeSnapshotId,
       snapshots: effectiveSnapshots,
+      activeSuiteRun:
+        unifiedBackendRaw?.context?.activeSuiteRun ??
+        unifiedBackendRaw?.activeSuiteRun ??
+        null,
       updatedAt: unifiedBackendRaw?.context?.updatedAt || Date.now(),
     },
     qualityGate,
