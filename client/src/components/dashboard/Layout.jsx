@@ -345,8 +345,49 @@ function LayoutInner() {
     return () => window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
   }, []);
 
-  const [projects, setProjects] = useState([]);
-  const [project, setProject] = useState(null);
+  const resolveCachedProjectsList = useCallback(() => {
+    const direct = queryClient.getQueryData(["projects", user?.id]);
+    if (Array.isArray(direct) && direct.length > 0) return direct;
+
+    const allProjectQueries = queryClient.getQueriesData({ queryKey: ["projects"] });
+    for (const [, data] of allProjectQueries) {
+      if (Array.isArray(data) && data.length > 0) return data;
+    }
+
+    const portfolioRaw = queryClient.getQueryData(["projectsPortfolio", "live"]);
+    const portfolioProjects =
+      portfolioRaw?.data?.projects || portfolioRaw?.projects || null;
+    if (Array.isArray(portfolioProjects) && portfolioProjects.length > 0) {
+      return portfolioProjects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description || "",
+        repoUrl: p.repoUrl || null,
+        defaultBranch: p.defaultBranch || "main",
+        lifecycleStatus: p.lifecycleStatus || "NOT_STARTED",
+        lifecycleUpdatedAt: p.lifecycleUpdatedAt || p.updatedAt || null,
+        isPinned: Boolean(p.isPinned),
+        activeSnapshotId: p.snapshotId || p.activeSnapshotId || null,
+        latestSnapshotId: p.snapshotId || p.latestSnapshotId || null,
+        snapshots: p.snapshotId ? [{ id: p.snapshotId }] : [],
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      }));
+    }
+    return [];
+  }, [queryClient, user?.id]);
+
+  const [projects, setProjects] = useState(() => resolveCachedProjectsList());
+  const [project, setProject] = useState(() => {
+    const cached = resolveCachedProjectsList();
+    if (Array.isArray(cached) && cached.length > 0) {
+      if (initialProjectId) {
+        return cached.find((p) => p.id === initialProjectId) || null;
+      }
+      return cached[0] || null;
+    }
+    return null;
+  });
   const projectAccess = useProjectAccess(project?.id);
   const [fileTree, setFileTree] = useState([]);
   const [treeVersion, setTreeVersion] = useState(null);
@@ -442,7 +483,13 @@ function LayoutInner() {
       }
     };
 
-    refreshRunJob();
+    // When opening Unified Overview directly, defer background job polling slightly so unified-dashboard gets 100% priority
+    const initialDelay = activeActivity === "overview" ? 1200 : 0;
+    if (initialDelay > 0) {
+      timerId = window.setTimeout(refreshRunJob, initialDelay);
+    } else {
+      refreshRunJob();
+    }
     return () => {
       cancelled = true;
       if (timerId) window.clearTimeout(timerId);
@@ -467,7 +514,19 @@ function LayoutInner() {
       try {
         const { getProjectsApi, getProjectTreeApi } =
           await import("../../services/project.service");
-        const loadedProjects = await queryClient.fetchQuery({
+
+        const seededProjects = resolveCachedProjectsList();
+        if (seededProjects.length > 0) {
+          setProjects((prev) => (prev.length > 0 ? prev : seededProjects));
+          const seededTarget = activeProjId
+            ? seededProjects.find((p) => p.id === activeProjId) || seededProjects[0]
+            : seededProjects[0];
+          if (seededTarget) {
+            setProject((prev) => (prev?.id === seededTarget.id ? prev : seededTarget));
+          }
+        }
+
+        const loadedProjects = await queryClient.ensureQueryData({
           queryKey: ["projects", user?.id],
           queryFn: async () => {
             const res = await getProjectsApi();
@@ -487,61 +546,91 @@ function LayoutInner() {
             newParams.set("projectId", targetProj.id);
             navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
           }
-          let lastError = null;
-          for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-              const tree = await queryClient.fetchQuery({
-                queryKey: ["projectTree", user?.id, targetProj.id],
-                queryFn: async () => {
-                  const res = await getProjectTreeApi(targetProj.id);
-                  return { tree: res?.data || [], snapshotId: res.snapshotId, workspaceRevision: res.workspaceRevision };
-                },
-                staleTime: 10 * 1000,
-              });
-              const sourceTree = Array.isArray(tree) ? tree : tree.tree;
-              setTreeVersion(Array.isArray(tree) ? null : { snapshotId: tree.snapshotId, expectedWorkspaceRevision: tree.workspaceRevision });
-              setFileTree(sourceTree || []);
-              if (sourceTree && sourceTree.length > 0) {
-                const fileExistsInTree = (nodes, path) => {
-                  for (const node of nodes) {
-                    if (node.id === path) return true;
-                    if (node.children && fileExistsInTree(node.children, path))
-                      return true;
-                  }
-                  return false;
-                };
-                setTabs((prev) => {
-                  const remaining = prev.filter((t) =>
-                    fileExistsInTree(sourceTree, t.id),
-                  );
-                  if (remaining.length !== prev.length) {
-                    setActiveTabId((currActive) => {
-                      if (remaining.some((t) => t.id === currActive))
-                        return currActive;
-                      const nextId = remaining[0]?.id || null;
-                      setActiveFileId(nextId);
-                      return nextId;
-                    });
-                  }
-                  return remaining;
+
+          const loadProjectFileTree = async () => {
+            let lastError = null;
+            for (let attempt = 1; attempt <= retries; attempt++) {
+              try {
+                const tree = await queryClient.ensureQueryData({
+                  queryKey: ["projectTree", user?.id, targetProj.id],
+                  queryFn: async () => {
+                    const res = await getProjectTreeApi(targetProj.id);
+                    return {
+                      tree: res?.data || [],
+                      snapshotId: res.snapshotId,
+                      workspaceRevision: res.workspaceRevision,
+                    };
+                  },
+                  staleTime: 15 * 1000,
                 });
-              }
-              lastError = null;
-              break;
-            } catch (treeErr) {
-              lastError = treeErr;
-              if (attempt < retries) {
-                await new Promise((r) => setTimeout(r, delay));
+                const sourceTree = Array.isArray(tree) ? tree : tree.tree;
+                setTreeVersion(
+                  Array.isArray(tree)
+                    ? null
+                    : {
+                        snapshotId: tree.snapshotId,
+                        expectedWorkspaceRevision: tree.workspaceRevision,
+                      }
+                );
+                setFileTree(sourceTree || []);
+                if (sourceTree && sourceTree.length > 0) {
+                  const fileExistsInTree = (nodes, path) => {
+                    for (const node of nodes) {
+                      if (node.id === path) return true;
+                      if (node.children && fileExistsInTree(node.children, path))
+                        return true;
+                    }
+                    return false;
+                  };
+                  setTabs((prev) => {
+                    const remaining = prev.filter((t) =>
+                      fileExistsInTree(sourceTree, t.id)
+                    );
+                    if (remaining.length !== prev.length) {
+                      setActiveTabId((currActive) => {
+                        if (remaining.some((t) => t.id === currActive))
+                          return currActive;
+                        const nextId = remaining[0]?.id || null;
+                        setActiveFileId(nextId);
+                        return nextId;
+                      });
+                    }
+                    return remaining;
+                  });
+                }
+                lastError = null;
+                break;
+              } catch (treeErr) {
+                if (
+                  treeErr?.name === "CancelledError" ||
+                  treeErr?.name === "AbortError" ||
+                  /cancelled/i.test(treeErr?.message || "")
+                ) {
+                  lastError = null;
+                  break;
+                }
+                lastError = treeErr;
+                if (attempt < retries) {
+                  await new Promise((r) => setTimeout(r, delay));
+                }
               }
             }
-          }
-          if (lastError) {
-            setFileTree([]);
-            showToast({
-              type: "warning",
-              title: "Project tree not ready",
-              message: "Source code is still being extracted.",
-            });
+            if (lastError) {
+              setFileTree([]);
+              showToast({
+                type: "warning",
+                title: "Project tree not ready",
+                message: "Source code is still being extracted.",
+              });
+            }
+          };
+
+          if (activeActivity === "overview") {
+            window.setTimeout(() => {
+              loadProjectFileTree().catch(() => {});
+            }, 600);
+          } else {
+            await loadProjectFileTree();
           }
         } else {
           setProjects([]);
@@ -549,6 +638,13 @@ function LayoutInner() {
           setFileTree([]);
         }
       } catch (err) {
+        if (
+          err?.name === "CancelledError" ||
+          err?.name === "AbortError" ||
+          /cancelled/i.test(err?.message || "")
+        ) {
+          return;
+        }
         showToast({
           type: "error",
           title: "Load failed",
@@ -558,7 +654,7 @@ function LayoutInner() {
         setIsLoadingTree(false);
       }
     },
-    [showToast, user?.id],
+    [showToast, user?.id, resolveCachedProjectsList],
   );
 
   const handleSidebarResize = useCallback(
@@ -1397,31 +1493,37 @@ function LayoutInner() {
           className="flex flex-1 min-w-0 min-h-0 relative"
           variants={panelVariants}
         >
-          <div className={activeActivity === "settings" ? "w-full h-full overflow-y-auto" : "hidden"}>
-            {isMobile && (
-              <SettingsSidebar
-                project={project}
-                activeSetting={activeSetting}
-                onSelectSetting={setActiveSetting}
-                variant="tabs"
-              />
-            )}
-            {activeSetting === "profile" && <UserProfile />}
-            {activeSetting === "appearance" && <Appearance />}
-            {activeSetting === "security" && <Security />}
-            {activeSetting === "notifications" && <NotificationsSettings />}
-            {activeSetting === "usage" && <Usage isActive={activeActivity === "settings"} />}
-            {activeSetting === "billing" && <Billing />}
-            {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
-          </div>
+          {(activeActivity === "settings" || visitedPanels.has("settings")) && (
+            <div className={activeActivity === "settings" ? "w-full h-full overflow-y-auto" : "hidden"}>
+              {isMobile && (
+                <SettingsSidebar
+                  project={project}
+                  activeSetting={activeSetting}
+                  onSelectSetting={setActiveSetting}
+                  variant="tabs"
+                />
+              )}
+              {activeSetting === "profile" && <UserProfile />}
+              {activeSetting === "appearance" && <Appearance />}
+              {activeSetting === "security" && <Security />}
+              {activeSetting === "notifications" && <NotificationsSettings />}
+              {activeSetting === "usage" && <Usage isActive={activeActivity === "settings"} />}
+              {activeSetting === "billing" && <Billing />}
+              {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
+            </div>
+          )}
 
-          <div className={(activeActivity === "version-control" || activeActivity === "git") ? "w-full h-full overflow-y-auto" : "hidden"}>
-            <VersionControlWorkspace projectId={project?.id} onSync={handleGitSync} />
-          </div>
+          {(activeActivity === "version-control" || activeActivity === "git" || visitedPanels.has("version-control") || visitedPanels.has("git")) && (
+            <div className={(activeActivity === "version-control" || activeActivity === "git") ? "w-full h-full overflow-y-auto" : "hidden"}>
+              <VersionControlWorkspace projectId={project?.id} onSync={handleGitSync} />
+            </div>
+          )}
 
-          <div className={(activeActivity === "jobs" || activeActivity === "activity") ? "w-full h-full overflow-y-auto" : "hidden"}>
-            <JobQueue projectId={project?.id} onSync={handleGitSync} />
-          </div>
+          {(activeActivity === "jobs" || activeActivity === "activity" || visitedPanels.has("jobs") || visitedPanels.has("activity")) && (
+            <div className={(activeActivity === "jobs" || activeActivity === "activity") ? "w-full h-full overflow-y-auto" : "hidden"}>
+              <JobQueue projectId={project?.id} onSync={handleGitSync} />
+            </div>
+          )}
 
           {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
 
@@ -1437,7 +1539,7 @@ function LayoutInner() {
           {(activeActivity === "overview" || visitedPanels.has("overview")) && (
             <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
               <UnifiedDashboard
-                projectId={project?.id}
+                projectId={project?.id || initialProjectId}
                 project={project}
                 projects={projects}
                 onSelectProject={handleChangeProject}
@@ -1446,8 +1548,10 @@ function LayoutInner() {
                   project?.activeSnapshotId ||
                   project?.latestSnapshotId ||
                   project?.snapshots?.[0]?.id ||
-                  (project?.id
-                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                  (project?.id || initialProjectId
+                    ? localStorage.getItem(
+                        `latestSnapshot_${project?.id || initialProjectId}`
+                      )
                     : null) ||
                   testPromptSnapshotId
                 }
@@ -1531,38 +1635,40 @@ function LayoutInner() {
             </div>
           )}
 
-          <div className={!isFullWidthWorkspace && activeActivity !== "settings" ? "w-full h-full" : "hidden"}>
-                <Editor
-                  key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
-                  tabs={tabs}
-                  activeTabId={activeTabId}
-                  onSelectTab={(tabId) => {
-                    setActiveTabId(tabId);
-                    setActiveFileId(tabId);
-                  }}
-                  onCloseTab={handleCloseTab}
-                  onReorderTabs={setTabs}
-                  fileTree={fileTree}
-                  isLoadingTree={isLoadingTree}
-                  projectId={project?.id}
-                  snapshotId={
-                    searchParams.get("snapshotId") ||
-                    project?.activeSnapshotId ||
-                    project?.latestSnapshotId ||
-                    project?.snapshots?.[0]?.id ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  coverageType={coverageType}
-                  onOpenFile={handleOpenFileByPath}
-                  onRunAnalysis={handleTriggerRunAnalysis}
-                  onSuggestTestcase={handleSuggestTestcase}
-                  refreshTrigger={editorRefreshTrigger}
-                  jumpTarget={editorJumpTarget}
-                />
-              </div>
+          {(!isFullWidthWorkspace || visitedPanels.has("editor") || visitedPanels.has("explorer")) && (
+            <div className={!isFullWidthWorkspace && activeActivity !== "settings" ? "w-full h-full" : "hidden"}>
+                  <Editor
+                    key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    onSelectTab={(tabId) => {
+                      setActiveTabId(tabId);
+                      setActiveFileId(tabId);
+                    }}
+                    onCloseTab={handleCloseTab}
+                    onReorderTabs={setTabs}
+                    fileTree={fileTree}
+                    isLoadingTree={isLoadingTree}
+                    projectId={project?.id}
+                    snapshotId={
+                      searchParams.get("snapshotId") ||
+                      project?.activeSnapshotId ||
+                      project?.latestSnapshotId ||
+                      project?.snapshots?.[0]?.id ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    coverageType={coverageType}
+                    onOpenFile={handleOpenFileByPath}
+                    onRunAnalysis={handleTriggerRunAnalysis}
+                    onSuggestTestcase={handleSuggestTestcase}
+                    refreshTrigger={editorRefreshTrigger}
+                    jumpTarget={editorJumpTarget}
+                  />
+                </div>
+          )}
         </motion.div>
         <AnimatePresence initial={false}>
           {aiPanelOpen && (

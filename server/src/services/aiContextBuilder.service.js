@@ -61,15 +61,19 @@ export const clearSourceCodeCache = (snapshotId = null) => {
     }
 };
 
-export const loadSourceCode = async (snapshotId) => {
+export const loadSourceCode = async (snapshotId, knownRootDir = null) => {
     if (snapshotId && sourceCodeMemoryCache.has(snapshotId)) {
         return sourceCodeMemoryCache.get(snapshotId);
     }
-    const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } }));
-    if (!snapshot || !snapshot.rootDir) {
-        throw new ServiceError("Snapshot root directory not found", 404);
+    let rootDirToUse = knownRootDir;
+    if (!rootDirToUse) {
+        const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } }));
+        if (!snapshot || !snapshot.rootDir) {
+            throw new ServiceError("Snapshot root directory not found", 404);
+        }
+        rootDirToUse = snapshot.rootDir;
     }
-    const effectiveRootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
+    const effectiveRootDir = resolveProjectRoot(rootDirToUse) || rootDirToUse;
 
     const isSourceMatch = (fileName, filePath) => {
         const ext = path.extname(fileName).toLowerCase();

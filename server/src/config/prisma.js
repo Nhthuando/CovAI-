@@ -9,7 +9,7 @@ if (process.env.DATABASE_URL) {
     const pool = new Pool({ 
         connectionString: process.env.DATABASE_URL,
         max: 25,
-        idleTimeoutMillis: 30000,
+        idleTimeoutMillis: 120000,
         connectionTimeoutMillis: 45000,
         keepAlive: true,
         keepAliveInitialDelayMillis: 10000,

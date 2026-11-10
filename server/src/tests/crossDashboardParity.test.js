@@ -1,5 +1,7 @@
 import { extractExecutionDurationMs } from "../services/testResultParser.service.js";
 import { healProjectLifecycleStatusIfNeeded } from "../services/project.service.js";
+import { getDashboardFingerprint } from "../services/unifiedQualityDashboard.service.js";
+import { getPortfolioFingerprint } from "../services/portfolioDashboard.service.js";
 
 describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
     describe("Lỗi 2B: Read-Time Self-Healing & Serialization for lifecycleStatus", () => {
@@ -173,6 +175,18 @@ describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
             const baseLabel = snapshot.label || `${vNum} (${shortRef})`;
 
             expect(baseLabel).toBe("#2 (9f8e7d6)");
+        });
+    });
+
+    describe("Performance Optimization: Fingerprint & Cache Verification", () => {
+        test("getDashboardFingerprint handles non-existent snapshot gracefully without crashing", async () => {
+            const fp = await getDashboardFingerprint("non_existent_snapshot_id");
+            expect(fp === null || typeof fp === "string").toBe(true);
+        });
+
+        test("getPortfolioFingerprint handles offline/mock environment gracefully without crashing", async () => {
+            const fp = await getPortfolioFingerprint("non_existent_user_id");
+            expect(fp === null || fp === "empty" || typeof fp === "string").toBe(true);
         });
     });
 });

@@ -226,9 +226,11 @@ export default function ProjectSelectionPage() {
           <ProjectsPortfolioDashboard
             favorites={favorites}
             onTogglePin={toggleFavorite}
-            onOpenProjectOverview={(projectId) =>
-              navigate(`/main-editor?projectId=${projectId}&tab=overview`)
-            }
+            onOpenProjectOverview={(projectId, project) => {
+              const snapId = project?.snapshotId || project?.activeSnapshotId;
+              const snapQuery = snapId ? `&snapshotId=${snapId}` : "";
+              navigate(`/main-editor?projectId=${projectId}${snapQuery}&tab=overview`);
+            }}
             onNavigateWorkspace={(projectId, pillar, focus = {}) => {
               const params = new URLSearchParams();
               params.set("projectId", projectId);

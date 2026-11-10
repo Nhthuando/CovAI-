@@ -17,7 +17,7 @@ import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
 import { filterAndSortPortfolioProjects } from "../../../../services/portfolioDashboard/portfolioDashboard.selectors.js";
 import { PORTFOLIO_CONFIG } from "../../../../services/portfolioDashboard/portfolioDashboard.config.js";
 
-export function ProjectDirectoryWorkspaceZone({
+function ProjectDirectoryWorkspaceZoneComponent({
   projects = [],
   favorites = [],
   highlightedProjectId = null,
@@ -439,7 +439,7 @@ export function ProjectDirectoryWorkspaceZone({
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => onOpenOverview?.(p.id)}
+                          onClick={() => onOpenOverview?.(p.id, p)}
                           className="font-bold text-[var(--ud-text)] hover:text-[var(--ud-unit)] transition-colors truncate text-left cursor-pointer"
                         >
                           {p.name}
@@ -525,7 +525,7 @@ export function ProjectDirectoryWorkspaceZone({
                     <td className="py-2 px-3 text-center">
                       <button
                         type="button"
-                        onClick={() => onOpenOverview?.(p.id)}
+                        onClick={() => onOpenOverview?.(p.id, p)}
                         className="p-1 rounded text-[var(--ud-unit)] hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer"
                         title="Open Overview"
                       >
@@ -543,4 +543,5 @@ export function ProjectDirectoryWorkspaceZone({
   );
 }
 
-export default memo(ProjectDirectoryWorkspaceZone);
+export const ProjectDirectoryWorkspaceZone = memo(ProjectDirectoryWorkspaceZoneComponent);
+export default ProjectDirectoryWorkspaceZone;

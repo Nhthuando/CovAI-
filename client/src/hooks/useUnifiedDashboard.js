@@ -125,9 +125,9 @@ export function useUnifiedDashboard({
     enabled: isEnabled,
     placeholderData: (previousData, previousQuery) =>
       previousQuery?.queryKey?.[1] === effectiveSnapshotId ? previousData : undefined,
-    staleTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    staleTime: 15_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     gcTime: 30 * 60 * 1000,
   });
 
