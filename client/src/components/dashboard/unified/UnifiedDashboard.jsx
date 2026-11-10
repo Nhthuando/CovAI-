@@ -70,6 +70,7 @@ export function UnifiedDashboard({
     const summaryPayload = {
       projectId: vm.context?.projectId,
       projectName: vm.context?.projectName,
+      lifecycleStatus: vm.context?.lifecycleStatus || null,
       snapshotId: vm.context?.snapshotId,
       healthScore: vm.health?.score ?? null,
       healthGrade: vm.health?.grade ?? "--",

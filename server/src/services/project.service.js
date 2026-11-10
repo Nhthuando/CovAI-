@@ -180,8 +180,65 @@ export const createProject = async ({ input, currentUserId }) => {
   return project;
 };
 
+/**
+ * Read-time self-healing for Project.lifecycleStatus:
+ * If a project is currently marked "NOT_STARTED" (or null) in the DB,
+ * but already has activity (TestRuns, CoverageSummary, AiTests, AiSuggestions,
+ * SystemScenarios, IntegrationScenarios, or >1 snapshots), automatically
+ * heals the DB state to "DOING" and returns "DOING".
+ * Explicit user overrides ("PAUSED", "COMPLETED", "CANCELLED") are never overwritten.
+ */
+export const healProjectLifecycleStatusIfNeeded = async (project, options = {}) => {
+  if (!project || typeof project !== "object") return "NOT_STARTED";
+
+  const currentStatus = project.lifecycleStatus || "NOT_STARTED";
+  if (currentStatus !== "NOT_STARTED") {
+    return currentStatus;
+  }
+
+  const snapshots = Array.isArray(project.snapshots) ? project.snapshots : [];
+  const hasSnapshotActivity = snapshots.some(
+    (s) =>
+      (s?._count?.testRuns || 0) > 0 ||
+      (s?._count?.systemScenarios || 0) > 0 ||
+      Boolean(s?.coverageSummaries || s?.coverageSummary)
+  );
+
+  const hasActivity =
+    Boolean(options.hasActivity) ||
+    (project._count?.snapshots || 0) > 1 ||
+    (project._count?.aiTests || 0) > 0 ||
+    (project._count?.aiSuggestions || 0) > 0 ||
+    hasSnapshotActivity;
+
+  if (!hasActivity) {
+    project.lifecycleStatus = "NOT_STARTED";
+    return "NOT_STARTED";
+  }
+
+  const now = new Date();
+  project.lifecycleStatus = "DOING";
+  project.lifecycleUpdatedAt = now;
+
+  if (project.id) {
+    try {
+      await prisma.project.updateMany({
+        where: { id: project.id, lifecycleStatus: "NOT_STARTED" },
+        data: {
+          lifecycleStatus: "DOING",
+          lifecycleUpdatedAt: now,
+        },
+      });
+    } catch (_) {
+      // Non-fatal in read path
+    }
+  }
+
+  return "DOING";
+};
+
 export const listProjects = async (userId) => {
-  return prisma.project.findMany({
+  const projects = await prisma.project.findMany({
     where: membershipWhere(userId),
     orderBy: { createdAt: "desc" },
     select: {
@@ -202,15 +259,29 @@ export const listProjects = async (userId) => {
       snapshots: {
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true },
+        select: {
+          id: true,
+          coverageSummaries: { select: { id: true } },
+          _count: {
+            select: {
+              testRuns: true,
+              systemScenarios: true,
+            },
+          },
+        },
       },
       _count: {
         select: {
           snapshots: true,
+          aiTests: true,
+          aiSuggestions: true,
         },
       },
     },
   });
+
+  await Promise.all(projects.map((p) => healProjectLifecycleStatusIfNeeded(p)));
+  return projects;
 };
 
 export const getProjectById = async (projectId, userId) => {
@@ -223,6 +294,20 @@ export const getProjectById = async (projectId, userId) => {
           id: true,
           email: true,
           name: true,
+        },
+      },
+      snapshots: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          coverageSummaries: { select: { id: true } },
+          _count: {
+            select: {
+              testRuns: true,
+              systemScenarios: true,
+            },
+          },
         },
       },
       _count: {
@@ -239,6 +324,8 @@ export const getProjectById = async (projectId, userId) => {
   if (!project) {
     throw new ServiceError("Project not found", 404);
   }
+
+  await healProjectLifecycleStatusIfNeeded(project);
 
   return project;
 };

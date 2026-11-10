@@ -25,25 +25,25 @@ export function PortfolioGatePopover({
   const { passed = 0, atRisk = 0, blocked = 0, untested = 0 } = gateBreakdown || {};
 
   // Determine overall badge variant strictly based on activeProjectsCount (totalProjects)
-  let badgeBorder = "border-[#30363d]";
-  let badgeBg = "bg-[#21262d] text-[#8b949e]";
+  let badgeBorder = "border-[var(--ud-border)]";
+  let badgeBg = "bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)]";
   let icon = HelpCircle;
   let badgeText = "PORTFOLIO GATE: 0/0 ACTIVE";
 
   if (totalProjects > 0) {
     if (blocked > 0) {
-      badgeBorder = "border-[#f85149]/40";
-      badgeBg = "bg-[#da3633]/15 text-[#f85149]";
+      badgeBorder = "border-[var(--ud-fail)]/40";
+      badgeBg = "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)]";
       icon = XCircle;
       badgeText = `PORTFOLIO GATE: ${passed}/${totalProjects} PASSED • BLOCKED`;
     } else if (passed < totalProjects || atRisk > 0 || untested > 0) {
-      badgeBorder = "border-[#d29922]/40";
-      badgeBg = "bg-[#bb8009]/15 text-[#d29922]";
+      badgeBorder = "border-[var(--ud-warn)]/40";
+      badgeBg = "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)]";
       icon = AlertTriangle;
       badgeText = `PORTFOLIO GATE: ${passed}/${totalProjects} PASSED • AT RISK`;
     } else {
-      badgeBorder = "border-[#3fb950]/40";
-      badgeBg = "bg-[#238636]/15 text-[#3fb950]";
+      badgeBorder = "border-[var(--ud-pass)]/40";
+      badgeBg = "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)]";
       icon = CheckCircle2;
       badgeText = `PORTFOLIO GATE: ${passed}/${totalProjects} PASSED`;
     }

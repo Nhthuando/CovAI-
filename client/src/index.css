@@ -464,11 +464,13 @@ select:-webkit-autofill:focus {
    Strict GitHub Primer / Technical Engineering theme
    Light Mode Default, Dark Mode via [data-theme="dark"] / .dark
    ============================================================ */
+:root,
 .unified-dashboard {
   --ud-bg: #f6f8fa;
   --ud-surface: #ffffff;
   --ud-surface-2: #f3f4f6;
   --ud-border: #d0d7de;
+  --ud-border-strong: #afb8c1;
   --ud-text: #1f2328;
   --ud-text-muted: #656d76;
   --ud-pass: #1a7f37;
@@ -477,15 +479,18 @@ select:-webkit-autofill:focus {
   --ud-unit: #0969da;
   --ud-integration: #8250df;
   --ud-system: #1b7c83;
-  --ud-neutral: #8c959f;
+  --ud-neutral: #6e7781;
 }
 
+[data-theme="dark"],
+.dark,
 [data-theme="dark"] .unified-dashboard,
 .dark .unified-dashboard {
   --ud-bg: #0d1117;
   --ud-surface: #161b22;
   --ud-surface-2: #1f242c;
   --ud-border: #30363d;
+  --ud-border-strong: #484f58;
   --ud-text: #f0f6fc;
   --ud-text-muted: #8b949e;
   --ud-pass: #3fb950;
@@ -494,7 +499,7 @@ select:-webkit-autofill:focus {
   --ud-unit: #58a6ff;
   --ud-integration: #a371f7;
   --ud-system: #39c5cf;
-  --ud-neutral: #6e7681;
+  --ud-neutral: #8b949e;
 }
 
 /* ============================================================

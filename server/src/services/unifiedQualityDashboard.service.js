@@ -525,7 +525,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       commitSha: true,
       createdAt: true,
       project: {
-        select: { id: true, ownerId: true, name: true },
+        select: { id: true, ownerId: true, name: true, lifecycleStatus: true },
       },
     },
   });
@@ -551,6 +551,13 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     if (cachedEntry && Date.now() - cachedEntry.cachedAt < DASHBOARD_CACHE_TTL_MS) {
       const currentFingerprint = await getDashboardFingerprint(snapshotId);
       if (currentFingerprint && cachedEntry.fingerprint === currentFingerprint) {
+        if (cachedEntry.data?.context && snapshot.project?.lifecycleStatus) {
+          cachedEntry.data.context.lifecycleStatus =
+            snapshot.project.lifecycleStatus === "NOT_STARTED" &&
+            cachedEntry.data.context.lifecycleStatus === "DOING"
+              ? "DOING"
+              : snapshot.project.lifecycleStatus;
+        }
         const totalTime = Date.now() - start;
         console.log(
           `[PERF: Unified Dashboard] snapshotId=${snapshotId} Total=${totalTime}ms | cacheHit=true | access=${accessTime}ms`
@@ -1351,10 +1358,30 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   else if (healthScore >= 65) healthGrade = "B";
   else if (healthScore >= 50) healthGrade = "C";
 
+  const hasProjectActivity =
+    unitTotal + intTotalExecuted + sysTotal > 0 ||
+    aiGeneratedCount > 0 ||
+    aiRepairedCount > 0 ||
+    projectSnapshots.length > 1 ||
+    historyRuns.length > 0 ||
+    Boolean(coverageSummary);
+
+  let effectiveLifecycleStatus = snapshot.project?.lifecycleStatus || "NOT_STARTED";
+  if (effectiveLifecycleStatus === "NOT_STARTED" && hasProjectActivity) {
+    effectiveLifecycleStatus = "DOING";
+    prisma.project
+      .updateMany({
+        where: { id: snapshot.projectId, lifecycleStatus: "NOT_STARTED" },
+        data: { lifecycleStatus: "DOING", lifecycleUpdatedAt: new Date() },
+      })
+      .catch(() => {});
+  }
+
   const resultPayload = {
     context: {
       projectId: snapshot.projectId,
       projectName: snapshot.project?.name || "CovAI Project",
+      lifecycleStatus: effectiveLifecycleStatus,
       snapshotId: snapshot.id,
       commitSha: snapshot.commitSha || snapshot.id.slice(0, 7),
       snapshots: formattedSnapshots,
