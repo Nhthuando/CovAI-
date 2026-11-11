@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import {
   Mail,
   Lock,
@@ -45,6 +46,20 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
   const [status, setStatus] = useState("idle"); // idle | loading | success | error
   const [serverMessage, setServerMessage] = useState("");
 
+  useEffect(() => {
+    setFormData({
+      name: "",
+      email: "",
+      password: "",
+      confirm: "",
+    });
+    setErrors({});
+    setShowPass(false);
+    setShowConfirm(false);
+    setStatus("idle");
+    setServerMessage("");
+  }, [mode]);
+
   const update = (field) => (e) => {
     setFormData((d) => ({ ...d, [field]: e.target.value }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }));
@@ -89,9 +104,10 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
     try {
       await queryClient.cancelQueries();
       queryClient.clear();
+      const normalizedEmail = formData.email.trim().toLowerCase();
       if (isLogin) {
         const data = await loginApi({
-          email: formData.email,
+          email: normalizedEmail,
           password: formData.password,
         });
         localStorage.setItem("token", data.accessToken);
@@ -99,8 +115,8 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         localStorage.setItem("userEmail", data.email);
       } else {
         const data = await registerApi({
-          name: formData.name,
-          email: formData.email,
+          name: formData.name.trim(),
+          email: normalizedEmail,
           password: formData.password,
         });
         localStorage.setItem("token", data.accessToken);
@@ -382,26 +398,26 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             {isLogin ? (
               <>
                 Don&apos;t have an account?{" "}
-                <button
-                  type="button"
+                <Link
+                  to="/register"
                   id="auth-toggle-to-register"
                   onClick={onToggleMode}
                   className="font-semibold text-[var(--color-primary)] hover:underline cursor-pointer"
                 >
                   Create account
-                </button>
+                </Link>
               </>
             ) : (
               <>
                 Already have an account?{" "}
-                <button
-                  type="button"
+                <Link
+                  to="/login"
                   id="auth-toggle-to-login"
                   onClick={onToggleMode}
                   className="font-semibold text-[var(--color-primary)] hover:underline cursor-pointer"
                 >
                   Sign in
-                </button>
+                </Link>
               </>
             )}
           </div>

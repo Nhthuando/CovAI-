@@ -8,7 +8,8 @@ import {resetPasswordValid} from "../validators/auth.validation.js";
 export const forgotPassword  = async (req,res) => {
     try {
         const {email} = req.body;
-        const user = await prisma.user.findUnique({where: {email}});
+        const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : email;
+        const user = await prisma.user.findUnique({where: {email: normalizedEmail}});
         if(!user) {
             return res.status(200).json({message: "Password reset link has been sent, please check your email!"});
         } 
@@ -16,14 +17,14 @@ export const forgotPassword  = async (req,res) => {
         const resetToken = crypto.randomBytes(32).toString('hex');
         const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
         const tokenExpires = new Date(Date.now() + 1 * 60 * 1000);
-        await prisma.user.update({where: {email}, data: {passwordResetToken: hashedToken, passwordResetExpires: tokenExpires}});
+        await prisma.user.update({where: {email: normalizedEmail}, data: {passwordResetToken: hashedToken, passwordResetExpires: tokenExpires}});
         const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
         const resetUrl = `${clientUrl}/reset-password?token=${resetToken}`;
         try {
-            await sendEmail({email: email, subject: "RESET PASSWORD | CovAI Service", html: resetPasswordEmailHtml(user.name,resetUrl)})
+            await sendEmail({email: normalizedEmail, subject: "RESET PASSWORD | CovAI Service", html: resetPasswordEmailHtml(user.name,resetUrl)})
             return res.status(200).json({message: "Password reset link has been sent, please check your email!"});
         } catch (error) {
-            await prisma.user.update({where: {email}, data: {passwordResetToken: null, passwordResetExpires: null}});
+            await prisma.user.update({where: {email: normalizedEmail}, data: {passwordResetToken: null, passwordResetExpires: null}});
             return res.status(500).json({ message: 'Error sending email, please try again.' });
         }
     } catch (error) {
