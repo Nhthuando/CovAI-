@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { User, Upload, Trash2, Lock, Save, CheckCircle2 } from "lucide-react";
+import { User, Upload, Trash2, Lock, Save, CheckCircle2, AlertCircle } from "lucide-react";
 import {
   getUserProfileApi,
   updateUserProfileApi,
@@ -12,6 +12,8 @@ export default function UserProfile() {
   const [isAvatarExpanded, setIsAvatarExpanded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [initialProfile, setInitialProfile] = useState(null);
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [errors, setErrors] = useState({});
   const [profile, setProfile] = useState({
     name: "",
     email: "",
@@ -41,10 +43,46 @@ export default function UserProfile() {
   }, []);
 
   const handleSave = async () => {
+    if (!profile.name || !profile.name.trim()) {
+      setErrors((prev) => ({ ...prev, name: "Name is required!" }));
+      showToast({
+        type: "error",
+        title: "Validation Error",
+        message: "Name is required!",
+      });
+      return;
+    }
+
+    const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
+    let avatarSizeBytes = 0;
+    if (avatarFile) {
+      avatarSizeBytes = avatarFile.size;
+    } else if (profile.avatarUrl?.startsWith("data:")) {
+      const base64Part = profile.avatarUrl.split(",")[1] || "";
+      avatarSizeBytes = Math.round((base64Part.length * 3) / 4);
+    }
+
+    if (avatarSizeBytes > MAX_AVATAR_SIZE) {
+      showToast({
+        type: "error",
+        title: "Avatar Too Large",
+        message: "Avatar image size must not exceed 2MB. Please select a smaller photo.",
+      });
+      return;
+    }
+
     setIsSaving(true);
+    setErrors({});
     try {
-      await updateUserProfileApi(profile);
-      setInitialProfile(profile);
+      await updateUserProfileApi({
+        ...profile,
+        name: profile.name.trim(),
+      });
+      setInitialProfile({
+        ...profile,
+        name: profile.name.trim(),
+      });
+      setAvatarFile(null);
       showToast({
         type: "success",
         title: "Profile Saved",
@@ -52,10 +90,14 @@ export default function UserProfile() {
       });
     } catch (error) {
       console.error("Error updating profile:", error);
+      const msg = error.message || "Could not save profile changes. Please try again.";
+      if (error.data?.error?.name) {
+        setErrors((prev) => ({ ...prev, name: error.data.error.name[0] }));
+      }
       showToast({
         type: "error",
         title: "Update Failed",
-        message: "Could not save profile changes. Please try again.",
+        message: msg,
       });
     } finally {
       setIsSaving(false);
@@ -65,6 +107,8 @@ export default function UserProfile() {
   const handleCancel = () => {
     if (initialProfile) {
       setProfile(initialProfile);
+      setAvatarFile(null);
+      setErrors({});
       showToast({
         type: "info",
         title: "Changes Reverted",
@@ -139,6 +183,8 @@ export default function UserProfile() {
               accept="image/*"
               onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
+                  const file = e.target.files[0];
+                  setAvatarFile(file);
                   const reader = new FileReader();
                   reader.onload = (event) => {
                     setProfile({ ...profile, avatarUrl: event.target.result });
@@ -148,7 +194,7 @@ export default function UserProfile() {
                       message: "Remember to click 'Save Changes' to apply.",
                     });
                   };
-                  reader.readAsDataURL(e.target.files[0]);
+                  reader.readAsDataURL(file);
                 }
               }}
             />
@@ -163,18 +209,22 @@ export default function UserProfile() {
               <div className="flex items-center gap-2.5">
                 <button
                   type="button"
+                  id="avatar-upload-btn"
                   onClick={() =>
                     document.getElementById("avatar-upload").click()
                   }
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer"
                 >
                   <Upload size={13} />
-                  Change Avatar
+                  Upload New Photo
                 </button>
                 {profile.avatarUrl && (
                   <button
                     type="button"
-                    onClick={() => setProfile({ ...profile, avatarUrl: "" })}
+                    onClick={() => {
+                      setProfile({ ...profile, avatarUrl: "" });
+                      setAvatarFile(null);
+                    }}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/25 text-[var(--color-danger)] text-xs font-semibold hover:bg-[var(--color-danger)]/20 transition-colors cursor-pointer"
                   >
                     <Trash2 size={13} />
@@ -196,17 +246,31 @@ export default function UserProfile() {
             {/* Full Name */}
             <div>
               <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-                Full Name
+                Full Name <span className="text-[var(--color-danger)]">*</span>
               </label>
               <input
                 type="text"
+                id="profile-name"
                 value={profile.name}
                 placeholder="e.g. Jane Doe"
-                className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-2 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all font-sans"
-                onChange={(e) =>
-                  setProfile({ ...profile, name: e.target.value })
-                }
+                className={`w-full bg-[var(--color-bg)] border rounded-[var(--radius-md)] px-3 py-2 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none transition-all font-sans ${
+                  errors.name
+                    ? "border-[var(--color-danger)] focus:border-[var(--color-danger)] focus:ring-1 focus:ring-[var(--color-danger)]"
+                    : "border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+                }`}
+                onChange={(e) => {
+                  setProfile({ ...profile, name: e.target.value });
+                  if (errors.name) {
+                    setErrors((prev) => ({ ...prev, name: "" }));
+                  }
+                }}
               />
+              {errors.name && (
+                <p className="mt-1 text-xs text-[var(--color-danger)] flex items-center gap-1">
+                  <AlertCircle size={12} />
+                  <span>{errors.name}</span>
+                </p>
+              )}
             </div>
 
             {/* Email Address */}
