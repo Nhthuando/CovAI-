@@ -48,6 +48,7 @@ export class GitHubCloneService {
     const gitEnv = {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "echo",
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "safe.directory",
       GIT_CONFIG_VALUE_0: "*",
@@ -60,7 +61,10 @@ export class GitHubCloneService {
       // 1. Clone repository into a 'repo' subfolder to avoid messing with current directory
       const repoDir = path.join(baseDir, "repo");
       fs.mkdirSync(repoDir, { recursive: true });
-      await execAsync(`git -c safe.directory=* clone ${cloneUrl} .`, { cwd: repoDir, env: gitEnv });
+      await execAsync(
+        `git -c credential.helper= -c safe.directory=* clone ${cloneUrl} .`,
+        { cwd: repoDir, env: gitEnv },
+      );
 
       // 2. Get latest commit SHA from the repo folder
       const { stdout: commitSha } = await execAsync(`git -c safe.directory=* rev-parse HEAD`, {
@@ -120,14 +124,21 @@ export class GitHubCloneService {
         fs.rmSync(baseDir, { recursive: true, force: true });
       }
 
-      if (error.message.includes("Repository not found")) {
-        throw new ServiceError("Repository not found", 404);
-      }
-      if (error.message.includes("Authentication failed")) {
-        throw new ServiceError("Access denied to repository", 403);
+      const errMsg = error.message || "";
+      if (
+        errMsg.includes("Authentication failed") ||
+        errMsg.includes("could not read Username") ||
+        errMsg.includes("terminal prompts disabled") ||
+        errMsg.includes("Password authentication is not supported") ||
+        errMsg.includes("Invalid username or token") ||
+        errMsg.includes("Access denied") ||
+        errMsg.includes("Repository not found") ||
+        errMsg.includes("not found")
+      ) {
+        throw new ServiceError("This Repository is private", 400);
       }
 
-      throw new ServiceError(`Clone failed: ${error.message}`, 500);
+      throw new ServiceError(`Clone failed: ${errMsg}`, 500);
     }
   }
 }
