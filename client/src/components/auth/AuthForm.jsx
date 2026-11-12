@@ -125,7 +125,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
 
   const handleGithubOAuth = () => {
     const clientId =
-      import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQyAORXbj6NeqAB";
+      import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQ1Hyb1oaqmSTXi";
     const redirectUri = `${window.location.origin}/auth/github/callback`;
     window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=user:email repo&redirect_uri=${redirectUri}`;
   };

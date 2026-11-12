@@ -5,6 +5,7 @@
 
 # env files
 .env
+.env.production
 
 # node modules
 node_modules/
