@@ -1,13 +1,7 @@
 /* eslint-disable no-unused-vars */
 import { Routes, Route, Navigate } from "react-router-dom";
 import "./index.css";
-import Navbar from "./components/Navbar";
-import Hero from "./components/Hero";
-import IDEPreview from "./components/IDEPreview";
-import Features from "./components/Features";
-import Workflow from "./components/Workflow";
-import Pricing from "./components/Pricing";
-import Footer from "./components/Footer";
+import LandingPage from "./components/landing/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -23,23 +17,6 @@ import { ToastProvider } from "./components/dashboard/ToastContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import { useAuth } from "./hooks/useAuth";
 import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
-
-/* ── Landing Page ─────────────────────────────────────────── */
-function LandingPage() {
-  return (
-    <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150 flex flex-col">
-      <Navbar />
-      <main className="flex-1">
-        <Hero />
-        <IDEPreview />
-        <Features />
-        <Workflow />
-        <Pricing />
-      </main>
-      <Footer />
-    </div>
-  );
-}
 
 /* ── Protected Route ────────────────────────────────────────── */
 function ProtectedRoute({ children }) {

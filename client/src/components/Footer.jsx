@@ -1,11 +1,11 @@
-import { Terminal } from "lucide-react";
+import CovaiLogo from "./common/CovaiLogo";
 
 const FOOTER_COLS = [
   {
     heading: "Product",
     links: [
       { label: "Features", href: "#features" },
-      { label: "IDE & Coverage", href: "#ide-preview" },
+      { label: "Coverage", href: "#coverage" },
       { label: "Pipeline", href: "#workflow" },
       { label: "Pricing", href: "#pricing" },
     ],
@@ -88,9 +88,7 @@ export default function Footer() {
               id="footer-logo"
               className="inline-flex items-center gap-2 text-decoration-none group"
             >
-              <div className="w-7 h-7 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs select-none shrink-0">
-                <Terminal className="w-3.5 h-3.5 stroke-[2.5]" />
-              </div>
+              <CovaiLogo size={28} className="shrink-0" />
               <span className="font-bold text-sm tracking-tight text-[var(--color-text)]">
                 CovAI Platform
               </span>

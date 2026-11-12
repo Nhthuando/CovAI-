@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Terminal, Menu, X, ArrowRight, ShieldCheck } from "lucide-react";
+import { Menu, X, ArrowRight } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { NotificationCenter } from "./NotificationCenter";
 import { ThemeSelector } from "./common/ThemeSelector";
 import Button from "./common/Button";
+import CovaiLogo from "./common/CovaiLogo";
 
 export default function Navbar() {
   const { user } = useAuth();
@@ -20,10 +21,11 @@ export default function Navbar() {
   }, []);
 
   const navLinks = [
+    { label: "Coverage", href: "#coverage" },
     { label: "Features", href: "#features" },
-    { label: "IDE & Coverage", href: "#ide-preview" },
     { label: "Pipeline", href: "#workflow" },
     { label: "Pricing", href: "#pricing" },
+    { label: "FAQ", href: "#faq" },
   ];
 
   return (
@@ -41,9 +43,7 @@ export default function Navbar() {
           id="nav-logo"
           className="flex items-center gap-2.5 text-decoration-none group focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)]"
         >
-          <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-sm select-none shrink-0">
-            <Terminal className="w-4 h-4 stroke-[2.5]" />
-          </div>
+          <CovaiLogo size={32} className="shrink-0" />
           <div className="flex items-center gap-2">
             <span className="font-bold text-base tracking-tight text-[var(--color-text)]">
               CovAI
