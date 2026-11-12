@@ -6,6 +6,7 @@ Tài liệu dự án CovAI được tổ chức theo các danh mục chuẩn k�
 
 ```text
 docs/
+├── admin/                        # Hệ thống Quản trị Trung tâm (Admin Console, 67 DB Tables, Plan, Specs)
 ├── architecture/                 # Kiến trúc tổng thể hệ thống, sơ đồ C4, ERD, PlantUML
 ├── assets/                       # Ảnh tư liệu, tài nguyên biểu đồ
 ├── plans/                        # Kế hoạch triển khai, Roadmap, Task tracking của các tính năng
@@ -24,7 +25,17 @@ docs/
 
 ## 📌 Chi Tiết Danh Mục
 
-### 1. `plans/` (Kế Hoạch & Tiến Độ)
+### 1. `admin/` (Hệ Thống Quản Trị Trung Tâm - CovAI Admin Console)
+Trung tâm điều phối, giám sát hạ tầng và quản lý toàn bộ 67+ Tables trong cơ sở dữ liệu:
+- `README.md`: Tổng quan hệ thống và bản đồ tài liệu Admin.
+- `plan.md`: Kế hoạch triển khai chi tiết chia thành 48 subtasks có checkbox `[ ]` theo dõi tiến độ.
+- `architecture.md`: Kiến trúc bảo mật, Admin RBAC, Universal Prisma DMMF Engine và Audit Log.
+- `database-management.md`: Quản trị phổ quát 67 tables phân bổ theo 8 domains, bộ lọc động và quan hệ FK.
+- `business-requirements.md`: Nghiệp vụ chuẩn mực: User governance, AI/Gemini tokens, BullMQ queue, hạ tầng.
+- `ui-design.md`: Thiết kế giao diện tùy biến (Custom UI) phong cách "Tactile Obsidian & Cyber Emerald".
+- `api-spec.md`: Đặc tả đầy đủ REST API và sự kiện WebSocket realtime.
+
+### 2. `plans/` (Kế Hoạch & Tiến Độ)
 Chứa toàn bộ các kế hoạch thực hiện tính năng, checklist và task tracking:
 - `plan_unified_dashboard.md`: Kế hoạch tổng thể Unified Testing & Quality Dashboard.
 - `plan_unified_dashboard_fe_polish.md`: Tinh chỉnh và hoàn thiện giao diện Unified Dashboard.

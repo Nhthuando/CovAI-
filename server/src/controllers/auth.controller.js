@@ -21,14 +21,16 @@ export const register = async (req, res) => {
     res.cookie("refreshToken", response.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     return res.status(201).json({
       message: response.message,
       accessToken: response.accessToken,
+      refreshToken: response.refreshToken,
       userName: response.userName,
       userEmail: response.userEmail,
+      systemRole: response.systemRole,
     });
   } catch (error) {
     console.log(error);
@@ -52,14 +54,16 @@ export const login = async (req, res) => {
     res.cookie("refreshToken", response.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     return res.status(200).json({
       message: response.message,
       accessToken: response.accessToken,
+      refreshToken: response.refreshToken,
       name: response.name,
       email: response.email,
+      systemRole: response.systemRole,
     });
   } catch (error) {
     console.log(error);
@@ -329,8 +333,11 @@ export const oAuthGithub = async (req, res) => {
         },
       });
     }
+    if (user.isSuspended) {
+      return res.status(403).json({ message: "Account has been suspended! Please contact support." });
+    }
     const token = jwt.sign(
-      { userId: user.id, userEmail: user.email, userName: user.name },
+      { userId: user.id, userEmail: user.email, userName: user.name, systemRole: user.systemRole || "USER" },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" },
     );
@@ -339,6 +346,7 @@ export const oAuthGithub = async (req, res) => {
       token,
       name: user.name,
       email: user.email,
+      systemRole: user.systemRole || "USER",
     });
   } catch (error) {
     console.log(error);

@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { queryClient } from "../lib/queryClient";
 import {
   Terminal,
@@ -8,10 +8,12 @@ import {
   AlertTriangle,
   PanelRightClose,
   PanelRightOpen,
+  ShieldAlert,
 } from "lucide-react";
 import { deleteProjectApi } from "../services/project.service";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { useAuth } from "../hooks/useAuth";
+import { isAdminRole } from "../shared/adminRoles";
 import Button from "../components/common/Button";
 import ThemeSelector from "../components/common/ThemeSelector";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -185,6 +187,18 @@ export default function ProjectSelectionPage() {
           >
             {aiPanelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
           </button>
+
+          {/* Admin Console Shortcut for Administrator Roles */}
+          {isAdminRole(user?.systemRole) && (
+            <Link
+              to="/admin"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-mono font-semibold transition-colors"
+              title="Access CovAI Mission Control Admin Console"
+            >
+              <ShieldAlert size={13} className="text-emerald-400" />
+              <span className="hidden sm:inline">Admin Console</span>
+            </Link>
+          )}
 
           <div className="h-4 w-px bg-[var(--color-border)] mx-0.5" />
 

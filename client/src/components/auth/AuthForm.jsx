@@ -105,14 +105,17 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
       await queryClient.cancelQueries();
       queryClient.clear();
       const normalizedEmail = formData.email.trim().toLowerCase();
+      let authRole = "USER";
       if (isLogin) {
         const data = await loginApi({
           email: normalizedEmail,
           password: formData.password,
         });
         localStorage.setItem("token", data.accessToken);
+        if (data.refreshToken) localStorage.setItem("refreshToken", data.refreshToken);
         localStorage.setItem("userName", data.name);
         localStorage.setItem("userEmail", data.email);
+        authRole = data.systemRole || "USER";
       } else {
         const data = await registerApi({
           name: formData.name.trim(),
@@ -120,12 +123,22 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
           password: formData.password,
         });
         localStorage.setItem("token", data.accessToken);
+        if (data.refreshToken) localStorage.setItem("refreshToken", data.refreshToken);
         localStorage.setItem("userName", data.userName);
         localStorage.setItem("userEmail", data.userEmail);
+        authRole = data.systemRole || "USER";
       }
       setStatus("success");
       setTimeout(() => {
-        window.location.href = consumeAuthReturn();
+        const targetUrl = consumeAuthReturn();
+        if (
+          targetUrl === "/projects" &&
+          (authRole === "SUPERADMIN" || authRole === "ADMIN" || authRole === "OPERATOR")
+        ) {
+          window.location.href = "/admin";
+        } else {
+          window.location.href = targetUrl;
+        }
       }, 1000);
     } catch (err) {
       setStatus("error");

@@ -1,10 +1,13 @@
-import projectEditorRoutes from './src/routes/projectEditor.route.js';
+import projectEditorRoutes from "./src/routes/projectEditor.route.js";
 let attachProjectEditorGateway;
 try {
-  const mod = await import('./src/realtime/projectEditor.gateway.js');
+  const mod = await import("./src/realtime/projectEditor.gateway.js");
   attachProjectEditorGateway = mod.attachProjectEditorGateway;
 } catch (err) {
-  console.warn('[Server] Project editor gateway deferred (run npm install):', err.message);
+  console.warn(
+    "[Server] Project editor gateway deferred (run npm install):",
+    err.message,
+  );
 }
 import dotenv from "dotenv";
 dotenv.config();
@@ -24,16 +27,16 @@ import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
 import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
-import aiEvaluationRoutes from './src/routes/aiEvaluation.route.js';
-import aiEvaluationGatewayRoutes from './src/routes/aiEvaluationGateway.route.js';
-import { reconcileEvaluations } from './src/services/aiEvaluation/runner.service.js';
-import projectMemberRoutes from './src/routes/projectMember.route.js';
-import projectInvitationRoutes from './src/routes/projectInvitation.route.js';
-import { startInvitationDeliveryWorker } from './src/services/invitationDelivery.service.js';
-import projectEventRoutes from './src/routes/projectEvent.route.js';
-import { attachProjectSubscriptions } from './src/services/projectSubscription.service.js';
-import { isCollaborationLocalTest } from './src/config/collaborationLocal.js';
-import { recoverQueuedProjectOperations } from './src/services/projectOperationRecovery.service.js';
+import aiEvaluationRoutes from "./src/routes/aiEvaluation.route.js";
+import aiEvaluationGatewayRoutes from "./src/routes/aiEvaluationGateway.route.js";
+import { reconcileEvaluations } from "./src/services/aiEvaluation/runner.service.js";
+import projectMemberRoutes from "./src/routes/projectMember.route.js";
+import projectInvitationRoutes from "./src/routes/projectInvitation.route.js";
+import { startInvitationDeliveryWorker } from "./src/services/invitationDelivery.service.js";
+import projectEventRoutes from "./src/routes/projectEvent.route.js";
+import { attachProjectSubscriptions } from "./src/services/projectSubscription.service.js";
+import { isCollaborationLocalTest } from "./src/config/collaborationLocal.js";
+import { recoverQueuedProjectOperations } from "./src/services/projectOperationRecovery.service.js";
 import pipelineRoutes from "./src/routes/pipeline.route.js";
 import prisma from "./src/config/prisma.js";
 import uploadRoute from "./src/routes/upload.route.js";
@@ -58,6 +61,7 @@ import reportRoute from "./src/routes/report.route.js";
 import gitRoute from "./src/routes/git.route.js";
 import portfolioRoute from "./src/routes/portfolio.route.js";
 import aiQuotaSettingsRoute from "./src/routes/aiQuotaSettings.route.js";
+import adminRoute from "./src/routes/admin/index.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -97,10 +101,13 @@ app.use(
 
 app.use(cookieParser());
 
-app.use('/api/ai-evaluation-gateway', aiEvaluationGatewayRoutes);
+app.use("/api/ai-evaluation-gateway", aiEvaluationGatewayRoutes);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
-app.use('/invitations', (_req, res, next) => { res.setHeader('Referrer-Policy', 'no-referrer'); next(); });
+app.use("/invitations", (_req, res, next) => {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
 
 // Global rate limiter
 app.use(globalLimiter);
@@ -108,23 +115,34 @@ app.use(globalLimiter);
 app.use("/api/auth", authRoute);
 app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
-app.use('/api/projects', projectEditorRoutes);
-app.use('/api/projects', projectMemberRoutes);
-app.use('/api/projects', projectEventRoutes);
-app.use('/api/invitations', projectInvitationRoutes);
-app.get('/api/health', async (_req, res) => {
-  try { await prisma.$queryRaw`SELECT 1`; res.json({ success: true }); }
-  catch { res.status(503).json({ success: false }); }
+app.use("/api/projects", projectEditorRoutes);
+app.use("/api/projects", projectMemberRoutes);
+app.use("/api/projects", projectEventRoutes);
+app.use("/api/invitations", projectInvitationRoutes);
+app.get("/api/health", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ success: true });
+  } catch {
+    res.status(503).json({ success: false });
+  }
 });
-app.use('/api/projects/:projectId/ai-evaluations', aiEvaluationRoutes);
+app.use("/api/projects/:projectId/ai-evaluations", aiEvaluationRoutes);
 app.use("/api/projects", projectRoutes);
-if (process.env.AI_EVALUATION_ENABLED === 'true') {
+if (process.env.AI_EVALUATION_ENABLED === "true") {
   let recoveringEvaluation = false;
   const recover = async () => {
     if (recoveringEvaluation) return;
     recoveringEvaluation = true;
-    try { await reconcileEvaluations(); } catch { console.error('[Evaluation] Recovery failed; check database and migration status'); }
-    finally { recoveringEvaluation = false; }
+    try {
+      await reconcileEvaluations();
+    } catch {
+      console.error(
+        "[Evaluation] Recovery failed; check database and migration status",
+      );
+    } finally {
+      recoveringEvaluation = false;
+    }
   };
   void recover();
   setInterval(recover, 30000).unref();
@@ -147,6 +165,7 @@ app.use("/api/git", gitRoute);
 app.use("/api/portfolio", portfolioRoute);
 app.use("/api/settings/ai-quotas", aiQuotaSettingsRoute);
 app.use("/api/reports", reportRoute);
+app.use("/api/admin", adminRoute);
 app.use("/webhook", webhookRoute);
 
 const __filename = fileURLToPath(import.meta.url);
@@ -171,29 +190,45 @@ io.on("connection", (socket) => {
   });
 });
 
+import { attachAdminGateway } from "./src/realtime/admin.gateway.js";
+
 // Make io available globally for services
 global.io = io;
 attachProjectSubscriptions(io);
-if (typeof attachProjectEditorGateway === 'function') {
+if (typeof attachProjectEditorGateway === "function") {
   attachProjectEditorGateway(io);
 }
+attachAdminGateway(io);
 
 async function startServer() {
   try {
-    if (process.env.COLLABORATION_E2E_ENABLED === 'true' && !isCollaborationLocalTest()) throw new Error('Collaboration E2E profile requires isolated localhost database and non-production mode');
+    if (
+      process.env.COLLABORATION_E2E_ENABLED === "true" &&
+      !isCollaborationLocalTest()
+    )
+      throw new Error(
+        "Collaboration E2E profile requires isolated localhost database and non-production mode",
+      );
     await prisma.$connect();
     startInvitationDeliveryWorker();
-    const recover = () => recoverQueuedProjectOperations().catch(() => console.error('[operations] Queue recovery unavailable; retrying'));
+    const recover = () =>
+      recoverQueuedProjectOperations().catch(() =>
+        console.error("[operations] Queue recovery unavailable; retrying"),
+      );
     const recoveryTimer = setInterval(recover, 10000);
     recoveryTimer.unref();
     void recover();
     console.log("Database connected successfully.");
 
-    httpServer.listen(PORT, isCollaborationLocalTest() ? '127.0.0.1' : undefined, () => {
-      console.log("-----------------------------------------------");
-      console.log("CovAI server is running on port: " + PORT);
-      console.log("-----------------------------------------------");
-    });
+    httpServer.listen(
+      PORT,
+      isCollaborationLocalTest() ? "127.0.0.1" : undefined,
+      () => {
+        console.log("-----------------------------------------------");
+        console.log("CovAI server is running on port: " + PORT);
+        console.log("-----------------------------------------------");
+      },
+    );
   } catch (error) {
     console.error("Failed to connect to the database:", error);
     process.exit(1);
@@ -201,5 +236,3 @@ async function startServer() {
 }
 
 startServer();
-
-

@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    "process.env": {},
+    "process.version": JSON.stringify(""),
+  },
   resolve: { alias: [{ find: '@shared', replacement: fileURLToPath(new URL('./src/shared', import.meta.url)) }, { find: 'monaco-editor/esm', replacement: fileURLToPath(new URL('./node_modules/monaco-editor/esm', import.meta.url)) }] },
   plugins: [react(), tailwindcss()],
   // Worker imports must reach Vite's worker transform instead of becoming dependencies.

@@ -257,7 +257,10 @@ model User {
   bio                  String?
   jobTitle             String?
   aiTokenUsage         Int            @default(0)
+  systemRole           SystemRole     @default(USER)
+  isSuspended          Boolean        @default(false)
   refreshToken         String?
+  adminAuditLogs       AdminAuditLog[] @relation("AdminAuditActor")
   jobs                 Job[]          @relation("UserJobs")
   notifications        Notification[]
   projects             Project[]
@@ -281,6 +284,27 @@ model User {
   sentChatMessages ChatMessage[] @relation("ChatSender")
   chatRequests ChatRequest[]
   aiQuotaReservations AiQuotaReservation[]
+}
+
+model AdminAuditLog {
+  id             String      @id @default(cuid())
+  actorId        String?
+  action         String
+  targetModel    String
+  targetId       String?
+  beforeSnapshot Json?
+  afterSnapshot  Json?
+  diff           Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
+
+  actor          User?       @relation("AdminAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([targetModel, targetId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([action])
 }
 
 model Project {
@@ -808,6 +832,13 @@ model ProjectMemory {
   sourceMessage ChatMessage? @relation(fields: [sourceMessageId], references: [id], onDelete: SetNull)
   @@unique([projectId, fingerprint])
   @@index([projectId, userId, status])
+}
+
+enum SystemRole {
+  SUPERADMIN
+  ADMIN
+  OPERATOR
+  USER
 }
 
 enum ProjectLifecycleStatus {

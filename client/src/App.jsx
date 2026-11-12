@@ -23,6 +23,16 @@ import { ToastProvider } from "./components/dashboard/ToastContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import { useAuth } from "./hooks/useAuth";
 import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
+import { AdminRoute } from "./components/admin/AdminRoute";
+import {
+  AdminOverviewDashboard,
+  AdminDatabaseExplorer,
+  AdminUserManagement,
+  AdminAiGovernance,
+  AdminQueueConsole,
+  AdminSystemHealth,
+  AdminAuditLogsView,
+} from "./pages/admin";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
@@ -136,6 +146,64 @@ function AppContent() {
           }
         />
         <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
+
+        {/* ── Admin Console Routes ── */}
+        <Route
+          path="/admin"
+          element={
+            <AdminRoute>
+              <AdminOverviewDashboard />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/admin/database"
+          element={
+            <AdminRoute>
+              <AdminDatabaseExplorer />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <AdminRoute>
+              <AdminUserManagement />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/admin/ai"
+          element={
+            <AdminRoute>
+              <AdminAiGovernance />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/admin/queues"
+          element={
+            <AdminRoute>
+              <AdminQueueConsole />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/admin/health"
+          element={
+            <AdminRoute>
+              <AdminSystemHealth />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/admin/audit"
+          element={
+            <AdminRoute>
+              <AdminAuditLogsView />
+            </AdminRoute>
+          }
+        />
       </Routes>
       <GlobalProcessIndicator />
     </>

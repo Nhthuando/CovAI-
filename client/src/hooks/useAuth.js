@@ -22,6 +22,7 @@ export const useAuth = () => {
                 id: payload.userId,
                 email: payload.userEmail || localStorage.getItem('userEmail'),
                 name: payload.userName || localStorage.getItem('userName'),
+                systemRole: payload.systemRole || 'USER',
             };
 
             setUser({ ...userData, token });
@@ -45,6 +46,7 @@ export const useAuth = () => {
         queryClient.cancelQueries();
         queryClient.clear();
         localStorage.removeItem('token');
+        localStorage.removeItem('refreshToken');
         localStorage.removeItem('user');
         localStorage.removeItem('userName');
         localStorage.removeItem('userEmail');

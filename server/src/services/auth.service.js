@@ -2,7 +2,7 @@ import prisma from "../config/prisma.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
-const JWT_TTL = "15m";
+const JWT_TTL = process.env.JWT_EXPIRES_IN || "7d";
 
 export const register = async (name, email, password) => {
   const normalizedEmail = email.trim().toLowerCase();
@@ -15,7 +15,7 @@ export const register = async (name, email, password) => {
   });
 
   const accessToken = jwt.sign(
-    { userId: user.id, userEmail: user.email, userName: user.name },
+    { userId: user.id, userEmail: user.email, userName: user.name, systemRole: user.systemRole || "USER" },
     process.env.JWT_SECRET,
     { expiresIn: JWT_TTL },
   );
@@ -37,6 +37,7 @@ export const register = async (name, email, password) => {
     refreshToken,
     userName: name,
     userEmail: normalizedEmail,
+    systemRole: user.systemRole || "USER",
   };
 };
 
@@ -45,11 +46,15 @@ export const login = async (email, password) => {
   const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   if (!user) throw new Error("Incorrect email or password!");
 
+  if (user.isSuspended) {
+    throw new Error("Account has been suspended! Please contact support.");
+  }
+
   const checkPass = await bcrypt.compare(password, user.passwordHash);
   if (!checkPass) throw new Error("Incorrect email or password!");
 
   const accessToken = jwt.sign(
-    { userId: user.id, userEmail: user.email, userName: user.name },
+    { userId: user.id, userEmail: user.email, userName: user.name, systemRole: user.systemRole || "USER" },
     process.env.JWT_SECRET,
     { expiresIn: JWT_TTL },
   );
@@ -71,5 +76,6 @@ export const login = async (email, password) => {
     refreshToken,
     name: user.name,
     email: user.email,
+    systemRole: user.systemRole || "USER",
   };
 };

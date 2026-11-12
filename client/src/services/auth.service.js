@@ -12,15 +12,20 @@ async function fetchWithAuth(input, init = {}) {
   let response = await fetch(input, { ...init, headers });
 
   if (response.status === 401 && !init._retry) {
-    // Refresh the access token using the refresh token
+    // Refresh the access token using the refresh token (both cookie and localStorage fallback)
     try {
+      const storedRefreshToken = localStorage.getItem("refreshToken");
       const refreshResponse = await fetch(`${BASE_URL}/refresh`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         credentials: "include", // Include cookies for refresh token
+        body: JSON.stringify({ refreshToken: storedRefreshToken }),
       });
       if (refreshResponse.ok) {
-        const { accessToken } = await refreshResponse.json();
-        localStorage.setItem("token", accessToken);
+        const { accessToken, refreshToken: newRefresh } = await refreshResponse.json();
+        if (accessToken) localStorage.setItem("token", accessToken);
+        if (newRefresh) localStorage.setItem("refreshToken", newRefresh);
+        window.dispatchEvent(new Event("covai:auth-change"));
 
         // Retry the original request with the new token
         response = await fetch(input, {

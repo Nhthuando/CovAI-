@@ -45,3 +45,19 @@ export const aiLimiter = rateLimit({
     message: "Too many AI requests, please try again later.",
   },
 });
+
+/**
+ * Admin Console rate limiter — applies to all /api/admin/* routes.
+ * 600 requests / 15 minutes / IP to accommodate data grids & telemetry.
+ */
+export const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isCollaborationLocalTest() ? 5000 : 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many admin requests from this IP. Please slow down.",
+    code: "ADMIN_RATE_LIMITED",
+  },
+});

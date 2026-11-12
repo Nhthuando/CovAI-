@@ -1,3 +1,8 @@
+// Ensure window.process exists to protect against legacy node references in libraries or dev builds
+if (typeof window !== 'undefined') {
+  window.process = window.process || { env: {}, version: '' };
+}
+
 import './lib/monacoSetup.js'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
