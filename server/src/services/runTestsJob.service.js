@@ -581,7 +581,7 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
  * @param {string} rootDir
  * @returns {Promise<boolean>}
  */
-export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
+export const detectAndRunPrismaGenerate = async (jobId, rootDir, options = {}) => {
     if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir)) return false;
     const resolvedRoot = path.resolve(rootDir);
     const lastChecked = preparedPrismaCache.get(resolvedRoot);
@@ -696,41 +696,9 @@ export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
             } catch (_) { }
         }
 
-        let resolvedDbUrl = "";
-        for (const envDir of [targetDir, rootDir]) {
-            for (const envName of [".env.test", ".env.local", ".env"]) {
-                const envPath = path.join(envDir, envName);
-                if (fs.existsSync(envPath)) {
-                    try {
-                        const envText = fs.readFileSync(envPath, "utf8");
-                        const match = envText.match(/DATABASE_URL=["']?([^"'\r\n]+)["']?/);
-                        if (match && match[1]) {
-                            const foundUrl = match[1].trim();
-                            if (provider === "mysql" && foundUrl.startsWith("mysql://")) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "sqlite" && (foundUrl.startsWith("file:") || foundUrl.endsWith(".db"))) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "postgresql" && (foundUrl.startsWith("postgresql://") || foundUrl.startsWith("postgres://"))) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "mongodb" && foundUrl.startsWith("mongodb")) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (!resolvedDbUrl) {
-                                resolvedDbUrl = foundUrl;
-                            }
-                        }
-                    } catch (_) { }
-                }
-            }
-            if (resolvedDbUrl) break;
-        }
-
-        if (!resolvedDbUrl) {
-            resolvedDbUrl = dummyUrl;
-        }
+        // R2 Requirement: Never extract real database credentials from repository .env files.
+        // Use isolated virtual database connection string or hermetic dummy fallback.
+        const resolvedDbUrl = options?.virtualDbUrl || options?.virtualDbEnv?.DATABASE_URL || dummyUrl;
 
         const hasLocalPrisma = fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma")) ||
             fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma.cmd")) ||
@@ -753,6 +721,7 @@ export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
                 jobId: jobId || "prisma-generate",
                 env: {
                     DATABASE_URL: resolvedDbUrl,
+                    DIRECT_URL: resolvedDbUrl,
                     NODE_ENV: "test",
                     PRISMA_GENERATE_SKIP_AUTOINSTALL: "true"
                 }
@@ -1696,8 +1665,9 @@ export const resolveTestEnvironment = (dir, rootDir, configuredEnv) => {
  * 3. Injects hermetic RAM mock dictionary to guarantee zero undefined crashes.
  * 4. Configures Jest global shims, custom matchers, and Bull/Prisma mocks.
  */
-export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMocks = {} } = {}) => {
+export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMocks = {}, virtualDbEnv = {} } = {}) => {
     const serializedMocks = JSON.stringify(hermeticMocks || {});
+    const serializedVirtualDbEnv = JSON.stringify(virtualDbEnv || {});
     const safeRootDir = rootDir ? String(rootDir).replace(/\\/g, "/") : "";
     const safeTargetDir = targetDir ? String(targetDir).replace(/\\/g, "/") : "";
 
@@ -1732,6 +1702,10 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `        const eq = clean.indexOf('=');\n` +
         `        if (eq !== -1) {\n` +
         `          const k = clean.slice(0, eq).trim();\n` +
+        `          if (/^(DATABASE_URL|DIRECT_URL|SHADOW_DATABASE_URL|POSTGRES_URL|POSTGRESQL_URL|DB_URL|DB_URI|DB_CONNECTION_STRING|MONGODB_URI|MYSQL_URL)$/i.test(k) || /^DATABASE_/i.test(k)) {\n` +
+        `            i++;\n` +
+        `            continue;\n` +
+        `          }\n` +
         `          let rest = clean.slice(eq + 1).trim();\n` +
         `          let v = '';\n` +
         `          if (rest.startsWith('"')) {\n` +
@@ -1791,6 +1765,11 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `    if (process.env[k] === undefined || process.env[k] === null || process.env[k] === '') {\n` +
         `      process.env[k] = v;\n` +
         `    }\n` +
+        `  }\n` +
+        `  // Strict Precedence 4: Isolated Virtual Database environment injection (highest precedence)\n` +
+        `  const VIRTUAL_DB_ENV = ${serializedVirtualDbEnv};\n` +
+        `  for (const [k, v] of Object.entries(VIRTUAL_DB_ENV)) {\n` +
+        `    process.env[k] = v;\n` +
         `  }\n` +
         `} catch (_) {}\n` +
         `try {\n` +
@@ -2095,7 +2074,7 @@ const buildSetupAfterEnvContent = () => {
 
 export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = [], customJestCommand = null, options = {}) => {
     const hermeticMocks = options?.hermeticMocks || {};
-    const useHermeticMock = Boolean(options?.useHermeticMock);
+    const useHermeticMock = options?.useHermeticMock !== false;
     const targetCovDir = options?.coverageDir ? path.resolve(rootDir, options.coverageDir) : path.join(rootDir, "coverage");
     const covDir = targetCovDir;
     if (!fs.existsSync(targetCovDir)) {
@@ -2543,7 +2522,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             try {
                 fs.writeFileSync(
                     tempSetupPath,
-                    buildSetupContent({ rootDir, targetDir: rootDir, hermeticMocks }),
+                    buildSetupContent({ rootDir, targetDir: rootDir, hermeticMocks, virtualDbEnv: options?.virtualDbEnv || {} }),
                     "utf8"
                 );
                 createdHarnessFiles.add(tempSetupPath);
@@ -2741,6 +2720,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                         NODE_OPTIONS: nodeOptions,
                         NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
                         ...hermeticMocks,
+                        ...(options?.virtualDbEnv || {}),
                         ...(options?.env || {}),
                     }
                 });
@@ -2809,7 +2789,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             try {
                 fs.writeFileSync(
                     tempSubSetupPath,
-                    buildSetupContent({ rootDir, targetDir, hermeticMocks }),
+                    buildSetupContent({ rootDir, targetDir, hermeticMocks, virtualDbEnv: options?.virtualDbEnv || {} }),
                     "utf8"
                 );
                 fs.writeFileSync(
@@ -3011,6 +2991,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                         NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
                         NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
                         ...hermeticMocks,
+                        ...(options?.virtualDbEnv || {}),
                         ...(options?.env || {}),
                     }
                 });
@@ -3852,7 +3833,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     }
 
     const payload = typeof job.payloadJson === "string" ? JSON.parse(job.payloadJson || "{}") : (job.payloadJson || {});
-    const useHermeticMock = Boolean(options?.useHermeticMock || payload?.useHermeticMock || job?.useHermeticMock);
+    const useHermeticMock = options?.useHermeticMock !== false && payload?.useHermeticMock !== false && job?.useHermeticMock !== false;
 
     let hermeticMocks = {};
     try {
@@ -3868,7 +3849,35 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         console.warn("[processRunTestsJob] Env resolution warning:", envErr.message);
     }
 
-    const runnerOptions = { coverageDir: unitCoverageDir, hermeticMocks, useHermeticMock };
+    let isolatedDb = null;
+    let virtualDbEnv = {};
+    try {
+        const { isDatabaseRequiredForProject, provisionIsolatedDatabase, syncDatabaseSchema } = await import("./virtualDatabase.service.js");
+        if (isDatabaseRequiredForProject(rootDir)) {
+            await addJobLog(jobId, "INFO", "[VirtualDB] Database usage detected in project. Provisioning isolated virtual database...").catch(() => {});
+            isolatedDb = await provisionIsolatedDatabase(jobId);
+            virtualDbEnv = isolatedDb.env || {};
+            await addJobLog(jobId, "INFO", `[VirtualDB] Isolated catalog "${isolatedDb.dbName}" ready. Synchronizing schema...`).catch(() => {});
+            const syncRes = await syncDatabaseSchema(isolatedDb.databaseUrl, null, rootDir);
+            if (syncRes.synced) {
+                await addJobLog(jobId, "INFO", `[VirtualDB] Database schema synchronized successfully for catalog "${isolatedDb.dbName}".`).catch(() => {});
+            }
+        } else {
+            await addJobLog(jobId, "INFO", "[VirtualDB] Pure logic/no-DB project detected. Bypassing virtual database provisioning for speed.").catch(() => {});
+        }
+    } catch (vDbErr) {
+        console.warn("[processRunTestsJob] Virtual DB provisioning warning:", vDbErr.message);
+        await addJobLog(jobId, "WARN", `[VirtualDB] Virtual DB provisioning notice: ${vDbErr.message}`).catch(() => {});
+    }
+
+    const runnerOptions = {
+        coverageDir: unitCoverageDir,
+        hermeticMocks,
+        useHermeticMock,
+        virtualDbEnv,
+        virtualDbUrl: isolatedDb?.databaseUrl || null,
+        env: { ...virtualDbEnv },
+    };
 
     // Initialize output record
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
@@ -4894,6 +4903,14 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             console.error(`[RunTestsJob ${jobId}] Error failing BUILD_CFG:`, failChainErr);
         }
     } finally {
+        if (isolatedDb) {
+            try {
+                const { destroyIsolatedDatabase } = await import("./virtualDatabase.service.js");
+                await destroyIsolatedDatabase(isolatedDb.jobId || jobId, { log: true });
+            } catch (destroyErr) {
+                console.warn("[processRunTestsJob] Virtual DB cleanup warning:", destroyErr.message);
+            }
+        }
         cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
     }
 };

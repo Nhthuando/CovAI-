@@ -296,7 +296,19 @@ export const runCoverageByType = async (req, res) => {
         const { snapshotId, coverageType } = req.params;
         const requestedFramework = req.body?.framework || req.query?.framework || null;
         const isRestart = Boolean(req.body?.restart || req.query?.restart);
-        const useHermeticMock = Boolean(req.body?.useHermeticMock || req.query?.useHermeticMock);
+        const parseOptionalBoolean = (val) => {
+          if (val === undefined || val === null || val === '') return undefined;
+          if (typeof val === 'boolean') return val;
+          if (typeof val === 'string') {
+            const lower = val.trim().toLowerCase();
+            if (lower === 'true' || lower === '1') return true;
+            if (lower === 'false' || lower === '0') return false;
+          }
+          return Boolean(val);
+        };
+        const parsedBodyHermetic = parseOptionalBoolean(req.body?.useHermeticMock);
+        const parsedQueryHermetic = parseOptionalBoolean(req.query?.useHermeticMock);
+        const useHermeticMock = parsedBodyHermetic !== undefined ? parsedBodyHermetic : (parsedQueryHermetic !== undefined ? parsedQueryHermetic : true);
         const userId = req.user?.id;
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
@@ -357,7 +369,7 @@ export const runCoverageByType = async (req, res) => {
                     job = activeUnitJob;
                     if (job.status === "QUEUED") {
                         // Ensure queued job is properly enqueued in BullMQ in case it was missed
-                        await addJobToQueue("RUN_TESTS", job.id).catch(() => { });
+                        await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock }).catch(() => { });
                     }
                 }
             } else {
@@ -381,7 +393,7 @@ export const runCoverageByType = async (req, res) => {
         const { detectIntegrationFrameworks } =
           await import("../services/integrationDetection.service.js");
         const intDetect = await detectIntegrationFrameworks(resolvedRootDir);
-        if (!intDetect.summary?.hasDependencies && !req.body?.skipHitlCheck) {
+        if (!(intDetect?.hasDependencies ?? intDetect?.summary?.hasDependencies) && !req.body?.skipHitlCheck) {
           return res.status(409).json({
             success: false,
             code: "INTEGRATION_DEPENDENCY_MISSING",
@@ -4175,6 +4187,7 @@ export const runSystemTestCoverage = async (req, res) => {
       userId,
       capability: "project.read",
     });
+    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res.status(409).json({
         success: false,
@@ -4960,12 +4973,8 @@ export const applySuggestion = async (req, res) => {
       return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, suggestion, suggestions, skipBackgroundJob, envVariables, requireCoverageGoal, requestId } = req.body || {};
+        let { projectId, suggestion, suggestions, skipBackgroundJob, requireCoverageGoal, requestId } = req.body || {};
         if (requestId !== undefined && (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(requestId))) return res.status(400).json({success:false,message:'Invalid request ID'});
-        if (envVariables !== undefined && (!envVariables || typeof envVariables !== 'object' || Array.isArray(envVariables) ||
-            Object.entries(envVariables).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string'))) {
-            return res.status(400).json({ success: false, message: 'Invalid test environment configuration.' });
-        }
 
         if (!suggestion && (!suggestions || suggestions.length === 0)) {
             return res.status(400).json({ success: false, message: "suggestion or suggestions array is required." });
@@ -4986,7 +4995,6 @@ export const applySuggestion = async (req, res) => {
             userId,
             suggestion,
             suggestions,
-            envVariables,
             requestId,
             requireCoverageGoal: requireCoverageGoal === true
         });
@@ -5043,6 +5051,7 @@ export const getSystemTestFileContent = async (req, res) => {
         success: false,
         message: "Snapshot not found or unauthorized.",
       });
+    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res
         .status(409)
@@ -5133,6 +5142,7 @@ export const updateSystemTestFileContent = async (req, res) => {
         success: false,
         message: "Snapshot not found or unauthorized.",
       });
+    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res
         .status(409)
@@ -5245,6 +5255,7 @@ export const runSingleSystemTest = async (req, res) => {
       userId,
       capability: "project.read",
     });
+    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res.status(409).json({
         success: false,
@@ -5345,6 +5356,7 @@ export const optimizeSystemTestController = async (req, res) => {
         success: false,
         message: "Snapshot not found or unauthorized.",
       });
+    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res.status(409).json({
         success: false,
@@ -5704,87 +5716,29 @@ export const suggestUnitTestcaseAll = async (req, res) => {
 
 /**
  * GET /api/coverage/:snapshotId/unit/env-check
- * Pre-flight check detecting process.env variables and requirements in candidate files.
+ * Non-blocking stub under R1 zero-.env architecture.
  */
-export const checkUnitTestEnvironment = async (req, res, next) => {
-    try {
-        const { snapshotId } = req.params;
-        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
-
-        if (!req.user?.id) return res.status(401).json({success:false,message:'Unauthorized.'});
-        const snapshot = await findOwnedSnapshot(snapshotId, req.user.id);
-        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
-        if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot root directory is not ready." });
-
-        const data = await detectProjectEnvironment(snapshot.rootDir || snapshot);
-        return res.status(200).json({ success: true, data: { ...data, existingVariables: {}, detectedVariables: data.detectedVariables.map(({ inferredMock, ...variable }) => variable) } });
-    } catch (error) {
-        if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });
-        if (typeof next === 'function') return next(error);
-        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to check unit test environment." });
-    }
+export const checkUnitTestEnvironment = async (req, res) => {
+    return res.status(200).json({
+        success: true,
+        data: {
+            requiresPrompt: false,
+            missingRequired: [],
+            detectedVariables: [],
+            existingVariables: {}
+        }
+    });
 };
 
 /**
  * POST /api/coverage/:snapshotId/unit/env
- * Persists configured environment variables into .env at workspace root.
+ * Non-blocking stub under R1 zero-.env architecture.
  */
-export const saveUnitTestEnvironment = async (req, res, next) => {
-    try {
-        const userId = req.user?.id;
-        const { snapshotId } = req.params;
-        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
-
-        const { envVariables, runAfterSave } = req.body || {};
-        if (!envVariables || typeof envVariables !== "object" || Array.isArray(envVariables)) {
-            return res.status(400).json({ success: false, message: "envVariables must be an object of key-value pairs." });
-        }
-
-        if (!req.user?.id) return res.status(401).json({success:false,message:'Unauthorized.'});
-        const snapshot = await findOwnedSnapshot(snapshotId, req.user.id);
-        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
-
-        const result = await saveWorkspaceEnv({
-            snapshot,
-            envVariables,
-            userId,
-            db: prisma
-        });
-
-        let jobId = undefined;
-        let runTriggered = false;
-        if (runAfterSave) {
-            const job = await prisma.job.create({
-                data: {
-                    type: "RUN_TESTS",
-                    status: "PENDING",
-                    payloadJson: JSON.stringify({
-                        snapshotId: snapshot.id,
-                        coverageType: "unit"
-                    })
-                }
-            });
-            await addJobToQueue("RUN_TESTS", job.id);
-            jobId = job.id;
-            runTriggered = true;
-        }
-
-        return res.status(200).json({
-            success: true,
-            data: {
-                workspaceRevision: result.workspaceRevision,
-                path: ".env",
-                persisted: true,
-                configuredVariables: Object.keys(envVariables),
-                runTriggered,
-                ...(jobId ? { jobId } : {})
-            }
-        });
-    } catch (error) {
-        if (error instanceof ServiceError) return res.status(error.statusCode || 400).json({ success: false, message: error.message });
-        if (typeof next === 'function') return next(error);
-        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to save unit test environment." });
-    }
+export const saveUnitTestEnvironment = async (req, res) => {
+    return res.status(200).json({
+        success: true,
+        message: 'Hermetic in-memory mocks active.'
+    });
 };
 
 /**

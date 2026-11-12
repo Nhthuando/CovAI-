@@ -141,25 +141,28 @@ export function useIntegrationWorkspace(snapshotId) {
  */
 export function invalidateCoverageQueries(snapshotId = null) {
   if (snapshotId) {
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        if (!Array.isArray(key) || key.length < 2) return false;
-        const [domain, snap] = key;
-        return (
-          (domain === "coverageDashboard" ||
-            domain === "fileCoverage" ||
-            domain === "integrationWorkspace" ||
-            domain === "unifiedDashboard") &&
-          snap === snapshotId
-        );
-      },
-    });
+    queryClient
+      .invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          if (!Array.isArray(key) || key.length < 2) return false;
+          const [domain, snap] = key;
+          return (
+            (domain === "coverageDashboard" ||
+              domain === "fileCoverage" ||
+              domain === "integrationWorkspace" ||
+              domain === "unifiedDashboard") &&
+            snap === snapshotId
+          );
+        },
+        cancelRefetch: false,
+      })
+      .catch(() => {});
   } else {
-    queryClient.invalidateQueries({ queryKey: ["coverageDashboard"] });
-    queryClient.invalidateQueries({ queryKey: ["fileCoverage"] });
-    queryClient.invalidateQueries({ queryKey: ["integrationWorkspace"] });
-    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["coverageDashboard"], cancelRefetch: false }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["fileCoverage"], cancelRefetch: false }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["integrationWorkspace"], cancelRefetch: false }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"], cancelRefetch: false }).catch(() => {});
   }
 }
 
@@ -251,7 +254,12 @@ export function useProjectTreeQuery(projectId) {
  * Invalidate Project file tree queries so Explorer immediately refreshes.
  */
 export function invalidateProjectTree(projectId = null) {
-  queryClient.invalidateQueries({ predicate: (query) => query.queryKey?.[0] === "projectTree" });
+  queryClient
+    .invalidateQueries({
+      predicate: (query) => query.queryKey?.[0] === "projectTree",
+      cancelRefetch: false,
+    })
+    .catch(() => {});
   if (typeof window !== "undefined" && projectId) {
     window.dispatchEvent(
       new CustomEvent("covai:project-event", {

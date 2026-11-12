@@ -286,7 +286,7 @@ const createTypedJob =
 
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
-export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL", testType, requestId, chainBuildCfg = false, useHermeticMock = false }) =>
+export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL", testType, requestId, chainBuildCfg = false, useHermeticMock = true }) =>
   createSnapshotJob({
     projectId,
     snapshotId,
@@ -297,7 +297,7 @@ export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL"
       mode,
       ...(testType ? { testType } : {}),
       ...(chainBuildCfg ? { chainBuildCfg: true } : {}),
-      ...(useHermeticMock ? { useHermeticMock: true } : {}),
+      useHermeticMock: useHermeticMock !== false,
     },
     requestId,
   });

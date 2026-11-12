@@ -203,7 +203,7 @@ export default function UnitTestSimulationStudioModal({
         setApplySuccessMessage("✓ The test was applied, verified and saved to the project test file.");
         invalidateCoverageQueries(snapshotId);
       } else {
-        throw new Error(result?.status === 'WAITING_FOR_ENV' ? `${result.message} Required environment variables: ${(result.environment?.missingRequired || []).join(', ')}.` : result?.message || "Unable to apply this test to the project.");
+        throw new Error(result?.message || "Unable to apply this test to the project.");
       }
     } catch (err) {
       setApplyErrorMessage(err.message || "Failed to apply the test.");

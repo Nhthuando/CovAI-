@@ -47,8 +47,6 @@ import {
     getUnifiedTestRunInspectionController,
     getSimulationSources,
     getSimulationTrace,
-    checkUnitTestEnvironment,
-    saveUnitTestEnvironment,
     getSuitesReadinessController,
     confirmBatchSystemScenariosController,
 } from "../controllers/coverage.controller.js";
@@ -96,9 +94,9 @@ router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
 router.post("/:snapshotId/apply-test-suggestion", authMiddleware, applySuggestion);
 router.post("/:snapshotId/apply-all-test-suggestions", authMiddleware, applySuggestion);
 
-// Unit test environment variable detection & workspace persistence routes (Milestone 2)
-router.get("/:snapshotId/unit/env-check", authMiddleware, checkUnitTestEnvironment);
-router.post("/:snapshotId/unit/env", authMiddleware, saveUnitTestEnvironment);
+// Unit test environment variable detection & workspace persistence routes (Non-blocking stubs under R1 zero-.env architecture)
+router.get("/:snapshotId/unit/env-check", authMiddleware, (req, res) => res.status(200).json({ success: true, data: { requiresPrompt: false, missingRequired: [], detectedVariables: [], existingVariables: {} } }));
+router.post("/:snapshotId/unit/env", authMiddleware, (req, res) => res.status(200).json({ success: true, message: "Hermetic in-memory mocks active." }));
 
 // Unit test versioning & rollback routes
 router.get("/:snapshotId/unit-test-versions", authMiddleware, getUnitTestVersionsController);

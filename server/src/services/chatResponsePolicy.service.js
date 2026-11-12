@@ -1,6 +1,6 @@
 // Interactive chat must not inherit the multi-minute code-generation job policy.
 export const CHAT_GENERATION_CONFIG = Object.freeze({
-    requestTimeoutMs: 20000, totalTimeoutMs: 22000, maxAttempts: 1,
+    requestTimeoutMs: 45000, totalTimeoutMs: 55000, maxAttempts: 2,
     maxOutputTokens: 1536, temperature: 0.65,
 });
 
@@ -34,8 +34,8 @@ export function chatThinkingConfig(model) {
 export function chatProviderError(error) {
     if (['AI_QUOTA_EXCEEDED', 'AI_KEY_NOT_CONFIGURED'].includes(error.code)) return error;
     if (error.code === 'AI_REQUEST_TIMEOUT' || error.name === 'AbortError' || /deadline|timed out/i.test(error.message || ''))
-        return { message: 'The project assistant took too long to respond. Please try again. Your draft is still here.', status: 504, code: 'AI_REQUEST_TIMEOUT' };
+        return { message: 'The project assistant took too long to respond. Please try again.', status: 504, code: 'AI_REQUEST_TIMEOUT' };
     if (error.status === 404) return { message: 'The project assistant is temporarily unavailable. Please contact your project administrator if this continues.', status: 503, code: 'AI_MODEL_UNAVAILABLE' };
     if ([401, 403].includes(error.status)) return { message: 'The project assistant is not available. Please contact your project administrator.', status: 503, code: 'AI_AUTH_ERROR' };
-    return { message: 'The project assistant is temporarily unavailable. Please try again in a moment. Your draft is still here.', status: 503, code: 'AI_PROVIDER_UNAVAILABLE' };
+    return { message: 'The project assistant is temporarily unavailable. Please try again in a moment.', status: 503, code: 'AI_PROVIDER_UNAVAILABLE' };
 }

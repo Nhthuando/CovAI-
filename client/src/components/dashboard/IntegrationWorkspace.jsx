@@ -337,7 +337,7 @@ export default function IntegrationWorkspace({
   const [workspace, setWorkspace] = useState(null);
   const [reportData, setReportData] = useState(null);
   const chatExecution = reportData?.latestExecution;
-  const chatSnapshotId = reportData?.history?.executions?.find(row => row.testRunId === chatExecution?.testRunId)?.snapshotId || snapshotId;
+  const chatSnapshotId = (chatExecution?.testRunId && reportData?.history?.executions?.find(row => row?.testRunId === chatExecution.testRunId)?.snapshotId) || snapshotId;
   useChatTestContext(onChatContextChange, { projectId, snapshotId: chatSnapshotId, testType: 'integration', testRunId: chatExecution?.testRunId || chatExecution?.id });
   const [detectionInfo, setDetectionInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -686,7 +686,7 @@ export default function IntegrationWorkspace({
         framework: targetFramework,
         force: true,
       });
-      const jId = res?.data?.jobId || res?.jobId;
+      const jId = res?.data?.job?.id || res?.data?.jobId || res?.job?.id || res?.jobId;
       if (jId) {
         setActiveJobId(jId);
         setActiveJobType("GENERATE");

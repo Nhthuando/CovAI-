@@ -119,6 +119,15 @@ export const detectIntegrationFrameworks = async (rootDir) => {
             detectionReasons: ["Project root directory does not exist"],
             permutation: "ZERO_TESTS_NO_DEPS",
             permutationDetails: null,
+            summary: {
+                hasDependencies: false,
+                hasTestFiles: false,
+                isZeroTestProject: true,
+                needsDependencyInstall: false,
+                missingPackages: ["supertest", "jest"],
+                primaryFramework: null,
+                permutation: "ZERO_TESTS_NO_DEPS",
+            },
         };
     }
 
@@ -279,6 +288,15 @@ export const detectIntegrationFrameworks = async (rootDir) => {
         targetFramework: permutationDetails.targetFramework || primaryFramework || null,
         suggestedFrameworks: permutationDetails.proposedFrameworks ? permutationDetails.proposedFrameworks.map((p) => p.id) : ["supertest", "playwright"],
         permutationDetails,
+        summary: {
+            hasDependencies,
+            hasTestFiles,
+            isZeroTestProject: Boolean(permutationDetails.isZeroTestProject),
+            needsDependencyInstall: Boolean(permutationDetails.needsInstall),
+            missingPackages: permutationDetails.missingPackages || (!hasDependencies ? ["supertest", "jest"] : []),
+            primaryFramework,
+            permutation: permutationDetails.permutation,
+        },
     };
 };
 

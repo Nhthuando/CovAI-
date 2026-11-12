@@ -100,7 +100,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   const pendingRunRef = useRef(null);
   const [inspectedScenario, setInspectedScenario] = useState(null);
   useChatTestContext(onChatContextChange, { projectId, snapshotId, testType: 'system', testRunId: summary?.testRunId,
-    scenarioId: inspectedScenario?.testRunId === summary?.testRunId ? inspectedScenario.id : undefined });
+    scenarioId: inspectedScenario?.id && summary?.testRunId && inspectedScenario.testRunId === summary.testRunId ? inspectedScenario.id : undefined });
   const [editorTarget, setEditorTarget] = useState(null); // { filePath, scenarioId, initialMode }
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
 

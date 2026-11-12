@@ -181,7 +181,7 @@ ${unexportedWarning}
 - CUCUMBER / GHERKIN AST FIXTURE INVARIANT: When testing Cucumber/Gherkin functions or AST code-generation (e.g. ParsedFeature, ParsedScenario, ParsedStep), NEVER pass incomplete mock step or scenario objects. Every step object MUST contain { lineNumber, stepText: string, keyword: 'Given'|'When'|'Then' }. Every scenario object MUST contain { lineNumber, title: string, steps: ParsedStep[] }.
 
 ### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS
-- Target: 100% Statements, Branches, Functions and Lines where reachable. Prioritize uncovered branch outcomes and meaningful behavior assertions. Static expectations are estimates until a real runner verifies them. Never change existing skips, source code, expected behavior or coverage exclusions to reach the target. Required secrets must be reported, not invented.
+- Target: 100% Statements, Branches, Functions and Lines where reachable. Prioritize uncovered branch outcomes and meaningful behavior assertions. Static expectations are estimates until a real runner verifies them. Never change existing skips, source code, expected behavior or coverage exclusions to reach the target. ZERO .ENV DEPENDENCY: Never assume, expect, or read from real .env files or external configuration. All required environment variables and secrets MUST be fully mocked in RAM using runner-native stubs (${isVitest ? "vi.stubEnv for Vitest" : "process.env overrides in beforeEach/afterEach for Jest"}) with realistic mock values.
 - Current Coverage: Lines ${coverageDetails?.summary?.linesPct ?? 0}%, Branches ${coverageDetails?.summary?.branchesPct ?? 0}%, Functions ${coverageDetails?.summary?.funcsPct ?? 0}%, Statements ${coverageDetails?.summary?.stmtsPct ?? 0}%
 - Control Flow Graph Complexity: Cyclomatic Complexity (CC) = ${cyclomaticComplexity} (Basis Paths = ${cyclomaticComplexity})
 - Uncovered Lines in Source: ${uncoveredLinesStr}
@@ -251,6 +251,7 @@ ${deltaDecisionTableMarkdown}
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
+   - ZERO EXTERNAL .ENV REQUIREMENT: Every unit test must be 100% self-contained and run in memory without requiring real .env files on disk. If the tested module references process.env, stub the variables directly in test setup (${isVitest ? "vi.stubEnv('VAR', 'mock_value')" : "process.env.VAR = 'mock_value'"}) with safe, valid mock fixtures.
 ${mockInstructionsStr}${prismaMockDirective}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:

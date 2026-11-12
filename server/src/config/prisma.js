@@ -9,9 +9,9 @@ if (process.env.DATABASE_URL) {
     const connectionString = process.env.DATABASE_URL.replace(/([?&])sslmode=require(?=&|$)/, "$1sslmode=verify-full");
     const pool = new Pool({ 
         connectionString,
-        max: 25,
+        max: 15,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 45000,
+        connectionTimeoutMillis: 30000,
         keepAlive: true,
         keepAliveInitialDelayMillis: 10000,
         allowExitOnIdle: true,
@@ -27,19 +27,26 @@ if (process.env.DATABASE_URL) {
             $allModels: {
                 async $allOperations({ model, operation, args, query }) {
                     let attempts = 0;
-                    while (attempts < 2) {
+                    const maxAttempts = 3;
+                    while (attempts < maxAttempts) {
                         try {
                             return await query(args);
                         } catch (error) {
                             attempts++;
+                            const msg = String(error?.message || "");
                             const isDbUnreachable =
-                                error?.code === "P1001" ||
-                                error?.message?.includes("Can't reach database server") ||
-                                error?.message?.includes("DatabaseNotReachable") ||
-                                error?.message?.includes("Connection terminated");
-                            if (isDbUnreachable && attempts < 2) {
-                                console.warn(`[Prisma] Transient DB connection issue on ${model}.${operation}. Retrying in 1.5s (attempt ${attempts + 1})...`);
-                                await new Promise(r => setTimeout(r, 1500));
+                                ["P1001", "P1002", "P1008", "P1017", "P2024", "ECONNRESET", "ETIMEDOUT", "EPIPE"].includes(error?.code) ||
+                                msg.includes("Can't reach database server") ||
+                                msg.includes("DatabaseNotReachable") ||
+                                msg.includes("Connection terminated") ||
+                                msg.includes("timeout exceeded when trying to connect") ||
+                                msg.includes("Authentication timed out") ||
+                                msg.includes("Client has encountered a connection error") ||
+                                msg.includes("Timed out fetching a new connection");
+                            if (isDbUnreachable && attempts < maxAttempts) {
+                                const delayMs = attempts * 500;
+                                console.warn(`[Prisma] Transient DB connection issue on ${model}.${operation} (${msg.slice(0, 80)}). Retrying in ${delayMs}ms (attempt ${attempts + 1}/${maxAttempts})...`);
+                                await new Promise(r => setTimeout(r, delayMs));
                                 continue;
                             }
                             throw error;

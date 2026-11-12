@@ -12,6 +12,7 @@ import {
   Check,
   Loader2,
   RotateCcw,
+  Undo2,
   Shield,
   FileCode,
   Wand2,
@@ -58,7 +59,9 @@ import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 import DiffReviewModal from "./DiffReviewModal";
 import AIContextDialog from "./AIContextDialog";
-import { getAiContext } from "../../services/aiContext.service";
+import { branchAiConversation, getAiContext } from "../../services/aiContext.service";
+import Button from "../common/Button";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery";
 import { isTestFile } from "./CoverageTypeDashboard";
 
@@ -999,6 +1002,9 @@ function FormattedMessage({ content }) {
 function ChatMessage({
   msg,
   onRetry,
+  onEditMessage,
+  onUndoMessage,
+  messageActionsBusy,
   onApplySuggestion,
   onUndoSuggestion,
   onApplyAllSuggestions,
@@ -1011,6 +1017,7 @@ function ChatMessage({
   const isUser = msg.role === "user";
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editText, setEditText] = useState(null);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(msg.content);
@@ -1097,6 +1104,36 @@ function ChatMessage({
         </span>
       </div>
 
+      {editText !== null && onEditMessage ? (
+        <form className="w-full space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-2" onSubmit={async event => {
+          event.preventDefault();
+          const text = editText.trim();
+          if (text && text !== msg.content && !messageActionsBusy && await onEditMessage(text)) setEditText(null);
+        }}>
+          <textarea
+            aria-label="Edit message"
+            value={editText}
+            onChange={event => setEditText(event.target.value)}
+            disabled={messageActionsBusy}
+            autoFocus
+            rows={3}
+            maxLength={16000}
+            className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-2 text-sm text-[var(--color-text)]"
+            onKeyDown={event => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!messageActionsBusy) setEditText(null);
+              }
+            }}
+          />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" disabled={messageActionsBusy} onClick={() => setEditText(null)}>Cancel</Button>
+            <Button size="sm" type="submit" disabled={messageActionsBusy || !editText.trim() || editText.trim() === msg.content}>Send</Button>
+          </div>
+        </form>
+      ) : (
+      <>
       {/* Message Bubble */}
       {msg.type === "quota" ? (
         <div
@@ -1289,7 +1326,7 @@ function ChatMessage({
             )}
 
           {/* Hover Actions (Copy / Retry) */}
-          {!isUser && hovered && (
+          {!isUser && (hovered || msg.failed) && (
             <div
               className="absolute -bottom-3 right-3 flex items-center gap-1 px-1.5 py-0.5 rounded-md"
               style={{
@@ -1336,6 +1373,14 @@ function ChatMessage({
             </div>
           )}
         </div>
+      )}
+      {onEditMessage && (
+        <div className="mt-1 flex gap-1">
+          <Button size="sm" variant="ghost" icon={Edit2} disabled={messageActionsBusy} onClick={() => setEditText(msg.content)}>Edit</Button>
+          <Button size="sm" variant="ghost" icon={Undo2} disabled={messageActionsBusy || !onUndoMessage} onClick={onUndoMessage} title="Return this message to the composer">Undo</Button>
+        </div>
+      )}
+      </>
       )}
     </motion.div>
   );
@@ -1417,12 +1462,15 @@ function TypingIndicator() {
 function ChatInput({
   onSend,
   isTyping,
+  isRevising,
   fileTree = [],
   projectId,
+  input,
+  setInput,
+  attachments,
+  setAttachments,
 }) {
-  const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
-  const [attachments, setAttachments] = useState([]);
 
   // @ mention autocomplete state
   const [atMentionOpen, setAtMentionOpen] = useState(false);
@@ -1682,16 +1730,15 @@ if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
       }
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || isTyping) return;
-    const sent = await onSend(input.trim(), attachments);
-    if (!sent) return;
+  const handleSend = () => {
+    if (!input.trim() || isTyping) return;
+    if (!onSend(input.trim(), attachments)) return;
     setInput("");
     setAttachments([]);
     setAtMentionOpen(false);
@@ -1700,13 +1747,14 @@ if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
     }
   };
 
-  const canSend = (input.trim() || attachments.length > 0) && !isTyping;
+  const canSend = Boolean(input.trim()) && !isTyping;
 
   return (
     <div
       className="flex-shrink-0 relative"
       style={{ padding: "6px 14px 12px" }}
       onPaste={handlePaste}
+      inert={isRevising}
     >
       {/* Hidden file input for system file attachment */}
       <input
@@ -2017,6 +2065,11 @@ export default function AIPanel({
   }, [fileTree, projectId]);
 
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [draftText, setDraftText] = useState("");
+  const [draftAttachments, setDraftAttachments] = useState([]);
+  const [isRevising, setIsRevising] = useState(false);
+  const revisionRef = useRef(false);
+  const access = useProjectAccess(projectId);
   const [isTyping, setIsTyping] = useState(false);
   const [selectedModel] = useState(() => {
     const curId = typeof getSelectedAIModel === "function" ? getSelectedAIModel() : null;
@@ -2090,8 +2143,8 @@ export default function AIPanel({
     }
   }, [projectId]);
 
-  const handleSelectSession = useCallback(async (sessionId, throwOnError = false) => {
-    if (!sessionId) return;
+  const handleSelectSession = useCallback(async (sessionId, throwOnError = false, fromRevision = false) => {
+    if (!sessionId || (revisionRef.current && !fromRevision)) return;
     const request = ++contextRequestRef.current;
     setIsLoadingSession(true);
     try {
@@ -2100,7 +2153,7 @@ export default function AIPanel({
       if (!res?.success || !res.data) throw new Error("Could not load conversation.");
       const session = res.data.session;
       const formatted = (res.data.messages || []).map(m => ({
-        id: m.id, role: m.role, content: m.content, model: m.model,
+        id: m.id, savedMessageId: m.id, role: m.role, content: m.content, model: m.model,
         attachments: (m.attachments || []).map((att, index) => ({ ...att, id: att.id || `${m.id}_${index}`, previewUrl: att.type === "image" ? att.data : undefined })),
         timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       }));
@@ -2109,6 +2162,7 @@ export default function AIPanel({
       setMessages(formatted.length ? formatted : INITIAL_MESSAGES); setIsHistoryOpen(false);
       if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: sessionId, useMemory: session.useMemory ?? true }));
       if (res.data.truncated) showToast({ type: "info", title: "Recent history loaded", message: "Only the latest 2,000 messages are shown. Older stored context may be summarized." });
+      return true;
     } catch (err) {
       if (request === contextRequestRef.current) showToast({ type: "error", title: "Load failed", message: err.message });
       if (throwOnError) throw err;
@@ -2139,7 +2193,7 @@ export default function AIPanel({
   }, [projectId, storageKey, fetchSessions, handleSelectSession]);
 
   const handleNewChat = (memory = useProjectMemory) => {
-    if (isTyping || isRestoring || isLoadingSession) return;
+    if (isTyping || isRestoring || isLoadingSession || revisionRef.current) return;
     contextRequestRef.current++;
     setUseProjectMemory(typeof memory === "boolean" ? memory : useProjectMemory);
     setActiveSessionMeta(null); setContextInfo(null);
@@ -3032,8 +3086,8 @@ export default function AIPanel({
     }
   };
 
-  const handleSend = async (text, attachments = [], retryContext = null) => {
-    if (sendRef.current || isRestoring || isLoadingSession || isTyping) return;
+  const handleSend = (text, attachments = [], retryContext = null, replaceFailedMessageId = null) => {
+    if (sendRef.current || revisionRef.current || isRestoring || isLoadingSession || isTyping) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -3058,9 +3112,17 @@ export default function AIPanel({
     const currentHistory = []; // The server reconstructs authoritative history from the session.
     sendRef.current = true;
     const requestScope = contextRequestRef.current;
-    setMessages((m) => [...m, userMsg]);
+    setMessages(previous => {
+      const failedIndex = previous.findIndex(message => message.id === replaceFailedMessageId);
+      return [...(failedIndex < 0 ? previous : previous.slice(0, failedIndex)), userMsg];
+    });
     setIsTyping(true);
 
+    return finishSend(userMsg, requestScope, currentHistory);
+  };
+
+  const finishSend = async (userMsg, requestScope, currentHistory) => {
+    const { content: text, attachments } = userMsg;
     try {
       const res = await sendAiChatMessageApi(
         projectId,
@@ -3074,7 +3136,7 @@ export default function AIPanel({
       if (requestScope !== contextRequestRef.current) return;
 
       if (res?.data?.sessionId) {
-        setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID(), sessionId: res.data.sessionId, screenContext: { ...userMsg.requestContext.screenContext, workspaceRevision: res.data.context?.workspaceRevision } } } : message));
+        setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, savedMessageId: res.data.userMessageId, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID(), sessionId: res.data.sessionId, screenContext: { ...userMsg.requestContext.screenContext, workspaceRevision: res.data.context?.workspaceRevision } } } : message));
         setActiveSessionId(res.data.sessionId);
         setContextInfo(res.data.context || null);
         if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: res.data.sessionId, useMemory: useProjectMemory }));
@@ -3100,49 +3162,60 @@ export default function AIPanel({
       // A transport failure can hide a committed reply: reuse its ID to replay it.
       // A definite HTTP failure requires a new ID because failed requests are immutable.
       if (err.status) setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID() } } : message));
-      const isQuotaError =
-        err.code === 'AI_QUOTA_EXCEEDED' || (err.message && err.message.includes("QUOTA_EXCEEDED"));
-
-      if (isQuotaError) {
-        setMessages((m) => [
-          ...m,
-          {
-            id: getNextId(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            content:
-              "The project assistant has reached its usage limit. Please try again later. Your draft is still here.",
-          },
-        ]);
-      } else {
-        showToast({
-          type: "error",
-          title: "Unable to respond",
-          message: err.message || "Could not complete the AI request.",
-        });
-        setMessages((m) => [
-          ...m,
-          {
-            id: getNextId(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            content:
-              `I couldn’t respond just now.\n\n${err.message || "Please try again in a moment. Your draft is still here."}`,
-          },
-        ]);
-      }
+      setMessages(previous => [...previous, {
+        id: getNextId(),
+        role: "assistant",
+        failed: true,
+        timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+        content: `I couldn’t respond just now.\n\n${err.message || "Please try again in a moment."}`,
+      }]);
       return false;
     } finally {
       sendRef.current = false;
       setIsTyping(false);
     }
   };
+
+  const handleReviseMessage = async (message, editedText) => {
+    if (sendRef.current || revisionRef.current || isLoadingSession || !activeSessionId || !message.savedMessageId) return false;
+    revisionRef.current = true;
+    setIsRevising(true);
+    const scope = contextRequestRef.current;
+    let branch;
+    try {
+      branch = await branchAiConversation(projectId, activeSessionId, {
+        beforeMessageId: message.savedMessageId,
+        snapshotId,
+        useMemory: useProjectMemory,
+      });
+      if (scope !== contextRequestRef.current) return false;
+      if (!branch?.id) throw new Error("Could not open a revised conversation.");
+      if (!await handleSelectSession(branch.id, true, true)) return false;
+      fetchSessions();
+      if (editedText === undefined) {
+        setDraftText(message.content);
+        setDraftAttachments(message.attachments || []);
+      }
+    } catch (error) {
+      showToast({ type: "error", title: "Unable to revise message", message: error.message });
+      return false;
+    } finally {
+      revisionRef.current = false;
+      setIsRevising(false);
+    }
+    if (editedText !== undefined) {
+      handleSend(editedText, message.attachments || [], {
+        sessionId: branch.id,
+        snapshotId,
+        useMemory: useProjectMemory,
+        screenContext: normalizeChatScreenContext(screenContext),
+        clientRequestId: crypto.randomUUID(),
+      });
+    }
+    return true;
+  };
+
+  const chatBusy = isTyping || isRestoring || isLoadingSession || isRevising;
 
   return (
     <motion.div
@@ -4320,10 +4393,15 @@ export default function AIPanel({
 
         {/* Message Stream */}
         <AnimatePresence>
-          {messages.map((msg, index) => (
+          {messages.map((msg, index) => {
+            const canRevise = msg.role === "user" && msg.savedMessageId && access.can("chat.write");
+            return (
             <ChatMessage
               key={msg.id}
               msg={msg.isGreeting ? { ...msg, content: chatGreeting(screenContext) } : msg}
+              onEditMessage={canRevise ? text => handleReviseMessage(msg, text) : undefined}
+              onUndoMessage={canRevise && !draftText && !draftAttachments.length ? () => handleReviseMessage(msg) : undefined}
+              messageActionsBusy={chatBusy}
               onApplySuggestion={handleApplySuggestion}
               onUndoSuggestion={handleUndoSuggestion}
               onApplyAllSuggestions={handleApplyAllSuggestions}
@@ -4346,13 +4424,14 @@ export default function AIPanel({
                         }
                       }
                       if (userMsg) {
-                        handleSend(userMsg.content, userMsg.attachments || [], userMsg.requestContext || null);
+                        handleSend(userMsg.content, userMsg.attachments || [], userMsg.requestContext || null, msg.failed ? userMsg.id : null);
                       }
                     }
                   : null
               }
             />
-          ))}
+            );
+          })}
           {isTyping && <TypingIndicator key="typing" />}
         </AnimatePresence>
         <div ref={bottomRef} />
@@ -4361,7 +4440,12 @@ export default function AIPanel({
       {/* ── Modern Prompt Input ──────────────────────────── */}
       <ChatInput
         onSend={handleSend}
-        isTyping={isTyping || isRestoring || isLoadingSession}
+        isTyping={chatBusy}
+        isRevising={isRevising}
+        input={draftText}
+        setInput={setDraftText}
+        attachments={draftAttachments}
+        setAttachments={setDraftAttachments}
         fileTree={internalTree}
         projectId={projectId}
       />

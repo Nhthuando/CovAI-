@@ -59,7 +59,7 @@ import {
 import { saveVerifiedUnitTestBatch, clearManifestCache } from "./unitTestVersion.service.js";
 import { verifyUnitTestBatch, coverageGoalStatus, existingTestContractsPreserved } from './unitTestVerification.service.js';
 import { resolveUnitTestDependency, collectUnitTestEnvironmentFiles } from './unitTestPreflight.service.js';
-import { detectProjectEnvironment, loadWorkspaceEnv, serializeEnv } from './environmentDetection.service.js';
+import { detectProjectEnvironment, loadWorkspaceEnv, serializeEnv, generateHermeticMockEnvironment } from './environmentDetection.service.js';
 import { parseExistingTestAst } from './unitTestContextEngineering.service.js';
 import { runUnitTestBatch } from './unitTestBatchRunner.service.js';
 import { detectTestingFrameworks, classifyTestFile } from '../utils/testingFrameworkDetector.js';
@@ -3114,6 +3114,8 @@ export const autoRefineCoverageGaps = async ({
     , allowedSkippedByFile = {}
     , regressionTestFiles = null, frameworkByFile = {}
     , coverageSourceFiles = null
+    , hermeticMocks = {}
+    , useHermeticMock = true
 }) => {
     if (!rootDir || isDirectStorageDirectory(rootDir)) {
         return { currentSum: rawSum, currentFinal: rawFinal, passesRun: 0, refined: false };
@@ -3281,10 +3283,10 @@ export const autoRefineCoverageGaps = async ({
         let runnerOutput = "";
         try {
             if (typeof runCoverageFn === "function") {
-                const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir: activeCoverageDir, pass });
+                const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir: activeCoverageDir, pass, hermeticMocks, useHermeticMock: useHermeticMock !== false });
                 lastExitCode = result?.exitCode ?? 0;
             } else {
-                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:activeCoverageDir,frameworkByFile});
+                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:activeCoverageDir,frameworkByFile,hermeticMocks,useHermeticMock: useHermeticMock !== false});
                 runnerOutput = result.stdout + '\n' + result.stderr;
                 lastExitCode = result.exitCode;
             }
@@ -3534,19 +3536,30 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         if (reviewedTargets.get(key) !== identity) throw new ServiceError('Conflicting proposals target the same test file. Review one combined candidate before applying the batch.',409);
         return false;
     });
-    const operationEnv = { ...(configuredEnv?.variables || {}), ...envVariables };
-    const envCheck = await detectProjectEnvironment(rootDir, { files: collectUnitTestEnvironmentFiles(rootDir, itemsToApply.map(item => item.sourceFile).filter(Boolean)), existingVariables: operationEnv });
-    const environmentBlocker = () => ({ success: false, status: 'WAITING_FOR_ENV', fileUpdated: false, newCoverage: null,
-            message: 'Configure the required test environment variables before applying the entire batch.',
-            environment: { missingRequired: envCheck.missingRequired, detectedVariables: envCheck.detectedVariables.map(({ inferredMock, ...variable }) => variable), existingVariables: {} } });
-    const draftCode = itemsToApply.map(item => [item.suggestedTestCode,item.generatedCode,item.fullUpdatedContent,item.originalCode].filter(Boolean).join('\n')).join('\n');
-    const hasEnvironmentIsolation = /\b(?:vi|jest)\.(?:mock|doMock|unstable_mockModule|stubEnv)\s*\(/.test(draftCode) ||
-        envCheck.missingRequired.every(name => draftCode.includes(`process.env.${name} =`) || draftCode.includes(`process.env.${name}=`));
-    if (envCheck.requiresPrompt && !hasEnvironmentIsolation) return environmentBlocker();
-    // Operation-only configuration is excluded by the workspace publisher.
-    if (Object.keys(operationEnv).length && path.resolve(rootDir) !== path.resolve(snapshot.rootDir)) {
-        fs.writeFileSync(path.join(rootDir, '.env'), serializeEnv('', operationEnv), { mode: 0o600 });
+    const operationEnv = { ...(configuredEnv?.variables || {}), ...(envVariables || {}) };
+    const envCheck = await detectProjectEnvironment(rootDir, {
+        files: collectUnitTestEnvironmentFiles(rootDir, itemsToApply.map(item => item.sourceFile).filter(Boolean)),
+        existingVariables: operationEnv,
+        zeroEnv: true
+    });
+    // Hermetic in-memory mock environment synthesized in RAM (Zero .env disk writes)
+    const hermeticMockEnvironment = generateHermeticMockEnvironment(envCheck?.detectedVariables || [], operationEnv);
+
+    let isolatedDb = null;
+    try {
+        const { isDatabaseRequiredForProject, provisionIsolatedDatabase, syncDatabaseSchema } = await import("./virtualDatabase.service.js");
+        if (isDatabaseRequiredForProject(rootDir)) {
+            isolatedDb = await provisionIsolatedDatabase(`apply_${snapshotId || Date.now()}`);
+            if (isolatedDb?.env) {
+                Object.assign(hermeticMockEnvironment, isolatedDb.env);
+            }
+            await syncDatabaseSchema(isolatedDb.databaseUrl, null, rootDir).catch(() => {});
+        }
+    } catch (vDbErr) {
+        console.warn("[applyUnitTestSuggestion] Virtual DB provisioning notice:", vDbErr.message);
     }
+
+    try {
 
     // Idempotent Crash Recovery: Automatically detect & recover any interrupted transactions on disk
     try {
@@ -3915,10 +3928,10 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
 
     try {
         if (typeof runCoverageFn === "function") {
-            const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: 0 });
+            const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: 0, hermeticMocks: hermeticMockEnvironment, useHermeticMock: true });
             runnerExitCode = result?.exitCode ?? 0;
         } else {
-            const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile});
+            const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile,hermeticMocks:hermeticMockEnvironment,useHermeticMock:true});
             runnerExitCode = result.exitCode;
             rawOutput = result.stdout + '\n' + result.stderr;
         }
@@ -4057,10 +4070,10 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         const retryStartTime = Date.now();
         try {
             if (typeof runCoverageFn === "function") {
-                const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: healIterations });
+                const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: healIterations, hermeticMocks: hermeticMockEnvironment, useHermeticMock: true });
                 runnerExitCode = result?.exitCode ?? 0;
             } else {
-                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile});
+                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile,hermeticMocks:hermeticMockEnvironment,useHermeticMock:true});
                 runnerExitCode = result.exitCode;
                 rawOutput = result.stdout + '\n' + result.stderr;
             }
@@ -4092,7 +4105,6 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         if (durableTx) rollbackDurableTransaction({ rootDir, tx: durableTx });
         cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
         const diagnostics = collectTestResultErrors(testResults) + '\n' + rawOutput;
-        if (envCheck.requiresPrompt && (envCheck.missingRequired.some(name => diagnostics.includes(name)) || /secretOrPrivateKey must have a value|missing (?:required )?environment|environment variable.*required/i.test(diagnostics))) return environmentBlocker();
         const failureDetail = getTestRunnerFailure(testResults, rawOutput, runnerExitCode, testExecutionError);
         const modResError = parseModuleResolutionError(collectTestResultErrors(testResults) + "\n" + rawOutput, origWorkspaceRoot || rootDir);
         const missingDepPayload = modResError?.missingDependency || null;
@@ -4169,6 +4181,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             , allowedSkippedByFile
             , regressionTestFiles: testFilesToRun, frameworkByFile
             , coverageSourceFiles: targetSourceFiles
+            , hermeticMocks: hermeticMockEnvironment
+            , useHermeticMock: true
         });
         refinement = refined;
         if (refined?.refined) runnerExitCode = refined.exitCode;
@@ -4754,6 +4768,14 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         sourceFileCoverage,
         dodEvaluation
     };
+    } finally {
+        if (isolatedDb) {
+            try {
+                const { destroyIsolatedDatabase } = await import("./virtualDatabase.service.js");
+                await destroyIsolatedDatabase(isolatedDb.jobId || isolatedDb.dbName, { log: false });
+            } catch (_) {}
+        }
+    }
 };
 
 /**

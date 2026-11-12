@@ -19,10 +19,13 @@ services:
       - GIT_CONFIG_COUNT=1
       - GIT_CONFIG_KEY_0=safe.directory
       - GIT_CONFIG_VALUE_0=*
+      - VIRTUAL_DB_DOCKER_HOST=virtual_test_db
+      - VIRTUAL_DB_PORT=5432
     env_file:
       - ./server/.env
     depends_on:
       - redis
+      - virtual_test_db
     restart: unless-stopped
 
   client:
@@ -48,6 +51,24 @@ services:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
+    restart: unless-stopped
+
+  virtual_test_db:
+    image: postgres:17-alpine
+    container_name: covai_virtual_test_db
+    environment:
+      - POSTGRES_USER=covai_test
+      - POSTGRES_PASSWORD=covai_test_password
+      - POSTGRES_DB=covai_virtual_test
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U covai_test -d covai_virtual_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
 volumes:

@@ -132,7 +132,7 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
         await processChatContextMaintenance(customData);
         break;
       case 'RUN_TESTS':
-        await processRunTestsJob(jobId);
+        await processRunTestsJob(jobId, customData);
         break;
       case 'SUPERTEST_COVERAGE':
         await processSupertestCoverageJob(jobId);

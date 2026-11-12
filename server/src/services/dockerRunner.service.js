@@ -106,8 +106,20 @@ const executeCommand = async ({ snapshotPath, command, hostCommand = command, ti
       const delimiter = path.delimiter;
       const customPath = [nodeModulesBin, appModulesBin, currentPath].filter(Boolean).join(delimiter);
 
+      const baseEnv = isolatedEnv
+        ? isolatedProcessEnvironment()
+        : (inheritEnv
+            ? { ...process.env }
+            : Object.fromEntries(['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'COMSPEC', 'PATHEXT'].filter(key => process.env[key]).map(key => [key, process.env[key]])));
+
+      // REDACTION: Redact host production database credentials (e.g. Neon DB) so child processes never inherit them
+      delete baseEnv.DATABASE_URL;
+      delete baseEnv.DIRECT_URL;
+      delete baseEnv.SHADOW_DATABASE_URL;
+      delete baseEnv.NEON_DATABASE_URL;
+
       const mergedEnv = {
-        ...(isolatedEnv ? isolatedProcessEnvironment() : (inheritEnv ? process.env : Object.fromEntries(['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'COMSPEC', 'PATHEXT'].filter(key => process.env[key]).map(key => [key, process.env[key]])))),
+        ...baseEnv,
         CI: "true",
         VITE_CJS_IGNORE_WARNING: "true",
         PATH: customPath,
@@ -117,6 +129,8 @@ const executeCommand = async ({ snapshotPath, command, hostCommand = command, ti
       };
 
       // Auto-load repo-level environment variables (.env.test, .env, .env.example) into mergedEnv
+      // Note: Database connection strings from repo .env files are strictly blocked to enforce isolated virtual DB usage
+      const isDatabaseKey = k => /^(DATABASE_URL|DIRECT_URL|SHADOW_DATABASE_URL|POSTGRES_URL|POSTGRESQL_URL|DB_URL|DB_URI|DB_CONNECTION_STRING|MONGODB_URI|MYSQL_URL)$/i.test(k) || /^DATABASE_/i.test(k);
       const repoEnvFiles = isolatedEnv ? [] : [".env.test", ".env", ...(loadEnvExamples ? [".env.example"] : [])];
       for (const envFile of repoEnvFiles) {
         const envFilePath = path.join(effectiveSnapshotPath, envFile);
@@ -133,7 +147,7 @@ const executeCommand = async ({ snapshotPath, command, hostCommand = command, ti
                 if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
                   val = val.slice(1, -1);
                 }
-                if (key && !(key in mergedEnv)) {
+                if (key && !isDatabaseKey(key) && !(key in mergedEnv)) {
                   mergedEnv[key] = val;
                 }
               }

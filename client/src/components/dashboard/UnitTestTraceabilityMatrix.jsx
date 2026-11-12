@@ -237,11 +237,18 @@ export default function UnitTestTraceabilityMatrix({
   const [fileCoverageCache, setFileCoverageCache] = useState({});
   const [loadingFiles, setLoadingFiles] = useState(new Set());
   const prevRunningRef = useRef(running);
+  const inFlightFilesRef = useRef(new Set());
+  const failedFilesRef = useRef(new Map());
+  const preloadQueueRef = useRef([]);
+  const activeFetchesRef = useRef(0);
 
   // Invalidate file coverage cache when job completes so newly generated metrics update immediately
   useEffect(() => {
     if (prevRunningRef.current && !running) {
       setFileCoverageCache({});
+      inFlightFilesRef.current.clear();
+      failedFilesRef.current.clear();
+      preloadQueueRef.current = [];
     }
     prevRunningRef.current = running;
   }, [running]);
@@ -249,15 +256,20 @@ export default function UnitTestTraceabilityMatrix({
   // Invalidate file coverage cache when snapshotId changes
   useEffect(() => {
     setFileCoverageCache({});
+    inFlightFilesRef.current.clear();
+    failedFilesRef.current.clear();
+    preloadQueueRef.current = [];
   }, [snapshotId]);
 
-  // Fetch detailed file coverage from backend on demand
-  const fetchFileCoverage = async (filePath) => {
-    if (!snapshotId || !filePath || fileCoverageCache[filePath] || loadingFiles.has(filePath)) return;
+  // Fetch detailed file coverage from backend on demand with bounded concurrency (max 2 concurrent requests)
+  const executeFileCoverageFetch = async (filePath) => {
+    if (!snapshotId || !filePath) return;
+    activeFetchesRef.current += 1;
     setLoadingFiles((prev) => new Set(prev).add(filePath));
     try {
       const res = await getFileCoverage(snapshotId, filePath);
       if (res?.data) {
+        failedFilesRef.current.delete(filePath);
         const clean = cleanDisplayPath(filePath);
         const norm = filePath.replace(/\\/g, "/");
         const resPath = res.data.filePath;
@@ -276,21 +288,46 @@ export default function UnitTestTraceabilityMatrix({
         }));
       }
     } catch (err) {
+      failedFilesRef.current.set(filePath, Date.now());
       console.warn("Failed to load file coverage details for", filePath, err);
     } finally {
+      inFlightFilesRef.current.delete(filePath);
+      activeFetchesRef.current = Math.max(0, activeFetchesRef.current - 1);
       setLoadingFiles((prev) => {
         const next = new Set(prev);
         next.delete(filePath);
         return next;
       });
+      while (activeFetchesRef.current < 2 && preloadQueueRef.current.length > 0) {
+        const nextPath = preloadQueueRef.current.shift();
+        if (nextPath) {
+          void executeFileCoverageFetch(nextPath);
+        }
+      }
+    }
+  };
+
+  const fetchFileCoverage = (filePath, { priority = true } = {}) => {
+    if (!snapshotId || !filePath || fileCoverageCache[filePath] || inFlightFilesRef.current.has(filePath)) return;
+    if (!priority) {
+      const lastFailedAt = failedFilesRef.current.get(filePath);
+      if (lastFailedAt && Date.now() - lastFailedAt < 30000) return;
+    }
+    inFlightFilesRef.current.add(filePath);
+    if (activeFetchesRef.current < 2) {
+      void executeFileCoverageFetch(filePath);
+    } else if (priority) {
+      preloadQueueRef.current.unshift(filePath);
+    } else {
+      preloadQueueRef.current.push(filePath);
     }
   };
 
   // Auto-fetch file coverage for any expanded files
   useEffect(() => {
     expandedFiles.forEach((fPath) => {
-      if (fPath && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
-        fetchFileCoverage(fPath);
+      if (fPath && !fileCoverageCache[fPath] && !inFlightFilesRef.current.has(fPath)) {
+        fetchFileCoverage(fPath, { priority: true });
       }
     });
   }, [expandedFiles, snapshotId]);
@@ -585,21 +622,24 @@ export default function UnitTestTraceabilityMatrix({
     return Array.from(map.values());
   }, [functionTraceability, sourceFiles]);
 
-  // Auto-preload file coverage for files with coverage gaps (< 100%) after groupedByFile is initialized
+  // Auto-preload file coverage for top files with coverage gaps (< 100%) with bounded concurrency
   useEffect(() => {
     if (running) return; // Do not fetch coverage while analysis is actively in-flight
-    (groupedByFile || []).forEach((group) => {
+    let queuedCount = 0;
+    for (const group of groupedByFile || []) {
+      if (queuedCount >= 8) break;
       const fPath = group?.filePath;
-      if (!fPath) return;
+      if (!fPath) continue;
       const meta = group?.sourceMeta;
       const bPct = meta?.branchesPct ?? 100;
       const lPct = meta?.linesPct ?? 100;
       const sPct = meta?.stmtsPct ?? 100;
       const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
-      if (hasGap && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
-        fetchFileCoverage(fPath);
+      if (hasGap && !fileCoverageCache[fPath] && !inFlightFilesRef.current.has(fPath)) {
+        fetchFileCoverage(fPath, { priority: false });
+        queuedCount += 1;
       }
-    });
+    }
   }, [groupedByFile, snapshotId, running]);
 
   // Filtered files & functions based on search and category filter

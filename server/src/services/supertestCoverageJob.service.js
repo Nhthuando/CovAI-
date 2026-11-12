@@ -168,6 +168,23 @@ export const processSupertestCoverageJob = async (jobId) => {
     const snapshotId = job.snapshotId;
     const projectId = job.projectId;
     const userId = job.userId;
+    const reportIntProgress = async (progress, stage, message) => {
+      await updateJobProgress(jobId, progress).catch(() => {});
+      try {
+        import("./dashboardEvents.service.js")
+          .then(({ emitDashboardJobProgress }) => {
+            emitDashboardJobProgress(projectId, {
+              snapshotId,
+              jobId,
+              pillar: "integration",
+              progress,
+              stage,
+              message,
+            }).catch(() => {});
+          })
+          .catch(() => {});
+      } catch (_) {}
+    };
     if (currentProjectOperation()) {
       ensureMinimalPackageJson(rootDir);
       if (origRootDir && path.resolve(origRootDir) !== path.resolve(rootDir)) {
@@ -211,7 +228,10 @@ export const processSupertestCoverageJob = async (jobId) => {
     const { detectIntegrationFrameworks } =
       await import("./integrationDetection.service.js");
     const intDetection = await detectIntegrationFrameworks(rootDir);
-    if (!intDetection.summary?.hasDependencies) {
+    const hasIntegrationDeps = Boolean(
+      intDetection?.hasDependencies ?? intDetection?.summary?.hasDependencies,
+    );
+    if (!hasIntegrationDeps) {
       throw new ServiceError(
         "Integration tests require 'supertest' to be installed in the project's package.json. Please run 'Install supertest & jest' first.",
         409,
@@ -423,7 +443,7 @@ export const processSupertestCoverageJob = async (jobId) => {
       rootDir,
       jestConfigPath ?? supertestInfo.configPath,
       supertestFiles,
-      testNamePattern ? { testNamePattern } : {},
+      ...(testNamePattern ? [{ testNamePattern }] : []),
     );
     // DockerRunner streams output live. Saving the final buffers also covers
     // alternative runners and guarantees a complete output record.
@@ -761,7 +781,7 @@ export const processSupertestCoverageJob = async (jobId) => {
       isJobCanceled(jobId, abortController.signal) ||
       error?.message?.includes("canceled") ||
       error?.message?.includes("cancelled") ||
-      error?.statusCode === 409
+      error?.code === "OPERATION_CANCELED"
     ) {
       await addJobLog(
         jobId,

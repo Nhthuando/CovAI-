@@ -271,17 +271,28 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
             } catch (_) { }
         }
 
-        if (options?.useHermeticMock && !options?.hermeticMocks) {
+        const useHermeticMock = options?.useHermeticMock !== false;
+        if (useHermeticMock && (!options?.hermeticMocks || Object.keys(options.hermeticMocks).length === 0)) {
             const detected = await detectProjectEnvironment(rootDir, { existingVariables: { ...loadedWorkspaceEnv, ...loadedTestEnv } });
             hermeticMocks = generateHermeticMockEnvironment(detected?.detectedVariables || [], { ...loadedWorkspaceEnv, ...loadedTestEnv });
         }
     } catch (_) { }
+
+    // Requirement R2: Never inherit or load real database credentials from repository .env
+    const isDbKey = k => /^(DATABASE_URL|DIRECT_URL|SHADOW_DATABASE_URL|POSTGRES_URL|POSTGRESQL_URL|DB_URL|DB_URI|DB_CONNECTION_STRING|MONGODB_URI|MYSQL_URL)$/i.test(k) || /^DATABASE_/i.test(k);
+    for (const k of Object.keys(loadedWorkspaceEnv)) {
+        if (isDbKey(k)) delete loadedWorkspaceEnv[k];
+    }
+    for (const k of Object.keys(loadedTestEnv)) {
+        if (isDbKey(k)) delete loadedTestEnv[k];
+    }
 
     const vitestMergedEnv = {
         ...SHARED_ENV,
         ...hermeticMocks,
         ...loadedWorkspaceEnv,
         ...loadedTestEnv,
+        ...(options?.virtualDbEnv || {}),
         ...(options?.env || {}),
         NODE_PATH:[path.join(executionDir,'node_modules'),path.join(rootDir,'node_modules')].join(path.delimiter),
     };

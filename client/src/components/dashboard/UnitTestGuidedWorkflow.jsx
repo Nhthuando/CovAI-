@@ -25,6 +25,7 @@ import {
   Info,
   ExternalLink,
 } from "lucide-react";
+import { ExportUnitTestReportModal } from "./modals/ExportUnitTestReportModal.jsx";
 
 /**
  * UnitTestGuidedWorkflow
@@ -60,6 +61,7 @@ export default function UnitTestGuidedWorkflow({
   rawTotals = null,
   executions = null,
   testTotals = null,
+  scenarios = null,
   hasExecuted = false,
   isLatestRunFailed = false,
   hasPartialFailures = false,
@@ -75,7 +77,6 @@ export default function UnitTestGuidedWorkflow({
   onSwitchVersion = null,
   isSwitchingVersion = false,
   switchingVersionFile = null,
-  isCheckingEnv = false,
 }) {
   const hasAnyV2 = React.useMemo(() => {
     return Object.values(unitTestVersions || {}).some(
@@ -143,6 +144,7 @@ export default function UnitTestGuidedWorkflow({
     return 1;
   };
 
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [currentStage, setCurrentStage] = useState(getInitialActiveStage);
   const [selectedStage, setSelectedStage] = useState(null);
   const currentViewStep = selectedStage !== null ? selectedStage : currentStage;
@@ -415,6 +417,19 @@ export default function UnitTestGuidedWorkflow({
             >
               <RotateCcw size={11} />
               <span>Jump to Stage {currentStage}</span>
+            </button>
+          )}
+
+          {/* Export Report Action in Top Toolbar */}
+          {(hasExecuted || rawTotals || testTotals || executions) && (
+            <button
+              type="button"
+              onClick={() => setIsExportModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--color-border,#29313D)] bg-[var(--color-surface,#11161D)] text-[var(--color-text,#F8FAFC)] hover:bg-[var(--color-surface-secondary,#171D25)] transition-colors cursor-pointer"
+              title="Export Unit Test Report (Markdown, JSON, Standalone HTML)"
+            >
+              <Download size={13} className="text-[#8B7CFD]" />
+              <span>Export Report</span>
             </button>
           )}
         </div>
@@ -950,8 +965,17 @@ export default function UnitTestGuidedWorkflow({
                 </button>
               )}
               <button
+                type="button"
+                onClick={() => setIsExportModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[var(--color-border,#29313D)] bg-[var(--color-surface,#11161D)] text-[var(--color-text,#F8FAFC)] hover:bg-[var(--color-surface-secondary,#171D25)] transition-colors cursor-pointer"
+                title="Export Unit Test Report (Markdown, JSON, Standalone HTML)"
+              >
+                <Download size={13} className="text-[#8B7CFD]" />
+                <span>Export Report</span>
+              </button>
+              <button
                 onClick={() => onRun && onRun({ restart: true })}
-                disabled={isCheckingEnv}
+                disabled={running}
                 style={{
                   background: (is100Percent || isFeasibleLogicCovered) ? "#16a34a" : (isLight ? "#4f46e5" : "#6d5dfb"),
                   border: (is100Percent || isFeasibleLogicCovered) ? "1px solid #15803d" : (isLight ? "1px solid #4338ca" : "1px solid #5b4be7"),
@@ -960,8 +984,8 @@ export default function UnitTestGuidedWorkflow({
                   padding: "9px 18px",
                   fontSize: 13,
                   fontWeight: 700,
-                  cursor: isCheckingEnv ? "wait" : "pointer",
-                  opacity: isCheckingEnv ? 0.75 : 1,
+                  cursor: running ? "wait" : "pointer",
+                  opacity: 1,
                   display: "flex",
                   alignItems: "center",
                   gap: 7,
@@ -971,11 +995,9 @@ export default function UnitTestGuidedWorkflow({
                   transition: "all 0.15s ease",
                 }}
                 className="hover:opacity-90"
-                title={isCheckingEnv ? "Checking environment variables..." : "Re-run tests to continuously verify coverage"}
+                title="Re-run tests to continuously verify coverage"
               >
-                {isCheckingEnv ? (
-                  <Loader2 size={14} className="animate-spin text-white" />
-                ) : running ? (
+                {running ? (
                   <RotateCcw size={14} className="animate-spin" />
                 ) : (is100Percent || isFeasibleLogicCovered) ? (
                   <ShieldCheck size={14} />
@@ -983,9 +1005,7 @@ export default function UnitTestGuidedWorkflow({
                   <RefreshCw size={14} />
                 )}
                 <span>
-                  {isCheckingEnv
-                    ? "Checking Environment..."
-                    : running
+                  {running
                     ? `Verifying Tests (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)`
                     : is100Percent
                       ? "Re-run Verification (100% Guaranteed)"
@@ -1000,33 +1020,29 @@ export default function UnitTestGuidedWorkflow({
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <button
                 onClick={() => onRun && onRun({ restart: Boolean(hasBaselineRun || running) })}
-                disabled={isCheckingEnv}
+                disabled={running}
                 style={{
-                  background: (running || isCheckingEnv)
-                    ? (isLight ? "#4f46e5" : "#6d5dfb")
-                    : (isLight ? "#4f46e5" : "#6d5dfb"),
+                  background: isLight ? "#4f46e5" : "#6d5dfb",
                   border: isLight ? "1px solid #4338ca" : "1px solid #5b4be7",
                   color: "#ffffff",
                   borderRadius: 7,
                   padding: "9px 18px",
                   fontSize: 13,
                   fontWeight: 700,
-                  cursor: isCheckingEnv ? "wait" : "pointer",
-                  opacity: isCheckingEnv ? 0.75 : 1,
+                  cursor: running ? "wait" : "pointer",
+                  opacity: 1,
                   display: "flex",
                   alignItems: "center",
                   gap: 7,
-                  boxShadow: (running || isCheckingEnv)
+                  boxShadow: running
                     ? "0 0 10px rgba(99, 102, 241, 0.4), 0 2px 6px rgba(79, 70, 229, 0.25)"
                     : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(109, 93, 251, 0.35)"),
                   transition: "all 0.15s ease",
                 }}
                 className="hover:opacity-90"
-                title={isCheckingEnv ? "Checking environment variables..." : running ? "Analysis is running. Click to restart test execution." : "Run Jest and Vitest to measure source code coverage"}
+                title={running ? "Analysis is running. Click to restart test execution." : "Run Jest and Vitest to measure source code coverage"}
               >
-                {isCheckingEnv ? (
-                  <Loader2 size={14} className="animate-spin text-white" />
-                ) : running ? (
+                {running ? (
                   <RotateCcw size={14} className="animate-spin" />
                 ) : hasBaselineRun ? (
                   <RefreshCw size={14} />
@@ -1034,9 +1050,7 @@ export default function UnitTestGuidedWorkflow({
                   <Play size={14} fill="currentColor" />
                 )}
                 <span>
-                  {isCheckingEnv
-                    ? "Checking Environment..."
-                    : running
+                  {running
                     ? `Running Analysis (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)`
                     : hasBaselineRun
                       ? "1. Re-run Baseline Analysis"
@@ -1047,6 +1061,20 @@ export default function UnitTestGuidedWorkflow({
           )}
         </div>
       </div>
+
+      {/* Export Unit Test Report Modal */}
+      <ExportUnitTestReportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        data={{
+          snapshotId,
+          summary,
+          rawTotals,
+          executions,
+          testTotals,
+          scenarios: scenarios || summary?.scenarios || summary?.data?.scenarios || [],
+        }}
+      />
     </div>
   );
 }

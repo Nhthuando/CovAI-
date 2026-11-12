@@ -89,6 +89,8 @@ export const normalizeDiskPath = (rawPath) => {
     return path.resolve(rawPath);
 };
 
+export const resolveSnapshotRootDir = normalizeDiskPath;
+
 // rootDir remains the package used by analysis runners. The workspace root
 // is the full repository / project tree (including client, server, configs, etc.).
 export const snapshotWorkspaceRoot = (snapshot) => {

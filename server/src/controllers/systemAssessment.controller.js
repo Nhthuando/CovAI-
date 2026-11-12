@@ -34,11 +34,16 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
     const owned = async req => {
         const snapshot = await client.projectSnapshot.findFirst({ where: { id: req.params.snapshotId, project: membershipWhere(req.user.id) } });
         if (!snapshot) throw new ServiceError('Snapshot not found', 404);
-        if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
-            const rootDir = resolveSystemRepositoryRoot(snapshot.rootDir);
-            if (rootDir !== snapshot.rootDir) {
-                await client.projectSnapshot.update?.({ where: { id: snapshot.id }, data: { rootDir } });
-                snapshot.rootDir = rootDir;
+        if (snapshot.rootDir) {
+            const candidateRoot = /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, '/'))
+                ? resolveSystemRepositoryRoot(snapshot.rootDir)
+                : snapshot.rootDir;
+            if (fs.existsSync(candidateRoot)) {
+                const rootDir = resolveSystemRepositoryRoot(candidateRoot);
+                if (rootDir !== snapshot.rootDir) {
+                    await client.projectSnapshot.update?.({ where: { id: snapshot.id }, data: { rootDir } });
+                    snapshot.rootDir = rootDir;
+                }
             }
         }
         return snapshot;

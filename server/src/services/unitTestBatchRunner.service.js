@@ -59,7 +59,7 @@ function clearArtifacts(directory) {
  * wholesale to whichever runner happened to be selected first. */
 export const runUnitTestBatch = input => measureUnitTestPhase('batchExecution', () => runUnitTestBatchInternal(input));
 
-async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSourceFiles, coverageDir, frameworkByFile = {} }) {
+async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSourceFiles, coverageDir, frameworkByFile = {}, hermeticMocks = {}, useHermeticMock = true }) {
     clearArtifacts(coverageDir);
     const isE2EOrIntegrationTest = (filePath) => {
         if (!filePath || typeof filePath !== 'string') return false;
@@ -94,8 +94,8 @@ async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSo
             const options = {
                 coverageDir: directory,
                 targetSourceFiles,
-                hermeticMocks: {},
-                useHermeticMock: false,
+                hermeticMocks: hermeticMocks || {},
+                useHermeticMock: useHermeticMock !== false,
                 createdHarnessFiles,
                 cleanupStubs: true,
                 autoHeal: true,

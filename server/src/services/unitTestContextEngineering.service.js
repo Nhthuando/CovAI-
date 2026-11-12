@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { parseJavaScriptCode } from "./babelParser.service.js";
+import { extractEnvReferencesFromAst, inferMockValue } from "./environmentDetection.service.js";
 import { analyzeSourceAst, mapCoverageGaps } from "./businessLogicAstAnalyzer.service.js";
 import { isLocContained, isLocOverlapping } from "./unreachableCodeDetector.service.js";
 import { NODE_BUILTINS, isValidNpmPackageName } from "./dependencyResolution.service.js";
@@ -1273,19 +1274,59 @@ export const buildIsolationMockContracts = ({
 
     const codeToInspect = `${sourceCode}\n${existingTestCode}\n${transitiveSourceCodes.join("\n")}`;
 
-    // 1. Detect Environment Variables
-    const envMatches = [...codeToInspect.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map(m => m[1]);
-    const uniqueEnvs = Array.from(new Set(envMatches)).filter(v => !["NODE_ENV", "PATH", "HOME", "USER"].includes(v));
+    // 1. Detect Environment Variables using AST Extraction and Typed Mock Inference
+    const detectedEnvNames = new Set();
+    try {
+        const parsedAst = parseJavaScriptCode(codeToInspect, {
+            filePath: sourceFile || "",
+            allowRecoveredAst: true
+        });
+        const astNode = parsedAst?.ast?.type ? parsedAst.ast : (parsedAst?.type ? parsedAst : null);
+        if (astNode) {
+            const astRefs = extractEnvReferencesFromAst(astNode, sourceFile || "");
+            for (const ref of astRefs) {
+                if (ref?.name) detectedEnvNames.add(ref.name);
+            }
+        }
+    } catch (_) {}
+    for (const m of codeToInspect.matchAll(/process\.env(?:\.([A-Za-z0-9_]+)|\[['"]([A-Za-z0-9_]+)['"]\])/g)) {
+        const name = m[1] || m[2];
+        if (name) detectedEnvNames.add(name);
+    }
     if (/quickbooks/i.test(codeToInspect)) {
         for (const qbKey of ["QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET", "QUICKBOOKS_REDIRECT_URI", "QUICKBOOKS_ENVIRONMENT"]) {
-            if (!uniqueEnvs.includes(qbKey)) uniqueEnvs.push(qbKey);
+            detectedEnvNames.add(qbKey);
         }
     }
+    const uniqueEnvs = Array.from(detectedEnvNames).filter(v => !["NODE_ENV", "PATH", "HOME", "USER"].includes(v));
     let envMockCode = "";
     if (uniqueEnvs.length > 0) {
         detectedDependencies.push("environment-variables");
-        envMockCode = `// 1. Mock Environment Variables\nprocess.env.NODE_ENV = 'test';\n` +
-            uniqueEnvs.map(v => (v.includes("URI") || v.includes("URL")) ? `process.env.${v} = process.env.${v} || 'http://localhost:8000/callback';` : `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n";
+        if (isVitest) {
+            envMockCode = "// 1. Mock Environment Variables (Hermetic In-Memory RAM Stubs for Vitest)\n" +
+                "beforeEach(() => {\n" +
+                "  vi.stubEnv('NODE_ENV', 'test');\n" +
+                uniqueEnvs.map(v => "  vi.stubEnv('" + v + "', process.env." + v + " || '" + inferMockValue(v) + "');").join("\n") +
+                "\n});\n" +
+                "afterEach(() => {\n" +
+                "  vi.unstubAllEnvs();\n" +
+                "  vi.restoreAllMocks();\n" +
+                "});\n\n";
+        } else {
+            envMockCode = "// 1. Mock Environment Variables (Hermetic In-Memory RAM Stubs for Jest)\n" +
+                "const originalEnv = process.env;\n" +
+                "beforeEach(() => {\n" +
+                "  process.env = {\n" +
+                "    ...originalEnv,\n" +
+                "    NODE_ENV: 'test',\n" +
+                uniqueEnvs.map(v => "    " + v + ": process.env." + v + " || '" + inferMockValue(v) + "',").join("\n") +
+                "\n  };\n" +
+                "});\n" +
+                "afterEach(() => {\n" +
+                "  process.env = originalEnv;\n" +
+                "  jest.restoreAllMocks();\n" +
+                "});\n\n";
+        }
     }
 
     // 2. Detect Prisma / Database

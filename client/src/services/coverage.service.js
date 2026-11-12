@@ -256,11 +256,11 @@ export async function getIntegrationWorkspace(snapshotId) {
     return handleResponse(res);
 }
 
-export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, envVariables, requireCoverageGoal, requestId } = {}) {
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, requireCoverageGoal, requestId } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-test-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), envVariables, requireCoverageGoal, requestId }),
+        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), requireCoverageGoal, requestId }),
     });
     return handleResponse(res);
 }
@@ -498,31 +498,6 @@ export async function getUnitTestSimulationTrace(snapshotId, payload = {}) {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(payload),
-    });
-    return handleResponse(res);
-}
-
-export async function checkUnitTestEnvironmentApi(snapshotId) {
-    if (!snapshotId) throw new Error("snapshotId is required");
-    const res = await fetch(`${BASE_URL}/coverage/${encodeURIComponent(snapshotId)}/unit/env-check`, {
-        method: "GET",
-        headers: getAuthHeaders(),
-    });
-    return handleResponse(res);
-}
-
-export async function saveUnitTestEnvironmentApi(snapshotId, { envVariables = {}, runAfterSave = false } = {}) {
-    if (!snapshotId) throw new Error("snapshotId is required");
-    const res = await fetch(`${BASE_URL}/coverage/${encodeURIComponent(snapshotId)}/unit/env`, {
-        method: "POST",
-        headers: {
-            ...getAuthHeaders(),
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            envVariables,
-            runAfterSave: Boolean(runAfterSave),
-        }),
     });
     return handleResponse(res);
 }

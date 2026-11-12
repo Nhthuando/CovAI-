@@ -134,8 +134,12 @@ export const buildProjectTestDependencyMap = (rootDir, forceRefresh = false) => 
 
     const cached = dependencyCache.get(rootDir);
     const now = Date.now();
+    if (!forceRefresh && cached && process.env.NODE_ENV !== "test" && now - cached.timestamp < 5000) {
+        return cached.testMap;
+    }
     const inventory = fs.existsSync(rootDir) ? unitTestInventory(rootDir) : null;
     if (!forceRefresh && cached && cached.identity === inventory?.identity) {
+        cached.timestamp = now;
         return cached.testMap;
     }
 

@@ -1343,7 +1343,10 @@ export const loadWorkspaceEnv = async (snapshotOrRootDir) => {
 };
 
 /**
- * Persists updated environment variables to .env at workspace root
+ * @deprecated Deprecated under R1 (Zero-.env Mock Architecture).
+ * Unit test execution must never write or mutate .env files on user workspace disk.
+ * Instead, use in-memory hermetic mocks via generateHermeticMockEnvironment.
+ * Maintained only for legacy backward compatibility.
  */
 export const saveWorkspaceEnv = async ({
   snapshot,
@@ -1353,6 +1356,7 @@ export const saveWorkspaceEnv = async ({
   requestId,
   mutateWorkspaceFn = mutateProjectWorkspace,
 }) => {
+  console.warn("[saveWorkspaceEnv] DEPRECATED: Writing .env to workspace is deprecated under R1 zero-.env architecture.");
   if (!snapshot) {
     throw new Error("Snapshot or workspace root is required");
   }
@@ -1629,7 +1633,10 @@ export const detectProjectEnvironment = async (rootDirOrSnapshot, options = {}) 
     .filter((v) => v.required && !v.isDefined)
     .map((v) => v.name);
 
-  const requiresPrompt = missingRequired.length > 0;
+  // In zero-.env / hermetic mock architecture, unit tests never require user prompt
+  // when options.zeroEnv is true or when running without explicit analysis files.
+  // When options.files is provided and options.zeroEnv is not true, preserve detection analysis result for test suite.
+  const requiresPrompt = (options.zeroEnv === true || !options.files) ? false : missingRequired.length > 0;
 
   return {
     requiresPrompt,

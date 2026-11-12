@@ -43,6 +43,7 @@ import {
     resolveAndValidateAiTestPath,
     resolveAppImportPath,
 } from "./aiTestStorage.service.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { addJobToQueue } from "./queue.service.js";
 import { getJobById, addJobLog } from "./job.service.js";
 import { updateJobStatus } from "./jobUpdate.service.js";
@@ -120,6 +121,14 @@ export const detectIntegrationFrameworksService = async ({ snapshotId, projectId
         throw new ServiceError("Either snapshotId or projectId is required", 400);
     }
 
+    if (
+        rootDir &&
+        /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+        !fs.existsSync(rootDir)
+    ) {
+        rootDir = resolveProjectRoot(rootDir) || rootDir;
+    }
+
     if (!rootDir || !fs.existsSync(rootDir)) {
         throw new ServiceError("Project directory does not exist on disk", 404);
     }
@@ -142,6 +151,14 @@ const installIntegrationDependenciesInWorkspace = async ({ snapshotId, projectId
         rootDir = latest?.rootDir || latest?.storagePath || project.rootDir;
     } else {
         throw new ServiceError("Either snapshotId or projectId is required", 400);
+    }
+
+    if (
+        rootDir &&
+        /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+        !fs.existsSync(rootDir)
+    ) {
+        rootDir = resolveProjectRoot(rootDir) || rootDir;
     }
 
     if (!rootDir || !fs.existsSync(rootDir)) {
@@ -433,7 +450,14 @@ const applyIntegrationTestsInWorkspace = async ({
     fileName = null,
 }) => {
     const { snapshot, project } = await verifySnapshotOwnership(snapshotId, userId);
-    const rootDir = snapshot.rootDir || snapshot.storagePath || project.rootDir;
+    let rootDir = snapshot.rootDir || snapshot.storagePath || project.rootDir;
+    if (
+        rootDir &&
+        /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+        !fs.existsSync(rootDir)
+    ) {
+        rootDir = resolveProjectRoot(rootDir) || rootDir;
+    }
 
     if (!rootDir || !fs.existsSync(rootDir)) {
         throw new ServiceError("Project source directory does not exist on disk", 404);

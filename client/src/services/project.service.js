@@ -443,7 +443,7 @@ export async function sendAiChatMessageApi(
   let res;
   try { res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat`, {
     method: "POST",
-    signal: AbortSignal.timeout(35000),
+    signal: AbortSignal.timeout(75000),
     headers: getAuthHeaders(),
     body: JSON.stringify({ message, model, attachments, sessionId, clientRequestId: crypto.randomUUID(), ...context, screenContext: normalizeChatScreenContext(context.screenContext) }),
   }); } catch (error) {

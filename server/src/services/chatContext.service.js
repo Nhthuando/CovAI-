@@ -58,21 +58,24 @@ export const branchContextSession = async (projectId, userId, sessionId, input) 
         const source = await requireOwnedSession(projectId, userId, sessionId, tx);
         const messages = await tx.chatMessage.findMany({ where: { sessionId }, orderBy: messageOrder, take: 2001 });
         if (messages.length > 2000) throw new ServiceError("Conversation is too large to branch. Start a new chat using saved memory.", 413);
-        const end = input.throughMessageId ? messages.findIndex(row => row.id === input.throughMessageId) : messages.length - 1;
-        if (end < 0) throw new ServiceError("Branch boundary not found in this conversation", 400);
-        const inherited = messages.slice(0, end + 1);
+        const boundaryId = input.beforeMessageId || input.throughMessageId;
+        const boundary = boundaryId ? messages.findIndex(row => row.id === boundaryId) : messages.length - 1;
+        if (boundary < 0 || (input.beforeMessageId && messages[boundary].role !== "user")) {
+            throw new ServiceError("Branch boundary not found in this conversation", 400);
+        }
+        const inherited = messages.slice(0, boundary + (input.beforeMessageId ? 0 : 1));
         const copiedIds = new Map(inherited.map(row => [row.id, randomUUID()]));
         const summaryThroughId = copiedIds.get(source.summaryThroughId) || null;
         const attachmentBytes = inherited.reduce((sum, row) => sum + Buffer.byteLength(JSON.stringify(row.attachments || [])), 0);
         if (attachmentBytes > 5 * 1024 * 1024) throw new ServiceError("Conversation attachments are too large to branch.", 413);
         const branch = await tx.chatSession.create({ data: { projectId, userId, title: input.title || `Branch: ${source.title}`.slice(0, 120), useMemory: input.useMemory,
             sourceSessionId: source.id, sourceSnapshotId: source.sourceSnapshotId || source.snapshotId,
-            sourceMessageId: inherited.at(-1).id, snapshotId: snapshot?.id || null, contextStatus: "READY",
+            sourceMessageId: messages[boundary].id, snapshotId: snapshot?.id || null, contextStatus: "READY",
             summary: summaryThroughId ? source.summary : null, summaryThroughId } });
         // Materialize independent messages. FK cascades from deleting the source cannot erase them.
         // Millisecond offsets preserve transcript order independently of generated message IDs.
         const now = Date.now();
-        await tx.chatMessage.createMany({ data: inherited.map((row, index) => ({ id: copiedIds.get(row.id), sessionId: branch.id, role: row.role, content: row.content, model: row.model,
+        if (inherited.length) await tx.chatMessage.createMany({ data: inherited.map((row, index) => ({ id: copiedIds.get(row.id), sessionId: branch.id, role: row.role, content: row.content, model: row.model,
             senderUserId: row.senderUserId || null, replyToMessageId: copiedIds.get(row.replyToMessageId) || null,
             attachments: durableAttachments(row.attachments), createdAt: new Date(now - inherited.length + index) })) });
         return publicSession(branch);
@@ -98,10 +101,26 @@ export const boundHistory = (messages, summaryThroughId, maxBytes = 40000) => {
 };
 export const assembleChatContext = async (projectId, userId, options = {}) => {
     const project = await requireContextOwner(projectId, userId);
-    const settings = await ensureContextSettings(projectId, userId);
-    const session = options.sessionId ? await requireOwnedSession(projectId, userId, options.sessionId) : null;
-    const snapshot = await resolveContextSnapshot(projectId, options.snapshotId);
-    const rows = session ? await prisma.chatMessage.findMany({ where: { sessionId: session.id }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 25 }) : [];
+    const [settings, session, snapshot] = await Promise.all([
+        ensureContextSettings(projectId, userId),
+        options.sessionId ? requireOwnedSession(projectId, userId, options.sessionId) : null,
+        resolveContextSnapshot(projectId, options.snapshotId),
+    ]);
+    const memoryEnabled = settings.automaticMemory && (options.useMemory ?? session?.useMemory ?? true);
+    const screenContext = options.screenContext || null;
+    const needsEvidence = chatContextMode(options) === 'analysis' || screenContext?.testRunId || screenContext?.scenarioId;
+    const types = { unit: ["JEST", "VITEST"], integration: ["SUPERTEST"], system: ["PLAYWRIGHT", "CYPRESS"] };
+    const [rows, notes, coverage, files, testResults, workspaceContext] = await Promise.all([
+        session ? prisma.chatMessage.findMany({ where: { sessionId: session.id }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 25 }) : [],
+        memoryEnabled ? prisma.projectMemory.findMany({ where: { projectId, status: "ACTIVE" }, take: 100, orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }] }) : [],
+        snapshot ? prisma.coverageSummary.findUnique({ where: { snapshotId: snapshot.id }, select: { linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true } }) : null,
+        snapshot && options.message?.trim().toLowerCase() === "analyze coverage" ? prisma.coverageFile.findMany({ where: { snapshotId: snapshot.id }, select: { filePath: true, linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true }, take: 60, orderBy: { filePath: "asc" } }) : [],
+        needsEvidence && snapshot && screenContext?.activity === "coverage" && types[screenContext.testType]
+            ? prisma.testRun.findFirst({ where: { snapshotId: snapshot.id, type: { in: types[screenContext.testType] }, ...(screenContext.testRunId ? { id: screenContext.testRunId } : {}), ...(screenContext.scenarioId ? { scenarios: { some: { id: screenContext.scenarioId } } } : {}) }, orderBy: { createdAt: "desc" },
+                select: { id: true, type: true, status: true, executionMode: true, totalTests: true, passedTests: true, failedTests: true, skippedTests: true, finishedAt: true,
+                    scenarios: { where: screenContext.scenarioId ? { id: screenContext.scenarioId } : { status: "FAILED" }, take: 8, select: { id: true, title: true, status: true, testFile: true, failureMessages: true } } } }) : null,
+        resolveChatWorkspaceContext({ projectId, snapshot, screenContext, message: options.message, attachments: options.attachments, project, isOwner: project.ownerId === userId }),
+    ]);
     const messages = rows.reverse();
     // A verified cursor can predate the bounded message window in very long chats.
     const outsideCursor = session?.summaryThroughId && !messages.some(row => row.id === session.summaryThroughId)
@@ -110,12 +129,10 @@ export const assembleChatContext = async (projectId, userId, options = {}) => {
         || (+new Date(outsideCursor.createdAt) === +new Date(messages[0].createdAt) && outsideCursor.id < messages[0].id));
     const history = boundHistory(messages, cursorBeforeWindow ? null : session?.summaryThroughId);
     const cursor = messages.find(row => row.id === session?.summaryThroughId) || outsideCursor;
-    const pendingCount = session ? await prisma.chatMessage.count({ where: { sessionId: session.id, ...(cursor ? { OR: [
+    const pendingCount = session && (rows.length >= 25 || outsideCursor) ? await prisma.chatMessage.count({ where: { sessionId: session.id, ...(cursor ? { OR: [
         { createdAt: { gt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { gt: cursor.id } },
-    ] } : {}) } }) : 0;
+    ] } : {}) } }) : rows.length;
     history.omitted = Math.max(history.omitted, pendingCount - history.recent.length);
-    const memoryEnabled = settings.automaticMemory && (options.useMemory ?? session?.useMemory ?? true);
-    const notes = memoryEnabled ? await prisma.projectMemory.findMany({ where: { projectId, status: "ACTIVE" }, take: 100, orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }] }) : [];
     const selectedNotes = selectRelevantMemories(notes, options.message || "");
     const warnings = [];
     if (session?.snapshotId && snapshot?.id !== session.snapshotId) warnings.push("This conversation started on another snapshot. Historical code claims may be outdated.");
@@ -124,20 +141,10 @@ export const assembleChatContext = async (projectId, userId, options = {}) => {
     if (session?.contextStatus === "FAILED") warnings.push("Previous context maintenance failed. Memory may not include the latest decisions.");
     if (history.recent.some(row => durableAttachments(row.attachments).some(att => att.type === "image" || att.mimeType?.startsWith("image/")))) warnings.push("Earlier images are not re-sent automatically. Attach an image again if it is needed.");
     if (history.recent.some(row => durableAttachments(row.attachments).some(att => !att.content && att.type !== "image"))) warnings.push("Some earlier attachments have no durable text content and were omitted.");
-    const coverage = snapshot ? await prisma.coverageSummary.findUnique({ where: { snapshotId: snapshot.id }, select: { linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true } }) : null;
-    const files = snapshot && options.message?.trim().toLowerCase() === "analyze coverage" ? await prisma.coverageFile.findMany({ where: { snapshotId: snapshot.id }, select: { filePath: true, linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true }, take: 60, orderBy: { filePath: "asc" } }) : [];
-    const screenContext = options.screenContext || null;
-    const needsEvidence = chatContextMode(options) === 'analysis' || screenContext?.testRunId || screenContext?.scenarioId;
-    const types = { unit: ["JEST", "VITEST"], integration: ["SUPERTEST"], system: ["PLAYWRIGHT", "CYPRESS"] };
-    const testResults = needsEvidence && snapshot && screenContext?.activity === "coverage" && types[screenContext.testType]
-        ? await prisma.testRun.findFirst({ where: { snapshotId: snapshot.id, type: { in: types[screenContext.testType] }, ...(screenContext.testRunId ? { id: screenContext.testRunId } : {}), ...(screenContext.scenarioId ? { scenarios: { some: { id: screenContext.scenarioId } } } : {}) }, orderBy: { createdAt: "desc" },
-            select: { id: true, type: true, status: true, executionMode: true, totalTests: true, passedTests: true, failedTests: true, skippedTests: true, finishedAt: true,
-                scenarios: { where: screenContext.scenarioId ? { id: screenContext.scenarioId } : { status: "FAILED" }, take: 8, select: { id: true, title: true, status: true, testFile: true, failureMessages: true } } } }) : null;
     if ((screenContext?.testRunId || screenContext?.scenarioId) && !testResults) throw new ServiceError("Selected test result not found in this snapshot and test type.", 404);
     if (needsEvidence && screenContext?.testType && !testResults) warnings.push("No saved test run is available for the current screen. Do not infer results from conversation history.");
     if (testResults?.scenarios) testResults.scenarios = testResults.scenarios.map(row => ({ ...row,
         failureMessages: row.failureMessages.slice(0, 2).map(text => redactChatSecrets(text).slice(0, 1500)) }));
-    const workspaceContext = await resolveChatWorkspaceContext({ projectId, snapshot, screenContext, message: options.message, attachments: options.attachments, project, isOwner: project.ownerId === userId });
     warnings.push(...workspaceContext.warnings);
     const snapshotInfo = snapshot ? { id: snapshot.id, commitSha: snapshot.commitSha, createdAt: snapshot.createdAt,
         analysisPackage: snapshot.rootDir?.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || null } : null;

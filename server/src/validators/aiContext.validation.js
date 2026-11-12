@@ -10,7 +10,13 @@ export const settingsSchema = z.object({ automaticMemory: z.boolean(), guidance:
 export const noteSchema = z.object({ content: safeText(1000).refine(value => value.length > 0, "Memory cannot be empty."), pinned: z.boolean().default(false) }).strict();
 export const editNoteSchema = noteSchema.extend({ revision: z.number().int().nonnegative() }).strict();
 export const sessionSchema = z.object({ title: z.string().trim().min(1).max(120).optional(), useMemory: z.boolean().default(true), snapshotId: contextId.nullable().optional() }).strict();
-export const branchSchema = z.object({ throughMessageId: contextId.optional(), useMemory: z.boolean().default(true), snapshotId: contextId.nullable().optional(), title: z.string().trim().min(1).max(120).optional() }).strict();
+export const branchSchema = z.object({
+    throughMessageId: contextId.optional(),
+    beforeMessageId: contextId.optional(),
+    useMemory: z.boolean().default(true),
+    snapshotId: contextId.nullable().optional(),
+    title: z.string().trim().min(1).max(120).optional(),
+}).strict().refine(input => !(input.throughMessageId && input.beforeMessageId), "Choose one branch boundary.");
 const attachment = z.object({ type: z.enum(["image", "file", "project_file", "text", "code"]), name: z.string().max(240).optional(), path: z.string().max(500).optional(), content: z.string().max(100000).optional(), data: z.string().max(1500000).optional(), mimeType: z.string().max(100).optional() }).passthrough();
 export const screenContextSchema = z.object({ contextVersion: z.literal(1).optional(), activity: z.string().max(40).regex(/^[a-z-]+$/), testType: z.enum(["unit", "integration", "system"]).optional(), filePath: z.string().max(500).optional(), workspaceRevision: z.number().int().nonnegative().optional(), testRunId: contextId.optional(), scenarioId: contextId.optional(), jobId: contextId.optional() }).strict();
 export const chatSchema = z.object({ clientRequestId: contextId, screenContext: screenContextSchema.optional(), message: z.string().trim().min(1).max(16000), sessionId: contextId.nullable().optional(), snapshotId: contextId.nullable().optional(), useMemory: z.boolean().optional(), model: z.enum(GEMINI_MODEL_IDS).optional(), attachments: z.array(attachment).max(5).default([]), history: z.array(z.unknown()).max(1000).optional() }).strict();

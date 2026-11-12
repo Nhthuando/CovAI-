@@ -35,6 +35,7 @@ import {
   Play,
   FileCheck,
   History,
+  Download,
 } from "lucide-react";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
@@ -55,8 +56,6 @@ import {
   saveUnitTestVersions,
   getSystemCoverageSummary,
   saveAiSystemTest,
-  checkUnitTestEnvironmentApi,
-  saveUnitTestEnvironmentApi,
 } from "../../services/coverage.service.js";
 import {
   useCoverageDashboard,
@@ -87,7 +86,7 @@ import UnitTestVersionHistoryView from "./UnitTestVersionHistoryView.jsx";
 import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
 import SuggestTestcaseModal from "./SuggestTestcaseModal.jsx";
 import UnitTestSimulationStudioModal from "./simulation/UnitTestSimulationStudioModal.jsx";
-import UnitTestEnvVarModal from "./UnitTestEnvVarModal.jsx";
+import { ExportUnitTestReportModal } from "./modals/ExportUnitTestReportModal.jsx";
 
 const CONFIG = {
   unit: {
@@ -641,53 +640,12 @@ export default function CoverageTypeDashboard({
   const isGenerating = generating || internalGenerating;
   const activeJobIdRef = useRef(null);
   const pendingRunOptionsRef = useRef(null);
-  const pendingApplyRef = useRef(null);
-  const [envModalOpen, setEnvModalOpen] = useState(false);
-  const [envDetectionData, setEnvDetectionData] = useState(null);
-  useEffect(() => {
-    pendingApplyRef.current?.cancel?.();
-    pendingApplyRef.current = null;
-    setEnvModalOpen(false);
-    setEnvDetectionData(null);
-    if (!snapshotId) return;
-    try {
-      const pending = JSON.parse(sessionStorage.getItem(`covai:pending-unit-apply:${snapshotId}`) || 'null');
-      if (pending?.requestId && pending?.suggestions?.length) {
-        pendingApplyRef.current = pending;
-        setEnvDetectionData(pending.environment);
-        setEnvModalOpen(true);
-      }
-    } catch { /* Invalid browser drafts cannot change the active version. */ }
-  }, [snapshotId]);
+
   const applyWithEnvironment = useCallback(async (payload) => {
     const requestId = payload.requestId || crypto.randomUUID();
-    const response = await applyUnitTestSuggestion(snapshotId,{...payload,requestId});
-    const result = response?.data || response;
-    if (result.status !== 'WAITING_FOR_ENV') return response;
-    const suggestions = payload.suggestions || [payload.suggestion];
-    const pending = {suggestions,requestId,revision:suggestions[0]?.proposalBase?.workspaceRevision ?? 0,environment:result.environment};
-    try {sessionStorage.setItem(`covai:pending-unit-apply:${snapshotId}`,JSON.stringify(pending));} catch { /* Keep the in-memory continuation. */ }
-    setEnvDetectionData(result.environment);
-    setEnvModalOpen(true);
-    return new Promise((resolve,reject) => {
-      pendingApplyRef.current = {...pending,
-        cancel:()=>reject(new Error('Apply canceled; the active version is unchanged.')),
-        resume:async envVariables => {
-          const resumed = await applyUnitTestSuggestion(snapshotId,{...payload,requestId,envVariables});
-          const data = resumed?.data || resumed;
-          if (data.status === 'WAITING_FOR_ENV') {
-            setEnvDetectionData(data.environment);
-            throw new Error(data.message);
-          }
-          pendingApplyRef.current = null;
-          sessionStorage.removeItem(`covai:pending-unit-apply:${snapshotId}`);
-          resolve(resumed);
-        },
-      };
-    });
-  },[snapshotId]);
-  const [isCheckingEnv, setIsCheckingEnv] = useState(false);
-  const [isSavingEnv, setIsSavingEnv] = useState(false);
+    const response = await applyUnitTestSuggestion(snapshotId, { ...payload, requestId });
+    return response;
+  }, [snapshotId]);
 
   // Suggest TestCase Modal configuration
   const [suggestModalConfig, setSuggestModalConfig] = useState({
@@ -868,6 +826,9 @@ export default function CoverageTypeDashboard({
 
   // Interactive Unit Test Execution Simulation Studio target state
   const [simulationTarget, setSimulationTarget] = useState(null);
+
+  // Unit Test Export Report Modal state
+  const [isUnitTestExportOpen, setIsUnitTestExportOpen] = useState(false);
 
   const handleOpenFileInPlace = useCallback(
     (filePath, targetLine = null, functionName = null, endLine = null, testInfo = null) => {
@@ -1625,13 +1586,11 @@ export default function CoverageTypeDashboard({
   const [bulkApplyPhase, setBulkApplyPhase] = useState("");
 
   // A single request stages and verifies the entire batch before publishing any version.
-  const handleApplyAllGlobal = useCallback(async (resumeEnv) => {
-    const captured = pendingApplyRef.current;
-    const batch = captured?.suggestions || allPendingSuggestions;
+  const handleApplyAllGlobal = useCallback(async () => {
+    const batch = allPendingSuggestions;
     if (!snapshotId || !batch.length || isBulkApplying) return;
-    const envVariables = resumeEnv && !resumeEnv.nativeEvent ? resumeEnv : undefined;
-    const revision = captured?.revision ?? getExpectedWorkspaceRevision();
-    const requestId = captured?.requestId || crypto.randomUUID();
+    const revision = getExpectedWorkspaceRevision();
+    const requestId = crypto.randomUUID();
     const cleanedSuggestions = batch.map(s => ({ ...s,
       suggestionId: s.suggestionId || s.id, sourceFile: s.sourceFile || s.filePath,
       testFile: s.testFile || s.targetTestFile || resolveTargetTestFile(s.sourceFile || s.filePath, unitTestSuites, { framework: s.framework || activeFramework }),
@@ -1654,20 +1613,8 @@ export default function CoverageTypeDashboard({
     updateSuggestions('APPLYING');
     try {
       const response = await applyUnitTestSuggestion(snapshotId, { suggestions: cleanedSuggestions, projectId,
-        skipBackgroundJob: false, envVariables, requestId });
+        skipBackgroundJob: false, requestId });
       const result = response?.data || response;
-      if (result.status === 'WAITING_FOR_ENV') {
-        pendingApplyRef.current = { suggestions: cleanedSuggestions, revision, requestId, environment: result.environment };
-        try {sessionStorage.setItem(`covai:pending-unit-apply:${snapshotId}`, JSON.stringify(pendingApplyRef.current));} catch { /* Keep the in-memory draft. */ }
-        setEnvDetectionData(result.environment);
-        setEnvModalOpen(true);
-        updateSuggestions('PENDING');
-        setBulkSuggestMessage(result.message);
-        completeBulkApply({ success: false, status: 'WAITING_FOR_ENV', message: result.message });
-        return result;
-      }
-      pendingApplyRef.current = null;
-      try {sessionStorage.removeItem(`covai:pending-unit-apply:${snapshotId}`);} catch { /* Publication does not depend on browser storage. */ }
       if (!result.success) throw new Error(result.errorDetail || result.message || 'Batch verification failed. The active version is unchanged.');
       updateSuggestions('PASSED');
       if (result.perFileResults) updateCoverageFilesData(snapshotId, type, projectId, result.perFileResults);
@@ -1931,24 +1878,6 @@ export default function CoverageTypeDashboard({
   const run = async (options = {}) => {
     if (!snapshotId) return;
 
-    if (type === "unit" && !options?.bypassEnvCheck && !options?.useHermeticMock) {
-      setIsCheckingEnv(true);
-      try {
-        const envRes = await checkUnitTestEnvironmentApi(snapshotId);
-        if (envRes?.success && envRes?.data?.requiresPrompt) {
-          setEnvDetectionData(envRes.data);
-          pendingRunOptionsRef.current = options;
-          setEnvModalOpen(true);
-          setIsCheckingEnv(false);
-          return;
-        }
-      } catch (envCheckErr) {
-        console.warn("[CoverageTypeDashboard] Pre-flight env check error, proceeding with run:", envCheckErr);
-      } finally {
-        setIsCheckingEnv(false);
-      }
-    }
-
     activeJobIdRef.current = null;
     setRunning(true);
     setRunProgress(8);
@@ -2044,83 +1973,6 @@ export default function CoverageTypeDashboard({
         setRunStep("");
       }, 1200);
     }
-  };
-
-  const handleSaveEnvAndRun = async (envVars) => {
-    if (!snapshotId || isSavingEnv) return;
-    setIsSavingEnv(true);
-    setError("");
-    try {
-      if (pendingApplyRef.current) {
-        if (pendingApplyRef.current.resume) {
-          await pendingApplyRef.current.resume(envVars);
-          setEnvModalOpen(false);
-          return;
-        }
-        setEnvModalOpen(false);
-        const result = await handleApplyAllGlobal(envVars);
-        if (result?.status === 'WAITING_FOR_ENV') throw new Error(result.message);
-        return;
-      }
-      const res = await saveUnitTestEnvironmentApi(snapshotId, {
-        envVariables: envVars,
-        runAfterSave: true,
-      });
-
-      // Synchronize workspace tree and coverage queries immediately
-      invalidateProjectTree(projectId);
-      invalidateCoverageQueries(snapshotId);
-
-      setEnvModalOpen(false);
-
-      const returnedJobId = res?.data?.jobId || res?.data?.job?.id;
-      if (returnedJobId) {
-        activeJobIdRef.current = returnedJobId;
-        setRunning(true);
-        setRunProgress(10);
-        setRunStep("Running unit test suite with configured .env variables...");
-        startAnalysis({ snapshotId, projectId, type: "unit", jobId: returnedJobId });
-        try {
-          await waitForJob(returnedJobId, (prog) => {
-            const pct = Math.max(10, Math.min(100, Math.round(prog)));
-            setRunProgress(pct);
-            setRunStep(`Executing unit tests (${pct}%)...`);
-            updateAnalysisProgress({ progress: prog, message: `Executing unit tests (${pct}%)...` });
-          });
-          setRunProgress(100);
-          completeAnalysis(true);
-          invalidateCoverageQueries(snapshotId);
-          await refetchCoverage();
-        } catch (jobErr) {
-          setError(jobErr.message || "Test execution failed.");
-          completeAnalysis(false, jobErr.message);
-        } finally {
-          activeJobIdRef.current = null;
-          setTimeout(() => {
-            setRunning(false);
-            setRunningStatus("");
-            setRunProgress(0);
-            setRunStep("");
-          }, 1200);
-        }
-      } else {
-        await run({ ...(pendingRunOptionsRef.current || {}), bypassEnvCheck: true });
-      }
-    } catch (err) {
-      console.error("[handleSaveEnvAndRun] Error saving .env:", err);
-      setError(err.message || "Failed to save environment variables.");
-      throw err;
-    } finally {
-      setIsSavingEnv(false);
-      pendingRunOptionsRef.current = null;
-    }
-  };
-
-  const handleRunHermeticFallback = async () => {
-    setEnvModalOpen(false);
-    const prevOptions = pendingRunOptionsRef.current || {};
-    pendingRunOptionsRef.current = null;
-    await run({ ...prevOptions, useHermeticMock: true, bypassEnvCheck: true });
   };
 
   useEffect(() => {
@@ -2708,29 +2560,40 @@ export default function CoverageTypeDashboard({
               </button>
             </>
           ) : type === "unit" ? (
-            <button
-              onClick={load}
-              disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
-              style={{
-                background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border, #29313d)",
-                color: isLight ? "#475569" : "var(--color-text-secondary, #cbd5e1)",
-                borderRadius: 6,
-                padding: "8px 14px",
-                fontWeight: 650,
-                fontSize: 12.5,
-                opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
-                cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                transition: "all 0.15s ease",
-              }}
-              title="Refresh Coverage Analysis"
-            >
-              <RefreshCw size={13} className={isCoverageQueryFetching ? "animate-spin" : ""} />
-              <span>{isCoverageQueryFetching ? "Refreshing..." : "Refresh"}</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setIsUnitTestExportOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[var(--color-border,#29313D)] bg-[var(--color-surface,#11161D)] text-[var(--color-text,#F8FAFC)] hover:bg-[var(--color-surface-secondary,#171D25)] transition-colors cursor-pointer"
+                title="Export Unit Test Report (Markdown, JSON, Standalone HTML)"
+              >
+                <Download size={13} className="text-[#8B7CFD]" />
+                <span>Export Report</span>
+              </button>
+              <button
+                onClick={load}
+                disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
+                style={{
+                  background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border, #29313d)",
+                  color: isLight ? "#475569" : "var(--color-text-secondary, #cbd5e1)",
+                  borderRadius: 6,
+                  padding: "8px 14px",
+                  fontWeight: 650,
+                  fontSize: 12.5,
+                  opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
+                  cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  transition: "all 0.15s ease",
+                }}
+                title="Refresh Coverage Analysis"
+              >
+                <RefreshCw size={13} className={isCoverageQueryFetching ? "animate-spin" : ""} />
+                <span>{isCoverageQueryFetching ? "Refreshing..." : "Refresh"}</span>
+              </button>
+            </>
           ) : (
             <>
               {onGenerate && (
@@ -2803,7 +2666,6 @@ export default function CoverageTypeDashboard({
             runStep={runStep}
             activeJobId={activeJobIdRef.current}
             onRun={run}
-            isCheckingEnv={isCheckingEnv}
             onBulkSuggest={handleBulkSuggestTest}
             onOpenSuggestModal={(opts) => handleOpenSuggestModal(opts?.filePath, opts?.functionName, opts?.isBulk ?? true)}
             isBulkSuggesting={isBulkSuggesting}
@@ -2818,6 +2680,7 @@ export default function CoverageTypeDashboard({
             rawTotals={rawTotals}
             executions={executions}
             testTotals={totals}
+            scenarios={summary?.scenarios || summary?.data?.scenarios || []}
             hasExecuted={relevantRuns.some(r => ["COMPLETED", "PASSED", "SUCCESS", "FAILED"].includes(r?.status)) || (totals.total > 0 && !running)}
             isLatestRunFailed={isLatestRunFailed}
             hasPartialFailures={hasPartialFailures}
@@ -5869,25 +5732,19 @@ export default function CoverageTypeDashboard({
         />
       )}
 
-      {/* Unit Test Environment Variable Prompting Modal (Milestone 3) */}
-      <UnitTestEnvVarModal
-        isOpen={envModalOpen}
-        operationOnly={Boolean(pendingApplyRef.current)}
-        onClose={() => {
-          setEnvModalOpen(false);
-          pendingRunOptionsRef.current = null;
-          pendingApplyRef.current?.cancel?.();
-          pendingApplyRef.current = null;
-          sessionStorage.removeItem(`covai:pending-unit-apply:${snapshotId}`);
+      {/* Unit Test Export Report Modal */}
+      <ExportUnitTestReportModal
+        isOpen={isUnitTestExportOpen}
+        onClose={() => setIsUnitTestExportOpen(false)}
+        data={{
+          snapshotId,
+          projectId,
+          summary,
+          rawTotals,
+          executions,
+          testTotals: totals,
+          scenarios: summary?.scenarios || summary?.data?.scenarios || [],
         }}
-        data={envDetectionData}
-        missingRequired={envDetectionData?.missingRequired}
-        detectedVariables={envDetectionData?.detectedVariables}
-        existingVariables={envDetectionData?.existingVariables}
-        onSaveAndRun={handleSaveEnvAndRun}
-        onRunHermeticFallback={handleRunHermeticFallback}
-        isSaving={isSavingEnv}
-        isLight={isLight}
       />
     </div>
   );
