@@ -293,10 +293,46 @@ export const runIntegrationGenerationPipeline = async ({
     await updateJobStatus({ jobId, progress: 85 }).catch(() => {});
     await addJobLog(jobId, "INFO", "[Integration AI] Kiểm duyệt an toàn cú pháp Babel AST...").catch(() => {});
 
-    let cleanedCode = aiResponseText.trim();
-    const codeMatch = cleanedCode.match(/```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/);
-    if (codeMatch && codeMatch[1]) {
-        cleanedCode = codeMatch[1].trim();
+    let cleanedCode = "";
+
+    // 4.1 Try to extract code from JSON structure (buildIntegrationTestPrompt specifies JSON output)
+    try {
+        let jsonStr = aiResponseText.trim();
+        const jsonMatch = jsonStr.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+        if (jsonMatch && jsonMatch[1]) {
+            jsonStr = jsonMatch[1].trim();
+        } else {
+            jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+        }
+
+        const parsed = JSON.parse(jsonStr);
+        if (Array.isArray(parsed?.tests) && parsed.tests.length > 0) {
+            cleanedCode = parsed.tests.map((t) => t.content).filter(Boolean).join("\n\n");
+        } else if (parsed?.content) {
+            cleanedCode = parsed.content;
+        } else if (typeof parsed === "string") {
+            cleanedCode = parsed;
+        }
+    } catch (_) {
+        // Fallback: If not valid JSON, proceed to extract raw code block
+    }
+
+    // 4.2 Fallback to markdown code block or raw text
+    if (!cleanedCode) {
+        const codeMatch = aiResponseText.match(/```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i);
+        if (codeMatch && codeMatch[1]) {
+            cleanedCode = codeMatch[1].trim();
+        } else {
+            cleanedCode = aiResponseText.trim();
+        }
+    }
+
+    // 4.3 If cleanedCode itself contains markdown code fences, unwrap them
+    if (cleanedCode) {
+        const innerMatch = cleanedCode.match(/```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i);
+        if (innerMatch && innerMatch[1]) {
+            cleanedCode = innerMatch[1].trim();
+        }
     }
 
     validateIntegrationTestCode(cleanedCode, normFramework.toLowerCase());
@@ -427,6 +463,7 @@ const applyIntegrationTestsInWorkspace = async ({
     snapshotId,
     userId,
     testIds = [],
+    selectedScenarios = [],
     targetFilePath = null,
     fileName = null,
 }) => {
@@ -437,15 +474,45 @@ const applyIntegrationTestsInWorkspace = async ({
         throw new ServiceError("Project source directory does not exist on disk", 404);
     }
 
+    // Normalize composite keys ("aiTestId::scenarioId") and explicit scenario selections
+    const explicitAiTestIds = new Set();
+    const requestedScenarios = Array.isArray(selectedScenarios) ? [...selectedScenarios] : [];
+
+    if (Array.isArray(testIds)) {
+        for (const rawId of testIds) {
+            if (!rawId || typeof rawId !== "string") continue;
+            if (rawId.includes("::")) {
+                const [aiId, scenPart] = rawId.split("::");
+                if (aiId) explicitAiTestIds.add(aiId);
+                if (aiId && scenPart) {
+                    requestedScenarios.push({
+                        aiTestId: aiId,
+                        scenarioId: scenPart,
+                        testName: scenPart,
+                    });
+                }
+            } else {
+                explicitAiTestIds.add(rawId);
+            }
+        }
+    }
+
+    for (const sc of requestedScenarios) {
+        if (sc?.aiTestId) explicitAiTestIds.add(sc.aiTestId);
+    }
+
     let testsToApply = [];
-    if (Array.isArray(testIds) && testIds.length > 0) {
+    if (explicitAiTestIds.size > 0) {
         testsToApply = await prisma.aiTest.findMany({
             where: {
                 snapshotId,
-                id: { in: testIds },
+                id: { in: Array.from(explicitAiTestIds) },
             },
         });
-    } else {
+    }
+
+    // Fallback to all integration tests for snapshot if testIds contained only scenario-level IDs or was empty
+    if (testsToApply.length === 0) {
         const allTests = await prisma.aiTest.findMany({
             where: { snapshotId },
         });
@@ -467,12 +534,64 @@ const applyIntegrationTestsInWorkspace = async ({
     const appliedFiles = [];
     let totalScenarios = 0;
 
+    const hasScenarioFilter = requestedScenarios.length > 0;
+    const { parseCode, findScenarioPath, getScenarioIdentity } = hasScenarioFilter
+        ? await import("./scenarioManager.service.js")
+        : {};
+    const generateModule = hasScenarioFilter ? await import("@babel/generator") : null;
+    const generate = generateModule?.default?.default || generateModule?.default || generateModule;
+
     for (const test of testsToApply) {
         const meta = test.metaJson ? (typeof test.metaJson === "string" ? JSON.parse(test.metaJson) : test.metaJson) : {};
         const framework = (meta.framework || "SUPERTEST").toLowerCase();
+        const requests = Array.isArray(meta.requests) ? meta.requests : [];
+
+        // Determine if only a subset of scenarios from this test file should be written
+        let contentToApply = test.content;
+        let isPartialApply = false;
+        let appliedScenarioIds = requests.map((r) => r.scenarioId || r.testName).filter(Boolean);
+
+        if (hasScenarioFilter && requests.length > 0) {
+            const forThisTest = requestedScenarios.filter(
+                (s) => !s.aiTestId || s.aiTestId === test.id
+            );
+            if (forThisTest.length > 0) {
+                const selectedSet = new Set();
+                for (const s of forThisTest) {
+                    if (s.scenarioId) selectedSet.add(String(s.scenarioId).trim());
+                    if (s.testName) selectedSet.add(String(s.testName).trim().toLowerCase());
+                    if (s.title) selectedSet.add(String(s.title).trim().toLowerCase());
+                }
+
+                const matchedReqs = requests.filter((r) => {
+                    const idMatch = r.scenarioId && selectedSet.has(String(r.scenarioId).trim());
+                    const nameMatch = r.testName && selectedSet.has(String(r.testName).trim().toLowerCase());
+                    return idMatch || nameMatch;
+                });
+
+                if (matchedReqs.length === 0) {
+                    continue;
+                }
+
+                if (matchedReqs.length < requests.length) {
+                    isPartialApply = true;
+                    appliedScenarioIds = matchedReqs.map((r) => r.scenarioId || r.testName).filter(Boolean);
+                    const ast = parseCode(test.content);
+                    const matchedKeys = new Set(matchedReqs.map((r) => r.scenarioId || r.testName));
+                    for (const r of requests) {
+                        if (!matchedKeys.has(r.scenarioId || r.testName)) {
+                            const { testName, nameIndex } = getScenarioIdentity(test, r.scenarioId);
+                            const scPath = findScenarioPath(ast, testName, nameIndex);
+                            if (scPath) scPath.remove();
+                        }
+                    }
+                    contentToApply = generate(ast).code;
+                }
+            }
+        }
 
         // 1. Validate test code safety
-        validateIntegrationTestCode(test.content, framework);
+        validateIntegrationTestCode(contentToApply, framework);
 
         // 2. Resolve target file path securely (no path traversal allowed)
         let relPath = test.filePath;
@@ -495,9 +614,9 @@ const applyIntegrationTestsInWorkspace = async ({
         }
 
         // 3. Resolve application import statement
-        let finalContent = test.content;
+        let finalContent = contentToApply;
         try {
-            finalContent = resolveAppImportPath(test.content, rootDir, fullDestPath);
+            finalContent = resolveAppImportPath(contentToApply, rootDir, fullDestPath);
         } catch (err) {
             console.warn(`[applyIntegrationTests] Notice resolving app entry import: ${err.message}`);
         }
@@ -505,21 +624,28 @@ const applyIntegrationTestsInWorkspace = async ({
         // 4. Write to disk
         fs.writeFileSync(fullDestPath, finalContent, "utf8");
 
-        // 5. Update aiTest record with applied status
-        meta.status = "APPLIED";
+        // 5. Update aiTest record with applied status (keep full content if partial apply)
+        meta.appliedScenarios = Array.from(
+            new Set([...(Array.isArray(meta.appliedScenarios) ? meta.appliedScenarios : []), ...appliedScenarioIds])
+        );
+        meta.status = isPartialApply && meta.appliedScenarios.length < requests.length ? "PARTIAL_APPLIED" : "APPLIED";
         meta.appliedAt = new Date().toISOString();
 
         await stagePreparedPublication(tx => tx.aiTest.update({
             where: { id: test.id },
             data: {
-                filePath: relPath,
-                content: finalContent,
+                ...(isPartialApply ? {} : { filePath: relPath, content: finalContent }),
                 metaJson: JSON.stringify(meta),
             },
         }));
 
-        appliedFiles.push(relPath);
-        totalScenarios += Array.isArray(meta.requests) ? meta.requests.length : 1;
+        const scenariosWritten = isPartialApply ? appliedScenarioIds.length : (requests.length || 1);
+        appliedFiles.push({ filePath: relPath, scenariosCount: scenariosWritten });
+        totalScenarios += scenariosWritten;
+    }
+
+    if (appliedFiles.length === 0) {
+        throw new ServiceError("No matching test scenarios found to apply to source code", 404);
     }
 
     await stagePreparedPublication(async tx => {

@@ -139,11 +139,37 @@ export const processInstallDepsJob = async (jobId) => {
   }
 
   const operation = currentProjectOperation();
-  const origRootDir = operation?.originalRootDir || job.snapshot.rootDir;
+  const canonicalOrigBase =
+    job.snapshot?.originalRootDir ||
+    operation?.originalRootDir ||
+    job.snapshot?.rootDir;
+  const origRootDir =
+    resolveProjectRoot(canonicalOrigBase) || canonicalOrigBase;
   if (origRootDir && path.resolve(origRootDir) !== path.resolve(resolvedRootDir)) {
     try {
       ensureWorkspaceNodeModulesLinked(origRootDir, resolvedRootDir);
     } catch (_) {}
+    for (const sub of ["", "server", "backend", "api"]) {
+      const srcNm = sub
+        ? path.join(origRootDir, sub, "node_modules")
+        : path.join(origRootDir, "node_modules");
+      const dstNm = sub
+        ? path.join(resolvedRootDir, sub, "node_modules")
+        : path.join(resolvedRootDir, "node_modules");
+      if (fs.existsSync(srcNm) && !fs.existsSync(dstNm)) {
+        try {
+          fs.symlinkSync(
+            srcNm,
+            dstNm,
+            process.platform === "win32" ? "junction" : "dir",
+          );
+        } catch (_) {
+          try {
+            fs.cpSync(srcNm, dstNm, { recursive: true });
+          } catch (_) {}
+        }
+      }
+    }
   }
 
   try {
@@ -245,6 +271,20 @@ export const processInstallDepsJob = async (jobId) => {
 
       try {
         if (kind === "success") {
+          if (
+            origRootDir &&
+            path.resolve(origRootDir) !== path.resolve(resolvedRootDir) &&
+            fs.existsSync(path.join(resolvedRootDir, "node_modules")) &&
+            !fs.existsSync(path.join(origRootDir, "node_modules"))
+          ) {
+            try {
+              fs.cpSync(
+                path.join(resolvedRootDir, "node_modules"),
+                path.join(origRootDir, "node_modules"),
+                { recursive: true },
+              );
+            } catch (_) {}
+          }
           await updateJobProgress(jobId, 100);
           await addJobLog(jobId, "INFO", "npm install completed successfully.");
           await markJobSuccess(jobId, { installExitCode: 0, ...payload });
