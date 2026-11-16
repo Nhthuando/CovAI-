@@ -302,7 +302,7 @@ export const buildIntegrationTestPrompt = ({
     framework = "supertest",
     uncoveredBranches = [],
 } = {}) => {
-    const isPlaywright = framework === "playwright";
+    const isPlaywright = framework === "playwright" || String(framework).toLowerCase().includes("playwright");
     const frameworkName = isPlaywright ? "Playwright API Testing (@playwright/test)" : "Supertest + Jest";
 
     let prompt = `You are a Principal Software Engineer & QA Architect specializing in Node.js API Testing.\n`;

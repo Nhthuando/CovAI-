@@ -799,6 +799,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     ) || null;
 
   const integrationWs = await buildIntegrationWorkspace(snapshot.id, {
+    skipAutoScan: true,
     preloadedData: {
       snapshot,
       coverageSummary: unitSummaryRecord,

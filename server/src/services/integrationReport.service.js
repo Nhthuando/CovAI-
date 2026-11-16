@@ -136,7 +136,7 @@ export const getIntegrationAnalytics = async (projectId) => {
         if (!t.metaJson) return false;
         try {
             const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
-            return meta.framework === "SUPERTEST";
+            return meta.framework === "SUPERTEST" || meta.framework === "PLAYWRIGHT_API";
         } catch { return false; }
     });
 
@@ -173,20 +173,51 @@ export const getIntegrationAnalytics = async (projectId) => {
         allParsedRequests.length
     );
 
+    // Check if API endpoints have been explicitly scanned (or have prior test/generation history)
+    let savedIntegrationScan = null;
+    if (typeof prisma?.projectStructureAnalysis?.findUnique === "function") {
+        try {
+            const analysisRow = await prisma.projectStructureAnalysis.findUnique({
+                where: { snapshotId },
+                select: { resultJson: true },
+            });
+            if (analysisRow?.resultJson) {
+                const parsed = typeof analysisRow.resultJson === "string"
+                    ? JSON.parse(analysisRow.resultJson)
+                    : analysisRow.resultJson;
+                if (parsed?.integrationScan?.explicitlyScanned) {
+                    savedIntegrationScan = parsed.integrationScan;
+                }
+            }
+        } catch (_) {}
+    }
+
+    const hasPriorHistory = testRuns.length > 0 || integrationTests.length > 0;
+    const hasScannedEndpoints = Boolean(savedIntegrationScan?.explicitlyScanned) || hasPriorHistory;
+    const hasExecutedCoverage = Boolean(latestRun) && ((latestRun.totalTests || 0) > 0 || latestRunScenarios.length > 0);
+
     report.overview = {
         snapshotId,
         totalScenarios: effectiveTotalScenarios,
         unmodifiedAiScenarios,
-        modifiedScenarios
+        modifiedScenarios,
+        hasScannedEndpoints,
+        hasExecutedCoverage,
     };
 
-    // API Endpoint Coverage
-    let sourceCode = [];
-    try {
-        sourceCode = await loadSourceCode(snapshotId);
-    } catch(e) {}
-    
-    const discoveredEndpoints = extractValidEndpoints(sourceCode);
+    // API Endpoint Coverage (only scan/populate after explicit API scan or prior history)
+    let discoveredEndpoints = [];
+    if (hasScannedEndpoints) {
+        if (Array.isArray(savedIntegrationScan?.discoveredEndpoints) && savedIntegrationScan.discoveredEndpoints.length > 0) {
+            discoveredEndpoints = savedIntegrationScan.discoveredEndpoints;
+        } else {
+            let sourceCode = [];
+            try {
+                sourceCode = await loadSourceCode(snapshotId);
+            } catch(e) {}
+            discoveredEndpoints = extractValidEndpoints(sourceCode);
+        }
+    }
     let testedApis = 0;
 
     const failureLogs = latestRunScenarios.filter(s => s.status === 'failed' || s.executionVerdict === 'FAIL').map(s => ({
@@ -248,6 +279,8 @@ export const getIntegrationAnalytics = async (projectId) => {
         testedApis,
         uncoveredApis: Math.max(0, discoveredEndpoints.length - testedApis),
         coveragePercentage: discoveredEndpoints.length > 0 ? (testedApis / discoveredEndpoints.length) * 100 : 0,
+        hasScannedEndpoints,
+        hasExecutedCoverage,
         provenance: apiProvenance
     };
 

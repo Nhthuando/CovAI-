@@ -946,9 +946,18 @@ export const discoverProjectIntegrationTests = async (rootDir) => {
 export const buildIntegrationWorkspace = async (snapshotId, options = {}) => {
   if (!snapshotId) return null;
 
-  if (!options.bypassCache) {
+  if (options.scanNow) {
+    endpointCache.delete(snapshotId);
+    integrationWorkspacePayloadCache.delete(snapshotId);
+  }
+
+  if (!options.bypassCache && !options.scanNow) {
     const cached = integrationWorkspacePayloadCache.get(snapshotId);
-    if (cached) {
+    if (
+      cached &&
+      (options.skipAutoScan ||
+        cached.data?.generation?.hasScannedEndpoints !== false)
+    ) {
       const now = Date.now();
       // Fast-path within 15s (since any mutation explicitly calls invalidateEndpointCache)
       if (now - cached.lastVerifiedAt < INTEGRATION_FAST_TTL_MS) {
@@ -964,12 +973,16 @@ export const buildIntegrationWorkspace = async (snapshotId, options = {}) => {
     }
   }
 
-  if (!options.bypassCache && inFlightIntegrationBuilds.has(snapshotId)) {
+  if (!options.bypassCache && !options.scanNow && inFlightIntegrationBuilds.has(snapshotId)) {
     return inFlightIntegrationBuilds.get(snapshotId);
   }
   const buildPromise = (async () => {
     try {
-      const built = await executeBuildIntegrationWorkspace(snapshotId, options.preloadedData || null);
+      const built = await executeBuildIntegrationWorkspace(
+        snapshotId,
+        options.preloadedData || null,
+        options,
+      );
       if (built?.payload) {
         const now = Date.now();
         integrationWorkspacePayloadCache.set(snapshotId, {
@@ -985,18 +998,139 @@ export const buildIntegrationWorkspace = async (snapshotId, options = {}) => {
       inFlightIntegrationBuilds.delete(snapshotId);
     }
   })();
-  if (!options.bypassCache) {
+  if (!options.bypassCache && !options.scanNow) {
     inFlightIntegrationBuilds.set(snapshotId, buildPromise);
   }
   return buildPromise;
 };
 
-const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null) => {
+const loadIntegrationScanFromDb = (structureAnalysisRow) => {
+  if (!structureAnalysisRow?.resultJson) return null;
+  try {
+    const parsed =
+      typeof structureAnalysisRow.resultJson === "string"
+        ? JSON.parse(structureAnalysisRow.resultJson)
+        : structureAnalysisRow.resultJson;
+    if (
+      parsed?.integrationScan?.explicitlyScanned &&
+      Array.isArray(parsed.integrationScan.discoveredEndpoints)
+    ) {
+      return parsed.integrationScan;
+    }
+  } catch (err) {
+    console.warn("[IntegrationWorkspace] Failed to parse DB integrationScan:", err.message);
+  }
+  return null;
+};
+
+const saveIntegrationScanToDb = async (
+  snapshotId,
+  { discoveredEndpoints, sourceFilesCount },
+) => {
+  if (
+    !snapshotId ||
+    typeof prisma?.projectStructureAnalysis?.findUnique !== "function" ||
+    typeof prisma?.projectStructureAnalysis?.upsert !== "function"
+  ) {
+    return;
+  }
+  try {
+    const existing = await prisma.projectStructureAnalysis.findUnique({
+      where: { snapshotId },
+      select: { schemaVersion: true, resultJson: true },
+    });
+    let baseObj = {};
+    if (existing?.resultJson) {
+      try {
+        baseObj =
+          typeof existing.resultJson === "string"
+            ? JSON.parse(existing.resultJson)
+            : existing.resultJson || {};
+      } catch (_) {
+        baseObj = {};
+      }
+    }
+    const nextJson = JSON.stringify({
+      ...baseObj,
+      integrationScan: {
+        explicitlyScanned: true,
+        scannedAt: new Date().toISOString(),
+        sourceFilesCount,
+        discoveredEndpoints,
+      },
+    });
+    await prisma.projectStructureAnalysis.upsert({
+      where: { snapshotId },
+      create: {
+        snapshotId,
+        schemaVersion: existing?.schemaVersion || 1,
+        resultJson: nextJson,
+      },
+      update: {
+        resultJson: nextJson,
+      },
+    });
+  } catch (err) {
+    console.warn(
+      "[IntegrationWorkspace] Could not persist integrationScan to DB:",
+      err.message,
+    );
+  }
+};
+
+const buildEndpointDescription = (ep) => {
+  const method = (ep.method || "GET").toUpperCase();
+  const routePath = ep.fullPath || ep.path || "/";
+  const handler =
+    ep.controllerMethod ||
+    ep.requestProcessingChain?.controller?.name ||
+    ep.handler ||
+    "";
+  const readableHandler =
+    handler && handler !== "anonymousHandler" && handler !== "inlineHandler"
+      ? handler
+          .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+          .replace(/[_-]+/g, " ")
+          .toLowerCase()
+      : "";
+  const actionVerb =
+    method === "GET"
+      ? "Fetches"
+      : method === "POST"
+        ? "Creates or processes"
+        : method === "PUT" || method === "PATCH"
+          ? "Updates"
+          : method === "DELETE"
+            ? "Deletes"
+            : "Handles";
+  const authNote =
+    ep.authRequired ||
+    (ep.middlewares || []).some((m) => /auth|jwt|token|protect/i.test(String(m)))
+      ? " (protected)"
+      : "";
+  if (readableHandler) {
+    return `${actionVerb} ${routePath} via ${readableHandler}${authNote}.`;
+  }
+  return `${actionVerb} requests at ${routePath}${authNote}.`;
+};
+
+const executeBuildIntegrationWorkspace = async (
+  snapshotId,
+  preloadedData = null,
+  options = {},
+) => {
   const start = Date.now();
 
   const startDb = Date.now();
-  const [testRuns, coverageSummary, coverageFiles, aiTests, snapshot, jobs] =
-    await Promise.all([
+  const [
+    testRuns,
+    coverageSummary,
+    coverageFiles,
+    aiTests,
+    snapshot,
+    jobs,
+    structureAnalysis,
+  ] = await Promise.all([
       preloadedData?.testRuns !== undefined
         ? Promise.resolve(preloadedData.testRuns)
         : prisma.testRun.findMany({
@@ -1036,6 +1170,16 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
               errorMessage: true,
             },
           }),
+      preloadedData?.structureAnalysis !== undefined
+        ? Promise.resolve(preloadedData.structureAnalysis)
+        : typeof prisma?.projectStructureAnalysis?.findUnique === "function"
+          ? prisma.projectStructureAnalysis
+              .findUnique({
+                where: { snapshotId },
+                select: { schemaVersion: true, resultJson: true },
+              })
+              .catch(() => null)
+          : Promise.resolve(null),
     ]);
   const dbTime = Date.now() - startDb;
   const latestRun = (testRuns && testRuns[0]) || null;
@@ -1054,16 +1198,47 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
       j.type === "CYPRESS_SYSTEM_TEST",
   );
 
-  // 2. Load API Endpoints (Cached by snapshotId in memory and fs)
+  // 2. Load API Endpoints (Cached by DB, memory, and fs)
   const startAst = Date.now();
-  let discoveredEndpointsCache = endpointCache.get(snapshotId);
+  const dbIntegrationScan = loadIntegrationScanFromDb(structureAnalysis);
+  const hasPriorHistory = Boolean(
+    (latestRun && latestRun.status !== "CANCELED") ||
+      (jobs || []).some(
+        (j) =>
+          (j.type === "SUPERTEST_COVERAGE" || j.type === "PLAYWRIGHT_API") &&
+          j.status === "SUCCESS",
+      ),
+  );
+
+  let discoveredEndpointsCache = options.scanNow
+    ? null
+    : endpointCache.get(snapshotId);
   let discoveredEndpoints = [];
   let sourceFilesCount = 0;
   let sourceTime = 0;
   let loadedSourceCode = null;
+  let hasScannedEndpoints = Boolean(
+    options.scanNow ||
+      dbIntegrationScan?.explicitlyScanned ||
+      hasPriorHistory ||
+      discoveredEndpointsCache?.explicitlyScanned,
+  );
 
   if (!discoveredEndpointsCache) {
-    // Try file cache
+    // 2a. Check persisted DB scan first (unless explicitly rescanning)
+    if (!options.scanNow && dbIntegrationScan) {
+      discoveredEndpoints = dbIntegrationScan.discoveredEndpoints || [];
+      sourceFilesCount = dbIntegrationScan.sourceFilesCount || 0;
+      hasScannedEndpoints = true;
+      endpointCache.set(snapshotId, {
+        discoveredEndpoints,
+        sourceFilesCount,
+        explicitlyScanned: true,
+      });
+      discoveredEndpointsCache = endpointCache.get(snapshotId);
+    }
+
+    // 2b. Fallback to file cache
     const resolvedRootDir = resolvedSnapshotRoot;
     const cacheFile = resolvedRootDir
       ? path.join(
@@ -1073,30 +1248,56 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
         )
       : null;
 
-    try {
-      if (cacheFile && fs.existsSync(cacheFile)) {
-        const fileData = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-        discoveredEndpoints = fileData.discoveredEndpoints;
-        sourceFilesCount = fileData.sourceFilesCount;
-        endpointCache.set(snapshotId, {
-          discoveredEndpoints,
-          sourceFilesCount,
-        });
-        discoveredEndpointsCache = endpointCache.get(snapshotId);
+    if (!discoveredEndpointsCache && !options.scanNow) {
+      try {
+        if (cacheFile && fs.existsSync(cacheFile)) {
+          const fileData = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+          const isExplicitlyScanned = Boolean(fileData.explicitlyScanned);
+          const canUseCachedFile =
+            isExplicitlyScanned || hasPriorHistory || !options.skipAutoScan;
+          if (canUseCachedFile) {
+            discoveredEndpoints = fileData.discoveredEndpoints || [];
+            sourceFilesCount = fileData.sourceFilesCount || 0;
+            hasScannedEndpoints = isExplicitlyScanned || hasPriorHistory;
+            endpointCache.set(snapshotId, {
+              discoveredEndpoints,
+              sourceFilesCount,
+              explicitlyScanned: isExplicitlyScanned,
+            });
+            discoveredEndpointsCache = endpointCache.get(snapshotId);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to read endpoint cache file", e);
       }
-    } catch (e) {
-      console.error("Failed to read endpoint cache file", e);
     }
 
-    // Fallback to computing
-    if (!discoveredEndpointsCache) {
+    const shouldRunAstScan =
+      !discoveredEndpointsCache &&
+      (Boolean(options.scanNow) || hasPriorHistory || !options.skipAutoScan);
+
+    // 2c. Run AST Scan when explicitly triggered or allowed
+    if (shouldRunAstScan) {
       const startSource = Date.now();
       const sourceCode = await loadSourceCode(snapshotId, snapshot?.rootDir).catch(() => []);
       loadedSourceCode = sourceCode;
       sourceTime = Date.now() - startSource;
       sourceFilesCount = sourceCode.length;
       discoveredEndpoints = extractValidEndpoints(sourceCode);
-      endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+      const isExplicitlyScanned = Boolean(options.scanNow);
+      hasScannedEndpoints = isExplicitlyScanned || hasPriorHistory || !options.skipAutoScan;
+      endpointCache.set(snapshotId, {
+        discoveredEndpoints,
+        sourceFilesCount,
+        explicitlyScanned: isExplicitlyScanned,
+      });
+
+      if (isExplicitlyScanned) {
+        await saveIntegrationScanToDb(snapshotId, {
+          discoveredEndpoints,
+          sourceFilesCount,
+        });
+      }
 
       if (cacheFile && resolvedRootDir && fs.existsSync(resolvedRootDir)) {
         try {
@@ -1105,7 +1306,11 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
           }
           fs.writeFileSync(
             cacheFile,
-            JSON.stringify({ discoveredEndpoints, sourceFilesCount }),
+            JSON.stringify({
+              discoveredEndpoints,
+              sourceFilesCount,
+              explicitlyScanned: isExplicitlyScanned,
+            }),
             "utf8",
           );
         } catch (e) {
@@ -1114,8 +1319,19 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
       }
     }
   } else {
-    sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
-    discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+    const canUseMemoryCache =
+      Boolean(discoveredEndpointsCache.explicitlyScanned) ||
+      hasPriorHistory ||
+      !options.skipAutoScan;
+    if (canUseMemoryCache) {
+      sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
+      discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+      hasScannedEndpoints = true;
+    } else {
+      sourceFilesCount = 0;
+      discoveredEndpoints = [];
+      hasScannedEndpoints = false;
+    }
   }
   const astTime = Date.now() - startAst;
 
@@ -1345,8 +1561,12 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
     }
   });
 
-  // Discover existing integration test files from the project codebase
-  if (resolvedSnapshotRoot) {
+  const hasAnalyzedCoverage = Boolean(
+    hasPriorHistory || integrationTests.length > 0 || options.includeProjectTests,
+  );
+
+  // Discover existing integration test files from the project codebase ONLY after Run Coverage or when AI tests exist
+  if (resolvedSnapshotRoot && hasScannedEndpoints && hasAnalyzedCoverage) {
     try {
       const projectExistingTests = await discoverProjectIntegrationTests(
         resolvedSnapshotRoot,
@@ -1392,7 +1612,12 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
               break;
             }
           }
-        } catch (_) {}
+        } catch (err) {
+          console.warn(
+            "[buildIntegrationWorkspace] Failed to parse unified coverage:",
+            err.message,
+          );
+        }
       }
     }
     return fileCoverageMap;
@@ -1407,15 +1632,21 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
     try {
       sourceCodeList = await loadSourceCode(snapshotId, snapshot?.rootDir);
       loadedSourceCode = sourceCodeList;
-    } catch (_) {
+    } catch (err) {
+      console.warn(
+        "[buildIntegrationWorkspace] Failed to load source code:",
+        err.message,
+      );
       sourceCodeList = [];
     }
     return sourceCodeList;
   };
 
   const apiTraceCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
-  let apiTraceResult = apiTraceCache.get(apiTraceCacheKey);
-  if (!apiTraceResult) {
+  let apiTraceResult = hasScannedEndpoints
+    ? apiTraceCache.get(apiTraceCacheKey)
+    : { endpointsTraceability: [], summary: {} };
+  if (!apiTraceResult && hasScannedEndpoints) {
     const fMap = getOrLoadFileCoverage();
     const sCode = await getOrLoadSourceCode();
 
@@ -2144,6 +2375,7 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
       method: ep.method,
       path: ep.fullPath,
       route: ep.fullPath,
+      description: ep.description || buildEndpointDescription(ep),
       status,
       testCount: executedCount, // Legacy for UI if needed
       executedCount,
@@ -2690,6 +2922,9 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
     generation: {
       hasAnalysis:
         analyzeJob?.status === "SUCCESS" || discoveredEndpoints.length > 0,
+      hasScannedEndpoints,
+      hasAnalyzedCoverage,
+      hasPriorHistory,
       hasGeneratedTests: integrationTests.length > 0,
       targetedApis,
       generatedFiles: integrationTests.length,
@@ -2710,8 +2945,9 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
           })()
         : null,
     },
-    endpoints,
-    aiTests: integrationTests.map((t) => {
+    endpoints: hasScannedEndpoints ? endpoints : [],
+    aiTests: hasScannedEndpoints
+      ? integrationTests.map((t) => {
       const meta =
         (typeof t.metaJson === "string"
           ? JSON.parse(t.metaJson)
@@ -2758,7 +2994,8 @@ const executeBuildIntegrationWorkspace = async (snapshotId, preloadedData = null
           };
         }),
       };
-    }),
+    })
+      : [],
     execution: latestRun
       ? {
           id: latestRun.id,

@@ -133,6 +133,292 @@ export const transformTestCodeForProject = async (code, rootDir, filePath) => {
 };
 
 /**
+ * Create a lightweight Jest/Supertest-backed shim for `@playwright/test` API tests
+ * (`test('...', async ({ request }) => ...)`), allowing Playwright API suites to
+ * execute in-process with full Istanbul coverage and without requiring Chromium or a live port.
+ */
+const adaptPlaywrightApiCodeForJest = (code, rootDir, testFilePath) => {
+  if (!code || !/@playwright\/test/.test(code)) return code;
+  const resolvedRoot = path.resolve(rootDir);
+  const shimDir = path.join(resolvedRoot, ".covai-temp");
+  if (!fs.existsSync(shimDir)) {
+    fs.mkdirSync(shimDir, { recursive: true });
+  }
+  const shimPath = path.join(shimDir, "playwright-api-shim.cjs");
+
+  // Discover Express app entry path relative to shimDir
+  const probeApp = resolveAppImportPath(
+    "import app from '../../app.js';",
+    resolvedRoot,
+    path.join(shimDir, "probe.test.js"),
+  );
+  const appImportMatch = probeApp.match(/from\s+['"]([^'"]+)['"]/);
+  const appRelPath = appImportMatch ? appImportMatch[1] : "../app.js";
+
+  const shimSource = `
+const supertest = require('supertest');
+let appModule = null;
+try {
+  appModule = require('${appRelPath.replace(/\\/g, "/")}');
+} catch (e) {
+  appModule = null;
+}
+const app = (appModule && (appModule.default || appModule.app)) || appModule;
+
+const wrapResponse = (res) => ({
+  status: () => res.status,
+  statusText: () => (res.res && res.res.statusMessage) || '',
+  ok: () => res.status >= 200 && res.status < 300,
+  headers: () => res.headers || {},
+  json: async () => (res.body !== undefined ? res.body : JSON.parse(res.text || '{}')),
+  text: async () => (typeof res.text === 'string' ? res.text : JSON.stringify(res.body ?? '')),
+  body: async () => Buffer.from(typeof res.text === 'string' ? res.text : JSON.stringify(res.body ?? '')),
+});
+
+const makeReq = (verb) => async (url, options = {}) => {
+  if (!app) throw new Error('Express app entry could not be resolved for Playwright API shim');
+  let req = supertest(app)[verb](url);
+  if (options && options.params) req = req.query(options.params);
+  if (options && options.headers) {
+    for (const [k, v] of Object.entries(options.headers)) {
+      req = req.set(k, v);
+    }
+  }
+  if (options && options.data !== undefined) {
+    req = req.send(options.data);
+  }
+  const res = await req;
+  return wrapResponse(res);
+};
+
+const pwRequest = {
+  get: makeReq('get'),
+  post: makeReq('post'),
+  put: makeReq('put'),
+  patch: makeReq('patch'),
+  delete: makeReq('delete'),
+  head: makeReq('head'),
+  fetch: async (url, opts = {}) => makeReq(String(opts.method || 'get').toLowerCase())(url, opts),
+};
+
+const testFn = (title, fn) => {
+  if (typeof global.it !== 'function') return;
+  return global.it(title, () => fn({ request: pwRequest }));
+};
+testFn.skip = (title, fn) => {
+  if (typeof global.it !== 'function') return;
+  return global.it.skip(title, () => (typeof fn === 'function' ? fn({ request: pwRequest }) : undefined));
+};
+testFn.only = (title, fn) => {
+  if (typeof global.it !== 'function') return;
+  return global.it.only(title, () => fn({ request: pwRequest }));
+};
+testFn.describe = (title, fn) => (typeof global.describe === 'function' ? global.describe(title, fn) : fn());
+testFn.beforeEach = (fn) => (typeof global.beforeEach === 'function' ? global.beforeEach(() => fn({ request: pwRequest })) : undefined);
+testFn.afterEach = (fn) => (typeof global.afterEach === 'function' ? global.afterEach(() => fn({ request: pwRequest })) : undefined);
+testFn.beforeAll = (fn) => (typeof global.beforeAll === 'function' ? global.beforeAll(() => fn({ request: pwRequest })) : undefined);
+testFn.afterAll = (fn) => (typeof global.afterAll === 'function' ? global.afterAll(() => fn({ request: pwRequest })) : undefined);
+
+module.exports = {
+  test: testFn,
+  expect: global.expect,
+  request: pwRequest,
+};
+`;
+  fs.writeFileSync(shimPath, shimSource.trim() + "\n", "utf8");
+
+  let relShim = path
+    .relative(path.dirname(path.resolve(testFilePath)), shimPath)
+    .replace(/\\/g, "/");
+  if (!relShim.startsWith(".")) relShim = `./${relShim}`;
+
+  return code.replace(
+    /(['"])@playwright\/test\1/g,
+    `'${relShim}'`,
+  );
+};
+
+/**
+ * Temporarily prepare Express entry files for isolated Supertest runs when
+ * a project creates `const app = express()` and calls `app.listen(...)`
+ * without exporting `app` or guarding `.listen()` under Jest.
+ * Returns a `restore()` callback to revert any temporary edits in `finally`.
+ */
+const prepareExpressEntriesForSupertest = async (rootDir) => {
+  const backups = new Map();
+  if (!rootDir) return () => {};
+
+  const candidates = [
+    "app.js",
+    "server.js",
+    "index.js",
+    "main.js",
+    "src/app.js",
+    "src/server.js",
+    "src/index.js",
+    "src/main.js",
+  ];
+
+  const _genModule = await import("@babel/generator");
+  const generate = _genModule.default?.default || _genModule.default || _genModule;
+
+  for (const rel of candidates) {
+    const filePath = path.join(rootDir, rel);
+    if (!fs.existsSync(filePath)) continue;
+
+    let originalContent;
+    try {
+      originalContent = fs.readFileSync(filePath, "utf8");
+    } catch (readErr) {
+      console.warn(`[SupertestCoverageJob] Could not read ${filePath}:`, readErr?.message);
+      continue;
+    }
+
+    let ast;
+    try {
+      ast = babel.parseSync(originalContent, {
+        sourceType: "unambiguous",
+        filename: filePath,
+      });
+    } catch (parseErr) {
+      console.warn(`[SupertestCoverageJob] Could not parse ${filePath}:`, parseErr?.message);
+      continue;
+    }
+
+    const body = ast?.program?.body;
+    if (!Array.isArray(body) || body.length === 0) continue;
+
+    let expressAppName = null;
+    let hasExport = false;
+    let hasEsm = false;
+    const listenIndices = [];
+
+    for (let i = 0; i < body.length; i++) {
+      const node = body[i];
+      if (node.type === "ImportDeclaration") {
+        hasEsm = true;
+      } else if (
+        node.type === "ExportDefaultDeclaration" ||
+        node.type === "ExportNamedDeclaration" ||
+        node.type === "ExportAllDeclaration"
+      ) {
+        hasEsm = true;
+        hasExport = true;
+      } else if (node.type === "VariableDeclaration") {
+        for (const decl of node.declarations || []) {
+          if (
+            decl.id?.type === "Identifier" &&
+            decl.init?.type === "CallExpression" &&
+            decl.init.callee?.type === "Identifier" &&
+            decl.init.callee.name === "express"
+          ) {
+            expressAppName = decl.id.name;
+          }
+        }
+      } else if (node.type === "ExpressionStatement") {
+        const expr = node.expression;
+        if (
+          expr?.type === "AssignmentExpression" &&
+          expr.left?.type === "MemberExpression"
+        ) {
+          const objName = expr.left.object?.name;
+          const propName = expr.left.property?.name;
+          if (
+            (objName === "module" && propName === "exports") ||
+            objName === "exports"
+          ) {
+            hasExport = true;
+          }
+        }
+        if (
+          expr?.type === "CallExpression" &&
+          expr.callee?.type === "MemberExpression" &&
+          expr.callee.property?.type === "Identifier" &&
+          expr.callee.property.name === "listen"
+        ) {
+          listenIndices.push(i);
+        }
+      }
+    }
+
+    if (!expressAppName || (hasExport && listenIndices.length === 0)) {
+      continue;
+    }
+
+    for (const idx of listenIndices) {
+      const stmt = body[idx];
+      body[idx] = {
+        type: "IfStatement",
+        test: {
+          type: "UnaryExpression",
+          operator: "!",
+          prefix: true,
+          argument: {
+            type: "MemberExpression",
+            object: {
+              type: "MemberExpression",
+              object: { type: "Identifier", name: "process" },
+              property: { type: "Identifier", name: "env" },
+              computed: false,
+            },
+            property: { type: "Identifier", name: "JEST_WORKER_ID" },
+            computed: false,
+          },
+        },
+        consequent: {
+          type: "BlockStatement",
+          body: [stmt],
+          directives: [],
+        },
+        alternate: null,
+      };
+    }
+
+    if (!hasExport) {
+      if (hasEsm) {
+        body.push({
+          type: "ExportDefaultDeclaration",
+          declaration: { type: "Identifier", name: expressAppName },
+        });
+      } else {
+        body.push({
+          type: "ExpressionStatement",
+          expression: {
+            type: "AssignmentExpression",
+            operator: "=",
+            left: {
+              type: "MemberExpression",
+              object: { type: "Identifier", name: "module" },
+              property: { type: "Identifier", name: "exports" },
+              computed: false,
+            },
+            right: { type: "Identifier", name: expressAppName },
+          },
+        });
+      }
+    }
+
+    try {
+      const { code: patchedCode } = generate(ast);
+      backups.set(filePath, originalContent);
+      fs.writeFileSync(filePath, patchedCode, "utf8");
+    } catch (writeErr) {
+      console.warn(`[SupertestCoverageJob] Failed to stage Express entry ${filePath}:`, writeErr?.message);
+    }
+  }
+
+  return () => {
+    for (const [filePath, originalContent] of backups.entries()) {
+      try {
+        fs.writeFileSync(filePath, originalContent, "utf8");
+      } catch (restoreErr) {
+        console.warn(`[SupertestCoverageJob] Failed to restore ${filePath}:`, restoreErr?.message);
+      }
+    }
+  };
+};
+
+/**
  * Pipeline cho Supertest Coverage:
  * 1. Run Supertest (runSupertest)
  * 2. Parse coverage (reuse existing parsers)
@@ -143,6 +429,8 @@ export const processSupertestCoverageJob = async (jobId) => {
   registerJobAbortController(jobId, abortController);
   let projectId;
   let snapshotId;
+  let stagedIntegrationDir = null;
+  let restoreExpressEntries = null;
 
   try {
     if (isJobCanceled(jobId, abortController.signal)) return;
@@ -167,9 +455,40 @@ export const processSupertestCoverageJob = async (jobId) => {
         : rawSnapshot;
     const { jestConfigPath } = snapshot;
     const rootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
+    const canonicalOrigBase =
+      snapshot.originalRootDir ||
+      rawSnapshot.originalRootDir ||
+      currentProjectOperation()?.originalRootDir ||
+      rawSnapshot.rootDir;
     const origRootDir =
-      resolveProjectRoot(rawSnapshot.rootDir) || rawSnapshot.rootDir;
+      resolveProjectRoot(canonicalOrigBase) || canonicalOrigBase;
     const userId = job.userId;
+
+    const reportIntProgress = async (progress, stage, message) => {
+      await updateJobProgress(jobId, progress).catch((err) => {
+        console.warn("[SupertestCoverageJob] updateJobProgress warning:", err?.message);
+      });
+      await addJobLog(
+        jobId,
+        "INFO",
+        JSON.stringify({ stage, label: message, progress }),
+      ).catch((err) => {
+        console.warn("[SupertestCoverageJob] addJobLog warning:", err?.message);
+      });
+      try {
+        const { emitDashboardJobProgress } = await import("./dashboardEvents.service.js");
+        emitDashboardJobProgress(projectId, {
+          snapshotId,
+          jobId,
+          pillar: "integration",
+          progress,
+          stage,
+          message,
+        });
+      } catch (err) {
+        console.warn("[SupertestCoverageJob] emitDashboardJobProgress warning:", err?.message);
+      }
+    };
     if (currentProjectOperation()) {
       ensureMinimalPackageJson(rootDir);
       if (origRootDir && path.resolve(origRootDir) !== path.resolve(rootDir)) {
@@ -206,6 +525,20 @@ export const processSupertestCoverageJob = async (jobId) => {
       if (!hasJestAndSupertest) {
         const { runNpmInstall } = await import("./runTestsJob.service.js");
         await runNpmInstall(jobId, rootDir);
+        if (
+          origRootDir &&
+          path.resolve(origRootDir) !== path.resolve(rootDir) &&
+          fs.existsSync(path.join(rootDir, "node_modules")) &&
+          !fs.existsSync(path.join(origRootDir, "node_modules"))
+        ) {
+          try {
+            fs.cpSync(
+              path.join(rootDir, "node_modules"),
+              path.join(origRootDir, "node_modules"),
+              { recursive: true },
+            );
+          } catch (_) {}
+        }
       }
     }
 
@@ -213,12 +546,48 @@ export const processSupertestCoverageJob = async (jobId) => {
     const { detectIntegrationFrameworks } =
       await import("./integrationDetection.service.js");
     const intDetection = await detectIntegrationFrameworks(rootDir);
-    if (!intDetection.summary?.hasDependencies) {
+    const hasIntegrationDeps = Boolean(
+      intDetection?.hasDependencies ||
+        intDetection?.summary?.hasDependencies ||
+        fs.existsSync(path.join(rootDir, "node_modules", "supertest")) ||
+        fs.existsSync(path.resolve(process.cwd(), "node_modules", "supertest")),
+    );
+    if (!hasIntegrationDeps) {
       throw new ServiceError(
         "Integration tests require 'supertest' to be installed in the project's package.json. Please run 'Install supertest & jest' first.",
         409,
       );
     }
+
+    // Targeted single-endpoint or multi-scenario execution support
+    let parsedPayload = {};
+    if (typeof job.payloadJson === "string") {
+      try {
+        parsedPayload = JSON.parse(job.payloadJson) || {};
+      } catch (_) {
+        parsedPayload = {};
+      }
+    } else if (job.payloadJson && typeof job.payloadJson === "object") {
+      parsedPayload = job.payloadJson;
+    }
+    const targetTestNames = Array.isArray(parsedPayload?.targetTestNames)
+      ? parsedPayload.targetTestNames
+          .map((t) => String(t).trim())
+          .filter(Boolean)
+      : [];
+    const selectedScenarioIds = Array.isArray(parsedPayload?.selectedScenarioIds)
+      ? parsedPayload.selectedScenarioIds
+          .map((id) => String(id).trim())
+          .filter(Boolean)
+      : [];
+    const targetEndpoint = parsedPayload?.targetEndpoint || null;
+    const isTargetedRun = targetTestNames.length > 0 || selectedScenarioIds.length > 0;
+    const targetNameSet = new Set(targetTestNames);
+    const targetIdSet = new Set(
+      selectedScenarioIds.flatMap((id) =>
+        id.includes("::") ? [id, id.split("::").slice(1).join("::")] : [id],
+      ),
+    );
 
     // Use ONLY generated AI tests to avoid running broken user tests
     const aiTests = await prisma.aiTest.findMany({
@@ -241,10 +610,8 @@ export const processSupertestCoverageJob = async (jobId) => {
       } catch (e) {
         continue;
       }
-      if (
-        meta.framework &&
-        String(meta.framework).toUpperCase() !== "SUPERTEST"
-      )
+      const fwUpper = meta.framework ? String(meta.framework).toUpperCase() : "SUPERTEST";
+      if (fwUpper !== "SUPERTEST" && fwUpper !== "PLAYWRIGHT_API")
         continue;
       if (meta.status === "REJECTED" || meta.status === "DISABLED") continue;
 
@@ -275,7 +642,14 @@ export const processSupertestCoverageJob = async (jobId) => {
             !isDraftTest &&
             (approvedScenarios.size === 0 || isExplicitlyApproved);
           const isEnabled = r.enabled !== false;
-          const shouldRun = isApproved && isEnabled;
+          const matchesTarget =
+            targetNameSet.has(r.testName) ||
+            targetNameSet.has(testName) ||
+            targetIdSet.has(r.scenarioId) ||
+            targetIdSet.has(`${t.id}::${r.scenarioId}`);
+          const shouldRun = isTargetedRun
+            ? isEnabled && matchesTarget
+            : isApproved && isEnabled;
 
           const callee = scenarioPath.node.callee;
           if (shouldRun) {
@@ -302,14 +676,36 @@ export const processSupertestCoverageJob = async (jobId) => {
       }
 
       const { code: finalCode } = generate(ast);
+      const resolvedRootDir = path.resolve(rootDir);
+      const relToRoot = path.relative(resolvedRootDir, path.resolve(filePath));
+      const isOutsideResolvedRoot =
+        !relToRoot || relToRoot.startsWith("..") || path.isAbsolute(relToRoot);
+      const executionFilePath = isOutsideResolvedRoot
+        ? (() => {
+            stagedIntegrationDir = path.join(
+              resolvedRootDir,
+              "__covai_integration__",
+            );
+            return path.join(
+              stagedIntegrationDir,
+              String(t.filePath || path.basename(filePath)).replace(/^[/\\]+/, ""),
+            );
+          })()
+        : filePath;
+
+      const adaptedCode =
+        fwUpper === "PLAYWRIGHT_API" || /@playwright\/test/.test(finalCode)
+          ? adaptPlaywrightApiCodeForJest(finalCode, rootDir, executionFilePath)
+          : finalCode;
+
       const executableCode = await transformTestCodeForProject(
-        finalCode,
+        adaptedCode,
         rootDir,
-        filePath,
+        executionFilePath,
       );
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, executableCode, "utf8");
-      supertestFiles.push(filePath);
+      fs.mkdirSync(path.dirname(executionFilePath), { recursive: true });
+      fs.writeFileSync(executionFilePath, executableCode, "utf8");
+      supertestFiles.push(executionFilePath);
     }
 
     const projectTestFiles =
@@ -335,17 +731,9 @@ export const processSupertestCoverageJob = async (jobId) => {
       );
     }
 
-    // Targeted single-endpoint or single-scenario execution support
-    const targetTestNames = Array.isArray(job.payloadJson?.targetTestNames)
-      ? job.payloadJson.targetTestNames
-          .map((t) => String(t).trim())
-          .filter(Boolean)
-      : [];
-    const targetEndpoint = job.payloadJson?.targetEndpoint || null;
-    const isTargetedRun = targetTestNames.length > 0;
     let testNamePattern = null;
 
-    if (isTargetedRun) {
+    if (isTargetedRun && targetTestNames.length > 0) {
       const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       testNamePattern = targetTestNames.map(escapeRegex).join("|");
       const matchedFiles = supertestFiles.filter((filePath) => {
@@ -416,6 +804,8 @@ export const processSupertestCoverageJob = async (jobId) => {
         progress: 20,
       }),
     );
+    restoreExpressEntries = await prepareExpressEntriesForSupertest(rootDir);
+
     const runResult = await runSupertest(
       jobId,
       rootDir,
@@ -749,9 +1139,9 @@ export const processSupertestCoverageJob = async (jobId) => {
   } catch (error) {
     if (
       isJobCanceled(jobId, abortController.signal) ||
+      error?.code === "OPERATION_CANCELED" ||
       error?.message?.includes("canceled") ||
-      error?.message?.includes("cancelled") ||
-      error?.statusCode === 409
+      error?.message?.includes("cancelled")
     ) {
       await addJobLog(
         jobId,
@@ -921,5 +1311,18 @@ export const processSupertestCoverageJob = async (jobId) => {
     } catch (_) {}
   } finally {
     unregisterJobAbortController(jobId);
+    if (typeof restoreExpressEntries === "function") {
+      restoreExpressEntries();
+    }
+    if (stagedIntegrationDir && fs.existsSync(stagedIntegrationDir)) {
+      try {
+        fs.rmSync(stagedIntegrationDir, { recursive: true, force: true });
+      } catch (cleanupErr) {
+        console.warn(
+          "[SupertestCoverageJob] Staged integration test cleanup warning:",
+          cleanupErr?.message,
+        );
+      }
+    }
   }
 };

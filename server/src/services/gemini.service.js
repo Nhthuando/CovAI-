@@ -110,6 +110,26 @@ export function getGeminiClient(
 const VALID_MODELS = GEMINI_MODEL_IDS;
 const exhaustedModels = new Map();
 
+const ALLOWED_GENERATION_CONFIG_KEYS = new Set([
+  "candidateCount",
+  "stopSequences",
+  "maxOutputTokens",
+  "temperature",
+  "topP",
+  "topK",
+  "responseMimeType",
+  "responseSchema",
+  "presencePenalty",
+  "frequencyPenalty",
+  "responseLogprobs",
+  "logprobs",
+  "thinkingConfig",
+  "speechConfig",
+  "audioTimestamp",
+  "seed",
+  "responseModalities",
+]);
+
 /**
  * Checks if a model is currently exhausted and cleans up expired entries.
  */
@@ -317,8 +337,18 @@ export const generateMultimodalText = async (
     apiKey: _apiKey,
     returnTelemetry: _returnTelemetry,
     userId: _userId,
+    model: _model,
+    signal: _signal,
+    timeout: _timeout,
     ...providerConfig
   } = generationConfig;
+
+  const cleanProviderConfig = {};
+  for (const [key, value] of Object.entries(providerConfig)) {
+    if (ALLOWED_GENERATION_CONFIG_KEYS.has(key) && value !== undefined) {
+      cleanProviderConfig[key] = value;
+    }
+  }
 
   let primaryModelName = resolveModelName(modelName);
 
@@ -364,7 +394,7 @@ export const generateMultimodalText = async (
           contents: [{ role: "user", parts }],
           generationConfig: {
             maxOutputTokens: 65536,
-            ...providerConfig,
+            ...cleanProviderConfig,
           },
         },
         { signal: requestSignal },

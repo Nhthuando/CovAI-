@@ -1,15 +1,13 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   FileCode,
   Folder,
   CheckCircle2,
   Play,
   X,
-  Sparkles,
   AlertCircle,
-  FileCheck,
-  ArrowRight,
   HardDriveDownload,
+  Check,
 } from "lucide-react";
 import { applyIntegrationTests } from "../../../services/coverage.service.js";
 
@@ -24,17 +22,49 @@ export default function IntegrationApplyTestsModal({
   onClose,
   snapshotId,
   testIds = [],
+  scenarios = [],
+  initialSelectedKeys = null,
   defaultFilePath = "tests/integration/api.test.js",
   onAppliedSuccess,
   onTriggerRerun,
 }) {
   const [targetDir, setTargetDir] = useState("tests/integration");
   const [fileName, setFileName] = useState("api.test.js");
+  const [selectedKeys, setSelectedKeys] = useState([]);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState("");
   const [appliedResult, setAppliedResult] = useState(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setError("");
+    setAppliedResult(null);
+    if (Array.isArray(initialSelectedKeys) && initialSelectedKeys.length > 0) {
+      setSelectedKeys(initialSelectedKeys);
+    } else if (scenarios.length > 0) {
+      setSelectedKeys(scenarios.map((s) => s.key));
+    } else {
+      setSelectedKeys([]);
+    }
+  }, [isOpen, initialSelectedKeys, scenarios]);
+
+  const selectedKeySet = useMemo(() => new Set(selectedKeys), [selectedKeys]);
+  const chosenScenarios = useMemo(
+    () => scenarios.filter((s) => selectedKeySet.has(s.key)),
+    [scenarios, selectedKeySet],
+  );
+  const passedScenarios = useMemo(
+    () => scenarios.filter((s) => String(s.status || "").toLowerCase() === "passed"),
+    [scenarios],
+  );
+
   if (!isOpen) return null;
+
+  const toggleScenarioKey = (key) => {
+    setSelectedKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+  };
 
   const handleSelectPreset = (preset) => {
     setTargetDir(preset.dir);
@@ -48,8 +78,20 @@ export default function IntegrationApplyTestsModal({
 
     try {
       const fullPath = targetDir ? `${targetDir.replace(/\/+$/, "")}/${fileName}` : fileName;
+      const resolvedTestIds =
+        chosenScenarios.length > 0
+          ? Array.from(new Set(chosenScenarios.map((s) => s.aiTestId).filter(Boolean)))
+          : testIds;
+      const selectedScenariosPayload = chosenScenarios.map((s) => ({
+        aiTestId: s.aiTestId || null,
+        scenarioId: s.scenarioId || null,
+        testName: s.testName || s.title || "",
+        title: s.title || s.testName || "",
+      }));
+
       const res = await applyIntegrationTests(snapshotId, {
-        testIds,
+        testIds: resolvedTestIds,
+        selectedScenarios: selectedScenariosPayload,
         targetFilePath: fullPath,
         fileName,
       });
@@ -69,6 +111,7 @@ export default function IntegrationApplyTestsModal({
   const fullDestinationPath = targetDir
     ? `${targetDir.replace(/\/+$/, "")}/${fileName}`
     : fileName;
+  const activeCount = scenarios.length > 0 ? chosenScenarios.length : testIds.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans animate-in fade-in duration-150">
@@ -83,8 +126,8 @@ export default function IntegrationApplyTestsModal({
               <h3 className="text-sm font-bold tracking-tight text-[var(--color-text)] m-0">
                 {appliedResult ? "Tests Applied Successfully" : "Save & Apply Tests to Repository"}
               </h3>
-              <p className="text-[11px] text-[var(--color-text-secondary)] m-0 font-mono mt-0.5">
-                {testIds.length} test scenario(s) will be written directly to project repository
+              <p className="text-[11px] text-[var(--color-text-secondary)] m-0 font-mono mt-0.5 tabular-nums">
+                {activeCount} test scenario(s) selected to write to project repository
               </p>
             </div>
           </div>
@@ -109,6 +152,88 @@ export default function IntegrationApplyTestsModal({
 
           {!appliedResult ? (
             <>
+              {/* Scenario Selector (All or Individual) */}
+              {scenarios.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
+                      Scenarios to Apply ({chosenScenarios.length}/{scenarios.length})
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedKeys(scenarios.map((s) => s.key))}
+                        className="px-2 py-0.5 rounded text-[10px] font-medium bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border)] cursor-pointer"
+                      >
+                        Select All
+                      </button>
+                      {passedScenarios.length > 0 && passedScenarios.length < scenarios.length && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedKeys(passedScenarios.map((s) => s.key))}
+                          className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 cursor-pointer"
+                        >
+                          Passed Only ({passedScenarios.length})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedKeys([])}
+                        className="px-2 py-0.5 rounded text-[10px] font-medium bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-muted)] border border-[var(--color-border)] cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg)] divide-y divide-[var(--color-border)]/60">
+                    {scenarios.map((sc) => {
+                      const checked = selectedKeySet.has(sc.key);
+                      const statusLower = String(sc.status || "ready").toLowerCase();
+                      const statusColor =
+                        statusLower === "passed"
+                          ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
+                          : statusLower === "failed"
+                            ? "text-rose-400 bg-rose-500/10 border-rose-500/25"
+                            : "text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] border-[var(--color-border)]";
+                      return (
+                        <button
+                          key={sc.key}
+                          type="button"
+                          onClick={() => toggleScenarioKey(sc.key)}
+                          className={`w-full px-2.5 py-1.5 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer ${
+                            checked ? "bg-[var(--color-primary)]/5" : "hover:bg-[var(--color-surface-hover)]/60 opacity-75"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className={`w-3.5 h-3.5 rounded-[3px] border flex items-center justify-center shrink-0 ${
+                                checked
+                                  ? "bg-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-primary-foreground)]"
+                                  : "border-[var(--color-border)] bg-[var(--color-surface)]"
+                              }`}
+                            >
+                              {checked && <Check size={10} strokeWidth={3} />}
+                            </span>
+                            <span className="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] shrink-0">
+                              {sc.method || "API"}
+                            </span>
+                            <span className="text-[11px] font-mono text-[var(--color-text-muted)] truncate max-w-[110px] shrink-0">
+                              {sc.path || "/"}
+                            </span>
+                            <span className="text-[11px] text-[var(--color-text)] truncate">
+                              {sc.title || sc.testName}
+                            </span>
+                          </div>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase border shrink-0 ${statusColor}`}>
+                            {statusLower}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Directory & File Path Picker */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
@@ -213,7 +338,7 @@ export default function IntegrationApplyTestsModal({
               <button
                 type="button"
                 onClick={handleApply}
-                disabled={isApplying || !fileName.trim()}
+                disabled={isApplying || !fileName.trim() || (scenarios.length > 0 && chosenScenarios.length === 0)}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-bold hover:opacity-90 transition-opacity shadow-xs cursor-pointer disabled:opacity-50"
               >
                 <HardDriveDownload size={13} />

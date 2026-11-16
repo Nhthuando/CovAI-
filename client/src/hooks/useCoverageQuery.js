@@ -122,7 +122,7 @@ export function useIntegrationWorkspace(snapshotId) {
   return useQuery({
     queryKey: ["integrationWorkspace", snapshotId, userId],
     queryFn: async () => {
-      const res = await getIntegrationWorkspace(snapshotId);
+      const res = await getIntegrationWorkspace(snapshotId, { skipAutoScan: true });
       return res?.data || null;
     },
     enabled: Boolean(snapshotId),

@@ -220,8 +220,12 @@ export async function getCoverageTestSuites(snapshotId, type = "unit") {
     return handleResponse(res);
 }
 
-export async function getIntegrationWorkspace(snapshotId) {
-    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace`, {
+export async function getIntegrationWorkspace(snapshotId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.skipAutoScan) params.set("skipAutoScan", "true");
+    if (options.scan) params.set("scan", "true");
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace${qs}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);

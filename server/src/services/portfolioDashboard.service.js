@@ -378,7 +378,7 @@ async function executeBuildPortfolioOverview({ userId, bypassCache = false }) {
     // 2j. Integration Workspaces per snapshot (for exact discovered/covered APIs)
     Promise.all(
       snapshotIds.map((sid) =>
-        buildIntegrationWorkspace(sid)
+        buildIntegrationWorkspace(sid, null, { skipAutoScan: true })
           .then((ws) => ({ snapshotId: sid, ws }))
           .catch(() => ({ snapshotId: sid, ws: null }))
       )

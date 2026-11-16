@@ -355,7 +355,10 @@ export const runCoverageByType = async (req, res) => {
         const { detectIntegrationFrameworks } =
           await import("../services/integrationDetection.service.js");
         const intDetect = await detectIntegrationFrameworks(resolvedRootDir);
-        if (!intDetect.summary?.hasDependencies && !req.body?.skipHitlCheck) {
+        const hasIntDeps = Boolean(
+          intDetect?.hasDependencies || intDetect?.summary?.hasDependencies,
+        );
+        if (!hasIntDeps && !req.body?.skipHitlCheck) {
           return res.status(409).json({
             success: false,
             code: "INTEGRATION_DEPENDENCY_MISSING",
@@ -379,19 +382,32 @@ export const runCoverageByType = async (req, res) => {
           ...(targetTestNames.length > 0 ? { targetTestNames } : {}),
           ...(selectedScenarioIds.length > 0 ? { selectedScenarioIds } : {}),
         };
-        const installJob = await createInstallDepsJob({
-          projectId: snapshot.projectId,
-          snapshotId,
-          userId,
-        });
-        job = await createSupertestCoverageJob({
-          projectId: snapshot.projectId,
-          snapshotId,
-          userId,
-          payloadJson: supertestPayload,
-        });
-        await addSupertestCoveragePipeline(installJob.id, job.id);
-        jobs = [installJob, job];
+        const isTargetedRun =
+          targetTestNames.length > 0 || selectedScenarioIds.length > 0;
+        if (isTargetedRun && hasIntDeps) {
+          job = await createSupertestCoverageJob({
+            projectId: snapshot.projectId,
+            snapshotId,
+            userId,
+            payloadJson: supertestPayload,
+          });
+          await addJobToQueue("SUPERTEST_COVERAGE", job.id, supertestPayload);
+          jobs = [job];
+        } else {
+          const installJob = await createInstallDepsJob({
+            projectId: snapshot.projectId,
+            snapshotId,
+            userId,
+          });
+          job = await createSupertestCoverageJob({
+            projectId: snapshot.projectId,
+            snapshotId,
+            userId,
+            payloadJson: supertestPayload,
+          });
+          await addSupertestCoveragePipeline(installJob.id, job.id);
+          jobs = [installJob, job];
+        }
       } else {
         const runner = framework === "cypress" ? "cypress" : "playwright";
         job = await createSystemTestAnalysisJob({
@@ -1663,12 +1679,35 @@ export const runSupertestCoverage = async (req, res) => {
     }
 
     const supertestInfo = await detectSupertest(resolvedRootDir);
+    let hasDbAiTests = false;
     if (!supertestInfo.detected || supertestInfo.supertestFiles.length === 0) {
-      return res.status(422).json({
-        success: false,
-        message: "No Supertest test files were found in this snapshot.",
-      });
+      if (typeof prisma?.aiTest?.count === "function") {
+        const aiCount = await prisma.aiTest
+          .count({ where: { snapshotId } })
+          .catch(() => 0);
+        hasDbAiTests = aiCount > 0;
+      }
+      if (!hasDbAiTests) {
+        return res.status(422).json({
+          success: false,
+          message: "No Supertest test files were found in this snapshot.",
+        });
+      }
     }
+
+    const targetEndpoint = req.body?.targetEndpoint || null;
+    const targetTestNames = Array.isArray(req.body?.targetTestNames)
+      ? req.body.targetTestNames.filter(Boolean)
+      : [];
+    const selectedScenarioIds = Array.isArray(req.body?.selectedScenarioIds)
+      ? req.body.selectedScenarioIds.filter(Boolean)
+      : [];
+    const supertestPayload = {
+      ...(targetEndpoint ? { targetEndpoint } : {}),
+      ...(targetTestNames.length > 0 ? { targetTestNames } : {}),
+      ...(selectedScenarioIds.length > 0 ? { selectedScenarioIds } : {}),
+    };
+    const hasPayload = Object.keys(supertestPayload).length > 0;
 
     // Snapshots normally do not include node_modules. Install first so the
     // runner never falls back to npx downloading arbitrary packages.
@@ -1681,6 +1720,7 @@ export const runSupertestCoverage = async (req, res) => {
       projectId: snapshot.projectId,
       snapshotId,
       userId,
+      ...(hasPayload ? { payloadJson: supertestPayload } : {}),
     });
 
     // Queue Supertest pipeline with correct BullMQ dependency direction:
@@ -3325,7 +3365,7 @@ export const applyIntegrationTestsController = async (req, res) => {
       return res.status(401).json({ success: false, message: "Unauthorized." });
 
     const { snapshotId } = req.params;
-    const { testIds, targetFilePath, fileName } = req.body || {};
+    const { testIds, selectedScenarios, targetFilePath, fileName } = req.body || {};
 
     const { applyIntegrationTestsService } =
       await import("../services/integrationApiService.service.js");
@@ -3333,6 +3373,7 @@ export const applyIntegrationTestsController = async (req, res) => {
       snapshotId,
       userId,
       testIds: testIds || [],
+      selectedScenarios: Array.isArray(selectedScenarios) ? selectedScenarios : [],
       targetFilePath: targetFilePath || null,
       fileName: fileName || null,
     });
@@ -3529,7 +3570,16 @@ export const getIntegrationWorkspace = async (req, res) => {
       });
     }
 
-    const workspaceData = await buildIntegrationWorkspace(targetSnapshotId);
+    const skipAutoScan =
+      req.query?.skipAutoScan === "true" || req.query?.skipAutoScan === "1";
+    const scanNow =
+      req.query?.scan === "true" || req.query?.scan === "1";
+
+    const workspaceData = await buildIntegrationWorkspace(targetSnapshotId, {
+      skipAutoScan,
+      scanNow,
+      bypassCache: scanNow,
+    });
 
     return res.status(200).json({ success: true, data: workspaceData });
   } catch (error) {
@@ -3603,7 +3653,8 @@ export const approveIntegrationTests = async (req, res) => {
             typeof t.metaJson === "string"
               ? JSON.parse(t.metaJson)
               : t.metaJson;
-          if (meta.framework === "SUPERTEST") {
+          const fwUpper = String(meta.framework || "SUPERTEST").toUpperCase();
+          if (fwUpper === "SUPERTEST" || fwUpper === "PLAYWRIGHT_API") {
             const approvedScenarios = approvedScenariosByTestId[t.id] || [];
             const isApproved = approvedScenarios.length > 0;
 
