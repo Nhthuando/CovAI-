@@ -16,6 +16,7 @@ import { digest, analyzeSystemTestFile } from '../services/systemTestStaticAnaly
 import { createRequirementRevision, confirmRequirementRevision, createAssertionBinding, approveAssertionBinding } from '../services/systemRequirement.service.js';
 import { assessmentRequest, automaticAssessmentRequest, requirementsRequest, bindingRequest, improvementRequest, parseRequest } from '../validators/systemAssessment.validator.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { systemAssessmentEnabled, systemMeasuredCoverageEnabled, systemAiImprovementEnabled, systemMutationEnabled } from '../services/systemFeatureFlags.service.js';
 import { summarizeImprovementVerification } from '../services/systemImprovementFeedback.service.js';
 import { proposalProgress } from '../services/systemImprovementProgress.service.js';
 import { syncSystemScenarioCatalog, fullStackCatalog, createManualScenario, materializeManualScenario, updateScenarioDraft, reviewScenario, confirmScenarioExpected, evaluateRunReadiness } from '../services/systemScenarioCatalog.service.js';
@@ -29,7 +30,7 @@ import { reviewSystemProposal, proposalReviewHash } from '../services/systemProp
 import { clearUnifiedDashboardCache } from '../services/unifiedQualityDashboard.service.js';
 import { projectSystemAssessment } from '../services/systemReportProjection.service.js';
 
-export const assessmentCapabilities = () => ({ enabled: process.env.SYSTEM_ASSESSMENT_ENABLED === 'true', coverageEnabled: process.env.SYSTEM_MEASURED_COVERAGE_ENABLED === 'true', improvementEnabled: process.env.SYSTEM_AI_IMPROVEMENT_ENABLED === 'true', mutationEnabled: process.env.SYSTEM_MUTATION_ENABLED === 'true' && process.env.SYSTEM_MUTATION_TRUSTED_LOCAL === 'true', supported: { runners: ['playwright'], frontend: 'Vite JS/JSX/TS/TSX source instrumentation', backend: 'Node JS ESM/CJS source instrumentation', requirementEvidence: 'Owner-reviewed direct awaited Playwright assertions' } });
+export const assessmentCapabilities = () => ({ enabled: systemAssessmentEnabled(), coverageEnabled: systemMeasuredCoverageEnabled(), improvementEnabled: systemAiImprovementEnabled(), mutationEnabled: systemMutationEnabled(), supported: { runners: ['playwright'], frontend: 'Vite JS/JSX/TS/TSX source instrumentation', backend: 'Node JS ESM/CJS source instrumentation', requirementEvidence: 'Owner-reviewed direct awaited Playwright assertions' } });
 export const createAssessmentControllers = ({ client = prisma, queue = async () => import('../services/queue.service.js'), createJob = createSnapshotJob } = {}) => {
     const owned = async req => {
         const snapshot = await client.projectSnapshot.findFirst({ where: { id: req.params.snapshotId, project: membershipWhere(req.user.id) } });
@@ -166,7 +167,7 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
             const projected = projectSystemAssessment(record,{artifacts:client.systemRunArtifact?await client.systemRunArtifact.findMany({where:{assessmentId:record.id},take:500}):[]});
             const liveFrame = getLatestSystemLiveFrame(record.id);
             if (projected && liveFrame) projected.liveFrame = liveFrame;
-            const expected=record.reportJson?.executionOnly && record.reportJson.workspaceIdentity ? record.reportJson.workspaceIdentity : record;
+            const expected=record.reportJson?.workspaceIdentity || record;
             res.json({ success: true, data: { ...projected, stale: identity.sourceHash !== expected.sourceHash || identity.testHash !== expected.testHash || (!record.reportJson?.executionOnly && (latestRevision?.id || null) !== record.requirementRevisionId) } });
         }),
         reportPdf: handler(async (req, res) => {

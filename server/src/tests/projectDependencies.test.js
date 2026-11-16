@@ -146,3 +146,18 @@ it('serializes three simultaneous preparations sharing one workspace receipt',as
     expect(maximum).toBe(1);
     expect(verify).toHaveBeenCalledTimes(3);
 });
+it('accepts installed CLI-only tooling without an importable entry point (react-scripts)',async()=>{
+    const directory=fixture({scripts:{start:'react-scripts start'},dependencies:{'react-scripts':'5'}});
+    fs.mkdirSync(path.join(directory,'node_modules/react-scripts/bin'),{recursive:true});
+    fs.writeFileSync(path.join(directory,'node_modules/react-scripts/package.json'),'{"name":"react-scripts","bin":{"react-scripts":"./bin/react-scripts.js"}}');
+    await expect(verifyRuntimeTooling({directory,repositoryRoot:directory,pkg:{dependencies:{'react-scripts':'5'}}})).resolves.toBeUndefined();
+});
+it('finds hoisted workspace tooling and reports only the packages that are really missing',async()=>{
+    const root=fixture({workspaces:['apps/*']});const app=path.join(root,'apps/web');fs.mkdirSync(app,{recursive:true});
+    tooling(root);
+    await expect(verifyRuntimeTooling({directory:app,repositoryRoot:root,pkg:{devDependencies:{vite:'7',nodemon:'3'}}})).rejects.toThrow('Application dependencies are incomplete: nodemon.');
+});
+it('does not borrow tooling installed above the repository root',async()=>{
+    const outer=fixture({});tooling(outer);const repo=path.join(outer,'repo');fs.mkdirSync(repo);
+    await expect(verifyRuntimeTooling({directory:repo,repositoryRoot:repo,pkg:{devDependencies:{vite:'7'}}})).rejects.toMatchObject({code:'AUT_DEPENDENCY_MISSING'});
+});

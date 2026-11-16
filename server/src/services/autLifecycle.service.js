@@ -291,6 +291,23 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
 /**
  * Starts the application under test (AUT) web server and performs 2-tier healthcheck.
  */
+// Imported projects often pin tooling that no longer runs on the host's Node.js
+// version. Name the cause up front instead of leaving users with a stack trace.
+export const autRuntimeCompatibilityHint = (output = "") => {
+  const text = String(output);
+  const node = process.versions.node;
+  if (/No such module: http_parser|process\.binding\(['"]http_parser/.test(text)) {
+    return `Cause: the project's dev server uses a legacy package (for example an old react-scripts / webpack-dev-server) that does not run on Node.js ${node}. Upgrade the project's build tooling, or run CovAI's server on an older Node.js version supported by the project.`;
+  }
+  if (/ERR_OSSL_EVP_UNSUPPORTED|digital envelope routines::unsupported/.test(text)) {
+    return `Cause: the project's build tooling (webpack 4 or older) is not compatible with the OpenSSL 3 used by Node.js ${node}. Upgrade the project's tooling or set NODE_OPTIONS=--openssl-legacy-provider in the System Test environment.`;
+  }
+  if (/The engine "node" is incompatible|Unsupported engine|requires Node\.?js? (?:version )?[<>=~^]/i.test(text)) {
+    return `Cause: the project declares a Node.js engine range that excludes the host version ${node}.`;
+  }
+  return "";
+};
+
 export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false, allowHttpClientError = false }) => {
   if (signal?.aborted) throw new ServiceError('AUT startup canceled',409);
   const selected = !preferStart ? selectFrontendPackage({rootDir:snapshotDir}) : null;
@@ -381,7 +398,8 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     await stopAutServer(child.pid, port, jobId);
     if (serverExited) {
       const details = formatAutStartupFailure(stderrBuffer || stdoutBuffer, env);
-      const msg = `AUT server process exited prematurely with code ${exitCode}.${details ? ` Details: ${details}` : ""}`;
+      const hint = autRuntimeCompatibilityHint(stderrBuffer || stdoutBuffer);
+      const msg = `AUT server process exited prematurely with code ${exitCode}.${hint ? ` ${hint}` : ""}${details ? ` Details: ${details}` : ""}`;
       await safeAddJobLog(jobId, "ERROR", `[AUT Lifecycle] ${msg}`);
       throw new Error(msg);
     }

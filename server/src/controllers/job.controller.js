@@ -123,6 +123,7 @@ export const getJobDetail = async (req, res) => {
           errorMessage: true,
           startedAt: true,
           finishedAt: true,
+          computeTimeMs: true,
           userId: true,
           projectId: true,
           logs: true,

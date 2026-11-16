@@ -1,3 +1,4 @@
+import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
 /* eslint-disable react-hooks/refs */
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -29,11 +30,12 @@ export const useSocket = (userId, onNotification) => {
       token ||= JSON.parse(localStorage.getItem("user") || "null")?.token;
     } catch { /* An expired session reconnects after login. */ }
     const socket = io(SOCKET_URL, {
-      auth: { token },
+      auth: socketAuth,
       transports: ["websocket", "polling"],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     });
+    attachSocketAuthRecovery(socket);
     socketRef.current = socket;
 
     socket.on("connect", () => {

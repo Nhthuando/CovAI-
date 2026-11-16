@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useToast } from "./ToastContext";
 import {
   Sparkles,
   Edit3,
@@ -148,6 +149,9 @@ function generateAnnotatedTestTemplate({
   filePath = "",
   category = "HAPPY_PATH",
 }) {
+  if (!functionName.trim()) {
+    return "// Enter a function name from the source file to preview its tests.";
+  }
   const isVitest = framework === "vitest";
   const cleanModName = filePath ? cleanPath(filePath).split("/").pop().replace(/\.[^.]+$/, "") : "sample";
   const fallbackFn = cleanModName && cleanModName !== "sample"
@@ -366,6 +370,7 @@ export default function SuggestTestcaseModal({
 }) {
   // Navigation: "SELECTION" (Step 1) vs "MANUAL_STUDIO" (Step 2 - Guided Mode)
   const [step, setStep] = useState("SELECTION");
+  const { showToast } = useToast();
 
   // Selection choices
   const [chosenMode, setChosenMode] = useState("AI"); // "AI" | "MANUAL"
@@ -403,7 +408,7 @@ export default function SuggestTestcaseModal({
 
   // Dynamic function list for the currently selected file
   const availableFunctionsForFile = useMemo(() => {
-    if (!selectedFile) return targetFunctionsList || [];
+    if (!selectedFile) return [];
     const cleanTarget = cleanPath(selectedFile);
     if (allFunctions && allFunctions.length > 0) {
       const matches = allFunctions.filter((fn) => {
@@ -412,8 +417,8 @@ export default function SuggestTestcaseModal({
       });
       if (matches.length > 0) return matches;
     }
-    return targetFunctionsList && targetFunctionsList.length > 0 ? targetFunctionsList : [];
-  }, [selectedFile, allFunctions, targetFunctionsList]);
+    return cleanTarget === cleanPath(targetFilePath || "") ? targetFunctionsList || [] : [];
+  }, [selectedFile, allFunctions, targetFilePath, targetFunctionsList]);
 
   // Manual Studio state: active function & category
   const [activeCategory, setActiveCategory] = useState("HAPPY_PATH");
@@ -440,15 +445,17 @@ export default function SuggestTestcaseModal({
         const fPath = fn.filePath || "";
         return fPath === initialFile || cleanPath(fPath) === cleanPath(initialFile);
       });
-      const resolvedFns = fns.length > 0 ? fns : targetFunctionsList || [];
-      const initialFn = targetFunction || resolvedFns[0]?.functionName || resolvedFns[0]?.name || "";
+      const isTargetFile = cleanPath(initialFile) === cleanPath(targetFilePath || "");
+      const resolvedFns = fns.length > 0 ? fns : isTargetFile ? targetFunctionsList || [] : [];
+      const initialFn = (isTargetFile ? targetFunction : "") || resolvedFns[0]?.functionName || resolvedFns[0]?.name || "";
       setSelectedFunc(initialFn);
+      setApplyFeedback(null);
     }
   }, [isOpen, defaultFramework, targetFilePath, targetFunction, cleanBusinessFiles, allFunctions, targetFunctionsList]);
 
-  // When selectedFile changes, sync selectedFunc to first available function if not present
+  // When selectedFile changes, initialize the function without overriding manual input.
   useEffect(() => {
-    if (availableFunctionsForFile.length > 0) {
+    if (availableFunctionsForFile.length > 0 && !selectedFunc) {
       const exists = availableFunctionsForFile.some(
         (fn) => (fn.functionName || fn.displayName || fn.name) === selectedFunc
       );
@@ -461,7 +468,7 @@ export default function SuggestTestcaseModal({
         );
       }
     }
-  }, [availableFunctionsForFile, selectedFunc]);
+  }, [selectedFile]);
 
   // Regenerate template when entering studio or toggling function / category / framework / file
   useEffect(() => {
@@ -499,6 +506,7 @@ export default function SuggestTestcaseModal({
 
   // Handle switching file from dropdown
   const handleFileChange = (newFile) => {
+    setApplyFeedback(null);
     setSelectedFile(newFile);
     const cleanTarget = cleanPath(newFile);
     const matchingFns = (allFunctions || []).filter((fn) => {
@@ -523,18 +531,34 @@ export default function SuggestTestcaseModal({
   };
 
   // Submit action for manual test apply
+  const [applyFeedback, setApplyFeedback] = useState(null);
   const handleApplyManual = async () => {
+    if (!selectedFunc.trim()) {
+      setApplyFeedback({ error: true, message: "Enter a function name to test." });
+      return;
+    }
     if (!syntaxStatus.valid) {
       alert("Please resolve syntax errors before saving and executing tests.");
       return;
     }
-    await onApplyManualTest?.({
-      framework: chosenFramework,
-      filePath: selectedFile || targetFilePath,
-      functionName: selectedFunc,
-      generatedCode: codeContent,
-    });
-    onClose();
+    setApplyFeedback(null);
+    try {
+      const result = await onApplyManualTest?.({
+        framework: chosenFramework,
+        filePath: selectedFile || targetFilePath,
+        functionName: selectedFunc.trim(),
+        generatedCode: codeContent,
+      });
+      if (result) {
+        setApplyFeedback(result);
+        if (!result.error) {
+          showToast({ type: "success", title: "Tests applied", message: result.message });
+          onClose();
+        }
+      }
+    } catch (error) {
+      setApplyFeedback({ error: true, message: error.response?.data?.message || error.message || "Unable to save and run the test." });
+    }
   };
 
   if (!isOpen) return null;
@@ -1290,7 +1314,7 @@ export default function SuggestTestcaseModal({
                             {availableFunctionsForFile.length} functions detected
                           </span>
                         </label>
-                        {availableFunctionsForFile && availableFunctionsForFile.length > 0 ? (
+                        {availableFunctionsForFile && availableFunctionsForFile.length > 0 && (
                           <div className="relative">
                             <select
                               value={selectedFunc}
@@ -1314,19 +1338,14 @@ export default function SuggestTestcaseModal({
                               })}
                             </select>
                           </div>
-                        ) : (
+                        )}
                           <input
                             type="text"
                             value={selectedFunc}
                             onChange={(e) => setSelectedFunc(e.target.value)}
                             placeholder="Enter function name from source file"
-                            className={`w-full text-xs rounded-xl px-3.5 py-2.5 font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                              isLight
-                                ? "bg-white border border-slate-300 text-slate-900 shadow-sm"
-                                : "bg-slate-900 border border-slate-700 text-slate-100"
-                            }`}
+                            className="mt-2 w-full text-xs rounded-xl px-3.5 py-2.5 font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]"
                           />
-                        )}
                       </div>
                     </div>
 
@@ -1354,7 +1373,14 @@ export default function SuggestTestcaseModal({
                               onClick={() => handleApplyPreset(cat.id)}
                               role="button"
                               tabIndex={0}
-                              className="rounded-xl p-3 cursor-pointer transition-all border text-left"
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  handleApplyPreset(cat.id);
+                                }
+                              }}
+                              aria-pressed={isCatActive}
+                              className="rounded-lg p-3 cursor-pointer transition-colors duration-150 border text-left"
                               style={{
                                 background: isCatActive
                                   ? isLight
@@ -1402,6 +1428,7 @@ export default function SuggestTestcaseModal({
                               >
                                 {cat.description}
                               </p>
+                              <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{cat.exampleHint}</p>
                             </div>
                           );
                         })}
@@ -1530,6 +1557,12 @@ export default function SuggestTestcaseModal({
               >
                 Cancel
               </button>
+            )}
+
+            {step === "MANUAL_STUDIO" && applyFeedback && (
+              <p role={applyFeedback.error ? "alert" : "status"} className={applyFeedback.error ? "text-sm text-[var(--color-danger)]" : "text-sm text-[var(--color-success)]"}>
+                {applyFeedback.message}
+              </p>
             )}
 
             <div className="flex items-center gap-3">

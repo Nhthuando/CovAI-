@@ -806,6 +806,7 @@ export const generateAiUnitTestSuite = async ({
   coverageDetails,
   isTest,
   filePath,
+  targetTestFile,
 }) => {
   const cleanSource = sanitizeSourceFilePath(
     snapshot?.rootDir,
@@ -816,7 +817,19 @@ export const generateAiUnitTestSuite = async ({
     .basename(cleanSource, ext)
     .replace(/\.(test|spec)$/i, "");
 
-  const testFileInfo = isTest
+  const testFileInfo = targetTestFile
+    ? {
+        found: fs.existsSync(path.join(snapshot.rootDir, targetTestFile)),
+        relativePath: targetTestFile,
+        suggestedFilePath: targetTestFile,
+        absolutePath: path.join(snapshot.rootDir, targetTestFile),
+        fileName: path.basename(targetTestFile),
+        content: fs.existsSync(path.join(snapshot.rootDir, targetTestFile))
+          ? fs.readFileSync(path.join(snapshot.rootDir, targetTestFile), "utf8")
+          : "",
+        framework,
+      }
+    : isTest
     ? {
         found: true,
         relativePath: filePath,
@@ -858,7 +871,7 @@ export const generateAiUnitTestSuite = async ({
   });
 
   // 2. Build Standard 6-Part Prompt (Section 3.1)
-  const prompt = buildStandardUnitTestPrompt({
+  const initialPrompt = buildStandardUnitTestPrompt({
     framework,
     cleanSource,
     testFileInfo,
@@ -878,7 +891,7 @@ export const generateAiUnitTestSuite = async ({
     let generationTimer;
     const callStart = Date.now();
     const aiResponse = await Promise.race([
-      generateText(prompt, null, null, {
+      generateText(initialPrompt, null, null, {
         returnTelemetry: true,
         userId,
         taskType: "unit",
@@ -1004,6 +1017,10 @@ export const generateAiUnitTestSuite = async ({
     };
 
     // 4. Parse & Sanitize Response (Section 3.2)
+    const responseText =
+      typeof aiResponse === "object" && aiResponse?.text !== undefined
+        ? aiResponse.text
+        : aiResponse;
     const parseCheck = parseAndSanitizeAiTestResponse({
       rawResponse: responseText,
       framework,

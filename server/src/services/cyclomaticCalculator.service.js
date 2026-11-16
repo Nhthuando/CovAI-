@@ -1,7 +1,7 @@
 /**
  * Tính toán Cyclomatic Complexity từ nút AST của hàm.
  * Hỗ trợ các nút AST từ Babel (@babel/parser), tương thích đầy đủ với ES2024+.
- * CC = 1 + Decision Points (If, Loops, Catch, Switch cases, Logical &&, ||, ??).
+ * CC = 1 + Decision Points (If, Loops, Catch, Switch cases, Logical &&, ||, ??); nested functions are excluded.
  * @param {object} astNode - Nút AST của hàm
  * @returns {{value: number, decisionPoints: number}}
  */
@@ -15,6 +15,8 @@ export function calculateComplexityFromAst(astNode) {
         const countDecisions = (node) => {
             if (!node || typeof node !== 'object') return;
             const type = node.type;
+            if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression',
+                'ObjectMethod', 'ClassMethod', 'ClassPrivateMethod'].includes(type)) return;
 
             if (
                 type === 'IfStatement' ||

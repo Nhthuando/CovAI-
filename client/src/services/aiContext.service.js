@@ -20,5 +20,15 @@ export const addAiMemory = (projectId, input) => contextRequest(projectId, "/ai-
 export const editAiMemory = (projectId, id, input) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "PATCH", input);
 export const forgetAiMemory = (projectId, id) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "DELETE");
 export const clearAiMemories = projectId => contextRequest(projectId, "/ai-context/memories", "DELETE");
-export const previewAiContext = (projectId, input) => contextRequest(projectId, "/ai-context/preview", "POST", input);
+export function chatScreenContext(screen) {
+  if (!screen) return undefined;
+  return {
+    activity: screen.activity,
+    testType: ["unit", "integration", "system"].includes(screen.testType) ? screen.testType : undefined,
+    filePath: screen.filePath,
+  };
+}
+export const previewAiContext = (projectId, input) => contextRequest(projectId, "/ai-context/preview", "POST", {
+  ...input, screenContext: chatScreenContext(input.screenContext),
+});
 export const branchAiConversation = (projectId, sessionId, input) => contextRequest(projectId, `/chat/sessions/${encodeURIComponent(sessionId)}/branch`, "POST", input);

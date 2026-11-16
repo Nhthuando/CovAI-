@@ -62,6 +62,9 @@
 
   /* Semantic Status Colors */
   --color-success: #15803d;
+  --color-coverage-good: #16a34a;
+  --color-coverage-warning: #d97706;
+  --color-coverage-low: #dc2626;
   --color-warning: #b45309;
   --color-danger: #dc2626;
   --color-info: #0284c7;
@@ -137,6 +140,9 @@
 
   /* Semantic Status Colors */
   --color-success: #22c55e;
+  --color-coverage-good: #22c55e;
+  --color-coverage-warning: #fbbf24;
+  --color-coverage-low: #f87171;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-info: #38bdf8;

@@ -13,6 +13,7 @@ import {
   Play,
 } from 'lucide-react';
 import Button from '../../common/Button.jsx';
+import { Skeleton } from '../../common/Skeleton.jsx';
 import { systemEvidenceRequest, downloadSystemAssessmentPdf } from '../../../services/systemTest.service.js';
 import SystemTestImprovementReview from './SystemTestImprovementReview.jsx';
 import SystemTestDimensionsTable from './SystemTestDimensionsTable.jsx';
@@ -57,6 +58,9 @@ export default function SystemTestAssessmentPanel({
   const [fileChoice, setFileChoice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Until the first load finishes we do not know whether a run exists; showing
+  // "Not Executed Yet" here would contradict results that are still loading.
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -78,9 +82,10 @@ export default function SystemTestAssessmentPanel({
         setProposal(recovered);
         setScenarios(scns?.scenarios || (Array.isArray(scns) ? scns : []));
         setError('');
+        setLoaded(true);
       }
     }).catch(err => {
-      if (active) setError(err.response?.data?.message || err.message);
+      if (active) { setError(err.response?.data?.message || err.message); setLoaded(true); }
     });
 
     return () => { active = false; };
@@ -171,6 +176,16 @@ export default function SystemTestAssessmentPanel({
   };
 
   const hasExecuted = Boolean(current && current.scenarioVerdicts?.length);
+
+  if (!loaded && snapshotId) {
+    return (
+      <div className="space-y-4" aria-busy="true" aria-label="Loading system test results">
+        <Skeleton height={56} rounded="rounded-lg" />
+        <div className="grid gap-4 md:grid-cols-2"><Skeleton height={180} rounded="rounded-lg" /><Skeleton height={180} rounded="rounded-lg" /></div>
+        <div className="grid gap-4 sm:grid-cols-3"><Skeleton height={96} rounded="rounded-lg" /><Skeleton height={96} rounded="rounded-lg" /><Skeleton height={96} rounded="rounded-lg" /></div>
+      </div>
+    );
+  }
 
   return (
     <section className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-all">

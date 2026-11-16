@@ -189,6 +189,8 @@ export const generateText = async (
       typeof maybeInstructionOrConfig === "object"
     ) {
       generationConfig = maybeInstructionOrConfig;
+    } else {
+      generationConfig = maybeConfig || {};
     }
   }
 
@@ -313,6 +315,8 @@ export const generateMultimodalText = async (
     retryBaseDelayMs,
     taskType: _taskType,
     apiKey: _apiKey,
+    returnTelemetry: _returnTelemetry,
+    userId: _userId,
     ...providerConfig
   } = generationConfig;
 

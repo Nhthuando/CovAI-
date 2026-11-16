@@ -67,7 +67,8 @@ const runSystemImprovementJob = async (jobId, lease) => {
         const latest=await prisma.systemRequirementRevision.findFirst({where:{snapshotId:job.snapshotId,status:'CONFIRMED'},orderBy:{revisionNumber:'desc'}});
         if((latest?.id || null)!==assessment.requirementRevisionId)throw new ServiceError('Requirement revision changed; assess again',409);
         identity=snapshotIdentity(job.snapshot.rootDir);
-        if(identity.sourceHash!==assessment.sourceHash || identity.testHash!==assessment.testHash)throw new ServiceError('Assessment is stale',409);
+        const assessedIdentity=assessment.reportJson?.workspaceIdentity || assessment;
+        if(identity.sourceHash!==assessedIdentity.sourceHash || identity.testHash!==assessedIdentity.testHash)throw new ServiceError('Assessment is stale',409);
         before=fs.readFileSync(containedPath(job.snapshot.rootDir,input.filePath),'utf8');
         if(digest(before)!==input.expectedTestHash)throw new ServiceError('Test changed since review',409);
         if(input.gapIds.some(id=>!assessment.reportJson.gaps.some(gap=>gap.id===id)))throw new ServiceError('Selected gap is not in this assessment',400);

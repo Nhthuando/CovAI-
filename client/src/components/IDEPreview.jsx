@@ -415,6 +415,7 @@ export default function IDEPreview() {
                       size="sm"
                       className="w-full text-xs font-semibold"
                       icon={Play}
+                      to="/register"
                     >
                       Run in Test Sandbox
                     </Button>

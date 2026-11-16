@@ -1,6 +1,4 @@
 import { requireFullStackMode } from "../services/systemExecutionPolicy.service.js";
-import { withPreparedProjectWorkspace } from "../services/projectWorkspacePreparation.service.js";
-import { stagePreparedPublication } from "../services/projectOperationWorkspace.service.js";
 import {
   membershipWhere,
   resolveProjectAccess,
@@ -13,6 +11,7 @@ import { snapshotWorkspaceRoot } from "../utils/snapshotWorkspace.js";
 import { requestedAiModel } from "../utils/selectedAiModel.js";
 import { resolveSystemScreenshot } from "../services/systemScreenshotPath.service.js";
 import { coverageSummaryFor } from "../services/systemAssessmentContract.service.js";
+import { deriveRunStatusNotices } from "../services/testResultParser.service.js";
 import { parseSystemTestResultQuery } from "../validators/systemTestResultQuery.validator.js";
 import fs from "fs";
 import path from "path";
@@ -79,6 +78,7 @@ import {
 import {
   cleanStoragePath,
   cleanStorageText,
+  stripAnsi,
   canonicalizeFilePath,
 } from "../utils/pathSanitizer.js";
 import {
@@ -87,6 +87,7 @@ import {
 } from "../utils/businessLogicFileDetector.js";
 import { detectSystemTestFrameworksForSnapshot } from "../services/systemTestFrameworkDetection.service.js";
 import { optimizeSystemTest } from "../services/systemTestBooster.service.js";
+import { createSystemGenerationDraft } from "../services/systemGenerationProposal.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 import { extractSuitesAndScenarios } from "../utils/testFileParser.js";
 import {
@@ -505,6 +506,15 @@ export const getCoverageSummary = async (req, res) => {
     });
 
     const typeFilter = req.query?.type || req.query?.coverageType || null;
+
+    const storedCoverage = summary
+      ? {
+          lines: summary.linesPct,
+          branches: summary.branchesPct,
+          functions: summary.funcsPct,
+          statements: summary.stmtsPct,
+        }
+      : null;
 
     let coverage = summary
       ? {
@@ -1344,38 +1354,15 @@ export const getCoverageSummary = async (req, res) => {
       );
     }
 
-    const isJobFailed = latestJob?.status === "FAILED";
-    const hasModuleResolutionError =
-      latestJob?.errorMessage?.includes("Cannot find module") ||
-      latestJob?.errorMessage?.includes("Cannot find package") ||
-      latestTestRun?.scenarios?.some((s) =>
-        s.failureMessages?.some(
-          (m) =>
-            m.includes("Cannot find module") ||
-            m.includes("Cannot find package"),
-        ),
-      );
-    const isFatalFailure = isJobFailed || hasModuleResolutionError;
+    const { isFatalFailure, hasTestFailures, failedSuite, failedSuites, latestRunStatus } =
+      deriveRunStatusNotices(latestTestRun, latestJob);
 
     const scenarioWithErr = latestTestRun?.scenarios?.find(
       (s) => s.failureMessages?.length > 0,
     );
-    const latestRunError = cleanStorageText(
+    const latestRunError = cleanStorageText(stripAnsi(
       scenarioWithErr?.failureMessages?.[0] || latestJob?.errorMessage || null,
-    );
-    const failedSuite = cleanStoragePath(scenarioWithErr?.testFile) || null;
-    const hasTestFailures = (latestTestRun?.failedTests || 0) > 0;
-
-    let latestRunStatus = "success";
-    if (isFatalFailure) {
-      latestRunStatus = "failed";
-    } else if (hasTestFailures) {
-      latestRunStatus = "passed_with_failures";
-    } else if (latestTestRun?.status === "PASSED") {
-      latestRunStatus = "passed";
-    } else if (!latestJob && !latestTestRun) {
-      latestRunStatus = "not_run";
-    }
+    ));
 
     const sanitizedTestExecution = latestTestRun
       ? {
@@ -1384,7 +1371,7 @@ export const getCoverageSummary = async (req, res) => {
             ...s,
             testFile: cleanStoragePath(s.testFile) || null,
             failureMessages: (s.failureMessages || []).map((m) =>
-              cleanStorageText(m),
+              cleanStorageText(stripAnsi(m)),
             ),
           })),
         }
@@ -1433,6 +1420,7 @@ export const getCoverageSummary = async (req, res) => {
     }
 
     // Return formatted response with explicit distinction between current run and last successful coverage
+    const lastSuccessfulCoverage = coverage ?? storedCoverage;
     return res.status(200).json({
       success: true,
       data: {
@@ -1443,13 +1431,14 @@ export const getCoverageSummary = async (req, res) => {
         commitSha: snapshot.commitSha ?? null,
         snapshotCreatedAt: snapshot.createdAt,
         coverage: isFatalFailure ? null : coverage,
-        previousCoverage: coverage,
-        lastSuccessfulCoverage: coverage,
+        previousCoverage: lastSuccessfulCoverage,
+        lastSuccessfulCoverage,
         isPreviousResult: isFatalFailure,
         latestRunStatus,
         latestRunError,
         missingDependency,
         failedSuite,
+        failedSuites,
         hasTestFailures,
         testExecution: sanitizedTestExecution,
         rawTotals,
@@ -2276,6 +2265,43 @@ const extractRepoRelativePath = (suiteName) => {
  * Returns test files executed for this snapshot, with classification and test case counts.
  * For type=unit: strictly returns Jest and Vitest test files only.
  */
+export const mapCoverageSuiteResult = (suiteResult) => {
+  const assertions = (suiteResult?.assertionResults || []).filter(Boolean).map((a) => ({
+    ...a,
+    title: a.title || a.fullName || "Test case",
+    status: (a.status || "pending").toLowerCase(),
+    ...(typeof a.message === "string" ? { message: stripAnsi(a.message) } : {}),
+    ...(Array.isArray(a.failureMessages) ? { failureMessages: a.failureMessages.map(stripAnsi) } : {}),
+  }));
+  const passedTests = Math.max(assertions.filter((a) => a.status === "passed").length, suiteResult?.numPassingTests || 0);
+  const failedTests = Math.max(assertions.filter((a) => a.status === "failed").length, suiteResult?.numFailingTests || 0);
+  const totalTests = Math.max(assertions.length, passedTests + failedTests + (suiteResult?.numPendingTests || 0));
+  const status = suiteResult?.status?.toLowerCase() === "failed" || failedTests > 0
+    ? "failed" : passedTests > 0 ? "passed" : "pending";
+  return {
+    assertions, passedTests, failedTests, totalTests, status,
+    ...(typeof suiteResult?.message === "string" ? { message: stripAnsi(suiteResult.message) } : {}),
+  };
+};
+
+export const storedTestRunSuites = (runs) => {
+  const latestTypes = new Set();
+  const suites = [];
+  // Runs arrive newest first. Never combine old assertions with the latest run.
+  for (const run of runs) {
+    if (latestTypes.has(run.type)) continue;
+    latestTypes.add(run.type);
+    const byFile = new Map();
+    for (const scenario of run.scenarios || []) {
+      if (!scenario.testFile) continue;
+      if (!byFile.has(scenario.testFile)) byFile.set(scenario.testFile, { name: scenario.testFile, assertionResults: [] });
+      byFile.get(scenario.testFile).assertionResults.push(scenario);
+    }
+    suites.push(...byFile.values());
+  }
+  return suites;
+};
+
 export const getCoverageTestSuites = async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -2359,8 +2385,16 @@ export const getCoverageTestSuites = async (req, res) => {
         .trim();
 
     // 1. Locate test-results.json and separate Jest vs Vitest results
-    const loadTestResultsFromPaths = (paths) => {
-      const list = [];
+    // Operation workspaces may be gone; persisted scenarios still describe the run.
+    const storedRuns = requestedType === "unit"
+      ? await prisma.testRun.findMany({
+          where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+          include: { scenarios: true },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
+    const loadTestResultsFromPaths = (paths, storedSuites = []) => {
+      const list = [...storedSuites];
       const seen = new Set();
       for (const p of paths) {
         if (fs.existsSync(p) && !seen.has(p)) {
@@ -2378,7 +2412,7 @@ export const getCoverageTestSuites = async (req, res) => {
         // extractRepoRelativePath handles Docker paths like /app/storage/.../repo/foo.test.js
         // path.relative() fails when mixing Docker linux paths with Windows host paths
         const repoRelative = suite.name
-          ? norm(extractRepoRelativePath(suite.name))
+          ? norm(canonicalizeFilePath(suite.name, snapshotRootDir) || extractRepoRelativePath(suite.name))
           : "";
         if (!repoRelative) continue;
         map.set(repoRelative, suite);
@@ -2426,9 +2460,11 @@ export const getCoverageTestSuites = async (req, res) => {
 
     const jestResultsByPath = loadTestResultsFromPaths(
       findJsonFiles(snapshotRootDir, "jest-results.json"),
+      storedTestRunSuites(storedRuns.filter((run) => run.type === "JEST")),
     );
     const vitestResultsByPath = loadTestResultsFromPaths(
       findJsonFiles(snapshotRootDir, "vitest-results.json"),
+      storedTestRunSuites(storedRuns.filter((run) => run.type === "VITEST")),
     );
     const generalResultsByPath = loadTestResultsFromPaths(
       findJsonFiles(snapshotRootDir, "test-results.json"),
@@ -2595,9 +2631,8 @@ export const getCoverageTestSuites = async (req, res) => {
         .toLowerCase();
       const fileKnownFunctions = functionsByBaseName.get(cleanBase) || [];
 
-      const assertions =
-        suiteResult && Array.isArray(suiteResult.assertionResults)
-          ? suiteResult.assertionResults.filter(Boolean).map((a) => {
+      const mappedSuite = mapCoverageSuiteResult(suiteResult);
+      const assertions = mappedSuite.assertions.map((a) => {
               let targetFunction = null;
               try {
                 targetFunction = extractTargetFunction(
@@ -2613,7 +2648,9 @@ export const getCoverageTestSuites = async (req, res) => {
               );
               return {
                 title: a?.title || a?.fullName || "Test case",
-                status: a?.status || "passed",
+                status: a.status,
+                ...(typeof a.message === "string" ? { message: a.message } : {}),
+                ...(Array.isArray(a.failureMessages) ? { failureMessages: a.failureMessages } : {}),
                 duration: typeof a?.duration === "number" ? a.duration : 0,
                 targetFunction: targetFunction || null,
                 ancestorTitles: Array.isArray(a?.ancestorTitles)
@@ -2625,41 +2662,10 @@ export const getCoverageTestSuites = async (req, res) => {
                 categoryColor: catInfo.categoryColor,
                 line: a?.location?.line || a?.line || a?.startLine || null,
               };
-            })
-          : [];
+            });
 
-      const numPassing =
-        typeof suiteResult?.numPassingTests === "number"
-          ? suiteResult.numPassingTests
-          : null;
-      const numFailing =
-        typeof suiteResult?.numFailingTests === "number"
-          ? suiteResult.numFailingTests
-          : null;
-
-      const passedTests =
-        assertions.length > 0
-          ? assertions.filter((a) => a.status === "passed").length
-          : (numPassing ?? (suiteResult?.status === "passed" ? 1 : 0));
-
-      const failedTests =
-        assertions.length > 0
-          ? assertions.filter((a) => a.status === "failed").length
-          : (numFailing ?? (suiteResult?.status === "failed" ? 1 : 0));
-
-      const totalTests =
-        assertions.length > 0
-          ? assertions.length
-          : passedTests + failedTests || (suiteResult ? 1 : 0);
-
-      // pending = file found but no test run result yet; failed/passed = from results
-      let status = suiteResult
-        ? suiteResult.status === "failed" || failedTests > 0
-          ? "failed"
-          : suiteResult.status === "pending" || suiteResult.status === "skipped"
-            ? "pending"
-            : "passed"
-        : "pending";
+      // pending = file found but no executed assertions; failures take precedence.
+      const { passedTests, failedTests, totalTests, status } = mappedSuite;
 
       const rawDuration =
         suiteResult?.endTime && suiteResult?.startTime
@@ -2674,18 +2680,19 @@ export const getCoverageTestSuites = async (req, res) => {
           typeof suiteResult.failureMessage === "string" &&
           suiteResult.failureMessage
         ) {
-          message = suiteResult.failureMessage.slice(0, 1000);
+          message = stripAnsi(suiteResult.failureMessage).slice(0, 1000);
         } else if (Array.isArray(suiteResult.failureMessage)) {
           message =
             suiteResult.failureMessage
               .filter(Boolean)
+              .map(stripAnsi)
               .join("\n")
               .slice(0, 1000) || null;
         } else if (
           typeof suiteResult.message === "string" &&
           suiteResult.message
         ) {
-          message = suiteResult.message.slice(0, 1000);
+          message = mappedSuite.message.slice(0, 1000);
         } else if (Array.isArray(suiteResult.assertionResults)) {
           const failedAssertion = suiteResult.assertionResults.find(
             (a) =>
@@ -2698,6 +2705,7 @@ export const getCoverageTestSuites = async (req, res) => {
             message =
               failedAssertion.failureMessages
                 .filter(Boolean)
+                .map(stripAnsi)
                 .join("\n")
                 .slice(0, 1000) || null;
           }
@@ -5204,157 +5212,26 @@ export const generateColdStartSystemTestsController = async (req, res) => {
         .json({ success: false, message: "snapshotId is required." });
     }
 
-    const snapshot = await prisma.projectSnapshot.findUnique({
-      where: { id: snapshotId },
-      include: { project: true },
+    const draft = await createSystemGenerationDraft({
+      snapshotId,
+      userId: req.user.id,
+      framework,
+      targetRoutes,
+      executionMode,
+      model: requestedAiModel(req),
+      signal: cancellation.signal,
     });
-
-    if (!snapshot) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Snapshot not found." });
-    }
-    const generationAccess = await resolveProjectAccess({
-      projectId: snapshot.projectId,
-      userId,
-      capability: "ai.use",
-    });
-
-    const rootDir = snapshot.rootDir;
-    if (!rootDir || !fs.existsSync(rootDir)) {
-      return res.status(409).json({
-        success: false,
-        message: "Snapshot repository is not available on disk.",
-      });
-    }
-
-    const rawFramework =
-      req.body?.framework || req.body?.runner || "playwright";
-    // const framework =
-    //   String(rawFramework).toLowerCase() === "cypress"
-    //     ? "cypress"
-    //     : "playwright";
-    // const targetRoutes = Array.isArray(req.body?.targetRoutes)
-    //   ? req.body.targetRoutes
-    //   : Array.isArray(req.body?.routes)
-    //     ? req.body.routes
-    //     : [];
-
-    // const executionMode =
-    //   req.body?.executionMode === "full" ? "full" : "frontend";
-
-    let aiTest;
-    const generationResult = await withPreparedProjectWorkspace(
-      {
-        projectId: snapshot.projectId,
-        snapshotId,
-        userId,
-        capability: "ai.use",
-        expectedWorkspaceRevision: generationAccess.project.workspaceRevision,
-        type: "AI_COLDSTART",
-        input: {
-          framework,
-          targetRoutes,
-          executionMode,
-          model: requestedAiModel(req) || null,
-        },
-      },
-      async (context) => {
-        const result = await generateColdStartSystemTests({
-          model: requestedAiModel(req),
-          rootDir: path.join(context.rootDir, context.analysisRelative),
-          framework,
-          targetRoutes,
-          executionMode,
-        });
-        await stagePreparedPublication(async (tx) => {
-          aiTest = await tx.aiTest.create({
-            data: {
-              projectId: snapshot.projectId,
-              snapshotId,
-              filePath: result.filePath,
-              content: result.code,
-              status: "VERIFIED",
-              mode: framework === "cypress" ? "CYPRESS_E2E" : "PLAYWRIGHT_E2E",
-              metaJson: JSON.stringify({
-                coldStart: true,
-                applied: true,
-                suiteCount: result.suiteCount,
-                scenarioCount: result.scenarioCount,
-                suites: result.suites,
-                scenarios: result.scenarios,
-                configCreated: result.configCreated,
-                configPath: result.configPath,
-                proposalBase: {
-                  snapshotId,
-                  workspaceRevision: context.workspaceRevision,
-                },
-                telemetry: result.telemetry || null,
-              }),
-            },
-          });
-          // SystemTestFile belongs to an actual TestRun, not a snapshot.
-          // Generation metadata stays in AiTest; execution creates its own
-          // file rows without inventing a successful run here.
-        });
-        return result;
-      },
-    );
-
-    // Refresh framework detection for snapshot to update hasTestFiles and isZeroTestProject
-    invalidateCoverageCache(snapshotId);
-    let frameworks = null;
-    try {
-      frameworks = await detectSystemTestFrameworksForSnapshot(
-        snapshotId,
-        snapshot,
-      );
-    } catch (_) {}
-
-    // Automatically sync scenario catalog so scenarios are immediately available in Scenario Library
-    if (prisma?.systemScenario) {
-      try {
-        const { syncSystemScenarioCatalog } =
-          await import("../services/systemScenarioCatalog.service.js");
-        await syncSystemScenarioCatalog({
-          client: prisma,
-          snapshotId,
-          rootDir: snapshot.rootDir,
-        });
-      } catch (syncErr) {
-        console.warn(
-          "[generateColdStartSystemTestsController] Auto-sync catalog notice:",
-          syncErr.message,
-        );
-      }
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: `Successfully generated ${generationResult.framework} system tests with ${generationResult.scenarioCount} scenarios.`,
-      data: {
-        aiTestId: aiTest.id,
-        snapshotId,
-        workspaceRevision: generationResult.workspaceRevision,
-        applied: true,
-        framework: generationResult.framework,
-        filePath: generationResult.filePath,
-        configCreated: generationResult.configCreated,
-        configPath: generationResult.configPath,
-        suiteCount: generationResult.suiteCount,
-        scenarioCount: generationResult.scenarioCount,
-        suites: generationResult.suites,
-        scenarios: generationResult.scenarios,
-        frameworks,
-        telemetry: generationResult.telemetry || null,
-      },
-    });
+    return res.status(201).json({ success: true, data: draft });
   } catch (error) {
     console.error("[generateColdStartSystemTestsController] Error:", error);
     return res.status(error.statusCode || 500).json({
       success: false,
+      code: error.code,
+      details: error.details,
       message: error.message || "Failed to generate system tests.",
     });
+  } finally {
+    req.off?.("aborted", onAbort);
   }
 };
 

@@ -36,6 +36,6 @@ export const sendEmail = async ({ email, subject, message, html }) => {
         const info = await transporter.sendMail(mailOptions);
         return info; 
     } catch (err) {
-        throw new Error(`Failed to send email to ${email}: ${err.message}`);
+        throw new Error(`Failed to send email to ${email}: ${err.message}`, { cause: err });
     }
 };

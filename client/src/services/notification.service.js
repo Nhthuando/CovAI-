@@ -1,13 +1,7 @@
 import axios from 'axios';
+import { installAxiosAuthRefresh } from '../lib/authSession.js';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-
-const clearAuthState = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('userName');
-    localStorage.removeItem('userEmail');
-};
 
 const notificationApi = axios.create({
     baseURL: `${API_URL}/notifications`,
@@ -29,19 +23,8 @@ notificationApi.interceptors.request.use(
     (error) => Promise.reject(error)
 );
 
-// Handle token expiration
-notificationApi.interceptors.response.use(
-    (response) => response,
-    (error) => {
-        if (error?.response?.status === 401) {
-            clearAuthState();
-            if (!window.location.pathname.includes('/login')) {
-                window.location.href = '/login';
-            }
-        }
-        return Promise.reject(error);
-    }
-);
+// Handle token expiration: renew the session and retry before logging out.
+installAxiosAuthRefresh(notificationApi);
 
 export const notificationService = {
     /**

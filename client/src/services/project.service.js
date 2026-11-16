@@ -1,5 +1,6 @@
 import { editorAwareFetch } from "./editorAwareRequest";
 import { getAIModelHeaders } from "./aiModel.service.js";
+import { handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -15,11 +16,7 @@ async function handleResponse(res) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("userName");
-      localStorage.removeItem("userEmail");
-      window.location.href = "/login";
+      await handleUnauthorizedResponse();
     }
     const err = new Error(data.message || "Failed API call");
     err.status = res.status;
@@ -448,6 +445,7 @@ export async function sendAiChatMessageApi(
       attachments,
       sessionId,
       ...context,
+      clientRequestId: context.clientRequestId || crypto.randomUUID(),
     }),
   });
   return handleResponse(res);
