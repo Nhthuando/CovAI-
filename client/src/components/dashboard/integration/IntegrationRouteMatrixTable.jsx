@@ -14,7 +14,6 @@ import {
   Plus,
   Edit3,
   Trash2,
-  Sparkles,
   Radar,
   Code2,
   AlertTriangle,
@@ -34,14 +33,21 @@ import {
 } from "./integrationCaseCoverage.js";
 
 export const METHOD_STYLES = {
-  GET: "bg-sky-500/10 text-sky-400 border-sky-500/25",
-  POST: "bg-indigo-500/10 text-indigo-400 border-indigo-500/25",
-  PUT: "bg-amber-500/10 text-amber-400 border-amber-500/25",
-  PATCH: "bg-purple-500/10 text-purple-400 border-purple-500/25",
-  DELETE: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+  GET: "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  POST: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]",
+  PUT: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
+  PATCH: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  DELETE: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
   DEFAULT:
     "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
 };
+
+function isBoilerplateDescription(description) {
+  if (!description || typeof description !== "string") return true;
+  return /^(Fetches|Creates or processes|Updates|Deletes|Handles|Processes)\s+requests?\s+at\s+/i.test(
+    description.trim(),
+  );
+}
 
 const HTTP_METHODS = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"];
 
@@ -592,7 +598,7 @@ export default function IntegrationRouteMatrixTable({
             </div>
             <div className="p-3.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
               <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)] mb-1">
-                <Sparkles className="w-3.5 h-3.5 text-[var(--color-primary)]" />
+                <Zap className="w-3.5 h-3.5 text-[var(--color-primary)]" />
                 <span>2. Run or generate tests</span>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">
@@ -607,7 +613,7 @@ export default function IntegrationRouteMatrixTable({
               type="button"
               onClick={onScanEndpoints}
               disabled={isScanning}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
             >
               {isScanning ? (
                 <>
@@ -786,9 +792,9 @@ export default function IntegrationRouteMatrixTable({
                 type="button"
                 onClick={() => onGenerateSelected(selectedEndpointsList)}
                 disabled={isGenerating || isRunning}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-primary)] border border-[var(--color-primary)]/40 transition-colors disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50 cursor-pointer"
               >
-                <Sparkles className="w-3 h-3" />
+                <Zap className="w-3 h-3 text-[var(--color-primary)]" />
                 <span className="tabular-nums">
                   Generate Tests ({selectedEndpointsList.length})
                 </span>
@@ -806,7 +812,7 @@ export default function IntegrationRouteMatrixTable({
                     : onRunSelected(selectedEndpointsList)
                 }
                 disabled={isRunning || isGenerating}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <Play className="w-3 h-3" fill="currentColor" />
                 <span className="tabular-nums">
@@ -954,28 +960,28 @@ export default function IntegrationRouteMatrixTable({
                       </td>
 
                       {/* Endpoint (Method + Path + Description) */}
-                      <td className="py-3.5 px-3 align-top">
+                      <td className="py-3 px-3 align-top">
                         <div className="flex items-center gap-2.5">
                           <span
-                            className={`inline-flex items-center justify-center w-14 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0 ${
+                            className={`inline-flex items-center justify-center w-14 py-0.5 rounded text-[10px] font-mono font-semibold border shrink-0 ${
                               METHOD_STYLES[method] || METHOD_STYLES.DEFAULT
                             }`}
                           >
                             {method}
                           </span>
-                          <span className="font-mono text-[13px] font-semibold text-[var(--color-text)] tracking-tight">
+                          <span className="font-mono text-[13px] font-medium text-[var(--color-text)] tracking-tight">
                             {ep.path}
                           </span>
                           {ep.authRequired && (
                             <span
                               title="Authentication Middleware Detected"
-                              className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                              className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-[var(--color-bg)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
                             >
-                              Auth
+                              auth
                             </span>
                           )}
                         </div>
-                        {ep.description && (
+                        {ep.description && !isBoilerplateDescription(ep.description) && (
                           <p className="text-[11px] text-[var(--color-text-muted)] mt-1 pl-[66px] line-clamp-1 font-sans">
                             {ep.description}
                           </p>
@@ -1019,30 +1025,30 @@ export default function IntegrationRouteMatrixTable({
                         <div className="pt-0.5">
                           {status === "DISCOVERED" ? (
                             <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" />
                               Discovered
                             </span>
                           ) : status === "PASS" ? (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/65" />
                               Covered
                             </span>
                           ) : status === "PARTIAL" ? (
                             <span
-                              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-400 font-mono tabular-nums"
+                              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] font-mono tabular-nums"
                               title={`Missing required cases (${epCaseCov.passedCasesCount}/${epCaseCov.totalRequired} verified)`}
                             >
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500/60" />
                               Partial ({epCaseCov.passedCasesCount}/{epCaseCov.totalRequired})
                             </span>
                           ) : status === "FAIL" ? (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-300/85">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400/75" />
                               Failed
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" />
                               Uncovered
                             </span>
                           )}
@@ -1089,15 +1095,15 @@ export default function IntegrationRouteMatrixTable({
                               type="button"
                               onClick={() => onGenerateTest(ep)}
                               disabled={isGenerating || isRunning}
-                              title="Generate AI multi-scenario suite for this endpoint"
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-colors disabled:opacity-50 cursor-pointer"
+                              title="Generate integration test suite for this endpoint"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors disabled:opacity-50 cursor-pointer"
                             >
                               {isThisGenerating ? (
-                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <RefreshCw className="w-3 h-3 animate-spin text-[var(--color-text-secondary)]" />
                               ) : (
-                                <Zap className="w-3 h-3" />
+                                <Zap className="w-3 h-3 text-[var(--color-text-muted)]" />
                               )}
-                              <span>AI Gen</span>
+                              <span>Generate</span>
                             </button>
                           )}
                         </div>
@@ -1106,7 +1112,7 @@ export default function IntegrationRouteMatrixTable({
 
                     {/* Expanded API Details, Logic Code & Scenarios */}
                     {isExpanded && (
-                      <tr className="bg-[#0D1219]">
+                      <tr className="bg-[var(--color-bg)]">
                         <td colSpan={6} className="p-0">
                           <div className="px-6 py-4 border-l-2 border-[var(--color-primary)] space-y-3.5">
                             {/* Compact Contract Metadata + Handler Code Toggle */}
@@ -1207,8 +1213,8 @@ export default function IntegrationRouteMatrixTable({
 
                             {/* Collapsible Handler Logic Code */}
                             {showLogic && (
-                              <div className="rounded-md border border-[var(--color-border)] bg-[#090D12] overflow-hidden">
-                                <div className="px-3 py-1.5 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex items-center justify-between text-[11px] font-mono text-[var(--color-text-muted)]">
+                              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+                                <div className="px-3 py-1.5 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between text-[11px] font-mono text-[var(--color-text-muted)]">
                                   <span>Handler Logic</span>
                                   <button
                                     type="button"
@@ -1234,7 +1240,7 @@ export default function IntegrationRouteMatrixTable({
                                     )}
                                   </button>
                                 </div>
-                                <pre className="p-3 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-48 custom-scrollbar leading-relaxed">
+                                <pre className="p-3 text-[11px] font-mono text-[var(--color-text-secondary)] overflow-x-auto max-h-48 custom-scrollbar leading-relaxed">
                                   {ep.source?.controllerSnippet ||
                                     ep.source?.routeSnippet}
                                 </pre>
@@ -1248,10 +1254,10 @@ export default function IntegrationRouteMatrixTable({
                                 scenarios,
                               );
                               return (
-                                <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-[var(--color-border)]/80 bg-[var(--color-surface)]/70 text-[11px] font-mono">
+                                <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-mono">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-[var(--color-text-muted)]">
-                                      Case coverage ({cov.coveredCount}/
+                                      Cases ({cov.coveredCount}/
                                       {cov.totalRequired}):
                                     </span>
                                     {cov.cases.map((c) => (
@@ -1259,11 +1265,13 @@ export default function IntegrationRouteMatrixTable({
                                         key={c.key}
                                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
                                           c.covered
-                                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                                            : "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                                            ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                                            : "bg-transparent text-[var(--color-text-muted)] border-[var(--color-border)] border-dashed"
                                         }`}
                                       >
-                                        <span>{c.covered ? "✓" : "○"}</span>
+                                        <span className={c.covered ? "text-emerald-500/75" : "text-[var(--color-text-muted)]"}>
+                                          {c.covered ? "✓" : "○"}
+                                        </span>
                                         <span>{c.label}</span>
                                       </span>
                                     ))}
@@ -1280,19 +1288,19 @@ export default function IntegrationRouteMatrixTable({
                                       </span>
                                     ) : (
                                       <span>
-                                        <span className="text-emerald-400">
+                                        <span className="text-[var(--color-text-secondary)]">
                                           {cov.passedCount} passed
                                         </span>
                                         {cov.failedCount > 0 && (
-                                          <span className="text-rose-400">
+                                          <span className="text-rose-300/85">
                                             {" "}
-                                            • {cov.failedCount} failed
+                                            · {cov.failedCount} failed
                                           </span>
                                         )}
                                         {cov.notRunCount > 0 && (
                                           <span className="text-[var(--color-text-muted)]">
                                             {" "}
-                                            • {cov.notRunCount} pending
+                                            · {cov.notRunCount} pending
                                           </span>
                                         )}
                                       </span>
@@ -1319,10 +1327,10 @@ export default function IntegrationRouteMatrixTable({
                                     type="button"
                                     onClick={() => onGenerateTest(ep)}
                                     disabled={isGenerating || isRunning}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-primary)] border border-[var(--color-primary)]/30 cursor-pointer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] cursor-pointer"
                                   >
-                                    <Sparkles className="w-3 h-3" />
-                                    <span>Generate 100% Tests</span>
+                                    <Zap className="w-3 h-3 text-[var(--color-primary)]" />
+                                    <span>Generate tests</span>
                                   </button>
                                 )}
                               </div>
@@ -1397,9 +1405,9 @@ export default function IntegrationRouteMatrixTable({
 
                                           {/* Pass/Fail Status Icon */}
                                           {scPassed ? (
-                                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/75 shrink-0 mt-0.5" />
                                           ) : scFailed ? (
-                                            <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                                            <XCircle className="w-3.5 h-3.5 text-rose-400/80 shrink-0 mt-0.5" />
                                           ) : null}
 
                                           <div className="min-w-0 flex-1">
@@ -1410,16 +1418,16 @@ export default function IntegrationRouteMatrixTable({
                                             </div>
                                             <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono text-[var(--color-text-muted)]">
                                               <span
-                                                className={`px-1.5 py-0.2 rounded border font-semibold ${catInfo.color}`}
+                                                className="px-1.5 py-0.2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] font-medium"
                                               >
                                                 {catInfo.label}
                                               </span>
                                               <span
-                                                className={`px-1.5 py-0.2 rounded border font-semibold ${
+                                                className={`px-1.5 py-0.2 rounded border font-medium ${
                                                   scPassed
-                                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                                                    ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
                                                     : scFailed
-                                                      ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
+                                                      ? "bg-rose-500/[0.06] text-rose-300/85 border-rose-500/20"
                                                       : "bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)]"
                                                 }`}
                                               >
@@ -1483,7 +1491,7 @@ export default function IntegrationRouteMatrixTable({
                                                           )
                                                     )
                                                       ? "text-emerald-400"
-                                                      : "text-rose-400 font-semibold"
+                                                      : "text-rose-300/85 font-medium"
                                                   }`}
                                                 >
                                                   Actual {sc.actualStatus}
@@ -1515,7 +1523,7 @@ export default function IntegrationRouteMatrixTable({
                                                 }
                                                 disabled={isRunning}
                                                 title="Load failed test & endpoint context into AI Assistant"
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer"
+                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
                                               >
                                                 <Wrench className="w-2.5 h-2.5" />
                                                 <span>AI Fix</span>
@@ -1703,10 +1711,10 @@ export default function IntegrationRouteMatrixTable({
                                       type="button"
                                       onClick={() => onGenerateTest(ep)}
                                       disabled={isGenerating || isRunning}
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors disabled:opacity-50 cursor-pointer"
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors disabled:opacity-50 cursor-pointer"
                                     >
-                                      <Sparkles className="w-3.5 h-3.5" />
-                                      <span>Generate AI Scenarios</span>
+                                      <Zap className="w-3.5 h-3.5" />
+                                      <span>Generate Scenarios</span>
                                     </button>
                                   )}
                                 </div>

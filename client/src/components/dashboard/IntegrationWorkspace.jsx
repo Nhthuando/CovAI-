@@ -2152,22 +2152,7 @@ export default function IntegrationWorkspace({
     ? apiFileCoverage.reduce((sum, file) => sum + (file.line ?? 0), 0) /
       apiFileCoverage.length
     : null;
-  const coverageMetrics = [
-    ["API files", apiFiles.length],
-    [
-      "Covered API files",
-      apiFileCoverage.filter((file) => file.line > 0).length,
-    ],
-    [
-      "Average coverage",
-      averageCoverage == null ? "—" : averageCoverage.toFixed(1) + "%",
-    ],
-    [
-      "Critical APIs",
-      apiFileCoverage.filter((file) => file.line != null && file.line < 60)
-        .length,
-    ],
-  ];
+  const coveredApiFilesCount = apiFileCoverage.filter((file) => file.line > 0).length;
 
   // Loading State with Authentic Skeleton
   if (loading && !workspace) {
@@ -2209,8 +2194,8 @@ export default function IntegrationWorkspace({
             : null,
       badgeColor:
         failedScenariosList.length > 0
-          ? "bg-rose-500/10 text-rose-400 border border-rose-500/25 font-semibold"
-          : "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold",
+          ? "bg-rose-500/[0.06] text-rose-300/85 border border-rose-500/20 font-medium"
+          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] font-medium",
     },
   ];
 
@@ -2227,7 +2212,7 @@ export default function IntegrationWorkspace({
         <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3">
           {/* Left: Title & Live State Badge */}
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-primary)] flex items-center justify-center">
+            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-center justify-center">
               <Network size={15} />
             </div>
             <h1 className="text-sm font-semibold text-[var(--color-text)] tracking-tight m-0">
@@ -2248,13 +2233,13 @@ export default function IntegrationWorkspace({
                 type="button"
                 onClick={handleScanEndpoints}
                 disabled={isScanningEndpoints || isJobActive}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                 title="Scan Express/Node AST to discover API routes and controllers"
               >
                 <RefreshCw
                   size={12}
                   className={
-                    isScanningEndpoints ? "animate-spin" : "text-white"
+                    isScanningEndpoints ? "animate-spin" : ""
                   }
                 />
                 <span>
@@ -2276,7 +2261,7 @@ export default function IntegrationWorkspace({
                 >
                   <SlidersHorizontal
                     size={13}
-                    className="text-[var(--color-primary)]"
+                    className="text-[var(--color-text-muted)]"
                   />
                   <span>Test Setup</span>
                 </button>
@@ -2289,7 +2274,7 @@ export default function IntegrationWorkspace({
                     isJobActive ||
                     pendingAction === "RUN"
                   }
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                   title="Run existing project integration tests & approved scenarios to measure coverage"
                 >
                   {pendingAction === "RUN" ||
@@ -2337,18 +2322,16 @@ export default function IntegrationWorkspace({
                   <span className="font-mono tabular-nums text-[var(--color-text-muted)]">
                     {overallStats.testedApis}/{overallStats.totalApis}{" "}
                     {overallStats.totalApis === 1 ? "route" : "routes"}
+                    {averageCoverage != null && (
+                      <span className="ml-2 text-[var(--color-text-secondary)]">
+                        · {averageCoverage.toFixed(1)}% line cov
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="flex items-baseline gap-2 font-mono tabular-nums">
-                    <span
-                      className={`text-2xl font-bold tracking-tight ${
-                        overallStats.apiCoverageRate === 100 &&
-                        overallStats.totalApis > 0
-                          ? "text-emerald-400"
-                          : "text-[var(--color-primary)]"
-                      }`}
-                    >
+                    <span className="text-2xl font-bold tracking-tight text-[var(--color-text)]">
                       {overallStats.apiCoverageRate}%
                     </span>
                     <span className="text-xs text-[var(--color-text-muted)]">
@@ -2360,8 +2343,8 @@ export default function IntegrationWorkspace({
                       className={`h-full transition-all duration-300 ${
                         overallStats.apiCoverageRate === 100 &&
                         overallStats.totalApis > 0
-                          ? "bg-emerald-400"
-                          : "bg-[var(--color-primary)]"
+                          ? "bg-emerald-500/65"
+                          : "bg-[var(--color-primary)]/70"
                       }`}
                       style={{ width: `${overallStats.apiCoverageRate}%` }}
                     />
@@ -2376,13 +2359,7 @@ export default function IntegrationWorkspace({
                   <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
                     <span>Discovered</span>
                     {overallStats.totalApis > 0 && (
-                      <span
-                        className={`font-mono text-[11px] tabular-nums ${
-                          overallStats.uncoveredApis > 0
-                            ? "text-amber-400"
-                            : "text-emerald-400"
-                        }`}
-                      >
+                      <span className="font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]">
                         {overallStats.uncoveredApis === 0
                           ? "All covered"
                           : overallStats.partialApis > 0
@@ -2391,12 +2368,17 @@ export default function IntegrationWorkspace({
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline gap-1 font-mono tabular-nums">
-                    <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
-                      {overallStats.totalApis}
-                    </span>
+                  <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
+                        {overallStats.totalApis}
+                      </span>
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                        {overallStats.totalApis === 1 ? "route" : "routes"}
+                      </span>
+                    </div>
                     <span className="text-[11px] text-[var(--color-text-muted)]">
-                      {overallStats.totalApis === 1 ? "route" : "routes"}
+                      {coveredApiFilesCount}/{apiFiles.length} {apiFiles.length === 1 ? "file" : "files"}
                     </span>
                   </div>
                 </div>
@@ -2408,11 +2390,9 @@ export default function IntegrationWorkspace({
                     {overallStats.totalScenariosCount > 0 && (
                       <span
                         className={`font-mono text-[11px] tabular-nums ${
-                          overallStats.scenarioPassRate === 100
-                            ? "text-emerald-400"
-                            : overallStats.failedScenariosCount > 0
-                              ? "text-rose-400"
-                              : "text-[var(--color-text-muted)]"
+                          overallStats.failedScenariosCount > 0
+                            ? "text-rose-300/85"
+                            : "text-[var(--color-text-muted)]"
                         }`}
                       >
                         {overallStats.scenarioPassRate}%
@@ -2444,25 +2424,25 @@ export default function IntegrationWorkspace({
                   </div>
                   <div className="flex items-center gap-2 font-mono tabular-nums">
                     <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         overallStats.passedScenariosCount +
                           overallStats.failedScenariosCount ===
                         0
                           ? "bg-[var(--color-text-muted)]"
                           : failedScenariosList.length === 0
-                            ? "bg-emerald-400"
-                            : "bg-rose-400"
+                            ? "bg-emerald-500/65"
+                            : "bg-rose-400/75"
                       }`}
                     />
                     <span
-                      className={`text-sm font-semibold truncate ${
+                      className={`text-sm font-medium truncate ${
                         overallStats.passedScenariosCount +
                           overallStats.failedScenariosCount ===
                         0
                           ? "text-[var(--color-text-secondary)]"
                           : failedScenariosList.length === 0
-                            ? "text-emerald-400"
-                            : "text-rose-400"
+                            ? "text-[var(--color-text-secondary)]"
+                            : "text-rose-300/85"
                       }`}
                     >
                       {overallStats.passedScenariosCount +
@@ -2534,21 +2514,6 @@ export default function IntegrationWorkspace({
             )}
           </div>
         </div>
-        <dl className="grid grid-cols-2 gap-2 px-5 pb-3 sm:grid-cols-4">
-          {coverageMetrics.map(([label, value]) => (
-            <div
-              key={label}
-              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2"
-            >
-              <dt className="text-xs text-[var(--color-text-secondary)]">
-                {label}
-              </dt>
-              <dd className="font-mono text-sm font-semibold tabular-nums">
-                {value}
-              </dd>
-            </div>
-          ))}
-        </dl>
       </header>
 
       {/* Cancellation Notice Banner */}
@@ -3047,19 +3012,19 @@ export default function IntegrationWorkspace({
                   </span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-[10px] font-mono">
-                  <span className="px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     2xx Happy Path
                   </span>
-                  <span className="px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     400 Validation
                   </span>
-                  <span className="px-2 py-1 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     401/403 Auth
                   </span>
-                  <span className="px-2 py-1 rounded bg-zinc-500/10 text-zinc-300 border border-zinc-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     404 Not Found
                   </span>
-                  <span className="px-2 py-1 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     500 Resiliency
                   </span>
                 </div>
@@ -3117,7 +3082,7 @@ export default function IntegrationWorkspace({
                     })
                   }
                   disabled={isRunningSetupFlow}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {isRunningSetupFlow ? (
                     <>
