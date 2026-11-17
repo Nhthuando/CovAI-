@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useLocation } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
-import CoveragePanel from "./CoveragePanel";
 import Editor from "./Editor";
 import RetainedPanel from '../common/RetainedPanel';
 import GitPanel from "./GitPanel";
@@ -282,6 +281,7 @@ function LayoutInner() {
     "git",
     "jobs",
     "activity",
+    "coverage",
   ].includes(activeActivity);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
@@ -1466,12 +1466,6 @@ function LayoutInner() {
                     setActiveSetting(s);
                     if (isMobile) setSidebarOpen(false);
                   }}
-                />
-              ) : activeActivity === "coverage" ? (
-                <CoveragePanel
-                  sidebarWidth={sidebarWidth}
-                  coverageType={coverageType}
-                  setCoverageType={handleSelectCoverageType}
                 />
               ) : (
                 <Sidebar

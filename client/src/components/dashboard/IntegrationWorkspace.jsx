@@ -1,5 +1,8 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
-import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
+import {
+  getIntegrationScenarioApi,
+  mutateIntegrationScenarioApi,
+} from "../../services/integrationScenario.service";
 import React, {
   useCallback,
   useEffect,
@@ -297,7 +300,10 @@ function IntegrationCockpitSkeleton() {
             <div className="h-3.5 w-24 rounded bg-[var(--color-surface-secondary)] animate-pulse" />
           </div>
           {[1, 2, 3, 4, 5, 6].map((row) => (
-            <div key={row} className="p-3 flex items-center justify-between gap-4">
+            <div
+              key={row}
+              className="p-3 flex items-center justify-between gap-4"
+            >
               <div className="flex items-center gap-3">
                 <div className="h-4 w-12 rounded bg-[var(--color-surface-secondary)] animate-pulse" />
                 <div className="h-4 w-48 rounded bg-[var(--color-surface-secondary)] animate-pulse" />
@@ -344,7 +350,7 @@ export default function IntegrationWorkspace({
   const [hasScanned, setHasScanned] = useState(
     Boolean(
       initialContext?.cachedWorkspace?.generation?.hasScannedEndpoints ||
-        (initialContext?.cachedWorkspace?.endpoints || []).length > 0,
+      (initialContext?.cachedWorkspace?.endpoints || []).length > 0,
     ),
   );
   const [error, setError] = useState("");
@@ -403,7 +409,10 @@ export default function IntegrationWorkspace({
 
   useEffect(() => {
     let interval = null;
-    if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
+    if (
+      activeJobId &&
+      (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")
+    ) {
       setJobElapsedSeconds(0);
       interval = setInterval(() => {
         setJobElapsedSeconds((prev) => prev + 1);
@@ -621,7 +630,8 @@ export default function IntegrationWorkspace({
         showToast({
           type: "success",
           title: "Coverage Run Completed",
-          message: "API test suite execution finished. Coverage & diagnostics updated.",
+          message:
+            "API test suite execution finished. Coverage & diagnostics updated.",
         });
       } else if (completedType === "GENERATE") {
         showToast({
@@ -838,11 +848,14 @@ export default function IntegrationWorkspace({
       return;
     }
     if (endpoints.length === 0 && !workspace?.generation?.hasAnalysis) {
-      setError("Please run project analysis to discover API endpoints before generating test scenarios.");
+      setError(
+        "Please run project analysis to discover API endpoints before generating test scenarios.",
+      );
       showToast({
         type: "warning",
         title: "Analysis Needed",
-        message: "No API endpoints detected yet. Run analysis first to discover routes.",
+        message:
+          "No API endpoints detected yet. Run analysis first to discover routes.",
       });
       return;
     }
@@ -1049,16 +1062,18 @@ export default function IntegrationWorkspace({
       .map((s) => s.title || s.testName)
       .filter(Boolean);
     if (scenarioIds.length === 0 && targetTestNames.length === 0) {
-      setError(
-        `Endpoint ${epKey} has no test scenarios yet.`,
-      );
+      setError(`Endpoint ${epKey} has no test scenarios yet.`);
       return;
     }
     setError("");
     setPendingAction("RUN_ENDPOINT");
     setRunningTargetKey(epKey);
     try {
-      if (workspace?.aiTests && workspace.aiTests.length > 0 && scenarioIds.length > 0) {
+      if (
+        workspace?.aiTests &&
+        workspace.aiTests.length > 0 &&
+        scenarioIds.length > 0
+      ) {
         try {
           await approveIntegrationTestsApi(snapshotId, scenarioIds);
         } catch (_) {}
@@ -1093,7 +1108,13 @@ export default function IntegrationWorkspace({
   // Run Coverage for Multiple Selected Endpoints (Targeted Batch Execution)
   const handleRunSelectedEndpoints = async (selectedEps = []) => {
     if (!projectAccess.can("tests.run")) return;
-    if (!snapshotId || pendingAction || !Array.isArray(selectedEps) || selectedEps.length === 0) return;
+    if (
+      !snapshotId ||
+      pendingAction ||
+      !Array.isArray(selectedEps) ||
+      selectedEps.length === 0
+    )
+      return;
 
     const allScenarios = selectedEps.flatMap((ep) => ep.scenarios || []);
     const scenarioIds = allScenarios
@@ -1104,7 +1125,8 @@ export default function IntegrationWorkspace({
       .filter(Boolean);
 
     const targetEndpoints = selectedEps.map(
-      (ep) => `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
+      (ep) =>
+        `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
     );
     const targetLabel =
       selectedEps.length === 1
@@ -1116,7 +1138,11 @@ export default function IntegrationWorkspace({
     setPendingAction("RUN_ENDPOINT");
     setRunningTargetKey(targetLabel);
     try {
-      if (workspace?.aiTests && workspace.aiTests.length > 0 && scenarioIds.length > 0) {
+      if (
+        workspace?.aiTests &&
+        workspace.aiTests.length > 0 &&
+        scenarioIds.length > 0
+      ) {
         try {
           await approveIntegrationTestsApi(snapshotId, scenarioIds);
         } catch (_) {}
@@ -1141,7 +1167,9 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       }
     } catch (err) {
-      setError(err.message || "Failed to execute tests for selected endpoints.");
+      setError(
+        err.message || "Failed to execute tests for selected endpoints.",
+      );
       setRunningTargetKey(null);
     } finally {
       setPendingAction(null);
@@ -1151,7 +1179,13 @@ export default function IntegrationWorkspace({
   // Run Coverage for Specific Selected Scenarios (Cross-Endpoint Multi-Select)
   const handleRunSelectedScenarios = async (selectedScenarios = []) => {
     if (!projectAccess.can("tests.run")) return;
-    if (!snapshotId || pendingAction || !Array.isArray(selectedScenarios) || selectedScenarios.length === 0) return;
+    if (
+      !snapshotId ||
+      pendingAction ||
+      !Array.isArray(selectedScenarios) ||
+      selectedScenarios.length === 0
+    )
+      return;
 
     const scenarioIds = selectedScenarios
       .map((s) => s.id || `${s.testId}::${s.scenarioId || s.testName}`)
@@ -1219,7 +1253,12 @@ export default function IntegrationWorkspace({
     setPendingAction("RETRY_SCENARIO");
     setRunningTargetKey(scId || scTitle);
     try {
-      if (workspace?.aiTests && workspace.aiTests.length > 0 && scId && sc.enabled === false) {
+      if (
+        workspace?.aiTests &&
+        workspace.aiTests.length > 0 &&
+        scId &&
+        sc.enabled === false
+      ) {
         try {
           await approveIntegrationTestsApi(snapshotId, [scId]);
         } catch (_) {}
@@ -1263,9 +1302,15 @@ export default function IntegrationWorkspace({
 
     // Clean container and storage prefixes
     let cleanPath = (rawPath || "").replace(/\\/g, "/").trim();
-    cleanPath = cleanPath.replace(/^(?:\/?app\/)?\.?covai-temp\/collaboration-operations\/[^/]+\//i, "");
+    cleanPath = cleanPath.replace(
+      /^(?:\/?app\/)?\.?covai-temp\/collaboration-operations\/[^/]+\//i,
+      "",
+    );
     cleanPath = cleanPath.replace(/^(?:\/?app\/)?\.?covai-temp\/[^/]+\//i, "");
-    cleanPath = cleanPath.replace(/^(?:\/?app\/)?storage\/projects\/[^/]+\/(?:snapshots\/[^/]+\/)?/i, "");
+    cleanPath = cleanPath.replace(
+      /^(?:\/?app\/)?storage\/projects\/[^/]+\/(?:snapshots\/[^/]+\/)?/i,
+      "",
+    );
     cleanPath = cleanPath.replace(/^(?:\/?app\/)/i, "");
     cleanPath = cleanPath.replace(/^[a-zA-Z]:\//i, "");
     cleanPath = cleanPath.replace(/^\/+/, "");
@@ -1273,8 +1318,13 @@ export default function IntegrationWorkspace({
     // Look for matching in-memory AI test or source test from workspace
     const matchingTest = (workspace?.aiTests || []).find(
       (t) =>
-        (cleanPath && (t.filePath === cleanPath || t.filePath?.endsWith(cleanPath) || cleanPath.endsWith(t.filePath || ""))) ||
-        (sc?.title && (t.content?.includes(sc.title) || (t.requests || []).some((r) => r.testName === sc.title)))
+        (cleanPath &&
+          (t.filePath === cleanPath ||
+            t.filePath?.endsWith(cleanPath) ||
+            cleanPath.endsWith(t.filePath || ""))) ||
+        (sc?.title &&
+          (t.content?.includes(sc.title) ||
+            (t.requests || []).some((r) => r.testName === sc.title))),
     );
 
     const targetPath =
@@ -1285,14 +1335,14 @@ export default function IntegrationWorkspace({
       "tests/integration/cart.test.js";
 
     const codeSnippet =
-      sc?.code ||
-      sc?.sourceCode ||
-      matchingTest?.content ||
-      null;
+      sc?.code || sc?.sourceCode || matchingTest?.content || null;
 
     setSourceViewerOptions([
       {
-        label: sc?.title || sc?.testName || (ep ? `${ep.method} ${ep.path}` : "Test Scenario"),
+        label:
+          sc?.title ||
+          sc?.testName ||
+          (ep ? `${ep.method} ${ep.path}` : "Test Scenario"),
         filePath: targetPath,
         rawFilePath: rawPath,
         line: sc?.line || sc?.startLine || 1,
@@ -1403,7 +1453,10 @@ export default function IntegrationWorkspace({
     }
   };
 
-  const handleOpenApplyModal = (targetIds = null, initialScenarioKeys = null) => {
+  const handleOpenApplyModal = (
+    targetIds = null,
+    initialScenarioKeys = null,
+  ) => {
     if (!projectAccess.can("files.write")) return;
     const resolvedAiTestIds =
       Array.isArray(targetIds) && targetIds.length > 0
@@ -1433,15 +1486,26 @@ export default function IntegrationWorkspace({
       setEditorModalOpen(true);
 
       // Sync latest version silently in background if missing
-      if (identity.aiTestId && identity.aiTestId !== "fallback" && !identity.expectedVersion) {
-        getIntegrationScenarioApi(snapshotId, identity.aiTestId, identity.scenarioId)
+      if (
+        identity.aiTestId &&
+        identity.aiTestId !== "fallback" &&
+        !identity.expectedVersion
+      ) {
+        getIntegrationScenarioApi(
+          snapshotId,
+          identity.aiTestId,
+          identity.scenarioId,
+        )
           .then((result) => {
             if (result) {
               setEditorModalScenario((prev) =>
                 prev
                   ? {
                       ...prev,
-                      expectedVersion: result.version || result.aiTest?.version || prev.expectedVersion,
+                      expectedVersion:
+                        result.version ||
+                        result.aiTest?.version ||
+                        prev.expectedVersion,
                     }
                   : prev,
               );
@@ -1463,7 +1527,9 @@ export default function IntegrationWorkspace({
           ...sc,
           ...identity,
           expectedVersion:
-            result.version || result.aiTest?.version || identity.expectedVersion,
+            result.version ||
+            result.aiTest?.version ||
+            identity.expectedVersion,
           code: result.code || "",
         });
       } else {
@@ -1486,9 +1552,7 @@ export default function IntegrationWorkspace({
     const tests = workspace?.aiTests || [];
     const test =
       tests.find((t) =>
-        t.requests?.some(
-          (r) => r.method === ep?.method && r.path === ep?.path,
-        ),
+        t.requests?.some((r) => r.method === ep?.method && r.path === ep?.path),
       ) || tests[0];
     if (!test) {
       setSetupAutoRun(false);
@@ -1624,7 +1688,9 @@ export default function IntegrationWorkspace({
     const statusByTitle = new Map();
     for (const ep of endpoints || []) {
       for (const sc of ep.scenarios || []) {
-        const key = String(sc.title || sc.name || "").trim().toLowerCase();
+        const key = String(sc.title || sc.name || "")
+          .trim()
+          .toLowerCase();
         if (key && sc.status) statusByTitle.set(key, sc.status);
       }
     }
@@ -1727,8 +1793,12 @@ export default function IntegrationWorkspace({
 
       for (const ep of endpoints) {
         if ((ep.method || "").toUpperCase() !== reqMethod) continue;
-        const cleanRoute = (ep.path || ep.route || ep.fullPath || "").replace(/\/+$/, "") || "/";
-        const regexStr = "^" + cleanRoute.replace(/\./g, "\\.").replace(/:[a-zA-Z0-9_]+/g, "[^/]+") + "$";
+        const cleanRoute =
+          (ep.path || ep.route || ep.fullPath || "").replace(/\/+$/, "") || "/";
+        const regexStr =
+          "^" +
+          cleanRoute.replace(/\./g, "\\.").replace(/:[a-zA-Z0-9_]+/g, "[^/]+") +
+          "$";
         if (new RegExp(regexStr, "i").test(cleanReq)) {
           return ep;
         }
@@ -1747,9 +1817,11 @@ export default function IntegrationWorkspace({
         const rMethod = (r.method || "GET").toUpperCase();
         const rPath = r.path || "";
         const matchedEp = findMatchingEndpoint(rMethod, rPath);
-        const epMethod = matchedEp ? (matchedEp.method || "GET").toUpperCase() : rMethod;
+        const epMethod = matchedEp
+          ? (matchedEp.method || "GET").toUpperCase()
+          : rMethod;
         const epPath = matchedEp
-          ? (matchedEp.path || matchedEp.route || matchedEp.fullPath || "/")
+          ? matchedEp.path || matchedEp.route || matchedEp.fullPath || "/"
           : rPath.split("?")[0] || "/";
         const epKey = `${epMethod} ${epPath}`;
 
@@ -1803,7 +1875,11 @@ export default function IntegrationWorkspace({
 
       epScenarios.forEach((s, idx) => {
         const scStatusUpper = String(s.status || "").toUpperCase();
-        const isExecuted = scStatusUpper === "PASSED" || scStatusUpper === "PASS" || scStatusUpper === "FAILED" || scStatusUpper === "FAIL";
+        const isExecuted =
+          scStatusUpper === "PASSED" ||
+          scStatusUpper === "PASS" ||
+          scStatusUpper === "FAILED" ||
+          scStatusUpper === "FAIL";
         const isRepoTest =
           !s.aiTestId ||
           String(s.aiTestId).startsWith("existing_test_") ||
@@ -1816,7 +1892,8 @@ export default function IntegrationWorkspace({
         const existingIdx = scenariosByEndpointMap[epKey].findIndex(
           (ex) =>
             ex.id === scenarioId ||
-            (ex.testName && (ex.testName === sTitle || ex.testName === s.testName))
+            (ex.testName &&
+              (ex.testName === sTitle || ex.testName === s.testName)),
         );
 
         if (existingIdx === -1) {
@@ -1832,9 +1909,12 @@ export default function IntegrationWorkspace({
             existing.status = s.status;
           }
           if (s.rawJestStatus) existing.rawJestStatus = s.rawJestStatus;
-          if (s.executionVerdict) existing.executionVerdict = s.executionVerdict;
-          if (s.actualStatus !== undefined) existing.actualStatus = s.actualStatus;
-          if (s.failureDiagnostics) existing.failureDiagnostics = s.failureDiagnostics;
+          if (s.executionVerdict)
+            existing.executionVerdict = s.executionVerdict;
+          if (s.actualStatus !== undefined)
+            existing.actualStatus = s.actualStatus;
+          if (s.failureDiagnostics)
+            existing.failureDiagnostics = s.failureDiagnostics;
         }
       });
     });
@@ -1842,7 +1922,9 @@ export default function IntegrationWorkspace({
     const uncoveredApis = Math.max(0, totalApis - testedApis);
     const executedApisCount = passedApis + failedApis;
     const apiPassRate =
-      executedApisCount > 0 ? Math.round((passedApis / executedApisCount) * 100) : 0;
+      executedApisCount > 0
+        ? Math.round((passedApis / executedApisCount) * 100)
+        : 0;
     const apiCoverageRate =
       totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
 
@@ -1869,14 +1951,10 @@ export default function IntegrationWorkspace({
           : generation?.generatedScenarios || 0;
 
     const passedScenariosCount =
-      dedupedScenarios.length > 0
-        ? dedupPassed
-        : execution?.passedTests || 0;
+      dedupedScenarios.length > 0 ? dedupPassed : execution?.passedTests || 0;
 
     const failedScenariosCount =
-      dedupedScenarios.length > 0
-        ? dedupFailed
-        : execution?.failedTests || 0;
+      dedupedScenarios.length > 0 ? dedupFailed : execution?.failedTests || 0;
 
     const totalExecutedScenarios = passedScenariosCount + failedScenariosCount;
     const scenarioPassRate =
@@ -1915,16 +1993,31 @@ export default function IntegrationWorkspace({
     };
   }, [endpoints, execution, generation, workspace]);
 
-  const apiFiles = new Set(endpoints.map(endpoint => endpoint.source?.sourceFile).filter(Boolean));
-  const apiFileCoverage = (summary?.fileCoverages || []).filter(file => apiFiles.has(file.filePath));
+  const apiFiles = new Set(
+    endpoints.map((endpoint) => endpoint.source?.sourceFile).filter(Boolean),
+  );
+  const apiFileCoverage = (summary?.fileCoverages || []).filter((file) =>
+    apiFiles.has(file.filePath),
+  );
   const averageCoverage = apiFileCoverage.length
-    ? apiFileCoverage.reduce((sum, file) => sum + (file.line ?? 0), 0) / apiFileCoverage.length
+    ? apiFileCoverage.reduce((sum, file) => sum + (file.line ?? 0), 0) /
+      apiFileCoverage.length
     : null;
   const coverageMetrics = [
     ["API files", apiFiles.size],
-    ["Covered API files", apiFileCoverage.filter(file => file.line > 0).length],
-    ["Average coverage", averageCoverage == null ? "—" : averageCoverage.toFixed(1) + "%"],
-    ["Critical APIs", apiFileCoverage.filter(file => file.line != null && file.line < 60).length],
+    [
+      "Covered API files",
+      apiFileCoverage.filter((file) => file.line > 0).length,
+    ],
+    [
+      "Average coverage",
+      averageCoverage == null ? "—" : averageCoverage.toFixed(1) + "%",
+    ],
+    [
+      "Critical APIs",
+      apiFileCoverage.filter((file) => file.line != null && file.line < 60)
+        .length,
+    ],
   ];
 
   // Loading State with Authentic Skeleton
@@ -1941,7 +2034,8 @@ export default function IntegrationWorkspace({
           No Project Snapshot Selected
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-4 leading-relaxed">
-          Please select a valid snapshot from the project list before using API Integration Testing features.
+          Please select a valid snapshot from the project list before using API
+          Integration Testing features.
         </p>
       </div>
     );
@@ -1987,52 +2081,19 @@ export default function IntegrationWorkspace({
             <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-primary)] flex items-center justify-center">
               <Network size={15} />
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-sm font-semibold text-[var(--color-text)] tracking-tight m-0">
-                Integration Test Coverage
-              </h1>
-              <span className="text-xs text-[var(--color-text-secondary)]">Playwright · Supertest</span>
-              {hasScanned && detectionInfo?.targetFramework && (
-                <span className="px-2 py-0.5 rounded font-mono text-[10px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-                  {detectionInfo.targetFramework.toUpperCase()}
-                </span>
-              )}
-              {/* Dynamic Health Badge */}
-              {isJobActive ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-sky-500/10 text-sky-400 border border-sky-500/25">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500" />
-                  </span>
-                  Running...
-                </span>
-              ) : failedScenariosList.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("report")}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/25 cursor-pointer hover:bg-rose-500/20 transition-colors"
-                >
-                  <AlertTriangle size={10} />
-                  {failedScenariosList.length} failed
-                </button>
-              ) : overallStats.passedScenariosCount > 0 ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
-                  <CheckCircle2 size={10} />
-                  {overallStats.passedScenariosCount} passed
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
-                  {hasScanned
-                    ? `${overallStats.totalApis} ${overallStats.totalApis === 1 ? "route" : "routes"} discovered`
-                    : "Not scanned yet"}
-                </span>
-              )}
-            </div>
+            <h1 className="text-sm font-semibold text-[var(--color-text)] tracking-tight m-0">
+              Integration Test Coverage
+            </h1>
           </div>
 
           {/* Right: Header Utilities (Initial Scan, Framework Setup, History) */}
           <div className="flex items-center gap-2 flex-wrap">
-            {onOpenJobQueue && <CoverageJobQueueButton onClick={onOpenJobQueue} running={isJobActive} />}
+            {onOpenJobQueue && (
+              <CoverageJobQueueButton
+                onClick={onOpenJobQueue}
+                running={isJobActive}
+              />
+            )}
             {!hasScanned ? (
               <button
                 type="button"
@@ -2043,9 +2104,13 @@ export default function IntegrationWorkspace({
               >
                 <RefreshCw
                   size={12}
-                  className={isScanningEndpoints ? "animate-spin" : "text-white"}
+                  className={
+                    isScanningEndpoints ? "animate-spin" : "text-white"
+                  }
                 />
-                <span>{isScanningEndpoints ? "Scanning APIs..." : "Scan APIs"}</span>
+                <span>
+                  {isScanningEndpoints ? "Scanning APIs..." : "Scan APIs"}
+                </span>
               </button>
             ) : (
               <>
@@ -2060,7 +2125,10 @@ export default function IntegrationWorkspace({
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                   title="Configure test framework (Supertest / Playwright API) and dependencies"
                 >
-                  <SlidersHorizontal size={13} className="text-[var(--color-primary)]" />
+                  <SlidersHorizontal
+                    size={13}
+                    className="text-[var(--color-primary)]"
+                  />
                   <span>Test Setup</span>
                 </button>
 
@@ -2126,7 +2194,8 @@ export default function IntegrationWorkspace({
                   <div className="flex items-baseline gap-2 font-mono tabular-nums">
                     <span
                       className={`text-2xl font-bold tracking-tight ${
-                        overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
+                        overallStats.apiCoverageRate === 100 &&
+                        overallStats.totalApis > 0
                           ? "text-emerald-400"
                           : "text-[var(--color-primary)]"
                       }`}
@@ -2140,7 +2209,8 @@ export default function IntegrationWorkspace({
                   <div className="flex-1 max-w-[160px] bg-[var(--color-surface-secondary)] h-1.5 rounded-sm overflow-hidden">
                     <div
                       className={`h-full transition-all duration-300 ${
-                        overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
+                        overallStats.apiCoverageRate === 100 &&
+                        overallStats.totalApis > 0
                           ? "bg-emerald-400"
                           : "bg-[var(--color-primary)]"
                       }`}
@@ -2154,17 +2224,28 @@ export default function IntegrationWorkspace({
               <div className="lg:col-span-7 grid grid-cols-3 divide-x divide-[var(--color-border)]">
                 {/* Discovered Routes */}
                 <div className="px-4 py-3 flex flex-col justify-between gap-1">
-                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">
-                    Discovered
-                  </span>
-                  <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
+                  <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
+                    <span>Discovered</span>
+                    {overallStats.totalApis > 0 && (
+                      <span
+                        className={`font-mono text-[11px] tabular-nums ${
+                          overallStats.uncoveredApis > 0
+                            ? "text-amber-400"
+                            : "text-emerald-400"
+                        }`}
+                      >
+                        {overallStats.uncoveredApis > 0
+                          ? `${overallStats.uncoveredApis} uncovered`
+                          : "All covered"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1 font-mono tabular-nums">
                     <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
                       {overallStats.totalApis}
                     </span>
-                    <span className="text-[11px] text-[var(--color-text-muted)] truncate">
-                      {overallStats.uncoveredApis > 0
-                        ? `${overallStats.uncoveredApis} uncovered`
-                        : "all covered"}
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      {overallStats.totalApis === 1 ? "route" : "routes"}
                     </span>
                   </div>
                 </div>
@@ -2213,7 +2294,9 @@ export default function IntegrationWorkspace({
                   <div className="flex items-center gap-2 font-mono tabular-nums">
                     <span
                       className={`w-2 h-2 rounded-full shrink-0 ${
-                        overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
+                        overallStats.passedScenariosCount +
+                          overallStats.failedScenariosCount ===
+                        0
                           ? "bg-[var(--color-text-muted)]"
                           : failedScenariosList.length === 0
                             ? "bg-emerald-400"
@@ -2222,14 +2305,18 @@ export default function IntegrationWorkspace({
                     />
                     <span
                       className={`text-sm font-semibold truncate ${
-                        overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
+                        overallStats.passedScenariosCount +
+                          overallStats.failedScenariosCount ===
+                        0
                           ? "text-[var(--color-text-secondary)]"
                           : failedScenariosList.length === 0
                             ? "text-emerald-400"
                             : "text-rose-400"
                       }`}
                     >
-                      {overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
+                      {overallStats.passedScenariosCount +
+                        overallStats.failedScenariosCount ===
+                      0
                         ? "Not run yet"
                         : failedScenariosList.length === 0
                           ? "All healthy"
@@ -2298,9 +2385,16 @@ export default function IntegrationWorkspace({
         </div>
         <dl className="grid grid-cols-2 gap-2 px-5 pb-3 sm:grid-cols-4">
           {coverageMetrics.map(([label, value]) => (
-            <div key={label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
-              <dt className="text-xs text-[var(--color-text-secondary)]">{label}</dt>
-              <dd className="font-mono text-sm font-semibold tabular-nums">{value}</dd>
+            <div
+              key={label}
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2"
+            >
+              <dt className="text-xs text-[var(--color-text-secondary)]">
+                {label}
+              </dt>
+              <dd className="font-mono text-sm font-semibold tabular-nums">
+                {value}
+              </dd>
             </div>
           ))}
         </dl>
@@ -2480,8 +2574,8 @@ export default function IntegrationWorkspace({
                 hasScanned={hasScanned}
                 hasAnalyzedCoverage={Boolean(
                   workspace?.generation?.hasAnalyzedCoverage ||
-                    overallStats.totalScenariosCount > 0 ||
-                    (workspace?.execution?.totalTests || 0) > 0,
+                  overallStats.totalScenariosCount > 0 ||
+                  (workspace?.execution?.totalTests || 0) > 0,
                 )}
                 isScanning={isScanningEndpoints}
                 onScanEndpoints={handleScanEndpoints}
@@ -2525,14 +2619,10 @@ export default function IntegrationWorkspace({
                 }
                 onOpenEditScenario={handleOpenEditScenario}
                 onDeleteScenario={
-                  projectAccess.can("files.write")
-                    ? handleDeleteScenario
-                    : null
+                  projectAccess.can("files.write") ? handleDeleteScenario : null
                 }
                 onToggleScenario={
-                  projectAccess.can("files.write")
-                    ? handleToggleScenario
-                    : null
+                  projectAccess.can("files.write") ? handleToggleScenario : null
                 }
                 onAIFixScenario={
                   projectAccess.can("ai.use") ? handleAIFixScenario : null
@@ -2565,7 +2655,9 @@ export default function IntegrationWorkspace({
               hasExecutedCoverage={
                 Boolean(reportData?.apiCoverage?.hasExecutedCoverage) ||
                 (execution?.totalTests || 0) > 0 ||
-                overallStats.passedScenariosCount + overallStats.failedScenariosCount > 0
+                overallStats.passedScenariosCount +
+                  overallStats.failedScenariosCount >
+                  0
               }
               onScanApis={() => {
                 setActiveTab("routes");
