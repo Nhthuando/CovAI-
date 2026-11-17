@@ -1,3 +1,4 @@
+import { handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -12,9 +13,7 @@ async function handleResponse(res) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+      await handleUnauthorizedResponse();
     }
     throw new Error(data.message || `API Error: ${res.status}`);
   }

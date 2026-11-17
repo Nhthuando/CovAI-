@@ -10,6 +10,7 @@ import { createSnapshotJob, markQueuedJobFailed } from '../services/job.service.
 import { snapshotIdentity } from '../services/systemAssessmentWorkspace.service.js';
 import { parseRequest } from '../validators/systemAssessment.validator.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { systemAssessmentEnabled, systemMeasuredCoverageEnabled } from '../services/systemFeatureFlags.service.js';
 
 const handler = fn => async (req,res) => {
     try {res.json({success:true,data:await fn(req)});}
@@ -32,7 +33,7 @@ export const systemSuiteControllers = {
     check:async (req,res) => {
         let job;
         try {
-            if(process.env.SYSTEM_ASSESSMENT_ENABLED!=='true' || process.env.SYSTEM_MEASURED_COVERAGE_ENABLED!=='true')throw new ServiceError('Enable measured System Test assessments before checking a version.',409);
+            if(!systemAssessmentEnabled() || !systemMeasuredCoverageEnabled())throw new ServiceError('Enable measured System Test assessments before checking a version.',409);
             const input = parseRequest(suiteCheckRequest,{...req.body,executionMode:requireFullStackMode(req.body?.executionMode)});
             const {snapshot} = await resolveSnapshotAccess({...args(req),capability:'tests.run'});
             await readSystemSuiteVersion(args(req));

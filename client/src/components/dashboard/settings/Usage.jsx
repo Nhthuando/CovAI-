@@ -1,3 +1,4 @@
+import { attachSocketAuthRecovery, socketAuth } from "../../../lib/authSession.js";
 import { useState, useEffect, useCallback } from "react";
 import { io } from "socket.io-client";
 import { RefreshCw, RotateCcw } from "lucide-react";
@@ -145,11 +146,12 @@ export default function Usage({ isActive = true }) {
       // ignore
     }
     const socket = io(SOCKET_URL, {
-      auth: { token },
+      auth: socketAuth,
       transports: ["websocket", "polling"],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     });
+    attachSocketAuthRecovery(socket);
 
     socket.on("ai_quotas:updated", (newSnapshot) => {
       if (newSnapshot) {

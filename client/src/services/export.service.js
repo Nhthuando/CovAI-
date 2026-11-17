@@ -1,3 +1,4 @@
+import { handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 export async function downloadProjectExportApi(projectId, { snapshotId, format, signal }) {
@@ -10,8 +11,7 @@ export async function downloadProjectExportApi(projectId, { snapshotId, format, 
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     if (response.status === 401) {
-      ["token", "user", "userName", "userEmail"].forEach((key) => localStorage.removeItem(key));
-      window.location.href = "/login";
+      await handleUnauthorizedResponse();
     }
     throw new Error(data.message || "Could not download export. Please try again.");
   }

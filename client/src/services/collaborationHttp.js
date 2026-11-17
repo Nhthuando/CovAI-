@@ -1,5 +1,6 @@
 import { queryClient } from "../lib/queryClient";
 import { rememberAuthReturn } from "../lib/authReturn";
+import { refreshAccessToken } from "../lib/authSession.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -12,6 +13,11 @@ export async function collaborationRequest(path, { body, headers, ...options } =
   });
   const result = response.status === 204 ? {} : await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && await refreshAccessToken()) {
+      const error = new Error("Your session was renewed. Please retry.");
+      Object.assign(error, { status: 401, code: "SESSION_RENEWED" });
+      throw error;
+    }
     if (response.status === 401) {
       rememberAuthReturn(window.location.pathname);
       queryClient.cancelQueries(); queryClient.clear();

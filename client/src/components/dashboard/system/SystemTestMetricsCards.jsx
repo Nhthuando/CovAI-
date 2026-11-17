@@ -29,13 +29,14 @@ function getPassRateColor(rate) {
   return "text-[var(--color-danger)]";
 }
 
-export default function SystemTestMetricsCards({ summary }) {
+export default function SystemTestMetricsCards({ summary, coverageTiers }) {
   const total = summary?.totalTests || 0;
   const passed = summary?.passedTests || 0;
   const failed = summary?.failedTests || 0;
   const flaky = summary?.flakyTests || 0;
   const skipped = summary?.skippedTests || 0;
   const durationMs = summary?.durationMs || 0;
+  const measuredTiers = Object.entries(coverageTiers || {}).filter(([, tier]) => tier?.counters?.lines?.pct != null);
 
 
   const passRate = total > 0 ? Math.round((passed / total) * 100) : null;
@@ -43,6 +44,22 @@ export default function SystemTestMetricsCards({ summary }) {
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <dl className="col-span-full grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {[
+          ["E2E tests", total],
+          ["Passed", passed],
+          ["Failed", failed],
+          ["Flaky / Stability", flaky],
+          ["Coverage", measuredTiers.length
+            ? measuredTiers.map(([name, tier]) => name + " " + tier.counters.lines.pct + "%").join(" · ")
+            : "—"],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+            <dt className="text-xs text-[var(--color-text-secondary)]">{label}</dt>
+            <dd className="font-mono text-sm font-semibold tabular-nums">{value}</dd>
+          </div>
+        ))}
+      </dl>
       {/* 1. Pass Rate Card */}
       <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col justify-between">
         <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)] font-medium mb-1">

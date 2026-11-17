@@ -427,6 +427,8 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
 export const processSupertestCoverageJob = async (jobId) => {
   const abortController = new AbortController();
   registerJobAbortController(jobId, abortController);
+  let projectId;
+  let snapshotId;
   let stagedIntegrationDir = null;
   let restoreExpressEntries = null;
 
@@ -435,6 +437,8 @@ export const processSupertestCoverageJob = async (jobId) => {
 
     await markJobRunning(jobId);
     const job = await getJobById(jobId);
+    projectId = job.projectId;
+    snapshotId = job.snapshotId;
     if (
       isJobCanceled(jobId, abortController.signal) ||
       job?.status === "CANCELED"
@@ -458,8 +462,6 @@ export const processSupertestCoverageJob = async (jobId) => {
       rawSnapshot.rootDir;
     const origRootDir =
       resolveProjectRoot(canonicalOrigBase) || canonicalOrigBase;
-    const snapshotId = job.snapshotId;
-    const projectId = job.projectId;
     const userId = job.userId;
 
     const reportIntProgress = async (progress, stage, message) => {
@@ -895,11 +897,7 @@ export const processSupertestCoverageJob = async (jobId) => {
     if (isJobCanceled(jobId, abortController.signal)) return;
 
     // Ensure dependencies exist (e.g. server/node_modules) before starting test suite
-    await reportIntProgress(
-      25,
-      "Verifying dependencies",
-      "Checking Supertest runtime dependencies...",
-    );
+    await updateJobProgress(jobId, 25);
     await ensureProjectDependencies(jobId, rootDir);
 
     if (isJobCanceled(jobId, abortController.signal)) return;
@@ -932,11 +930,7 @@ export const processSupertestCoverageJob = async (jobId) => {
       stderr: runResult.stderr ?? "",
     }).catch(() => {});
     const { coverageDir } = runResult;
-    await reportIntProgress(
-      60,
-      "Parsing HTTP results",
-      "Parsing HTTP status assertions and runtime evidence...",
-    );
+    await updateJobProgress(jobId, 60);
 
     // 2. Parse coverage
     const summaryPath = path.join(coverageDir, "coverage-summary.json");
@@ -1138,11 +1132,7 @@ export const processSupertestCoverageJob = async (jobId) => {
       }),
     );
 
-    await reportIntProgress(
-      80,
-      "Mapping coverage",
-      "Mapping covered endpoints and functions...",
-    );
+    await updateJobProgress(jobId, 80);
 
     // 3. Save results
     const storageResult = await storeCoverageOutputs(
@@ -1303,7 +1293,7 @@ export const processSupertestCoverageJob = async (jobId) => {
           try {
             const { emitDashboardRunStatus } =
               await import("./dashboardEvents.service.js");
-            emitDashboardRunStatus(projectId, {
+            emitDashboardRunStatus(job.projectId, {
               snapshotId,
               jobId,
               pillar: "integration",

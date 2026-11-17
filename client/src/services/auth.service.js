@@ -1,41 +1,30 @@
 import axios from "axios";
+import { getAccessToken, isAuthEndpoint, installAxiosAuthRefresh, redirectToLogin, refreshAccessToken } from "../lib/authSession.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 async function fetchWithAuth(input, init = {}) {
-  const token = localStorage.getItem("token");
+  const token = getAccessToken();
   const headers = {
     ...init.headers,
     Authorization: token ? `Bearer ${token}` : "",
   };
 
-  let response = await fetch(input, { ...init, headers });
+  // credentials: the API sets the HttpOnly refresh-token cookie on login, register
+  // and GitHub sign-in; a cross-origin fetch only stores it with "include".
+  let response = await fetch(input, { ...init, headers, credentials: "include" });
 
-  if (response.status === 401 && !init._retry) {
-    // Refresh the access token using the refresh token
-    try {
-      const refreshResponse = await fetch(`${BASE_URL}/refresh`, {
-        method: "POST",
-        credentials: "include", // Include cookies for refresh token
+  if (response.status === 401 && !init._retry && !isAuthEndpoint(input)) {
+    const accessToken = await refreshAccessToken();
+    if (accessToken) {
+      response = await fetch(input, {
+        ...init,
+        headers: { ...headers, Authorization: `Bearer ${accessToken}` },
+        credentials: "include",
+        _retry: true,
       });
-      if (refreshResponse.ok) {
-        const { accessToken } = await refreshResponse.json();
-        localStorage.setItem("token", accessToken);
-
-        // Retry the original request with the new token
-        response = await fetch(input, {
-          ...init,
-          headers: { ...headers, Authorization: `Bearer ${accessToken}` },
-          _retry: true,
-        });
-      } else {
-        localStorage.removeItem("token");
-        window.location.href = "/login";
-      }
-    } catch (error) {
-      console.error("Token refresh failed:", error);
-      localStorage.removeItem("token");
-      window.location.href = "/login";
+    } else {
+      redirectToLogin();
     }
   }
 
@@ -50,33 +39,7 @@ async function fetchWithAuth(input, init = {}) {
  *        400:  { message: "Account already exists!" }
  */
 const httpClient = axios.create({ baseURL: BASE_URL });
-httpClient.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        const { data } = await httpClient.post(
-          "/refresh",
-          {},
-          { withCredentials: true },
-        );
-        localStorage.setItem("token", data.accessToken);
-        originalRequest.headers.Authorization = `Bearer ${data.accessToken}`;
-        return httpClient(originalRequest);
-      } catch (refreshError) {
-        console.error(refreshError);
-        localStorage.removeItem("token");
-        window.location.href = "/login";
-      }
-    }
-
-    return Promise.reject(error);
-  },
-);
+installAxiosAuthRefresh(httpClient);
 
 export async function registerApi({ name, email, password }) {
   const res = await fetchWithAuth(`${BASE_URL}/auth/register`, {

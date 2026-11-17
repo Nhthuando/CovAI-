@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { queryClient } from "../lib/queryClient";
+import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
@@ -32,14 +33,14 @@ export function useDashboardSocket({
     if (!projectId) return;
 
     let alive = true;
-    const token = localStorage.getItem("token") || "";
 
     const socket = io(SOCKET_URL, {
-      auth: { token },
+      auth: socketAuth,
       transports: ["websocket", "polling"],
       reconnectionAttempts: 15,
       reconnectionDelay: 1000,
     });
+    attachSocketAuthRecovery(socket);
 
     socket.on("connect", () => {
       if (!alive) return;

@@ -73,6 +73,11 @@ export const cleanStoragePath = (p) => {
     return clean.replace(/^\/+/, "");
 };
 
+export const stripAnsi = (text) => {
+    if (typeof text !== "string") return text;
+    return text.replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\u001b/g, "");
+};
+
 /**
  * Strips internal storage paths from error logs, failure messages, stack traces, and console output.
  *

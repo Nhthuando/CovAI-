@@ -1647,7 +1647,7 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
 
         // 3.6e. Fix TypeError: Cannot set properties of undefined (setting 'file' / 'body' / etc.)
         if (rawOutput.includes("Cannot set properties of undefined")) {
-            const healedFixtures = healControllerFixturesWithAst(content, testFile);
+            const healedFixtures = healControllerFixturesWithAst(content, fullPath);
             if (healedFixtures !== content) {
                 content = healedFixtures;
                 anyFileModified = true;

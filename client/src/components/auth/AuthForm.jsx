@@ -144,6 +144,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
   }
 
   const handleGithubOAuth = () => {
+<<<<<<< HEAD
     const oauthUrl = getGithubOAuthUrl("login");
     if (!oauthUrl) {
       setServerMessage("GitHub OAuth is not configured.");
@@ -151,6 +152,12 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
     }
     sessionStorage.setItem("covai.githubOAuthMode", "login");
     window.location.href = oauthUrl;
+=======
+    const clientId =
+      import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQ1Hyb1oaqmSTXi";
+    const redirectUri = `${window.location.origin}/auth/github/callback`;
+    window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=user:email repo&redirect_uri=${redirectUri}`;
+>>>>>>> 56795b36d270ed9b0369125739735bccf44396c1
   };
 
   return (

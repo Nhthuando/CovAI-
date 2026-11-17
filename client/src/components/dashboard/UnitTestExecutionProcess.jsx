@@ -22,7 +22,7 @@ import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 import { getProjectJobsApi, getJobDetailApi } from "../../services/job.service.js";
 
 export default function UnitTestExecutionProcess({
-  testSuites = [],
+  testSuites: discoveredSuites = [],
   executions = {},
   snapshotId,
   projectId,
@@ -35,6 +35,8 @@ export default function UnitTestExecutionProcess({
   rawTotals = null,
   summary = null,
   missingDependency = null,
+  dependencyInstallError = "",
+  dependencyInstallLogs = [],
   onInstallDependency = null,
   isInstallingDependency = false,
 }) {
@@ -50,6 +52,20 @@ export default function UnitTestExecutionProcess({
   // Raw logs & job state
   const [rawLogs, setRawLogs] = useState("");
   const [latestJob, setLatestJob] = useState(null);
+  const [currentRunStartedAt, setCurrentRunStartedAt] = useState(() => running ? Date.now() : null);
+  const [now, setNow] = useState(Date.now);
+  const lastRunningProgress = useRef(null);
+  useEffect(() => {
+    setLatestJob(null);
+    if (!running) return;
+    setCurrentRunStartedAt(Date.now());
+    lastRunningProgress.current = null;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running, snapshotId]);
+  useEffect(() => {
+    if (running && runProgress > 0) lastRunningProgress.current = runProgress;
+  }, [running, runProgress]);
   const [expandedFileId, setExpandedFileId] = useState(null);
 
   const terminalEndRef = useRef(null);
@@ -58,6 +74,11 @@ export default function UnitTestExecutionProcess({
   const jestRun = executions?.jest;
   const vitestRun = executions?.vitest;
 
+
+  const testSuites = useMemo(
+    () => discoveredSuites.filter((suite) => suite.status === "passed" || suite.status === "failed"),
+    [discoveredSuites],
+  );
 
   // Global KPIs calculation
   const kpis = useMemo(() => {
@@ -87,7 +108,13 @@ export default function UnitTestExecutionProcess({
       totalDurationMs = (jestRun?.durationMs || 0) + (vitestRun?.durationMs || 0);
     }
 
-    const durationSeconds = totalDurationMs > 0 ? (totalDurationMs / 1000).toFixed(2) : "262.04";
+    const startedAt = latestJob?.startedAt || latestJob?.createdAt || (running ? currentRunStartedAt : null);
+    const finishedAt = latestJob?.finishedAt || latestJob?.updatedAt;
+    const jobDuration = startedAt && (running || finishedAt)
+      ? Math.max(0, (running ? now : new Date(finishedAt).getTime()) - new Date(startedAt).getTime())
+      : null;
+    const durationMs = jobDuration ?? totalDurationMs;
+    const durationSeconds = durationMs > 0 ? (durationMs / 1000).toFixed(2) : "—";
     const passRate = totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 100;
 
     // Statement coverage
@@ -95,7 +122,7 @@ export default function UnitTestExecutionProcess({
       ? Number(rawTotals.statements.pct)
       : summary?.coverage?.statements != null
         ? Number(summary.coverage.statements)
-        : (jestRun?.coverageStatementsPct || vitestRun?.coverageStatementsPct || 57.9);
+        : (jestRun?.coverageStatementsPct || vitestRun?.coverageStatementsPct || 0);
 
     const statementPct = Number(statPctRaw).toFixed(1);
 
@@ -110,7 +137,14 @@ export default function UnitTestExecutionProcess({
       durationSeconds,
       statementPct,
     };
-  }, [testSuites, jestRun, vitestRun, rawTotals, summary]);
+  }, [testSuites, jestRun, vitestRun, rawTotals, summary, latestJob, running, currentRunStartedAt, now]);
+
+  const selectLatestJob = (jobs) => jobs.filter(j =>
+    ["RUN_TESTS", "RUN_VITEST_TESTS", "ANALYSIS"].includes(j.type) &&
+    (!snapshotId || j.snapshotId === snapshotId || !j.snapshotId) &&
+    (!running || ["RUNNING", "PENDING", "QUEUED", "ACTIVE"].includes(j.status) ||
+      new Date(j.startedAt || j.createdAt).getTime() >= currentRunStartedAt)
+  ).sort((a, b) => new Date(b.startedAt || b.createdAt || 0) - new Date(a.startedAt || a.createdAt || 0))[0];
 
   // Fetch real job output/logs from server (manual refresh)
   const handleRefreshLogs = async () => {
@@ -119,11 +153,7 @@ export default function UnitTestExecutionProcess({
     try {
       const projJobs = await getProjectJobsApi(projectId).catch(() => ({ jobs: [] }));
       const jobs = projJobs?.jobs || [];
-      const relevantJob = jobs.find(
-        (j) =>
-          ["RUN_TESTS", "RUN_VITEST_TESTS", "ANALYSIS"].includes(j.type) &&
-          (!snapshotId || j.snapshotId === snapshotId || !j.snapshotId),
-      );
+      const relevantJob = selectLatestJob(jobs);
 
       if (relevantJob?.id) {
         setLatestJob(relevantJob);
@@ -133,9 +163,8 @@ export default function UnitTestExecutionProcess({
           const out = jobData.output?.stdout || "";
           const err = jobData.output?.stderr || "";
           const fullText = [out, err].filter(Boolean).join("\n");
-          if (fullText.trim()) {
-            setRawLogs(fullText);
-          }
+          setLatestJob((previous) => ({ ...previous, ...jobData }));
+          setRawLogs(fullText);
         }
       }
     } catch (e) {
@@ -149,107 +178,48 @@ export default function UnitTestExecutionProcess({
     let ignore = false;
     if (!projectId) return;
 
-    getProjectJobsApi(projectId)
+    const fetchLatest = () => getProjectJobsApi(projectId)
       .then(async (projJobs) => {
         if (ignore) return;
         const jobs = projJobs?.jobs || [];
-        const relevantJob = jobs.find(
-          (j) =>
-            ["RUN_TESTS", "RUN_VITEST_TESTS", "ANALYSIS"].includes(j.type) &&
-            (!snapshotId || j.snapshotId === snapshotId || !j.snapshotId),
-        );
+        const relevantJob = selectLatestJob(jobs);
 
         if (relevantJob?.id && !ignore) {
           setLatestJob(relevantJob);
+          setRawLogs("");
           const detail = await getJobDetailApi(relevantJob.id).catch(() => null);
           const jobData = detail?.job;
           if (jobData && !ignore) {
             const out = jobData.output?.stdout || "";
             const err = jobData.output?.stderr || "";
             const fullText = [out, err].filter(Boolean).join("\n");
-            if (fullText.trim()) {
-              setRawLogs(fullText);
-            }
+            setLatestJob((previous) => ({ ...previous, ...jobData }));
+            setRawLogs(fullText);
           }
         }
       })
       .catch((e) => {
         console.warn("[UnitTestExecutionProcess] initial load error:", e);
       });
+    fetchLatest();
+    const timer = running ? setInterval(fetchLatest, 3000) : null;
 
     return () => {
       ignore = true;
+      if (timer) clearInterval(timer);
     };
-  }, [projectId, snapshotId]);
+  }, [projectId, snapshotId, running, currentRunStartedAt]);
 
   // Auto-scroll terminal
   useEffect(() => {
     if (autoScroll && terminalEndRef.current && activeConsoleTab === "terminal") {
       terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [rawLogs, autoScroll, activeConsoleTab, running, runStep]);
+  }, [rawLogs, dependencyInstallLogs, autoScroll, activeConsoleTab, running, runStep]);
 
-  // Fallback / authentic formatted log content when server output is not yet recorded
-  const formattedLogs = useMemo(() => {
-    if (rawLogs && rawLogs.trim().length > 0) {
-      return rawLogs;
-    }
-
-    // Generate authentic Jest/Vitest developer terminal output matching the user's screenshot
-    const lines = [];
-
-    // Header info if available
-    lines.push("> covai-test-runner@2.0.0 test:unit");
-    lines.push("> jest --detectOpenHandles --coverage\n");
-
-    if (testSuites.length > 0) {
-      testSuites.forEach((suite) => {
-        const isPass = suite.status === "passed" && (suite.failedTests || 0) === 0;
-        const durationSec = suite.durationMs ? (suite.durationMs / 1000).toFixed(3) : "1.240";
-        const cleanPath = cleanDisplayPath(suite.filePath);
-
-        if (isPass) {
-          lines.push(`PASS ${cleanPath} (${durationSec} s)`);
-        } else {
-          lines.push(`FAIL ${cleanPath} (${durationSec} s)`);
-          if (suite.failureMessage) {
-            lines.push(suite.failureMessage);
-          } else {
-            (suite.assertions || [])
-              .filter((a) => a.status === "failed")
-              .forEach((a) => {
-                lines.push(`  ● ${a.title || "Assertion failed"}`);
-                if (Array.isArray(a.failureMessages) && a.failureMessages.length > 0) {
-                  lines.push(a.failureMessages.join("\n"));
-                } else if (a.error || a.message) {
-                  lines.push(`    ${a.error || a.message}`);
-                }
-              });
-          }
-        }
-      });
-    } else {
-      lines.push("Waiting for test execution output...");
-    }
-
-    const totalS = kpis.totalSuites || 8;
-    const passedS = kpis.passedSuites || (kpis.failedSuites > 0 ? totalS - kpis.failedSuites : totalS - 1);
-    const failedS = kpis.failedSuites > 0 ? kpis.failedSuites : (totalS > passedS ? totalS - passedS : 1);
-
-    const totalT = kpis.totalTests || 23;
-    const passedT = kpis.passedTests || (totalT > 1 ? totalT - 1 : totalT);
-    const failedT = kpis.failedTests > 0 ? kpis.failedTests : (totalT > passedT ? totalT - passedT : 1);
-
-    lines.push(`Test Suites: ${failedS > 0 ? `${failedS} failed, ` : ""}${passedS} passed, ${totalS} total`);
-    lines.push(`Tests:       ${failedT > 0 ? `${failedT} failed, ` : ""}${passedT} passed, ${totalT} total`);
-    lines.push("Snapshots:   0 total");
-    lines.push(`Time:        ${kpis.durationSeconds} s, estimated 27 s`);
-    lines.push("Ran all test suites matching Jest & Vitest specs.");
-    lines.push("Test results written to: ../../coverage/jest-results-unit.json");
-    lines.push("Force exiting Jest: Have you considered using `--detectOpenHandles` to detect async operations that kept running after all tests finished?");
-
-    return lines.join("\n");
-  }, [rawLogs, testSuites, kpis]);
+  const formattedLogs = [rawLogs || "Waiting for test execution output...", ...dependencyInstallLogs,
+    !dependencyInstallLogs.length && dependencyInstallError && `[ERROR] ${dependencyInstallError}`]
+    .filter(Boolean).join("\n");
 
   // If live running, append live status line
   const displayedLogText = useMemo(() => {
@@ -315,19 +285,20 @@ export default function UnitTestExecutionProcess({
     },
   ];
 
-  // Helper to determine step status: "completed" | "running" | "pending"
+  const jobStatus = latestJob?.status;
+  const isSuccess = !running && jobStatus === "SUCCESS" && kpis.failedTests === 0;
   const getStepStatus = (stepIndex, threshold) => {
-    if (running) {
-      if (runProgress >= threshold) return "completed";
-      const prevThreshold = stepIndex === 1 ? 0 : pipelineSteps[stepIndex - 2].threshold;
-      if (runProgress >= prevThreshold && runProgress < threshold) return "running";
-      return "pending";
+    if (!running && jobStatus === "SUCCESS") return "completed";
+    const failed = !running && jobStatus === "FAILED";
+    const progress = running ? runProgress : failed ? Math.min(latestJob?.progress ?? lastRunningProgress.current ?? 99, 99) : 0;
+    if (progress >= threshold) return "completed";
+    const previousThreshold = stepIndex === 1 ? 0 : pipelineSteps[stepIndex - 2].threshold;
+    if (progress >= previousThreshold) {
+      if (running) return "running";
+      if (failed) return "failed";
     }
-    // Idle or finished: if we have test suites or executions, all 5 are completed
-    return "completed";
+    return "pending";
   };
-
-  const isSuccess = !running && kpis.failedTests === 0;
 
   // Render log line syntax styling
   const renderLogLine = (line, idx) => {
@@ -491,7 +462,7 @@ export default function UnitTestExecutionProcess({
                       : (isLight ? "1px solid #fca5a5" : "1px solid rgba(239, 68, 68, 0.35)"),
                 }}
               >
-                {running ? `RUNNING (${runProgress}%)` : isSuccess ? "SUCCESS (100%)" : "FAILED"}
+                {running ? `RUNNING (${runProgress}%)` : isSuccess ? "SUCCESS (100%)" : jobStatus || "NOT RUN"}
               </span>
 
               {/* Duration info */}
@@ -506,7 +477,7 @@ export default function UnitTestExecutionProcess({
                 }}
               >
                 <Clock size={13} />
-                <span>Duration: <b>{kpis.durationSeconds}s</b></span>
+                <span>Duration: <b>{kpis.durationSeconds === "—" ? "—" : kpis.durationSeconds + "s"}</b></span>
               </span>
             </div>
 
@@ -520,7 +491,7 @@ export default function UnitTestExecutionProcess({
               }}
             >
               <span>Engine: <b>Vitest & Jest</b></span>
-              <span>Started: <b>{latestJob?.startedAt ? new Date(latestJob.startedAt).toLocaleTimeString() : "10:03:44"}</b></span>
+              <span>Started: <b>{latestJob?.startedAt || latestJob?.createdAt || (running && currentRunStartedAt) ? new Date(latestJob?.startedAt || latestJob?.createdAt || currentRunStartedAt).toLocaleTimeString() : "—"}</b></span>
             </div>
           </div>
         </div>
@@ -613,7 +584,7 @@ export default function UnitTestExecutionProcess({
               color: isLight ? "#64748b" : "var(--color-text-muted)",
             }}
           >
-            {running ? `In progress (${runProgress}%)` : "All 5/5 steps completed"}
+            {running ? "In progress (" + runProgress + "%)" : jobStatus === "SUCCESS" ? "All 5/5 steps completed" : jobStatus === "FAILED" ? "Execution failed" : "Waiting for a run"}
           </span>
         </div>
 
@@ -671,6 +642,8 @@ export default function UnitTestExecutionProcess({
                     <CheckCircle2 size={14} style={{ color: isLight ? "#16a34a" : "#4ade80" }} />
                   ) : isRunning ? (
                     <Loader2 size={14} className="animate-spin" style={{ color: isLight ? "#4f46e5" : "#818cf8" }} />
+                  ) : status === "failed" ? (
+                    <XCircle size={14} className="text-[var(--color-danger)]" aria-label="Failed" />
                   ) : (
                     <div
                       style={{
@@ -1082,7 +1055,7 @@ export default function UnitTestExecutionProcess({
                         ) : isRunning ? (
                           <Loader2 size={18} color="#6366f1" className="animate-spin" />
                         ) : (
-                          <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid #64748b" }} />
+                          status === "failed" ? <XCircle size={18} color="var(--color-danger)" /> : <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid #64748b" }} />
                         )}
                         <div>
                           <span style={{ fontSize: 13, fontWeight: 750 }}>
@@ -1100,21 +1073,21 @@ export default function UnitTestExecutionProcess({
                           fontWeight: 750,
                           padding: "2px 8px",
                           borderRadius: 6,
-                          background: isCompleted ? "#dcfce7" : isRunning ? "#e0e7ff" : "#f1f5f9",
-                          color: isCompleted ? "#15803d" : isRunning ? "#4338ca" : "#64748b",
+                          background: status === "failed" ? "var(--color-surface)" : isCompleted ? "#dcfce7" : isRunning ? "#e0e7ff" : "#f1f5f9",
+                          color: status === "failed" ? "var(--color-danger)" : isCompleted ? "#15803d" : isRunning ? "#4338ca" : "#64748b",
                         }}
                       >
-                        {isCompleted ? "COMPLETED" : isRunning ? "RUNNING" : "PENDING"}
+                        {isCompleted ? "COMPLETED" : isRunning ? "RUNNING" : status === "failed" ? "FAILED" : "PENDING"}
                       </span>
                     </div>
 
-                    <div style={{ marginTop: 8, fontSize: 11.5, color: isLight ? "#475569" : "#8b949e", fontFamily: "var(--font-mono, monospace)" }}>
+                    {isCompleted && <div style={{ marginTop: 8, fontSize: 11.5, color: isLight ? "#475569" : "#8b949e", fontFamily: "var(--font-mono, monospace)" }}>
                       {step.id === 1 && "✓ Docker runtime initialized, workspace isolation active."}
                       {step.id === 2 && "✓ Node modules & Jest/Vitest dependencies validated."}
-                      {step.id === 3 && `✓ ${testSuites.length || 8} unit test suite specifications discovered.`}
+                      {step.id === 3 && `✓ ${testSuites.length} unit test suite specifications discovered.`}
                       {step.id === 4 && `✓ Test assertions executed with ${(kpis.durationSeconds)}s runtime.`}
-                      {step.id === 5 && `✓ V8 coverage merged (${kpis.statementPct}% statements achieved).`}
-                    </div>
+                      {step.id === 5 && `✓ Coverage merged (${kpis.statementPct}% statements achieved).`}
+                    </div>}
                   </div>
                 );
               })}
@@ -1141,7 +1114,7 @@ export default function UnitTestExecutionProcess({
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {testSuites.map((suite, idx) => {
                   const isPass = suite.status === "passed" && (suite.failedTests || 0) === 0;
-                  const durationSec = suite.durationMs ? (suite.durationMs / 1000).toFixed(3) : "1.24";
+                  const durationSec = suite.durationMs ? (suite.durationMs / 1000).toFixed(3) : "—";
                   const cleanPath = cleanDisplayPath(suite.filePath);
                   const isExpanded = expandedFileId === suite.filePath;
 

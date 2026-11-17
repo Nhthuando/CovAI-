@@ -209,6 +209,8 @@ export const generateText = async (
       typeof maybeInstructionOrConfig === "object"
     ) {
       generationConfig = maybeInstructionOrConfig;
+    } else {
+      generationConfig = maybeConfig || {};
     }
   }
 

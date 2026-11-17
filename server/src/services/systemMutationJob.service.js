@@ -19,7 +19,8 @@ export const processSystemMutationJob = async (jobId, lease) => {
         const latestRevision=await prisma.systemRequirementRevision.findFirst({where:{snapshotId:job.snapshotId,status:'CONFIRMED'},orderBy:{revisionNumber:'desc'}});
         if((latestRevision?.id || null) !== assessment.requirementRevisionId) throw new ServiceError('Requirement revision changed; assess again',409);
         const current = snapshotIdentity(job.snapshot.rootDir);
-        if(current.sourceHash !== assessment.sourceHash || current.testHash !== assessment.testHash) throw new ServiceError('Assessment source or test has changed',409);
+        const assessedIdentity = assessment.reportJson?.workspaceIdentity || assessment;
+        if(current.sourceHash !== assessedIdentity.sourceHash || current.testHash !== assessedIdentity.testHash) throw new ServiceError('Assessment source or test has changed',409);
         const revision = assessment.requirementRevisionId ? await prisma.systemRequirementRevision.findFirst({ where: { id: assessment.requirementRevisionId, snapshotId: job.snapshotId }, include: { bindings: true } }) : null;
         const options = assessment.reportJson.input;
         const baseline = await assessSystemWorkspace({ rootDir: job.snapshot.rootDir, input: { ...options, repeatRuns: 3 }, jobId, signal:lease.signal, revision, bindings: revision?.bindings || [] });

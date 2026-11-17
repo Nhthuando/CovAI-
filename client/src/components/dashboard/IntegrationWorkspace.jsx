@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "./ToastContext";
+import CoverageJobQueueButton from "./CoverageJobQueueButton.jsx";
 
 import IntegrationRouteMatrixTable from "./integration/IntegrationRouteMatrixTable.jsx";
 import IntegrationReportEmbed from "./integration/IntegrationReportEmbed.jsx";
@@ -325,6 +326,7 @@ export default function IntegrationWorkspace({
   initialContext,
   onContextChange,
   activeView,
+  onOpenJobQueue,
 }) {
   const { showToast } = useToast();
   const projectAccess = useProjectAccess(projectId);
@@ -1913,6 +1915,18 @@ export default function IntegrationWorkspace({
     };
   }, [endpoints, execution, generation, workspace]);
 
+  const apiFiles = new Set(endpoints.map(endpoint => endpoint.source?.sourceFile).filter(Boolean));
+  const apiFileCoverage = (summary?.fileCoverages || []).filter(file => apiFiles.has(file.filePath));
+  const averageCoverage = apiFileCoverage.length
+    ? apiFileCoverage.reduce((sum, file) => sum + (file.line ?? 0), 0) / apiFileCoverage.length
+    : null;
+  const coverageMetrics = [
+    ["API files", apiFiles.size],
+    ["Covered API files", apiFileCoverage.filter(file => file.line > 0).length],
+    ["Average coverage", averageCoverage == null ? "—" : averageCoverage.toFixed(1) + "%"],
+    ["Critical APIs", apiFileCoverage.filter(file => file.line != null && file.line < 60).length],
+  ];
+
   // Loading State with Authentic Skeleton
   if (loading && !workspace) {
     return <IntegrationCockpitSkeleton />;
@@ -1975,8 +1989,9 @@ export default function IntegrationWorkspace({
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-sm font-semibold text-[var(--color-text)] tracking-tight m-0">
-                API Integration Testing
+                Integration Test Coverage
               </h1>
+              <span className="text-xs text-[var(--color-text-secondary)]">Playwright · Supertest</span>
               {hasScanned && detectionInfo?.targetFramework && (
                 <span className="px-2 py-0.5 rounded font-mono text-[10px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                   {detectionInfo.targetFramework.toUpperCase()}
@@ -2017,6 +2032,7 @@ export default function IntegrationWorkspace({
 
           {/* Right: Header Utilities (Initial Scan, Framework Setup, History) */}
           <div className="flex items-center gap-2 flex-wrap">
+            {onOpenJobQueue && <CoverageJobQueueButton onClick={onOpenJobQueue} running={isJobActive} />}
             {!hasScanned ? (
               <button
                 type="button"
@@ -2280,6 +2296,14 @@ export default function IntegrationWorkspace({
             )}
           </div>
         </div>
+        <dl className="grid grid-cols-2 gap-2 px-5 pb-3 sm:grid-cols-4">
+          {coverageMetrics.map(([label, value]) => (
+            <div key={label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
+              <dt className="text-xs text-[var(--color-text-secondary)]">{label}</dt>
+              <dd className="font-mono text-sm font-semibold tabular-nums">{value}</dd>
+            </div>
+          ))}
+        </dl>
       </header>
 
       {/* Cancellation Notice Banner */}

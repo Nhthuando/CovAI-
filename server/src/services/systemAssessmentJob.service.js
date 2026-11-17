@@ -147,14 +147,16 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
     try {
         await withOperationPublishGuard(tx=>tx.systemTestAssessment.update({where:{jobId},data:{status:'RUNNING'}}));
         const onProgress = async (message, progress = 30) => { await lease.assertHeld(); const current = await getJobById(jobId); if (current.status !== 'RUNNING') throw new ServiceError('Assessment canceled', 409); await updateJobProgress(jobId, Math.max(current.progress || 0, progress)); await addJobLog(jobId, 'INFO', `Assessment stage: ${message}`); };
+        // Staleness is judged against the snapshot as imported. Preparation may add
+        // lockfiles or runtime config inside the disposable workspace afterwards.
+        const startIdentity=snapshotIdentity(job.snapshot.rootDir);
+        workspaceIdentity={sourceHash:startIdentity.sourceHash,testHash:startIdentity.testHash};
         if(input.versionCheck) {
             job.snapshot.rootDir = currentProjectOperation()?.rootDir || job.snapshot.rootDir;
             historical = await prepareHistoricalSuiteRun({rootDir:job.snapshot.rootDir,snapshotId:job.snapshotId,input});
             input = historical.input;
         }
         if (input.autoDiscover) {
-            const beforePreparation=snapshotIdentity(job.snapshot.rootDir);
-            workspaceIdentity={sourceHash:beforePreparation.sourceHash,testHash:beforePreparation.testHash};
             const prepared = await prepareAutomaticAssessment({rootDir:job.snapshot.rootDir,input,onProgress,signal:lease.signal,jobId});
             input = prepared.input;
             automaticCatalog=prepared.catalog;
@@ -199,18 +201,6 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
                 return;
             }
             const matches = catalog.filter(scenario => scenario.filePath === payload.filePath && scenario.title === payload.title);
-            if (type === 'SCENARIO_ENDED' && screenshotBody) {
-                const framePayload = {
-                    snapshotId: job.snapshotId,
-                    assessmentId: assessment.id,
-                    runIndex,
-                    frame: screenshotBody,
-                };
-                recordSystemLiveFrame(framePayload);
-                global.io?.to?.(`user:${job.userId}`)?.emit?.('system-run:frame', framePayload);
-                const operation = currentProjectOperation();
-                if (operation) void deliverScopedProjectTransport({ projectId: operation.projectId, event: 'system-run:frame', payload: framePayload });
-            }
             if (type === 'SCENARIO_ENDED' && matches.length === 1 && screenshotBody) {
                 try {
                     const relativePath = storeScenarioScreenshot({ rootDir: job.snapshot.rootDir, source: { body: screenshotBody }, runKey: `live-${assessment.id}-${runIndex}` });
@@ -229,6 +219,7 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
             report.limitations.push('Automatic technical execution does not confirm business requirements or approve expected outcomes. Generated tests and startup setup remain in the disposable operation workspace.');
             if(generatedTests)report.generatedTests={...generatedTests,code:fs.readFileSync(containedPath(job.snapshot.rootDir,generatedTests.filePath),'utf8')};
         }
+        if(!report.workspaceIdentity)report.workspaceIdentity=workspaceIdentity;
         if(historical) {report.suiteVersionId=historical.version.id;report.limitations.push('Historical tests on current source. Requirement reviews are stale; this check does not restore application source.');}
         if(preparationUsage)report.aiUsage=preparationUsage;
         await lease.assertHeld();

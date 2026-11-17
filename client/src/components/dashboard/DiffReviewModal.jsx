@@ -16,6 +16,14 @@ import {
   Loader2,
 } from "lucide-react";
 import { DiffEditor } from "@monaco-editor/react";
+import { diffLines } from "diff";
+
+export function countDiffLines(original, updated) {
+  return diffLines(original, updated).reduce((counts, change) => ({
+    added: counts.added + (change.added ? change.count : 0),
+    removed: counts.removed + (change.removed ? change.count : 0),
+  }), { added: 0, removed: 0 });
+}
 
 /* ── Helper to resolve file icon ── */
 function getFileIcon(fileName = "") {
@@ -37,6 +45,7 @@ export default function DiffReviewModal({
   onRunAnalysis,
   isApplying = false,
   applyingStep = "",
+  error = null,
 }) {
   const [activeIdx, setActiveIdx] = useState(initialFileIndex);
   const [sideBySide, setSideBySide] = useState(true);
@@ -132,11 +141,15 @@ export default function DiffReviewModal({
   const modifiedCode =
     currentSuggestion?.fullUpdatedContent ||
     currentSuggestion?.suggestedTestCode ||
+    currentSuggestion?.generatedCode ||
     activeFile?.fullUpdatedContent ||
     activeFile?.suggestedTestCode ||
+    activeFile?.generatedCode ||
     "";
 
-  const isApplied = currentSuggestion?.applied ?? activeFile?.applied;
+  const isApplied = Boolean(currentSuggestion?.applied || activeFile?.applied);
+  const addedLines = countDiffLines(originalCode, modifiedCode).added;
+  const runFailure = currentSuggestion?.testRunError || activeFile.suggestions?.find(s => s.testRunError)?.testRunError;
   const anyUnapplied = files.some((f) => !f.applied);
   const anyApplied = files.some((f) => f.applied);
 
@@ -195,7 +208,7 @@ export default function DiffReviewModal({
                       border: "1px solid rgba(34, 197, 94, 0.3)",
                     }}
                   >
-                    +{activeFile.linesAdded || 0} lines
+                    +{addedLines} lines
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-400 font-mono truncate max-w-md">
@@ -271,7 +284,7 @@ export default function DiffReviewModal({
               ) : (
                 <button
                   type="button"
-                  disabled={isAnyApplying}
+                  disabled={isAnyApplying || !onUndoFile || activeFile.canUndo === false}
                   onClick={() => onUndoFile?.(activeFile, currentSuggestion)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     isAnyApplying ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-90"
@@ -387,7 +400,7 @@ export default function DiffReviewModal({
                         color: "#4ade80",
                       }}
                     >
-                      +{file.linesAdded || 0}
+                      +{countDiffLines(file.originalContent || "", file.fullUpdatedContent || file.suggestedTestCode || file.generatedCode || "").added}
                     </span>
                     {isApplyingCurrent && isSelected ? (
                       <Loader2 size={12} className="animate-spin text-purple-400" />
@@ -417,7 +430,7 @@ export default function DiffReviewModal({
                   disabled={activeIdx === files.length - 1}
                   onClick={() => setActiveIdx((prev) => Math.min(files.length - 1, prev + 1))}
                   className="p-1 rounded hover:text-white disabled:opacity-30 cursor-pointer"
-                  title="File sau"
+                  title="Next file"
                 >
                   <ChevronRight size={14} />
                 </button>
@@ -426,6 +439,8 @@ export default function DiffReviewModal({
           )}
 
           {/* ── Monaco Diff Editor Body ── */}
+          {error && <p role="alert" className="px-4 py-2 text-sm text-[var(--color-danger)]">{error}</p>}
+          {runFailure && <p role="alert" className="px-4 py-2 text-sm text-[var(--color-danger)]">{runFailure}</p>}
           <div className="flex-1 min-h-0 relative">
             <DiffEditor
               height="100%"

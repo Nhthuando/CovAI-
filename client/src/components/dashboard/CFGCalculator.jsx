@@ -1,3 +1,4 @@
+import { getJobDetailApi } from "../../services/job.service.js";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import dagre from "dagre";
@@ -480,8 +481,25 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
   return fileCfgs[0].functionName;
 };
 
+async function rebuildCfg(projectId, snapshotId) {
+  const response = await buildCfgApi(projectId, snapshotId);
+  const jobId = response?.data?.job?.id;
+  if (!jobId) throw new Error("CFG build did not return a job.");
+  const deadline = Date.now() + 180000;
+  while (Date.now() < deadline) {
+    const { job } = await getJobDetailApi(jobId);
+    if (job?.status === "SUCCESS") return;
+    if (["FAILED", "CANCELED"].includes(job?.status)) {
+      throw new Error(job.errorMessage || "CFG build did not complete.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error("CFG build is still running. Check the job queue.");
+}
+
 export default function CFGCalculator({
   project,
+  snapshotId: selectedSnapshotId,
   onClose,
   initialFile,
   initialFunc,
@@ -489,6 +507,8 @@ export default function CFGCalculator({
   onOpenFile,
 }) {
   const { isMobile } = useBreakpoints();
+  const projectId = project?.id;
+  const snapshotId = selectedSnapshotId || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id;
   const [cfgs, setCfgs] = useState([]);
   const [ccs, setCcs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -550,19 +570,17 @@ export default function CFGCalculator({
     try {
       setRebuilding(true);
       setError(null);
-      await buildCfgApi(project.id);
-      // Wait a moment for the job to process, then refetch
-      await new Promise((r) => setTimeout(r, 3000));
+      // Refetch only after the job publishes the graphs.
+      await rebuildCfg(projectId, snapshotId);
       const [cfgRes, ccRes] = await Promise.all([
-        getProjectCfgApi(project.id),
-        getProjectCcApi(project.id),
+        getProjectCfgApi(projectId, snapshotId),
+        getProjectCcApi(projectId, snapshotId),
       ]);
       setCfgs(cfgRes.data || []);
       setCcs(ccRes.data || []);
-      if (cfgRes?.data?.length > 0) {
-        const firstFile = [...new Set(cfgRes.data.map((c) => c.filePath))][0];
-        setSelectedFile(firstFile);
-      }
+      const files = [...new Set((cfgRes?.data || []).map((cfg) => cfg.filePath))];
+      setSelectedFile(findMatchingCfgFile(files, selectedFile || initialFile) || files[0] || null);
+      setSelectedFunc(null);
     } catch (err) {
       setError(err.message || "Failed to rebuild CFG");
     } finally {
@@ -570,18 +588,21 @@ export default function CFGCalculator({
     }
   };
 
-  const autoRebuiltRef = useRef(false);
+  const autoRebuiltRef = useRef(new Set());
 
   useEffect(() => {
+    let current = true;
     async function fetchData() {
       try {
         setLoading(true);
-        // Default to latest snapshot
+        setError(null);
+        // Default to latest snapshot when no snapshot was selected
         let [cfgRes, ccRes] = await Promise.all([
-          getProjectCfgApi(project.id),
-          getProjectCcApi(project.id),
+          getProjectCfgApi(projectId, snapshotId),
+          getProjectCcApi(projectId, snapshotId),
         ]);
 
+        if (!current) return;
         let currentCfgs = cfgRes?.data || [];
         let currentCcs = ccRes?.data || [];
         let files = [...new Set(currentCfgs.map((c) => c.filePath))];
@@ -591,25 +612,26 @@ export default function CFGCalculator({
         if (
           initialFile &&
           !hasCfgFileMatch(files, initialFile) &&
-          !autoRebuiltRef.current &&
+          !autoRebuiltRef.current.has(snapshotId || projectId) &&
           project?.id
         ) {
-          autoRebuiltRef.current = true;
+          autoRebuiltRef.current.add(snapshotId || projectId);
           setRebuilding(true);
           try {
-            await buildCfgApi(project.id);
-            await new Promise((r) => setTimeout(r, 2000));
+            await rebuildCfg(projectId, snapshotId);
             const [cfgRes2, ccRes2] = await Promise.all([
-              getProjectCfgApi(project.id),
-              getProjectCcApi(project.id),
+              getProjectCfgApi(projectId, snapshotId),
+              getProjectCcApi(projectId, snapshotId),
             ]);
+            if (!current) return;
             currentCfgs = cfgRes2?.data || [];
             currentCcs = ccRes2?.data || [];
             files = [...new Set(currentCfgs.map((c) => c.filePath))];
           } catch (autoErr) {
             console.warn("Auto-rebuild CFG for missing file failed:", autoErr);
+            if (current) setError(autoErr.message || "Failed to rebuild CFG");
           } finally {
-            setRebuilding(false);
+            if (current) setRebuilding(false);
           }
         }
 
@@ -617,11 +639,9 @@ export default function CFGCalculator({
         setCcs(currentCcs);
 
         if (currentCfgs.length > 0) {
-          let targetFile = files[0];
-          if (initialFile) {
-            targetFile = findMatchingCfgFile(files, initialFile);
-          }
+          const targetFile = findMatchingCfgFile(files, initialFile) || files[0];
           setSelectedFile(targetFile);
+          setSelectedFunc(null);
 
           if (initialFunc || initialLine) {
             const fileCfgs = currentCfgs.filter((c) => c.filePath === targetFile);
@@ -632,13 +652,14 @@ export default function CFGCalculator({
           }
         }
       } catch (err) {
-        setError(err.message || "Failed to fetch CFG/CC data");
+        if (current) setError(err.message || "Failed to fetch CFG/CC data");
       } finally {
-        setLoading(false);
+        if (current) setLoading(false);
       }
     }
-    if (project?.id) fetchData();
-  }, [project, initialFile, initialFunc, initialLine]);
+    if (projectId) fetchData();
+    return () => { current = false; };
+  }, [projectId, snapshotId, initialFile, initialFunc, initialLine]);
 
   // Keep selectedFile / selectedFunc synchronized if initialFile / initialFunc changes dynamically
   useEffect(() => {
@@ -658,18 +679,20 @@ export default function CFGCalculator({
   }, [initialFile, initialFunc, initialLine, cfgs]);
 
   useEffect(() => {
-    async function fetchCode() {
-      if (selectedFile && project?.id) {
-        try {
-          const res = await getFileContentApi(project.id, selectedFile, { snapshotId: project.snapshots?.[0]?.id || project.latestSnapshotId });
-          setSourceCode(res.data.content);
-        } catch (err) {
-          setSourceCode("// Failed to load source code");
-        }
-      }
-    }
-    fetchCode();
-  }, [selectedFile, project]);
+    setSourceCode("");
+    if (!selectedFile || !projectId) return;
+    const controller = new AbortController();
+    getFileContentApi(projectId, selectedFile, { snapshotId, signal: controller.signal })
+      .then((res) => {
+        if (!controller.signal.aborted) setSourceCode(res.data.content);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        console.error("Failed to load CFG source code:", err);
+        setSourceCode("// Failed to load source code");
+      });
+    return () => controller.abort();
+  }, [selectedFile, projectId, snapshotId]);
 
   const uniqueFiles = useMemo(() => {
     return [...new Set(cfgs.map((c) => c.filePath))];
@@ -741,6 +764,9 @@ export default function CFGCalculator({
         let nodes = parsed.nodes || [];
         let edges = parsed.edges || [];
 
+        if (nodes.every((node) => node.type === "start"))
+          return { nodes: [], edges: [], width: 400, height: 400 };
+
         // Add virtual exit node to conform to standard McCabe CFG calculation
         if (nodes.length > 0) {
           const fromNodeIds = new Set(edges.map((e) => e.from));
@@ -765,28 +791,17 @@ export default function CFGCalculator({
 
         return computeLayout(nodes, edges);
       } catch (e) {
+        console.warn("Unable to read CFG graph:", e);
         return { nodes: [], edges: [], width: 400, height: 400 };
       }
     }
   }, [isCallGraph, fileCfgs, activeCfg]);
 
-  // Auto-center / reset pan & zoom when file or function changes, auto-fit large graphs
+  // Center the graph at 100% when the file or function changes.
   useEffect(() => {
-    if (canvasRef.current && graphLayout.width && graphLayout.height) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      if (rect.width > 100 && rect.height > 100) {
-        const padding = 60;
-        const scaleX = (rect.width - padding) / Math.max(graphLayout.width, 100);
-        const scaleY = (rect.height - padding) / Math.max(graphLayout.height, 100);
-        const fitScale = Math.min(1, Math.max(0.4, Math.min(scaleX, scaleY)));
-        setZoom(Number(fitScale.toFixed(2)));
-        setPan({ x: 0, y: 0 });
-        return;
-      }
-    }
     setPan({ x: 0, y: 0 });
     setZoom(1);
-  }, [selectedFile, selectedFunc, graphLayout.width, graphLayout.height]);
+  }, [selectedFile, selectedFunc]);
 
   // Handle canvas mouse drag for panning
   const handleCanvasMouseDown = (e) => {
@@ -1790,6 +1805,8 @@ export default function CFGCalculator({
                                   {meta.level} Complexity ({meta.riskText})
                                 </span>
                               </div>
+
+                              <p className="text-center text-xs text-[var(--color-text-secondary)]">{meta.summary}</p>
 
                               {/* 4-Tier Interactive Scale Bar */}
                               <div className="w-full px-2 mt-1">

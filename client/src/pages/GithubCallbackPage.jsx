@@ -1,7 +1,14 @@
+<<<<<<< HEAD
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { oAuthGithubApi, connectGithubApi } from "../services/auth.service";
 import { Loader2, AlertCircle, ArrowLeft } from "lucide-react";
+=======
+import { useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { oAuthGithubApi } from "../services/auth.service";
+import { Loader2 } from "lucide-react";
+>>>>>>> 56795b36d270ed9b0369125739735bccf44396c1
 import { consumeAuthReturn } from "../lib/authReturn";
 import { queryClient } from "../lib/queryClient";
 import Button from "../components/common/Button";
@@ -41,9 +48,12 @@ function getOrCreateOAuthTask(code, isConnectMode) {
   return task;
 }
 
+// Module-level guard to ensure a GitHub code is only exchanged once in the browser runtime
+const consumedCodes = new Set();
+
 export default function GithubCallbackPage() {
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+<<<<<<< HEAD
   const [asyncErrorState, setAsyncErrorState] = useState(null);
 
   const code = searchParams.get("code");
@@ -98,6 +108,46 @@ export default function GithubCallbackPage() {
           return;
         }
 
+=======
+  const calledRef = useRef(false);
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const code = searchParams.get("code");
+    const error = searchParams.get("error");
+
+    if (error === "access_denied") {
+      alert("You declined GitHub access permission.");
+      navigate("/login", { replace: true });
+      return;
+    }
+
+    if (!code) {
+      navigate("/login", { replace: true });
+      return;
+    }
+
+    // 1. Component instance ref guard (StrictMode double-mount)
+    // 2. Runtime Set guard (Component remount / re-renders)
+    if (calledRef.current || consumedCodes.has(code)) {
+      return;
+    }
+    calledRef.current = true;
+    consumedCodes.add(code);
+
+    // 3. SessionStorage guard (Hard browser reload with code still in address bar)
+    const sessionKey = `covai_gh_code_${code}`;
+    if (sessionStorage.getItem(sessionKey)) {
+      return;
+    }
+    sessionStorage.setItem(sessionKey, "1");
+
+    // Clear the code from the URL for better UX and preventing shoulder-surfing
+    window.history.replaceState({}, document.title, "/auth/github/callback");
+
+    oAuthGithubApi(code)
+      .then((data) => {
+>>>>>>> 56795b36d270ed9b0369125739735bccf44396c1
         const userPayload = {
           id: data.userId || data.id,
           name: data.name,
@@ -106,13 +156,19 @@ export default function GithubCallbackPage() {
         };
         localStorage.setItem("token", data.token);
         localStorage.setItem("user", JSON.stringify(userPayload));
+<<<<<<< HEAD
         localStorage.setItem("userName", data.name || "");
         localStorage.setItem("userEmail", data.email || "");
         window.dispatchEvent(new Event("covai:auth-change"));
+=======
+        localStorage.setItem("userName", data.name);
+        localStorage.setItem("userEmail", data.email);
+>>>>>>> 56795b36d270ed9b0369125739735bccf44396c1
         queryClient.clear();
         navigate(consumeAuthReturn(), { replace: true });
       })
       .catch((err) => {
+<<<<<<< HEAD
         if (!active) return;
         setAsyncErrorState({
           mode: task.mode,
@@ -167,6 +223,12 @@ export default function GithubCallbackPage() {
       </div>
     );
   }
+=======
+        alert("GitHub login error: " + err.message);
+        navigate("/login", { replace: true });
+      });
+  }, [navigate]);
+>>>>>>> 56795b36d270ed9b0369125739735bccf44396c1
 
   return (
     <div className="h-screen flex items-center justify-center flex-col gap-4 bg-[var(--color-bg)] text-[var(--color-text)] font-sans">

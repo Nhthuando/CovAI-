@@ -81,3 +81,13 @@ test-results/
 !/docs/superpowers/specs/2026-11-04-collaborative-editor-design.md
 /docs/research/
 !/docs/research/*.md
+
+# Disposable collaboration worker copies and generated test artifacts
+/server/.covai-temp/collaboration-operations/
+
+# Local system-assessment verification artifacts
+/temp/system-assessment-*
+/server/src/tests/fixtures/system-assessment/.covai-system-test/
+
+docker-compose.prod.yml
+deploy.sh

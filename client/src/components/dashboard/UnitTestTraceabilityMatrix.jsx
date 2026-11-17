@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   FileCode,
+  Clock,
   FileCode2,
   GitBranch,
   Cpu,
@@ -169,6 +170,20 @@ export const isCallbackOrAnonymousName = (name) => {
 /**
  * 4-Category Decision Table Matrix with Resizable & Draggable Columns
  */
+function MatrixColumnDivider({ index, isDragging, onMouseDown, onDoubleClick, isLight }) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize columns ${index + 1} and ${index + 2}`}
+      className="w-px shrink-0 self-stretch cursor-col-resize bg-[var(--color-border)]"
+      style={{ opacity: isDragging ? 1 : isLight ? 0.7 : 0.5 }}
+      onMouseDown={onMouseDown}
+      onDoubleClick={onDoubleClick}
+    />
+  );
+}
+
 function CategoryMatrix4Cards({
   fn,
   isLight,

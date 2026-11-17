@@ -1,5 +1,5 @@
 /* eslint-disable no-unused-vars */
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, Link } from "react-router-dom";
 import "./index.css";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
@@ -16,6 +16,7 @@ import GithubCallbackPage from "./pages/GithubCallbackPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationReportPage from "./pages/IntegrationReportPage";
 import InvitationPage from "./pages/InvitationPage";
+import LegalPage from "./pages/LegalPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { RunningProcessProvider } from "./contexts/RunningProcessContext";
@@ -136,6 +137,17 @@ function AppContent() {
           }
         />
         <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
+        <Route path="/privacy" element={<LegalPage section="privacy" />} />
+        <Route path="/terms" element={<LegalPage section="terms" />} />
+        <Route path="/telemetry" element={<LegalPage section="telemetry" />} />
+        <Route path="*" element={
+          <main className="min-h-screen grid place-items-center bg-[var(--color-bg)] p-6 text-[var(--color-text)]">
+            <div className="space-y-4 text-center">
+              <h1 className="text-2xl font-semibold">404 - Page not found</h1>
+              <Link to="/" className="text-[var(--color-primary)] underline">Back to home</Link>
+            </div>
+          </main>
+        } />
       </Routes>
       <GlobalProcessIndicator />
     </>

@@ -304,7 +304,7 @@ export default function InlineTestSuggestions({
     };
 
     const handleResetCode = (sug, sugId) => {
-        const original = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";
+        const original = sug.originalGeneratedCode ?? sug.suggestedTestCode ?? sug.generatedCode ?? "";
         setEditedCode((prev) => ({
             ...prev,
             [sugId]: original,
@@ -493,21 +493,24 @@ export default function InlineTestSuggestions({
             )}
 
             {/* Before / After Coverage comparison banner if recent apply occurred */}
-            {lastApplyResult && lastApplyResult.oldCoverage && lastApplyResult.newCoverage && (() => {
-                const isFail = lastApplyResult.status === "FAILED" || lastApplyResult.isPassed === false;
+            {lastApplyResult && (() => {
+                const isFail = lastApplyResult.testStatus === "FAILED" || lastApplyResult.status === "FAILED" || lastApplyResult.isPassed === false;
                 const oldCov = lastApplyResult.oldCoverage;
                 const newCov = lastApplyResult.newCoverage;
 
                 const renderMetric = (label, oldVal, newVal) => {
-                    const o = Number(oldVal ?? 0);
-                    const n = Number(newVal ?? 0);
+                    const o = oldVal == null ? null : Number(oldVal);
+                    const n = newVal == null ? null : Number(newVal);
+                    if (o == null || n == null) {
+                        return <span key={label}>{label}: {o == null ? "—" : o + "%"} → {n == null ? "—" : n + "%"}</span>;
+                    }
                     const diff = Math.round((n - o) * 10) / 10;
-                    const increased = diff > 0;
+                    const changed = diff !== 0;
 
                     return (
                         <div key={label}>
                             <span style={{ color: "#94a3b8", marginRight: 4 }}>{label}:</span>
-                            {increased ? (
+                            {changed ? (
                                 <>
                                     <span style={{ textDecoration: "line-through", color: "#94a3b8", marginRight: 4 }}>
                                         {o}%
@@ -517,7 +520,7 @@ export default function InlineTestSuggestions({
                                         {n}%
                                     </span>
                                     <span style={{ fontSize: 10, fontWeight: 700, color: "#86efac", marginLeft: 4 }}>
-                                        (+{diff}%)
+                                        ({diff > 0 ? "+" : ""}{diff}%)
                                     </span>
                                 </>
                             ) : (
@@ -556,9 +559,12 @@ export default function InlineTestSuggestions({
                         </div>
 
                         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                            {renderMetric("Statements", oldCov.statements, newCov.statements)}
-                            {renderMetric("Branches", oldCov.branches, newCov.branches)}
-                            {renderMetric("Lines", oldCov.lines, newCov.lines)}
+                            {renderMetric("Statements", oldCov?.statements, isFail ? null : newCov?.statements)}
+                            {renderMetric("Branches", oldCov?.branches, isFail ? null : newCov?.branches)}
+                            {renderMetric("Functions", oldCov?.functions, isFail ? null : newCov?.functions)}
+                            {renderMetric("Lines", oldCov?.lines, isFail ? null : newCov?.lines)}
+                            {isFail && <span>New coverage: unavailable (run failed)</span>}
+                            {isFail && <span>{lastApplyResult.errorDetail || lastApplyResult.testRunError || lastApplyResult.message || "Test execution failed."}</span>}
                         </div>
                     </div>
                 );
@@ -572,8 +578,8 @@ export default function InlineTestSuggestions({
                     const status = isApplying ? "APPLYING" : (sug.status === "APPLYING" ? (sug.testRunError ? "FAILED" : "GENERATED") : (sug.status || "GENERATED"));
                     const badge = getStatusBadge(status);
 
-                    const originalCode = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";
-                    const currentCode = editedCode[sugId] !== undefined ? editedCode[sugId] : originalCode;
+                    const originalCode = sug.originalGeneratedCode ?? sug.suggestedTestCode ?? sug.generatedCode ?? "";
+                    const currentCode = editedCode[sugId] !== undefined ? editedCode[sugId] : (sug.suggestedTestCode ?? sug.generatedCode ?? originalCode);
 
                     return (
                         <div

@@ -177,6 +177,14 @@ export const createProject = async ({ input, currentUserId }) => {
     },
   });
 
+  // A new project must show up in the portfolio immediately, not after the
+  // overview cache expires.
+  try {
+    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(effectiveOwnerId);
+  } catch (error) {
+    console.error("[createProject] Portfolio cache invalidation failed:", error);
+  }
   return project;
 };
 

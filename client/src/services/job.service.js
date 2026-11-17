@@ -1,4 +1,5 @@
 import { getAIModelHeaders } from './aiModel.service.js';
+import { handleUnauthorizedResponse } from "../lib/authSession.js";
 /* eslint-disable no-useless-assignment */
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -46,8 +47,7 @@ async function handleResponse(res) {
 
   if (!res.ok) {
     if (res.status === 401) {
-      clearAuthState();
-      window.location.href = "/login";
+      await handleUnauthorizedResponse();
     }
     const error = new Error(data.message || `Request failed with status ${res.status}`);
     Object.assign(error, { status: res.status, code: data.code, details: data.details });

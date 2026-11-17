@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useLocation } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
@@ -84,6 +84,25 @@ import {
 import { getProjectJobsApi } from "../../services/job.service";
 import { queryClient } from "../../lib/queryClient.js";
 
+function CoverageJobsDialog({ projectId, onClose }) {
+  const dialogRef = useRef(null);
+  useEffect(() => { dialogRef.current?.showModal(); }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-labelledby="coverage-job-queue-title"
+      onCancel={onClose}
+      className="m-auto w-[min(95vw,70rem)] max-h-[85vh] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] backdrop:bg-black/60"
+    >
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] p-4">
+        <h2 id="coverage-job-queue-title" className="text-sm font-semibold">Job Queue</h2>
+        <button type="button" aria-label="Close Job Queue" onClick={onClose} className="cursor-pointer rounded-md p-1 hover:bg-[var(--color-surface-secondary)]"><X size={18} /></button>
+      </div>
+      <JobQueue projectId={projectId} />
+    </dialog>
+  );
+}
+
 const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const DEFAULT_AI_PANEL_WIDTH = 340;
@@ -125,6 +144,7 @@ function LayoutInner() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [coverageJobsOpen, setCoverageJobsOpen] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
 
   const handleLogout = () => {
@@ -258,7 +278,6 @@ function LayoutInner() {
     "architecture",
     "overview",
     "trustworthiness",
-    "coverage",
     "version-control",
     "git",
     "jobs",
@@ -1259,6 +1278,7 @@ function LayoutInner() {
                   role="tab"
                   id={`top-nav-test-${tab.key}`}
                   aria-selected={isActive}
+                  aria-current={isActive ? "page" : undefined}
                   type="button"
                   onClick={() => {
                     handleSelectCoverageType(tab.key);
@@ -1608,6 +1628,7 @@ function LayoutInner() {
                     onOpenCFG={handleOpenCFG}
                     onSuggestTestcase={handleSuggestTestcase}
                     onOpenArchitecture={handleOpenArchitecture}
+                    onOpenJobQueue={() => setCoverageJobsOpen(true)}
                     initialContext={integrationInitialContext}
                     onContextChange={setIntegrationInitialContext}
                   />
@@ -1615,28 +1636,35 @@ function LayoutInner() {
               )}
               {(coverageType === "system" || visitedPanels.has("coverage:system")) && (
                 <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
-                  <SystemTestDashboard
-                    snapshotId={
-                      searchParams.get("snapshotId") ||
-                      project?.activeSnapshotId ||
-                      project?.latestSnapshotId ||
-                      project?.snapshots?.[0]?.id ||
-                      (project?.id
-                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                        : null) ||
-                      testPromptSnapshotId
-                    }
-                    projectId={project?.id}
-                    focusScenario={searchParams.get("focusScenario")}
-                    onOpenFile={handleOpenFileByPath}
-                  />
+                  {/* The dashboard is keyed by project and snapshot; mount it once the
+                      project is known so it does not load twice under a placeholder key. */}
+                  {project?.id ? (
+                    <SystemTestDashboard
+                      snapshotId={
+                        searchParams.get("snapshotId") ||
+                        project?.activeSnapshotId ||
+                        project?.latestSnapshotId ||
+                        project?.snapshots?.[0]?.id ||
+                        (project?.id
+                          ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                          : null) ||
+                        testPromptSnapshotId
+                      }
+                      projectId={project?.id}
+                      onOpenJobQueue={() => setCoverageJobsOpen(true)}
+                      focusScenario={searchParams.get("focusScenario")}
+                      onOpenFile={handleOpenFileByPath}
+                    />
+                  ) : (
+                    <div className="flex min-h-[400px] items-center justify-center text-sm text-[var(--color-text-secondary)]" aria-busy="true">Loading project...</div>
+                  )}
                 </div>
               )}
             </div>
           )}
 
           {(!isFullWidthWorkspace || visitedPanels.has("editor") || visitedPanels.has("explorer")) && (
-            <div className={!isFullWidthWorkspace && activeActivity !== "settings" ? "w-full h-full" : "hidden"}>
+            <div className={!isFullWidthWorkspace && activeActivity !== "settings" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
                   <Editor
                     key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
                     tabs={tabs}
@@ -1789,11 +1817,15 @@ function LayoutInner() {
           />
         )}
       </AnimatePresence>
+      {coverageJobsOpen && project?.id && (
+        <CoverageJobsDialog projectId={project.id} onClose={() => setCoverageJobsOpen(false)} />
+      )}
       <AnimatePresence>
         {showCFG && (
           <CFGCalculator
             project={project}
             onClose={handleCloseCFG}
+            snapshotId={searchParams.get("snapshotId") || undefined}
             initialFile={cfgInitialContext?.initialFile}
             initialFunc={cfgInitialContext?.initialFunc}
             initialLine={cfgInitialContext?.initialLine}
