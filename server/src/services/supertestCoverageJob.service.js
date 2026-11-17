@@ -232,10 +232,7 @@ module.exports = {
     .replace(/\\/g, "/");
   if (!relShim.startsWith(".")) relShim = `./${relShim}`;
 
-  return code.replace(
-    /(['"])@playwright\/test\1/g,
-    `'${relShim}'`,
-  );
+  return code.replace(/(['"])@playwright\/test\1/g, `'${relShim}'`);
 };
 
 /**
@@ -260,7 +257,8 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
   ];
 
   const _genModule = await import("@babel/generator");
-  const generate = _genModule.default?.default || _genModule.default || _genModule;
+  const generate =
+    _genModule.default?.default || _genModule.default || _genModule;
 
   for (const rel of candidates) {
     const filePath = path.join(rootDir, rel);
@@ -270,7 +268,10 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
     try {
       originalContent = fs.readFileSync(filePath, "utf8");
     } catch (readErr) {
-      console.warn(`[SupertestCoverageJob] Could not read ${filePath}:`, readErr?.message);
+      console.warn(
+        `[SupertestCoverageJob] Could not read ${filePath}:`,
+        readErr?.message,
+      );
       continue;
     }
 
@@ -281,7 +282,10 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
         filename: filePath,
       });
     } catch (parseErr) {
-      console.warn(`[SupertestCoverageJob] Could not parse ${filePath}:`, parseErr?.message);
+      console.warn(
+        `[SupertestCoverageJob] Could not parse ${filePath}:`,
+        parseErr?.message,
+      );
       continue;
     }
 
@@ -403,7 +407,10 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
       backups.set(filePath, originalContent);
       fs.writeFileSync(filePath, patchedCode, "utf8");
     } catch (writeErr) {
-      console.warn(`[SupertestCoverageJob] Failed to stage Express entry ${filePath}:`, writeErr?.message);
+      console.warn(
+        `[SupertestCoverageJob] Failed to stage Express entry ${filePath}:`,
+        writeErr?.message,
+      );
     }
   }
 
@@ -412,7 +419,10 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
       try {
         fs.writeFileSync(filePath, originalContent, "utf8");
       } catch (restoreErr) {
-        console.warn(`[SupertestCoverageJob] Failed to restore ${filePath}:`, restoreErr?.message);
+        console.warn(
+          `[SupertestCoverageJob] Failed to restore ${filePath}:`,
+          restoreErr?.message,
+        );
       }
     }
   };
@@ -466,7 +476,10 @@ export const processSupertestCoverageJob = async (jobId) => {
 
     const reportIntProgress = async (progress, stage, message) => {
       await updateJobProgress(jobId, progress).catch((err) => {
-        console.warn("[SupertestCoverageJob] updateJobProgress warning:", err?.message);
+        console.warn(
+          "[SupertestCoverageJob] updateJobProgress warning:",
+          err?.message,
+        );
       });
       await addJobLog(
         jobId,
@@ -476,7 +489,8 @@ export const processSupertestCoverageJob = async (jobId) => {
         console.warn("[SupertestCoverageJob] addJobLog warning:", err?.message);
       });
       try {
-        const { emitDashboardJobProgress } = await import("./dashboardEvents.service.js");
+        const { emitDashboardJobProgress } =
+          await import("./dashboardEvents.service.js");
         emitDashboardJobProgress(projectId, {
           snapshotId,
           jobId,
@@ -486,7 +500,10 @@ export const processSupertestCoverageJob = async (jobId) => {
           message,
         });
       } catch (err) {
-        console.warn("[SupertestCoverageJob] emitDashboardJobProgress warning:", err?.message);
+        console.warn(
+          "[SupertestCoverageJob] emitDashboardJobProgress warning:",
+          err?.message,
+        );
       }
     };
     if (currentProjectOperation()) {
@@ -548,9 +565,9 @@ export const processSupertestCoverageJob = async (jobId) => {
     const intDetection = await detectIntegrationFrameworks(rootDir);
     const hasIntegrationDeps = Boolean(
       intDetection?.hasDependencies ||
-        intDetection?.summary?.hasDependencies ||
-        fs.existsSync(path.join(rootDir, "node_modules", "supertest")) ||
-        fs.existsSync(path.resolve(process.cwd(), "node_modules", "supertest")),
+      intDetection?.summary?.hasDependencies ||
+      fs.existsSync(path.join(rootDir, "node_modules", "supertest")) ||
+      fs.existsSync(path.resolve(process.cwd(), "node_modules", "supertest")),
     );
     if (!hasIntegrationDeps) {
       throw new ServiceError(
@@ -575,7 +592,9 @@ export const processSupertestCoverageJob = async (jobId) => {
           .map((t) => String(t).trim())
           .filter(Boolean)
       : [];
-    const selectedScenarioIds = Array.isArray(parsedPayload?.selectedScenarioIds)
+    const selectedScenarioIds = Array.isArray(
+      parsedPayload?.selectedScenarioIds,
+    )
       ? parsedPayload.selectedScenarioIds
           .map((id) => String(id).trim())
           .filter(Boolean)
@@ -640,9 +659,10 @@ export const processSupertestCoverageJob = async (jobId) => {
       } catch (e) {
         continue;
       }
-      const fwUpper = meta.framework ? String(meta.framework).toUpperCase() : "SUPERTEST";
-      if (fwUpper !== "SUPERTEST" && fwUpper !== "PLAYWRIGHT_API")
-        continue;
+      const fwUpper = meta.framework
+        ? String(meta.framework).toUpperCase()
+        : "SUPERTEST";
+      if (fwUpper !== "SUPERTEST" && fwUpper !== "PLAYWRIGHT_API") continue;
       if (meta.status === "REJECTED" || meta.status === "DISABLED") continue;
 
       const filePath = (await resolveContainedProjectPath(snapshot, t.filePath))
@@ -672,7 +692,10 @@ export const processSupertestCoverageJob = async (jobId) => {
             !isDraftTest &&
             (approvedScenarios.size === 0 || isExplicitlyApproved);
           const isEnabled = r.enabled !== false;
-          const epSignature = `${String(r.method || "").toUpperCase()} ${String(r.path || "").trim()}`.trim().toUpperCase();
+          const epSignature =
+            `${String(r.method || "").toUpperCase()} ${String(r.path || "").trim()}`
+              .trim()
+              .toUpperCase();
           const matchesTarget =
             targetNameSet.has(r.testName) ||
             targetNameSet.has(testName) ||
@@ -722,7 +745,10 @@ export const processSupertestCoverageJob = async (jobId) => {
             );
             return path.join(
               stagedIntegrationDir,
-              String(t.filePath || path.basename(filePath)).replace(/^[/\\]+/, ""),
+              String(t.filePath || path.basename(filePath)).replace(
+                /^[/\\]+/,
+                "",
+              ),
             );
           })()
         : filePath;
@@ -782,7 +808,8 @@ export const processSupertestCoverageJob = async (jobId) => {
         supertestFiles.splice(0, supertestFiles.length, ...matchedFiles);
       }
     } else if (isTargetedRun && targetEndpointSpecs.length > 0) {
-      const { extractTestRequests } = await import("./testSourceParser.service.js");
+      const { extractTestRequests } =
+        await import("./testSourceParser.service.js");
       const matchedFiles = [];
       const matchedTestNames = new Set();
 
@@ -794,11 +821,15 @@ export const processSupertestCoverageJob = async (jobId) => {
           const parsedReqs = extractTestRequests(content, filePath);
           for (const req of parsedReqs) {
             const reqMethod = String(req.method || "").toUpperCase();
-            const reqPath = String(req.path || "").split("?")[0].replace(/\/+$/, "") || "/";
+            const reqPath =
+              String(req.path || "")
+                .split("?")[0]
+                .replace(/\/+$/, "") || "/";
             const isMatch = targetEndpointSpecs.some(
               (spec) =>
                 (!spec.method || !reqMethod || spec.method === reqMethod) &&
-                (spec.pathRegex.test(reqPath) || reqPath.toLowerCase() === spec.pathLower),
+                (spec.pathRegex.test(reqPath) ||
+                  reqPath.toLowerCase() === spec.pathLower),
             );
             if (isMatch) {
               fileMatched = true;
@@ -807,14 +838,19 @@ export const processSupertestCoverageJob = async (jobId) => {
           }
 
           if (!fileMatched) {
-            fileMatched = targetEndpointSpecs.some((spec) => spec.contentRegex.test(content));
+            fileMatched = targetEndpointSpecs.some((spec) =>
+              spec.contentRegex.test(content),
+            );
           }
 
           if (fileMatched) {
             matchedFiles.push(filePath);
           }
         } catch (err) {
-          console.warn(`[SupertestCoverageJob] Could not inspect ${filePath}:`, err?.message);
+          console.warn(
+            `[SupertestCoverageJob] Could not inspect ${filePath}:`,
+            err?.message,
+          );
         }
       }
 
@@ -853,15 +889,18 @@ export const processSupertestCoverageJob = async (jobId) => {
           "INFO",
           JSON.stringify({
             stage: "COMPLETE",
-            label: "Selected endpoints analyzed (0 test scenarios found; marked Uncovered).",
+            label:
+              "Selected endpoints analyzed (0 test scenarios found; marked Uncovered).",
             progress: 100,
           }),
         );
 
         try {
-          const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+          const { invalidateCoverageCache } =
+            await import("../controllers/coverage.controller.js");
           invalidateCoverageCache(snapshotId);
-          const { invalidateEndpointCache } = await import("./integrationWorkspace.service.js");
+          const { invalidateEndpointCache } =
+            await import("./integrationWorkspace.service.js");
           invalidateEndpointCache(snapshotId);
         } catch (_) {}
 
@@ -871,7 +910,9 @@ export const processSupertestCoverageJob = async (jobId) => {
       supertestFiles.splice(0, supertestFiles.length, ...matchedFiles);
       const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       if (matchedTestNames.size > 0) {
-        testNamePattern = Array.from(matchedTestNames).map(escapeRegex).join("|");
+        testNamePattern = Array.from(matchedTestNames)
+          .map(escapeRegex)
+          .join("|");
       } else {
         testNamePattern = targetEndpointPaths.map(escapeRegex).join("|");
       }
@@ -916,13 +957,89 @@ export const processSupertestCoverageJob = async (jobId) => {
     );
     restoreExpressEntries = await prepareExpressEntriesForSupertest(rootDir);
 
-    const runResult = await runSupertest(
-      jobId,
-      rootDir,
-      jestConfigPath ?? supertestInfo.configPath,
-      supertestFiles,
-      testNamePattern ? { testNamePattern } : {},
-    );
+    // Temporarily skip scenarios staged as deleted in the Integration Workspace on repo test files
+    // without mutating user repo source on disk permanently (restored in finally).
+    const stagedSkipBackups = new Map();
+    try {
+      if (typeof prisma?.projectStructureAnalysis?.findUnique === "function") {
+        const analysisRow = await prisma.projectStructureAnalysis
+          .findUnique({
+            where: { snapshotId },
+            select: { resultJson: true },
+          })
+          .catch(() => null);
+        const parsedAnalysis = analysisRow?.resultJson
+          ? typeof analysisRow.resultJson === "string"
+            ? JSON.parse(analysisRow.resultJson)
+            : analysisRow.resultJson
+          : null;
+        const stagedDeletes = Array.isArray(
+          parsedAnalysis?.deletedIntegrationScenarios,
+        )
+          ? parsedAnalysis.deletedIntegrationScenarios
+          : [];
+        const skipTitleSet = new Set(
+          stagedDeletes
+            .map((d) => String(d?.testName || "").trim())
+            .filter(Boolean),
+        );
+        if (skipTitleSet.size > 0) {
+          const { default: traverseModule } = await import("@babel/traverse");
+          const babelTraverse = traverseModule?.default || traverseModule;
+          for (const testFilePath of supertestFiles) {
+            if (!fs.existsSync(testFilePath)) continue;
+            const origContent = fs.readFileSync(testFilePath, "utf8");
+            if (origContent.includes("[AI GENERATED]")) continue;
+            try {
+              const ast = parseCode(origContent);
+              let modified = false;
+              babelTraverse(ast, {
+                CallExpression(p) {
+                  const { callee, arguments: args } = p.node;
+                  if (
+                    callee.type === "Identifier" &&
+                    (callee.name === "it" || callee.name === "test") &&
+                    args.length > 0 &&
+                    args[0].type === "StringLiteral" &&
+                    skipTitleSet.has(args[0].value.trim())
+                  ) {
+                    p.node.callee = {
+                      type: "MemberExpression",
+                      object: callee,
+                      property: { type: "Identifier", name: "skip" },
+                      computed: false,
+                    };
+                    modified = true;
+                  }
+                },
+              });
+              if (modified) {
+                const { code: patched } = generate(ast);
+                stagedSkipBackups.set(testFilePath, origContent);
+                fs.writeFileSync(testFilePath, patched, "utf8");
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
+
+    let runResult;
+    try {
+      runResult = await runSupertest(
+        jobId,
+        rootDir,
+        jestConfigPath ?? supertestInfo.configPath,
+        supertestFiles,
+        testNamePattern ? { testNamePattern } : {},
+      );
+    } finally {
+      for (const [fPath, orig] of stagedSkipBackups.entries()) {
+        try {
+          fs.writeFileSync(fPath, orig, "utf8");
+        } catch (_) {}
+      }
+    }
     // DockerRunner streams output live. Saving the final buffers also covers
     // alternative runners and guarantees a complete output record.
     await saveJobOutput(jobId, {
@@ -946,6 +1063,7 @@ export const processSupertestCoverageJob = async (jobId) => {
     const summaryResult = await withOperationPublishGuard(() =>
       parseCoverageSummary(coverageDir, snapshotId, {
         skipSummaryUpsert: true,
+        skipFileUpsert: true,
       }),
     );
 
@@ -954,6 +1072,7 @@ export const processSupertestCoverageJob = async (jobId) => {
       aiTests,
       rootDir,
     });
+    let createdTestRun = null;
     // SCRUM-141: Persist Supertest test results (only executed/targeted scenarios)
     if (supertestResults) {
       const finalScenarios = supertestResults.scenarios || [];
@@ -980,6 +1099,10 @@ export const processSupertestCoverageJob = async (jobId) => {
         status: failedCount > 0 ? "FAILED" : "PASSED",
         startedAt: job.startedAt || new Date(),
         finishedAt: new Date(),
+        coverageLinesPct: summaryResult?.total?.lines?.pct ?? null,
+        coverageBranchesPct: summaryResult?.total?.branches?.pct ?? null,
+        coverageStatementsPct: summaryResult?.total?.statements?.pct ?? null,
+        coverageFunctionsPct: summaryResult?.total?.functions?.pct ?? null,
       };
       if (formattedScenarios) {
         dataPayload.scenarios = formattedScenarios;
@@ -989,7 +1112,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         dataPayload.scenarios.create = dataPayload.scenarios.create.map(
           (row) => ({ ...row, id: row.id || randomUUID() }),
         );
-      let createdTestRun = {
+      createdTestRun = {
         ...dataPayload,
         scenarios: dataPayload.scenarios?.create || [],
       };
@@ -1121,6 +1244,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         snapshotId,
         coverageReport,
         userId,
+        testType: "INTEGRATION",
       }),
     );
     await withOperationPublishGuard(() =>
@@ -1155,7 +1279,8 @@ export const processSupertestCoverageJob = async (jobId) => {
         exitCode: runResult.exitCode,
       },
       storageBasePath: storageResult.baseStoragePath,
-      analyzedEndpoints: isTargetedRun && targetEndpoints.length > 0 ? targetEndpoints : ["*"],
+      analyzedEndpoints:
+        isTargetedRun && targetEndpoints.length > 0 ? targetEndpoints : ["*"],
     });
 
     await addJobLog(
@@ -1196,6 +1321,21 @@ export const processSupertestCoverageJob = async (jobId) => {
         await import("./integrationWorkspace.service.js");
       invalidateEndpointCache(snapshotId, rootDir);
     } catch (_) {}
+
+    try {
+      const { capturePeakIntegrationReportIfHigher } =
+        await import("./integrationReport.service.js");
+      await capturePeakIntegrationReportIfHigher(snapshotId, {
+        projectId,
+        testRunId: createdTestRun?.id || null,
+        coverageTotal: summaryResult?.total || null,
+      });
+    } catch (peakErr) {
+      console.warn(
+        "[SupertestCoverageJob] Non-fatal peak report capture warning:",
+        peakErr?.message,
+      );
+    }
   } catch (error) {
     if (
       isJobCanceled(jobId, abortController.signal) ||

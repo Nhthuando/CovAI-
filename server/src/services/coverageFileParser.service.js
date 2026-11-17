@@ -1,7 +1,10 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
-import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
+import {
+  isBusinessLogicSourceFile,
+  isTestFilePath,
+} from "../utils/businessLogicFileDetector.js";
 import path from "node:path";
 import { resolveProjectAccess } from "./projectAccess.service.js";
 import { operationSnapshot, currentProjectOperation, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
@@ -108,7 +111,11 @@ const getCoverageRecords = (coverageReport, rootDir = "") => {
   } else {
     entries = Object.entries(coverageReport)
       .filter(
-        ([key]) => key !== "total" && key !== "summary" && key !== "metadata",
+        ([key]) =>
+          key !== "total" &&
+          key !== "summary" &&
+          key !== "metadata" &&
+          key !== "testType",
       )
       .map(([key, value]) => ({ ...value, filePath: key }));
   }
@@ -191,6 +198,7 @@ export const parseCoverageFilesForSnapshot = async ({
   snapshotId,
   coverageReport,
   userId,
+  testType: explicitTestType,
 }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
@@ -223,12 +231,20 @@ export const parseCoverageFilesForSnapshot = async ({
 
   const coverageRows = getCoverageRecords(coverageReport, snapshot.rootDir);
 
-  const testType = coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
+  const testType = explicitTestType || coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
+  const isIgnoredArtifactPath = (filePath) =>
+    /(^|\/)(node_modules|coverage|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(
+      filePath.replace(/\\/g, "/"),
+    );
 
   const dedupedMap = new Map();
   for (const row of coverageRows) {
     if (!row.filePath) continue;
-    if (testType === "UNIT" && !isBusinessLogicSourceFile(row.filePath)) continue;
+    if (testType === "UNIT") {
+      if (!isBusinessLogicSourceFile(row.filePath)) continue;
+    } else if (isTestFilePath(row.filePath) || isIgnoredArtifactPath(row.filePath)) {
+      continue;
+    }
     if (!dedupedMap.has(row.filePath)) {
       dedupedMap.set(row.filePath, {
         snapshotId,
@@ -266,18 +282,39 @@ export const parseCoverageFilesForSnapshot = async ({
   };
 
   const persist = async tx => {
-    await tx.coverageFile.deleteMany({
-      where: { snapshotId },
-    });
-
-    if (formattedRows.length > 0) {
-      await tx.coverageFile.createMany({
-        data: formattedRows,
-        skipDuplicates: true,
+    if (testType === "INTEGRATION") {
+      // Preserve previously parsed unit-test CoverageFile rows while upserting integration/route files
+      for (const row of formattedRows) {
+        await tx.coverageFile.upsert({
+          where: {
+            snapshotId_filePath: {
+              snapshotId: row.snapshotId,
+              filePath: row.filePath,
+            },
+          },
+          create: row,
+          update: {
+            linesPct: row.linesPct,
+            branchesPct: row.branchesPct,
+            funcsPct: row.funcsPct,
+            stmtsPct: row.stmtsPct,
+          },
+        });
+      }
+    } else {
+      await tx.coverageFile.deleteMany({
+        where: { snapshotId },
       });
+
+      if (formattedRows.length > 0) {
+        await tx.coverageFile.createMany({
+          data: formattedRows,
+          skipDuplicates: true,
+        });
+      }
     }
 
-    if (rawSummary) {
+    if (rawSummary && testType !== "INTEGRATION") {
       await tx.coverageSummary.upsert({
         where: { snapshotId },
         update: {

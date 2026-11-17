@@ -357,7 +357,12 @@ function LayoutInner() {
       const text = e.detail?.promptText;
       if (text) {
         setAiPanelOpen(true);
-        setPendingAiSuggestion({ promptText: text, timestamp: Date.now() });
+        setPendingAiSuggestion({
+          promptText: text,
+          attachments: e.detail?.attachments || [],
+          fixContext: e.detail?.fixContext || null,
+          timestamp: Date.now(),
+        });
       }
     };
     window.addEventListener("covai:prefill-prompt", onPrefillEvent);

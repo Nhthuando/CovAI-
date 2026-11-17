@@ -25,6 +25,7 @@ export {
   buildApiCoverageReport,
 };
 import crypto from "crypto";
+import { getEndpointCaseCoverage } from "../../../shared/integrationCaseCoverage.js";
 
 export const extractValidatedTestRequests = (t) => {
   let reqs = extractTestRequests(t.content, t.filePath);
@@ -451,6 +452,7 @@ export function evaluateEndpointMetrics({
   consistentPassedCount = 0,
   hasRelevantTestFile = false,
   hasObservedServerResponse = false,
+  caseCoverageComplete = true,
 } = {}) {
   const hasGenuineApiCall =
     executedCount > 0 &&
@@ -471,7 +473,7 @@ export function evaluateEndpointMetrics({
     } else if (failedCount > 0) {
       status = "Partial";
     } else if (passedCount === executedCount) {
-      status = "Covered";
+      status = caseCoverageComplete ? "Covered" : "Partial";
     } else {
       status = "Partial";
     }
@@ -1200,39 +1202,47 @@ const executeBuildIntegrationWorkspace = async (
       j.type === "CYPRESS_SYSTEM_TEST",
   );
 
-  // Extract which endpoints were actually targeted/analyzed in the latest Supertest execution
+  // Extract which endpoints were actually targeted/analyzed across historical Supertest executions
   let isFullSupertestAnalysis = false;
+  let isLatestSupertestTargeted = false;
   const analyzedEndpointSet = new Set();
-  const latestSuccessSupertestJob = (jobs || []).find(
+  const supertestSuccessJobs = (jobs || []).filter(
     (j) =>
       (j.type === "SUPERTEST_COVERAGE" || j.type === "PLAYWRIGHT_API") &&
       j.status === "SUCCESS",
   );
-  if (latestSuccessSupertestJob) {
+  const latestSuccessSupertestJob = supertestSuccessJobs[0] || null;
+
+  const parseJobAnalyzedEndpoints = (jobItem) => {
     let jResult = {};
     let jPayload = {};
     try {
       jResult =
-        typeof latestSuccessSupertestJob.resultJson === "string"
-          ? JSON.parse(latestSuccessSupertestJob.resultJson)
-          : latestSuccessSupertestJob.resultJson || {};
+        typeof jobItem.resultJson === "string"
+          ? JSON.parse(jobItem.resultJson)
+          : jobItem.resultJson || {};
     } catch (_) {}
     try {
       jPayload =
-        typeof latestSuccessSupertestJob.payloadJson === "string"
-          ? JSON.parse(latestSuccessSupertestJob.payloadJson)
-          : latestSuccessSupertestJob.payloadJson || {};
+        typeof jobItem.payloadJson === "string"
+          ? JSON.parse(jobItem.payloadJson)
+          : jobItem.payloadJson || {};
     } catch (_) {}
-
-    const list = Array.isArray(jResult?.analyzedEndpoints)
+    return Array.isArray(jResult?.analyzedEndpoints)
       ? jResult.analyzedEndpoints
       : Array.isArray(jPayload?.targetEndpoints) && jPayload.targetEndpoints.length > 0
         ? jPayload.targetEndpoints
         : null;
+  };
 
-    if (!list) {
-      isFullSupertestAnalysis = true;
-    } else if (list.includes("*")) {
+  if (latestSuccessSupertestJob) {
+    const latestList = parseJobAnalyzedEndpoints(latestSuccessSupertestJob);
+    isLatestSupertestTargeted = Boolean(latestList && !latestList.includes("*"));
+  }
+
+  for (const jobItem of supertestSuccessJobs) {
+    const list = parseJobAnalyzedEndpoints(jobItem);
+    if (!list || list.includes("*")) {
       isFullSupertestAnalysis = true;
     } else {
       for (const item of list) {
@@ -1584,6 +1594,44 @@ const executeBuildIntegrationWorkspace = async (
     runtimeEvidenceCache.set(firebaseCacheKey, runtimeEvidences);
   }
 
+  // Extract staged workspace scenario deletions so deleted repo/orphan scenarios stay hidden in Workspace until Apply
+  const stagedDeletedScenarios = (() => {
+    if (!structureAnalysis?.resultJson) return [];
+    try {
+      const parsed =
+        typeof structureAnalysis.resultJson === "string"
+          ? JSON.parse(structureAnalysis.resultJson)
+          : structureAnalysis.resultJson || {};
+      return Array.isArray(parsed?.deletedIntegrationScenarios)
+        ? parsed.deletedIntegrationScenarios
+        : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const isStagedDeletedScenario = (item, fallbackFilePath = null) => {
+    if (!stagedDeletedScenarios || stagedDeletedScenarios.length === 0 || !item) {
+      return false;
+    }
+    const itemTitle = String(item.testName || item.title || item.name || "").trim().toLowerCase();
+    const itemId = item.scenarioId ? String(item.scenarioId) : null;
+    const itemFile = String(item.filePath || item.testFile || fallbackFilePath || "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
+      .toLowerCase();
+    return stagedDeletedScenarios.some((d) => {
+      const dTitle = String(d?.testName || "").trim().toLowerCase();
+      const dId = d?.scenarioId ? String(d.scenarioId) : null;
+      const dFile = String(d?.filePath || "").replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+      const fileCompatible = !dFile || !itemFile || dFile === itemFile || dFile.endsWith(itemFile) || itemFile.endsWith(dFile);
+      if (!fileCompatible) return false;
+      if (dTitle && itemTitle && dTitle === itemTitle) return true;
+      if (dId && itemId && dId === itemId) return true;
+      return false;
+    });
+  };
+
   // Isolate runtime evidence to the active testRun to prevent mixing historical runs
   if (latestRun?.id && Array.isArray(runtimeEvidences)) {
     runtimeEvidences = runtimeEvidences.filter(
@@ -1798,6 +1846,9 @@ const executeBuildIntegrationWorkspace = async (
           : requests;
     }
 
+    requests = requests.filter((r) => !isStagedDeletedScenario(r, t.filePath));
+    approvedReqs = approvedReqs.filter((r) => !isStagedDeletedScenario(r, t.filePath));
+
     return {
       test: t,
       requests,
@@ -1818,7 +1869,8 @@ const executeBuildIntegrationWorkspace = async (
 
   const testParseTime = Date.now() - startTestParse;
 
-  const enrichedScenarios = testScenarios.map((s) => {
+  const activeTestScenarios = testScenarios.filter((s) => !isStagedDeletedScenario(s, s.testFile));
+  const enrichedScenarios = activeTestScenarios.map((s) => {
     let matchingRequests = allParsedRequests.filter(
       (pr) =>
         pr.testName === s.title &&
@@ -2272,6 +2324,9 @@ const executeBuildIntegrationWorkspace = async (
 
         return {
           ...rest,
+          aiTestId: rest.aiTestId || rest.testId || req?.testId || null,
+          scenarioId: rest.scenarioId || req?.scenarioId || rest.id || null,
+          filePath: rest.filePath || req?.filePath || req?.testFile || null,
           name: rest.name || rest.title || req?.testName,
           method: rest.method || requestMethod,
           path: rest.path || rawReqPath,
@@ -2325,6 +2380,7 @@ const executeBuildIntegrationWorkspace = async (
           requestPayload: req?.payload || null,
           queryParams: req?.queryParams || null,
           expectedStatus,
+          expectedStatuses: req?.expectedStatuses || null,
           actualStatus,
           actualStatusFromRuntime,
           evidenceSource,
@@ -2370,6 +2426,24 @@ const executeBuildIntegrationWorkspace = async (
         (s.actualStatusFromRuntime !== null &&
           s.actualStatusFromRuntime !== undefined),
     );
+    const epSignatureUpper = `${String(ep.method || "GET").toUpperCase()} ${String(ep.fullPath || ep.path || "/").trim()}`.toUpperCase();
+    const hasActualRun = passedCount + failedCount > 0;
+    const aiGeneratedCount = parsedTests.reduce((acc, pt) => {
+      if (String(pt.test?.id || pt.id || "").startsWith("existing_test_")) return acc;
+      return acc + pt.requests.filter((r) => isMatch(r, ep)).length;
+    }, 0);
+    const wasAnalyzed =
+      isFullSupertestAnalysis ||
+      analyzedEndpointSet.has(epSignatureUpper) ||
+      hasActualRun;
+
+    const visibleScenarios = wasAnalyzed
+      ? cleanScenarios
+      : cleanScenarios.filter(
+          (s) => s.aiTestId && !String(s.aiTestId).startsWith("existing_test_"),
+        );
+
+    const caseCoverage = getEndpointCaseCoverage(ep, visibleScenarios);
     const metrics = evaluateEndpointMetrics({
       executedCount,
       passedCount,
@@ -2380,6 +2454,7 @@ const executeBuildIntegrationWorkspace = async (
       consistentPassedCount,
       hasRelevantTestFile,
       hasObservedServerResponse,
+      caseCoverageComplete: caseCoverage.isFullyVerified,
     });
     const hasGenuineApiCall = metrics.hasGenuineApiCall;
     const isVerifiedTested = metrics.isVerifiedTested;
@@ -2389,8 +2464,10 @@ const executeBuildIntegrationWorkspace = async (
 
     if (executedCount > 0) {
       if (hasGenuineApiCall) {
-        testedApis++;
         executedApis++;
+        if (failedCount === 0 && caseCoverage.isFullyVerified) {
+          testedApis++;
+        }
       }
       if (isImplementationConsistent) {
         implementationConsistentApis++;
@@ -2414,30 +2491,6 @@ const executeBuildIntegrationWorkspace = async (
       return acc + pt.approvedReqs.filter((r) => isMatch(r, ep)).length;
     }, 0);
 
-    const epSignatureUpper = `${String(ep.method || "GET").toUpperCase()} ${String(ep.fullPath || ep.path || "/").trim()}`.toUpperCase();
-    const hasActualRun = passedCount + failedCount > 0;
-    const aiGeneratedCount = parsedTests.reduce((acc, pt) => {
-      if (String(pt.test?.id || pt.id || "").startsWith("existing_test_")) return acc;
-      return acc + pt.requests.filter((r) => isMatch(r, ep)).length;
-    }, 0);
-    const wasAnalyzed =
-      isFullSupertestAnalysis ||
-      analyzedEndpointSet.has(epSignatureUpper) ||
-      hasActualRun;
-
-    const visibleScenarios = wasAnalyzed
-      ? cleanScenarios.filter((s) => {
-          const isRepo =
-            !s.aiTestId ||
-            String(s.aiTestId).startsWith("existing_test_") ||
-            s.origin === "PROJECT_EXISTING";
-          if (!isRepo) return true;
-          return s.status === "passed" || s.status === "failed";
-        })
-      : cleanScenarios.filter(
-          (s) => s.aiTestId && !String(s.aiTestId).startsWith("existing_test_"),
-        );
-
     const finalExecutedCount = hasActualRun ? executedCount : 0;
     if (!hasActualRun && aiGeneratedCount === 0) {
       status = wasAnalyzed ? "UNCOVERED" : "DISCOVERED";
@@ -2450,6 +2503,7 @@ const executeBuildIntegrationWorkspace = async (
       route: ep.fullPath,
       description: ep.description || buildEndpointDescription(ep),
       status,
+      caseCoverage,
       wasAnalyzed,
       testCount: finalExecutedCount, // Legacy for UI if needed
       executedCount: finalExecutedCount,
@@ -2861,22 +2915,12 @@ const executeBuildIntegrationWorkspace = async (
           (e) => e.status === "Covered",
         ).length;
         const effectiveCoveredEp =
-          hasExecutedRun && discoveredEndpoints.length > 0
-            ? Math.max(
-                Number(apiTraceResult?.summary?.coveredEndpoints || 0),
-                testedApis,
-                coveredEpCount,
-              )
-            : 0;
+          hasExecutedRun && discoveredEndpoints.length > 0 ? coveredEpCount : 0;
         const effectiveEpCovPct =
           hasExecutedRun && discoveredEndpoints.length > 0
-            ? Math.max(
-                Number(apiTraceResult?.summary?.endpointCoveragePct || 0),
-                Number(
-                  (
-                    (effectiveCoveredEp / discoveredEndpoints.length) *
-                    100
-                  ).toFixed(1),
+            ? Number(
+                ((effectiveCoveredEp / discoveredEndpoints.length) * 100).toFixed(
+                  1,
                 ),
               )
             : 0;
@@ -2884,18 +2928,14 @@ const executeBuildIntegrationWorkspace = async (
           ...(apiTraceResult?.summary || {}),
           totalEndpoints: discoveredEndpoints.length,
           coveredEndpoints: effectiveCoveredEp,
+          partialEndpoints: endpoints.filter((e) => e.status === "Partial")
+            .length,
           uncoveredEndpoints: Math.max(
             0,
             discoveredEndpoints.length - effectiveCoveredEp,
           ),
           endpointCoveragePct: effectiveEpCovPct,
-          effectiveCoveragePct:
-            hasExecutedRun && discoveredEndpoints.length > 0
-              ? Math.max(
-                  Number(apiTraceResult?.summary?.effectiveCoveragePct || 0),
-                  effectiveEpCovPct,
-                )
-              : 0,
+          effectiveCoveragePct: effectiveEpCovPct,
         };
       })(),
       endpointsTraceability: apiTraceResult?.endpointsTraceability || [],
@@ -3027,9 +3067,10 @@ const executeBuildIntegrationWorkspace = async (
           ? JSON.parse(t.metaJson)
           : t.metaJson) || {};
       const cacheEntry = snapshotParseCache.get(t.id);
-      const cachedRequests = cacheEntry
+      const cachedRequests = (cacheEntry
         ? cacheEntry.requests
-        : extractValidatedTestRequests(t);
+        : extractValidatedTestRequests(t)
+      ).filter((r) => !isStagedDeletedScenario(r, t.filePath));
       return {
         id: t.id,
         version: scenarioArtifactVersion(t),

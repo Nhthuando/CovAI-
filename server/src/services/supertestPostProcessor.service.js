@@ -83,11 +83,17 @@ export const processSingleSupertestTest = (rawTest, { projectId, snapshotId }) =
     const requests = testBlocks.map(block => ({
         scenarioId: crypto.randomUUID(),
         testName: block.testName,
+        suiteName: block.suiteName || "",
         enabled: true,
         userEdited: false,
         origin: "AI_GENERATED",
         method: block.method,
         path: block.path,
+        ...(block.expectedStatus != null ? { expectedStatus: block.expectedStatus } : {}),
+        ...(Array.isArray(block.expectedStatuses) && block.expectedStatuses.length > 0
+            ? { expectedStatuses: block.expectedStatuses }
+            : {}),
+        line: block.line || 1,
         createdAt: new Date().toISOString()
     }));
 

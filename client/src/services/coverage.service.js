@@ -349,11 +349,11 @@ export async function updateIntegrationScenario(snapshotId, scenarioId, updateDa
     return handleResponse(res);
 }
 
-export async function applyIntegrationTests(snapshotId, { testIds = [], targetFilePath = "", fileName = "" } = {}) {
+export async function applyIntegrationTests(snapshotId, { testIds = [], selectedScenarios = [], targetFilePath = "", fileName = "" } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/apply-tests`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ testIds, targetFilePath, fileName }),
+        body: JSON.stringify({ testIds, selectedScenarios, targetFilePath, fileName }),
     });
     return handleResponse(res);
 }

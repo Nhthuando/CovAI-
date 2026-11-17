@@ -70,6 +70,7 @@ import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx
 import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal.jsx";
 import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEditorModal.jsx";
 import SourceCodeViewerModal from "./integration/SourceCodeViewerModal.jsx";
+import { getEndpointCaseCoverage } from "./integration/integrationCaseCoverage.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -715,6 +716,18 @@ export default function IntegrationWorkspace({
     }
   }, [load, showToast]);
 
+  useEffect(() => {
+    const onIntegrationUpdated = (e) => {
+      const targetSnap = e?.detail?.snapshotId;
+      if (!targetSnap || targetSnap === snapshotId) {
+        load({ scan: false });
+      }
+    };
+    window.addEventListener("covai:integration-updated", onIntegrationUpdated);
+    return () =>
+      window.removeEventListener("covai:integration-updated", onIntegrationUpdated);
+  }, [load, snapshotId]);
+
   const handleCancelActiveJob = useCallback(
     async (targetJobId = null) => {
       const jId = targetJobId || activeJobId;
@@ -1356,63 +1369,165 @@ export default function IntegrationWorkspace({
     setSourceViewerOpen(true);
   };
 
-  // Resolve runtime results to the versioned editable artifact.
+  // Resolve runtime results to the versioned editable artifact or repo test metadata.
   const editableScenario = (sc) => {
+    const filePath = sc?.filePath || sc?.testFile || undefined;
+    const testName = sc?.testName || sc?.title || sc?.name || undefined;
     if (sc?.aiTestId && sc?.scenarioId) {
       return {
         aiTestId: sc.aiTestId,
         scenarioId: sc.scenarioId,
         expectedVersion: sc.version ?? 1,
+        filePath,
+        testName,
+        origin: sc.origin,
       };
     }
     for (const test of workspace?.aiTests || []) {
       const request = (test.requests || []).find(
         (r) =>
-          r.scenarioId === sc?.scenarioId ||
-          r.scenarioId === sc?.id ||
+          (sc?.scenarioId && r.scenarioId === sc.scenarioId) ||
+          (sc?.id && r.scenarioId === sc.id) ||
           test.id + "::" + r.scenarioId === sc?.id ||
-          r.testName === (sc?.testName || sc?.title || sc?.name) ||
-          r.title === (sc?.testName || sc?.title || sc?.name),
+          (testName && (r.testName === testName || r.title === testName)),
       );
       if (request)
         return {
           aiTestId: test.id,
-          scenarioId: request.scenarioId,
-          expectedVersion: test.version,
+          scenarioId: request.scenarioId || sc?.scenarioId || testName || "scenario_1",
+          expectedVersion: test.version ?? 1,
+          filePath: filePath || test.filePath,
+          testName: request.testName || testName,
+          origin: sc?.origin || request.origin,
         };
+    }
+    if (sc?.origin === "PROJECT_EXISTING" || filePath || testName) {
+      return {
+        aiTestId:
+          sc?.aiTestId ||
+          (sc?.origin === "PROJECT_EXISTING"
+            ? "existing_test_lookup"
+            : "workspace_scenario_lookup"),
+        scenarioId: sc?.scenarioId || sc?.id || testName || "scenario_lookup",
+        expectedVersion: 1,
+        filePath,
+        testName,
+        origin: sc?.origin,
+      };
     }
     const fallbackTest = workspace?.aiTests?.[0];
     return {
       aiTestId: fallbackTest?.id || "fallback",
       scenarioId: sc?.scenarioId || sc?.id || "scenario_1",
       expectedVersion: fallbackTest?.version || 1,
+      filePath,
+      testName,
+      origin: sc?.origin,
     };
   };
 
   const handleAIFixScenario = async (scOrEp, maybeEp) => {
-    const sc = scOrEp?.title || scOrEp?.scenarioId ? scOrEp : maybeEp;
+    const sc = scOrEp?.title || scOrEp?.scenarioId || scOrEp?.testName ? scOrEp : maybeEp;
+    const ep = maybeEp && maybeEp !== sc ? maybeEp : null;
     if (!projectAccess.can("ai.use") || !snapshotId || !sc) return;
     setError("");
-    try {
-      const result = await mutateIntegrationScenarioApi({
-        snapshotId,
-        ...editableScenario(sc),
-        action: "REGENERATE",
-      });
-      const jobId =
-        result?.data?.job?.id ||
-        result?.job?.id ||
-        result?.data?.jobId ||
-        result?.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("GENERATE");
-        setActiveJobStatus("RUNNING");
+
+    const identity = editableScenario(sc);
+    const isProjectExisting =
+      sc?.origin === "PROJECT_EXISTING" ||
+      String(identity.aiTestId || "").startsWith("existing_test_") ||
+      identity.aiTestId === "existing_test_lookup";
+
+    let scenarioCode = sc?.code || sc?.fullFileCode || "";
+    if (!scenarioCode && !isProjectExisting && identity.aiTestId && identity.aiTestId !== "fallback") {
+      try {
+        const fetched = await getIntegrationScenarioApi(
+          snapshotId,
+          identity.aiTestId,
+          identity.scenarioId,
+        );
+        scenarioCode = fetched?.code || "";
+        if (fetched?.version) {
+          identity.expectedVersion = fetched.version;
+        }
+      } catch (err) {
+        console.warn("[IntegrationWorkspace] Could not prefetch scenario code for AI Fix:", err?.message);
       }
-      await load({ scan: true });
-    } catch (err) {
-      setError(err.message || "Failed to fix scenario with AI.");
     }
+
+    const endpointMethod = (ep?.method || sc?.method || "API").toUpperCase();
+    const endpointPath = ep?.fullPath || ep?.path || sc?.path || "/";
+    const endpointLabel = `${endpointMethod} ${endpointPath}`;
+    const testTitle = sc?.title || sc?.testName || sc?.name || "Failing Scenario";
+    const testFilePath = sc?.filePath || sc?.testFile || identity.filePath || "tests/integration/api.test.js";
+    const controllerSnippet = ep?.source?.controllerSnippet || ep?.source?.routeSnippet || "";
+    const statusCodes = ep?.source?.responseStatusCodes || ep?.responseStatusCodes || [];
+    const reqSchema = ep?.source?.requestBodySchema || ep?.requestBodySchema || [];
+    const failureDetails =
+      sc?.executionReason ||
+      (Array.isArray(sc?.failureMessages) && sc.failureMessages.length > 0
+        ? sc.failureMessages.join("\n")
+        : "Assertion or runtime failure occurred.");
+
+    const attachments = [];
+    if (scenarioCode) {
+      attachments.push({
+        id: `fix-test-${identity.scenarioId || Date.now()}`,
+        type: "file",
+        name: testFilePath.split("/").pop() || "integration.test.js",
+        path: testFilePath,
+        content: scenarioCode,
+      });
+    }
+    const handlerFile = ep?.source?.controllerFile || ep?.source?.sourceFile || ep?.sourceFile;
+    if (controllerSnippet && handlerFile) {
+      attachments.push({
+        id: `fix-endpoint-${Date.now()}`,
+        type: "file",
+        name: handlerFile.split("/").pop() || "controller.js",
+        path: handlerFile,
+        content: controllerSnippet,
+      });
+    }
+
+    const promptLines = [
+      `Help me debug and fix this failing integration test scenario for \`${endpointLabel}\`:`,
+      `- **Test Scenario**: ${testTitle}`,
+      `- **Test File**: \`${testFilePath}\``,
+      `- **Failure Layer**: \`${sc?.failureLayer || "ASSERTION_FAILED"}\``,
+      `- **Expected vs Actual Status**: Expected \`${Array.isArray(sc?.expectedStatuses) && sc.expectedStatuses.length > 1 ? sc.expectedStatuses.join("/") : (sc?.expectedStatus ?? "unknown")}\`, Actual \`${sc?.actualStatus ?? sc?.actualStatusFromRuntime ?? "N/A"}\``,
+      ...(statusCodes.length > 0 ? [`- **Controller Status Codes**: ${statusCodes.join(", ")}`] : []),
+      ...(reqSchema.length > 0 ? [`- **Request Body Schema**: ${reqSchema.join(", ")}`] : []),
+      "",
+      "**Failure Diagnostics:**",
+      "```",
+      failureDetails.slice(0, 2500),
+      "```",
+      "",
+      "Please explain the root cause of the failure against the endpoint implementation, and provide the corrected single Jest/Supertest `it(...)` test block in a ```javascript code block so I can apply it.",
+    ];
+
+    window.dispatchEvent(
+      new CustomEvent("covai:prefill-prompt", {
+        detail: {
+          promptText: promptLines.join("\n"),
+          attachments,
+          fixContext: {
+            snapshotId,
+            aiTestId: identity.aiTestId,
+            scenarioId: identity.scenarioId,
+            expectedVersion: identity.expectedVersion ?? 1,
+            testName: testTitle,
+            endpointLabel,
+            filePath: testFilePath,
+            failureLayer: sc?.failureLayer || "ASSERTION_FAILED",
+            expectedStatus: sc?.expectedStatus ?? null,
+            actualStatus: sc?.actualStatus ?? sc?.actualStatusFromRuntime ?? null,
+            isProjectExisting,
+          },
+        },
+      }),
+    );
   };
 
   const handleDeleteScenario = async (sc) => {
@@ -1766,6 +1881,8 @@ export default function IntegrationWorkspace({
     const totalApis = endpoints.length;
     let testedApis = 0;
     let passedApis = 0;
+    let partialApis = 0;
+    let executedOnlyApis = 0;
     let failedApis = 0;
 
     const hasExecuted =
@@ -1843,6 +1960,7 @@ export default function IntegrationWorkspace({
       const epPath = ep.path || ep.route || ep.fullPath || "/";
       const epKey = `${epMethod} ${epPath}`;
       const epScenarios = ep.scenarios || [];
+      const epCaseCov = ep.caseCoverage || getEndpointCaseCoverage(ep, epScenarios);
 
       const scFailed = epScenarios.filter(
         (s) =>
@@ -1863,9 +1981,12 @@ export default function IntegrationWorkspace({
       if (hasExecuted) {
         if (epFailed > 0) {
           failedApis++;
-        } else if (epPassed > 0) {
+        } else if (epPassed > 0 && epCaseCov.isFullyVerified) {
           passedApis++;
           testedApis++;
+        } else if (epPassed > 0) {
+          partialApis++;
+          executedOnlyApis++;
         }
       }
 
@@ -1920,7 +2041,8 @@ export default function IntegrationWorkspace({
     });
 
     const uncoveredApis = Math.max(0, totalApis - testedApis);
-    const executedApisCount = passedApis + failedApis;
+    const notFullyCoveredApis = Math.max(0, totalApis - testedApis - partialApis);
+    const executedApisCount = passedApis + partialApis + failedApis;
     const apiPassRate =
       executedApisCount > 0
         ? Math.round((passedApis / executedApisCount) * 100)
@@ -1981,8 +2103,11 @@ export default function IntegrationWorkspace({
       totalApis,
       testedApis,
       passedApis,
+      partialApis,
+      executedOnlyApis,
       failedApis,
       uncoveredApis,
+      notFullyCoveredApis,
       apiPassRate,
       apiCoverageRate,
       totalScenariosCount,
@@ -1993,18 +2118,42 @@ export default function IntegrationWorkspace({
     };
   }, [endpoints, execution, generation, workspace]);
 
-  const apiFiles = new Set(
-    endpoints.map((endpoint) => endpoint.source?.sourceFile).filter(Boolean),
+  const normalizeCoveragePath = (p) =>
+    String(p || "")
+      .replace(/\\/g, "/")
+      .trim()
+      .replace(/^\.\/+/, "")
+      .replace(/^\/+/, "");
+
+  const apiFiles = Array.from(
+    new Set(
+      endpoints.map((endpoint) => endpoint.source?.sourceFile).filter(Boolean),
+    ),
   );
-  const apiFileCoverage = (summary?.fileCoverages || []).filter((file) =>
-    apiFiles.has(file.filePath),
-  );
+  const allFileCoverages = summary?.fileCoverages || [];
+  const apiFileCoverage = apiFiles
+    .map((sourceFile) => {
+      const normSrc = normalizeCoveragePath(sourceFile);
+      const lowerSrc = normSrc.toLowerCase();
+      return (
+        allFileCoverages.find((file) => normalizeCoveragePath(file.filePath) === normSrc) ||
+        allFileCoverages.find((file) => normalizeCoveragePath(file.filePath).toLowerCase() === lowerSrc) ||
+        allFileCoverages.find((file) => {
+          const lowerCov = normalizeCoveragePath(file.filePath).toLowerCase();
+          return (
+            lowerCov.endsWith(`/${lowerSrc}`) ||
+            lowerSrc.endsWith(`/${lowerCov}`)
+          );
+        })
+      );
+    })
+    .filter(Boolean);
   const averageCoverage = apiFileCoverage.length
     ? apiFileCoverage.reduce((sum, file) => sum + (file.line ?? 0), 0) /
       apiFileCoverage.length
     : null;
   const coverageMetrics = [
-    ["API files", apiFiles.size],
+    ["API files", apiFiles.length],
     [
       "Covered API files",
       apiFileCoverage.filter((file) => file.line > 0).length,
@@ -2234,9 +2383,11 @@ export default function IntegrationWorkspace({
                             : "text-emerald-400"
                         }`}
                       >
-                        {overallStats.uncoveredApis > 0
-                          ? `${overallStats.uncoveredApis} uncovered`
-                          : "All covered"}
+                        {overallStats.uncoveredApis === 0
+                          ? "All covered"
+                          : overallStats.partialApis > 0
+                            ? `${overallStats.partialApis} partial · ${overallStats.notFullyCoveredApis} uncovered`
+                            : `${overallStats.uncoveredApis} uncovered`}
                       </span>
                     )}
                   </div>

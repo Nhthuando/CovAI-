@@ -41,10 +41,8 @@ function getOrCreateOAuthTask(code, isConnectMode) {
   return task;
 }
 
-// Module-level guard to ensure a GitHub code is only exchanged once in the browser runtime
-const consumedCodes = new Set();
-
 export default function GithubCallbackPage() {
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [asyncErrorState, setAsyncErrorState] = useState(null);
 

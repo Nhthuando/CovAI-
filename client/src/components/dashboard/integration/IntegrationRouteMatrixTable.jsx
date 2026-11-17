@@ -175,8 +175,7 @@ export default function IntegrationRouteMatrixTable({
             !sc.aiTestId ||
             String(sc.aiTestId).startsWith("existing_test_") ||
             sc.origin === "PROJECT_EXISTING";
-          const isUnrunRepoTest = isRepoTest && !isExecuted;
-          if (isUnrunRepoTest) {
+          if (!hasAnalyzedCoverage && isRepoTest && !isExecuted) {
             continue;
           }
           const scTitleNorm = String(sc.title || sc.name || "")
@@ -224,7 +223,9 @@ export default function IntegrationRouteMatrixTable({
                 : matchedReq?.enabled !== false,
             userEdited: Boolean(sc.userEdited || matchedReq?.userEdited),
             expectedStatus:
-              sc.expectedStatus ?? matchedReq?.expectedStatus ?? 200,
+              sc.expectedStatus ?? matchedReq?.expectedStatus ?? null,
+            expectedStatuses:
+              sc.expectedStatuses ?? matchedReq?.expectedStatuses ?? null,
             method: epMethod,
             path: epPath,
           };
@@ -331,6 +332,7 @@ export default function IntegrationRouteMatrixTable({
 
     const hasPassed =
       raw === "COVERED" ||
+      raw === "PARTIAL" ||
       raw === "PASS" ||
       raw === "PASSED" ||
       ep.covered === true ||
@@ -338,7 +340,13 @@ export default function IntegrationRouteMatrixTable({
         const st = (s.status || "").toUpperCase();
         return st === "PASSED" || st === "PASS";
       });
-    if (hasPassed) return "PASS";
+    if (hasPassed) {
+      const cov = getEndpointCaseCoverage(ep, scenarios);
+      if (raw === "PARTIAL" || !cov.isFullyVerified) {
+        return "PARTIAL";
+      }
+      return "PASS";
+    }
 
     if (ep.wasAnalyzed || raw === "UNCOVERED" || scenarios.length > 0) {
       return "UNCOVERED";
@@ -354,6 +362,7 @@ export default function IntegrationRouteMatrixTable({
 
       const status = getEndpointStatus(ep);
       if (statusFilter === "PASS" && status !== "PASS") return false;
+      if (statusFilter === "PARTIAL" && status !== "PARTIAL") return false;
       if (statusFilter === "FAIL" && status !== "FAIL") return false;
       if (
         statusFilter === "UNCOVERED" &&
@@ -659,6 +668,7 @@ export default function IntegrationRouteMatrixTable({
               {[
                 { id: "ALL", label: "All" },
                 { id: "PASS", label: "Pass" },
+                { id: "PARTIAL", label: "Partial" },
                 { id: "FAIL", label: "Fail" },
                 { id: "UNCOVERED", label: "Uncovered" },
               ].map((s) => (
@@ -894,7 +904,9 @@ export default function IntegrationRouteMatrixTable({
                 const isThisGenerating =
                   isGenerating && generatingKey === epActionKey;
                 const isThisRunning = isRunning && runningKey === epActionKey;
-                const sourceFile = ep.file || ep.sourceFile || "express-router";
+                const sourceFile =
+                  ep.file || ep.sourceFile || ep.source?.sourceFile || "express-router";
+                const epCaseCov = getEndpointCaseCoverage(ep, scenarios);
                 const sourceLine = ep.source?.sourceLine || ep.line || null;
                 const hasLogicSnippet = Boolean(
                   ep.source?.controllerSnippet || ep.source?.routeSnippet,
@@ -1014,6 +1026,14 @@ export default function IntegrationRouteMatrixTable({
                             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                               Covered
+                            </span>
+                          ) : status === "PARTIAL" ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-400 font-mono tabular-nums"
+                              title={`Missing required cases (${epCaseCov.passedCasesCount}/${epCaseCov.totalRequired} verified)`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              Partial ({epCaseCov.passedCasesCount}/{epCaseCov.totalRequired})
                             </span>
                           ) : status === "FAIL" ? (
                             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-400">
@@ -1323,7 +1343,20 @@ export default function IntegrationRouteMatrixTable({
                                   const isCodeOpen =
                                     expandedScenarioCodeKey === scKey;
                                   const canMutate = Boolean(
-                                    sc.aiTestId && sc.scenarioId,
+                                    sc.aiTestId &&
+                                    !String(sc.aiTestId).startsWith("existing_test_") &&
+                                    sc.origin !== "PROJECT_EXISTING" &&
+                                    sc.scenarioId,
+                                  );
+                                  const canDelete = Boolean(
+                                    onDeleteScenario &&
+                                    (canMutate ||
+                                      sc.aiTestId ||
+                                      sc.scenarioId ||
+                                      sc.title ||
+                                      sc.testName ||
+                                      sc.filePath ||
+                                      sc.testFile),
                                   );
                                   const isEnabled = sc.enabled !== false;
 
@@ -1405,19 +1438,50 @@ export default function IntegrationRouteMatrixTable({
                                                     ? "AI"
                                                     : sc.origin || "AI"}
                                               </span>
-                                              {sc.expectedStatus && (
+                                              {(sc.expectedStatus ||
+                                                (Array.isArray(
+                                                  sc.expectedStatuses,
+                                                ) &&
+                                                  sc.expectedStatuses.length >
+                                                    0)) && (
                                                 <span className="tabular-nums">
                                                   Expected{" "}
                                                   <strong className="text-[var(--color-text-secondary)]">
-                                                    {sc.expectedStatus}
+                                                    {Array.isArray(
+                                                      sc.expectedStatuses,
+                                                    ) &&
+                                                    sc.expectedStatuses.length >
+                                                      1
+                                                      ? sc.expectedStatuses.join(
+                                                          "/",
+                                                        )
+                                                      : sc.expectedStatus}
                                                   </strong>
                                                 </span>
                                               )}
                                               {sc.actualStatus && (
                                                 <span
                                                   className={`tabular-nums ${
-                                                    Number(sc.actualStatus) ===
-                                                    Number(sc.expectedStatus)
+                                                    (
+                                                      Array.isArray(
+                                                        sc.expectedStatuses,
+                                                      ) &&
+                                                      sc.expectedStatuses
+                                                        .length > 0
+                                                        ? sc.expectedStatuses
+                                                            .map(Number)
+                                                            .includes(
+                                                              Number(
+                                                                sc.actualStatus,
+                                                              ),
+                                                            )
+                                                        : Number(
+                                                            sc.actualStatus,
+                                                          ) ===
+                                                          Number(
+                                                            sc.expectedStatus,
+                                                          )
+                                                    )
                                                       ? "text-emerald-400"
                                                       : "text-rose-400 font-semibold"
                                                   }`}
@@ -1443,7 +1507,6 @@ export default function IntegrationRouteMatrixTable({
                                         {/* Quiet Ghost Scenario Actions */}
                                         <div className="flex items-center gap-0.5 shrink-0 opacity-75 group-hover/sc:opacity-100 transition-opacity">
                                           {scFailed &&
-                                            canMutate &&
                                             onAIFixScenario && (
                                               <button
                                                 type="button"
@@ -1451,7 +1514,7 @@ export default function IntegrationRouteMatrixTable({
                                                   onAIFixScenario(sc, ep)
                                                 }
                                                 disabled={isRunning}
-                                                title="Auto-repair this failed scenario using AI diagnostics"
+                                                title="Load failed test & endpoint context into AI Assistant"
                                                 className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer"
                                               >
                                                 <Wrench className="w-2.5 h-2.5" />
@@ -1498,7 +1561,7 @@ export default function IntegrationRouteMatrixTable({
                                             </span>
                                           </button>
 
-                                          {canMutate && onDeleteScenario && (
+                                          {canDelete && (
                                             <>
                                               {confirmDeleteKey === scKey ? (
                                                 <div className="inline-flex items-center gap-1">
@@ -1670,9 +1733,11 @@ export default function IntegrationRouteMatrixTable({
             </div>
           </div>
           <div className="space-y-1.5">
-            {unmappedScenarios.map((sc, idx) => (
+            {unmappedScenarios.map((sc, idx) => {
+              const unmappedKey = `unmapped-${sc.scenarioId || idx}`;
+              return (
               <div
-                key={`unmapped-${sc.scenarioId || idx}`}
+                key={unmappedKey}
                 className="px-3 py-2 rounded bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-between gap-3 text-xs"
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -1707,9 +1772,42 @@ export default function IntegrationRouteMatrixTable({
                       <span>Edit Code</span>
                     </button>
                   )}
+                  {onDeleteScenario && (
+                    confirmDeleteKey === unmappedKey ? (
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteScenario(sc);
+                            setConfirmDeleteKey(null);
+                          }}
+                          className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-500 text-white hover:bg-rose-600 transition-colors cursor-pointer"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteKey(null)}
+                          className="px-1.5 py-1 rounded text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteKey(unmappedKey)}
+                        title="Delete this scenario"
+                        className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

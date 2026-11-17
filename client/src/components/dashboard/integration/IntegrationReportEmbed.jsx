@@ -86,15 +86,26 @@ export default function IntegrationReportEmbed({
             endpoints.length > 0
         );
 
-  const overview = report?.overview || workspace?.summary || {};
-  const latestExecution = report?.latestExecution || workspace?.execution || {};
+  const usePeakReport = Boolean(
+    report?.isPeakCoverageReport &&
+      Array.isArray(report?.routeMatrix) &&
+      report.routeMatrix.length > 0,
+  );
+
+  const overview = usePeakReport
+    ? report?.overview || workspace?.summary || {}
+    : report?.overview || workspace?.summary || {};
+  const latestExecution = usePeakReport
+    ? report?.latestExecution || {}
+    : report?.latestExecution || workspace?.execution || {};
   const apiCoverage = report?.apiCoverage || {};
-  const rawEndpoints =
-    endpoints && endpoints.length > 0
+  const rawEndpoints = usePeakReport
+    ? []
+    : endpoints && endpoints.length > 0
       ? endpoints
       : workspace?.endpoints && workspace.endpoints.length > 0
-      ? workspace.endpoints
-      : [];
+        ? workspace.endpoints
+        : [];
 
   // Route Matrix derivation (Prefer live workspace endpoints with AST & Supertest execution evidence)
   const routeMatrix =
@@ -110,12 +121,13 @@ export default function IntegrationReportEmbed({
             e.status === "failed" ||
             e.failedCount > 0 ||
             failScenarios > 0;
+          const caseCoverage = getEndpointCaseCoverage(e, e.scenarios || []);
           const isCovered =
             !isFailed &&
-            (e.status === "passed" ||
+            (e.status === "Covered" ||
+              e.status === "passed" ||
               e.passedCount > 0 ||
               passScenarios > 0);
-          const caseCoverage = getEndpointCaseCoverage(e, e.scenarios || []);
           return {
             method: (e.method || "GET").toUpperCase(),
             path: e.fullPath || e.path || e.route || "/",
@@ -128,8 +140,10 @@ export default function IntegrationReportEmbed({
               e.sourceFile || e.source?.sourceFile || e.filePath || "express-router",
             status: isFailed
               ? "FAILED"
-              : isCovered
+              : isCovered && caseCoverage.isFullyVerified
               ? "COVERED"
+              : isCovered
+              ? "PARTIAL"
               : "UNCOVERED",
             scenarioCount: (e.scenarios || []).length,
             passedCount:
@@ -165,19 +179,24 @@ export default function IntegrationReportEmbed({
             errorMessage: "Endpoint has failing test scenarios or HTTP contract mismatch.",
           }));
 
-  // Scenarios aggregation
-  const allScenarios = rawEndpoints.flatMap((e) =>
-    (e.scenarios || []).map((s) => ({ ...s, endpoint: e }))
-  );
+  // Scenarios aggregation (if routeMatrix comes from peak report, derive scenario list from routeMatrix)
+  const allScenarios = usePeakReport
+    ? routeMatrix.flatMap((r) =>
+        (r.scenarios || []).map((s) => ({ ...s, endpoint: r })),
+      )
+    : rawEndpoints.flatMap((e) =>
+        (e.scenarios || []).map((s) => ({ ...s, endpoint: e })),
+      );
 
   const totalScenarios = Math.max(
     allScenarios.length,
-    workspace?.summary?.totalScenariosCount || 0,
     latestExecution?.totalTests || 0,
-    overview?.totalScenarios || 0
+    overview?.totalScenarios || 0,
+    usePeakReport ? 0 : workspace?.summary?.totalScenariosCount || 0,
   );
 
   const totalDiscovered =
+    (usePeakReport ? apiCoverage?.discoveredApis || routeMatrix.length : null) ||
     workspace?.summary?.discoveredApis ||
     (rawEndpoints.length > 0 ? rawEndpoints.length : null) ||
     apiCoverage?.discoveredApis ||
@@ -200,17 +219,22 @@ export default function IntegrationReportEmbed({
     (s) => s.status === "failed" || s.executionVerdict === "FAIL"
   ).length;
 
-  const totalExecuted = Math.max(
-    executedPassCount + executedFailCount,
-    latestExecution?.totalTests || 0,
-    workspace?.summary?.totalTests || 0
-  );
+  const totalExecuted = usePeakReport
+    ? Math.max(
+        executedPassCount + executedFailCount,
+        latestExecution?.totalTests || 0,
+      )
+    : Math.max(
+        executedPassCount + executedFailCount,
+        latestExecution?.totalTests || 0,
+        workspace?.summary?.totalTests || 0,
+      );
 
   const totalFailed =
     executedFailCount > 0
       ? executedFailCount
       : (latestExecution?.failedTests ??
-          workspace?.summary?.failedTests ??
+          (usePeakReport ? 0 : workspace?.summary?.failedTests) ??
           overview?.failedScenariosCount ??
           failureLogs.length);
 
@@ -220,9 +244,9 @@ export default function IntegrationReportEmbed({
       : Math.max(
           0,
           latestExecution?.passedTests ??
-            workspace?.summary?.passedTests ??
+            (usePeakReport ? null : workspace?.summary?.passedTests) ??
             overview?.passedScenariosCount ??
-            (totalExecuted - totalFailed)
+            (totalExecuted - totalFailed),
         );
 
   const effectiveHasExecuted =
@@ -297,8 +321,19 @@ export default function IntegrationReportEmbed({
       .filter((m) => m.total > 0);
   })();
 
-  // Code Coverage from Istanbul / Unified Coverage Engine
+  // Code Coverage from Istanbul / Unified Coverage Engine (prefer saved peak report when active)
   const codeCov =
+    (usePeakReport && report?.projectCodeCoverage?.stmtsPct != null
+      ? {
+          statement: report.projectCodeCoverage.stmtsPct,
+          branch: report.projectCodeCoverage.branchesPct || 0,
+          function: report.projectCodeCoverage.funcsPct || 0,
+          line:
+            report.projectCodeCoverage.linesPct ||
+            report.projectCodeCoverage.stmtsPct ||
+            0,
+        }
+      : null) ||
     workspace?.summary?.codeCoverage ||
     (report?.projectCodeCoverage?.stmtsPct != null
       ? {
@@ -662,6 +697,14 @@ export default function IntegrationReportEmbed({
                   ? "Regression detected"
                   : "Needs attention"}
               </span>
+              {usePeakReport && (
+                <span
+                  className="px-2 py-0.5 rounded-md text-[11px] font-mono tabular-nums bg-[var(--color-surface-secondary)] text-[var(--color-primary)] border border-[var(--color-primary)]/30"
+                  title="This report preserves the highest coverage snapshot achieved for audit reporting."
+                >
+                  Peak Coverage Snapshot · {coverageRate}% endpoints{codeCov?.line != null ? ` · ${Number(codeCov.line).toFixed(1)}% code` : ""}
+                </span>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums">
               <span>
