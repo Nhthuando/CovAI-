@@ -683,43 +683,6 @@ export default function UnitTestVersionPopover({
                                 <span>Diff</span>
                               </button>
                             )}
-
-                            {onSwitchVersion && hasMultiVers && (
-                              <button
-                                type="button"
-                                disabled={isSwitchingVersion}
-                                onClick={() => onSwitchVersion({ filePath: fRec.sourceFile || fRec.testFile, targetVersion: targetVer })}
-                                style={{
-                                  padding: "2px 7px",
-                                  borderRadius: 4,
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                  cursor: isSwitchingVersion ? "wait" : "pointer",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 3,
-                                  background: curVer === 1
-                                    ? (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)")
-                                    : (isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)"),
-                                  border: curVer === 1
-                                    ? (isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.35)")
-                                    : (isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.35)"),
-                                  color: curVer === 1
-                                    ? (isLight ? "#7c3aed" : "#c4b5fd")
-                                    : (isLight ? "#e11d48" : "#fb7185"),
-                                }}
-                                title={curVer === 1 ? "Switch this file to Version 2" : "Revert this file to Version 1"}
-                              >
-                                {isFileSwitching ? (
-                                  <Loader2 size={10} className="animate-spin" />
-                                ) : curVer === 1 ? (
-                                  <Zap size={10} />
-                                ) : (
-                                  <RotateCcw size={10} />
-                                )}
-                                <span>{curVer === 1 ? "v2" : "v1"}</span>
-                              </button>
-                            )}
                           </div>
                         </div>
                       );

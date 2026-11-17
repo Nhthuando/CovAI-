@@ -309,8 +309,25 @@ export default function SuggestTestcaseModal({
   const [step, setStep] = useState("SELECTION");
 
   // Selection choices
-  const [chosenMode, setChosenMode] = useState("AI"); // "AI" | "MANUAL"
-  const [chosenFramework, setChosenFramework] = useState(defaultFramework || "vitest");
+  const detectedProjectFramework = useMemo(() => {
+    const suites = Array.isArray(testSuites) ? testSuites : [];
+    let vitestHits = 0;
+    let jestHits = 0;
+    for (const s of suites) {
+      const fw = String(s?.framework || "").toLowerCase();
+      if (fw === "vitest") vitestHits += 2;
+      else if (fw === "jest") jestHits += 2;
+      const body = String(s?.content || s?.code || "");
+      if (/\bfrom\s+['"]vitest['"]|\bvi\s*\.\s*(?:fn|mock|spyOn|hoisted)\b/.test(body)) vitestHits += 1;
+      if (/\bfrom\s+['"]@jest\/globals['"]|\bjest\s*\.\s*(?:fn|mock|spyOn)\b/.test(body)) jestHits += 1;
+    }
+    if (vitestHits > jestHits) return "vitest";
+    if (jestHits > vitestHits) return "jest";
+    return defaultFramework || "vitest";
+  }, [testSuites, defaultFramework]);
+
+  const [chosenMode, setChosenMode] = useState("AI");
+  const [chosenFramework, setChosenFramework] = useState(detectedProjectFramework);
 
   // Deduplicated & sanitized business logic files list
   const cleanBusinessFiles = useMemo(() => {
@@ -381,7 +398,8 @@ export default function SuggestTestcaseModal({
   useEffect(() => {
     if (isOpen) {
       setStep("SELECTION");
-      setChosenFramework(defaultFramework || "vitest");
+      setChosenMode("AI");
+      setChosenFramework(detectedProjectFramework);
       const initialFile = targetFilePath || cleanBusinessFiles[0]?.rawPath || "";
       setSelectedFile(initialFile);
 
@@ -393,7 +411,7 @@ export default function SuggestTestcaseModal({
       const initialFn = targetFunction || resolvedFns[0]?.functionName || resolvedFns[0]?.name || "";
       setSelectedFunc(initialFn);
     }
-  }, [isOpen, defaultFramework, targetFilePath, targetFunction, cleanBusinessFiles, allFunctions, targetFunctionsList]);
+  }, [isOpen, detectedProjectFramework, targetFilePath, targetFunction, cleanBusinessFiles, allFunctions, targetFunctionsList]);
 
   // When selectedFile changes, sync selectedFunc to first available function if not present
   useEffect(() => {
@@ -629,139 +647,8 @@ export default function SuggestTestcaseModal({
                     <span className="text-indigo-500 font-bold">*</span>
                   </label>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    {/* Card A: Manual Guided Mode */}
-                    <div
-                      onClick={() => setChosenMode("MANUAL")}
-                      role="button"
-                      tabIndex={0}
-                      className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between relative overflow-hidden"
-                      style={{
-                        background:
-                          chosenMode === "MANUAL"
-                            ? isLight
-                              ? "#f0fdf4"
-                              : "rgba(16, 185, 129, 0.08)"
-                            : isLight
-                              ? "#ffffff"
-                              : "rgba(255, 255, 255, 0.02)",
-                        border:
-                          chosenMode === "MANUAL"
-                            ? isLight
-                              ? "2px solid #059669"
-                              : "2px solid #10b981"
-                            : isLight
-                              ? "1px solid #cbd5e1"
-                              : "1px solid rgba(255, 255, 255, 0.08)",
-                        boxShadow:
-                          chosenMode === "MANUAL"
-                            ? isLight
-                              ? "0 4px 20px rgba(16, 185, 129, 0.16)"
-                              : "0 0 20px rgba(16, 185, 129, 0.25)"
-                            : "none",
-                      }}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <div
-                              className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm ${
-                                isLight
-                                  ? "bg-emerald-100 text-emerald-700 border border-emerald-300"
-                                  : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
-                              }`}
-                            >
-                              <PenTool size={20} />
-                            </div>
-                            <div>
-                              <h3
-                                className={`font-bold text-base ${
-                                  isLight ? "text-emerald-800" : "text-emerald-400"
-                                }`}
-                              >
-                                Manual Guided Test Authoring
-                              </h3>
-                              <span
-                                className={`inline-block text-[10.5px] font-bold px-2 py-0.5 rounded-full mt-0.5 ${
-                                  isLight
-                                    ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                                    : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                                }`}
-                              >
-                                Beginner Friendly (A-Z)
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Selected Radio Indicator */}
-                          <div
-                            className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                              chosenMode === "MANUAL"
-                                ? isLight
-                                  ? "bg-emerald-600 text-white shadow-sm"
-                                  : "bg-emerald-500 text-slate-950 font-bold"
-                                : isLight
-                                  ? "border-2 border-slate-300"
-                                  : "border-2 border-slate-600"
-                            }`}
-                          >
-                            {chosenMode === "MANUAL" && <Check size={14} strokeWidth={3} />}
-                          </div>
-                        </div>
-
-                        <p
-                          className={`text-xs leading-relaxed mb-4 ${
-                            isLight ? "text-slate-700" : "text-slate-300"
-                          }`}
-                        >
-                          CovAI guides you through the standard{" "}
-                          <strong className={isLight ? "text-slate-900" : "text-white"}>
-                            3A pattern (Arrange - Act - Assert)
-                          </strong>
-                          , explains code mechanics, and provides ready-to-use templates for 4 scenario categories.
-                        </p>
-
-                        <div
-                          className={`flex flex-col gap-2 text-xs ${
-                            isLight ? "text-slate-700 font-medium" : "text-slate-300"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Check
-                              size={15}
-                              className={isLight ? "text-emerald-600 font-bold" : "text-emerald-400"}
-                            />
-                            <span>Standard 4-category templates (Happy Path, Boundary, Branching, Error)</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Check
-                              size={15}
-                              className={isLight ? "text-emerald-600 font-bold" : "text-emerald-400"}
-                            />
-                            <span>Comprehensive code annotations explaining each step</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Check
-                              size={15}
-                              className={isLight ? "text-emerald-600 font-bold" : "text-emerald-400"}
-                            />
-                            <span>Real-time syntax validation preventing missing bracket errors</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div
-                        className={`mt-5 pt-3.5 flex items-center justify-between text-xs font-semibold ${
-                          isLight
-                            ? "text-emerald-700 border-t border-emerald-200"
-                            : "text-emerald-400 border-t border-slate-800"
-                        }`}
-                      >
-                        <span>Click to open Guided Studio</span>
-                        <ArrowRight size={15} />
-                      </div>
-                    </div>
-
+                  <div className="grid grid-cols-1 gap-5">
+                    {/* Card: AI-Generated Mode */}
                     {/* Card B: AI-Generated Mode */}
                     <div
                       onClick={() => setChosenMode("AI")}

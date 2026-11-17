@@ -59,7 +59,9 @@ export const withPreparedProjectWorkspace = async ({projectId,snapshotId,userId,
             const current = await tx.project.findUnique({where:{id:projectId},select:{workspaceRevision:true}});
             publication.workspaceRevision = current.workspaceRevision + (publication.changedPaths.length ? 1 : 0);
             const status = result?.status === 'WAITING_FOR_ENV' ? 'WAITING_FOR_ENV' : result?.success === false ? 'FAILED' : 'SUCCESS';
-            await tx.projectOperation.update({where:{id:operation.id},data:{status,resultJson:{ ...(requestId ? result : {}), workspaceRevision:publication.workspaceRevision,changedPaths:publication.changedPaths}}});
+            await tx.projectOperation.update({where:{id:operation.id},data:{status,resultJson:{ ...(requestId ? result : {}),
+                ...(result?.qualityGate ? {qualityGate:result.qualityGate} : {}),
+                workspaceRevision:publication.workspaceRevision,changedPaths:publication.changedPaths}}});
             const event = await publishProjectEvent({tx,projectId,type:'operation.finished',actorId:userId,resourceId:primaryJobId || operation.id,
                 revision:publication.workspaceRevision,payload:{operationId:operation.id,status}});
             deferPreparedCommit(()=>deliverProjectEvent(event));
@@ -73,6 +75,7 @@ export const withPreparedProjectWorkspace = async ({projectId,snapshotId,userId,
                     status,
                     resultJson: {
                         ...(requestId ? result : {}),
+                        ...(result?.qualityGate ? {qualityGate:result.qualityGate} : {}),
                         workspaceRevision: expectedWorkspaceRevision,
                         changedPaths: []
                     }

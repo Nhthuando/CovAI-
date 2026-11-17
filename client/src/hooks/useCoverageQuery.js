@@ -17,20 +17,28 @@ import { loadSuggestionSourceFiles } from '../services/unitTestSuggestionQueue.j
 /**
  * Fetch all coverage data for a given snapshot and coverage type in parallel.
  */
-export async function fetchCoverageDashboardData({ snapshotId, type, projectId }) {
+export async function fetchCoverageDashboardData({ snapshotId, type, projectId, fetchAll = false }) {
   if (!snapshotId) return null;
 
-  const promises = [
-    getCoverageSummary(snapshotId, type).catch(() => ({ data: null })),
-    (type === 'unit'
-      ? loadSuggestionSourceFiles(page => getCoverageFiles(snapshotId, {page, sortBy: 'linesPct', order: 'asc', limit: 200, type}))
-        .then(files => ({data: {files}}))
-      : getCoverageFiles(snapshotId, {
+  // Single-page query by default to eliminate pagination waterfall on mount.
+  // If caller explicitly passes fetchAll: true, use parallelized loadSuggestionSourceFiles.
+  const fetchFiles = () => {
+    if (fetchAll && type === 'unit') {
+      return loadSuggestionSourceFiles(page =>
+        getCoverageFiles(snapshotId, { page, sortBy: 'linesPct', order: 'asc', limit: 200, type })
+      ).then(files => ({ data: { files } }));
+    }
+    return getCoverageFiles(snapshotId, {
       sortBy: "linesPct",
       order: "asc",
       limit: 200,
       type,
-    })).catch(() => ({ data: { files: [] } })),
+    });
+  };
+
+  const promises = [
+    getCoverageSummary(snapshotId, type).catch(() => ({ data: null })),
+    fetchFiles().catch(() => ({ data: { files: [] } })),
     getTestExecution(snapshotId).catch(() => ({ data: {} })),
     getCoverageFrameworks(snapshotId).catch(() => ({ data: null })),
   ];

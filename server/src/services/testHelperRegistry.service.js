@@ -226,7 +226,7 @@ export function inspectAstScopeDuplicates(ast, code = "") {
     ]);
     const globalHelperMap = new Map(); // name -> occurrences[]
 
-    const registerDeclaration = (scopeNode, name, declNode, parentStmtNode) => {
+    const registerDeclaration = (scopeNode, name, declNode, parentStmtNode, parentDeclNode = null) => {
         if (!name || typeof name !== "string") return;
         // Ignore Babel internal binding names or built-ins
         if (name === "arguments" || name === "undefined" || name === "NaN" || name === "Infinity") return;
@@ -236,6 +236,7 @@ export function inspectAstScopeDuplicates(ast, code = "") {
             name,
             declNode,
             parentStmtNode: parentStmtNode || declNode,
+            parentDeclNode,
             signature,
             loc: declNode.loc ? declNode.loc.start : null,
             start: declNode.start,
@@ -271,8 +272,8 @@ export function inspectAstScopeDuplicates(ast, code = "") {
 
         if (node.type === "Program" && Array.isArray(node.body)) {
             for (const stmt of node.body) {
-                extractDeclarationsFromStatement({ node: stmt }, (name, declNode) => {
-                    registerDeclaration(node, name, declNode, stmt);
+                extractDeclarationsFromStatement({ node: stmt }, (name, declNode, parentDeclNode) => {
+                    registerDeclaration(node, name, declNode, stmt, parentDeclNode);
                 });
             }
         }
@@ -292,8 +293,8 @@ export function inspectAstScopeDuplicates(ast, code = "") {
                     const body = fnArg.body;
                     if (body && body.type === "BlockStatement" && Array.isArray(body.body)) {
                         for (const stmt of body.body) {
-                            extractDeclarationsFromStatement({ node: stmt }, (name, declNode) => {
-                                registerDeclaration(body, name, declNode, stmt);
+                            extractDeclarationsFromStatement({ node: stmt }, (name, declNode, parentDeclNode) => {
+                                registerDeclaration(body, name, declNode, stmt, parentDeclNode);
                             });
                         }
                     }
@@ -399,16 +400,117 @@ function extractDeclarationsFromStatement(stmtPath, callback) {
     } else if (node.type === "VariableDeclaration" && Array.isArray(node.declarations)) {
         for (const decl of node.declarations) {
             if (decl.id && decl.id.type === "Identifier") {
-                callback(decl.id.name, decl);
+                callback(decl.id.name, decl, decl);
+            } else if (decl.id && decl.id.type === "ObjectPattern" && Array.isArray(decl.id.properties)) {
+                for (const prop of decl.id.properties) {
+                    if (prop.type === "ObjectProperty") {
+                        const localName = prop.value?.name || (prop.value?.type === "AssignmentPattern" ? prop.value.left?.name : null) || prop.key?.name;
+                        if (localName) {
+                            callback(localName, prop, decl);
+                        }
+                    } else if (prop.type === "RestElement" && prop.argument?.type === "Identifier") {
+                        callback(prop.argument.name, prop, decl);
+                    }
+                }
             }
         }
     } else if (node.type === "ImportDeclaration" && Array.isArray(node.specifiers)) {
         for (const spec of node.specifiers) {
             if (spec.local && spec.local.name) {
-                callback(spec.local.name, spec);
+                callback(spec.local.name, spec, null);
             }
         }
     }
+}
+
+/**
+ * Computes non-overlapping source ranges to remove for items in a comma-delimited sequence
+ * (such as ObjectPattern properties, ImportDeclaration specifiers, or VariableDeclaration declarators).
+ * Correctly consumes preceding or following delimiter commas and whitespace so no dangling
+ * commas or malformed syntax remain.
+ *
+ * @param {Array<Object>} items - Array of AST nodes with .start and .end
+ * @param {Set<Object>} removedSet - Set of AST nodes from items to remove
+ * @param {string} code - Source code string
+ * @returns {Array<{ start: number, end: number, isDeclaratorOnly: boolean }>}
+ */
+function computeRemovalRangesForItems(items, removedSet, code) {
+    if (!items || items.length === 0 || !removedSet || removedSet.size === 0) {
+        return [];
+    }
+
+    const isRemoved = items.map(item => removedSet.has(item));
+    const runs = [];
+    let runStart = -1;
+
+    for (let i = 0; i < items.length; i++) {
+        if (isRemoved[i]) {
+            if (runStart === -1) runStart = i;
+        } else {
+            if (runStart !== -1) {
+                runs.push({ fromIdx: runStart, toIdx: i - 1 });
+                runStart = -1;
+            }
+        }
+    }
+    if (runStart !== -1) {
+        runs.push({ fromIdx: runStart, toIdx: items.length - 1 });
+    }
+
+    const ranges = [];
+
+    for (const run of runs) {
+        const startItem = items[run.fromIdx];
+        const endItem = items[run.toIdx];
+        const hasKeptAfter = items.slice(run.toIdx + 1).some(it => !removedSet.has(it));
+
+        let startPos = startItem.start;
+        let endPos = endItem.end;
+
+        if (hasKeptAfter) {
+            // There are surviving items after this run.
+            // Consume the trailing comma that separates this run from the next item.
+            while (endPos < code.length && (code[endPos] === " " || code[endPos] === "\t" || code[endPos] === "\r" || code[endPos] === "\n")) {
+                endPos++;
+            }
+            if (endPos < code.length && code[endPos] === ",") {
+                endPos++;
+                while (endPos < code.length && (code[endPos] === " " || code[endPos] === "\t")) {
+                    endPos++;
+                }
+            }
+        } else {
+            // Tail run: all surviving items are before this run.
+            // Consume the preceding comma that separated the last kept item from this run.
+            while (startPos > 0 && (code[startPos - 1] === " " || code[startPos - 1] === "\t" || code[startPos - 1] === "\r" || code[startPos - 1] === "\n")) {
+                startPos--;
+            }
+            if (startPos > 0 && code[startPos - 1] === ",") {
+                startPos--;
+                while (startPos > 0 && (code[startPos - 1] === " " || code[startPos - 1] === "\t")) {
+                    startPos--;
+                }
+            }
+            // Also consume any trailing comma after endItem before closing bracket/semicolon
+            while (endPos < code.length && (code[endPos] === " " || code[endPos] === "\t")) {
+                endPos++;
+            }
+            if (endPos < code.length && code[endPos] === ",") {
+                endPos++;
+                while (endPos < code.length && (code[endPos] === " " || code[endPos] === "\t")) {
+                    endPos++;
+                }
+            }
+        }
+
+        ranges.push({
+            start: startPos,
+            end: endPos,
+            isDeclaratorOnly: true
+        });
+    }
+
+    return ranges;
 }
 
 /**
@@ -447,7 +549,8 @@ export function deduplicateAstDeclarations(code, options = {}) {
     // Collect AST ranges to remove or upgrade
     const rangesToRemove = [];
     let deduplicatedCount = 0;
-    let upgradedCanonicals = new Map(); // startIdx -> canonicalCode
+    const upgradedCanonicals = new Map(); // startIdx -> canonicalCode
+    const duplicateOccurrencesToProcess = [];
 
     for (const dup of duplicates) {
         if (!dup.isReconcilable) {
@@ -481,43 +584,101 @@ export function deduplicateAstDeclarations(code, options = {}) {
 
         // Mark all subsequent occurrences for deletion
         for (let i = 1; i < occurrences.length; i++) {
-            const occ = occurrences[i];
-            const pStmt = occ.parentStmtNode;
+            duplicateOccurrencesToProcess.push(occurrences[i]);
+            deduplicatedCount++;
+        }
+    }
 
-            if (pStmt && pStmt.type === "VariableDeclaration" && pStmt.declarations.length > 1) {
-                // If a variable declaration has multiple declarators: const a = 1, _collectCallableMembers = ..., b = 2;
-                // Only remove the specific declarator
+    // Group duplicate occurrences by parent statement node to decide statement-level vs partial removal
+    const stmtMap = new Map();
+    for (const occ of duplicateOccurrencesToProcess) {
+        const stmtNode = occ.parentStmtNode || occ.declNode;
+        if (!stmtMap.has(stmtNode)) {
+            stmtMap.set(stmtNode, {
+                stmtNode,
+                stmtStart: occ.stmtStart,
+                stmtEnd: occ.stmtEnd,
+                occurrences: []
+            });
+        }
+        stmtMap.get(stmtNode).occurrences.push(occ);
+    }
+
+    for (const [stmtNode, stmtData] of stmtMap) {
+        const occs = stmtData.occurrences;
+        const stmtStart = stmtData.stmtStart;
+        const stmtEnd = stmtData.stmtEnd;
+
+        if (stmtNode.type === "ImportDeclaration" && Array.isArray(stmtNode.specifiers)) {
+            const removedSpecSet = new Set(occs.map(o => o.declNode));
+            const totalSpecifiers = stmtNode.specifiers.length;
+            const removedCount = stmtNode.specifiers.filter(s => removedSpecSet.has(s)).length;
+
+            if (removedCount >= totalSpecifiers || totalSpecifiers === 0) {
+                // All specifiers removed -> remove the entire statement
                 rangesToRemove.push({
-                    start: occ.start,
-                    end: occ.end,
-                    isDeclaratorOnly: true
-                });
-            } else if (pStmt && pStmt.type === "ImportDeclaration" && pStmt.specifiers.length > 1) {
-                // Remove only the duplicate specifier along with its comma
-                let specStart = occ.start;
-                let specEnd = occ.end;
-                while (specEnd < code.length && (code[specEnd] === " " || code[specEnd] === "\t")) specEnd++;
-                if (code[specEnd] === ",") {
-                    specEnd++;
-                    while (specEnd < code.length && (code[specEnd] === " " || code[specEnd] === "\t")) specEnd++;
-                } else {
-                    while (specStart > 0 && (code[specStart - 1] === " " || code[specStart - 1] === "\t")) specStart--;
-                    if (specStart > 0 && code[specStart - 1] === ",") specStart--;
-                }
-                rangesToRemove.push({
-                    start: specStart,
-                    end: specEnd,
-                    isDeclaratorOnly: true
-                });
-            } else {
-                // Remove the entire statement
-                rangesToRemove.push({
-                    start: occ.stmtStart,
-                    end: occ.stmtEnd,
+                    start: stmtStart,
+                    end: stmtEnd,
                     isDeclaratorOnly: false
                 });
+            } else {
+                // Subset of specifiers removed -> slice individual specifiers and commas
+                const specRanges = computeRemovalRangesForItems(stmtNode.specifiers, removedSpecSet, code);
+                for (const r of specRanges) {
+                    rangesToRemove.push(r);
+                }
             }
-            deduplicatedCount++;
+        } else if (stmtNode.type === "VariableDeclaration" && Array.isArray(stmtNode.declarations)) {
+            const fullyRemovedDeclSet = new Set();
+            const partialRanges = [];
+
+            for (const decl of stmtNode.declarations) {
+                if (decl.id && decl.id.type === "ObjectPattern" && Array.isArray(decl.id.properties)) {
+                    const removedPropSet = new Set(occs.filter(o => o.parentDeclNode === decl).map(o => o.declNode));
+                    const totalProps = decl.id.properties.length;
+                    const removedPropsCount = decl.id.properties.filter(p => removedPropSet.has(p)).length;
+
+                    if (removedPropsCount >= totalProps || totalProps === 0) {
+                        fullyRemovedDeclSet.add(decl);
+                    } else if (removedPropsCount > 0) {
+                        const propRanges = computeRemovalRangesForItems(decl.id.properties, removedPropSet, code);
+                        partialRanges.push(...propRanges);
+                    }
+                } else {
+                    const isDeclDuplicate = occs.some(o => o.declNode === decl || o.parentDeclNode === decl);
+                    if (isDeclDuplicate) {
+                        fullyRemovedDeclSet.add(decl);
+                    }
+                }
+            }
+
+            const totalDeclarators = stmtNode.declarations.length;
+            if (fullyRemovedDeclSet.size >= totalDeclarators) {
+                // All declarators removed -> remove the entire statement
+                rangesToRemove.push({
+                    start: stmtStart,
+                    end: stmtEnd,
+                    isDeclaratorOnly: false
+                });
+            } else {
+                // Subset of declarators removed
+                if (fullyRemovedDeclSet.size > 0) {
+                    const declRanges = computeRemovalRangesForItems(stmtNode.declarations, fullyRemovedDeclSet, code);
+                    for (const r of declRanges) {
+                        rangesToRemove.push(r);
+                    }
+                }
+                for (const r of partialRanges) {
+                    rangesToRemove.push(r);
+                }
+            }
+        } else {
+            // FunctionDeclaration, ClassDeclaration, or other statement
+            rangesToRemove.push({
+                start: stmtStart,
+                end: stmtEnd,
+                isDeclaratorOnly: false
+            });
         }
     }
 
@@ -547,7 +708,7 @@ export function deduplicateAstDeclarations(code, options = {}) {
     }
 
     // Sort descending by start position
-    allEdits.sort((a, b) => b.start - a.start);
+    allEdits.sort((a, b) => b.start - a.start || b.end - a.end);
 
     let working = code;
     for (const edit of allEdits) {

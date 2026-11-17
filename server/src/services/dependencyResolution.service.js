@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { isBuiltin } from "node:module";
 import { dockerRunner } from "./dockerRunner.service.js";
 import { resolveProjectRoot, resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -53,7 +54,7 @@ export const NPM_PACKAGE_REGEX = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-
 export const isValidNpmPackageName = (packageName) => {
   if (!packageName || typeof packageName !== "string") return false;
   const trimmed = packageName.trim();
-  if (trimmed.length === 0 || trimmed.length > 214) return false;
+  if (trimmed.length === 0 || trimmed.length > 214 || /^[-~]/.test(trimmed)) return false;
   // Disallow shell metacharacters
   if (/[\s;&|`$><\\!*?(){}[\]\r\n]/.test(trimmed)) return false;
   return NPM_PACKAGE_REGEX.test(trimmed);
@@ -65,83 +66,22 @@ export const isValidNpmPackageName = (packageName) => {
  * @param {string} rawOutput - stdout or stderr from test execution
  * @returns {{ packageName: string, rawSpecifier: string, importedFrom: string | null } | null}
  */
-export const extractMissingDependency = (rawOutput = "") => {
-  if (!rawOutput || typeof rawOutput !== "string") return null;
+export const extractMissingDependency = (rawOutput = "") => extractMissingDependencies(rawOutput)[0] || null;
 
-  const patterns = [
-    // Node.js ESM loader: Cannot find package 'mathjs' imported from '/app/.../evaluator.ts'
-    /Cannot find package ['"]([^'"]+)['"]\s+imported from\s+['"]([^'"]+)['"]/i,
-    // Node.js ESM loader: Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'mathjs'
-    /Error\s*(?:\[[^\]]+\])?:\s*Cannot find package ['"]([^'"]+)['"]/i,
-    // Plain Node ESM: Cannot find package 'mathjs'
-    /Cannot find package ['"]([^'"]+)['"]/i,
-    // Jest resolver: Cannot find module 'mathjs' from 'src/utils/evaluator.ts'
-    /Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
-    // Vitest / Vite resolver: Failed to resolve import "mathjs" from "src/utils/evaluator.ts"
-    /Failed to resolve import ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
-    // Node.js loader: Error: Cannot find module 'mathjs'
-    /Error:\s*Cannot find module ['"]([^'"]+)['"]/i,
-    // Plain Jest/Node message: Cannot find module 'mathjs'
-    /Cannot find module ['"]([^'"]+)['"]/i,
-    // Webpack / bundler resolver: Module not found: Can't resolve 'mathjs' in '...'
-    /Module not found:\s*Can't resolve ['"]([^'"]+)['"]\s+in\s+['"]([^'"]+)['"]/i,
-  ];
-
-  let rawSpecifier = null;
-  let importedFrom = null;
-
-  for (const regex of patterns) {
-    const match = rawOutput.match(regex);
-    if (match) {
-      rawSpecifier = match[1]?.trim();
-      importedFrom = match[2]?.trim() || null;
-      break;
-    }
+export function extractMissingDependencies(rawOutput = "") {
+  if (typeof rawOutput !== "string") return [];
+  const pattern = /(?:Cannot find (?:module|package)|Failed to resolve import|Module not found:\s*Can't resolve)\s+['"]([^'"\r\n]+)['"](?:[ \t]+(?:imported from|from|in)[ \t]+['"]([^'"\r\n]+)['"])?/gi;
+  const dependencies = [];
+  for (const [, specifier, importer] of rawOutput.replace(/\x1b\[[0-9;]*m/g, "").matchAll(pattern)) {
+    const rawSpecifier = specifier.trim();
+    if (/^[./\\#]|^[a-z]:|\\/i.test(rawSpecifier) || isBuiltin(rawSpecifier)) continue;
+    const packageName = rawSpecifier.split("/").slice(0, rawSpecifier.startsWith("@") ? 2 : 1)
+      .join("/").replace(/@[\^~]?[0-9].*$/, "");
+    if (!isValidNpmPackageName(packageName) || NODE_BUILTINS.has(packageName.toLowerCase())) continue;
+    dependencies.push({ packageName, rawSpecifier, importedFrom: importer?.trim() || null });
   }
-
-  if (!rawSpecifier) return null;
-
-  // Disallow relative or absolute file paths (internal project files)
-  if (
-    rawSpecifier.startsWith(".") ||
-    rawSpecifier.startsWith("/") ||
-    rawSpecifier.startsWith("\\")
-  ) {
-    return null;
-  }
-
-  // Extract base package name
-  let packageName = rawSpecifier;
-  if (rawSpecifier.startsWith("@")) {
-    // Scoped package: @org/pkg/subpath -> @org/pkg
-    const parts = rawSpecifier.split("/");
-    if (parts.length >= 2) {
-      packageName = `${parts[0]}/${parts[1]}`;
-    }
-  } else {
-    // Regular package: mathjs/lib/esm -> mathjs
-    packageName = rawSpecifier.split("/")[0];
-  }
-
-  // Strip trailing version tag if any (e.g. mathjs@^12 -> mathjs)
-  packageName = packageName.replace(/@[\^~]?[0-9].*$/, "").trim();
-
-  // Exclude Node.js built-ins
-  if (NODE_BUILTINS.has(packageName.toLowerCase())) {
-    return null;
-  }
-
-  // Validate npm package format
-  if (!isValidNpmPackageName(packageName)) {
-    return null;
-  }
-
-  return {
-    packageName,
-    rawSpecifier,
-    importedFrom,
-  };
-};
+  return dependencies;
+}
 
 /**
  * Lists all candidate package directories in a project (root + monorepo subpackages).
@@ -392,6 +332,89 @@ export const inspectWorkspaceDependency = ({ rootDir, packageName, importedFrom 
   };
 };
 
+export function isWorkspaceMountedPath(root, file) {
+    if (!file) return false;
+    try {
+        // Absolute links can be broken after the snapshot is mounted at /workspace,
+        // even when their current target is somewhere else inside the snapshot.
+        const relative = path.relative(root, file);
+        let current = root;
+        for (const segment of relative.split(path.sep)) {
+            current = path.join(current, segment);
+            if (fs.lstatSync(current).isSymbolicLink() && path.isAbsolute(fs.readlinkSync(current))) return false;
+        }
+        const resolved = path.relative(fs.realpathSync(root), fs.realpathSync(file));
+        return resolved !== '..' && !resolved.startsWith('..' + path.sep) && !path.isAbsolute(resolved);
+    } catch {
+        return false;
+    }
+}
+
+export function collectWorkspaceMissingDependencies(rootDir, messages, fallbackImporter = null) {
+  if (!rootDir) return [];
+  const root = path.resolve(resolveSnapshotRootDir(rootDir) || rootDir);
+  const packages = new Map();
+  for (const message of messages) {
+    const dependencies = extractMissingDependencies(message);
+    for (const [, json] of String(message || "").matchAll(/\[MISSING_DEPENDENCY\]:([^\r\n]+)/g)) {
+      try {
+        const dependency = JSON.parse(json);
+        if (isValidNpmPackageName(dependency?.packageName) && !isBuiltin(dependency.packageName)) dependencies.push(dependency);
+      } catch { /* Older jobs may contain truncated markers. */ }
+    }
+    for (const dependency of dependencies) {
+      const importedFrom = dependency.importedFrom || fallbackImporter;
+      const { packageName } = dependency;
+      const inspection = inspectWorkspaceDependency({ rootDir: root, packageName, importedFrom });
+      const relativeTarget = path.relative(root, inspection.targetDir).replaceAll("\\", "/");
+      const targetPackage = relativeTarget ? `${relativeTarget}/package.json` : "package.json";
+      const key = JSON.stringify([targetPackage, packageName]);
+      if (!packages.has(key)) packages.set(key, { ...dependency, importedFrom, ...inspection, targetPackage });
+    }
+  }
+  return [...packages.values()];
+}
+
+/** Restore declared dependencies inside the workspace that Docker will mount. */
+export async function ensureMountedProjectDependencies({ rootDir, packageDirs, jobId, install = installPackageInWorkspace }) {
+  const root = path.resolve(rootDir);
+  const directories = new Set([root]);
+  for (const packageDir of packageDirs) {
+    const directory = path.resolve(root, packageDir);
+    const relative = path.relative(root, directory);
+    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+      throw new ServiceError("The test package is outside the Docker workspace.", 400);
+    }
+    directories.add(directory);
+  }
+
+  const available = (directory, name) => {
+    for (let current = directory; ; current = path.dirname(current)) {
+      if (isWorkspaceMountedPath(root, path.join(current, "node_modules", name, "package.json"))) return true;
+      if (current === root) return false;
+    }
+  };
+
+  for (const directory of directories) {
+    const manifestPath = path.join(directory, "package.json");
+    if (!fs.existsSync(manifestPath)) continue;
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const required = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })
+      .filter(name => !Object.hasOwn(manifest.optionalDependencies || {}, name));
+    const isPnp = directory === root && isWorkspaceMountedPath(root, path.join(root, ".pnp.cjs"));
+    if (isPnp) continue;
+    const missing = required.find(name => !available(directory, name));
+    if (!missing) continue;
+
+    const importedFrom = path.relative(root, manifestPath).replaceAll("\\", "/");
+    const result = await install({ rootDir: root, importedFrom, packageName: missing, jobId, repairLockfileInWorkspace: true });
+    if (!result.success || (!available(directory, missing) && !isWorkspaceMountedPath(root, path.join(root, ".pnp.cjs")))) {
+      throw new ServiceError(`Unable to prepare dependencies for Jest in the Docker workspace (${importedFrom}, ${missing}). ${result.stderr || ""}`.trim(),
+        409, "JEST_WORKSPACE_DEPENDENCIES_UNAVAILABLE");
+    }
+  }
+}
+
 /**
  * Links existing `node_modules` directories from `originalRootDir` (and its monorepo subpackages)
  * into `preparedRootDir` using OS directory junctions (Windows) or symlinks (Linux/macOS) so
@@ -527,6 +550,7 @@ export const cleanupWorkspaceNodeModulesLinks = (linkPaths = []) => {
  * @param {boolean} [params.isDev=false]
  * @param {string|null} [params.importedFrom=null]
  * @param {string|null} [params.jobId=null]
+ * @param {boolean} [params.repairLockfileInWorkspace=false] - Allow one retry in a disposable execution workspace
  * @returns {Promise<{ success: boolean, stdout: string, stderr: string, targetDir: string, timedOut?: boolean }>}
  */
 export const installPackageInWorkspace = async ({
@@ -537,6 +561,7 @@ export const installPackageInWorkspace = async ({
   jobId = null,
   cacheDir = null,
   version = null,
+  repairLockfileInWorkspace = false,
 }) => {
   if (!isValidNpmPackageName(packageName)) {
     throw new ServiceError(`Invalid or unsafe npm package name: '${packageName}'`, 400);
@@ -592,13 +617,15 @@ export const installPackageInWorkspace = async ({
     } catch { /* Restore a declared version when an installed runner is absent. */ }
   }
   const declared = !version && Boolean(packageManifest.dependencies?.[packageName] || packageManifest.devDependencies?.[packageName]);
-  const managerRoot = [targetDir,effectiveRootDir].find(directory => ['package-lock.json','pnpm-lock.yaml','yarn.lock','bun.lock','bun.lockb'].some(file => fs.existsSync(path.join(directory,file)))) || targetDir;
+  const managerRoot = [targetDir,effectiveRootDir].find(directory => ['npm-shrinkwrap.json','package-lock.json','pnpm-lock.yaml','yarn.lock','bun.lock','bun.lockb'].some(file => fs.existsSync(path.join(directory,file)))) || targetDir;
   const installDirectory = declared ? managerRoot : targetDir;
+  const npmLocks = ['npm-shrinkwrap.json', 'package-lock.json'];
+  const npmCleanInstall = declared && pkgManager === "npm" && npmLocks.some(file => fs.existsSync(path.join(managerRoot, file)));
   if (declared) {
     if (pkgManager === 'pnpm') command = 'pnpm install --frozen-lockfile';
     else if (pkgManager === 'yarn') command = /^yarn@[234]/.test(packageManifest.packageManager || '') ? 'yarn install --immutable' : 'yarn install --frozen-lockfile';
     else if (pkgManager === 'bun') command = 'bun install --frozen-lockfile';
-    else command = `npm ${fs.existsSync(path.join(managerRoot,'package-lock.json')) ? 'ci' : 'install'} --no-audit --no-fund --progress=false`;
+    else command = `npm ${npmCleanInstall ? 'ci' : 'install'} --no-audit --no-fund --progress=false`;
   } else if (pkgManager === "pnpm") {
     command = `pnpm add ${isDev ? "-D" : ""} ${installSpecifier}${version ? ' --save-exact' : ''}`;
   } else if (pkgManager === "yarn") {
@@ -626,18 +653,37 @@ export const installPackageInWorkspace = async ({
   }
   const timeoutMs = DEPENDENCY_INSTALL_TIMEOUT_MS;
 
+  const run = command => dockerRunner.run({
+    snapshotPath: installDirectory,
+    command,
+    hostCommand: resolvePackageManagerHostCommand(command),
+    timeoutMs,
+    jobId,
+    inheritEnv: false,
+    loadEnvExamples: false,
+    env: cacheDir ? { NPM_CONFIG_CACHE: cacheDir } : {},
+  });
   let execResult;
   try {
-    execResult = await dockerRunner.run({
-      snapshotPath: installDirectory,
-      command,
-      hostCommand: resolvePackageManagerHostCommand(command),
-      timeoutMs,
-      jobId,
-      inheritEnv: false,
-      loadEnvExamples: false,
-      env: cacheDir ? { NPM_CONFIG_CACHE: cacheDir } : {},
-    });
+    execResult = await run(command);
+    const output = `${execResult.stderr || ""}\n${execResult.stdout || ""}`;
+    const lockMismatch = /\bEUSAGE\b/i.test(output) &&
+      /(?:package-lock\.json|npm-shrinkwrap\.json).*in sync|(?:Missing|Invalid):[^\r\n]*lock file/i.test(output);
+    if (repairLockfileInWorkspace && npmCleanInstall && !execResult.success && !execResult.timedOut && lockMismatch) {
+      // Allow npm to reconcile the dependency tree locally without staging a lockfile change.
+      const locks = npmLocks.map(name => {
+        const file = path.join(installDirectory, name);
+        return { file, content: fs.existsSync(file) ? fs.readFileSync(file) : null };
+      });
+      try {
+        execResult = await run("npm install --include=dev --prefer-offline --no-audit --no-fund --progress=false");
+      } finally {
+        for (const { file, content } of locks) {
+          if (content) fs.writeFileSync(file, content);
+          else if (fs.existsSync(file)) fs.unlinkSync(file);
+        }
+      }
+    }
   } catch (err) {
     console.warn(`[installPackageInWorkspace] Package installation failed for '${packageName}':`, err.message);
     execResult = {

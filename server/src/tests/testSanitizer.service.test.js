@@ -1253,6 +1253,12 @@ FAIL tests/services/calculation.service.test.ts
             expect(healed).toContain("globalThis.__mockPrisma");
         });
 
+        test("healMissingDependencyMocks does not inject a mock of the runner's resolver", () => {
+            const input = "test('runs', () => { expect(1).toBe(1); });";
+            const output = "Cannot find module '../../src/covai-jest-resolver-server' from '__tests__/unit/productControllers.test.js'";
+            expect(healMissingDependencyMocks(input, output, { framework: "jest" })).toBe(input);
+        });
+
         test("healMissingDependencyMocks injects mathjs isolation mock for transitive missing dependency", () => {
             const initialCode = `
 import { describe, it, expect } from '@jest/globals';

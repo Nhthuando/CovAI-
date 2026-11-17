@@ -14,6 +14,7 @@ export function normalizeChatScreenContext(context) {
   if (context.filePath) result.filePath = context.filePath;
   if (Number.isInteger(context.workspaceRevision)) result.workspaceRevision = context.workspaceRevision;
   for (const key of ['testRunId', 'scenarioId', 'jobId']) if (context[key]) result[key] = context[key];
+  if (context.displayedMetrics) result.displayedMetrics = context.displayedMetrics;
   return result;
 }
 export function chatScreenLabel(context) {

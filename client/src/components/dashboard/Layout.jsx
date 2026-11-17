@@ -246,6 +246,10 @@ function LayoutInner() {
   const [coverageType, setCoverageType] = useState(initialCoverageType);
   const [unifiedSummary, setUnifiedSummary] = useState(null);
   const [project, setProject] = useState(null);
+  const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
+  const chatSnapshotId = searchParams.get("snapshotId") || project?.activeSnapshotId ||
+    project?.latestSnapshotId || project?.snapshots?.[0]?.id ||
+    (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId;
   const [aiPanelOwner, setAiPanelOwner] = useState(null);
   const aiPanelScope = `${user?.id}:${project?.id}`;
   const isAiPanelVisible = aiPanelOpen && aiPanelOwner === aiPanelScope;
@@ -254,17 +258,35 @@ function LayoutInner() {
     setChatTestContext(previous => JSON.stringify(previous[detail.testType]) === JSON.stringify(detail) ? previous : { ...previous, [detail.testType]: detail });
   }, []);
   const selectedChatTest = chatTestContext[coverageType];
-  const activeChatTest = activeActivity === 'coverage' && selectedChatTest?.projectId === project?.id ? selectedChatTest : null;
+  const activeChatTest = project?.id && chatSnapshotId && activeActivity === 'coverage' && selectedChatTest?.projectId === project.id &&
+    selectedChatTest?.snapshotId === chatSnapshotId ? selectedChatTest : null;
+  const activeOverviewSummary = activeActivity === "overview" && unifiedSummary?.projectId === project?.id &&
+    unifiedSummary?.snapshotId === chatSnapshotId ? unifiedSummary : null;
   const screenContext = useMemo(
     () => ({
       activity: activeActivity,
       testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
       filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
-      unifiedSummary: activeActivity === "overview" ? unifiedSummary : undefined,
+      unifiedSummary: activeOverviewSummary || undefined,
       testRunId: activeChatTest?.testRunId,
       scenarioId: activeChatTest?.scenarioId,
+      displayedMetrics: activeOverviewSummary && project?.id && chatSnapshotId ? {
+        kind: "overview", projectId: project.id, snapshotId: chatSnapshotId,
+        state: activeOverviewSummary.state || "ready",
+        healthScore: activeOverviewSummary.healthScore,
+        healthGrade: activeOverviewSummary.healthGrade,
+        qualityGate: activeOverviewSummary.qualityGateLabel,
+        totalTests: activeOverviewSummary.totalExecutedTests,
+        passedTests: activeOverviewSummary.passedTests,
+        failedTests: activeOverviewSummary.failedTests,
+        overallCoveragePct: activeOverviewSummary.overallCoveragePct,
+        unitLinesPct: activeOverviewSummary.unitLinesPct,
+        unitBranchesPct: activeOverviewSummary.unitBranchesPct,
+        apiCoveragePct: activeOverviewSummary.apiCoveragePct,
+        systemFlowPct: activeOverviewSummary.systemFlowPct,
+      } : activeChatTest?.displayedMetrics,
     }),
-    [activeActivity, coverageType, activeTabId, unifiedSummary, activeChatTest]
+    [activeActivity, coverageType, activeTabId, activeOverviewSummary, activeChatTest, project?.id, chatSnapshotId]
   );
   const isFullWidthWorkspace = [
     "architecture",
@@ -323,7 +345,6 @@ function LayoutInner() {
   const [showMissingTestFilesModal, setShowMissingTestFilesModal] =
     useState(false);
   const [currentProjectName, setCurrentProjectName] = useState(null);
-  const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
   const handleSuggestTestcase = (filePath, options = {}) => {
@@ -1612,17 +1633,7 @@ function LayoutInner() {
                   key={`${user?.id}:${project?.id}`}
                   screenContext={screenContext}
                   projectId={project?.id}
-                  snapshotId={
-                    activeChatTest?.snapshotId ||
-                    searchParams.get("snapshotId") ||
-                    project?.activeSnapshotId ||
-                    project?.latestSnapshotId ||
-                    project?.snapshots?.[0]?.id ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
+                  snapshotId={chatSnapshotId}
                   fileTree={fileTree}
                   pendingAiSuggestion={pendingAiSuggestion}
                   onClearPendingSuggestion={() => setPendingAiSuggestion(null)}

@@ -61,7 +61,7 @@ export default function DiffReviewModal({
               model.modified.dispose();
             }
           }
-        } catch (_) {}
+        } catch (_) { }
       }
     };
   }, []);
@@ -103,7 +103,13 @@ export default function DiffReviewModal({
   };
 
   const handleApplyAllClick = async () => {
-    if (isAnyApplying || files.some(file => file.reviewError)) return;
+    if (isAnyApplying) return;
+    const conflictingFiles = files.filter(file => file.reviewError);
+    if (conflictingFiles.length > 0) {
+      const names = conflictingFiles.map(f => f.filePath || f.targetTestFile || 'Unknown file').slice(0, 3).join(', ');
+      alert(`Cannot Apply All: ${conflictingFiles.length} file(s) have unresolved review conflicts (${names}${conflictingFiles.length > 3 ? '...' : ''}). Please review individual files.`);
+      return;
+    }
     setIsApplyingAllInternal(true);
     try {
       await onApplyAll?.();
@@ -215,10 +221,10 @@ export default function DiffReviewModal({
                       key={s.framework}
                       onClick={() => setActiveFw(s.framework)}
                       className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${activeFw === s.framework
-                          ? s.framework === "vitest"
-                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                            : "bg-purple-500/20 text-purple-300 border border-purple-500/40"
-                          : "text-slate-400 hover:text-white"
+                        ? s.framework === "vitest"
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                          : "bg-purple-500/20 text-purple-300 border border-purple-500/40"
+                        : "text-slate-400 hover:text-white"
                         }`}
                     >
                       {s.framework === "vitest" ? "⚡ Vitest" : "🃏 Jest"}
@@ -248,9 +254,8 @@ export default function DiffReviewModal({
                   type="button"
                   disabled={isAnyApplying || Boolean(activeFile.reviewError) || activeFile.hasChanges === false}
                   onClick={handleApplyCurrentFile}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ${
-                    isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
-                  }`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ${isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
+                    }`}
                   style={{
                     background: "var(--color-primary, #6d5dfb)",
                   }}
@@ -268,9 +273,8 @@ export default function DiffReviewModal({
                   type="button"
                   disabled={isAnyApplying}
                   onClick={() => onUndoFile?.(activeFile, currentSuggestion)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    isAnyApplying ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-90"
-                  }`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isAnyApplying ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-90"
+                    }`}
                   style={{
                     background: "rgba(239, 68, 68, 0.15)",
                     color: "#f87171",
@@ -289,9 +293,8 @@ export default function DiffReviewModal({
                   type="button"
                   disabled={isAnyApplying || files.some(file => file.reviewError)}
                   onClick={handleApplyAllClick}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
-                  }`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
+                    }`}
                   style={{
                     background: isApplyingAllCombined
                       ? "rgba(34, 197, 94, 0.3)"

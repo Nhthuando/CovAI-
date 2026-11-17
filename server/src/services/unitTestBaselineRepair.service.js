@@ -45,7 +45,7 @@ function baselineIdentity({rootDir,sourceFingerprint,snapshot,projectId,allOrigi
 
 /** Baseline failures are evidence, never authority to rewrite a suite. Only a
  * documented test defect can produce a signed, exact expected-value edit. */
-export async function prepareBaselineTestRepairs({rootDir,originalRootDir,snapshot,projectId,suggestions,review = false,runBatch = runUnitTestBatch,sourceFingerprint,environment}) {
+export async function prepareBaselineTestRepairs({rootDir,originalRootDir,snapshot,projectId,suggestions,review = false,runBatch = runUnitTestBatch,sourceFingerprint,environment,requireDocker = false}) {
     const originals = new Map();
     for (const item of suggestions) {
         const rel = item.testFile || item.targetTestFile;
@@ -91,7 +91,7 @@ export async function prepareBaselineTestRepairs({rootDir,originalRootDir,snapsh
                 fs.mkdirSync(directory,{recursive:true});
                 let result;
                 try { result = await measureUnitTestPhase('baselineExecution', () => runBatch({rootDir,snapshot,testFiles:files.map(file => file.path),targetSourceFiles:suggestions.map(item => item.sourceFile).filter(Boolean),
-                    frameworkByFile:Object.fromEntries(files.map(file => [file.path,file.framework])),coverageDir:directory})); }
+                    frameworkByFile:Object.fromEntries(files.map(file => [file.path,file.framework])),coverageDir:directory,requireDocker})); }
                 catch (error) { result = {stderr:error.message}; }
                 try { report = JSON.parse(fs.readFileSync(path.join(directory,'test-results.json'),'utf8')); }
                 catch { report = null; }

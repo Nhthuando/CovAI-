@@ -18,9 +18,10 @@ function extractAstStructuralRanges(sourceCode = "") {
     const catchRanges = [];
     const unreachableRanges = [];
     const branchConditionsByLine = new Map();
+    const logicalOperandsByLine = new Map();
 
     if (!sourceCode || typeof sourceCode !== "string") {
-        return { functions, guards, catchRanges, unreachableRanges, branchConditionsByLine };
+        return { functions, guards, catchRanges, unreachableRanges, branchConditionsByLine, logicalOperandsByLine };
     }
 
     const parsed = parseJavaScriptCode(sourceCode);
@@ -127,6 +128,13 @@ function extractAstStructuralRanges(sourceCode = "") {
             }
         }
 
+        if (node.type === 'LogicalExpression' && node.loc) {
+            const line = node.loc.start.line;
+            logicalOperandsByLine.set(line, logicalOperandsByLine.has(line) ? null : {
+                left: sliceConditionText(node.left), right: sliceConditionText(node.right), operator: node.operator,
+            });
+        }
+
         for (const key of Object.keys(node)) {
             if (key === "loc" || key === " leadingComments" || key === "trailingComments") continue;
             const child = node[key];
@@ -142,7 +150,7 @@ function extractAstStructuralRanges(sourceCode = "") {
         visit(ast, null);
     }
 
-    return { functions, guards, catchRanges, unreachableRanges, branchConditionsByLine };
+    return { functions, guards, catchRanges, unreachableRanges, branchConditionsByLine, logicalOperandsByLine };
 }
 
 /**
@@ -243,6 +251,8 @@ export function evaluateUncoverageDiagnostics({
         const missedTrue = b.missedTrue ?? trueHits === 0;
         const missedFalse = b.missedFalse ?? (counts.length > 1 ? falseHits === 0 : false);
         const cond = b.condition || astStructure.branchConditionsByLine.get(b.line) || (codeLines[(b.line || 1) - 1] || "").trim();
+        const logical = ['binary-expr', 'logical-expr'].includes(b.type) && counts.length === 2
+            ? astStructure.logicalOperandsByLine.get(Number(b.line)) : null;
 
         let reasonCategory = UNCOVERAGE_REASON_CATEGORIES.UNEXERCISED_BRANCH;
         let reason = "";
@@ -265,6 +275,10 @@ export function evaluateUncoverageDiagnostics({
         } else if (blockingGuard) {
             reasonCategory = UNCOVERAGE_REASON_CATEGORIES.DEFENSIVE_EARLY_EXIT;
             reason = `Defensive early exit: Branch '${cond}' at line ${b.line} was bypassed because all test inputs triggered the early-return guard '${blockingGuard.condition}' at line ${blockingGuard.line}.`;
+        } else if (logical && !missedTrue && missedFalse) {
+            const trigger = { '||': 'falsy', '&&': 'truthy', '??': 'null or undefined' }[logical.operator];
+            reason = "The right operand '" + logical.right + "' of " + logical.operator + " at line " + b.line +
+                " was not evaluated (0 hits). Set the left operand '" + logical.left + "' to " + trigger + ".";
         } else if (ownGuard) {
             reasonCategory = UNCOVERAGE_REASON_CATEGORIES.DEFENSIVE_EARLY_EXIT;
             if (missedFalse && !missedTrue) {
@@ -297,7 +311,8 @@ export function evaluateUncoverageDiagnostics({
             type: b.type || "if",
             condition: cond,
             status: b.status,
-            uncoveredPath: missedTrue && missedFalse ? "Both branches" : missedTrue ? "True branch" : "False branch",
+            uncoveredPath: logical ? (missedTrue && missedFalse ? "Both operands" : missedTrue ? "Left operand" : "Right operand")
+                : missedTrue && missedFalse ? "Both branches" : missedTrue ? "True branch" : "False branch",
             reasonCategory,
             reason,
             missedTrue,

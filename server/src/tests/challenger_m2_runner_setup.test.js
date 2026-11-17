@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { buildSetupContent } from '../services/runTestsJob.service.js';
 import { createSafeDatabaseFallbackProxy } from './helpers/databaseSafetySetup.js';
@@ -68,7 +70,7 @@ describe('Challenger M2: Empirical Runner Pre-flight Setup & Prisma Fallback Moc
         test('contains Jest virtual mock registrations for @prisma/client and relative singletons', () => {
             const setupScript = buildSetupContent({ rootDir: tempDir });
 
-            expect(setupScript).toContain('jest.mock(\'@prisma/client\'');
+            expect(setupScript).toContain('jest.doMock(\'@prisma/client\'');
             expect(setupScript).toContain('\'../lib/prisma\'');
             expect(setupScript).toContain('\'../../lib/prisma\'');
             expect(setupScript).toContain('\'../config/prisma\'');
@@ -424,12 +426,54 @@ runChildVerification().catch(err => {
     // 4. Jest Virtual Mock Registration & Singleton Paths
     // =========================================================================
     describe('4. Jest Virtual Mocks & Singleton Proxy Resolution', () => {
+        test.each(['root', 'subpackage'])('loads generated %s setup through Babel and executes a suite', layout => {
+            const resolve = createRequire(import.meta.url).resolve;
+            const tempParent = fileURLToPath(new URL('../../.covai-temp/', import.meta.url));
+            fs.mkdirSync(tempParent, { recursive: true });
+            const rootDir = fs.mkdtempSync(path.join(tempParent, 'jest-setup-regression-'));
+
+            try {
+                const targetDir = layout === 'root' ? rootDir : path.join(rootDir, 'packages', 'store');
+                fs.mkdirSync(targetDir, { recursive: true });
+                const setupName = layout === 'root' ? 'covai-jest-setup.cjs' : 'covai-setup-packages_store.cjs';
+                const setupFile = path.join(targetDir, setupName);
+                const testFile = path.join(targetDir, 'productService.test.js');
+                fs.writeFileSync(setupFile, buildSetupContent({ rootDir, targetDir }));
+                fs.writeFileSync(testFile, [
+                    "const mongoose = require('mongoose');",
+                    "const { PrismaClient } = require('@prisma/client');",
+                    "const jwt = require('jsonwebtoken');",
+                    "test('uses the generated mock factories', async () => {",
+                    "    const Product = mongoose.model('Product');",
+                    "    expect(mongoose.default.model('Product')).toBe(Product);",
+                    "    await expect(Product.find().lean()).resolves.toHaveLength(1);",
+                    "    expect(jest.isMockFunction(PrismaClient)).toBe(true);",
+                    "    await expect(new PrismaClient().$connect()).resolves.toBeUndefined();",
+                    "    expect(jwt.verify('token')).toMatchObject({ id: 'mock_user_1' });",
+                    "});",
+                ].join('\n'));
+                const config = {
+                    rootDir: targetDir,
+                    testEnvironment: 'node',
+                    setupFiles: [setupFile],
+                    transform: { '^.+\\.[cm]?jsx?$': [resolve('babel-jest'), { babelrc: false, configFile: false }] }
+                };
+                const output = execFileSync(process.execPath, [
+                    resolve('jest/bin/jest'), '--runInBand', '--runTestsByPath', testFile,
+                    '--config', JSON.stringify(config), '--json', '--no-cache',
+                ], { cwd: targetDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 });
+                expect(JSON.parse(output)).toMatchObject({ success: true, numPassedTests: 1 });
+            } finally {
+                fs.rmSync(rootDir, { recursive: true, force: true });
+            }
+        }, 40_000);
+
         test('virtual mocks are registered for relative singleton paths in Jest mock registry', () => {
             const setupScript = buildSetupContent({ rootDir: tempDir });
 
             const registeredMockPaths = [];
             const fakeJest = {
-                mock: jest.fn((modulePath, factory, options) => {
+                doMock: jest.fn((modulePath, factory, options) => {
                     registeredMockPaths.push({ modulePath, options });
                 }),
                 fn: jest.fn((impl) => {
@@ -452,7 +496,7 @@ runChildVerification().catch(err => {
             const context = vm.createContext(sandbox);
             vm.runInContext(setupScript, context);
 
-            expect(fakeJest.mock).toHaveBeenCalled();
+            expect(fakeJest.doMock).toHaveBeenCalled();
             const modulePaths = registeredMockPaths.map(m => m.modulePath);
 
             expect(modulePaths).toContain('@prisma/client');

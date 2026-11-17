@@ -59,6 +59,7 @@ export function findHeaderInsertionIndex(code) {
 
 export function isVitestTestCode(code, { framework, filePath = "" } = {}) {
     if (framework?.toLowerCase() === "vitest" || /\.vitest\./i.test(filePath)) return true;
+    if (framework?.toLowerCase() === "jest") return false;
     if (!/(?:from\s*|require\s*\(\s*|import\s*\(\s*)['"]vitest['"]/.test(code)) return false;
     const parsed = parseJavaScriptCode(code);
     if (!parsed.success) return true; // Protect runner imports while syntax repairs are pending.
@@ -71,7 +72,7 @@ export function isVitestTestCode(code, { framework, filePath = "" } = {}) {
     return found;
 }
 
-/** Normalize runner APIs only. Never replace assertions, source imports or local mocks. */
+/** Normalize equivalent runner APIs while preserving source imports and local mocks. */
 export function normalizeTestFrameworkCode(code, options = {}) {
     if (!code || typeof code !== "string") return code;
     const parsed = parseJavaScriptCode(code);
@@ -79,7 +80,6 @@ export function normalizeTestFrameworkCode(code, options = {}) {
     const isVitest = isVitestTestCode(code, options);
     const isEsm = isVitest || /\.m[jt]s$/i.test(options.filePath || "") ||
         options.moduleType === "module" || parsed.ast.program.sourceType === "module";
-    if (!isVitest && !isEsm) return code;
 
     const edits = [];
     const imports = new Set();
@@ -98,13 +98,28 @@ export function normalizeTestFrameworkCode(code, options = {}) {
 
     traverse(parsed.ast, {
         ImportDeclaration(p) {
-            if (!isVitest || p.node.source.value !== "@jest/globals") return;
-            const names = p.node.specifiers.map(s => {
-                if (s.type === "ImportNamespaceSpecifier") return `* as ${s.local.name}`;
-                const imported = s.imported?.name;
-                return `${imported === "jest" ? "vi" : imported}${s.local.name !== (imported === "jest" ? "vi" : imported) ? ` as ${s.local.name}` : ""}`;
-            });
-            replace(p.node, `import ${names[0]?.startsWith("*") ? names[0] : `{ ${names.join(", ")} }`} from 'vitest';`);
+            if (isVitest && p.node.source.value === "@jest/globals") {
+                const names = p.node.specifiers.map(s => {
+                    if (s.type === "ImportNamespaceSpecifier") return `* as ${s.local.name}`;
+                    const imported = s.imported?.name;
+                    return `${imported === "jest" ? "vi" : imported}${s.local.name !== (imported === "jest" ? "vi" : imported) ? ` as ${s.local.name}` : ""}`;
+                });
+                replace(p.node, `import ${names[0]?.startsWith("*") ? names[0] : `{ ${names.join(", ")} }`} from 'vitest';`);
+                return;
+            }
+            if (!isVitest && p.node.source.value === "vitest") {
+                if (!isEsm) {
+                    replace(p.node, "");
+                    return;
+                }
+                const names = p.node.specifiers.map(s => {
+                    if (s.type === "ImportNamespaceSpecifier") return `* as ${s.local.name}`;
+                    const imported = s.imported?.name;
+                    const mapped = imported === "vi" ? "jest" : imported;
+                    return `${mapped}${s.local.name !== mapped ? ` as ${s.local.name}` : ""}`;
+                });
+                replace(p.node, `import ${names[0]?.startsWith("*") ? names[0] : `{ ${names.join(", ")} }`} from '@jest/globals';`);
+            }
         },
         VariableDeclaration(p) {
             if (!isVitest || !p.parentPath.isProgram()) return;
@@ -134,6 +149,22 @@ export function normalizeTestFrameworkCode(code, options = {}) {
             if (changed) replace(p.node, parts.join("\n"));
         },
         CallExpression(p) {
+            if (!isVitest) {
+                const { callee, arguments: args } = p.node;
+                if (callee.type !== "MemberExpression" || callee.computed || callee.property.name !== "toBeTypeOf" ||
+                    args.length !== 1 || args[0].type !== "StringLiteral") return;
+                const target = callee.object.type === "MemberExpression" && !callee.object.computed &&
+                    callee.object.property.name === "not" ? callee.object.object : callee.object;
+                if (target.type !== "CallExpression" || target.callee.name !== "expect" || target.arguments.length !== 1 ||
+                    target.arguments[0].type === "SpreadElement") return;
+                const binding = p.scope.getBinding("expect");
+                if (binding && !(binding.path.isImportSpecifier() && binding.path.parent.source.value === "@jest/globals")) return;
+                const operand = target.arguments[0];
+                // Evaluate the original operand before typeof so an unresolved identifier still throws.
+                replace(operand, `typeof (0, ${code.slice(operand.start, operand.end)})`);
+                replace(callee.property, "toBe");
+                return;
+            }
             if (!isVitest || runnerModule(p.node) !== "vitest" || p.scope.getBinding("require")) return;
             // Non-declaration uses still receive the real ESM module, never require('vitest').
             if (edits.some(edit => edit.start <= p.node.start && edit.end >= p.node.end)) return;
@@ -141,6 +172,7 @@ export function normalizeTestFrameworkCode(code, options = {}) {
             replace(p.node, namespace);
         },
         ReferencedIdentifier(p) {
+            if (options.matcherOnly) return;
             if (isVitest && ["describe", "test", "it", "expect", "beforeEach", "afterEach", "beforeAll", "afterAll", "vi"].includes(p.node.name) && !p.scope.getBinding(p.node.name)) {
                 imports.add(`import { ${p.node.name} } from 'vitest';`);
             }
@@ -149,12 +181,23 @@ export function normalizeTestFrameworkCode(code, options = {}) {
             const requiredJest = binding?.path.isVariableDeclarator() && runnerModule(binding.path.node.init) === "@jest/globals" &&
                 binding.path.node.id.type === "ObjectPattern" && binding.path.node.id.properties.some(prop =>
                     prop.key?.name === "jest" && prop.value?.name === p.node.name);
+            const importedVi = binding?.path.isImportSpecifier() && binding.path.parent.source.value === "vitest" && binding.path.node.imported.name === "vi";
+
+            if (!isVitest && (p.node.name === "vi" || importedVi)) {
+                if (binding && !importedVi) return;
+                if (isEsm && !program.scope.getBinding("jest")) {
+                    imports.add("import { jest } from '@jest/globals';");
+                }
+                replace(p.node, p.parentPath.isObjectProperty() && p.parent.shorthand ? `${p.node.name}: jest` : "jest");
+                return;
+            }
+
             if (p.node.name !== "jest" && !importedJest && !requiredJest) return;
             if (binding && !importedJest && !requiredJest) return;
             if (isVitest) {
                 if (!viIsRunner) importVi();
                 replace(p.node, p.parentPath.isObjectProperty() && p.parent.shorthand ? `${p.node.name}: ${viName}` : viName);
-            } else if (!binding) {
+            } else if (isEsm && !binding) {
                 imports.add("import { jest } from '@jest/globals';");
             }
         }

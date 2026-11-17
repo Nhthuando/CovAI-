@@ -122,3 +122,8 @@ test('tracks calls with the real jest mock', () => {
         expect(JSON.parse(fs.readFileSync(report, "utf8")).numPassedTests).toBe(1);
     }, 40000);
 });
+test("translates Jest's unsupported typeof matcher while preserving the operand and negation", () => {
+    const code = "expect(getValue()).not.toBeTypeOf('object');";
+    expect(normalizeTestFrameworkCode(code, { framework: "jest" })).toBe("expect(typeof (0, getValue())).not.toBe('object');");
+    expect(normalizeTestFrameworkCode(code, { framework: "vitest" })).toContain(".not.toBeTypeOf('object')");
+});

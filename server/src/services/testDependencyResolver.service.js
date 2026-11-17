@@ -7,6 +7,18 @@ import { unitTestInventory } from './unitTestFilePolicy.service.js';
  * Stores { timestamp, testMap, testFiles }
  */
 const dependencyCache = new Map();
+const DEPENDENCY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Explicit cache invalidator called when test files are added, modified, or tests finish.
+ */
+export const invalidateDependencyCache = (rootDir = null) => {
+    if (rootDir) {
+        dependencyCache.delete(rootDir);
+    } else {
+        dependencyCache.clear();
+    }
+};
 
 /**
  * Normalizes file path to forward slashes with no leading slash or dot.
@@ -134,7 +146,7 @@ export const buildProjectTestDependencyMap = (rootDir, forceRefresh = false) => 
 
     const cached = dependencyCache.get(rootDir);
     const now = Date.now();
-    if (!forceRefresh && cached && process.env.NODE_ENV !== "test" && now - cached.timestamp < 5000) {
+    if (!forceRefresh && cached && (process.env.NODE_ENV === "test" || now - cached.timestamp < DEPENDENCY_CACHE_TTL_MS)) {
         return cached.testMap;
     }
     const inventory = fs.existsSync(rootDir) ? unitTestInventory(rootDir) : null;

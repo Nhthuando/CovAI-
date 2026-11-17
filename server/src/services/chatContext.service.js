@@ -107,7 +107,11 @@ export const assembleChatContext = async (projectId, userId, options = {}) => {
         resolveContextSnapshot(projectId, options.snapshotId),
     ]);
     const memoryEnabled = settings.automaticMemory && (options.useMemory ?? session?.useMemory ?? true);
-    const screenContext = options.screenContext || null;
+    const { displayedMetrics, ...location } = options.screenContext || {};
+    const screenKind = location.activity === "overview" ? "overview" : location.activity === "coverage" ? location.testType : null;
+    const matchingMetrics = displayedMetrics && displayedMetrics.projectId === projectId &&
+        displayedMetrics.snapshotId === snapshot?.id && displayedMetrics.kind === screenKind;
+    const screenContext = options.screenContext ? { ...location, ...(matchingMetrics ? { displayedMetrics } : {}) } : null;
     const needsEvidence = chatContextMode(options) === 'analysis' || screenContext?.testRunId || screenContext?.scenarioId;
     const types = { unit: ["JEST", "VITEST"], integration: ["SUPERTEST"], system: ["PLAYWRIGHT", "CYPRESS"] };
     const [rows, notes, coverage, files, testResults, workspaceContext] = await Promise.all([

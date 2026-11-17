@@ -472,7 +472,7 @@ export function healVitestCompatibility(code, options = {}) {
         if (missingModMatch) {
             const missingMod = missingModMatch[1];
             if (!transformed.includes(`vi.mock('${missingMod}'`)) {
-                const mockSnippet = `vi.mock('${missingMod}', () => { const m = typeof mockCreateUniversalStub === 'function' ? mockCreateUniversalStub() : new Proxy({}, { get: () => vi.fn(() => Promise.resolve({})) }); return { default: m, ...m }; });\n`;
+                const mockSnippet = `vi.mock('${missingMod}', () => { const m = typeof mockCreateUniversalStub === 'function' ? mockCreateUniversalStub() : new Proxy({}, { get: (_, k) => vi.fn((...args) => Promise.resolve(String(k).includes('Many') ? [{ id: 1, name: 'Sample' }] : { id: 1, name: 'Sample', ...(args?.[0]?.data || {}) })) }); return { default: m, ...m }; });\n`;
                 transformed = insertAfterDirectives(transformed, mockSnippet);
             }
         }

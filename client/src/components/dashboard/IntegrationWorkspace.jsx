@@ -336,9 +336,6 @@ export default function IntegrationWorkspace({
 
   const [workspace, setWorkspace] = useState(null);
   const [reportData, setReportData] = useState(null);
-  const chatExecution = reportData?.latestExecution;
-  const chatSnapshotId = (chatExecution?.testRunId && reportData?.history?.executions?.find(row => row?.testRunId === chatExecution.testRunId)?.snapshotId) || snapshotId;
-  useChatTestContext(onChatContextChange, { projectId, snapshotId: chatSnapshotId, testType: 'integration', testRunId: chatExecution?.testRunId || chatExecution?.id });
   const [detectionInfo, setDetectionInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1406,6 +1403,21 @@ export default function IntegrationWorkspace({
     };
   }, [endpoints, execution, generation, workspace]);
 
+  useChatTestContext(activeTab === "report" ? undefined : onChatContextChange, {
+    projectId, snapshotId, testType: "integration", testRunId: execution?.testRunId,
+    displayedMetrics: {
+      kind: "integration", tab: activeTab,
+      state: loading && !workspace ? "loading" : error && !workspace ? "unavailable" : overallStats.hasExecuted ? "ready" : "not-run",
+      counts: workspace ? {
+        endpoints: overallStats.totalApis, testedEndpoints: overallStats.testedApis,
+        passedEndpoints: overallStats.passedApis, failedEndpoints: overallStats.failedApis,
+        scenarios: overallStats.totalScenariosCount, passedScenarios: overallStats.passedScenariosCount,
+        failedScenarios: overallStats.failedScenariosCount,
+        apiCoveragePct: overallStats.apiCoverageRate, scenarioPassRate: overallStats.scenarioPassRate,
+      } : undefined,
+    },
+  });
+
   // Loading State with Authentic Skeleton
   if (loading && !workspace) {
     return <IntegrationCockpitSkeleton />;
@@ -2055,9 +2067,10 @@ export default function IntegrationWorkspace({
             <IntegrationReportEmbed
               projectId={projectId}
               snapshotId={snapshotId}
-              report={reportData}
+              report={reportData?.overview?.snapshotId === snapshotId ? reportData : null}
               workspace={workspace}
               endpoints={endpoints}
+              onChatContextChange={onChatContextChange}
               onNavigateTab={setActiveTab}
               onGenerateEndpoint={(key) => handleGenerateClick([key])}
               loading={loading}

@@ -99,8 +99,35 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   const runRequestRef = useRef(false);
   const pendingRunRef = useRef(null);
   const [inspectedScenario, setInspectedScenario] = useState(null);
-  useChatTestContext(onChatContextChange, { projectId, snapshotId, testType: 'system', testRunId: summary?.testRunId,
-    scenarioId: inspectedScenario?.id && summary?.testRunId && inspectedScenario.testRunId === summary.testRunId ? inspectedScenario.id : undefined });
+  const assessmentExecution = workspace.assessment?.presentation?.execution;
+  const metricsSummary = assessmentExecution ? {
+    ...summary,
+    hasRun: true,
+    totalTests: assessmentExecution.selected,
+    passedTests: assessmentExecution.passed,
+    failedTests: assessmentExecution.failed,
+    flakyTests: assessmentExecution.flaky,
+    skippedTests: assessmentExecution.skipped,
+    durationMs: assessmentExecution.elapsedMs,
+    runner: workspace.assessment.runner,
+  } : summary;
+  const testRunId = assessmentExecution ? workspace.assessment.testRunId : summary?.testRunId;
+  useChatTestContext(onChatContextChange, {
+    projectId, snapshotId, testType: "system", testRunId,
+    scenarioId: testRunId && inspectedScenario?.testRunId === testRunId ? inspectedScenario.id : undefined,
+    displayedMetrics: {
+      kind: "system", tab: currentView === "report" ? "report" : activeSubTab,
+      framework: metricsSummary?.runner || activeFramework, executionMode,
+      assessmentId: assessmentExecution ? workspace.assessment.id : undefined,
+      state: metricsSummary?.hasRun ? "ready" : loading ? "loading" : error || workspace.error ? "unavailable" : "not-run",
+      counts: metricsSummary?.hasRun ? {
+        scenarios: metricsSummary.totalTests || 0, passed: metricsSummary.passedTests || 0,
+        failed: metricsSummary.failedTests || 0, flaky: metricsSummary.flakyTests || 0,
+        skipped: metricsSummary.skippedTests || 0, durationMs: metricsSummary.durationMs || 0,
+        passRate: metricsSummary.totalTests > 0 ? Math.round((metricsSummary.passedTests || 0) / metricsSummary.totalTests * 100) : null,
+      } : undefined,
+    },
+  });
   const [editorTarget, setEditorTarget] = useState(null); // { filePath, scenarioId, initialMode }
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
 
@@ -445,7 +472,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       <label className="flex flex-wrap items-center gap-3 text-xs">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} ? {row.runner}</option>)}</select></label>
       {workspace.error && <p role="alert" className="text-sm text-rose-600">{workspace.error}</p>}
       {workspace.nextCursor && <button type="button" className="text-xs underline" onClick={workspace.loadMore}>Load older assessments</button>}
-      <SystemTestMetricsCards summary={workspace.assessment?.presentation ? {...summary,hasRun:true,totalTests:workspace.assessment.presentation.execution.selected,passedTests:workspace.assessment.presentation.execution.passed,failedTests:workspace.assessment.presentation.execution.failed,flakyTests:workspace.assessment.presentation.execution.flaky,skippedTests:workspace.assessment.presentation.execution.skipped,durationMs:workspace.assessment.presentation.execution.elapsedMs,runner:workspace.assessment.runner} : summary} />
+      <SystemTestMetricsCards summary={metricsSummary} />
 
       {historyOpen && <SystemTestVersionHistory projectId={projectId} snapshotId={snapshotId} executionMode={executionMode} onClose={() => setHistoryOpen(false)} onChanged={refreshData} onCheck={data => { activeJobRef.current=data.jobId; setActiveJobId(data.jobId); setActiveAssessmentId(data.assessmentId); setRunningTests(true); setActiveSubTab('live'); }} />}
       <button type="button" className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs" onClick={() => setHistoryOpen(true)}>Version history</button>
@@ -767,7 +794,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       <label className="flex flex-wrap items-center gap-3 text-xs">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} ? {row.runner}</option>)}</select></label>
       {workspace.error && <p role="alert" className="text-sm text-rose-600">{workspace.error}</p>}
       {workspace.nextCursor && <button type="button" className="text-xs underline" onClick={workspace.loadMore}>Load older assessments</button>}
-      <SystemTestMetricsCards summary={workspace.assessment?.presentation ? {...summary,hasRun:true,totalTests:workspace.assessment.presentation.execution.selected,passedTests:workspace.assessment.presentation.execution.passed,failedTests:workspace.assessment.presentation.execution.failed,flakyTests:workspace.assessment.presentation.execution.flaky,skippedTests:workspace.assessment.presentation.execution.skipped,durationMs:workspace.assessment.presentation.execution.elapsedMs,runner:workspace.assessment.runner} : summary} />
+      <SystemTestMetricsCards summary={metricsSummary} />
 
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text-secondary)] space-y-2">
                 <p className="font-semibold text-[var(--color-text)]">Executed Spec Files in this run:</p>

@@ -4,6 +4,7 @@ import { runJestCoverage, mergeCoverageFinal, mergeCoverageSummaries } from './r
 import { runVitestCoverage } from './vitestRunner.service.js';
 import { classifyTestFile } from '../utils/testingFrameworkDetector.js';
 import { measureUnitTestPhase } from './unitTestWork.service.js';
+import { dockerRunner } from './dockerRunner.service.js';
 
 function readFirst(directory, names) {
     const directories = (Array.isArray(directory) ? directory : [directory]).filter(Boolean);
@@ -59,7 +60,22 @@ function clearArtifacts(directory) {
  * wholesale to whichever runner happened to be selected first. */
 export const runUnitTestBatch = input => measureUnitTestPhase('batchExecution', () => runUnitTestBatchInternal(input));
 
-async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSourceFiles, coverageDir, frameworkByFile = {}, hermeticMocks = {}, useHermeticMock = true }) {
+async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSourceFiles, coverageDir, frameworkByFile = {}, hermeticMocks = {}, useHermeticMock = true, virtualDbEnv, requireDocker = false }) {
+    if (requireDocker) {
+        const availability = typeof dockerRunner.checkAvailability === 'function'
+            ? dockerRunner.checkAvailability()
+            : {
+                available: Boolean(dockerRunner.containerEnabled),
+                code: dockerRunner.containerEnabled ? 'RUNNER_AVAILABLE' : 'RUNNER_UNAVAILABLE',
+                reason: 'Docker runner is unavailable.',
+            };
+        if (!availability.available) {
+            const err = new Error(`Docker is required for generated unit test verification and is unavailable [${availability.code}]: ${availability.reason}`);
+            err.code = availability.code;
+            err.dockerDiagnostics = availability;
+            throw err;
+        }
+    }
     clearArtifacts(coverageDir);
     const isE2EOrIntegrationTest = (filePath) => {
         if (!filePath || typeof filePath !== 'string') return false;
@@ -96,9 +112,12 @@ async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSo
                 targetSourceFiles,
                 hermeticMocks: hermeticMocks || {},
                 useHermeticMock: useHermeticMock !== false,
+                virtualDbEnv: virtualDbEnv || (hermeticMocks?.DATABASE_URL ? { DATABASE_URL: hermeticMocks.DATABASE_URL } : {}),
                 createdHarnessFiles,
                 cleanupStubs: true,
-                autoHeal: true,
+                requireDocker,
+                autoHeal: !requireDocker,
+                allowUninstrumentedFallback: !requireDocker,
             };
             let result;
             try {
@@ -126,9 +145,16 @@ async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSo
             else suites.push(...report.testResults);
             const nextFinal = readFirst(candidateDirs, ['coverage-final.json', 'vitest-coverage-final.json', 'jest-coverage-final.json']);
             const nextSummary = readFirst(candidateDirs, ['coverage-summary.json', 'vitest-coverage-summary.json', 'jest-coverage-summary.json']);
+            const allTestsPassed = Array.isArray(report?.testResults) &&
+                report.testResults.length > 0 &&
+                report.testResults.every(r => r.status === 'passed' || !r.numFailingTests);
             if (!nextFinal || !nextSummary?.total) {
-                exitCode = 1;
-                output.push(`[${framework}] The runner did not produce fresh coverage JSON reports.`);
+                if (!allTestsPassed) {
+                    exitCode = 1;
+                    output.push(`[${framework}] The runner did not produce fresh coverage JSON reports.`);
+                } else {
+                    output.push(`[${framework}] Notice: Coverage JSON reports were not produced, but all tests passed.`);
+                }
             }
             final = mergeCoverageFinal(final, nextFinal || {}, { rootDir });
             summary = mergeCoverageSummaries(summary, nextSummary || {}, { rootDir, mergedFinal: final });

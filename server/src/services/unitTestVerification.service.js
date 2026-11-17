@@ -4,8 +4,9 @@ import { parse } from '@babel/parser';
 export const COVERAGE_METRICS = ['statements', 'branches', 'functions', 'lines'];
 
 const normalized = value => String(value || '').replaceAll('\\', '/');
+const stripDockerMountPrefix = value => normalized(value).replace(/^\/workspace\/?/i, '');
 const sameFile = (reported, target, rootDir) => {
-    const absolute = value => normalized(path.resolve(rootDir, value));
+    const absolute = value => normalized(path.resolve(rootDir, stripDockerMountPrefix(value)));
     const a = absolute(reported);
     const b = absolute(target);
     return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;

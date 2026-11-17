@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import semver from 'semver';
-import { installPackageInWorkspace } from './dependencyResolution.service.js';
+import { installPackageInWorkspace, isWorkspaceMountedPath } from './dependencyResolution.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 
 const read = file => { try { return JSON.parse(fs.readFileSync(file,'utf8')); } catch { return null; } };
@@ -46,24 +46,31 @@ export function inspectVitestCoverageRuntime(rootDir,executionDir=rootDir) {
     return {runner,provider,providerRunner,declared,matchesDeclaration,entry,compatible};
 }
 
-export async function ensureVitestCoverageRuntime({rootDir,executionDir=rootDir,jobId=null,install=installPackageInWorkspace}) {
+export async function ensureVitestCoverageRuntime({rootDir,executionDir=rootDir,jobId=null,install=installPackageInWorkspace,requireMountedRuntime=false}) {
     if(!contained(rootDir,executionDir))throw new ServiceError('Vitest execution must remain inside its workspace',400);
     let state=inspectVitestCoverageRuntime(rootDir,executionDir);
     const target=path.relative(rootDir,path.join(executionDir,'package.json')).replaceAll('\\','/');
-    if(!state.runner || !state.matchesDeclaration) {
+    const runnerUsable = () => state.runner && state.matchesDeclaration && state.entry && fs.existsSync(state.entry) &&
+        (!requireMountedRuntime || isWorkspaceMountedPath(rootDir, state.entry));
+    const providerUsable = () => state.compatible &&
+        (!requireMountedRuntime || isWorkspaceMountedPath(rootDir, state.provider.logical));
+    if(!runnerUsable()) {
         const fallback=read(fileURLToPath(new URL('../../node_modules/vitest/package.json',import.meta.url)))?.version;
+        const version = state.runner?.version || fallback;
         const result=await install({rootDir,packageName:'vitest',isDev:true,importedFrom:target,jobId,
-            ...(!state.declared && semver.valid(fallback) ? {version:fallback} : {})});
+            ...(!state.declared && semver.valid(version) ? {version} : {})});
         if(!result.success)throw new ServiceError(`Unable to restore the project's Vitest runtime. ${result.stderr || ''}`,409);
         state=inspectVitestCoverageRuntime(rootDir,executionDir);
     }
-    if(!state.runner || !state.matchesDeclaration)throw new ServiceError('The installed Vitest runtime does not match the project declaration.',409);
-    if(!state.compatible) {
+    if(!runnerUsable())throw new ServiceError(requireMountedRuntime
+        ? "The project's Vitest entry point is unavailable inside the Docker workspace."
+        : 'The installed Vitest runtime does not match the project declaration or is missing its entry point.',409);
+    if(!providerUsable()) {
         const result=await install({rootDir,packageName:'@vitest/coverage-v8',version:state.runner.version,isDev:true,importedFrom:target,jobId});
         if(!result.success)throw new ServiceError(`Unable to align @vitest/coverage-v8 with Vitest ${state.runner.version}. ${result.stderr || ''}`,409);
         state=inspectVitestCoverageRuntime(rootDir,executionDir);
     }
-    if(!state.compatible)throw new ServiceError(`Vitest coverage runtime is incompatible: runner=${state.runner?.version || 'missing'}, provider=${state.provider?.version || 'missing'}, provider's runner=${state.providerRunner?.version || 'missing'}. All packages must resolve the same runtime tree. Coverage and Apply were stopped.`,409,'VITEST_COVERAGE_RUNTIME_MISMATCH');
+    if(!runnerUsable() || !providerUsable())throw new ServiceError(`Vitest coverage runtime is incompatible: runner=${state.runner?.version || 'missing'}, provider=${state.provider?.version || 'missing'}, provider's runner=${state.providerRunner?.version || 'missing'}. All packages must resolve the same runtime tree${requireMountedRuntime ? ' inside the Docker workspace' : ''}. Coverage and Apply were stopped.`,409,'VITEST_COVERAGE_RUNTIME_MISMATCH');
     const relative=path.relative(executionDir,state.entry).replaceAll('\\','/');
     return {...state,command:`node "${relative}"`,major:semver.major(state.runner.version)};
 }

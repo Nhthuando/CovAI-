@@ -739,6 +739,9 @@ export default function InlineTestSuggestions({
                                                 ...sug,
                                                 generatedCode: currentCode,
                                                 suggestedTestCode: currentCode,
+                                                fullUpdatedContent: currentCode,
+                                                testCode: currentCode,
+                                                status: currentCode !== originalCode ? "EDITED" : sug.status,
                                             })
                                         }
                                         disabled={isApplying || status === "PASSED"}

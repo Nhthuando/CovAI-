@@ -66,7 +66,17 @@ export function UnifiedDashboard({
   // Publish live unified quality summary to parent / COV AI Agent context (guarded against duplicate emissions)
   const lastSummaryJsonRef = useRef("");
   useEffect(() => {
-    if (!vm) return;
+    if (!vm) {
+      if (effectiveProjectId && effectiveSnapshotId) {
+        onSummaryChange?.({
+          projectId: effectiveProjectId,
+          snapshotId: effectiveSnapshotId,
+          state: isError ? "unavailable" : "loading",
+        });
+      }
+      lastSummaryJsonRef.current = "";
+      return;
+    }
     const summaryPayload = {
       projectId: vm.context?.projectId,
       projectName: vm.context?.projectName,
@@ -124,7 +134,7 @@ export function UnifiedDashboard({
         new CustomEvent("covai:unified-summary-updated", { detail: summaryPayload })
       );
     }
-  }, [vm, onSummaryChange]);
+  }, [vm, onSummaryChange, effectiveProjectId, effectiveSnapshotId, isError]);
 
   // 2. Multi-Suite Sequential Run
   const runAllState = useRunAllSuites({

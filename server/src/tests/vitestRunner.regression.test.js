@@ -7,6 +7,7 @@ const run = jest.fn();
 await jest.unstable_mockModule("../services/dockerRunner.service.js", () => ({ dockerRunner: { run } }));
 await jest.unstable_mockModule("../services/job.service.js", () => ({ addJobLog: jest.fn().mockResolvedValue() }));
 const { runVitestCoverage, resolveVitestMajorVersion, getVitestWorkerArgs, runVitestWithSelfHealing } = await import("../services/vitestRunner.service.js");
+const { ensureVitestCoverageRuntime } = await import("../services/vitestRuntime.service.js");
 
 describe("Vitest multi-version compatibility and self-healing", () => {
     let rootDir;
@@ -23,6 +24,41 @@ describe("Vitest multi-version compatibility and self-healing", () => {
         run.mockReset();
     });
     afterEach(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+
+    test.each(["root", "nested package"])("restores a borrowed Vitest runtime before Docker mounts the %s", async scope => {
+        const executionDir = scope === "root" ? rootDir : path.join(rootDir, "backend");
+        fs.mkdirSync(executionDir, { recursive: true });
+        fs.writeFileSync(path.join(executionDir, "package.json"), JSON.stringify({ devDependencies: { vitest: "^3.2.0" } }));
+        const origin = fs.mkdtempSync(path.join(os.tmpdir(), "covai-vitest-origin-"));
+        const originalModules = path.join(origin, "node_modules");
+        const workspaceModules = path.join(executionDir, "node_modules");
+        try {
+            fs.renameSync(path.join(rootDir, "node_modules"), originalModules);
+            fs.symlinkSync(originalModules, workspaceModules, process.platform === "win32" ? "junction" : "dir");
+            const install = jest.fn(async () => {
+                fs.unlinkSync(workspaceModules);
+                fs.cpSync(originalModules, workspaceModules, { recursive: true });
+                return { success: true };
+            });
+
+            const hostRuntime = await ensureVitestCoverageRuntime({ rootDir, executionDir, install });
+            expect(hostRuntime.compatible).toBe(true);
+            expect(install).not.toHaveBeenCalled();
+
+            const dockerRuntime = await ensureVitestCoverageRuntime({ rootDir, executionDir, install, requireMountedRuntime: true });
+            expect(install).toHaveBeenCalledTimes(1);
+            expect(install).toHaveBeenCalledWith(expect.objectContaining({
+                packageName: "vitest",
+                importedFrom: scope === "root" ? "package.json" : "backend/package.json",
+            }));
+            expect(dockerRuntime.command).toBe('node "node_modules/vitest/vitest.mjs"');
+            expect(dockerRuntime.runner.real).toBe(fs.realpathSync(path.join(workspaceModules, "vitest/package.json")));
+            expect(dockerRuntime.providerRunner.real).toBe(dockerRuntime.runner.real);
+            expect(fs.existsSync(path.join(originalModules, "vitest/vitest.mjs"))).toBe(true);
+        } finally {
+            fs.rmSync(origin, { recursive: true, force: true });
+        }
+    });
 
     test("resolveVitestMajorVersion correctly detects versions from node_modules and package.json", () => {
         const testDir1 = fs.mkdtempSync(path.join(os.tmpdir(), "covai-v5-"));

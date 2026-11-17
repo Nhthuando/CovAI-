@@ -54,6 +54,7 @@ import {
 import {
   suggestUnitTestcase,
   getIntegrationWorkspace,
+  applyUnitTestSuggestion,
 } from "../../services/coverage.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
@@ -2919,21 +2920,36 @@ export default function AIPanel({
         }
       }
 
-      const contentToWrite =
-        suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
-
-      if (suggestion.isExisting) {
-        await updateFileContentApi(
+      if (snapshotId) {
+        await applyUnitTestSuggestion(snapshotId, {
+          suggestion: {
+            ...suggestion,
+            projectId,
+            targetTestFile: suggestion.targetTestFile,
+            suggestedTestCode: suggestion.suggestedTestCode || suggestion.code,
+            fullUpdatedContent: suggestion.fullUpdatedContent,
+            framework: suggestion.framework,
+          },
           projectId,
-          suggestion.targetTestFile,
-          contentToWrite,
-        );
+          skipBackgroundJob: true,
+        });
       } else {
-        await createProjectFileApi(
-          projectId,
-          suggestion.targetTestFile,
-          contentToWrite,
-        );
+        const contentToWrite =
+          suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
+
+        if (suggestion.isExisting) {
+          await updateFileContentApi(
+            projectId,
+            suggestion.targetTestFile,
+            contentToWrite,
+          );
+        } else {
+          await createProjectFileApi(
+            projectId,
+            suggestion.targetTestFile,
+            contentToWrite,
+          );
+        }
       }
 
       setMessages((prev) =>

@@ -48,6 +48,7 @@ import {
   runCoverageByType,
   getFileCoverage,
   installMissingDependency,
+  installMissingDependencies,
   suggestUnitTestcase,
   suggestAllUnitTestcases,
   applyUnitTestSuggestion,
@@ -492,51 +493,63 @@ export function PaginationControl({
   );
 }
 
+const activeJobSubscriptions = new Map();
+
 async function waitForJob(jobId, onProgress) {
-  let lastProgress = 8;
-  let consecutiveErrors = 0;
-  // Allow up to 15 minutes (600 attempts * 1500ms = 900s) for large test suites to complete
-  for (let attempt = 0; attempt < 600; attempt += 1) {
-    let job = null;
-    try {
-      const response = await getJobDetailApi(jobId);
-      job = response?.job;
-      consecutiveErrors = 0;
-    } catch (pollErr) {
-      consecutiveErrors += 1;
-      if (consecutiveErrors > 15) {
-        throw new Error(pollErr?.message || "Failed to communicate with job service.");
-      }
-    }
+  return new Promise((resolve, reject) => {
+    const jId = String(jobId);
+    let pollTimer = null;
+    let isSettled = false;
 
-    if (job) {
-      const prog = typeof job.progress === "number" ? Math.max(lastProgress, job.progress) : lastProgress;
-      lastProgress = prog;
-      if (onProgress) {
-        onProgress(prog, job.status);
-      }
-    }
+    const cleanup = () => {
+      isSettled = true;
+      if (pollTimer) clearInterval(pollTimer);
+      activeJobSubscriptions.delete(jId);
+    };
 
-    if (job?.status === "SUCCESS") {
+    const handleSuccess = (val) => {
+      if (isSettled) return;
+      cleanup();
       if (onProgress) onProgress(100, "SUCCESS");
-      return;
-    }
+      resolve(val);
+    };
 
-    if (["FAILED", "CANCELED"].includes(job?.status)) {
-      throw new Error(
-        job?.errorMessage ||
-        job?.error ||
-        `${job.status}: coverage analysis failed.`,
-      );
-    }
+    const handleFailure = (err) => {
+      if (isSettled) return;
+      cleanup();
+      reject(err instanceof Error ? err : new Error(err || "Job failed"));
+    };
 
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
+    // Register listener for instantaneous Socket.IO resolution
+    activeJobSubscriptions.set(jId, {
+      onProgress: (prog, status) => {
+        if (!isSettled && onProgress) onProgress(prog, status);
+      },
+      resolve: handleSuccess,
+      reject: handleFailure,
+    });
 
-  try {
-    await cancelJobApi(jobId);
-  } catch (_) { }
-  throw new Error("Coverage analysis timed out after 15 minutes. The job was automatically paused/canceled to unblock the project.");
+    // Low-frequency safety heartbeat (every 10s instead of 1.5s spam)
+    // Guarantees termination if WebSocket disconnects, reducing HTTP queries by >85%
+    pollTimer = setInterval(async () => {
+      if (isSettled) return;
+      try {
+        const response = await getJobDetailApi(jobId);
+        const job = response?.job;
+        if (!job) return;
+
+        if (job.status === "SUCCESS") {
+          handleSuccess(job);
+        } else if (["FAILED", "CANCELED"].includes(job.status)) {
+          handleFailure(job.errorMessage || job.error || `${job.status}: job failed`);
+        } else if (typeof job.progress === "number" && onProgress) {
+          onProgress(job.progress, job.status);
+        }
+      } catch {
+        // Network hiccup; retry on next 10s heartbeat
+      }
+    }, 10000);
+  });
 }
 
 export const invalidateDashboardCache = (snapshotId) => {
@@ -664,7 +677,7 @@ export default function CoverageTypeDashboard({
     });
   }, []);
 
-  // Socket.IO realtime progress listener
+  // Socket.IO realtime progress listener (F7)
   useEffect(() => {
     let userId = null;
     let socketToken = localStorage.getItem("token");
@@ -687,77 +700,147 @@ export default function CoverageTypeDashboard({
 
     socket.on("connect", () => {
       if (userId) socket.emit("subscribe_notifications", userId);
+      if (projectId) socket.emit("project:subscribe", { projectId });
     });
 
-    const onJobProgress = (data) => {
-      if (data && activeJobIdRef.current && data.jobId === activeJobIdRef.current) {
-        if (data.stage) {
-          setRunningStatus(data.stage);
+    if (socket.connected && projectId) {
+      socket.emit("project:subscribe", { projectId });
+    }
+
+    // Listen to real-time job progress emitted by dashboardEvents.service.js
+    const onDashboardJobProgress = (data) => {
+      if (!data) return;
+      const jId = String(data.jobId || "");
+      if (data.stage) {
+        setRunningStatus(data.stage);
+      }
+      if (typeof data.progress === "number") {
+        setRunProgress(data.progress);
+        if (typeof updateAnalysisProgress === "function") {
+          try {
+            updateAnalysisProgress(data.progress, data.stage || "Running analysis...");
+          } catch (_) {}
         }
+      }
+
+      // Dispatch to active job promise listener
+      const sub = activeJobSubscriptions.get(jId);
+      if (sub?.onProgress && typeof data.progress === "number") {
+        sub.onProgress(data.progress, data.stage || data.status);
+      }
+      if (sub?.onStage && data.stage) {
+        sub.onStage(data.stage);
       }
     };
 
-    socket.on("job:progress", onJobProgress);
+    // Listen to real-time run status emitted by dashboardEvents.service.js
+    const onDashboardRunStatus = (data) => {
+      if (!data) return;
+      const jId = String(data.jobId || "");
+      const status = data.status;
+      const sub = activeJobSubscriptions.get(jId);
+
+      if (status === "RUNNING") {
+        if (data.stage) setRunningStatus(data.stage);
+      } else if (status === "SUCCESS") {
+        setRunningStatus("");
+        setRunProgress(100);
+        if (activeJobIdRef.current && String(activeJobIdRef.current) === jId) {
+          activeJobIdRef.current = null;
+        }
+        sub?.resolve?.(data);
+      } else if (status === "FAILED" || status === "CANCELED") {
+        setRunningStatus("");
+        if (activeJobIdRef.current && String(activeJobIdRef.current) === jId) {
+          activeJobIdRef.current = null;
+        }
+        sub?.reject?.(new Error(data.errorMessage || data.error || `${status}: test run failed`));
+      }
+    };
+
+    // Listen to dashboard metrics update notifications
+    const onDashboardMetricsUpdated = (data) => {
+      if (data && (!data.snapshotId || data.snapshotId === snapshotId)) {
+        invalidateCoverageQueries(snapshotId);
+      }
+    };
+
+    const onUnitTestApplyProgress = (data) => {
+      if (data && (!data.snapshotId || data.snapshotId === snapshotId)) {
+        if (data.step) {
+          setBulkApplyStep(data.step);
+        }
+        if (data.progressPct !== undefined && data.progressPct !== null) {
+          setBulkApplyProgress(data.progressPct);
+        }
+        if (data.phase) {
+          setBulkApplyPhase(data.phase);
+        }
+        updateBulkApplyStep({
+          step: data.step,
+          stats: data.stats || (data.totalCount ? `${data.completedCount || 0}/${data.totalCount}` : undefined),
+          progressPct: data.progressPct,
+          phase: data.phase,
+          completedCount: data.completedCount,
+          totalCount: data.totalCount,
+          currentFile: data.currentFile || "",
+        });
+      }
+    };
+
+    const onUnitTestSuggestProgress = (data) => {
+      if (data && (data.snapshotId === snapshotId || data.projectId === projectId)) {
+        if (data.step) {
+          setBulkSuggestMessage(data.step);
+        }
+        updateSuggestionProgress({
+          snapshotId,
+          completedFiles: data.completedCount || 0,
+          totalFiles: data.totalCount || 0,
+          currentFile: data.currentFile || "",
+          filePath: data.currentFile || "",
+          message: data.step || `Processed ${data.completedCount || 0}/${data.totalCount || 0} source files.`
+        });
+      }
+    };
+
+    socket.on("dashboard:job-progress", onDashboardJobProgress);
+    socket.on("dashboard:run-status", onDashboardRunStatus);
+    socket.on("dashboard:metrics-updated", onDashboardMetricsUpdated);
+    socket.on("job:progress", onDashboardJobProgress);
+    socket.on("unit_test:apply_progress", onUnitTestApplyProgress);
+    socket.on("unit_test:suggest_progress", onUnitTestSuggestProgress);
 
     return () => {
-      socket.off("job:progress", onJobProgress);
+      if (projectId && socket.connected) {
+        socket.emit("project:unsubscribe", { projectId });
+      }
+      socket.off("dashboard:job-progress", onDashboardJobProgress);
+      socket.off("dashboard:run-status", onDashboardRunStatus);
+      socket.off("dashboard:metrics-updated", onDashboardMetricsUpdated);
+      socket.off("job:progress", onDashboardJobProgress);
+      socket.off("unit_test:apply_progress", onUnitTestApplyProgress);
+      socket.off("unit_test:suggest_progress", onUnitTestSuggestProgress);
       socket.disconnect();
     };
-  }, []);
+  }, [snapshotId, projectId, updateBulkApplyStep, updateAnalysisProgress]);
 
   const waitForJobWithProgress = useCallback(async (jobId, defaultInitial = "Starting AUT server...") => {
     activeJobIdRef.current = jobId;
     setRunningStatus(defaultInitial);
-    for (let attempt = 0; attempt < 600; attempt += 1) {
-      const response = await getJobDetailApi(jobId);
-      const job = response?.job;
-      if (job?.status === "SUCCESS") {
-        setRunningStatus("");
-        activeJobIdRef.current = null;
-        return;
-      }
-      if (["FAILED", "CANCELED"].includes(job?.status)) {
-        setRunningStatus("");
-        activeJobIdRef.current = null;
-        throw new Error(
-          job?.errorMessage ||
-          job?.error ||
-          `${job.status}: task failed.`,
-        );
-      }
-
-      // Live stage extraction from logs fallback
-      if (job?.logs && job.logs.length > 0) {
-        const latestLogs = [...job.logs].reverse();
-        for (const l of latestLogs) {
-          const msg = l.message || "";
-          if (/^(Inspecting|Generating system tests|Repairing generated tests|Verifying generated tests|Confirming generated tests)/.test(msg)) {
-            setRunningStatus(msg);
-            break;
-          } else if (msg.includes("Starting AUT server")) {
-            setRunningStatus("Starting AUT server...");
-            break;
-          } else if (msg.includes("Executing Playwright") || msg.includes("Selected playwright") || msg.includes("Run command")) {
-            setRunningStatus("Executing Playwright tests...");
-            break;
-          } else if (msg.includes("Executing Cypress") || msg.includes("Selected cypress")) {
-            setRunningStatus("Executing Cypress tests...");
-            break;
-          } else if (msg.includes("Parsing results") || msg.includes("Track 1") || msg.includes("Track 2")) {
-            setRunningStatus("Parsing results...");
-            break;
-          } else if (msg.includes("Dry-Run")) {
-            setRunningStatus("Verifying test syntax in isolated Dry-Run...");
-            break;
-          }
+    try {
+      await waitForJob(jobId, (prog, stage) => {
+        if (stage && typeof stage === "string") {
+          setRunningStatus(stage);
         }
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (typeof prog === "number") {
+          setRunProgress(prog);
+        }
+      });
+    } finally {
+      setRunningStatus("");
+      activeJobIdRef.current = null;
     }
-    activeJobIdRef.current = null;
-    setRunningStatus("");
-    throw new Error("Analysis timed out. Open Job Queue to inspect logs.");
   }, []);
 
   const handleGenerateAiSystemTest = async () => {
@@ -1122,16 +1205,20 @@ export default function CoverageTypeDashboard({
                 return {
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
                   testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
                   missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               if (s.suggestionId === sugId || s.id === sugId) {
                 return {
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
                   missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               return s;
@@ -1190,10 +1277,10 @@ export default function CoverageTypeDashboard({
               });
               completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
               invalidateCoverageQueries(snapshotId);
-              await refetchCoverage();
+              await refreshPublishedUnitTests([() => refetchCoverage(), () => ensureFileCoverage(filePath, true)]);
             } catch (error) {
-              completeAnalysis(`Post-Apply analysis failed: ${error.message}`);
-              setBulkSuggestMessage(`Tests were applied. Post-Apply analysis failed: ${error.message}`);
+              completeAnalysis(`Coverage refresh failed: ${error.message}`);
+              setBulkSuggestMessage(`Coverage refresh failed: ${error.message}`);
             }
           })();
         }
@@ -1201,7 +1288,8 @@ export default function CoverageTypeDashboard({
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
         refreshErrors.push(...await refreshPublishedUnitTests([() => ensureFileCoverage(filePath, true)]));
 
-        const inlineDoneMsg = refreshErrors.length ? `Tests saved for ${cleanFile}. Some views could not refresh. Reload to see the committed results.` : isPassed
+        const inlineDoneMsg = resultData.status === "NO_CHANGES" ? resultData.postApplyAnalysisError || resultData.message
+          : refreshErrors.length ? `Tests saved for ${cleanFile}. Some views could not refresh. Reload to see the committed results.` : isPassed
           ? `✓ Successfully applied test for ${cleanFile}! Coverage updated.`
           : `Applied test for ${cleanFile} (test runner reported some failures).`;
         completeBulkApply({
@@ -1328,16 +1416,20 @@ export default function CoverageTypeDashboard({
                 return {
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
                   testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
                   missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               if (sugIds.includes(s.suggestionId || s.id)) {
                 return {
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
                   missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               return s;
@@ -1395,10 +1487,10 @@ export default function CoverageTypeDashboard({
               });
               completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
               invalidateCoverageQueries(snapshotId);
-              await refetchCoverage();
+              await refreshPublishedUnitTests([() => refetchCoverage(), () => ensureFileCoverage(filePath, true)]);
             } catch (error) {
-              completeAnalysis(`Post-Apply analysis failed: ${error.message}`);
-              setBulkSuggestMessage(`Tests were applied. Post-Apply analysis failed: ${error.message}`);
+              completeAnalysis(`Coverage refresh failed: ${error.message}`);
+              setBulkSuggestMessage(`Coverage refresh failed: ${error.message}`);
             }
           })();
         }
@@ -1406,7 +1498,8 @@ export default function CoverageTypeDashboard({
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
         refreshErrors.push(...await refreshPublishedUnitTests([() => ensureFileCoverage(filePath, true)]));
 
-        const inlineDoneMsg = refreshErrors.length ? `Tests saved for ${cleanFile}. Some views could not refresh. Reload to see the committed results.` : isPassed
+        const inlineDoneMsg = resultData.status === "NO_CHANGES" ? resultData.postApplyAnalysisError || resultData.message
+          : refreshErrors.length ? `Tests saved for ${cleanFile}. Some views could not refresh. Reload to see the committed results.` : isPassed
           ? `✓ Successfully applied ${totalSugs} tests for ${cleanFile}! Coverage updated.`
           : `Applied tests for ${cleanFile} (test runner reported some failures).`;
         completeBulkApply({
@@ -1607,18 +1700,24 @@ export default function CoverageTypeDashboard({
     startBulkApply({ snapshotId, projectId, totalFiles, totalCount: totalFiles, totalSugs: batch.length,
       completedCount: 0, step: 'Verifying the entire batch before creating a version', phase: 'verify' });
     setApplyingSuggestionIds(prev => new Set([...prev, ...ids]));
+    let qualityGate;
+    let missingDependencies;
     const updateSuggestions = (status, message) => setInlineSuggestions(prev => Object.fromEntries(
       Object.entries(prev).map(([filePath, list]) => [filePath, list.map(s => ids.has(s.suggestionId || s.id)
-        ? { ...s, status, testRunError: message || null } : s)])));
+        ? { ...s, status, testRunError: message || null, missingDependency: null,
+            missingDependencies: status === 'FAILED' ? missingDependencies : undefined,
+            qualityGate: qualityGate || s.qualityGate } : s)])));
     updateSuggestions('APPLYING');
     try {
       const response = await applyUnitTestSuggestion(snapshotId, { suggestions: cleanedSuggestions, projectId,
         skipBackgroundJob: false, requestId });
       const result = response?.data || response;
+      qualityGate = result.qualityGate;
+      missingDependencies = result.missingDependencies ?? (result.missingDependency ? [result.missingDependency] : undefined);
       if (!result.success) throw new Error(result.errorDetail || result.message || 'Batch verification failed. The active version is unchanged.');
       updateSuggestions('PASSED');
       if (result.perFileResults) updateCoverageFilesData(snapshotId, type, projectId, result.perFileResults);
-      const message = result.coverageGoalStatus === 'MET'
+      const message = result.status === 'NO_CHANGES' ? result.message : result.coverageGoalStatus === 'MET'
         ? 'Applied the entire batch and met the 100% coverage goal.'
         : 'Applied the entire batch. Check the coverage report for remaining gaps.';
       setBulkApplyProgress(100);
@@ -1637,7 +1736,7 @@ export default function CoverageTypeDashboard({
               ...filesWithPendingSuggestions.map(filePath => () => ensureFileCoverage(filePath,true))]);
           } catch (error) {
             completeAnalysis(`Post-Apply analysis failed: ${error.message}`);
-            setBulkSuggestMessage(`Tests were applied. Post-Apply analysis failed: ${error.message}`);
+            setBulkSuggestMessage(`Coverage refresh failed: ${error.message}`);
           }
         })();
       } else if (result.postApplyAnalysisError) {
@@ -1647,7 +1746,7 @@ export default function CoverageTypeDashboard({
       invalidateProjectTree(projectId);
       const refreshErrors = await refreshPublishedUnitTests([() => refetchCoverage(), () => loadUnitTestVersions(),
         ...filesWithPendingSuggestions.map(filePath => () => ensureFileCoverage(filePath, true))]);
-      if (refreshErrors.length) setBulkSuggestMessage(`${message} Some views could not refresh. Reload to see the committed results.`);
+      if (refreshErrors.length) setBulkSuggestMessage(`${message} Some views could not refresh. Reload to see the latest results.`);
     } catch (err) {
       updateSuggestions('FAILED', err.message);
       setBulkSuggestMessage(err.message);
@@ -1821,27 +1920,39 @@ export default function CoverageTypeDashboard({
     }
   }, [snapshotId, projectId, isSwitchingVersion, loadUnitTestVersions, refetchCoverage]);
 
-  const activeMissingDependency = useMemo(() => {
-    if (summary?.missingDependency?.packageName) {
-      return summary.missingDependency;
+  const activeMissingDependencies = useMemo(() => {
+    const fromReport = (report, error) => report?.missingDependencies ??
+      [report?.missingDependency || extractMissingPackageFromError(error)];
+    const dependencies = [
+      ...fromReport(summary, summary?.latestRunError || coverageData?.latestRunError),
+      ...Object.entries(inlineSuggestions || {}).flatMap(([sourceFile, suggestions]) =>
+        suggestions.filter(suggestion => suggestion.status === "FAILED").flatMap(suggestion =>
+          fromReport(suggestion, suggestion.testRunError).filter(Boolean).map(dependency => ({
+            ...dependency, importedFrom: dependency.importedFrom || sourceFile,
+          })))),
+    ];
+    const unique = new Map();
+    for (const dependency of dependencies.filter(item => item?.packageName)) {
+      const key = JSON.stringify([dependency.packageName, dependency.targetPackage || dependency.importedFrom]);
+      if (!unique.has(key)) unique.set(key, dependency);
     }
-    const fromRunErr = extractMissingPackageFromError(summary?.latestRunError || coverageData?.latestRunError || "");
-    if (fromRunErr) return fromRunErr;
-    for (const [fPath, sugs] of Object.entries(inlineSuggestions || {})) {
-      for (const s of (sugs || [])) {
-        if (s.status === "FAILED") {
-          if (s.missingDependency?.packageName) {
-            return { ...s.missingDependency, sourceFile: fPath };
-          }
-          const parsed = extractMissingPackageFromError(s.testRunError || "");
-          if (parsed) {
-            return { ...parsed, sourceFile: fPath };
-          }
-        }
-      }
-    }
-    return null;
+    return [...unique.values()];
   }, [summary, coverageData, inlineSuggestions]);
+
+  const handleInstallDependencies = async (dependencies) => {
+    if (!snapshotId || !dependencies.length || installingDependencyName) throw new Error("The package installer is busy or unavailable.");
+    setInstallingDependencyName(dependencies[0].packageName);
+    try {
+      const result = await installMissingDependencies(snapshotId, dependencies);
+      if (result.installed.length) {
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+      }
+      return result;
+    } finally {
+      setInstallingDependencyName(null);
+    }
+  };
 
   const handleInstallDependency = async (packageName, isDev = false, importedFrom = null, onAfterInstall = null) => {
     if (!snapshotId || !packageName || installingDependencyName) return;
@@ -1854,7 +1965,7 @@ export default function CoverageTypeDashboard({
         packageName,
         isDev,
         shouldRerunFull,
-        importedFrom || activeMissingDependency?.importedFrom || activeMissingDependency?.sourceFile || null
+        importedFrom
       );
       if (res?.success) {
         invalidateCoverageQueries(snapshotId);
@@ -2191,7 +2302,7 @@ export default function CoverageTypeDashboard({
         setLoadingSuggestions(prev => ({...prev,...Object.fromEntries(paths.map(file => [file,true]))}));
         setBulkSuggestMessage(`Generating ${paths.length} source drafts and verifying one combined batch...`);
         const response = await suggestAllUnitTestcases(snapshotId,{projectId,filePaths:paths,
-          framework:frameworkOverride || activeFramework,validationMode:'full'});
+          framework:frameworkOverride || activeFramework,validationMode:'fast'});
         const data = response?.data || response;
         const failures = new Map((data.failedFiles || []).map(file => [file.filePath,file.message]));
         let completed = 0;
@@ -2302,7 +2413,6 @@ export default function CoverageTypeDashboard({
     [executions, type],
   );
   const chatRun = [...relevantRuns].sort((a, b) => new Date(b.createdAt || b.finishedAt || 0) - new Date(a.createdAt || a.finishedAt || 0))[0];
-  useChatTestContext(onChatContextChange, { projectId, snapshotId, testType: type, testRunId: chatRun?.id || chatRun?.testRunId });
 
   const totals = relevantRuns.reduce(
     (acc, item) => ({
@@ -2375,6 +2485,31 @@ export default function CoverageTypeDashboard({
                 : "N/A",
           ]
           : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
+
+  const unitCards = ["statements", "branches", "functions", "lines"].map((key, index) => {
+    const total = rawTotals?.[key]?.total == null ? null : Number(rawTotals[key].total);
+    const covered = total == null ? null : Number(rawTotals[key]?.covered || 0);
+    const value = key === "branches" && !covered && (!statPct || !linePct) ? 0 : values[index];
+    return {
+      metric: key,
+      value,
+      percent: isLatestRunFailed ? null : Number(pct(value).slice(0, -1)),
+      covered,
+      total,
+      status: isLatestRunFailed ? "Unavailable" : value >= 80 ? "PASSING" : value >= 60 ? "FAIR" : "LOW",
+    };
+  });
+  const unitRunStatus = summary?.latestRunStatus || coverageData?.latestRunStatus || chatRun?.status;
+  const hasUnitRun = unitRunStatus ? unitRunStatus.toLowerCase() !== "not_run" : Boolean(summary?.hasRun || chatRun);
+  useChatTestContext(onChatContextChange, {
+    projectId, snapshotId, testType: type, testRunId: chatRun?.id || chatRun?.testRunId,
+    displayedMetrics: type === "unit" ? {
+      kind: "unit", tab: activeMetricView, framework: activeFramework || chatRun?.type,
+      state: loading ? "loading" : isLatestRunFailed || !summary ? "unavailable" : hasUnitRun ? "ready" : "not-run",
+      runStatus: unitRunStatus,
+      cards: loading ? undefined : unitCards.map(({ value, ...card }) => card),
+    } : undefined,
+  });
 
   return (
     <div
@@ -2699,11 +2834,10 @@ export default function CoverageTypeDashboard({
           />
 
           <UnitTestPackageInstaller
-            snapshotId={snapshotId}
-            missingDependency={activeMissingDependency}
-            onInstallDependency={handleInstallDependency}
+            key={snapshotId}
+            missingDependencies={activeMissingDependencies}
+            onInstallDependencies={handleInstallDependencies}
             isInstalling={Boolean(installingDependencyName)}
-            onRerunTests={run}
             isLight={isLight}
           />
         </>
@@ -2945,9 +3079,10 @@ export default function CoverageTypeDashboard({
             }}
           >
             {config.focus.map((label, i) => {
-              let metricVal = Number(values[i] || 0);
-              const rawInfo = i === 0 ? rawTotals?.statements : i === 1 ? rawTotals?.branches : i === 2 ? rawTotals?.functions : rawTotals?.lines;
-              if (i === 1 && (Number(rawInfo?.covered || 0) === 0) && (Number(values[0] || 0) === 0 || Number(values[3] || 0) === 0)) {
+              const unitCard = type === "unit" ? unitCards[i] : null;
+              let metricVal = Number(unitCard?.value ?? values[i] ?? 0);
+              const rawInfo = unitCard || (i === 0 ? rawTotals?.statements : i === 1 ? rawTotals?.branches : i === 2 ? rawTotals?.functions : rawTotals?.lines);
+              if (!unitCard && i === 1 && (Number(rawInfo?.covered || 0) === 0) && (Number(values[0] || 0) === 0 || Number(values[3] || 0) === 0)) {
                 metricVal = 0;
               }
               const color = getCoverageColor(metricVal, isLight);
@@ -3011,7 +3146,7 @@ export default function CoverageTypeDashboard({
                                 : (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.35)"),
                           }}
                         >
-                          {metricVal >= 80 ? "✓ PASSING" : metricVal >= 60 ? "⚠ FAIR" : "× LOW"}
+                          {unitCard.status === "PASSING" ? "✓ PASSING" : unitCard.status === "FAIR" ? "⚠ FAIR" : "× LOW"}
                         </span>
                       )}
                     </div>
@@ -3028,7 +3163,7 @@ export default function CoverageTypeDashboard({
                             lineHeight: "1.1",
                           }}
                         >
-                          {isLatestRunFailed ? "Unavailable" : pct(metricVal)}
+                          {unitCard.percent === null ? "Unavailable" : pct(unitCard.percent)}
                         </div>
 
                         {/* Fraction: covered / total formatted with comma, prevent awkward line wrap */}

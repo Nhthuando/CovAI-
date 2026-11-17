@@ -43,11 +43,10 @@ export default function GithubCallbackPage() {
     }
     sessionStorage.setItem(sessionKey, "1");
 
-    // Clear the code from the URL for better UX and preventing shoulder-surfing
-    window.history.replaceState({}, document.title, "/auth/github/callback");
-
     oAuthGithubApi(code)
       .then((data) => {
+        // Clear the code from the URL after exchange so StrictMode remount still sees ?code=
+        window.history.replaceState({}, document.title, "/auth/github/callback");
         const userPayload = {
           id: data.userId || data.id,
           name: data.name,
@@ -62,6 +61,7 @@ export default function GithubCallbackPage() {
         navigate(consumeAuthReturn(), { replace: true });
       })
       .catch((err) => {
+        window.history.replaceState({}, document.title, "/auth/github/callback");
         alert("GitHub login error: " + err.message);
         navigate("/login", { replace: true });
       });

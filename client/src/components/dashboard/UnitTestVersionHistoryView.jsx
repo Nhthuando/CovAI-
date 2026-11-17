@@ -873,43 +873,6 @@ export default function UnitTestVersionHistoryView({
                                     <span>Diff</span>
                                   </button>
                                 )}
-
-                                {onSwitchVersion && !fileObj.isActive && (
-                                  <button
-                                    type="button"
-                                    disabled={isSwitchingVersion}
-                                    onClick={() => onSwitchVersion({ filePath: fileObj.sourceFile || fileObj.testFile, targetVersion: verItem.version })}
-                                    style={{
-                                      padding: "4px 10px",
-                                      borderRadius: 5,
-                                      fontSize: 11,
-                                      fontWeight: 700,
-                                      cursor: isSwitchingVersion ? "wait" : "pointer",
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 4,
-                                      background: verItem.version >= 2
-                                        ? (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)")
-                                        : (isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)"),
-                                      border: verItem.version >= 2
-                                        ? (isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.35)")
-                                        : (isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.35)"),
-                                      color: verItem.version >= 2
-                                        ? (isLight ? "#7c3aed" : "#c4b5fd")
-                                        : (isLight ? "#e11d48" : "#fb7185"),
-                                    }}
-                                    title={`Switch this file to Version ${verItem.version}`}
-                                  >
-                                    {isThisFileSwitching ? (
-                                      <Loader2 size={11} className="animate-spin" />
-                                    ) : verItem.version >= 2 ? (
-                                      <Zap size={11} />
-                                    ) : (
-                                      <RotateCcw size={11} />
-                                    )}
-                                    <span>{verItem.version === 1 ? "To v1" : `To v${verItem.version}`}</span>
-                                  </button>
-                                )}
                               </div>
                             </div>
                           );

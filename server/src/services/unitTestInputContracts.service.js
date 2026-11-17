@@ -50,6 +50,130 @@ function getRootIdentifier(node) {
     return null;
 }
 
+function requestAccesses(fn) {
+    const accesses = new Map();
+    const req = fn.params[0]?.name;
+    if (req !== 'req') return [];
+    walkAst(fn.body, node => {
+        if (node.type !== 'MemberExpression') return;
+        const segments = [];
+        let current = node;
+        while (current?.type === 'MemberExpression') {
+            const property = current.computed
+                ? current.property.type === 'StringLiteral' && current.property.value
+                : current.property.name;
+            if (!property) return;
+            segments.unshift(property);
+            current = current.object;
+        }
+        if (current?.name !== req || !['body', 'params', 'user', 'cookies', 'query', 'headers'].includes(segments[0])) return;
+        const access = [req, ...segments].join('.');
+        accesses.set(access, { segments, access, line: node.loc?.start.line });
+    });
+    return [...accesses.values()];
+}
+
+function inferRequestFields(declared, accesses) {
+    const fields = { ...declared };
+    for (const { segments, access, line } of accesses) {
+        let container = fields;
+        for (const [index, name] of segments.entries()) {
+            const nested = index < segments.length - 1;
+            const existing = container[name];
+            if (existing && !['object', 'unknown'].includes(existing.kind)) break;
+            const field = { kind: 'unknown', optional: true, evidence: { access, line }, ...existing };
+            if (nested) {
+                field.kind = 'object';
+                field.fields = { ...field.fields };
+            }
+            container[name] = field;
+            container = field.fields;
+        }
+    }
+    return fields;
+}
+
+function findRegisteredRequestContracts(rootDir, sourceFile, functions) {
+    if (!rootDir || !sourceFile || ![...functions.values()].some(fn => fn.requestEvidence.length)) return [];
+    const directory = path.join(path.dirname(path.dirname(sourceFile)), 'routes');
+    let files;
+    try { files = fs.readdirSync(directory).filter(file => /\.[cm]?[jt]s$/.test(file)).slice(0, 80); }
+    catch { return []; }
+    const results = [];
+    const resolve = (file, specifier) => typeof specifier === 'string' && specifier.startsWith('.') &&
+        ['', '.js', '.cjs', '.ts'].map(ext => localFile(rootDir, path.resolve(path.dirname(file), specifier + ext))).find(Boolean);
+    for (const name of files) {
+        const file = localFile(rootDir, path.join(directory, name));
+        if (!file || fs.statSync(file).size > 100000) continue;
+        const parsed = parseJavaScriptCode(fs.readFileSync(file, 'utf8'));
+        if (!parsed.success) continue;
+        const bindings = new Map();
+        for (const statement of parsed.ast.program.body) {
+            for (const decl of statement.declarations || []) {
+                if (decl.id.type === 'Identifier' && decl.init?.callee?.name === 'require') {
+                    bindings.set(decl.id.name, resolve(file, decl.init.arguments[0]?.value));
+                }
+            }
+        }
+        if (![...bindings.values()].includes(sourceFile)) continue;
+        for (const statement of parsed.ast.program.body) {
+            const call = statement.expression;
+            const args = call?.arguments || [];
+            const handler = args.at(-1);
+            const fn = handler?.type === 'MemberExpression' && bindings.get(handler.object.name) === sourceFile &&
+                functions.get(handler.property.name);
+            if (!fn || args[0]?.type !== 'StringLiteral') continue;
+            const middleware = args.slice(1, -1).flatMap(arg => {
+                const target = bindings.get(arg.name);
+                if (!target || fs.statSync(target).size > 100000) return [];
+                const ast = parseJavaScriptCode(fs.readFileSync(target, 'utf8'));
+                if (!ast.success) return [];
+                const writes = [];
+                walkAst(ast.ast.program, node => {
+                    const left = node.left;
+                    if (node.type === 'AssignmentExpression' && left.type === 'MemberExpression' &&
+                        left.object.name === 'req' && left.property.name === 'user') {
+                        writes.push({ access: 'req.user', line: node.loc.start.line, valueKind: valueKind(node.right) });
+                    }
+                });
+                return writes.length ? [{ file: path.relative(rootDir, target).replaceAll('\\', '/'), writes }] : [];
+            });
+            const routeParams = [...args[0].value.matchAll(/:([\w]+)/g)].map(match => match[1]);
+            const contract = { functionName: fn.name, route: args[0].value, file: path.relative(rootDir, file).replaceAll('\\', '/'),
+                line: statement.loc.start.line, routeParams, middleware };
+            const nestedUser = fn.requestEvidence.find(access => access.access.startsWith('req.user.'));
+            if (nestedUser && middleware.some(item => item.writes.length === 1 && ['null', 'string', 'number', 'boolean'].includes(item.writes[0].valueKind))) {
+                contract.potentialConflict = { access: nestedUser.access, line: nestedUser.line };
+            }
+            results.push(contract);
+        }
+    }
+    return results;
+}
+
+function observableContract(fn, dependencies) {
+    const returns = [];
+    const calls = new Set();
+    const visit = node => {
+        if (!node?.type || (node !== fn.body && /(?:Function|Method)/.test(node.type))) return;
+        if (node.type === 'ReturnStatement') {
+            const argument = node.argument;
+            const observed = argument ? { kind: argument.type, ...(Object.hasOwn(argument, 'value') && { value: argument.value }) } : { kind: 'void' };
+            returns.push(observed);
+        }
+        if (node.type === 'CallExpression') {
+            const target = getRootIdentifier(node.callee)?.name;
+            if (dependencies.has(target)) calls.add(node.callee.property?.name ? target + '.' + node.callee.property.name : target);
+        }
+        for (const child of Object.values(node)) {
+            if (Array.isArray(child)) child.forEach(visit);
+            else if (child?.type) visit(child);
+        }
+    };
+    visit(fn.body);
+    return { async: Boolean(fn.async), returns, dependencyCalls: [...calls] };
+}
+
 function parseJsdocTypeString(str) {
     str = (str || '').trim();
     if (!str) return { kind: 'unknown' };
@@ -466,11 +590,21 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
 
     // Index top-level functions for specifier/export matching
     const topLevelFns = new Map();
+    const dependencies = new Set();
     for (const item of parsed.ast.program.body) {
+        if (item.type === 'ImportDeclaration' && item.importKind !== 'type') {
+            item.specifiers.forEach(specifier => dependencies.add(specifier.local.name));
+        }
         if (item.type === 'FunctionDeclaration' && item.id?.name) {
             topLevelFns.set(item.id.name, item);
         } else if (item.type === 'VariableDeclaration') {
             for (const decl of item.declarations) {
+                if (decl.init?.callee?.name === 'require' && decl.init.arguments[0]?.type === 'StringLiteral') {
+                    if (decl.id.type === 'Identifier') dependencies.add(decl.id.name);
+                    for (const property of decl.id.properties || []) {
+                        if (property.value?.type === 'Identifier') dependencies.add(property.value.name);
+                    }
+                }
                 if (decl.id?.type === 'Identifier' && ['ArrowFunctionExpression', 'FunctionExpression'].includes(decl.init?.type)) {
                     topLevelFns.set(decl.id.name, decl.init);
                 }
@@ -547,6 +681,7 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
 
         for (const [name, fn] of entries) {
             const bodyInference = inferParamUsagesFromBody(fn, jsdoc);
+            const requestEvidence = requestAccesses(fn);
 
             const parameters = (fn.params || []).map(param => {
                 const value = param.type === 'AssignmentPattern' ? param.left : param.type === 'RestElement' ? param.argument : param;
@@ -619,6 +754,7 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
                         type.kind = 'object';
                         const fields = { ...(type.fields || {}) };
                         for (const [fName, fInfo] of dMap) {
+                            if (pName === 'req' && requestEvidence.some(item => item.segments[0] === fName)) continue;
                             if (!fields[fName]) {
                                 fields[fName] = {
                                     kind: fInfo.kind,
@@ -630,6 +766,9 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
                         }
                         type.fields = fields;
                     }
+                }
+                if (pName === 'req' && requestEvidence.length && ['unknown', 'object'].includes(type.kind)) {
+                    type = { ...type, kind: 'object', fields: inferRequestFields(type.fields, requestEvidence) };
                 }
 
                 const contractObj = {
@@ -644,11 +783,30 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
                 return contractObj;
             });
 
-            functions.set(name, { name, parameters });
+            functions.set(name, { name, parameters, ...observableContract(fn, dependencies), requestEvidence });
         }
     }
 
-    return { functions, evidence };
+    const entryPoints = parsed.ast.program.body.flatMap(statement => {
+        const call = statement.expression;
+        const name = call?.type === 'CallExpression' && call.callee.name;
+        const fn = topLevelFns.get(name);
+        return fn ? [{ name, importTime: true, parameters: fn.params.map(param => param.name || param.left?.name || null),
+            ...observableContract(fn, dependencies) }] : [];
+    });
+    const requestRoutes = findRegisteredRequestContracts(rootDir, sourceFile, functions);
+    for (const fn of functions.values()) {
+        const registrations = requestRoutes.filter(route => route.functionName === fn.name);
+        if (!registrations.length) continue;
+        const fields = fn.parameters[0]?.fields?.params?.fields;
+        for (const [name, field] of Object.entries(fields || {})) {
+            if (field.kind === 'unknown' && registrations.every(route => route.routeParams.includes(name))) {
+                field.kind = 'string';
+                field.routeEvidence = registrations.map(({ file, line, route }) => ({ file, line, route }));
+            }
+        }
+    }
+    return { functions, evidence, entryPoints, requestRoutes };
 }
 
 // Expand only finite local fixtures; never evaluate project code to discover inputs.
@@ -712,11 +870,25 @@ function mismatch(node, scope, contract, label, depth = 0) {
 }
 
 export function sourceTargets(call, testFile, rootDir, sourceFile, contracts) {
-    return alternatives(call.node.callee, call.scope).flatMap(({ node, scope }) => {
-        if (node?.type !== 'Identifier' || importedSource({ node: { callee: node }, scope }, testFile, rootDir) !== sourceFile) return [];
-        const binding = scope.getBinding(node.name), name = binding.path.node.imported?.name;
-        return contracts.has(name) ? [{ ...contracts.get(name), localName: node.name }] : [];
+    const candidates = [{ node: call.node.callee, scope: call.scope }, ...alternatives(call.node.callee, call.scope)];
+    const matches = candidates.flatMap(({ node, scope }) => {
+        const target = node?.type === 'MemberExpression' && !node.computed ? node.object : node;
+        if (target?.type !== 'Identifier') return [];
+        const binding = scope.getBinding(target.name);
+        if (!binding) return [];
+        const imported = importedSource({ node: { callee: target }, scope }, testFile, rootDir);
+        const init = binding.path.node.init;
+        const specifier = init?.callee?.name === 'require' ? init.arguments[0]?.value : null;
+        const dependency = typeof specifier === 'string' && specifier.startsWith('.') &&
+            ['', '.js', '.cjs', '.ts', '/index.js'].map(suffix => localFile(rootDir,
+                path.resolve(path.dirname(testFile), specifier + suffix))).find(Boolean);
+        if (imported !== sourceFile && dependency !== sourceFile) return [];
+        const property = binding.path.node.id?.properties?.find(prop => prop.value?.name === target.name);
+        const name = node.property?.name || binding.path.node.imported?.name || property?.key.name ||
+            (contracts.size === 1 ? contracts.keys().next().value : null);
+        return contracts.has(name) ? [{ ...contracts.get(name), localName: target.name }] : [];
     });
+    return [...new Map(matches.map(target => [target.name, target])).values()];
 }
 
 export function inputContractViolations(block, testFile, rootDir, sourceFile, contracts) {
@@ -730,7 +902,12 @@ export function inputContractViolations(block, testFile, rootDir, sourceFile, co
                     const values = argumentsToCheck.flatMap(argument => argument ? alternatives(argument, call.scope) : [{ node: { type: 'Identifier', name: 'undefined' }, scope: call.scope }]);
                     for (const value of values) {
                         const reason = mismatch(value.node, value.scope, param, param.name);
-                        if (reason) violations.push({ functionName: target.name, parameter: param.name, reason, callStart: call.node.start });
+                        if (reason) {
+                            const field = reason.split(' requires ')[0];
+                            const evidence = target.requestEvidence?.find(item => item.access.startsWith(field + '.')) ||
+                                target.requestEvidence?.find(item => item.access === field);
+                            violations.push({ functionName: target.name, parameter: param.name, reason, callStart: call.node.start, evidence });
+                        }
                     }
                 });
             }

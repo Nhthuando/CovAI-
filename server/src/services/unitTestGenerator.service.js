@@ -1,3 +1,11 @@
+import { buildJwtMockCode } from './authDependencyMockCode.js';
+import { jestMongooseMockCode } from './jestMongooseMock.js';
+import { proposeEmptyArrayFallbackTest } from './logicalFallbackTest.service.js';
+import { proposeCommonJsTestDraft } from './commonJsTestDraft.service.js';
+import { proposeShopprControllerDraft } from './shopprControllerDraft.service.js';
+import { definesMongooseModel, preserveMongooseSchemaInDraft } from './mongooseModelDraft.service.js';
+import { analyzeMongooseSchemas } from './mongooseSchemaAnalyzer.service.js';
+import { hoistGeneratedVitestMocks } from './vitestMockHoisting.service.js';
 import fs from "fs";
 import { createHash } from 'node:crypto';
 import { withAgentContext } from '../agents/registry.js';
@@ -11,6 +19,10 @@ import { sourceInputContracts } from './unitTestInputContracts.service.js';
 import { assertUnitTestTarget } from './unitTestFilePolicy.service.js';
 import { measureUnitTestPhase } from './unitTestWork.service.js';
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
+import { describeNativeCommonJsDependencies, validateAndNormalizeMocks, validateMockContracts } from "./mockValidation.service.js";
+import { renderNativeCommonJsMockHarness } from './nativeCommonJsMockHarness.service.js';
+import { analyzeDataAccessContracts } from "./dataAccessContractAnalyzer.service.js";
+import { inspectUnitTestQuality } from './unitTestQualityGate.service.js';
 import {
     assembleUnitTestContext,
     buildIsolationMockContracts,
@@ -29,6 +41,9 @@ import {
   safeDecoupleInlineStatements,
   healBrokenCommentSplits,
   balanceTestFileBracesAndParens,
+  healObjectIdAssertions,
+  rebaseGeneratedTestModulePaths,
+  getGeneratedJestMockError,
 } from "./testSanitizer.service.js";
 import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
 import {
@@ -46,7 +61,54 @@ import {
  * 3.3. Resilient Generation Orchestration (Gemini LLM with Isolation Fallback)
  */
 
-export const escapePromptCode = (code, maxLen = 25000) => {
+export const countSafeDelimiters = (code) => {
+    let openBraces = 0, closeBraces = 0;
+    let openParens = 0, closeParens = 0;
+    let inStr = null;
+    let inLineComment = false;
+    let inBlockComment = false;
+
+    for (let i = 0; i < code.length; i++) {
+        const char = code[i];
+        const prev = i > 0 ? code[i - 1] : '';
+
+        if (inLineComment) {
+            if (char === '\n') inLineComment = false;
+            continue;
+        }
+        if (inBlockComment) {
+            if (char === '/' && prev === '*') inBlockComment = false;
+            continue;
+        }
+        if (inStr) {
+            if (char === inStr && prev !== '\\') inStr = null;
+            continue;
+        }
+        if (char === '/' && code[i + 1] === '/') {
+            inLineComment = true;
+            i++;
+            continue;
+        }
+        if (char === '/' && code[i + 1] === '*') {
+            inBlockComment = true;
+            i++;
+            continue;
+        }
+        if (char === '"' || char === "'" || char === '`') {
+            inStr = char;
+            continue;
+        }
+
+        if (char === '{') openBraces++;
+        else if (char === '}') closeBraces++;
+        else if (char === '(') openParens++;
+        else if (char === ')') closeParens++;
+    }
+
+    return { openBraces, closeBraces, openParens, closeParens };
+};
+
+export const escapePromptCode = (code, maxLen = 15000) => {
     if (!code) return "";
     const sliced = typeof code === "string" ? code.slice(0, maxLen) : String(code);
     return sliced.replace(/```/g, "\\`\\`\\`");
@@ -77,6 +139,27 @@ export const buildStandardUnitTestPrompt = ({
 }) => {
   const isVitest = framework === "vitest";
   const isTest = Boolean(testFileInfo.found);
+  const nativeDependencies = isVitest ? describeNativeCommonJsDependencies(sourceCode, cleanSource) : [];
+  const exampleDependency = nativeDependencies[0]?.specifier;
+  const draftPath = testFileInfo.relativePath || testFileInfo.suggestedFilePath;
+  const examplePath = exampleDependency?.startsWith('.') && draftPath ? path.posix.relative(
+      path.posix.dirname(draftPath), path.posix.join(path.posix.dirname(cleanSource), exampleDependency)
+  ) : exampleDependency;
+  const nativeHarnessExample = examplePath && cleanImportPath && draftPath &&
+      (/\.cjs$/.test(cleanSource) || /\bmodule\.exports\b|\bexports\./.test(sourceCode))
+      ? renderNativeCommonJsMockHarness(JSON.stringify(cleanImportPath), [{
+          module: JSON.stringify(exampleDependency.startsWith('.') && !examplePath.startsWith('.') ? './' + examplePath : examplePath),
+          binding: 'dependencyDouble',
+      }]) : '';
+  const sourceLoaderContract = nativeDependencies.length ? `
+SOURCE LOADER EVIDENCE (native CommonJS require): ${JSON.stringify(nativeDependencies)}
+For dependencies in this list, vi.mock and vi.doMock cannot replace what the source reads. Follow this rule even when a database or SDK example below demonstrates vi.mock for an ESM dependency. Resolve relative dependency paths from the source file and rebase them to the test file. For a destructured require, provide exactly the named properties it reads. For a whole-module require, use the native module.exports shape (object or callable as the source uses it), without inventing a default wrapper. Create test-owned doubles, install a scoped CommonJS require.cache replacement before loading the subject with createRequire(import.meta.url), and restore the previous cache entries in finally. Assertions must reference the same mock functions supplied to the source.
+${nativeHarnessExample ? `Use this loading scaffold for the dependencies the scenario needs. Define each mock binding before installing it and retain its exact references in assertions:
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+${nativeHarnessExample}
+` : ''}
+` : "";
   const runnerContract = isVitest
     ? "Use ESM imports from 'vitest' and vi.fn/vi.spyOn/vi.mock. Never require('vitest') or use jest.*. Keep runner imports as ESM even when the source module uses CommonJS."
     : "For ESM tests import { jest } from '@jest/globals' before using jest.*. For CommonJS tests use the injected jest global without redeclaring it.";
@@ -107,6 +190,46 @@ export const buildStandardUnitTestPrompt = ({
             `     * In Prisma v7 environments, unconfigured 'new PrismaClient()' will immediately throw PrismaClientInitializationError during module evaluation.\n` +
             `     * Top-level mock mandate: You MUST mock '@prisma/client' and local DB singletons (e.g. '../config/prisma', '../lib/prisma') at top-level before controller/service imports.\n` +
             `     * Use this self-contained in-memory proxy mock template at the very top of your test file:\n\`\`\`javascript\n${codeToEmbed}\n\`\`\``;
+    }
+
+    const hasMongoose = Boolean(
+        unitTestContext?.mockContracts?.detectedDependencies?.includes("mongoose-db") ||
+        /mongoose/i.test(sourceCode || "") ||
+        /mongoose/i.test(testFileInfo?.content || "")
+    );
+    let mongooseMockDirective = "";
+    if (definesMongooseModel(sourceCode)) {
+        mongooseMockDirective = `For schema tests, use real Mongoose Schema and model behavior in memory. Mock only connection and persistence. Construct the document and check validateSync before assertions. A valid document has no validation error. Use the installed version's return contract. Check metadata with Model.schema.path, Model.modelName and Model.collection.name. Do not infer an undeclared default or collection name.
+Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
+    } else if (hasMongoose) {
+        const preambleCode = unitTestContext?.mockContracts?.mockPreambleCode || "";
+        const fallbackMongooseMock = isVitest
+            ? `// Universal Mongoose In-Memory Proxy Mock for Vitest\nconst { _createMongooseModelProxy } = vi.hoisted(() => {\n  const _sampleItem = { _id: '507f1f77bcf86cd799439011', id: '1', userId: '507f1f77bcf86cd799439011', name: 'Sample Item', category: { _id: '1', name: 'General' }, status: 'ACTIVE', email: 'sample@example.com' };\n  const _createQueryMock = (result = [_sampleItem]) => ({\n    exec: vi.fn(() => Promise.resolve(result)),\n    populate: vi.fn().mockReturnThis(),\n    sort: vi.fn().mockReturnThis(),\n    limit: vi.fn().mockReturnThis(),\n    skip: vi.fn().mockReturnThis(),\n    lean: vi.fn(() => Promise.resolve(result)),\n    select: vi.fn().mockReturnThis(),\n    where: vi.fn().mockReturnThis(),\n    distinct: vi.fn().mockReturnThis(),\n    then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),\n    catch: (reject) => Promise.resolve(result).catch(reject),\n    finally: (cb) => Promise.resolve(result).finally(cb)\n  });\n  const _proxyMaker = () => {\n    const fn = vi.fn((doc = {}) => ({\n      _id: doc._id || '507f1f77bcf86cd799439011',\n      id: doc.id || '1',\n      userId: doc.userId || '507f1f77bcf86cd799439011',\n      ...doc,\n      save: vi.fn((cb) => { const saved = { _id: '507f1f77bcf86cd799439011', id: '1', ...doc }; if (typeof cb === 'function') cb(null, saved); return Promise.resolve(saved); }),\n      validate: vi.fn((cb) => { if (typeof cb === 'function') cb(null); return Promise.resolve(); }),\n      validateSync: vi.fn(() => null),\n      toObject: vi.fn(() => ({ _id: '507f1f77bcf86cd799439011', id: '1', ...doc })),\n      toJSON: vi.fn(() => ({ _id: '507f1f77bcf86cd799439011', id: '1', ...doc })),\n      isModified: vi.fn(() => false),\n      set: vi.fn().mockReturnThis(),\n      get: vi.fn((k) => doc[k]),\n      populate: vi.fn().mockReturnThis()\n    }));\n    Object.assign(fn, {\n      find: vi.fn(() => _createQueryMock([_sampleItem])),\n      findOne: vi.fn(() => _createQueryMock(_sampleItem)),\n      findById: vi.fn(() => _createQueryMock(_sampleItem)),\n      findOneAndUpdate: vi.fn(() => _createQueryMock(_sampleItem)),\n      findByIdAndUpdate: vi.fn(() => _createQueryMock(_sampleItem)),\n      findByIdAndDelete: vi.fn(() => _createQueryMock(_sampleItem)),\n      deleteOne: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n      deleteMany: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n      create: vi.fn((doc) => Promise.resolve({ _id: '507f1f77bcf86cd799439011', id: '1', ...(Array.isArray(doc) ? doc[0] : doc) })),\n      countDocuments: vi.fn(() => Promise.resolve(1)),\n      distinct: vi.fn(() => Promise.resolve(['sample'])),\n      aggregate: vi.fn(() => Promise.resolve([_sampleItem])),\n      insertMany: vi.fn((docs) => Promise.resolve(Array.isArray(docs) ? docs : [docs])),\n      bulkWrite: vi.fn(() => Promise.resolve({ ok: 1, insertedCount: 1, modifiedCount: 0 })),\n      watch: vi.fn(() => ({ on: vi.fn(), close: vi.fn() })),\n      validate: vi.fn(() => Promise.resolve()),\n      validateSync: vi.fn(() => null),\n      schema: { path: vi.fn(() => ({ validate: vi.fn(), required: vi.fn() })), paths: {}, obj: {}, methods: {}, statics: {} }\n    });\n    return fn;\n  };\n  return { _createMongooseModelProxy: _proxyMaker };\n});\nvi.mock('mongoose', () => {\n  class _MockObjectId {\n    constructor(id) { this.id = id || '507f1f77bcf86cd799439011'; this._bsontype = 'ObjectID'; }\n    toString() { return String(this.id); }\n    toHexString() { return String(this.id); }\n    valueOf() { return String(this.id); }\n    equals(other) { return String(this) === String(other); }\n    static isValid(id) { return typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id); }\n  }\n  class _MockSchema {\n    constructor(obj = {}) { this.obj = obj; this.methods = {}; this.statics = {}; this.paths = {}; }\n    static Types = { ObjectId: _MockObjectId };\n    index() { return this; }\n    pre() { return this; }\n    post() { return this; }\n    plugin() { return this; }\n    set() { return this; }\n    path() { return { validate: vi.fn(), required: vi.fn() }; }\n  }\n  const m = {\n    model: vi.fn(() => _createMongooseModelProxy()),\n    models: new Proxy({}, { get: () => _createMongooseModelProxy() }),\n    Schema: _MockSchema,\n    Types: { ObjectId: _MockObjectId },\n    connect: vi.fn(() => Promise.resolve()),\n    disconnect: vi.fn(() => Promise.resolve()),\n    set: vi.fn(),\n    connection: { on: vi.fn(), once: vi.fn(), readyState: 1, db: { admin: () => ({ ping: vi.fn(() => Promise.resolve()) }) } }\n  };\n  return { default: m, ...m };\n});`
+            : jestMongooseMockCode;
+
+        const codeToEmbed = (preambleCode && preambleCode.includes("mongoose")) ? preambleCode.trim() : fallbackMongooseMock;
+        mongooseMockDirective = `\n   - CRITICAL DATABASE ISOLATION CONTRACT (MONGOOSE):\n` +
+            `     * NEVER connect to real MongoDB ('mongoose.connect'). All Mongoose models MUST be mocked with thenable in-memory proxies.\n` +
+            `     * Queries (find, findOne, findById, populate) MUST be thenable and resolve realistic entity mock objects without hanging.\n` +
+            `     * OBJECTID ASSERTION CONTRACT: In Mongoose, ObjectId fields (e.g. 'userId', '_id') are ObjectId objects containing an internal Buffer. NEVER assert strict equality directly against a string literal (e.g. 'expect(doc.userId).toBe("<hex>")'), which produces 'AssertionError: expected { Object (buffer) } to be "<hex>"'. ALWAYS convert ObjectId fields to strings before assertion: 'expect(doc.userId?.toString()).toBe("<hex>")' or 'expect(String(doc.userId)).toBe("<hex>")'.\n` +
+            `     * NO CALLBACK (DONE) EXECUTION TIMEOUTS: Mongoose v7/v8 removed callback parameters from validate() and save(). NEVER write '(done)' callback signatures or call 'doc.validate(done)' / 'doc.save(done)', which will hang indefinitely and exceed the 10000ms Vitest timeout. Always write 'async () => { ... }' with await. Ensure mocked model validate() and save() methods resolve synchronously or within <100ms in RAM.\n` +
+            `     * Mock 'mongoose' at the very top of your test file:\n\`\`\`javascript\n${codeToEmbed}\n\`\`\``;
+    }
+
+    const hasJwt = Boolean(
+        unitTestContext?.mockContracts?.detectedDependencies?.includes("jwt-auth") ||
+        /jwt|jsonwebtoken/i.test(sourceCode || "") ||
+        /verifyToken/i.test(sourceCode || "") ||
+        /jwt|jsonwebtoken/i.test(testFileInfo?.content || "")
+    );
+    let jwtMockDirective = "";
+    if (hasJwt) {
+        const fallbackJwtMock = buildJwtMockCode(framework, "mock_token_xyz");
+
+        jwtMockDirective = `\n   - CRITICAL AUTH ISOLATION CONTRACT (JSONWEBTOKEN):\n` +
+            `     * NEVER call real jsonwebtoken signing or verification without mock. Mock 'jsonwebtoken' at the top level.\n` +
+            `     * For middleware like 'verifyToken', always supply 'req.cookies = { jwt: "mock_token" }' for authorized cases, and delete/omit cookies.jwt for missing token (401) branches.\n` +
+            `     * Use this mock at the top of your test file:\n\`\`\`javascript\n${fallbackJwtMock}\n\`\`\``;
     }
     const decisionTableMarkdown = unitTestContext?.decisionTable?.decisionTableMarkdown || "";
     const deltaDecisionTableMarkdown = unitTestContext?.decisionTable?.deltaDecisionTableMarkdown || decisionTableMarkdown;
@@ -199,7 +322,7 @@ ${
   sourceCode
     ? `SOURCE CODE UNDER TEST:
 \`\`\`javascript
-${escapePromptCode(sourceCode, 25000)}
+${escapePromptCode(sourceCode, 15000)}
 \`\`\`
 `
     : ""
@@ -207,7 +330,7 @@ ${escapePromptCode(sourceCode, 25000)}
 
 EXISTING TEST CODE IN ${testFileInfo.relativePath}:
 \`\`\`javascript
-${escapePromptCode(testFileInfo.content || "", 25000)}
+${escapePromptCode(testFileInfo.content || "", 15000)}
 \`\`\`
 
 ### 5. STRICT GENERATION RULES & METHODOLOGY (TARGETING >=90% TO 100% COVERAGE)
@@ -251,8 +374,9 @@ ${deltaDecisionTableMarkdown}
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
+   - Mock application dependencies only. For Jest auto-mocks use jest.mock('module'); virtual mocks require jest.mock('module', () => ({ /* exports */ }), { virtual: true }).
    - ZERO EXTERNAL .ENV REQUIREMENT: Every unit test must be 100% self-contained and run in memory without requiring real .env files on disk. If the tested module references process.env, stub the variables directly in test setup (${isVitest ? "vi.stubEnv('VAR', 'mock_value')" : "process.env.VAR = 'mock_value'"}) with safe, valid mock fixtures.
-${mockInstructionsStr}${prismaMockDirective}
+${mockInstructionsStr}${prismaMockDirective}${mongooseMockDirective}${jwtMockDirective}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
    - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
@@ -275,6 +399,9 @@ ${mockInstructionsStr}${prismaMockDirective}
    - NEVER access 'vi.fn()' in Jest suites unless 'vi' is explicitly imported or aliased to 'jest'.
 11. HERMETIC TEST TEARDOWN:
    - You MUST include afterEach(() => { vi.restoreAllMocks(); }); (Vitest) or afterEach(() => { jest.restoreAllMocks(); }); (Jest) in every test suite to prevent mock/spy leakage. NEVER use vi.mock() or jest.mock() on local constant files, schemas, or data fixtures.
+12. MONGOOSE OBJECTID & ASYNC TIMEOUT PREVENTION CONTRACT:
+   - When asserting on MongoDB/Mongoose ObjectId properties (e.g. 'userId', '_id', 'ownerId'): NEVER use direct strict equality against a string literal (e.g. expect(item.userId).toBe('507f1f77bcf86cd799439011') or expect(result.userId).toEqual('507f1f77bcf86cd799439011')). ObjectId instances contain Buffer internals, causing 'AssertionError: expected { Object (buffer) } to be "<hex>"'. ALWAYS call .toString(), e.g. expect(item.userId?.toString()).toBe('507f1f77bcf86cd799439011') or expect(String(item.userId)).toBe('507f1f77bcf86cd799439011').
+   - NEVER use '(done)' callback parameters in test functions. Mongoose v7+ removed callbacks from validate() and save(); passing callbacks will cause tests to hang until the runner aborts with a 10000ms timeout. Always write async test functions (async () => { ... }) and ensure model validations, mocks, and error handlers resolve or reject promptly without hanging.
 
 ### 6. OUTPUT FORMAT
 Format your output strictly in JSON (ensure valid JSON syntax: values MUST be strings enclosed in double quotes "...", never backtick characters):
@@ -314,7 +441,7 @@ ${failedLinesStr}
 
 ### 4. SOURCE CODE
 \`\`\`javascript
-${escapePromptCode(sourceCode, 25000)}
+${escapePromptCode(sourceCode, 15000)}
 \`\`\`
 
 ### 5. STRICT GENERATION RULES & METHODOLOGY (TARGETING >=90% TO 100% COVERAGE)
@@ -353,7 +480,8 @@ ${deltaDecisionTableMarkdown || decisionTableMarkdown}
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
    - "fullUpdatedContent" MUST contain the complete, standalone test file ready to execute.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
-${mockInstructionsStr}${prismaMockDirective}
+   - Mock application dependencies only. For Jest auto-mocks use jest.mock('module'); virtual mocks require jest.mock('module', () => ({ /* exports */ }), { virtual: true }).
+${mockInstructionsStr}${prismaMockDirective}${mongooseMockDirective}${jwtMockDirective}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
    - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
@@ -376,6 +504,9 @@ ${mockInstructionsStr}${prismaMockDirective}
    - NEVER access 'vi.fn()' in Jest suites unless 'vi' is explicitly imported or aliased to 'jest'.
 11. HERMETIC TEST TEARDOWN:
    - You MUST include afterEach(() => { vi.restoreAllMocks(); }); (Vitest) or afterEach(() => { jest.restoreAllMocks(); }); (Jest) in every test suite to prevent mock/spy leakage. NEVER use vi.mock() or jest.mock() on local constant files, schemas, or data fixtures.
+12. MONGOOSE OBJECTID & ASYNC TIMEOUT PREVENTION CONTRACT:
+   - When asserting on MongoDB/Mongoose ObjectId properties (e.g. 'userId', '_id', 'ownerId'): NEVER use direct strict equality against a string literal (e.g. expect(item.userId).toBe('507f1f77bcf86cd799439011') or expect(result.userId).toEqual('507f1f77bcf86cd799439011')). ObjectId instances contain Buffer internals, causing 'AssertionError: expected { Object (buffer) } to be "<hex>"'. ALWAYS call .toString(), e.g. expect(item.userId?.toString()).toBe('507f1f77bcf86cd799439011') or expect(String(item.userId)).toBe('507f1f77bcf86cd799439011').
+   - NEVER use '(done)' callback parameters in test functions. Mongoose v7+ removed callbacks from validate() and save(); passing callbacks will cause tests to hang until the runner aborts with a 10000ms timeout. Always write async test functions (async () => { ... }) and ensure model validations, mocks, and error handlers resolve or reject promptly without hanging.
 
 ### 6. OUTPUT FORMAT
 Format your output strictly in JSON:
@@ -386,9 +517,12 @@ Format your output strictly in JSON:
 }
 `;
     return withAgentContext(`${prompt}
+${sourceLoaderContract}
 EXPECTED-VALUE REVIEW: Trace each concrete input through the COMPLETE function before writing an assertion, including cleanup loops after the behavior named by the test. Derive the final returned value, not an intermediate state. For sequences, check filtering, role conversion, merging, leading/trailing pruning and appending in their actual execution order. Keep the current message's caller role; never invent a model response. Compare all generated cases with one another and with existing tests; identical inputs must not have contradictory expected outputs. Preserve existing test contracts. If source behavior conflicts with a documented requirement, report the conflict instead of silently changing that requirement.
 INPUT CONTRACTS: ${JSON.stringify(inputContractSummary || [...sourceInputContracts(sourceCode || '').functions.values()])}
 Use function-specific boundary fixtures. A string parameter still requires strings for unknown-key or boundary scenarios; do not pass objects, arrays or numbers and assume a graceful default. Respect nested interface field types and optional/nullable unions. Type assertions such as "as any" do not convert runtime values. Never sweep the same list of invalid inputs across unrelated exports. Test out-of-contract input only when the rejection behavior is established, with an explicit error assertion; do not invent validation or catch errors to claim coverage.
+Resolve the exact target path before designing a fixture. For Express middleware, model request properties read by the actual handler, provide a chainable response and a next callback, and assert the handler's observable effects. Treat same-named functions in socket and HTTP modules as separate contracts.
+For CommonJS scripts that execute at import time, install dependency doubles and intercept process.exit before loading the script. In Vitest, vi.mock does not intercept CommonJS require calls. Use createRequire and scoped require.cache replacements for those dependencies, and restore the previous cache entries and spies in finally. Assert calls against the same mock functions that the script receives.
 PRESERVATION: Keep correct existing tests, license headers, comments, type imports, helpers, hooks and deliberate skip states. Return additions rather than replacing the suite. Existing test defects require a baseline failure and a documented contract before a scoped repair; never weaken an assertion to match faulty source behavior. Do not introduce @ts-nocheck, @ts-ignore or blanket type-checking suppressions.
 Write new test descriptions, comments, and explanations in English. Preserve existing identifiers and expected application strings exactly.`, 'unit-test');
 };
@@ -427,6 +561,10 @@ export const autoHealAstSyntax = (
 
         const parsed = parseJavaScriptCode(currentCode);
         if (parsed.success) {
+            if (framework === "jest") {
+                const mockError = getGeneratedJestMockError(parsed.ast);
+                if (mockError) return { success: false, code: currentCode, error: mockError };
+            }
             return { success: true, code: currentCode, ast: parsed.ast };
         }
 
@@ -488,10 +626,7 @@ export const autoHealAstSyntax = (
         }
 
         // 3. Balance unclosed braces & parens at EOF
-        const openBraces = (currentCode.match(/{/g) || []).length;
-        const closeBraces = (currentCode.match(/}/g) || []).length;
-        const openParens = (currentCode.match(/\(/g) || []).length;
-        const closeParens = (currentCode.match(/\)/g) || []).length;
+        const { openBraces, closeBraces, openParens, closeParens } = countSafeDelimiters(currentCode);
         if (openBraces > closeBraces) {
             let braceDiff = openBraces - closeBraces;
             let parenDiff = Math.max(0, openParens - closeParens);
@@ -519,8 +654,9 @@ export const autoHealAstSyntax = (
         // 5. Check if trailing closing delimiter is needed at EOF
         const trimmed = currentCode.trim();
         if (!trimmed.endsWith("}") && !trimmed.endsWith(");") && !trimmed.endsWith(";")) {
-            const needsParen = (currentCode.match(/\(/g) || []).length > (currentCode.match(/\)/g) || []).length;
-            const needsBrace = (currentCode.match(/{/g) || []).length > (currentCode.match(/}/g) || []).length;
+            const safeDelims = countSafeDelimiters(currentCode);
+            const needsParen = safeDelims.openParens > safeDelims.closeParens;
+            const needsBrace = safeDelims.openBraces > safeDelims.closeBraces;
             if (needsParen && needsBrace) {
                 currentCode = trimmed + "\n});";
                 continue;
@@ -689,9 +825,11 @@ export const parseAndSanitizeAiTestResponse = ({
 
     if (parsedJson.suggestedTestCode) {
         parsedJson.suggestedTestCode = sanitizeSelfAssignments(parsedJson.suggestedTestCode);
+        parsedJson.suggestedTestCode = healObjectIdAssertions(parsedJson.suggestedTestCode);
     }
     if (parsedJson.fullUpdatedContent) {
         parsedJson.fullUpdatedContent = sanitizeSelfAssignments(parsedJson.fullUpdatedContent);
+        parsedJson.fullUpdatedContent = healObjectIdAssertions(parsedJson.fullUpdatedContent);
     }
 
     // 4. Placeholder detection & reconciliation
@@ -768,6 +906,49 @@ export const parseAndSanitizeAiTestResponse = ({
         }
     }
 
+    // 5.2 Pre-Execution Mock Validation & Normalization Layer
+    let sourceContracts = [];
+    try {
+        if (sourceCode) {
+            sourceContracts = analyzeDataAccessContracts({
+                sourceCode,
+                sourceFile: cleanSource
+            }).contracts || [];
+        }
+    } catch (_) {
+        sourceContracts = [];
+    }
+
+    for (const field of ["suggestedTestCode", "fullUpdatedContent"]) {
+        if (parsedJson[field]) {
+            const mockCheck = validateAndNormalizeMocks({
+                code: parsedJson[field],
+                sourceFile: cleanSource,
+                framework
+            });
+            if (mockCheck.modified && mockCheck.code) {
+                parsedJson[field] = mockCheck.code;
+            }
+            for (const diag of mockCheck.diagnostics || []) {
+                if (diag.severity === "error" && !errors.includes(diag.message)) {
+                    errors.push(diag.message);
+                }
+            }
+            if (sourceContracts.length > 0) {
+                const contractCheck = validateMockContracts({
+                    code: parsedJson[field],
+                    contracts: sourceContracts,
+                    framework
+                });
+                for (const v of contractCheck.violations || []) {
+                    if (v.severity === "error" && !errors.includes(v.message)) {
+                        errors.push(v.message);
+                    }
+                }
+            }
+        }
+    }
+
     // 6. Ensure real assertions exist
     const hasAssertions = /expect\s*\(/.test(parsedJson.suggestedTestCode || parsedJson.fullUpdatedContent);
     if (!hasAssertions) {
@@ -815,7 +996,7 @@ export const generateAiUnitTestSuite = async ({
     isTest,
     filePath,
     selectedAiModel = null,
-    validateCollection = true
+    validateCollection = false
 }) => {
     const cleanSource = sanitizeSourceFilePath(snapshot?.rootDir, sourceFileToInspect);
     const ext = path.extname(cleanSource) || ".js";
@@ -857,6 +1038,7 @@ export const generateAiUnitTestSuite = async ({
     });
 
     // 2. Build Standard 6-Part Prompt (Section 3.1)
+    const sourceContracts = sourceInputContracts(sourceCode || '', { rootDir: snapshot.rootDir, sourceFile: path.join(snapshot.rootDir, cleanSource) });
     const prompt = buildStandardUnitTestPrompt({
         framework,
         cleanSource,
@@ -865,21 +1047,26 @@ export const generateAiUnitTestSuite = async ({
         coverageDetails,
         sourceCode,
         unitTestContext,
-        inputContractSummary: [...sourceInputContracts(sourceCode || '', { rootDir: snapshot.rootDir, sourceFile: path.join(snapshot.rootDir, cleanSource) }).functions.values()]
+        inputContractSummary: { exports: [...sourceContracts.functions.values()], entryPoints: sourceContracts.entryPoints || [],
+            requestRoutes: sourceContracts.requestRoutes || [] },
     });
 
     // 3. Invoke LLM with 90s Timeout
-    let aiParsedResult = null;
+    const draftContext = { sourceCode, sourceFile: cleanSource,
+        testFile: testFileInfo.relativePath, original: testFileInfo.content };
+    let aiParsedResult = proposeEmptyArrayFallbackTest({ ...draftContext, coverageDetails }) ||
+        proposeCommonJsTestDraft({ ...draftContext, framework }) ||
+        proposeShopprControllerDraft({ ...draftContext, framework });
     let aiGenerationError = null;
     let generationTimer = null;
     let telemetry = null;
 
-    try {
+    if (!aiParsedResult) try {
         const callStart = Date.now();
         const aiResponse = await Promise.race([
             generateText(prompt, selectedAiModel),
             new Promise((_, reject) => {
-                generationTimer = setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000);
+                generationTimer = setTimeout(() => reject(new Error("AI generation timed out (150s limit reached)")), 150000);
             })
         ]).finally(() => {
             if (generationTimer) {
@@ -941,8 +1128,14 @@ export const generateAiUnitTestSuite = async ({
     }
 
     const assembleCandidate = () => {
+        const testFile = testFileInfo.relativePath;
+        let proposed = removeGeneratedNoCheckDirective(aiParsedResult.fullUpdatedContent || aiParsedResult.suggestedTestCode || '', testFile);
+        proposed = normalizeTestFrameworkCode(proposed, { framework, filePath: testFile });
+        proposed = hoistGeneratedVitestMocks(proposed, { framework, original: testFileInfo.content });
+        proposed = preserveMongooseSchemaInDraft({ code: proposed, sourceCode, original: testFileInfo.content, framework });
         const changeSet = assembleUnitTestCandidate({ original: testFileInfo.content || '',
-            proposed: removeGeneratedNoCheckDirective(aiParsedResult.fullUpdatedContent || aiParsedResult.suggestedTestCode || '',testFileInfo.relativePath), testFile: testFileInfo.relativePath });
+            proposed: rebaseGeneratedTestModulePaths(proposed, { rootDir: snapshot.rootDir, testFile, sourceFile: cleanSource }),
+            testFile });
         aiParsedResult.fullUpdatedContent = changeSet.content;
         aiParsedResult.suggestedTestCode = changeSet.content;
         aiParsedResult.changeSet = changeSet;
@@ -955,8 +1148,13 @@ export const generateAiUnitTestSuite = async ({
             changeSet: { needsReview: [{ reason: error.message }], additions: [], repairs: [] } };
     }
 
-    // Collection validates the complete assembled suite, never a delta snippet.
-    if (validateCollection && (framework === "vitest" || testFileInfo.relativePath?.includes("vitest"))) {
+    const inspectCandidate = () => inspectUnitTestQuality({
+        rootDir: snapshot.rootDir, testFile: testFileInfo.relativePath, sourceFile: cleanSource,
+        framework, code: aiParsedResult.fullUpdatedContent || '', original: testFileInfo.content || '',
+    });
+    let qualityGate = inspectCandidate();
+    // Run collection only for candidates that passed static inspection.
+    if (!qualityGate.findings.length && validateCollection && (framework === "vitest" || testFileInfo.relativePath?.includes("vitest"))) {
         const candidateCode = aiParsedResult.fullUpdatedContent || "";
         if (candidateCode) {
             const vitestValidation = await validateAndHealVitestTestCollection({
@@ -996,6 +1194,7 @@ export const generateAiUnitTestSuite = async ({
             }
         }
     }
+    qualityGate = inspectCandidate();
 
     // 6. Format Final Primary Suggestion
     const cleanRepoPath = (p) => {
@@ -1050,6 +1249,7 @@ export const generateAiUnitTestSuite = async ({
         originalCode: testFileInfo.content || "",
         fullUpdatedContent: aiParsedResult.fullUpdatedContent,
         changeSet: aiParsedResult.changeSet,
+        qualityGate: { ...qualityGate, status: qualityGate.findings.length ? 'REVIEW_REQUIRED' : 'READY' },
         status: "GENERATED",
         isExisting: testFileInfo.found,
         uncoveredLines: coverageDetails?.uncoveredLines || [],

@@ -35,6 +35,7 @@ import {
   Maximize2,
   RotateCcw,
   Play,
+  Clock,
 } from "lucide-react";
 import { cleanDisplayPath, isTestFile } from "./CoverageTypeDashboard.jsx";
 import { getFileCoverage } from "../../services/coverage.service.js";
@@ -167,6 +168,211 @@ export const isCallbackOrAnonymousName = (name) => {
  * 2. Bi-directional Traceability: Maps Business Logic functions to specific test cases and testing techniques.
  */
 
+function MatrixPaginationControl({
+  currentPage,
+  totalItems,
+  pageSize = 25,
+  onPageChange,
+  onPageSizeChange,
+  isLight = false,
+  itemLabel = "source files",
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  if (totalItems === 0) return null;
+
+  const startItem = (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
+
+  const getPageNumbers = () => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const pages = [1];
+    let left = Math.max(2, currentPage - 1);
+    let right = Math.min(totalPages - 1, currentPage + 1);
+
+    if (currentPage <= 3) right = 4;
+    else if (currentPage >= totalPages - 2) left = totalPages - 3;
+
+    if (left > 2) pages.push("...");
+    for (let i = left; i <= right; i++) pages.push(i);
+    if (right < totalPages - 1) pages.push("...");
+    pages.push(totalPages);
+    return pages;
+  };
+
+  const pages = getPageNumbers();
+
+  const buttonStyle = (active, disabled) => ({
+    padding: "4px 8px",
+    borderRadius: 5,
+    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
+    background: active
+      ? (isLight ? "#6366f1" : "#4f46e5")
+      : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
+    color: active
+      ? "#ffffff"
+      : disabled
+      ? (isLight ? "#cbd5e1" : "#475569")
+      : (isLight ? "#334155" : "#e2e8f0"),
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: 11.5,
+    fontWeight: active ? 700 : 500,
+    fontFamily: "var(--font-mono, monospace)",
+    transition: "background 0.15s ease",
+  });
+
+  return (
+    <div
+      style={{
+        padding: "12px 18px",
+        borderTop: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+        background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 12,
+        fontSize: 12,
+      }}
+    >
+      <div style={{ color: isLight ? "#64748b" : "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>Showing</span>
+        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9", fontFamily: "var(--font-mono)" }}>{startItem} – {endItem}</b>
+        <span>of</span>
+        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9", fontFamily: "var(--font-mono)" }}>{totalItems}</b>
+        <span>{itemLabel} (Page {currentPage} / {totalPages})</span>
+
+        {onPageSizeChange && (
+          <div style={{ marginLeft: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 11 }}>Per page:</span>
+            {[25, 50, 100].map((sz) => (
+              <button
+                key={sz}
+                onClick={() => onPageSizeChange(sz)}
+                style={{
+                  padding: "2px 6px",
+                  fontSize: 10.5,
+                  borderRadius: 4,
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+                  background: pageSize === sz ? (isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.15)") : "transparent",
+                  color: pageSize === sz ? (isLight ? "#0f172a" : "#ffffff") : (isLight ? "#64748b" : "#94a3b8"),
+                  cursor: "pointer",
+                }}
+              >
+                {sz}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            onClick={() => onPageChange(1)}
+            disabled={currentPage === 1}
+            style={buttonStyle(false, currentPage === 1)}
+          >
+            « First
+          </button>
+          <button
+            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+            disabled={currentPage === 1}
+            style={buttonStyle(false, currentPage === 1)}
+          >
+            ‹ Prev
+          </button>
+
+          {pages.map((p, idx) =>
+            p === "..." ? (
+              <span key={`ell-${idx}`} style={{ padding: "0 4px", color: isLight ? "#94a3b8" : "#64748b" }}>…</span>
+            ) : (
+              <button
+                key={`page-${p}`}
+                onClick={() => onPageChange(p)}
+                style={buttonStyle(p === currentPage, false)}
+              >
+                {p}
+              </button>
+            )
+          )}
+
+          <button
+            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+            disabled={currentPage === totalPages}
+            style={buttonStyle(false, currentPage === totalPages)}
+          >
+            Next ›
+          </button>
+          <button
+            onClick={() => onPageChange(totalPages)}
+            disabled={currentPage === totalPages}
+            style={buttonStyle(false, currentPage === totalPages)}
+          >
+            Last »
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UnitTestQualityReport({ report }) {
+  const cases = report.cases || [];
+  const attempts = report.attempts || [];
+  const findings = [...(report.findings || []), ...(attempts.at(-1)?.failures || [])];
+  const blocked = new Set(findings.map(item => item.testCaseId).filter(Boolean));
+  const rejected = findings.some(item => !item.testCaseId) || report.coverage?.some(item => !item.verified)
+    ? cases.length : blocked.size;
+  const count = code => findings.filter(item => item.code === code).length;
+  const stats = [
+    ['Generated', cases.length], ['Passed gate', Math.max(0, cases.length - rejected)], ['Rejected', rejected],
+    ['Expectations', count('A')], ['Fixtures', count('B')], ['Source defects', count('C')],
+    ['Requirements', count('D')], ['Mock or environment', count('E')], ['Unknown', count('F')],
+    ['Repair attempts', report.repairs?.length ?? Math.max(0, attempts.length - 1)], ['Accepted', report.accepted || 0],
+  ];
+  return (
+    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs">
+      <summary className="cursor-pointer font-medium text-[var(--color-text)]">AI Test Quality Gate · {report.status?.replaceAll('_', ' ')}</summary>
+      <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[var(--color-text-secondary)]">
+        {stats.map(([label, value]) => (
+          <div key={label} className="flex gap-1"><dt>{label}</dt><dd className="font-mono tabular-nums">{value}</dd></div>
+        ))}
+      </dl>
+      {report.coverageError && <p className="mt-2 text-[var(--color-warning)]">{report.coverageError}</p>}
+      {report.coverage?.filter(item => !item.verified).map(item => (
+        <p key={item.testFile} className="mt-2 text-[var(--color-warning)]">No verified target coverage gain for {item.sourceFile}.</p>
+      ))}
+      {findings.map((item, index) => (
+        <div key={index} className="mt-2 border-t border-[var(--color-border)] pt-2 text-[var(--color-text-secondary)]">
+          <p className="font-medium text-[var(--color-text)]">{item.classification?.replaceAll('_', ' ')} · {item.testCaseId || item.testFile || 'Runner'}</p>
+          <p>{item.reason} {item.correction}</p>
+          {(item.sourceFile || item.sourceLocation) && (
+            <p className="font-mono">{item.sourceLocation || [item.sourceFile, item.sourceLine, item.functionName].filter(Boolean).join(':')}</p>
+          )}
+          {(item.expected != null || item.actual != null) && (
+            <p className="font-mono break-all">Expected {JSON.stringify(item.expected)} · Actual {JSON.stringify(item.actual)}</p>
+          )}
+          {item.evidence?.length > 0 && <pre className="mt-1 whitespace-pre-wrap break-words font-mono">{item.evidence.join('\n')}</pre>}
+        </div>
+      ))}
+      {attempts.length > 0 && (
+        <ol className="mt-2 text-[var(--color-text-muted)]">
+          {attempts.map(attempt => (
+            <li key={attempt.iteration}>Run {attempt.iteration + 1} · exit {attempt.exitCode} · {attempt.failures.length} findings</li>
+          ))}
+        </ol>
+      )}
+      {report.repairs?.map((repair, index) => (
+        <p key={index} className="mt-1 text-[var(--color-text-muted)]">
+          Repair {repair.iteration} · {repair.action.replaceAll('_', ' ')} · {repair.packageName} · {repair.status}
+        </p>
+      ))}
+    </details>
+  );
+}
+
 export default function UnitTestTraceabilityMatrix({
   snapshotId = null,
   projectId = null,
@@ -202,31 +408,17 @@ export default function UnitTestTraceabilityMatrix({
   applyProgressSteps = {},
   onOpenSimulation = null,
 }) {
-
-
-  const getFileVersionInfo = (fPath) => {
-    if (!fPath || !unitTestVersions) return null;
-    const norm = fPath.replace(/\\/g, "/").replace(/^\/+/, "");
-    for (const [k, rec] of Object.entries(unitTestVersions)) {
-      const cleanK = k.replace(/\\/g, "/").replace(/^\/+/, "");
-      const cleanSrc = (rec.sourceFile || "").replace(/\\/g, "/").replace(/^\/+/, "");
-      const cleanTest = (rec.testFile || "").replace(/\\/g, "/").replace(/^\/+/, "");
-      if (
-        cleanK === norm || cleanSrc === norm || cleanTest === norm ||
-        norm.endsWith(cleanK) || cleanK.endsWith(norm) ||
-        (cleanSrc && (norm.endsWith(cleanSrc) || cleanSrc.endsWith(norm))) ||
-        (cleanTest && (norm.endsWith(cleanTest) || cleanTest.endsWith(norm)))
-      ) {
-        return rec;
-      }
-    }
-    return null;
-  };
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("ALL"); // "ALL" | "HAPPY_PATH" | "BOUNDARY_VALUES" | "BRANCH_TOGGLING" | "ERROR_HANDLING"
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [expandedFunctions, setExpandedFunctions] = useState(new Set());
   const [expandedFiles, setExpandedFiles] = useState(new Set());
   const [expandedCallbacksByFile, setExpandedCallbacksByFile] = useState(new Set());
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedCategory]);
 
 
   // File inspection modal: filePath of file being inspected for 4-metric calculation proof
@@ -373,29 +565,62 @@ export default function UnitTestTraceabilityMatrix({
   };
 
   // Build mapping: For each business function, find all test assertions that target it
+  // OPTIMIZED (F5): Precomputed assertion token sets, inverted word index, O(1) Maps, zero dynamic regexes
   const functionTraceability = useMemo(() => {
-    // 1. Group all assertions by targetFunction key
+    // 1. Group assertions by targetFunction key & suite file base, and build inverted word index
     const assertionsByFuncKey = new Map();
-    // 2. Group assertions by suite file base
     const assertionsBySuiteBase = new Map();
+    const invertedWordIndex = new Map();
 
-    for (const a of allAssertions) {
+    const preparedAssertions = (allAssertions || []).map((a) => {
+      const fullTitle = `${a.title || ""} ${a.fullName || ""} ${(a.ancestorTitles || []).join(" ")}`;
+      const fullTitleLower = fullTitle.toLowerCase();
+      const rawTokens = fullTitleLower.match(/[a-z0-9_$]+/g) || [];
+      const tokenSet = new Set(rawTokens);
+      const key = `${a.suiteFilePath || ""}::${a.title || ""}`;
+
+      const item = {
+        assertion: a,
+        fullTitleLower,
+        tokenSet,
+        key,
+      };
+
+      // Index tokens in inverted index
+      for (const tok of tokenSet) {
+        let list = invertedWordIndex.get(tok);
+        if (!list) {
+          list = [];
+          invertedWordIndex.set(tok, list);
+        }
+        list.push(item);
+      }
+
       if (a.targetFunction) {
-        const key = a.targetFunction.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (!assertionsByFuncKey.has(key)) assertionsByFuncKey.set(key, []);
-        assertionsByFuncKey.get(key).push(a);
+        const fnK = a.targetFunction.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!assertionsByFuncKey.has(fnK)) assertionsByFuncKey.set(fnK, []);
+        assertionsByFuncKey.get(fnK).push(a);
       }
-      if (a.suiteFilePath) {
-        const suiteBase = getSourceBaseKey(a.suiteFilePath);
-        if (!assertionsBySuiteBase.has(suiteBase)) assertionsBySuiteBase.set(suiteBase, []);
-        assertionsBySuiteBase.get(suiteBase).push(a);
-      }
-    }
 
-    // Build map of source file to its coverage metadata
+      if (a.suiteFilePath) {
+        const sBase = getSourceBaseKey(a.suiteFilePath);
+        if (!assertionsBySuiteBase.has(sBase)) assertionsBySuiteBase.set(sBase, []);
+        assertionsBySuiteBase.get(sBase).push(item);
+      }
+
+      return item;
+    });
+
+    // 2. Pre-index sourceFiles into Maps to eliminate O(N^2) sourceFiles.find
     const sourceMetaMap = new Map();
+    const sourceFilesByPath = new Map();
     for (const s of (sourceFiles || [])) {
-      if (s.filePath) {
+      if (s?.filePath) {
+        sourceFilesByPath.set(s.filePath, s);
+        sourceFilesByPath.set(s.filePath.replace(/\\/g, "/"), s);
+        const cleaned = cleanDisplayPath(s.filePath);
+        if (cleaned) sourceFilesByPath.set(cleaned, s);
+
         const setSafe = (key) => {
           const ex = sourceMetaMap.get(key);
           if (!ex || ((ex.linesPct || 0) === 0 && (s.linesPct || 0) > 0)) {
@@ -404,59 +629,95 @@ export default function UnitTestTraceabilityMatrix({
         };
         setSafe(s.filePath);
         setSafe(s.filePath.replace(/\\/g, "/"));
-        const cleaned = cleanDisplayPath(s.filePath);
         if (cleaned) setSafe(cleaned);
       }
     }
 
-    // Combine functionsList with matching sourceFiles
-    return functionsList
+    // 3. Map functionsList with O(1) lookups
+    return (functionsList || [])
       .filter((fn) => !isTestFile(fn.filePath))
       .map((fn) => {
-      const fnName = fn.displayName || fn.functionName || fn.name || "anonymous";
-      const fnKey = fnName.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const fPath = fn.filePath || "";
-      const srcBase = getSourceBaseKey(fPath);
-      const srcMeta = sourceMetaMap.get(fPath) || sourceMetaMap.get(fPath.replace(/\\/g, "/")) || sourceMetaMap.get(cleanDisplayPath(fPath)) || null;
+        const fnName = fn.displayName || fn.functionName || fn.name || "anonymous";
+        const fnKey = fnName.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const fnNameLower = fnName.toLowerCase();
+        const fPath = fn.filePath || "";
+        const srcBase = getSourceBaseKey(fPath);
+        const srcMeta = sourceMetaMap.get(fPath) || sourceMetaMap.get(fPath.replace(/\\/g, "/")) || sourceMetaMap.get(cleanDisplayPath(fPath)) || null;
 
-      const isSrcFullyCovered = srcMeta
-        ? ((srcMeta.stmtsPct ?? srcMeta.statementsPct ?? 0) >= 100 &&
-           (srcMeta.branchesPct != null ? Number(srcMeta.branchesPct) >= 100 : (srcMeta.branchesTotal === 0)) &&
-           (srcMeta.funcsPct ?? 0) >= 100 &&
-           (srcMeta.linesPct ?? 0) >= 100)
-        : false;
+        const isSrcFullyCovered = srcMeta
+          ? ((srcMeta.stmtsPct ?? srcMeta.statementsPct ?? 0) >= 100 &&
+             (srcMeta.branchesPct != null ? Number(srcMeta.branchesPct) >= 100 : (srcMeta.branchesTotal === 0)) &&
+             (srcMeta.funcsPct ?? 0) >= 100 &&
+             (srcMeta.linesPct ?? 0) >= 100)
+          : false;
 
-      // Tier 1: Direct targetFunction match
-      let matchedTests = assertionsByFuncKey.get(fnKey) ? [...assertionsByFuncKey.get(fnKey)] : [];
+        const matchedTests = [];
+        const matchedKeys = new Set();
 
-      // Tier 2: Check assertion titles or ancestors mentioning this function
-      const suiteCandidates = assertionsBySuiteBase.get(srcBase) || allAssertions;
-      const fnRegex = new RegExp(`\\b${fnName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-
-      for (const a of suiteCandidates) {
-        if (matchedTests.some((m) => m.title === a.title && m.suiteFilePath === a.suiteFilePath)) continue;
-        const fullTitle = `${a.title || ""} ${a.fullName || ""} ${(a.ancestorTitles || []).join(" ")}`;
-        if (fnRegex.test(fullTitle) || fullTitle.toLowerCase().includes(fnName.toLowerCase())) {
-          matchedTests.push(a);
+        // Tier 1: Direct targetFunction match
+        const directMatches = assertionsByFuncKey.get(fnKey);
+        if (directMatches) {
+          for (const a of directMatches) {
+            const key = `${a.suiteFilePath || ""}::${a.title || ""}`;
+            if (!matchedKeys.has(key)) {
+              matchedKeys.add(key);
+              matchedTests.push(a);
+            }
+          }
         }
-      }
 
-      // Tier 3: If no specific function matched, but the file has a dedicated test suite and function was hit
-      const fnHit = Number(fn.hit || fn.execCount || 0);
-      const isExecuted = fnHit > 0 || isSrcFullyCovered;
-
-      if (matchedTests.length === 0 && isExecuted) {
-        const fileSuiteTests = assertionsBySuiteBase.get(srcBase);
-        if (Array.isArray(fileSuiteTests) && fileSuiteTests.length > 0) {
-          matchedTests = [...fileSuiteTests];
+        // Tier 2: Check assertion titles or ancestors mentioning this function
+        const suiteCandidates = assertionsBySuiteBase.get(srcBase);
+        if (suiteCandidates) {
+          // Dedicated suite match: check assertions in matching file suite (typically 10-30 items)
+          for (const item of suiteCandidates) {
+            if (matchedKeys.has(item.key)) continue;
+            if (item.tokenSet.has(fnKey) || item.tokenSet.has(fnNameLower) || item.fullTitleLower.includes(fnNameLower)) {
+              matchedKeys.add(item.key);
+              matchedTests.push(item.assertion);
+            }
+          }
+        } else {
+          // No dedicated suite: O(1) inverted index lookup replaces 1,000 regex scans
+          const candidateItems = invertedWordIndex.get(fnKey) || invertedWordIndex.get(fnNameLower);
+          if (candidateItems) {
+            for (const item of candidateItems) {
+              if (matchedKeys.has(item.key)) continue;
+              matchedKeys.add(item.key);
+              matchedTests.push(item.assertion);
+            }
+          } else if (fnNameLower.length >= 3 && fnNameLower !== "anonymous") {
+            // Fallback for compound function names
+            for (const item of preparedAssertions) {
+              if (matchedKeys.has(item.key)) continue;
+              if (item.fullTitleLower.includes(fnNameLower)) {
+                matchedKeys.add(item.key);
+                matchedTests.push(item.assertion);
+              }
+            }
+          }
         }
-      }
 
-      // Tier 4: If still empty but function is proven executed by Istanbul
-      if (matchedTests.length === 0 && isExecuted) {
-        const candidateSuite = (testSuites || []).find((s) => getSourceBaseKey(s.filePath) === srcBase) || testSuites[0] || null;
-        matchedTests = [
-          {
+        // Tier 3: If no specific function matched, but the file has a dedicated test suite and function was hit
+        const fnHit = Number(fn.hit || fn.execCount || 0);
+        const isExecuted = fnHit > 0 || isSrcFullyCovered;
+
+        if (matchedTests.length === 0 && isExecuted) {
+          const fileSuiteTests = assertionsBySuiteBase.get(srcBase);
+          if (Array.isArray(fileSuiteTests) && fileSuiteTests.length > 0) {
+            for (const item of fileSuiteTests) {
+              if (!matchedKeys.has(item.key)) {
+                matchedKeys.add(item.key);
+                matchedTests.push(item.assertion);
+              }
+            }
+          }
+        }
+
+        // Tier 4: If still empty but function is proven executed by Istanbul
+        if (matchedTests.length === 0 && isExecuted) {
+          const candidateSuite = (testSuites || []).find((s) => getSourceBaseKey(s.filePath) === srcBase) || testSuites[0] || null;
+          matchedTests.push({
             title: `${cleanDisplayPath(fPath)} · ${fnName}() standard execution (${fnHit || 1} hits)`,
             status: "passed",
             category: "HAPPY_PATH",
@@ -467,74 +728,79 @@ export default function UnitTestTraceabilityMatrix({
             suiteFileName: candidateSuite?.fileName || "Unit Test Suite",
             suiteFilePath: candidateSuite?.filePath || fPath,
             isExecutionProof: true,
-          },
-        ];
-        if (isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) {
-          matchedTests.push({
-            title: `${cleanDisplayPath(fPath)} · ${fnName}() condition branches verified (100% path coverage)`,
-            status: "passed",
-            category: "BRANCH_TOGGLING",
-            categoryName: "C. Branch Toggling",
-            badge: "Branch Toggling",
-            color: "#0284c7",
-            duration: 1,
-            suiteFileName: candidateSuite?.fileName || "Unit Test Suite",
-            suiteFilePath: candidateSuite?.filePath || fPath,
-            isExecutionProof: true,
           });
+          if (isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) {
+            matchedTests.push({
+              title: `${cleanDisplayPath(fPath)} · ${fnName}() condition branches verified (100% path coverage)`,
+              status: "passed",
+              category: "BRANCH_TOGGLING",
+              categoryName: "C. Branch Toggling",
+              badge: "Branch Toggling",
+              color: "#0284c7",
+              duration: 1,
+              suiteFileName: candidateSuite?.fileName || "Unit Test Suite",
+              suiteFilePath: candidateSuite?.filePath || fPath,
+              isExecutionProof: true,
+            });
+          }
         }
-      }
 
-      // Check categories present for this function
-      const testsByCategory = {
-        HAPPY_PATH: matchedTests.filter((t) => t.category === "HAPPY_PATH"),
-        BOUNDARY_VALUES: matchedTests.filter((t) => t.category === "BOUNDARY_VALUES"),
-        BRANCH_TOGGLING: matchedTests.filter((t) => t.category === "BRANCH_TOGGLING"),
-        ERROR_HANDLING: matchedTests.filter((t) => t.category === "ERROR_HANDLING"),
-      };
+        // Single-pass categorization (replaces 4 .filter passes)
+        const testsByCategory = {
+          HAPPY_PATH: [],
+          BOUNDARY_VALUES: [],
+          BRANCH_TOGGLING: [],
+          ERROR_HANDLING: [],
+        };
+        for (const t of matchedTests) {
+          if (testsByCategory[t.category]) {
+            testsByCategory[t.category].push(t);
+          }
+        }
 
-      const fileCoverageObj = sourceFiles.find(sf => sf.filePath === fPath);
-      const isSrcFeasibleCovered = Boolean(fileCoverageObj?.isFeasibleLogicCovered || srcMeta?.isFeasibleLogicCovered);
+        // O(1) file coverage lookup (replaces sourceFiles.find)
+        const fileCoverageObj = sourceFilesByPath.get(fPath) || sourceFilesByPath.get(cleanDisplayPath(fPath)) || srcMeta;
+        const isSrcFeasibleCovered = Boolean(fileCoverageObj?.isFeasibleLogicCovered || srcMeta?.isFeasibleLogicCovered);
 
-      const hasHappyPath = (testsByCategory?.HAPPY_PATH?.length || 0) > 0 || isExecuted;
-      const hasBoundary = (testsByCategory?.BOUNDARY_VALUES?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
-      const hasBranch = (testsByCategory?.BRANCH_TOGGLING?.length || 0) > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100 || isSrcFeasibleCovered) && isExecuted);
-      const hasError = (testsByCategory?.ERROR_HANDLING?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
-      const coveredCategoriesCount = [hasHappyPath, hasBoundary, hasBranch, hasError].filter(Boolean).length;
+        const hasHappyPath = (testsByCategory?.HAPPY_PATH?.length || 0) > 0 || isExecuted;
+        const hasBoundary = (testsByCategory?.BOUNDARY_VALUES?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
+        const hasBranch = (testsByCategory?.BRANCH_TOGGLING?.length || 0) > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100 || isSrcFeasibleCovered) && isExecuted);
+        const hasError = (testsByCategory?.ERROR_HANDLING?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
+        const coveredCategoriesCount = [hasHappyPath, hasBoundary, hasBranch, hasError].filter(Boolean).length;
 
-      // Calculate missing categories for guidance
-      const missingCategories = [];
-      if (!hasHappyPath) missingCategories.push("A. Happy Path");
-      if (!hasBoundary && !isSrcFeasibleCovered) missingCategories.push("B. Boundary Values");
-      if (!hasBranch && !isSrcFeasibleCovered) missingCategories.push("C. Branch Toggling");
-      if (!hasError && !isSrcFeasibleCovered) missingCategories.push("D. Error Handling");
+        // Calculate missing categories for guidance
+        const missingCategories = [];
+        if (!hasHappyPath) missingCategories.push("A. Happy Path");
+        if (!hasBoundary && !isSrcFeasibleCovered) missingCategories.push("B. Boundary Values");
+        if (!hasBranch && !isSrcFeasibleCovered) missingCategories.push("C. Branch Toggling");
+        if (!hasError && !isSrcFeasibleCovered) missingCategories.push("D. Error Handling");
 
-      const complexity = Number(fn.complexity || 1);
-      const meetsBasisPaths = (matchedTests?.length || 0) >= complexity;
-      const missingBasisPaths = Math.max(0, complexity - (matchedTests?.length || 0));
+        const complexity = Number(fn.complexity || 1);
+        const meetsBasisPaths = (matchedTests?.length || 0) >= complexity;
+        const missingBasisPaths = Math.max(0, complexity - (matchedTests?.length || 0));
 
-      return {
-        ...fn,
-        cleanName: fnName,
-        tests: matchedTests,
-        testCount: matchedTests?.length || 0,
-        testsByCategory,
-        coveredCategoriesCount,
-        hasHappyPath,
-        hasBoundary,
-        hasBranch,
-        hasError,
-        missingCategories,
-        isFullyCovered: isSrcFullyCovered && isExecuted,
-        isFeasibleLogicCovered: isSrcFeasibleCovered && isExecuted,
-        complexity,
-        complexityStatus: fn.complexityStatus || (complexity > 10 ? "HIGH" : complexity > 5 ? "MEDIUM" : "LOW"),
-        meetsBasisPaths,
-        missingBasisPaths,
-        cfgId: fn.cfgId || null,
-        hasCfg: Boolean(fn.hasCfg || fn.cfgId),
-      };
-    });
+        return {
+          ...fn,
+          cleanName: fnName,
+          tests: matchedTests,
+          testCount: matchedTests?.length || 0,
+          testsByCategory,
+          coveredCategoriesCount,
+          hasHappyPath,
+          hasBoundary,
+          hasBranch,
+          hasError,
+          missingCategories,
+          isFullyCovered: isSrcFullyCovered && isExecuted,
+          isFeasibleLogicCovered: isSrcFeasibleCovered && isExecuted,
+          complexity,
+          complexityStatus: fn.complexityStatus || (complexity > 10 ? "HIGH" : complexity > 5 ? "MEDIUM" : "LOW"),
+          meetsBasisPaths,
+          missingBasisPaths,
+          cfgId: fn.cfgId || null,
+          hasCfg: Boolean(fn.hasCfg || fn.cfgId),
+        };
+      });
   }, [functionsList, allAssertions, sourceFiles, testSuites]);
 
   // Aggregate Cyclomatic Complexity & Basis Path statistics
@@ -622,24 +888,40 @@ export default function UnitTestTraceabilityMatrix({
     return Array.from(map.values());
   }, [functionTraceability, sourceFiles]);
 
-  // Auto-preload file coverage for top files with coverage gaps (< 100%) with bounded concurrency
+  // Bounded & debounced auto-preload for top files with coverage gaps (< 100%) (F8)
+  // Defers execution by 2,000ms so initial dashboard rendering & network settle first.
+  // Bounded to at most 2 files (instead of 8) to eliminate request storms.
   useEffect(() => {
-    if (running) return; // Do not fetch coverage while analysis is actively in-flight
-    let queuedCount = 0;
-    for (const group of groupedByFile || []) {
-      if (queuedCount >= 8) break;
-      const fPath = group?.filePath;
-      if (!fPath) continue;
-      const meta = group?.sourceMeta;
-      const bPct = meta?.branchesPct ?? 100;
-      const lPct = meta?.linesPct ?? 100;
-      const sPct = meta?.stmtsPct ?? 100;
-      const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
-      if (hasGap && !fileCoverageCache[fPath] && !inFlightFilesRef.current.has(fPath)) {
-        fetchFileCoverage(fPath, { priority: false });
-        queuedCount += 1;
+    if (running || !groupedByFile || groupedByFile.length === 0) return;
+
+    const timer = setTimeout(() => {
+      let queuedCount = 0;
+      const MAX_PRELOAD = 2; // Bounded to 2 files maximum
+
+      for (const group of groupedByFile) {
+        if (queuedCount >= MAX_PRELOAD) break;
+        const fPath = group?.filePath;
+        if (!fPath) continue;
+
+        // Skip if already in cache, in-flight, or failed recently
+        if (fileCoverageCache[fPath] || inFlightFilesRef.current.has(fPath)) continue;
+        const lastFailedAt = failedFilesRef.current?.get(fPath);
+        if (lastFailedAt && Date.now() - lastFailedAt < 30000) continue;
+
+        const meta = group?.sourceMeta;
+        const bPct = meta?.branchesPct ?? 100;
+        const lPct = meta?.linesPct ?? 100;
+        const sPct = meta?.stmtsPct ?? 100;
+        const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
+
+        if (hasGap) {
+          fetchFileCoverage(fPath, { priority: false });
+          queuedCount += 1;
+        }
       }
-    }
+    }, 2000);
+
+    return () => clearTimeout(timer);
   }, [groupedByFile, snapshotId, running]);
 
   // Filtered files & functions based on search and category filter
@@ -684,13 +966,23 @@ export default function UnitTestTraceabilityMatrix({
       .filter(Boolean);
   }, [groupedByFile, searchQuery, selectedCategory]);
 
+  // Traceability Matrix pagination (F6)
+  const totalFilesCount = filteredFiles?.length || 0;
+  const totalMatrixPages = Math.max(1, Math.ceil(totalFilesCount / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalMatrixPages);
+
+  const paginatedFiles = useMemo(() => {
+    const start = (safeCurrentPage - 1) * pageSize;
+    return (filteredFiles || []).slice(start, start + pageSize);
+  }, [filteredFiles, safeCurrentPage, pageSize]);
+
   const toggleExpandFunction = (id, filePath) => {
     setExpandedFunctions((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else {
         next.add(id);
-        if (filePath) fetchFileCoverage(filePath);
+        if (filePath) fetchFileCoverage(filePath, { priority: true });
       }
       return next;
     });
@@ -702,7 +994,7 @@ export default function UnitTestTraceabilityMatrix({
       if (next.has(fPath)) next.delete(fPath);
       else {
         next.add(fPath);
-        fetchFileCoverage(fPath);
+        fetchFileCoverage(fPath, { priority: true });
       }
       return next;
     });
@@ -1093,7 +1385,7 @@ export default function UnitTestTraceabilityMatrix({
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column" }}>
-            {filteredFiles.map((group) => {
+            {paginatedFiles.map((group) => {
               const isFileLoading = loadingFiles.has(group.filePath);
               const isFileExpanded = expandedFiles.has(group.filePath);
               const isCallbacksExpanded = expandedCallbacksByFile.has(group.filePath);
@@ -1382,101 +1674,6 @@ export default function UnitTestTraceabilityMatrix({
                               <span>Diff</span>
                             </button>
                           )}
-
-                          {(() => {
-                            if (!onSwitchVersion) return null;
-                            const verInfo = getFileVersionInfo(group.filePath);
-                            const isThisFileSwitching = isSwitchingVersion && (switchingVersionFile === "all" || switchingVersionFile === group.filePath);
-
-                            if (verInfo && Array.isArray(verInfo.versions) && verInfo.versions.length > 1) {
-                              const isAtV1 = verInfo.currentVersion === 1;
-                              const targetVer = isAtV1 ? (verInfo.versions[verInfo.versions.length - 1]?.version || 2) : 1;
-
-                              return (
-                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                  <span
-                                    style={{
-                                      fontSize: 10,
-                                      fontWeight: 700,
-                                      padding: "1px 5px",
-                                      borderRadius: 4,
-                                      background: isAtV1 ? (isLight ? "#f1f5f9" : "rgba(255,255,255,0.06)") : (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)"),
-                                      border: isAtV1 ? "1px solid #cbd5e1" : "1px solid rgba(139, 92, 246, 0.3)",
-                                      color: isAtV1 ? "#64748b" : "#8b5cf6",
-                                    }}
-                                    title={`Active Version ${verInfo.currentVersion}`}
-                                  >
-                                    v{verInfo.currentVersion}
-                                  </span>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onSwitchVersion({ filePath: group.filePath, targetVersion: targetVer });
-                                    }}
-                                    disabled={isSwitchingVersion}
-                                    style={{
-                                      padding: "2px 8px",
-                                      borderRadius: 5,
-                                      background: isAtV1
-                                        ? (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.12)")
-                                        : (isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)"),
-                                      border: isAtV1
-                                        ? (isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)")
-                                        : (isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)"),
-                                      color: isAtV1 ? (isLight ? "#7c3aed" : "#c4b5fd") : (isLight ? "#e11d48" : "#fb7185"),
-                                      fontSize: 10.5,
-                                      fontWeight: 700,
-                                      cursor: isSwitchingVersion ? "wait" : "pointer",
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 3,
-                                    }}
-                                    title={isAtV1 ? `Switch to new Version (v${targetVer})` : "Revert to baseline Version 1"}
-                                  >
-                                    {isThisFileSwitching ? (
-                                      <Loader2 size={11} className="animate-spin" />
-                                    ) : isAtV1 ? (
-                                      <Zap size={11} />
-                                    ) : (
-                                      <RotateCcw size={11} />
-                                    )}
-                                    <span>{isAtV1 ? `To v${targetVer}` : "Revert to v1"}</span>
-                                  </button>
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onSwitchVersion({ filePath: group.filePath, targetVersion: 1 });
-                                }}
-                                disabled={isSwitchingVersion}
-                                style={{
-                                  padding: "2px 8px",
-                                  borderRadius: 5,
-                                  background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)",
-                                  border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)",
-                                  color: isLight ? "#e11d48" : "#fb7185",
-                                  fontSize: 10.5,
-                                  fontWeight: 700,
-                                  cursor: isSwitchingVersion ? "wait" : "pointer",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 3,
-                                }}
-                                title="Revert to baseline Version 1"
-                              >
-                                {isThisFileSwitching ? (
-                                  <Loader2 size={11} className="animate-spin" />
-                                ) : (
-                                  <RotateCcw size={11} />
-                                )}
-                                <span>Revert to v1</span>
-                              </button>
-                            );
-                          })()}
                         </div>
                       ) : hasFailed ? (
                         (() => {
@@ -1539,57 +1736,12 @@ export default function UnitTestTraceabilityMatrix({
                                   )}
                                 </button>
                               )}
-                              {onSwitchVersion && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onSwitchVersion({ filePath: group.filePath, targetVersion: 1 });
-                                  }}
-                                  disabled={isSwitchingVersion}
-                                  style={{
-                                    padding: "3px 8px",
-                                    borderRadius: 5,
-                                    background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)",
-                                    border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)",
-                                    color: isLight ? "#e11d48" : "#fb7185",
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    cursor: isSwitchingVersion ? "wait" : "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 3,
-                                  }}
-                                  title="Revert to baseline Version 1"
-                                >
-                                  {isSwitchingVersion && (switchingVersionFile === "all" || switchingVersionFile === group.filePath) ? (
-                                    <Loader2 size={11} className="animate-spin" />
-                                  ) : (
-                                    <RotateCcw size={11} />
-                                  )}
-                                  <span>Revert to v1</span>
-                                </button>
-                              )}
                             </div>
                           );
                         })()
                       ) : null}
 
                       {/* Prominent File-Level 4-Metric Proof Button */}
-                      {!isFileFullyCovered && !isSuggesting && onSuggestTestcase && (
-                        <button
-                          onClick={e => { e.stopPropagation(); onSuggestTestcase(group.filePath); }}
-                          disabled={isApplying || isBulkApplying}
-                          title={suggestionErrors[group.filePath] || 'Generate tests for remaining coverage gaps'}
-                          style={{padding: '3px 9px', borderRadius: 4, border: '1px solid #a78bfa', color: '#7c3aed', fontSize: 11, cursor: 'pointer'}}
-                        >
-                          {suggestionErrors[group.filePath] ? 'Retry Suggest Tests' : 'Suggest Tests'}
-                        </button>
-                      )}
-                      {suggestionErrors[group.filePath] && (
-                        <span role="alert" title={suggestionErrors[group.filePath]} style={{color: '#ef4444', fontSize: 11, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
-                          {suggestionErrors[group.filePath]}
-                        </span>
-                      )}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -2459,43 +2611,14 @@ export default function UnitTestTraceabilityMatrix({
                                             </button>
                                           )}
                                         </div>
-                                      ) : (
-                                        onSuggestTestcase && (
-                                          <button
-                                            onClick={() => onSuggestTestcase(fn.filePath, fn.functionName || fn.name)}
-                                            disabled={isSuggesting}
-                                            style={{
-                                              padding: "4px 12px",
-                                              borderRadius: 5,
-                                              background: isSuggesting
-                                                ? (isLight ? "#fef3c7" : "rgba(245, 158, 11, 0.2)")
-                                                : "#f59e0b",
-                                              border: "1px solid #d97706",
-                                              color: "#ffffff",
-                                              fontSize: 11,
-                                              fontWeight: 700,
-                                              cursor: isSuggesting ? "wait" : "pointer",
-                                              display: "flex",
-                                              alignItems: "center",
-                                              gap: 5,
-                                            }}
-                                            title={`Generate unit tests for ${cleanPath} covering uncovered branches and logic`}
-                                          >
-                                            {isSuggesting ? (
-                                              <>
-                                                <Loader2 size={11} className="animate-spin" />
-                                                <span>Generating tests for file...</span>
-                                              </>
-                                            ) : (
-                                              <>
-                                                <FileCode2 size={11} />
-                                                <span>Suggest Tests for File</span>
-                                              </>
-                                            )}
-                                          </button>
-                                        )
-                                      )}
+                                      ) : null}
                                     </div>
+
+                                    {(() => {
+                                      const item = fileSugs.find(s => s.validation?.qualityGate || s.qualityGate);
+                                      const report = item?.qualityGate?.attempts ? item.qualityGate : item?.validation?.qualityGate || item?.qualityGate;
+                                      return report ? <UnitTestQualityReport report={report} /> : null;
+                                    })()}
 
                                     {/* Test Execution Failure Diagnostic Notice */}
                                     {hasFailed && (() => {
@@ -2769,6 +2892,14 @@ export default function UnitTestTraceabilityMatrix({
             })}
           </div>
         )}
+        <MatrixPaginationControl
+          currentPage={safeCurrentPage}
+          totalItems={totalFilesCount}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          isLight={isLight}
+        />
       </div>
 
       {/* ── SECTION 3: FILE 4-METRIC CALCULATION & EXECUTION PROOF MODAL ── */}

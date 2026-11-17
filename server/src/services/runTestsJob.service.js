@@ -28,8 +28,11 @@ import { parseJavaScriptCode } from "./babelParser.service.js";
 import { sanitizeAllProjectTestFiles, cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "./testSanitizer.service.js";
 import { cleanStoragePath, cleanStorageText, canonicalizeFilePath } from "../utils/pathSanitizer.js";
 import { isBusinessLogicSourceFile, extractProjectCoverageExclusions } from "../utils/businessLogicFileDetector.js";
+import { covaiJestDerivedSuitePattern, isCovaiJestArtifact, isCovaiJestRuntimeFile } from "../utils/covaiJestArtifact.js";
 import {
     extractMissingDependency,
+    collectWorkspaceMissingDependencies,
+    ensureMountedProjectDependencies,
     inspectWorkspaceDependency,
     isValidNpmPackageName,
     installPackageInWorkspace,
@@ -774,7 +777,7 @@ export const parseModuleResolutionError = (errorOutput, rootDir = "") => {
 
         let missingDependency = null;
         try {
-            const dep = extractMissingDependency(errorOutput);
+            const dep = extractMissingDependency(cannotFindMatch[0]);
             if (dep) {
                 const inspection = inspectWorkspaceDependency({
                     rootDir,
@@ -945,7 +948,7 @@ export const findUnitFiles = (rootDir) => {
                 continue;
             }
 
-            if (!entry.isFile()) continue;
+            if (!entry.isFile() || isCovaiJestArtifact(relPath)) continue;
 
             // If it's a test file (ends with .test.ts, .spec.ts, etc.), do NOT skip it just because it's in a helper/util folder!
             const isTestFileName = /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(entry.name);
@@ -1849,8 +1852,9 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `  }\n` +
         `} catch (_) {}\n` +
         `try {\n` +
-        `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
-        `    jest.mock('bull', () => {\n` +
+        // Setup registrations run before the suite loads and must preserve local factory bindings.
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+        `    jest.doMock('bull', () => {\n` +
         `      const mockQueue = {\n` +
         `        process: jest.fn(),\n` +
         `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
@@ -1865,6 +1869,80 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `      };\n` +
         `      return jest.fn(() => mockQueue);\n` +
         `    }, { virtual: true });\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+        `    jest.doMock('mongoose', () => {\n` +
+        `    let actualMongoose;\n` +
+        `    try { actualMongoose = jest.requireActual('mongoose'); } catch (_) {}\n` +
+        `    if (actualMongoose?.Schema && actualMongoose?.Types?.ObjectId) {\n` +
+        `      const isolated = Object.create(actualMongoose);\n` +
+        `      Object.defineProperties(isolated, {\n` +
+        `        default: { value: isolated },\n` +
+        `        model: { value: actualMongoose.model.bind(actualMongoose), writable: true },\n` +
+        `        connect: { value: jest.fn().mockResolvedValue(isolated), writable: true },\n` +
+        `        createConnection: { value: jest.fn(() => actualMongoose.createConnection()), writable: true },\n` +
+        `      });\n` +
+        `      return isolated;\n` +
+        `    }\n` +
+        `    const sampleItem = { _id: '507f1f77bcf86cd799439011', id: '1', name: 'Sample Item', category: { _id: '1', name: 'General' }, status: 'ACTIVE', email: 'sample@example.com', save: jest.fn(() => Promise.resolve({ id: '1' })) };\n` +
+        `    const createQueryChain = (res = [sampleItem]) => ({\n` +
+        `      sort: jest.fn().mockReturnThis(),\n` +
+        `      limit: jest.fn().mockReturnThis(),\n` +
+        `      skip: jest.fn().mockReturnThis(),\n` +
+        `      select: jest.fn().mockReturnThis(),\n` +
+        `      populate: jest.fn().mockReturnThis(),\n` +
+        `      lean: jest.fn(() => Promise.resolve(res)),\n` +
+        `      where: jest.fn().mockReturnThis(),\n` +
+        `      distinct: jest.fn().mockReturnThis(),\n` +
+        `      exec: jest.fn().mockResolvedValue(res),\n` +
+        `      then: (resolve, reject) => Promise.resolve(res).then(resolve, reject),\n` +
+        `      catch: (reject) => Promise.resolve(res).catch(reject),\n` +
+        `      finally: (cb) => Promise.resolve(res).finally(cb)\n` +
+        `    });\n` +
+        `    const createModelProxy = () => {\n` +
+        `      const fn = jest.fn((doc) => ({ ...sampleItem, ...doc, save: jest.fn(() => Promise.resolve({ ...sampleItem, ...doc })) }));\n` +
+        `      fn.find = jest.fn(() => createQueryChain([sampleItem]));\n` +
+        `      fn.findOne = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.findById = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.findOneAndUpdate = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.findByIdAndUpdate = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });\n` +
+        `      fn.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 1 });\n` +
+        `      fn.create = jest.fn((doc) => Promise.resolve({ _id: '1', ...doc }));\n` +
+        `      fn.countDocuments = jest.fn().mockResolvedValue(1);\n` +
+        `      fn.distinct = jest.fn().mockResolvedValue(['sample']);\n` +
+        `      fn.aggregate = jest.fn().mockResolvedValue([sampleItem]);\n` +
+        `      return fn;\n` +
+        `    };\n` +
+        `    const models = new Map();\n` +
+        `    const mongooseMock = {\n` +
+        `      model: jest.fn((name) => {\n` +
+        `        if (!models.has(name)) models.set(name, createModelProxy());\n` +
+        `        return models.get(name);\n` +
+        `      }),\n` +
+        `      Schema: class { static Types = { ObjectId: String }; index() {} pre() {} post() {} },\n` +
+        `      Types: { ObjectId: class { constructor(value) { this.value = value; } toString() { return String(this.value); } } },\n` +
+        `      connect: jest.fn(() => Promise.resolve()),\n` +
+        `      disconnect: jest.fn(() => Promise.resolve()),\n` +
+        `      connection: { on: jest.fn(), once: jest.fn(), readyState: 1 }\n` +
+        `    };\n` +
+        `    return { default: mongooseMock, ...mongooseMock };\n` +
+        `    }, { virtual: true });\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+        `    const mockJwt = {\n` +
+        `      verify: jest.fn((token) => ({\n` +
+        `        id: 'mock_user_1', userId: 'mock_user_1', _id: '507f1f77bcf86cd799439011',\n` +
+        `        email: 'user@example.com', role: 'user', username: 'testuser'\n` +
+        `      })),\n` +
+        `      sign: jest.fn(() => 'mock_signed_jwt_token_xyz'),\n` +
+        `      decode: jest.fn(() => ({ id: 'mock_user_1', email: 'user@example.com', role: 'user' }))\n` +
+        `    };\n` +
+        `    jest.doMock('jsonwebtoken', () => ({ default: mockJwt, ...mockJwt }), { virtual: true });\n` +
         `  }\n` +
         `} catch (_) {}\n` +
         `try {\n` +
@@ -1925,16 +2003,26 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `      }\n` +
         `    }\n` +
         `    if (isStub) {\n` +
-        `      const createPrismaProxy = () => {\n` +
+        `      const createPrismaProxy = (lastProp = '') => {\n` +
+        `        const defaultRec = { id: 1, name: 'Sample', status: 'ACTIVE', createdAt: new Date(), updatedAt: new Date() };\n` +
         `        const handler = {\n` +
         `          get(target, prop) {\n` +
         `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
         `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
         `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
         `            if (prop === '$extends') return () => createPrismaProxy();\n` +
-        `            return new Proxy(() => Promise.resolve({}), handler);\n` +
+        `            return new Proxy((...args) => {\n` +
+        `              const m = String(prop || '');\n` +
+        `              if (m === 'findMany' || m === 'findRaw' || m === 'groupBy') return Promise.resolve([defaultRec]);\n` +
+        `              if (m === 'count') return Promise.resolve(1);\n` +
+        `              if (m === 'create' || m === 'update' || m === 'upsert') return Promise.resolve({ ...defaultRec, ...(args?.[0]?.data || args?.[0]?.create || args?.[0]?.update || {}) });\n` +
+        `              return Promise.resolve(defaultRec);\n` +
+        `            }, createPrismaProxy(prop).__handler || handler);\n` +
         `          },\n` +
-        `          apply() { return Promise.resolve({}); }\n` +
+        `          apply(target, thisArg, args) {\n` +
+        `            if (typeof target === 'function') return target(...(args || []));\n` +
+        `            return Promise.resolve(defaultRec);\n` +
+        `          }\n` +
         `        };\n` +
         `        return new Proxy({}, handler);\n` +
         `      };\n` +
@@ -1957,22 +2045,32 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `  }\n` +
         `} catch (_) {}\n` +
         `try {\n` +
-        `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
         `    const createPrismaProxy = () => {\n` +
+        `      const defaultRec = { id: 1, name: 'Sample', status: 'ACTIVE', createdAt: new Date(), updatedAt: new Date() };\n` +
         `      const handler = {\n` +
         `        get(target, prop) {\n` +
         `          if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
         `          if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
         `          if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
         `          if (prop === '$extends') return () => createPrismaProxy();\n` +
-        `          return new Proxy(() => Promise.resolve({}), handler);\n` +
+        `          return new Proxy((...args) => {\n` +
+        `            const m = String(prop || '');\n` +
+        `            if (m === 'findMany' || m === 'findRaw' || m === 'groupBy') return Promise.resolve([defaultRec]);\n` +
+        `            if (m === 'count') return Promise.resolve(1);\n` +
+        `            if (m === 'create' || m === 'update' || m === 'upsert') return Promise.resolve({ ...defaultRec, ...(args?.[0]?.data || args?.[0]?.create || args?.[0]?.update || {}) });\n` +
+        `            return Promise.resolve(defaultRec);\n` +
+        `          }, handler);\n` +
         `        },\n` +
-        `        apply() { return Promise.resolve({}); }\n` +
+        `        apply(target, thisArg, args) { return typeof target === 'function' ? target(...(args || [])) : Promise.resolve(defaultRec); }\n` +
         `      };\n` +
         `      return new Proxy({}, handler);\n` +
         `    };\n` +
         `    const fn = (typeof jest !== 'undefined' && typeof jest.fn === 'function') ? jest.fn : ((impl) => { const f = (...args) => (impl ? impl(...args) : undefined); f.mockImplementation = () => f; return f; });\n` +
-        `    jest.mock('@prisma/client', () => {\n` +
+        // Keep the resolved module ID when the fallback above has already loaded Prisma.
+        `    let prismaIsVirtual = true;\n` +
+        `    try { require.resolve('@prisma/client'); prismaIsVirtual = false; } catch (_) {}\n` +
+        `    jest.doMock('@prisma/client', () => {\n` +
         `      return {\n` +
         `        __esModule: true,\n` +
         `        PrismaClient: fn().mockImplementation(() => createPrismaProxy()),\n` +
@@ -1990,7 +2088,7 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `          sql: (strings, ...values) => strings.join('?')\n` +
         `        }\n` +
         `      };\n` +
-        `    }, { virtual: true });\n` +
+        `    }, { virtual: prismaIsVirtual });\n` +
         `    const _relPrismaPaths = [\n` +
         `      '../lib/prisma', '../lib/prisma.js',\n` +
         `      '../../lib/prisma', '../../lib/prisma.js',\n` +
@@ -2003,7 +2101,7 @@ export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMock
         `    ];\n` +
         `    for (const _rp of _relPrismaPaths) {\n` +
         `      try {\n` +
-        `        jest.mock(_rp, () => {\n` +
+        `        jest.doMock(_rp, () => {\n` +
         `          const client = createPrismaProxy();\n` +
         `          return {\n` +
         `            __esModule: true,\n` +
@@ -2072,7 +2170,11 @@ const buildSetupAfterEnvContent = () => {
     );
 };
 
-export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = [], customJestCommand = null, options = {}) => {
+export const runJestCoverage = async (jobId, rootDir, jestConfigPath, requestedFiles = [], customJestCommand = null, options = {}) => {
+    const specificFiles = Array.isArray(requestedFiles) ? requestedFiles.filter(file => !isCovaiJestArtifact(file)) : [];
+    if (requestedFiles?.length && !specificFiles.length) {
+        return { exitCode: 1, stdout: "", stderr: "The requested files are CovAI Jest runner artifacts." };
+    }
     const hermeticMocks = options?.hermeticMocks || {};
     const useHermeticMock = options?.useHermeticMock !== false;
     const targetCovDir = options?.coverageDir ? path.resolve(rootDir, options.coverageDir) : path.join(rootDir, "coverage");
@@ -2093,12 +2195,6 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         } catch { }
     }
 
-    // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
-    await detectAndRunBuild(jobId, rootDir);
-
-    // Ensure Prisma Client is generated if project uses Prisma
-    await detectAndRunPrismaGenerate(jobId, rootDir);
-
     const packageGroups = new Map();
     if (Array.isArray(filesToRun) && filesToRun.length > 0) {
         for (const file of filesToRun) {
@@ -2107,6 +2203,16 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             packageGroups.get(pkgDir).push(file);
         }
     }
+
+    if (dockerRunner.containerEnabled && (options.requireDocker || currentProjectOperation())) {
+        await ensureMountedProjectDependencies({ rootDir, packageDirs: packageGroups.keys(), jobId });
+    }
+
+    // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
+    await detectAndRunBuild(jobId, rootDir);
+
+    // Ensure Prisma Client is generated if project uses Prisma
+    await detectAndRunPrismaGenerate(jobId, rootDir);
 
     const rootFiles = packageGroups.has("") ? packageGroups.get("") : (packageGroups.size === 0 ? (specificFiles || []) : []);
     const shouldRunRoot = packageGroups.size === 0 ? true : (rootFiles.length > 0);
@@ -2122,7 +2228,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const rootJestBin = resolveJestBin(rootDir, isEsmProject, customJestCommand);
         const rootWorkerFlags = getOptimalWorkerFlags(rootFiles.length, customJestCommand);
-        let jestCmd = `${rootJestBin} --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
+        let jestCmd = `${rootJestBin} --json --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
 
         let tempConfigCreated = false;
         const tempConfigName = "covai-jest-runner.json";
@@ -2170,7 +2276,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const resolveTransformerPackage = (pkgName, searchDirs = []) => {
             try {
-                return require.resolve(pkgName, {
+                return esmRequire.resolve(pkgName, {
                     paths: [...searchDirs, rootDir, "/app/node_modules", serverNodeModules, process.cwd()]
                 });
             } catch (_) {
@@ -2180,7 +2286,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const isTsJestResolvable = (searchDirs = []) => {
             try {
-                require.resolve("ts-jest", {
+                esmRequire.resolve("ts-jest", {
                     paths: [...searchDirs, rootDir, "/app/node_modules", serverNodeModules, process.cwd()]
                 });
                 return true;
@@ -2542,7 +2648,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         if (shouldRunRoot) {
             const safeIgnorePatterns = [
-                "/node_modules/", "/client/", "/frontend/",
+                "/node_modules/", "/client/", "/frontend/", covaiJestDerivedSuitePattern,
                 ...(Array.isArray(cleanProjectJestConfig?.testPathIgnorePatterns)
                     ? cleanProjectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
                     : [])
@@ -2898,6 +3004,10 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             try {
                 const subConfig = {
                     ...cleanPkgJestConfig,
+                    testPathIgnorePatterns: [
+                        ...(Array.isArray(cleanPkgJestConfig?.testPathIgnorePatterns) ? cleanPkgJestConfig.testPathIgnorePatterns : ["/node_modules/"]),
+                        covaiJestDerivedSuitePattern
+                    ],
                     testTimeout: 10000,
                     testEnvironment: resolveTestEnvironment(targetDir, rootDir, cleanPkgJestConfig?.testEnvironment),
                     resolver: `<rootDir>/${tempSubResolverName}`,
@@ -2978,7 +3088,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 ? subScopedCoverageFiles.map(f => ` --collectCoverageFrom="${f}"`).join("")
                 : (fs.existsSync(path.join(targetDir, "src")) ? ' --collectCoverageFrom="src/**/*.{js,jsx,ts,tsx}" --collectCoverageFrom="!src/**/*.d.ts"' : '');
             const subWorkerFlags = getOptimalWorkerFlags(subFiles.length);
-            const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
+            const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --json --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
 
             let subResult;
             try {
@@ -3149,7 +3259,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         try {
             if (fs.existsSync(rootDir)) {
                 for (const f of fs.readdirSync(rootDir)) {
-                    if (/^covai[-_]/i.test(f) && (f.endsWith(".cjs") || f.endsWith(".json") || f.endsWith(".js"))) {
+                    if (isCovaiJestRuntimeFile(f)) {
                         try { fs.unlinkSync(path.join(rootDir, f)); } catch { }
                     }
                 }
@@ -3159,7 +3269,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 const targetDir = path.join(rootDir, pkgDir);
                 if (fs.existsSync(targetDir)) {
                     for (const f of fs.readdirSync(targetDir)) {
-                        if (/^covai[-_]/i.test(f) && (f.endsWith(".cjs") || f.endsWith(".json") || f.endsWith(".js"))) {
+                        if (isCovaiJestRuntimeFile(f)) {
                             try { fs.unlinkSync(path.join(targetDir, f)); } catch { }
                         }
                     }
@@ -3833,6 +3943,18 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     }
 
     const payload = typeof job.payloadJson === "string" ? JSON.parse(job.payloadJson || "{}") : (job.payloadJson || {});
+    const verifyPublishedUnitTests = payload?.verifyPublishedUnitTests === true;
+    if (verifyPublishedUnitTests) {
+        const availability = typeof dockerRunner.checkAvailability === "function"
+            ? dockerRunner.checkAvailability()
+            : { available: Boolean(dockerRunner.containerEnabled), code: dockerRunner.containerEnabled ? "RUNNER_AVAILABLE" : "RUNNER_UNAVAILABLE", reason: "Docker runner is unavailable." };
+        if (!availability.available) {
+            const err = new Error(`Docker is required to verify coverage for published generated tests [${availability.code}]: ${availability.reason}`);
+            err.code = availability.code;
+            await markJobFailed(jobId, err).catch(() => {});
+            return;
+        }
+    }
     const useHermeticMock = options?.useHermeticMock !== false && payload?.useHermeticMock !== false && job?.useHermeticMock !== false;
 
     let hermeticMocks = {};
@@ -3872,6 +3994,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
     const runnerOptions = {
         coverageDir: unitCoverageDir,
+        allowUninstrumentedFallback: !verifyPublishedUnitTests,
         hermeticMocks,
         useHermeticMock,
         virtualDbEnv,
@@ -4008,7 +4131,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         // Self-heal and sanitize only target unit test files prior to runner execution (O(K) instead of scanning entire repository)
         try {
             const unitFilesToSanitize = [...jestFiles, ...vitestFiles];
-            if (unitFilesToSanitize.length > 0) {
+            if (!verifyPublishedUnitTests && unitFilesToSanitize.length > 0) {
                 sanitizeAllProjectTestFiles(rootDir, unitFilesToSanitize);
             }
         } catch (sanitizeErr) {
@@ -4307,6 +4430,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             }
         }
 
+        if (verifyPublishedUnitTests && runnerResult?.exitCode !== 0) {
+            await markJobFailed(jobId, new Error("Published unit tests did not pass regression. Previously verified coverage was retained.")).catch(() => {});
+            return;
+        }
         if (runnerResult && runnerResult.exitCode !== 0 && runnerResult.exitCode !== null) {
             const jobOutputModule = await import("./jobOutput.service.js").catch(() => ({}));
             const jobFetcher = jobOutputModule.getJobOutput || jobOutputModule.getOutputByJob;
@@ -4534,7 +4661,9 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                                     status: isCollectionFailure ? "collection_failed" : "failed",
                                     failureMessages: [
                                         cleanStorageText(failMessage),
-                                        modResError?.missingDependency ? `[MISSING_DEPENDENCY]:${JSON.stringify(modResError.missingDependency)}` : null,
+                                        ...collectWorkspaceMissingDependencies(rootDir, [fullOutput], modResError?.testFile)
+                                            .map(({ packageName, rawSpecifier, targetPackage }) =>
+                                                `[MISSING_DEPENDENCY]:${JSON.stringify({ packageName, rawSpecifier, importedFrom: targetPackage })}`),
                                         cleanStorageText(fullOutput.slice(0, 2000))
                                     ].filter(Boolean),
                                     testFile: cleanStoragePath(modResError?.testFile) || null

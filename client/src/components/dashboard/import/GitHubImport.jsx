@@ -189,9 +189,13 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
               </p>
             </div>
             <a
-              href={`https://github.com/login/oauth/authorize?client_id=${
-                import.meta.env.VITE_GITHUB_CLIENT_ID || ""
-              }&scope=repo,user:email`}
+              href={`https://github.com/login/oauth/authorize?${new URLSearchParams({
+                client_id:
+                  import.meta.env.VITE_GITHUB_CLIENT_ID ||
+                  "Ov23liQyAORXbj6NeqAB",
+                scope: "repo user:email",
+                redirect_uri: `${window.location.origin}/auth/github/callback`,
+              }).toString()}`}
               className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer shadow-xs"
               id="connect-github-import-btn"
             >

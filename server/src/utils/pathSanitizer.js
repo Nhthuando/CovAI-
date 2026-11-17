@@ -23,6 +23,11 @@ export const cleanStoragePath = (p) => {
     if (!p || typeof p !== "string") return "";
     let clean = p.replace(/\\/g, "/").trim();
 
+    // 0. Strip Docker sibling runner container mount prefix (/workspace/...)
+    if (/^\/workspace(?:\/|$)/i.test(clean)) {
+        return clean.replace(/^\/workspace\/?/i, "").replace(/^\/+/, "");
+    }
+
     // 1. If it contains /repo/<relativePath>, extract the relative path
     const repoMatch = clean.match(/(?:^|\/)repo\/(.+)$/i);
     if (repoMatch) {

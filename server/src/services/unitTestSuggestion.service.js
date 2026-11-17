@@ -551,6 +551,8 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
             'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
             'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
+            'save', 'validate', 'validateSync', 'bulkWrite', 'insertMany', 'watch',
+            'populate', 'aggregate', 'createIndex', 'ensureIndexes', 'dropIndex', 'collection',
             'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
         ]);
         if (!target) return list;
@@ -875,6 +877,8 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
                 'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
                 'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
+                'save', 'validate', 'validateSync', 'bulkWrite', 'insertMany', 'watch',
+                'populate', 'aggregate', 'createIndex', 'ensureIndexes', 'dropIndex', 'collection',
                 'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
             ]);
             // 1. Static methods on class constructor
@@ -1550,6 +1554,8 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
 
         const batchResults = [];
         const failedFiles = [];
+        let completedCount = 0;
+        const totalCount = targetFiles.length;
         const generateFile = async fileItem => {
             try {
                 const singleRes = await suggestUnitTestcases({
@@ -1569,7 +1575,26 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
                 }
             } catch (fileErr) {
                 console.warn(`[unitTestSuggestion] Batch file ${fileItem.filePath} skipped: ${fileErr.message}`);
-                failedFiles.push({filePath: fileItem.filePath, status: 'FAILED', message: fileErr.message});
+                failedFiles.push({filePath: fileItem.filePath, status: 'FAILED', message: fileErr.message,
+                    ...(fileErr.code === 'INVALID_TEST_TARGET' && { classification: 'INVALID_TEST_TARGET' })});
+            } finally {
+                completedCount++;
+                if (global.io) {
+                    try {
+                        const progressPayload = {
+                            snapshotId: snapshot.id,
+                            projectId,
+                            completedCount,
+                            totalCount,
+                            currentFile: fileItem.filePath,
+                            status: 'GENERATING',
+                            progressPct: Math.round((completedCount / totalCount) * 100),
+                            step: `Generated ${completedCount}/${totalCount} files (${fileItem.filePath})...`
+                        };
+                        if (userId) global.io.to(`user:${userId}`).emit("unit_test:suggest_progress", progressPayload);
+                        if (projectId) global.io.to(`project:${projectId}`).emit("unit_test:suggest_progress", progressPayload);
+                    } catch (_) {}
+                }
             }
         };
         // Keep at most two AI requests in flight; CLI execution has its own
@@ -1581,7 +1606,7 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
         batchResults.sort((a,b) => order.get(a.sourceFile || a.targetSourceFile) - order.get(b.sourceFile || b.targetSourceFile));
         failedFiles.sort((a,b) => order.get(a.filePath) - order.get(b.filePath));
 
-        const combined = mergeUnitTestSuggestions(snapshot.rootDir,batchResults.flatMap(result => result.suggestions || [result]));
+        const combined = mergeUnitTestSuggestions(snapshot.rootDir,batchResults.flatMap(result => result.suggestions || [result]), failedFiles);
         let batchValidation = {status:'DRAFT',coverageGoalStatus:'UNAVAILABLE'};
         if (validationMode === 'full' && combined.length) batchValidation = await measureUnitTestPhase('draftVerification', () => validateUnitTestDraft({
             projectId,snapshotId:snapshot.id,userId,workspaceRevision:capturedWorkspaceRevision,suggestions:combined}));

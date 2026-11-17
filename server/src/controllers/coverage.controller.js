@@ -229,19 +229,30 @@ const findOwnedSnapshot = async (snapshotId, userId) => {
 
 const testSuitesCache = new Map();
 const frameworksCache = new Map();
+const unitFilesCache = new Map();
+const UNIT_FILES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export const invalidateCoverageCache = (snapshotId) => {
+export const invalidateCoverageCache = (snapshotId, rootDir = null) => {
+  if (snapshotId) {
+    unitFilesCache.delete(snapshotId);
+    frameworksCache.delete(snapshotId);
+  } else {
+    unitFilesCache.clear();
+    frameworksCache.clear();
+  }
+
   for (const key of Array.from(testSuitesCache.keys())) {
     if (!snapshotId || key.startsWith(snapshotId)) {
       testSuitesCache.delete(key);
     }
   }
-  if (snapshotId) {
-    frameworksCache.delete(snapshotId);
-  } else {
-    frameworksCache.clear();
-  }
+
   try {
+    import("../services/testDependencyResolver.service.js")
+      .then((mod) => {
+        mod?.invalidateDependencyCache?.(rootDir);
+      })
+      .catch(() => {});
     import("../services/unifiedQualityDashboard.service.js")
       .then((mod) => {
         mod?.clearUnifiedDashboardCache?.(snapshotId);
@@ -1199,41 +1210,13 @@ export const getCoverageSummary = async (req, res) => {
             }))
         } : null;
 
-        let missingDependency = null;
-        const allMessages = [
+        const { collectWorkspaceMissingDependencies } = await import("../services/dependencyResolution.service.js");
+        const missingDependencies = collectWorkspaceMissingDependencies(snapshot.rootDir, [
             ...(latestTestRun?.scenarios?.flatMap(s => s.failureMessages || []) || []),
             latestJob?.errorMessage || "",
-            latestRunError || ""
-        ];
-        for (const msg of allMessages) {
-            if (msg && msg.includes("[MISSING_DEPENDENCY]:")) {
-                try {
-                    const rawJson = msg.split("[MISSING_DEPENDENCY]:")[1].trim();
-                    missingDependency = JSON.parse(rawJson);
-                    break;
-                } catch { }
-            }
-        }
-        if (!missingDependency) {
-            const { extractMissingDependency, inspectWorkspaceDependency } = await import("../services/dependencyResolution.service.js").catch(() => ({}));
-            if (extractMissingDependency) {
-                for (const msg of allMessages) {
-                    const dep = extractMissingDependency(msg);
-                    if (dep) {
-                        const inspection = inspectWorkspaceDependency ? inspectWorkspaceDependency({
-                            rootDir: snapshot.rootDir,
-                            packageName: dep.packageName,
-                            importedFrom: dep.importedFrom || failedSuite
-                        }) : {};
-                        missingDependency = {
-                            ...dep,
-                            ...inspection
-                        };
-                        break;
-                    }
-                }
-            }
-        }
+            latestRunError || "",
+        ], failedSuite);
+        const missingDependency = missingDependencies[0] || null;
 
         // Return formatted response with explicit distinction between current run and last successful coverage
         return res.status(200).json({
@@ -1252,6 +1235,7 @@ export const getCoverageSummary = async (req, res) => {
                 latestRunStatus,
                 latestRunError,
                 missingDependency,
+                missingDependencies,
                 failedSuite,
                 hasTestFailures,
                 testExecution: sanitizedTestExecution,
@@ -1647,109 +1631,155 @@ export const getCoverageFiles = async (req, res) => {
             ]
         };
 
-        let [files, total] = await Promise.all([
-            prisma.coverageFile.findMany({
-                where,
-                orderBy: { [sortBy]: order },
-                skip: typeFilter === "unit" ? 0 : skip,
-                take: typeFilter === "unit" ? undefined : limit,
-                select: {
-                    id: true,
-                    filePath: true,
-                    linesPct: true,
-                    branchesPct: true,
-                    funcsPct: true,
-                    stmtsPct: true,
-                },
-            }),
-            prisma.coverageFile.count({ where }),
-        ]);
+        let files = [];
+        let total = 0;
 
         if (typeFilter === "unit") {
-            const snapshotWithRoot = await prisma.projectSnapshot.findUnique({
-                where: { id: snapshotId },
-                select: { rootDir: true }
-            });
-            const effectiveRoot = snapshotWithRoot?.rootDir
-                ? (resolveSnapshotRootDir(snapshotWithRoot.rootDir) || snapshotWithRoot.rootDir)
-                : "";
-            const configExclusions = extractProjectCoverageExclusions(effectiveRoot);
+            const cachedUnitFiles = unitFilesCache.get(snapshotId);
+            const now = Date.now();
 
-            // Deduplicate, filter by genuine business logic, and canonicalize DB files
-            const seen = new Map();
-            const seenByMatchKey = new Map();
+            if (cachedUnitFiles && (now - cachedUnitFiles.timestamp) < UNIT_FILES_CACHE_TTL_MS) {
+                // Cache hit: zero database queries and zero disk scan
+                let allFiles = cachedUnitFiles.allFiles;
 
-            for (const f of files) {
-                const can = resolveProjectRelativePath(f.filePath, effectiveRoot) || f.filePath;
-                if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
-
-                const matchKey = getNormalizedMatchKey(can);
-                const existingKey = seen.has(can) ? can : (seenByMatchKey.get(matchKey) || null);
-
-                if (!existingKey) {
-                    seen.set(can, { ...f, filePath: can });
-                    seenByMatchKey.set(matchKey, can);
-                } else {
-                    const existing = seen.get(existingKey);
-                    const currentHasCoverage = (f.linesPct || 0) > 0 || (f.stmtsPct || 0) > 0;
-                    const existingHasCoverage = (existing.linesPct || 0) > 0 || (existing.stmtsPct || 0) > 0;
-
-                    if ((!existingHasCoverage && currentHasCoverage) || (existingKey !== can && can.length > existingKey.length && !existingHasCoverage)) {
-                        seen.delete(existingKey);
-                        seen.set(can, { ...f, filePath: can });
-                        seenByMatchKey.set(matchKey, can);
-                    } else if (existingKey !== can && can.length > existingKey.length && existingHasCoverage && currentHasCoverage) {
-                        seen.delete(existingKey);
-                        seen.set(can, { ...existing, filePath: can });
-                        seenByMatchKey.set(matchKey, can);
+                allFiles.sort((a, b) => {
+                    let valA = a[sortBy];
+                    let valB = b[sortBy];
+                    if (typeof valA === "string") {
+                        return order === "desc" ? valB.localeCompare(valA) : valA.localeCompare(valB);
                     }
-                }
-            }
+                    valA = Number(valA || 0);
+                    valB = Number(valB || 0);
+                    return (order === "desc" ? valB - valA : valA - valB) || a.filePath.localeCompare(b.filePath);
+                });
 
-            // Fill in any missing logic source files from effectiveRoot
-            if (effectiveRoot) {
-                const logicFiles = findLogicSourceFiles(effectiveRoot);
-                for (let idx = 0; idx < logicFiles.length; idx++) {
-                    const lf = logicFiles[idx];
-                    const can = resolveProjectRelativePath(lf.relativePath, effectiveRoot);
+                total = allFiles.length;
+                files = allFiles.slice(skip, skip + limit);
+            } else {
+                // Cold build: load all DB files once, merge with logic files, and cache
+                const [dbFiles, snapshotWithRoot] = await Promise.all([
+                    prisma.coverageFile.findMany({
+                        where,
+                        select: {
+                            id: true,
+                            filePath: true,
+                            linesPct: true,
+                            branchesPct: true,
+                            funcsPct: true,
+                            stmtsPct: true,
+                        },
+                    }),
+                    prisma.projectSnapshot.findUnique({
+                        where: { id: snapshotId },
+                        select: { rootDir: true }
+                    }),
+                ]);
+
+                const effectiveRoot = snapshotWithRoot?.rootDir
+                    ? (resolveSnapshotRootDir(snapshotWithRoot.rootDir) || snapshotWithRoot.rootDir)
+                    : "";
+                const configExclusions = extractProjectCoverageExclusions(effectiveRoot);
+
+                const seen = new Map();
+                const seenByMatchKey = new Map();
+
+                for (const f of dbFiles) {
+                    const can = resolveProjectRelativePath(f.filePath, effectiveRoot) || f.filePath;
                     if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
 
                     const matchKey = getNormalizedMatchKey(can);
                     const existingKey = seen.has(can) ? can : (seenByMatchKey.get(matchKey) || null);
 
                     if (!existingKey) {
-                        seen.set(can, {
-                            id: `logic_${idx}_${path.basename(can)}`,
-                            filePath: can,
-                            linesPct: 0,
-                            branchesPct: 0,
-                            funcsPct: 0,
-                            stmtsPct: 0,
-                        });
+                        seen.set(can, { ...f, filePath: can });
                         seenByMatchKey.set(matchKey, can);
-                    } else if (existingKey !== can) {
-                        // The file exists under a shorter/legacy key in seen: upgrade its filePath to canonical relative path while preserving coverage
+                    } else {
                         const existing = seen.get(existingKey);
-                        seen.delete(existingKey);
-                        seen.set(can, { ...existing, filePath: can });
-                        seenByMatchKey.set(matchKey, can);
+                        const currentHasCoverage = (f.linesPct || 0) > 0 || (f.stmtsPct || 0) > 0;
+                        const existingHasCoverage = (existing.linesPct || 0) > 0 || (existing.stmtsPct || 0) > 0;
+
+                        if ((!existingHasCoverage && currentHasCoverage) || (existingKey !== can && can.length > existingKey.length && !existingHasCoverage)) {
+                            seen.delete(existingKey);
+                            seen.set(can, { ...f, filePath: can });
+                            seenByMatchKey.set(matchKey, can);
+                        } else if (existingKey !== can && can.length > existingKey.length && existingHasCoverage && currentHasCoverage) {
+                            seen.delete(existingKey);
+                            seen.set(can, { ...existing, filePath: can });
+                            seenByMatchKey.set(matchKey, can);
+                        }
                     }
                 }
-            }
 
-            files = Array.from(seen.values());
-            files.sort((a, b) => {
-                let valA = a[sortBy];
-                let valB = b[sortBy];
-                if (typeof valA === "string") {
-                    return order === "desc" ? valB.localeCompare(valA) : valA.localeCompare(valB);
+                if (effectiveRoot) {
+                    const logicFiles = findLogicSourceFiles(effectiveRoot);
+                    for (let idx = 0; idx < logicFiles.length; idx++) {
+                        const lf = logicFiles[idx];
+                        const can = resolveProjectRelativePath(lf.relativePath, effectiveRoot);
+                        if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
+
+                        const matchKey = getNormalizedMatchKey(can);
+                        const existingKey = seen.has(can) ? can : (seenByMatchKey.get(matchKey) || null);
+
+                        if (!existingKey) {
+                            seen.set(can, {
+                                id: `logic_${idx}_${path.basename(can)}`,
+                                filePath: can,
+                                linesPct: 0,
+                                branchesPct: 0,
+                                funcsPct: 0,
+                                stmtsPct: 0,
+                            });
+                            seenByMatchKey.set(matchKey, can);
+                        } else if (existingKey !== can) {
+                            const existing = seen.get(existingKey);
+                            seen.delete(existingKey);
+                            seen.set(can, { ...existing, filePath: can });
+                            seenByMatchKey.set(matchKey, can);
+                        }
+                    }
                 }
-                valA = Number(valA || 0);
-                valB = Number(valB || 0);
-                return (order === "desc" ? valB - valA : valA - valB) || a.filePath.localeCompare(b.filePath);
-            });
-            total = files.length;
-            files = files.slice(skip, skip + limit);
+
+                const assembledFiles = Array.from(seen.values());
+                unitFilesCache.set(snapshotId, {
+                    allFiles: assembledFiles,
+                    timestamp: now,
+                });
+
+                assembledFiles.sort((a, b) => {
+                    let valA = a[sortBy];
+                    let valB = b[sortBy];
+                    if (typeof valA === "string") {
+                        return order === "desc" ? valB.localeCompare(valA) : valA.localeCompare(valB);
+                    }
+                    valA = Number(valA || 0);
+                    valB = Number(valB || 0);
+                    return (order === "desc" ? valB - valA : valA - valB) || a.filePath.localeCompare(b.filePath);
+                });
+
+                total = assembledFiles.length;
+                files = assembledFiles.slice(skip, skip + limit);
+            }
+        } else {
+            // Non-unit types: direct paginated database query
+            const [queriedFiles, countTotal] = await Promise.all([
+                prisma.coverageFile.findMany({
+                    where,
+                    orderBy: { [sortBy]: order },
+                    skip,
+                    take: limit,
+                    select: {
+                        id: true,
+                        filePath: true,
+                        linesPct: true,
+                        branchesPct: true,
+                        funcsPct: true,
+                        stmtsPct: true,
+                    },
+                }),
+                prisma.coverageFile.count({ where }),
+            ]);
+            files = queriedFiles;
+            total = countTotal;
         }
 
         // Return an empty dataset instead of a 404 so the UI can render a valid
@@ -2120,10 +2150,11 @@ export const getCoverageTestSuites = async (req, res) => {
     const shouldBypassCache =
       req.query?.refresh === "true" ||
       req.headers?.["cache-control"] === "no-cache";
+    const TEST_SUITES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
     if (
       !shouldBypassCache &&
       cached &&
-      Date.now() - cached.timestamp < 10 * 1000
+      Date.now() - cached.timestamp < TEST_SUITES_CACHE_TTL_MS
     ) {
       return res.status(200).json({ success: true, data: cached.data });
     }
@@ -2679,15 +2710,13 @@ export const getCoverageFunctions = async (req, res) => {
             }),
         };
 
-        const queryLimit = typeFilter === "unit" ? 2000 : limit;
-        const querySkip = typeFilter === "unit" ? 0 : skip;
-
+        // ── Milestone 1 (F3): Safe database pagination without synchronous Babel AST parsing ──
         let [functions, total, cycRecords, cfgRecords] = await Promise.all([
             prisma.coverageFunction.findMany({
                 where,
                 orderBy: { [sortBy]: order },
-                skip: querySkip,
-                take: queryLimit,
+                skip,
+                take: limit,
                 select: {
                     id: true,
                     filePath: true,
@@ -2711,66 +2740,6 @@ export const getCoverageFunctions = async (req, res) => {
                 }).catch(() => [])
                 : Promise.resolve([]),
         ]);
-
-        if (typeFilter === "unit") {
-            const effectiveRoot = snapshot?.rootDir ? (resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir) : "";
-            const configExclusions = extractProjectCoverageExclusions(effectiveRoot);
-
-            const existingFileFuncs = new Set();
-            const validDbFunctions = [];
-            for (const f of functions) {
-                const can = resolveProjectRelativePath(f.filePath, effectiveRoot) || f.filePath;
-                if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
-                existingFileFuncs.add(can);
-                existingFileFuncs.add(getNormalizedMatchKey(can));
-                validDbFunctions.push({ ...f, filePath: can });
-            }
-
-            const addedFunctions = [];
-            if (effectiveRoot) {
-                const logicFiles = findLogicSourceFiles(effectiveRoot);
-                for (let i = 0; i < logicFiles.length; i++) {
-                    const lf = logicFiles[i];
-                    const can = resolveProjectRelativePath(lf.relativePath, effectiveRoot);
-                    if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
-                    if (filePathFilter && !can.toLowerCase().includes(filePathFilter.toLowerCase())) continue;
-
-                    // If file has no functions in DB, extract via AST
-                    if (!existingFileFuncs.has(can) && !existingFileFuncs.has(getNormalizedMatchKey(can))) {
-                        let content = "";
-                        try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
-                        let extracted = [];
-                        try { extracted = extractFunctions(content) || []; } catch { }
-
-                        for (let j = 0; j < extracted.length; j++) {
-                            const ef = extracted[j];
-                            addedFunctions.push({
-                                id: `ast_${i}_${j}_${path.basename(can)}`,
-                                filePath: can,
-                                functionName: ef.functionName || ef.name || `anonymous_${ef.startLine || j}`,
-                                startLine: ef.startLine || 1,
-                                endLine: ef.endLine || 1,
-                                hit: 0,
-                            });
-                        }
-                    }
-                }
-            }
-
-            functions = [...validDbFunctions, ...addedFunctions];
-            functions.sort((a, b) => {
-                let valA = a[sortBy];
-                let valB = b[sortBy];
-                if (typeof valA === "string") {
-                    return order === "desc" ? valB.localeCompare(valA) : valA.localeCompare(valB);
-                }
-                valA = Number(valA || 0);
-                valB = Number(valB || 0);
-                return order === "desc" ? valB - valA : valA - valB;
-            });
-            total = functions.length;
-            functions = functions.slice(skip, skip + limit);
-        }
 
         const normPath = (p = "") => p.replace(/\\/g, "/").replace(/^(backend|server|app)\//i, "");
         const cycByFile = new Map();
@@ -4999,7 +4968,7 @@ export const applySuggestion = async (req, res) => {
             requireCoverageGoal: requireCoverageGoal === true
         });
 
-        // Run one full analysis after publication, even when Apply measured coverage.
+        // Refresh coverage after publication or after verifying an already covered baseline.
         let backgroundJob = null;
         let postApplyAnalysisError = null;
         if (actualSnapshotId && actualProjectId) {
@@ -5007,7 +4976,7 @@ export const applySuggestion = async (req, res) => {
                 backgroundJob = await scheduleUnitTestPostApplyAnalysis({result,projectId:actualProjectId,
                     snapshotId:actualSnapshotId,userId,requestId,skipBackgroundJob});
             } catch (jobErr) {
-                postApplyAnalysisError = 'Tests were applied, but automatic analysis could not be queued. Run Analysis to refresh project coverage.';
+                postApplyAnalysisError = 'Automatic coverage refresh could not be queued. Run Analysis to refresh project coverage.';
                 console.warn("[applySuggestion] Warning auto-triggering background RUN_TESTS job:", jobErr.message);
             }
         }
@@ -5017,7 +4986,8 @@ export const applySuggestion = async (req, res) => {
         console.error("[applySuggestion] Error:", error);
         return res.status(error.statusCode || 500).json({
             success: false,
-            message: error.message || "Failed to apply test suggestion."
+            message: error.message || "Failed to apply test suggestion.",
+            ...(error.code === 'INVALID_TEST_TARGET' && { code: error.code, details: error.details })
         });
     }
 };
@@ -5683,7 +5653,7 @@ export const suggestUnitTestcaseAll = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, framework, filePaths = [], validationMode = 'full' } = req.body || {};
+        let { projectId, framework, filePaths = [], validationMode = 'fast' } = req.body || {};
         if (!Array.isArray(filePaths) || filePaths.length > 2000 || filePaths.some(file => typeof file !== 'string' || !file.trim()) || !['fast','full'].includes(validationMode)) {
             return res.status(400).json({success:false,message:'Invalid suggestion file list or validation mode.'});
         }

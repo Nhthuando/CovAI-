@@ -137,7 +137,7 @@ export async function loginApi({ email, password }) {
  */
 export async function oAuthGithubApi(code) {
   const res = await fetchWithAuth(
-    `${BASE_URL}/auth/github/callback?code=${code}`,
+    `${BASE_URL}/auth/github/callback?code=${encodeURIComponent(code)}`,
   );
   const data = await res.json();
   if (!res.ok) {

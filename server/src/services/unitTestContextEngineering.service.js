@@ -1,3 +1,6 @@
+import { buildBcryptMockCode, buildJwtMockCode } from './authDependencyMockCode.js';
+import { jestMongooseMockCode } from './jestMongooseMock.js';
+import { definesMongooseModel } from './mongooseModelDraft.service.js';
 import fs from "fs";
 import path from "path";
 import { parseJavaScriptCode } from "./babelParser.service.js";
@@ -5,6 +8,7 @@ import { extractEnvReferencesFromAst, inferMockValue } from "./environmentDetect
 import { analyzeSourceAst, mapCoverageGaps } from "./businessLogicAstAnalyzer.service.js";
 import { isLocContained, isLocOverlapping } from "./unreachableCodeDetector.service.js";
 import { NODE_BUILTINS, isValidNpmPackageName } from "./dependencyResolution.service.js";
+import { generateUniversalMocks } from "./universalMockEngine.service.js";
 
 /**
  * STAGE 2: CONTEXT ENGINEERING & DECISION TABLE TEST MATRIX
@@ -1581,60 +1585,95 @@ export const buildIsolationMockContracts = ({
 
     // 2.1. Detect Mongoose / Mongo
     const usesMongoose = /(?:require\(['"]mongoose['"]\)|from\s+['"]mongoose['"]|\bmongoose\.model\b|\bnew\s+mongoose\.Schema\b)/i.test(codeToInspect);
+    const testsMongooseSchema = definesMongooseModel(sourceCode);
     let mongooseMockCode = "";
-    if (usesMongoose) {
+    if (usesMongoose && !testsMongooseSchema) {
         detectedDependencies.push("mongoose-db");
         mongooseMockCode = `// 2.1 Universal Mongoose In-Memory Proxy Mock\n` +
             (isVitest
                 ? `const { _createMongooseModelProxy } = vi.hoisted(() => {\n` +
-                  `  const _queryMock = {\n` +
-                  `    exec: vi.fn(() => Promise.resolve({ _id: '507f1f77bcf86cd799439011', id: '1', save: vi.fn(() => Promise.resolve({ id: '1' })) })),\n` +
+                  `  const _sampleItem = { _id: '507f1f77bcf86cd799439011', id: '1', name: 'Sample Item', category: { _id: '1', name: 'General' }, status: 'ACTIVE', email: 'sample@example.com' };\n` +
+                  `  const _createQueryMock = (result = [_sampleItem]) => ({\n` +
+                  `    exec: vi.fn(() => Promise.resolve(result)),\n` +
                   `    populate: vi.fn().mockReturnThis(),\n` +
                   `    sort: vi.fn().mockReturnThis(),\n` +
                   `    limit: vi.fn().mockReturnThis(),\n` +
                   `    skip: vi.fn().mockReturnThis(),\n` +
-                  `    lean: vi.fn(() => Promise.resolve([{ _id: '1', name: 'Sample' }])),\n` +
+                  `    lean: vi.fn(() => Promise.resolve(result)),\n` +
                   `    select: vi.fn().mockReturnThis(),\n` +
-                  `    where: vi.fn().mockReturnThis()\n` +
-                  `  };\n` +
-                  `  const _proxyMaker = () => ({\n` +
-                  `    find: vi.fn(() => _queryMock),\n` +
-                  `    findOne: vi.fn(() => _queryMock),\n` +
-                  `    findById: vi.fn(() => _queryMock),\n` +
-                  `    findOneAndUpdate: vi.fn(() => _queryMock),\n` +
-                  `    findByIdAndUpdate: vi.fn(() => _queryMock),\n` +
-                  `    deleteOne: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n` +
-                  `    deleteMany: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n` +
-                  `    create: vi.fn((doc) => Promise.resolve({ _id: '1', ...doc })),\n` +
-                  `    countDocuments: vi.fn(() => Promise.resolve(1))\n` +
+                  `    where: vi.fn().mockReturnThis(),\n` +
+                  `    distinct: vi.fn().mockReturnThis(),\n` +
+                  `    then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),\n` +
+                  `    catch: (reject) => Promise.resolve(result).catch(reject),\n` +
+                  `    finally: (cb) => Promise.resolve(result).finally(cb)\n` +
                   `  });\n` +
-                  `  return { _createMongooseModelProxy: _proxyMaker };\n` +
+                  `  const _proxyMaker = () => {\n` +
+                  `    const fn = vi.fn((doc = {}) => ({\n` +
+                  `      _id: doc._id || '507f1f77bcf86cd799439011',\n` +
+                  `      id: doc.id || '1',\n` +
+                  `      ...doc,\n` +
+                  `      save: vi.fn((cb) => { const saved = { _id: '507f1f77bcf86cd799439011', id: '1', ...doc }; if (typeof cb === 'function') cb(null, saved); return Promise.resolve(saved); }),\n` +
+                  `      validate: vi.fn((cb) => { if (typeof cb === 'function') cb(null); return Promise.resolve(); }),\n` +
+                  `      validateSync: vi.fn(() => null),\n` +
+                  `      toObject: vi.fn(() => ({ _id: '507f1f77bcf86cd799439011', id: '1', ...doc })),\n` +
+                  `      toJSON: vi.fn(() => ({ _id: '507f1f77bcf86cd799439011', id: '1', ...doc })),\n` +
+                  `      isModified: vi.fn(() => false),\n` +
+                  `      set: vi.fn().mockReturnThis(),\n` +
+                  `      get: vi.fn((k) => doc[k]),\n` +
+                  `      populate: vi.fn().mockReturnThis()\n` +
+                  `    }));\n` +
+                  `    Object.assign(fn, {\n` +
+                  `      find: vi.fn(() => _createQueryMock([_sampleItem])),\n` +
+                  `      findOne: vi.fn(() => _createQueryMock(_sampleItem)),\n` +
+                  `      findById: vi.fn(() => _createQueryMock(_sampleItem)),\n` +
+                  `      findOneAndUpdate: vi.fn(() => _createQueryMock(_sampleItem)),\n` +
+                  `      findByIdAndUpdate: vi.fn(() => _createQueryMock(_sampleItem)),\n` +
+                  `      findByIdAndDelete: vi.fn(() => _createQueryMock(_sampleItem)),\n` +
+                  `      deleteOne: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n` +
+                  `      deleteMany: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n` +
+                  `      create: vi.fn((doc) => Promise.resolve({ _id: '507f1f77bcf86cd799439011', id: '1', ...(Array.isArray(doc) ? doc[0] : doc) })),\n` +
+                  `      countDocuments: vi.fn(() => Promise.resolve(1)),\n` +
+                  `      distinct: vi.fn(() => Promise.resolve(['sample'])),\n` +
+                  `      aggregate: vi.fn(() => Promise.resolve([_sampleItem])),\n` +
+                  `      insertMany: vi.fn((docs) => Promise.resolve(Array.isArray(docs) ? docs : [docs])),\n` +
+                  `      validate: vi.fn(() => Promise.resolve()),\n` +
+                  `      schema: { path: vi.fn(() => ({ validate: vi.fn(), required: vi.fn() })), paths: {}, obj: {} }\n` +
+                  `    });\n` +
+                  `    return fn;\n` +
+                  `  };\n` +
+                  `  class _MockObjectId {\n` +
+                  `    constructor(id) { this.id = id || '507f1f77bcf86cd799439011'; this._bsontype = 'ObjectID'; }\n` +
+                  `    toString() { return String(this.id); }\n` +
+                  `    toHexString() { return String(this.id); }\n` +
+                  `    valueOf() { return String(this.id); }\n` +
+                  `    equals(other) { return String(this) === String(other); }\n` +
+                  `    static isValid(id) { return typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id); }\n` +
+                  `  }\n` +
+                  `  class _MockSchema {\n` +
+                  `    constructor(obj = {}) { this.obj = obj; this.methods = {}; this.statics = {}; this.paths = {}; }\n` +
+                  `    static Types = { ObjectId: _MockObjectId };\n` +
+                  `    index() { return this; }\n` +
+                  `    pre() { return this; }\n` +
+                  `    post() { return this; }\n` +
+                  `    plugin() { return this; }\n` +
+                  `    virtual() { return { get: () => this, set: () => this }; }\n` +
+                  `    path() { return { validate: () => this, required: () => this, default: () => this }; }\n` +
+                  `    add() { return this; }\n` +
+                  `    set() { return this; }\n` +
+                  `  }\n` +
+                  `  const _mockMongoose = {\n` +
+                  `    model: vi.fn(() => _proxyMaker()),\n` +
+                  `    Schema: _MockSchema,\n` +
+                  `    Types: { ObjectId: _MockObjectId },\n` +
+                  `    connect: vi.fn(() => Promise.resolve()),\n` +
+                  `    disconnect: vi.fn(() => Promise.resolve()),\n` +
+                  `    connection: { on: vi.fn(), once: vi.fn(), readyState: 1 },\n` +
+                  `    set: vi.fn()\n` +
+                  `  };\n` +
+                  `  return { _createMongooseModelProxy: _proxyMaker, _mockMongooseObject: _mockMongoose };\n` +
                   `});\n` +
-                  `vi.mock('mongoose', () => {\n  const m = { model: vi.fn(() => _createMongooseModelProxy()), Schema: class { static Types = { ObjectId: String }; index() {} pre() {} post() {} }, connect: vi.fn(() => Promise.resolve()), connection: { on: vi.fn(), once: vi.fn() } };\n  return { default: m, ...m };\n});\n\n`
-                : `const _createMongooseModelProxy = () => {\n` +
-                  `  const _queryMock = {\n` +
-                  `    exec: jest.fn(() => Promise.resolve({ _id: '507f1f77bcf86cd799439011', id: '1', save: jest.fn(() => Promise.resolve({ id: '1' })) })),\n` +
-                  `    populate: jest.fn().mockReturnThis(),\n` +
-                  `    sort: jest.fn().mockReturnThis(),\n` +
-                  `    limit: jest.fn().mockReturnThis(),\n` +
-                  `    skip: jest.fn().mockReturnThis(),\n` +
-                  `    lean: jest.fn(() => Promise.resolve([{ _id: '1', name: 'Sample' }])),\n` +
-                  `    select: jest.fn().mockReturnThis(),\n` +
-                  `    where: jest.fn().mockReturnThis()\n` +
-                  `  };\n` +
-                  `  return {\n` +
-                  `    find: jest.fn(() => _queryMock),\n` +
-                  `    findOne: jest.fn(() => _queryMock),\n` +
-                  `    findById: jest.fn(() => _queryMock),\n` +
-                  `    findOneAndUpdate: jest.fn(() => _queryMock),\n` +
-                  `    findByIdAndUpdate: jest.fn(() => _queryMock),\n` +
-                  `    deleteOne: jest.fn(() => Promise.resolve({ deletedCount: 1 })),\n` +
-                  `    deleteMany: jest.fn(() => Promise.resolve({ deletedCount: 1 })),\n` +
-                  `    create: jest.fn((doc) => Promise.resolve({ _id: '1', ...doc })),\n` +
-                  `    countDocuments: jest.fn(() => Promise.resolve(1))\n` +
-                  `  };\n` +
-                  `};\n` +
-                  `jest.mock('mongoose', () => ({\n  model: jest.fn(() => _createMongooseModelProxy()),\n  Schema: class { static Types = { ObjectId: String }; index() {} pre() {} post() {} },\n  connect: jest.fn(() => Promise.resolve()),\n  connection: { on: jest.fn(), once: jest.fn() }\n}), { virtual: true });\n\n`);
+                  `vi.mock('mongoose', () => ({ default: _mockMongooseObject, ..._mockMongooseObject }));\n\n`
+                : jestMongooseMockCode);
     }
 
     // 2.1.1 Detect bcrypt / bcryptjs / argon2
@@ -1643,13 +1682,16 @@ export const buildIsolationMockContracts = ({
     if (usesBcrypt) {
         detectedDependencies.push("bcrypt-crypto");
         bcryptMockCode = `// 2.1.1 Universal Password Hashing Mock\n` +
-            (isVitest
-                ? `const _mockBcrypt = { hash: vi.fn(() => Promise.resolve('$2b$10$mockHashedPassword1234567890')), compare: vi.fn(() => Promise.resolve(true)), genSalt: vi.fn(() => Promise.resolve('$2b$10$salt')), hashSync: vi.fn(() => '$2b$10$mockHashedPassword1234567890'), compareSync: vi.fn(() => true) };\n` +
-                  `vi.mock('bcrypt', () => ({ default: _mockBcrypt, ..._mockBcrypt }));\n` +
-                  `vi.mock('bcryptjs', () => ({ default: _mockBcrypt, ..._mockBcrypt }));\n\n`
-                : `const _mockBcrypt = { hash: jest.fn(() => Promise.resolve('$2b$10$mockHashedPassword1234567890')), compare: jest.fn(() => Promise.resolve(true)), genSalt: jest.fn(() => Promise.resolve('$2b$10$salt')), hashSync: jest.fn(() => '$2b$10$mockHashedPassword1234567890'), compareSync: jest.fn(() => true) };\n` +
-                  `jest.mock('bcrypt', () => ({ default: _mockBcrypt, ..._mockBcrypt }), { virtual: true });\n` +
-                  `jest.mock('bcryptjs', () => ({ default: _mockBcrypt, ..._mockBcrypt }), { virtual: true });\n\n`);
+            buildBcryptMockCode(framework);
+    }
+
+    // 2.1.2 Detect jsonwebtoken / jwt
+    const usesJwt = /(?:require\(['"]jsonwebtoken['"]\)|from\s+['"]jsonwebtoken['"]|\bjwt\.(?:verify|sign|decode)\b|\bverifyToken\b)/i.test(codeToInspect);
+    let jwtMockCode = "";
+    if (usesJwt) {
+        detectedDependencies.push("jwt-auth");
+        jwtMockCode = `// 2.1.2 Universal JWT (jsonwebtoken) Mock\n` +
+            buildJwtMockCode(framework);
     }
 
     // 2.2. Detect Sequelize
@@ -1790,7 +1832,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
             `    query: { page: '1', limit: '10', ...(overrides?.query || overrides?.req?.query || {}) },\n` +
             `    params: { id: '1', ...(overrides?.params || overrides?.req?.params || {}) },\n` +
             `    headers: { authorization: 'Bearer test-token', ...(overrides?.headers || overrides?.req?.headers || {}) },\n` +
-            `    cookies: { ...(overrides?.cookies || overrides?.req?.cookies || {}) },\n` +
+            `    cookies: { jwt: 'mock_token', ...(overrides?.cookies || overrides?.req?.cookies || {}) },\n` +
             `    user: { id: 1, role: 'admin', email: 'admin@example.com', ...(overrides?.user || overrides?.req?.user || {}) },\n` +
             `    file: overrides?.file || overrides?.req?.file || null,\n` +
             `    files: overrides?.files || overrides?.req?.files || [],\n` +
@@ -2142,14 +2184,15 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         }
     }
 
-    const trimmedPreamble = `${envMockCode}${prismaMockCode}${mongooseMockCode}${bcryptMockCode}${sequelizeMockCode}${redisMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${controllerMockCode}${timersMockCode}`.trim();
+    const trimmedPreamble = `${envMockCode}${prismaMockCode}${mongooseMockCode}${bcryptMockCode}${jwtMockCode}${sequelizeMockCode}${redisMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${controllerMockCode}${timersMockCode}`.trim();
     const mockPreambleCode = trimmedPreamble ? trimmedPreamble + "\n\n" : "";
 
     const mockInstructions = [
         "MANDATORY ISOLATION MOCK CONTRACTS:",
         "- All unit tests MUST execute purely in RAM without network, real database, or external processes.",
         detectedDependencies.includes("prisma-db") ? "- Prisma DB: Re-use the Prisma Proxy Mock. Never connect to a real database. (Prisma DB: Re-use the self-contained in-memory Prisma Proxy Mock). Both '@prisma/client' and local database singletons ('../config/prisma', '../lib/prisma', etc.) MUST be mocked before any controller or service imports to prevent top-level 'new PrismaClient()' execution and PrismaClientInitializationError in Prisma v7 environments." : null,
-        detectedDependencies.includes("mongoose-db") ? "- Mongoose DB: Mongoose models are mocked with in-memory proxy. Queries resolve mock documents without connecting to MongoDB." : null,
+        detectedDependencies.includes("mongoose-db") ? "- Mongoose DB: Mongoose models are mocked with thenable in-memory proxy. Queries resolve mock documents without connecting to MongoDB. In model validation and error handling scenarios (e.g. malformed attributes), operations like validate() and save() resolve in RAM without buffering or 10000ms timeouts. In assertions on ObjectId fields (userId, _id), compare string representations using .toString() (e.g. expect(doc.userId.toString()).toBe('<hex>')) to avoid AssertionError buffer mismatches." : null,
+        detectedDependencies.includes("jwt-auth") ? "- JSON Web Tokens (JWT): `jwt.verify` and `jwt.sign` are mocked with mock user payloads and tokens in RAM without external signing dependencies. For verifyToken middleware, pass cookies: { jwt: 'mock_token' }." : null,
         detectedDependencies.includes("bcrypt-crypto") ? "- Password Hashing (Bcrypt): Bcrypt functions (hash, compare) are stubbed in RAM. Never run expensive native hashing in tests." : null,
         detectedDependencies.includes("sequelize-db") ? "- Sequelize DB: Sequelize models and queries are mocked in RAM. Queries resolve mock instances without DB connections." : null,
         detectedDependencies.includes("redis-cache") ? "- Redis Cache: Redis/ioredis operations are routed to in-memory mock client (get, set, del, keys, flushall). Never connect to a real Redis server." : null,
@@ -2161,10 +2204,25 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         detectedDependencies.includes("downstream-local-services") ? "- Downstream Services & Models: All local services and models are stubbed in RAM. Never import unmocked downstream files that connect to databases." : null
     ].filter(Boolean).join("\n");
 
+    let universalMockResult = null;
+    try {
+        universalMockResult = generateUniversalMocks({
+            rootDir: rootDir || "",
+            sourceCode,
+            sourceFile: sourceFile || "",
+            existingTestCode,
+            targetTestFile: targetTestFile || "",
+            framework: framework || "jest"
+        });
+    } catch (_) {
+        universalMockResult = null;
+    }
+
     return {
         detectedDependencies,
         mockPreambleCode,
-        mockInstructions
+        mockInstructions,
+        universalMockResult
     };
 };
 

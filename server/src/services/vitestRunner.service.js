@@ -229,9 +229,10 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
                 createdHarnessFiles,
             })
             : null;
-    let runtime = await ensureVitestCoverageRuntime({rootDir,executionDir,jobId});
+    const runtimeOptions = { rootDir, executionDir, jobId, requireMountedRuntime: dockerRunner.containerEnabled };
+    let runtime = await ensureVitestCoverageRuntime(runtimeOptions);
     if(await ensureVitestEnvironment({rootDir,directory:executionDir,config:config ?? null,jobId,runtime})) {
-        runtime = await ensureVitestCoverageRuntime({rootDir,executionDir,jobId});
+        runtime = await ensureVitestCoverageRuntime(runtimeOptions);
     }
     const baseCmd = runtime.command + configuredCommand.slice('vitest'.length);
     await addJobLog(jobId,'INFO',`[VITEST] Verified coverage runtime: vitest=${runtime.runner.version}, @vitest/coverage-v8=${runtime.provider.version}; runner=${runtime.runner.real}; provider=${runtime.provider.real}`).catch(()=>{});

@@ -167,12 +167,35 @@ export async function installMissingDependency(snapshotId, packageName, isDev = 
         return await handleResponse(res);
     } catch (err) {
         if (err.name === "AbortError") {
-            throw new Error(`The installation request for '${packageName}' timed out. The server may still be finishing the installation; check the project status before retrying. No mock fallback has been enabled.`, { cause: err });
+            const timeoutError = new Error(`The installation request for '${packageName}' timed out. The server may still be finishing the installation. Check the project status before retrying.`, { cause: err });
+            timeoutError.name = "DependencyInstallRequestTimeout";
+            throw timeoutError;
         }
         throw err;
     } finally {
         clearTimeout(timer);
     }
+}
+
+export async function installMissingDependencies(snapshotId, dependencies) {
+    const installed = [];
+    const failed = [];
+    let newJobId = null;
+    for (const [index, dependency] of dependencies.entries()) {
+        const { packageName, isDev, targetPackage, importedFrom } = dependency;
+        try {
+            const rerunTests = index === dependencies.length - 1 && failed.length === 0;
+            const result = await installMissingDependency(snapshotId, packageName, isDev, rerunTests, targetPackage || importedFrom);
+            if (!result.success) throw new Error(result.message || "Installation failed.");
+            installed.push({ ...dependency, installResult: result.installResult });
+            newJobId = result.newJobId || null;
+        } catch (error) {
+            failed.push({ ...dependency, message: error.message });
+            // A timed-out request may still be modifying the package manifest.
+            if (error.name === "DependencyInstallRequestTimeout") break;
+        }
+    }
+    return { installed, failed, newJobId };
 }
 
 export async function getFileCoverage(snapshotId, filePath) {

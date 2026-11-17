@@ -5,12 +5,17 @@ import { minimatch } from 'minimatch';
 import { parseJavaScriptCode } from './babelParser.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { recordUnitTestWork } from './unitTestWork.service.js';
+import { isCovaiJestArtifact } from '../utils/covaiJestArtifact.js';
 
 const ignoredDirectories = new Set(['node_modules', '.git', 'coverage', 'dist', 'build', 'out', '.next', '.nuxt', '.cache', '.turbo', '.vite', '.vitest', '.svelte-kit', '.output', 'storage', 'uploads']);
 const configNames = ['vitest.config.ts', 'vitest.config.mts', 'vitest.config.cts', 'vitest.config.js', 'vitest.config.mjs', 'vitest.config.cjs', 'vite.config.ts', 'vite.config.mts', 'vite.config.cts', 'vite.config.js', 'vite.config.mjs', 'vite.config.cjs', 'jest.config.js', 'jest.config.cjs', 'jest.config.ts', 'jest.config.mjs', 'jest.config.json'];
 const cache = new Map();
 const configurationCache = new Map();
 const normalize = value => value.replaceAll('\\', '/');
+const contained = (directory, file) => {
+    const rel = normalize(path.relative(directory, file));
+    return rel !== '..' && !rel.startsWith('../') && !path.isAbsolute(rel);
+};
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const conventional = /\.(?:test|spec)\.[cm]?[jt]sx?$/i;
 const fixtures = /(?:^|\/)(?:test[-_]data|fixtures?|__fixtures__|__mocks__|mocks?|helpers?|support|utils)(?:\/|$)/i;
@@ -70,7 +75,7 @@ function readStaticConfiguration(file, source) {
             .filter(item => item.type === 'ObjectProperty' && !item.computed)
             .map(item => [item.key.name || item.key.value, evaluate(item.value, visited)]));
         if (['TSAsExpression', 'TSSatisfiesExpression', 'ParenthesizedExpression'].includes(node.type)) return evaluate(node.expression, visited);
-        if (node.type === 'CallExpression' && node.callee.name === 'defineConfig') return evaluate(node.arguments[0], visited);
+        if (node.type === 'CallExpression' && ['defineConfig', 'defineWorkspace', 'defineProject'].includes(node.callee.name)) return evaluate(node.arguments[0], visited);
         if (node.type === 'CallExpression' && (node.callee.name === 'resolve' || node.callee.property?.name === 'resolve')) {
             const args = node.arguments.map(item => evaluate(item, visited));
             if (args.every(item => typeof item === 'string')) return path.resolve(...args);
@@ -86,7 +91,7 @@ function readStaticConfiguration(file, source) {
 function runnerPolicy(root, file, framework) {
     let directory = path.dirname(file);
     const configuration = {};
-    while (true) {
+    while (contained(root, directory)) {
         const manifest = path.join(directory, 'package.json');
         let pkg;
         try { pkg = JSON.parse(fs.readFileSync(manifest, 'utf8')); } catch { /* Optional package boundary. */ }
@@ -103,6 +108,14 @@ function runnerPolicy(root, file, framework) {
             }
         }
         const names = framework === 'vitest' ? configNames.filter(name => /^(?:vite|vitest)\./.test(name)) : configNames.filter(name => name.startsWith('jest.'));
+        const workspace = framework === 'vitest' && ['vitest.workspace.ts', 'vitest.workspace.js', 'vitest.workspace.mjs']
+            .find(name => fs.existsSync(path.join(directory, name)));
+        if (workspace) {
+            const absolute = path.join(directory, workspace);
+            const projects = staticConfiguration(absolute, fs.readFileSync(absolute, 'utf8'));
+            return { directory, configFile: normalize(path.relative(root, absolute)), config: Array.isArray(projects)
+                ? { test: { projects } } : { unresolved: true } };
+        }
         const config = names.find(name => fs.existsSync(path.join(directory, name)));
         if (config) {
             const absolute = path.join(directory, config);
@@ -110,39 +123,94 @@ function runnerPolicy(root, file, framework) {
             return { directory, configFile: normalize(path.relative(root, absolute)), config: configuration };
         }
         if (framework !== 'vitest' && pkg?.jest) return { directory, configFile: normalize(path.relative(root, manifest)), config: pkg.jest };
-        if (directory === root) break;
+        if (directory === root || directory === path.dirname(directory)) break;
         directory = path.dirname(directory);
     }
     return { directory: root, configFile: null, config: {} };
 }
 
-function matchesConfiguredTests(policy, absolute, framework) {
-    if (policy.config.unresolved) return false;
+function discoveryRule(policy, absolute, framework, depth = 0) {
+    if (depth > 4 || policy.config.unresolved) return 'Configuration could not be resolved statically';
     const config = framework === 'vitest' ? policy.config.test || {} : policy.config;
-    if (framework === 'vitest' && Object.hasOwn(policy.config,'test') && !policy.config.test) return false;
-    if (Object.hasOwn(config,framework === 'vitest' ? 'include' : 'testMatch') && !Array.isArray(config[framework === 'vitest' ? 'include' : 'testMatch'])) return false;
-    const configuredRoot = policy.config.root || config.rootDir;
-    const directory = typeof configuredRoot === 'string' ? path.resolve(policy.directory, configuredRoot.replaceAll('<rootDir>', policy.directory)) : policy.directory;
+    const selection = framework === 'vitest' ? 'include' : 'testMatch';
+    if (framework === 'vitest' && Object.hasOwn(policy.config,'test') && !policy.config.test) return 'Unsupported Vitest test configuration';
+    if (Object.hasOwn(config, selection) && !Array.isArray(config[selection])) return 'Unresolved ' + selection;
+    const configuredRoot = policy.config.root || config.rootDir || config.root;
+    const resolve = value => path.resolve(policy.directory, normalize(value).replaceAll('<rootDir>', normalize(policy.directory)));
+    const directory = typeof configuredRoot === 'string' ? resolve(configuredRoot) : policy.directory;
+    if (!contained(directory, absolute)) return 'Outside configured root ' + (configuredRoot || '.');
+    if (Object.hasOwn(config, 'roots') && (!Array.isArray(config.roots) || !config.roots.some(root =>
+        typeof root === 'string' && contained(path.resolve(directory, normalize(root).replaceAll('<rootDir>', normalize(directory))), absolute)))) {
+        return 'Excluded by roots ' + JSON.stringify(config.roots ?? null);
+    }
     const relative = normalize(path.relative(directory, absolute));
     const match = pattern => typeof pattern === 'string' && minimatch(relative, normalize(pattern.replaceAll('<rootDir>/', '')).replace(`${normalize(directory)}/`, ''), { dot: true });
     const excluded = framework === 'vitest' ? config.exclude : config.testPathIgnorePatterns;
-    if (Array.isArray(excluded) && excluded.some(pattern => {
+    const ignoredBy = Array.isArray(excluded) && excluded.find(pattern => {
         if (framework === 'vitest') return match(pattern);
+        if (typeof pattern !== 'string') return false;
         try { return new RegExp(pattern.replaceAll('<rootDir>', normalize(directory))).test(normalize(absolute)); } catch { return false; }
-    })) return false;
+    });
+    if (ignoredBy) return 'Excluded by ' + (framework === 'vitest' ? 'exclude' : 'testPathIgnorePatterns') + ' ' + ignoredBy;
+    const projects = config.projects;
+    if (Object.hasOwn(config, 'projects')) {
+        if (!Array.isArray(projects)) return 'Unresolved projects configuration';
+        const projectFailures = [];
+        for (const entry of projects) {
+            let project;
+            if (entry && typeof entry === 'object') {
+                project = { ...policy, directory, config: entry };
+            } else if (typeof entry === 'string') {
+                const pattern = normalize(entry).replaceAll('<rootDir>', normalize(directory));
+                const base = path.resolve(directory, pattern);
+                const candidates = [];
+                if (!/[*?[\]{}]/.test(pattern)) candidates.push(base);
+                else for (let ancestor = path.dirname(absolute); contained(directory, ancestor); ancestor = path.dirname(ancestor)) {
+                    const names = [ancestor, ...configNames.map(name => path.join(ancestor, name))];
+                    candidates.push(...names.filter(file => minimatch(normalize(file), normalize(base), { dot: true })));
+                    if (ancestor === directory) break;
+                }
+                for (const candidate of candidates) {
+                    if (!contained(directory, candidate) || !fs.existsSync(candidate)) continue;
+                    const isDirectory = fs.statSync(candidate).isDirectory();
+                    const candidateConfig = isDirectory ? runnerPolicy(candidate, path.join(candidate, 'test.js'), framework)
+                        : { directory: path.dirname(candidate), config: staticConfiguration(candidate, fs.readFileSync(candidate, 'utf8')) };
+                    const rejection = discoveryRule(candidateConfig, absolute, framework, depth + 1);
+                    if (!rejection) return null;
+                    projectFailures.push(rejection);
+                }
+            }
+            if (project) {
+                const rejection = discoveryRule(project, absolute, framework, depth + 1);
+                if (!rejection) return null;
+                projectFailures.push(rejection);
+            }
+        }
+        return 'Not selected by projects' + (projectFailures.length ? ': ' + [...new Set(projectFailures)].join('; ') : '');
+    }
     const patterns = framework === 'vitest' ? config.include : config.testMatch;
-    if (Array.isArray(patterns)) return patterns.some(match);
+    if (Array.isArray(patterns) && !patterns.reduce((selected, pattern) => {
+        if (typeof pattern !== 'string') return selected;
+        return pattern.startsWith('!') ? (match(pattern.slice(1)) ? false : selected) : selected || match(pattern);
+    }, false)) return 'Does not match ' + selection + ' ' + JSON.stringify(patterns);
+    if (Array.isArray(patterns)) return null;
     if (framework !== 'vitest' && config.testRegex) {
-        return [config.testRegex].flat().some(pattern => {
+        const matches = [config.testRegex].flat().some(pattern => {
             try { return new RegExp(pattern).test(normalize(absolute)); } catch { return false; }
         });
+        return matches ? null : 'Does not match testRegex ' + JSON.stringify(config.testRegex);
     }
-    return conventional.test(relative) || /(?:^|\/)__tests__\/.+\.[cm]?[jt]sx?$/i.test(relative);
+    return conventional.test(relative) || (framework === 'jest' && /(?:^|\/)__tests__\/.+\.[cm]?[jt]sx?$/i.test(relative))
+        ? null : 'Does not match default ' + framework + ' suite naming';
+}
+
+function matchesConfiguredTests(policy, absolute, framework) {
+    return discoveryRule(policy, absolute, framework) === null;
 }
 
 export function classifyUnitTestPath(rootDir, filePath, framework = null, { content: suppliedContent, policies = new Map() } = {}) {
     const root = path.resolve(rootDir);
-    const absolute = path.resolve(root, filePath);
+    const absolute = path.resolve(root, normalize(filePath));
     const relative = normalize(path.relative(root, absolute));
     const result = { filePath: relative, role: 'SOURCE', writable: false, framework };
     const configurationFor = runner => {
@@ -151,6 +219,7 @@ export function classifyUnitTestPath(rootDir, filePath, framework = null, { cont
         return policies.get(key);
     };
     if (!relative || relative.startsWith('../') || path.isAbsolute(relative)) return { ...result, role: 'INVALID', reason: 'Path escapes the workspace' };
+    if (isCovaiJestArtifact(relative)) return { ...result, role: 'RUNTIME', reason: 'CovAI Jest runner file or a suite generated from it' };
     if (relative.split('/').some(part => ignoredDirectories.has(part) || part.startsWith('.covai'))) return { ...result, role: 'INVALID', reason: 'Runtime or protected directory' };
     let current = root;
     for (const part of relative.split('/')) {
@@ -175,7 +244,8 @@ export function classifyUnitTestPath(rootDir, filePath, framework = null, { cont
     const isFixture = fixtures.test(relative) && /(?:^|\/)(?:specs?|tests?|__tests__)(?:\/|$)/i.test(relative);
     if (isFixture && !conventional.test(relative) && !/\.steps?\.[cm]?[jt]sx?$/i.test(relative)) return { ...result, role: 'FIXTURE', reason: 'Fixture or test helper module' };
     const policy = configurationFor(framework);
-    let runnable = matchesConfiguredTests(policy, absolute, framework);
+    const rejection = discoveryRule(policy, absolute, framework);
+    const runnable = rejection === null;
     if (runnable && fs.existsSync(absolute)) {
         const content = suppliedContent ?? fs.readFileSync(absolute,'utf8');
         if (/(?:from\s*|require\s*\(\s*)['"](?:@playwright\/test|cypress)['"]/.test(content) || /(?:^|\/)(?:e2e|cypress|playwright)(?:\/|$)/.test(relative)) {
@@ -188,7 +258,8 @@ export function classifyUnitTestPath(rootDir, filePath, framework = null, { cont
     }
     return { ...result, role: runnable ? 'TEST' : isFixture ? 'FIXTURE' : 'SOURCE', writable: runnable,
         packageRoot: normalize(path.relative(root, policy.directory)), configFile: policy.configFile,
-        reason: runnable ? 'Selected by the runner test patterns' : 'Not selected as a runnable suite by the runner configuration' };
+        testEnvironment: framework === 'vitest' ? policy.config.test?.environment : policy.config.testEnvironment,
+        reason: runnable ? 'Selected by the runner test patterns' : rejection + (policy.configFile ? ' in ' + policy.configFile : '') };
 }
 
 export function assertUnitTestTarget(rootDir, filePath, framework = 'jest') {
@@ -206,24 +277,86 @@ export function assertUnitTestSource(rootDir, filePath, framework) {
 
 /** Propose a new suite only where the selected runner will collect it. This is
  * used before generation; an already reviewed proposal is never redirected. */
-export function suggestUnitTestTarget(rootDir, sourceFile, framework, preferred) {
-    if (preferred && classifyUnitTestPath(rootDir, preferred, framework).writable) return preferred;
+export function suggestUnitTestTarget(rootDir, sourceFile, framework, preferred, { excluded = new Set(), sameDirectory, newOnly = false } = {}) {
     const root = path.resolve(rootDir);
-    const policy = runnerPolicy(root, path.resolve(root, sourceFile), framework);
-    const config = framework === 'vitest' ? policy.config.test || {} : policy.config;
-    const directory = path.resolve(policy.directory, policy.config.root || config.rootDir?.replaceAll('<rootDir>', policy.directory) || '.');
-    const base = path.basename(sourceFile).replace(/\.[cm]?[jt]sx?$/, '') + '.coverage';
-    for (let pattern of (framework === 'vitest' ? config.include : config.testMatch) || []) {
-        if (typeof pattern !== 'string' || /[!?()[\]]/.test(pattern)) continue;
-        pattern = normalize(pattern).replaceAll('<rootDir>', normalize(directory));
-        pattern = pattern.replace(/\{([^{}]+)\}/g, (_match, choices) => {
-            const values = choices.split(',');
-            return values.includes('test') ? 'test' : values.includes(path.extname(sourceFile).slice(1)) ? path.extname(sourceFile).slice(1) : values[0];
-        }).replaceAll('**/', '').replaceAll('*', base);
-        const candidate = normalize(path.relative(root, path.resolve(directory, pattern)));
-        if (!fs.existsSync(path.resolve(root, candidate)) && classifyUnitTestPath(root, candidate, framework).writable) return candidate;
+    const policies = new Map();
+    const select = candidate => {
+        const file = normalize(path.relative(root, path.resolve(root, normalize(candidate))));
+        if (excluded.has(file) || (newOnly && fs.existsSync(path.resolve(root, file))) ||
+            (sameDirectory != null && path.posix.dirname(file) !== sameDirectory)) return null;
+        return classifyUnitTestPath(root, file, framework, { policies }).writable ? file : null;
+    };
+    const preferredTarget = preferred && select(preferred);
+    if (preferredTarget) return preferredTarget;
+    const source = normalize(sourceFile || 'sample.js');
+    const absoluteSource = path.resolve(root, source);
+    if (!contained(root, absoluteSource)) {
+        throw new ServiceError('The source path escapes the workspace.', 422, 'INVALID_TEST_TARGET');
     }
-    throw new ServiceError('No writable test destination matches the selected runner configuration. Select an existing runnable suite or configure a test include pattern.', 422, 'INVALID_TEST_TARGET');
+    let policy = runnerPolicy(root, absoluteSource, framework);
+    for (let depth = 0; depth < 4; depth++) {
+        const projects = framework === 'vitest' ? policy.config.test?.projects : policy.config.projects;
+        if (!Array.isArray(projects)) break;
+        const configured = projects.filter(entry => entry && typeof entry === 'object').map(config => {
+            const setting = config.root || config.rootDir || config.test?.root;
+            const directory = typeof setting === 'string'
+                ? path.resolve(policy.directory, setting.replaceAll('<rootDir>', policy.directory))
+                : null;
+            return { config, directory };
+        }).filter(project => project.directory && contained(project.directory, absoluteSource))
+            .sort((a, b) => b.directory.length - a.directory.length)[0];
+        if (!configured) break;
+        policy = { ...policy, config: configured.config };
+    }
+    const config = framework === 'vitest' ? policy.config.test || {} : policy.config;
+    const configuredRoot = policy.config.root || config.rootDir || config.root || '.';
+    const directory = path.resolve(policy.directory, String(configuredRoot).replaceAll('<rootDir>', policy.directory));
+    const ext = path.posix.extname(source) || '.js';
+    const base = path.posix.basename(source, ext);
+    const sourceBase = contained(directory, absoluteSource) ? directory : policy.directory;
+    const relSourceDir = normalize(path.relative(sourceBase, path.dirname(absoluteSource))).replace(/^(?:src|lib)(?:\/|$)/, '');
+    const prefixes = relSourceDir && relSourceDir !== '.' ? [relSourceDir + '/', ''] : [''];
+    const folders = new Set([...['tests', '__tests__', 'specs', 'test'].map(name => path.join(directory, name)), directory,
+        path.join(path.dirname(path.resolve(root, source)), '__tests__')]);
+    if (preferred) folders.add(path.dirname(path.resolve(root, normalize(preferred))));
+    if (sameDirectory != null) folders.add(path.resolve(root, sameDirectory));
+    for (const runnerRoot of Array.isArray(config.roots) ? config.roots : []) {
+        if (typeof runnerRoot === 'string') folders.add(path.resolve(directory, runnerRoot.replaceAll('<rootDir>', directory)));
+    }
+    const endings = new Set([`.test${ext}`, `.spec${ext}`, `.${framework}.test${ext}`]);
+    for (const regex of [config.testRegex || []].flat()) {
+        if (typeof regex !== 'string') continue;
+        const tail = regex.match(/((?:\\\.[\w-]+)+)\\?\$?$/)?.[1];
+        if (tail) endings.add(tail.replaceAll('\\', ''));
+        for (const match of regex.matchAll(/\/([\w/-]+)\//g)) folders.add(path.resolve(directory, match[1]));
+    }
+    const options = [];
+    for (const prefix of prefixes) {
+        for (let pattern of (framework === 'vitest' ? config.include : config.testMatch) || []) {
+            if (typeof pattern !== 'string' || /[!?()[\]]/.test(pattern)) continue;
+            pattern = normalize(pattern).replaceAll('<rootDir>', normalize(directory));
+            pattern = pattern.replace(/\{([^{}]+)\}/g, (_match, choices) => {
+                const values = choices.split(',');
+                return values.includes('test') ? 'test' : values.includes(ext.slice(1)) ? ext.slice(1) : values[0];
+            }).replaceAll('**/', prefix).replaceAll('*', base);
+            options.push(path.resolve(directory, pattern));
+        }
+    }
+    for (const folder of folders) {
+        for (const prefix of prefixes) {
+            for (const ending of endings) options.push(path.resolve(folder, prefix, base + ending));
+            if (newOnly) {
+                for (const ending of endings) options.push(path.resolve(folder, prefix, base + '.coverage' + ending));
+            }
+        }
+    }
+    const resolved = [...new Set(options.map(select).filter(Boolean))];
+    const existing = resolved.find(file => fs.existsSync(path.join(root, file)));
+    if (existing || resolved[0]) return existing || resolved[0];
+    const rejection = preferred && classifyUnitTestPath(root, preferred, framework).reason;
+    throw new ServiceError('No writable ' + framework + ' test destination' +
+        (rejection ? ': ' + rejection : ' matches ' + (policy.configFile || 'the default suite naming rules')) + '.',
+        422, 'INVALID_TEST_TARGET', { filePath: preferred, framework, configFile: policy.configFile, reason: rejection });
 }
 
 export function unitTestInventory(rootDir) {
@@ -232,7 +365,7 @@ export function unitTestInventory(rootDir) {
     const metadata = [];
     const visit = directory => {
         for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-            if (ignoredDirectories.has(entry.name) || entry.name.startsWith('.covai') || entry.isSymbolicLink()) continue;
+            if (ignoredDirectories.has(entry.name) || entry.name.startsWith('.covai') || entry.isSymbolicLink() || isCovaiJestArtifact(entry.name)) continue;
             const absolute = path.join(directory, entry.name);
             if (entry.isDirectory()) visit(absolute);
             else if (entry.isFile() && (/\.[cm]?[jt]sx?$/.test(entry.name) || ['package.json', 'jest.config.json'].includes(entry.name))) {

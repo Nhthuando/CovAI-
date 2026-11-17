@@ -458,7 +458,7 @@ export const autoRepairTestSyntaxWithAst = (code, options = {}) => {
         const redeclRegex = new RegExp(`(^[ \\t]*)(?:const|let|var)\\s+(${varName}\\b[ \\t]*=)`, "gm");
         currentCode = currentCode.replace(redeclRegex, (m, indent, rest) => {
           count++;
-          if (count === 1) return m;
+          if (count === 1) return `${indent}let ${rest}`;
           return `${indent}${rest}`;
         });
         modified = true;

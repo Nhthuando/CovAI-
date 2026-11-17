@@ -9,7 +9,6 @@ import {
   FolderTree,
   ChevronDown,
   ChevronUp,
-  RotateCcw,
   Plus,
 } from "lucide-react";
 
@@ -17,16 +16,14 @@ import {
  * UnitTestPackageInstaller
  *
  * Dedicated package installer placed directly under Guided Unit Test Workflow.
- * Allows users to auto-install detected missing dependencies (e.g. 'mathjs')
- * or manually install any npm package into root or monorepo subpackages,
+ * Allows users to select detected missing dependencies or enter npm packages
+ * to install into root or monorepo subpackages,
  * immediately triggering test rerun and coverage dashboard refresh.
  */
 export default function UnitTestPackageInstaller({
-  snapshotId,
-  missingDependency = null,
-  onInstallDependency,
+  missingDependencies = [],
+  onInstallDependencies,
   isInstalling = false,
-  onRerunTests,
   isLight = false,
 }) {
   const [packageNameInput, setPackageNameInput] = useState("");
@@ -36,57 +33,49 @@ export default function UnitTestPackageInstaller({
   const [installError, setInstallError] = useState(null);
   const [showConsole, setShowConsole] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
+  const [excludedPackages, setExcludedPackages] = useState(new Set());
+  const [installedPackages, setInstalledPackages] = useState(new Set());
+  const [installedCount, setInstalledCount] = useState(0);
+  const packageKey = dependency => JSON.stringify([dependency.packageName, dependency.targetPackage || dependency.importedFrom]);
+  const pendingPackages = missingDependencies.filter(dependency => !installedPackages.has(packageKey(dependency)));
+  const selectedPackages = pendingPackages.filter(dependency => !excludedPackages.has(packageKey(dependency)));
+  const manualPackages = [...new Set(packageNameInput.trim().split(/[\s,]+/).filter(Boolean))];
 
-  // Auto-fill subpackage if missingDependency has importedFrom (e.g. backend/src/...)
-  React.useEffect(() => {
-    if (missingDependency?.importedFrom) {
-      const match = missingDependency.importedFrom.match(/^(?:.*[\\/])?(backend|server|app|client|frontend|web)[\\/]/i);
-      if (match) {
-        setTargetSubDir(match[1]);
-      }
-    }
-  }, [missingDependency]);
-
-  const handleInstallAuto = async () => {
-    if (!missingDependency?.packageName || isInstalling) return;
+  const install = async (dependencies) => {
+    if (!dependencies.length || isInstalling) return null;
     setInstallError(null);
     setInstallOutput(null);
     try {
-      const res = await onInstallDependency(
-        missingDependency.packageName,
-        /^(?:@testing-library\/|@types\/|@vitest\/|vitest$|jest(?:-|$)|jsdom$|happy-dom$)/.test(missingDependency.packageName),
-        missingDependency.importedFrom || null
-      );
-      if (res?.installResult) {
-        setInstallOutput(res.installResult.stdout || res.installResult.stderr || "Installation succeeded.");
+      const result = await onInstallDependencies(dependencies);
+      setInstalledPackages(previous => new Set([...previous, ...result.installed.map(packageKey)]));
+      if (result.failed.length) {
+        const failures = result.failed.map(item => `${item.packageName}: ${item.message}`).join("\n");
+        const installed = result.installed.length ? `Installed ${result.installed.length} package(s).\n` : "";
+        setInstallError(`${installed}${failures}\nTests were not queued. Retry the remaining packages.`);
+      } else {
+        setInstalledCount(result.installed.length);
+        setInstallOutput(result.installed.map(item =>
+          item.installResult?.stdout || item.installResult?.stderr || `${item.packageName} installed.`).join("\n"));
       }
+      return result;
     } catch (err) {
-      setInstallError(err.message || `Failed to install ${missingDependency.packageName}`);
+      setInstallError(err.message || "Package installation failed.");
+      return null;
     }
   };
 
+  const handleInstallAuto = () => install(selectedPackages.map(dependency => ({
+    ...dependency,
+    isDev: /^(?:@testing-library\/|@types\/|@vitest\/|vitest$|jest(?:-|$)|jsdom$|happy-dom$)/.test(dependency.packageName),
+  })));
+
   const handleInstallManual = async (e) => {
-    if (e) e.preventDefault();
-    const pkg = packageNameInput.trim();
-    if (!pkg || isInstalling) return;
-    setInstallError(null);
-    setInstallOutput(null);
-
-    const importedFromCandidate = targetSubDir.trim() ? `${targetSubDir.trim()}/package.json` : null;
-
-    try {
-      const res = await onInstallDependency(
-        pkg,
-        isDev,
-        importedFromCandidate
-      );
-      if (res?.installResult) {
-        setInstallOutput(res.installResult.stdout || res.installResult.stderr || "Installation succeeded.");
-      }
-      setPackageNameInput("");
-    } catch (err) {
-      setInstallError(err.message || `Failed to install ${pkg}`);
-    }
+    e.preventDefault();
+    const targetPackage = targetSubDir.trim() ? `${targetSubDir.trim()}/package.json` : "package.json";
+    const result = await install(manualPackages.map(packageName => ({ packageName, isDev, targetPackage })));
+    if (!result) return;
+    const completed = new Set(result.installed.map(item => item.packageName));
+    setPackageNameInput(manualPackages.filter(packageName => !completed.has(packageName)).join(", "));
   };
 
   return (
@@ -97,12 +86,12 @@ export default function UnitTestPackageInstaller({
         background: isLight
           ? "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)"
           : "linear-gradient(180deg, #161b22 0%, #0d1117 100%)",
-        border: missingDependency
+        border: pendingPackages.length
           ? isLight ? "1px solid #f87171" : "1px solid rgba(239, 68, 68, 0.45)"
           : isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
         borderRadius: 10,
         padding: "16px 20px",
-        boxShadow: missingDependency
+        boxShadow: pendingPackages.length
           ? "0 4px 20px rgba(239, 68, 68, 0.15)"
           : isLight ? "0 2px 8px rgba(0,0,0,0.04)" : "0 4px 14px rgba(0, 0, 0, 0.35)",
         transition: "all 0.2s ease",
@@ -125,13 +114,13 @@ export default function UnitTestPackageInstaller({
               width: 32,
               height: 32,
               borderRadius: 8,
-              background: missingDependency
+              background: pendingPackages.length
                 ? "rgba(239, 68, 68, 0.15)"
                 : isLight ? "rgba(99, 102, 241, 0.12)" : "rgba(99, 102, 241, 0.2)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: missingDependency ? "#ef4444" : "#818cf8",
+              color: pendingPackages.length ? "#ef4444" : "#818cf8",
             }}
           >
             <Package size={17} />
@@ -141,7 +130,7 @@ export default function UnitTestPackageInstaller({
               <span style={{ fontSize: 13.5, fontWeight: 700, color: isLight ? "#0f172a" : "#f1f5f9" }}>
                 Project Dependency Manager
               </span>
-              {missingDependency ? (
+              {pendingPackages.length > 0 ? (
                 <span
                   style={{
                     fontSize: 10.5,
@@ -156,7 +145,7 @@ export default function UnitTestPackageInstaller({
                     gap: 4,
                   }}
                 >
-                  <AlertTriangle size={11} /> MISSING PACKAGE DETECTED
+                  <AlertTriangle size={11} /> {pendingPackages.length} MISSING
                 </span>
               ) : (
                 <span
@@ -199,69 +188,44 @@ export default function UnitTestPackageInstaller({
       {isExpanded && (
         <div style={{ marginTop: 14 }}>
           {/* 1. Auto-detected Missing Dependency Quick Action Banner */}
-          {missingDependency && (
-            <div
-              style={{
-                marginBottom: 14,
-                padding: "12px 14px",
-                background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-                border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.35)",
-                borderRadius: 8,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                flexWrap: "wrap",
-                gap: 12,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 260 }}>
-                <AlertTriangle size={18} style={{ color: "#ef4444", flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: isLight ? "#991b1b" : "#fca5a5" }}>
-                    Missing package required by tests: <code style={{ fontWeight: 800, color: "#f87171" }}>{missingDependency.packageName}</code>
-                  </div>
-                  {missingDependency.importedFrom && (
-                    <div style={{ fontSize: 11, color: isLight ? "#b91c1c" : "#cbd5e1", marginTop: 2 }}>
-                      Imported from: <span style={{ fontFamily: "var(--font-mono)" }}>{missingDependency.importedFrom}</span>
-                    </div>
-                  )}
-                </div>
+          {pendingPackages.length > 0 && (
+            <fieldset className="mb-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-3">
+              <legend className="px-1 text-xs font-medium text-[var(--color-warning)]">Packages reported missing by the test runner</legend>
+              <div className="divide-y divide-[var(--color-border)]">
+                {pendingPackages.map(dependency => {
+                  const key = packageKey(dependency);
+                  return (
+                    <label key={key} className="flex items-center gap-2 py-2 text-xs text-[var(--color-text-secondary)]">
+                      <input
+                        type="checkbox"
+                        checked={!excludedPackages.has(key)}
+                        disabled={isInstalling}
+                        onChange={event => {
+                          const checked = event.target.checked;
+                          setExcludedPackages(previous => {
+                            const next = new Set(previous);
+                            if (checked) next.delete(key);
+                            else next.add(key);
+                            return next;
+                          });
+                        }}
+                      />
+                      <code className="font-mono text-[var(--color-text)]">{dependency.packageName}</code>
+                      {dependency.targetPackage && <span className="font-mono">{dependency.targetPackage}</span>}
+                    </label>
+                  );
+                })}
               </div>
-
               <button
                 type="button"
                 onClick={handleInstallAuto}
-                disabled={isInstalling}
-                style={{
-                  background: "#dc2626",
-                  border: "1px solid #b91c1c",
-                  color: "#ffffff",
-                  padding: "8px 16px",
-                  borderRadius: 6,
-                  fontSize: 12.5,
-                  fontWeight: 700,
-                  cursor: isInstalling ? "wait" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  boxShadow: "0 2px 8px rgba(220, 38, 38, 0.35)",
-                  transition: "all 0.15s ease",
-                }}
-                className="hover:opacity-90"
+                disabled={isInstalling || !selectedPackages.length}
+                className="mt-2 inline-flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-border)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isInstalling ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>Installing & Running Tests...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download size={14} />
-                    <span>Install '{missingDependency.packageName}' & Rerun Tests</span>
-                  </>
-                )}
+                {isInstalling ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                {isInstalling ? "Installing packages…" : `Install ${selectedPackages.length} & Rerun Tests`}
               </button>
-            </div>
+            </fieldset>
           )}
 
           {/* 2. Manual Package Installer Form */}
@@ -278,7 +242,8 @@ export default function UnitTestPackageInstaller({
             <div style={{ flex: "1 1 240px", minWidth: 180, position: "relative" }}>
               <input
                 type="text"
-                placeholder="Package name (e.g. mathjs, lodash, @types/jest)"
+                aria-label="Package names"
+                placeholder="Package names separated by commas or spaces"
                 value={packageNameInput}
                 onChange={(e) => setPackageNameInput(e.target.value)}
                 disabled={isInstalling}
@@ -398,7 +363,7 @@ export default function UnitTestPackageInstaller({
                 justifyContent: "space-between",
               }}
             >
-              <span>{installError}</span>
+              <span className="whitespace-pre-line">{installError}</span>
               <button
                 type="button"
                 onClick={() => setShowConsole((v) => !v)}
@@ -433,7 +398,7 @@ export default function UnitTestPackageInstaller({
             >
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <CheckCircle2 size={14} />
-                <span>Package installed successfully. Tests re-run triggered.</span>
+                <span>Installed {installedCount} {installedCount === 1 ? "package" : "packages"}. Test rerun queued.</span>
               </div>
               <button
                 type="button"
