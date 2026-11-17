@@ -126,6 +126,9 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
         ...(executionMode ? { executionMode } : {}),
         ...(isRestart ? { restart: true } : {}),
         ...(options?.targetEndpoint ? { targetEndpoint: options.targetEndpoint } : {}),
+        ...(Array.isArray(options?.targetEndpoints) && options.targetEndpoints.length > 0
+            ? { targetEndpoints: options.targetEndpoints }
+            : {}),
         ...(Array.isArray(options?.targetTestNames) && options.targetTestNames.length > 0
             ? { targetTestNames: options.targetTestNames }
             : {}),

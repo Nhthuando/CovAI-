@@ -118,139 +118,196 @@ export default function IntegrationRouteMatrixTable({
   const [copiedKey, setCopiedKey] = useState(null);
 
   // Merge endpoint scenarios + aiTests requests so 100% of scenarios (AI, Repo, Custom) live inside the matrix
-  const { enrichedEndpoints, unmappedScenarios, totalScenarioCount } = useMemo(() => {
-    const allAiRequests = [];
-    for (const testFile of aiTests || []) {
-      const requests = Array.isArray(testFile.requests) ? testFile.requests : [];
-      for (const req of requests) {
-        const resolvedTitle = req.title || req.testName || req.name || "";
-        allAiRequests.push({
-          ...req,
-          title: resolvedTitle,
-          aiTestId: req.aiTestId || testFile.id,
-          scenarioId: req.scenarioId || req.id,
-          version: testFile.version ?? req.version ?? 1,
-          filePath: req.filePath || testFile.filePath,
-          fullFileCode: testFile.code || "",
-          origin: req.origin || testFile.origin || "AI",
-          enabled: req.enabled !== false,
-          userEdited: Boolean(req.userEdited),
-        });
+  const { enrichedEndpoints, unmappedScenarios, totalScenarioCount } =
+    useMemo(() => {
+      const allAiRequests = [];
+      for (const testFile of aiTests || []) {
+        if (String(testFile.id || "").startsWith("existing_test_")) continue;
+        const requests = Array.isArray(testFile.requests)
+          ? testFile.requests
+          : [];
+        for (const req of requests) {
+          if (req.origin === "PROJECT_EXISTING") continue;
+          const resolvedTitle = req.title || req.testName || req.name || "";
+          allAiRequests.push({
+            ...req,
+            title: resolvedTitle,
+            aiTestId: req.aiTestId || testFile.id,
+            scenarioId: req.scenarioId || req.id,
+            version: testFile.version ?? req.version ?? 1,
+            filePath: req.filePath || testFile.filePath,
+            fullFileCode: testFile.code || "",
+            origin: req.origin || testFile.origin || "AI",
+            enabled: req.enabled !== false,
+            userEdited: Boolean(req.userEdited),
+          });
+        }
       }
-    }
 
-    const usedAiRequestKeys = new Set();
-    let scenarioCounter = 0;
+      const usedAiRequestKeys = new Set();
+      let scenarioCounter = 0;
 
-    const mappedEndpoints = (endpoints || []).map((ep) => {
-      const epMethod = (ep.method || "GET").toUpperCase();
-      const epPath = ep.path || "/";
-      const baseScenarios = Array.isArray(ep.scenarios) ? ep.scenarios : [];
+      const mappedEndpoints = (endpoints || []).map((ep) => {
+        const epMethod = (ep.method || "GET").toUpperCase();
+        const epPath = ep.path || "/";
+        const baseScenarios = Array.isArray(ep.scenarios) ? ep.scenarios : [];
 
-      // Match AI/Repo test requests targeting this endpoint
-      const matchingAiReqs = allAiRequests.filter((req) => {
-        const reqMethod = (req.method || "GET").toUpperCase();
-        if (reqMethod !== epMethod) return false;
-        return doesRouteMatch(epPath, req.path || "/");
-      });
+        // Match AI/Repo test requests targeting this endpoint
+        const matchingAiReqs = allAiRequests.filter((req) => {
+          const reqMethod = (req.method || "GET").toUpperCase();
+          if (reqMethod !== epMethod) return false;
+          return doesRouteMatch(epPath, req.path || "/");
+        });
 
-      const merged = [];
-      const seenScenarioIds = new Set();
-      const seenTitles = new Set();
+        const merged = [];
+        const seenScenarioIds = new Set();
+        const seenTitles = new Set();
 
-      // 1. Merge base scenarios from endpoint with metadata from matchingAiReqs
-      for (const sc of baseScenarios) {
-        const scTitleNorm = String(sc.title || sc.name || "")
-          .trim()
-          .toLowerCase();
-        const matchedReq = matchingAiReqs.find((r) => {
-          if (sc.scenarioId && r.scenarioId && sc.scenarioId === r.scenarioId) {
-            return true;
+        // 1. Merge base scenarios from endpoint with metadata from matchingAiReqs
+        for (const sc of baseScenarios) {
+          const scStatusUpper = String(sc.status || "").toUpperCase();
+          const isExecuted =
+            scStatusUpper === "PASSED" ||
+            scStatusUpper === "PASS" ||
+            scStatusUpper === "FAILED" ||
+            scStatusUpper === "FAIL";
+          const isRepoTest =
+            !sc.aiTestId ||
+            String(sc.aiTestId).startsWith("existing_test_") ||
+            sc.origin === "PROJECT_EXISTING";
+          const isUnrunRepoTest = isRepoTest && !isExecuted;
+          if (isUnrunRepoTest) {
+            continue;
           }
-          const rTitleNorm = String(r.title || r.testName || r.name || "")
+          const scTitleNorm = String(sc.title || sc.name || "")
             .trim()
             .toLowerCase();
-          return scTitleNorm && rTitleNorm === scTitleNorm;
-        });
+          const matchedReq = matchingAiReqs.find((r) => {
+            if (
+              sc.scenarioId &&
+              r.scenarioId &&
+              sc.scenarioId === r.scenarioId
+            ) {
+              return true;
+            }
+            const rTitleNorm = String(r.title || r.testName || r.name || "")
+              .trim()
+              .toLowerCase();
+            return scTitleNorm && rTitleNorm === scTitleNorm;
+          });
 
-        if (matchedReq) {
-          usedAiRequestKeys.add(`${matchedReq.aiTestId}::${matchedReq.scenarioId || matchedReq.title}`);
+          if (matchedReq) {
+            usedAiRequestKeys.add(
+              `${matchedReq.aiTestId}::${matchedReq.scenarioId || matchedReq.title}`,
+            );
+          }
+
+          const mergedSc = {
+            ...matchedReq,
+            ...sc,
+            title:
+              sc.title ||
+              sc.name ||
+              matchedReq?.title ||
+              `${epMethod} ${epPath} scenario`,
+            aiTestId: sc.aiTestId || matchedReq?.aiTestId || null,
+            scenarioId: sc.scenarioId || matchedReq?.scenarioId || null,
+            version: sc.version ?? matchedReq?.version ?? 1,
+            code: sc.code || matchedReq?.code || "",
+            fullFileCode: sc.fullFileCode || matchedReq?.fullFileCode || "",
+            filePath:
+              sc.filePath || sc.testFile || matchedReq?.filePath || null,
+            origin: sc.origin || matchedReq?.origin || "AI",
+            enabled:
+              sc.enabled !== undefined
+                ? sc.enabled !== false
+                : matchedReq?.enabled !== false,
+            userEdited: Boolean(sc.userEdited || matchedReq?.userEdited),
+            expectedStatus:
+              sc.expectedStatus ?? matchedReq?.expectedStatus ?? 200,
+            method: epMethod,
+            path: epPath,
+          };
+
+          const idKey = mergedSc.scenarioId
+            ? `${mergedSc.aiTestId || "ep"}::${mergedSc.scenarioId}`
+            : null;
+          const titleKey = scTitleNorm
+            ? `${epMethod}::${epPath}::${scTitleNorm}`
+            : null;
+
+          if (
+            (idKey && seenScenarioIds.has(idKey)) ||
+            (titleKey && seenTitles.has(titleKey))
+          ) {
+            continue;
+          }
+          if (idKey) seenScenarioIds.add(idKey);
+          if (titleKey) seenTitles.add(titleKey);
+          merged.push(mergedSc);
         }
 
-        const mergedSc = {
-          ...matchedReq,
-          ...sc,
-          title: sc.title || sc.name || matchedReq?.title || `${epMethod} ${epPath} scenario`,
-          aiTestId: sc.aiTestId || matchedReq?.aiTestId || null,
-          scenarioId: sc.scenarioId || matchedReq?.scenarioId || null,
-          version: sc.version ?? matchedReq?.version ?? 1,
-          code: sc.code || matchedReq?.code || "",
-          fullFileCode: sc.fullFileCode || matchedReq?.fullFileCode || "",
-          filePath: sc.filePath || sc.testFile || matchedReq?.filePath || null,
-          origin: sc.origin || matchedReq?.origin || "AI",
-          enabled: sc.enabled !== undefined ? sc.enabled !== false : matchedReq?.enabled !== false,
-          userEdited: Boolean(sc.userEdited || matchedReq?.userEdited),
-          expectedStatus: sc.expectedStatus ?? matchedReq?.expectedStatus ?? 200,
-          method: epMethod,
-          path: epPath,
-        };
+        // 2. Append any remaining matchingAiReqs not yet in baseScenarios
+        for (const req of matchingAiReqs) {
+          const reqKey = `${req.aiTestId}::${req.scenarioId || req.title}`;
+          const reqTitleNorm = String(
+            req.title || req.testName || req.name || "",
+          )
+            .trim()
+            .toLowerCase();
+          const idKey = req.scenarioId
+            ? `${req.aiTestId}::${req.scenarioId}`
+            : null;
+          const titleKey = reqTitleNorm
+            ? `${epMethod}::${epPath}::${reqTitleNorm}`
+            : null;
 
-        const idKey = mergedSc.scenarioId ? `${mergedSc.aiTestId || "ep"}::${mergedSc.scenarioId}` : null;
-        const titleKey = scTitleNorm ? `${epMethod}::${epPath}::${scTitleNorm}` : null;
-
-        if ((idKey && seenScenarioIds.has(idKey)) || (titleKey && seenTitles.has(titleKey))) {
-          continue;
-        }
-        if (idKey) seenScenarioIds.add(idKey);
-        if (titleKey) seenTitles.add(titleKey);
-        merged.push(mergedSc);
-      }
-
-      // 2. Append any remaining matchingAiReqs not yet in baseScenarios
-      for (const req of matchingAiReqs) {
-        const reqKey = `${req.aiTestId}::${req.scenarioId || req.title}`;
-        const reqTitleNorm = String(req.title || req.testName || req.name || "")
-          .trim()
-          .toLowerCase();
-        const idKey = req.scenarioId ? `${req.aiTestId}::${req.scenarioId}` : null;
-        const titleKey = reqTitleNorm ? `${epMethod}::${epPath}::${reqTitleNorm}` : null;
-
-        if ((idKey && seenScenarioIds.has(idKey)) || (titleKey && seenTitles.has(titleKey))) {
+          if (
+            (idKey && seenScenarioIds.has(idKey)) ||
+            (titleKey && seenTitles.has(titleKey))
+          ) {
+            usedAiRequestKeys.add(reqKey);
+            continue;
+          }
+          if (idKey) seenScenarioIds.add(idKey);
+          if (titleKey) seenTitles.add(titleKey);
           usedAiRequestKeys.add(reqKey);
-          continue;
+          merged.push({
+            ...req,
+            title:
+              req.title ||
+              req.testName ||
+              req.name ||
+              `${epMethod} ${epPath} scenario`,
+            status: req.status || "READY",
+            method: epMethod,
+            path: epPath,
+          });
         }
-        if (idKey) seenScenarioIds.add(idKey);
-        if (titleKey) seenTitles.add(titleKey);
-        usedAiRequestKeys.add(reqKey);
-        merged.push({
-          ...req,
-          title: req.title || req.testName || req.name || `${epMethod} ${epPath} scenario`,
-          status: req.status || "READY",
-          method: epMethod,
-          path: epPath,
-        });
-      }
 
-      scenarioCounter += merged.length;
+        scenarioCounter += merged.length;
+
+        return {
+          ...ep,
+          scenarios: merged,
+          scenarioCount: merged.length,
+        };
+      });
+
+      const leftover = allAiRequests.filter(
+        (req) =>
+          !usedAiRequestKeys.has(
+            `${req.aiTestId}::${req.scenarioId || req.title}`,
+          ),
+      );
+      scenarioCounter += leftover.length;
 
       return {
-        ...ep,
-        scenarios: merged,
-        scenarioCount: Math.max(ep.scenarioCount || 0, merged.length),
+        enrichedEndpoints: mappedEndpoints,
+        unmappedScenarios: leftover,
+        totalScenarioCount: scenarioCounter,
       };
-    });
-
-    const leftover = allAiRequests.filter(
-      (req) => !usedAiRequestKeys.has(`${req.aiTestId}::${req.scenarioId || req.title}`),
-    );
-    scenarioCounter += leftover.length;
-
-    return {
-      enrichedEndpoints: mappedEndpoints,
-      unmappedScenarios: leftover,
-      totalScenarioCount: scenarioCounter,
-    };
-  }, [endpoints, aiTests]);
+    }, [endpoints, aiTests]);
 
   const modules = useMemo(() => {
     const set = new Set();
@@ -283,8 +340,10 @@ export default function IntegrationRouteMatrixTable({
       });
     if (hasPassed) return "PASS";
 
-    if (scenarios.length > 0) return "READY";
-    return "UNCOVERED";
+    if (ep.wasAnalyzed || raw === "UNCOVERED" || scenarios.length > 0) {
+      return "UNCOVERED";
+    }
+    return "DISCOVERED";
   };
 
   const filteredEndpoints = useMemo(() => {
@@ -299,6 +358,7 @@ export default function IntegrationRouteMatrixTable({
       if (
         statusFilter === "UNCOVERED" &&
         status !== "UNCOVERED" &&
+        status !== "DISCOVERED" &&
         status !== "READY"
       )
         return false;
@@ -321,7 +381,13 @@ export default function IntegrationRouteMatrixTable({
 
       return true;
     });
-  }, [enrichedEndpoints, methodFilter, statusFilter, moduleFilter, searchQuery]);
+  }, [
+    enrichedEndpoints,
+    methodFilter,
+    statusFilter,
+    moduleFilter,
+    searchQuery,
+  ]);
 
   const stats = useMemo(() => {
     const total = enrichedEndpoints.length;
@@ -385,7 +451,9 @@ export default function IntegrationRouteMatrixTable({
 
   const toggleSelectEndpoint = (epKey) => {
     const isCurrentlySelected = selectedEndpointKeys.has(epKey);
-    const targetEp = enrichedEndpoints.find((ep) => getEpIdentityKey(ep) === epKey);
+    const targetEp = enrichedEndpoints.find(
+      (ep) => getEpIdentityKey(ep) === epKey,
+    );
     const childKeys = (targetEp?.scenarios || []).map((sc) =>
       getScenarioIdentityKey(sc, epKey),
     );
@@ -416,7 +484,9 @@ export default function IntegrationRouteMatrixTable({
       filteredKeys.every((k) => selectedEndpointKeys.has(k));
     const allChildKeys = filteredEndpoints.flatMap((ep) => {
       const epKey = getEpIdentityKey(ep);
-      return (ep.scenarios || []).map((sc) => getScenarioIdentityKey(sc, epKey));
+      return (ep.scenarios || []).map((sc) =>
+        getScenarioIdentityKey(sc, epKey),
+      );
     });
 
     if (allSelected) {
@@ -494,7 +564,9 @@ export default function IntegrationRouteMatrixTable({
               Map your API routes before running coverage
             </h4>
             <p className="text-xs text-[var(--color-text-secondary)] max-w-md mx-auto leading-relaxed">
-              Scan your Express/Node router AST to inspect route handlers, purpose, and logic, then run existing tests or generate a 100% Supertest suite.
+              Scan your Express/Node router AST to inspect route handlers,
+              purpose, and logic, then run existing tests or generate a 100%
+              Supertest suite.
             </p>
           </div>
 
@@ -505,7 +577,8 @@ export default function IntegrationRouteMatrixTable({
                 <span>1. Scan API routes</span>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">
-                Extracts HTTP methods, paths, controller names, and source handler code without executing tests.
+                Extracts HTTP methods, paths, controller names, and source
+                handler code without executing tests.
               </p>
             </div>
             <div className="p-3.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
@@ -514,7 +587,8 @@ export default function IntegrationRouteMatrixTable({
                 <span>2. Run or generate tests</span>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">
-                Measure Supertest coverage per endpoint, generate missing scenarios, and apply passing tests to your repo.
+                Measure Supertest coverage per endpoint, generate missing
+                scenarios, and apply passing tests to your repo.
               </p>
             </div>
           </div>
@@ -669,7 +743,8 @@ export default function IntegrationRouteMatrixTable({
       </div>
 
       {/* Unified Selection Action Bar (Endpoints & Scenarios) */}
-      {(selectedEndpointsList.length > 0 || selectedScenariosList.length > 0) && (
+      {(selectedEndpointsList.length > 0 ||
+        selectedScenariosList.length > 0) && (
         <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-primary)]/5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text)] tabular-nums">
             {selectedEndpointsList.length > 0 && (
@@ -680,9 +755,10 @@ export default function IntegrationRouteMatrixTable({
                 {selectedEndpointsList.length === 1 ? "endpoint" : "endpoints"}
               </span>
             )}
-            {selectedEndpointsList.length > 0 && selectedScenariosList.length > 0 && (
-              <span className="text-[var(--color-text-muted)]">·</span>
-            )}
+            {selectedEndpointsList.length > 0 &&
+              selectedScenariosList.length > 0 && (
+                <span className="text-[var(--color-text-muted)]">·</span>
+              )}
             {selectedScenariosList.length > 0 && (
               <span>
                 <span className="font-semibold text-emerald-400">
@@ -711,7 +787,7 @@ export default function IntegrationRouteMatrixTable({
 
             {(selectedScenariosList.length > 0
               ? onRunSelectedScenarios
-              : onRunSelected && selectedHasScenarios) && (
+              : onRunSelected && selectedEndpointsList.length > 0) && (
               <button
                 type="button"
                 onClick={() =>
@@ -734,7 +810,9 @@ export default function IntegrationRouteMatrixTable({
             )}
 
             {onApplyScenario &&
-              selectedScenariosList.some((sc) => sc.aiTestId && sc.scenarioId) && (
+              selectedScenariosList.some(
+                (sc) => sc.aiTestId && sc.scenarioId,
+              ) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -927,7 +1005,7 @@ export default function IntegrationRouteMatrixTable({
                       {/* Clean Status Indicator */}
                       <td className="py-3.5 px-3 align-top">
                         <div className="pt-0.5">
-                          {!hasAnalyzedCoverage && scenarioCount === 0 ? (
+                          {status === "DISCOVERED" ? (
                             <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
                               Discovered
@@ -942,11 +1020,6 @@ export default function IntegrationRouteMatrixTable({
                               <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
                               Failed
                             </span>
-                          ) : status === "READY" ? (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-sky-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
-                              Ready
-                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400">
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
@@ -959,8 +1032,10 @@ export default function IntegrationRouteMatrixTable({
                       {/* Scenarios Count */}
                       <td className="py-3.5 px-3 text-right font-mono tabular-nums text-[11px] align-top">
                         <div className="pt-0.5">
-                          {!hasAnalyzedCoverage && scenarioCount === 0 ? (
-                            <span className="text-[var(--color-text-muted)]">—</span>
+                          {status === "DISCOVERED" && scenarioCount === 0 ? (
+                            <span className="text-[var(--color-text-muted)]">
+                              —
+                            </span>
                           ) : (
                             <span className="text-[var(--color-text-secondary)]">
                               {scenarioCount}{" "}
@@ -1017,34 +1092,57 @@ export default function IntegrationRouteMatrixTable({
                             {/* Compact Contract Metadata + Handler Code Toggle */}
                             <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-[var(--color-text-muted)] pb-2.5 border-b border-[var(--color-border)]/70">
                               <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                                {(ep.source?.behaviorEvidence?.bodyParams || []).length > 0 && (
+                                {(ep.source?.behaviorEvidence?.bodyParams || [])
+                                  .length > 0 && (
                                   <span>
                                     Body:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {ep.source.behaviorEvidence.bodyParams.join(", ")}
+                                      {ep.source.behaviorEvidence.bodyParams.join(
+                                        ", ",
+                                      )}
                                     </span>
                                   </span>
                                 )}
-                                {(ep.source?.behaviorEvidence?.pathParams || ep.source?.params || []).length > 0 && (
+                                {(
+                                  ep.source?.behaviorEvidence?.pathParams ||
+                                  ep.source?.params ||
+                                  []
+                                ).length > 0 && (
                                   <span>
                                     Params:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {(ep.source?.behaviorEvidence?.pathParams || ep.source?.params).join(", ")}
+                                      {(
+                                        ep.source?.behaviorEvidence
+                                          ?.pathParams || ep.source?.params
+                                      ).join(", ")}
                                     </span>
                                   </span>
                                 )}
-                                {(ep.source?.behaviorEvidence?.queryParams || ep.source?.queryParams || []).length > 0 && (
+                                {(
+                                  ep.source?.behaviorEvidence?.queryParams ||
+                                  ep.source?.queryParams ||
+                                  []
+                                ).length > 0 && (
                                   <span>
                                     Query:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {(ep.source?.behaviorEvidence?.queryParams || ep.source?.queryParams).join(", ")}
+                                      {(
+                                        ep.source?.behaviorEvidence
+                                          ?.queryParams ||
+                                        ep.source?.queryParams
+                                      ).join(", ")}
                                     </span>
                                   </span>
                                 )}
                                 <span>
                                   Status:{" "}
                                   <span className="text-[var(--color-text-secondary)]">
-                                    {(ep.source?.behaviorEvidence?.responseStatusCodes || ep.source?.responseStatusCodes || []).join(", ") || "200"}
+                                    {(
+                                      ep.source?.behaviorEvidence
+                                        ?.responseStatusCodes ||
+                                      ep.source?.responseStatusCodes ||
+                                      []
+                                    ).join(", ") || "200"}
                                   </span>
                                 </span>
                                 {ep.source?.controllerFile && (
@@ -1060,8 +1158,12 @@ export default function IntegrationRouteMatrixTable({
                                   >
                                     <FileCode className="w-3 h-3" />
                                     <span>
-                                      {ep.source.controllerFile.split(/[\\/]/).pop()}
-                                      {ep.source.controllerLine ? `:${ep.source.controllerLine}` : ""}
+                                      {ep.source.controllerFile
+                                        .split(/[\\/]/)
+                                        .pop()}
+                                      {ep.source.controllerLine
+                                        ? `:${ep.source.controllerLine}`
+                                        : ""}
                                     </span>
                                   </button>
                                 )}
@@ -1074,7 +1176,11 @@ export default function IntegrationRouteMatrixTable({
                                   className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] cursor-pointer transition-colors"
                                 >
                                   <Code2 className="w-3 h-3 text-[var(--color-primary)]" />
-                                  <span>{showLogic ? "Hide Handler Code" : "Handler Code"}</span>
+                                  <span>
+                                    {showLogic
+                                      ? "Hide Handler Code"
+                                      : "Handler Code"}
+                                  </span>
                                 </button>
                               )}
                             </div>
@@ -1089,7 +1195,8 @@ export default function IntegrationRouteMatrixTable({
                                     onClick={() =>
                                       handleCopyCode(
                                         `logic-${rowKey}`,
-                                        ep.source?.controllerSnippet || ep.source?.routeSnippet,
+                                        ep.source?.controllerSnippet ||
+                                          ep.source?.routeSnippet,
                                       )
                                     }
                                     className="inline-flex items-center gap-1 text-[10px] hover:text-[var(--color-text)] cursor-pointer"
@@ -1108,19 +1215,24 @@ export default function IntegrationRouteMatrixTable({
                                   </button>
                                 </div>
                                 <pre className="p-3 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-48 custom-scrollbar leading-relaxed">
-                                  {ep.source?.controllerSnippet || ep.source?.routeSnippet}
+                                  {ep.source?.controllerSnippet ||
+                                    ep.source?.routeSnippet}
                                 </pre>
                               </div>
                             )}
 
                             {/* Case Coverage & Execution Readiness Strip */}
                             {(() => {
-                              const cov = getEndpointCaseCoverage(ep, scenarios);
+                              const cov = getEndpointCaseCoverage(
+                                ep,
+                                scenarios,
+                              );
                               return (
                                 <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-[var(--color-border)]/80 bg-[var(--color-surface)]/70 text-[11px] font-mono">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-[var(--color-text-muted)]">
-                                      Case coverage ({cov.coveredCount}/{cov.totalRequired}):
+                                      Case coverage ({cov.coveredCount}/
+                                      {cov.totalRequired}):
                                     </span>
                                     {cov.cases.map((c) => (
                                       <span
@@ -1138,19 +1250,30 @@ export default function IntegrationRouteMatrixTable({
                                   </div>
                                   <div className="flex items-center gap-2 text-[var(--color-text-secondary)] tabular-nums">
                                     {scenarios.length === 0 ? (
-                                      <span className="text-[var(--color-text-muted)]">No scenarios</span>
-                                    ) : cov.passedCount + cov.failedCount === 0 ? (
+                                      <span className="text-[var(--color-text-muted)]">
+                                        No scenarios
+                                      </span>
+                                    ) : cov.passedCount + cov.failedCount ===
+                                      0 ? (
                                       <span className="text-[var(--color-text-muted)]">
                                         {scenarios.length} ready • not run yet
                                       </span>
                                     ) : (
                                       <span>
-                                        <span className="text-emerald-400">{cov.passedCount} passed</span>
+                                        <span className="text-emerald-400">
+                                          {cov.passedCount} passed
+                                        </span>
                                         {cov.failedCount > 0 && (
-                                          <span className="text-rose-400"> • {cov.failedCount} failed</span>
+                                          <span className="text-rose-400">
+                                            {" "}
+                                            • {cov.failedCount} failed
+                                          </span>
                                         )}
                                         {cov.notRunCount > 0 && (
-                                          <span className="text-[var(--color-text-muted)]"> • {cov.notRunCount} pending</span>
+                                          <span className="text-[var(--color-text-muted)]">
+                                            {" "}
+                                            • {cov.notRunCount} pending
+                                          </span>
                                         )}
                                       </span>
                                     )}
@@ -1163,9 +1286,13 @@ export default function IntegrationRouteMatrixTable({
                             {!hasAnalyzedCoverage && scenarios.length === 0 ? (
                               <div className="px-4 py-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
                                 <span>
-                                  Test scenarios have not been scanned yet. Click{" "}
-                                  <span className="font-semibold text-[var(--color-text)]">Run Coverage</span>{" "}
-                                  above to scan project tests and measure coverage, or generate 100% tests for this API.
+                                  Test scenarios have not been scanned yet.
+                                  Click{" "}
+                                  <span className="font-semibold text-[var(--color-text)]">
+                                    Run Coverage
+                                  </span>{" "}
+                                  above to scan project tests and measure
+                                  coverage, or generate 100% tests for this API.
                                 </span>
                                 {onGenerateTest && (
                                   <button
@@ -1186,9 +1313,11 @@ export default function IntegrationRouteMatrixTable({
                                     sc.status || "READY"
                                   ).toUpperCase();
                                   const scPassed =
-                                    scStatus === "PASSED" || scStatus === "PASS";
+                                    scStatus === "PASSED" ||
+                                    scStatus === "PASS";
                                   const scFailed =
-                                    scStatus === "FAILED" || scStatus === "FAIL";
+                                    scStatus === "FAILED" ||
+                                    scStatus === "FAIL";
                                   const catInfo = classifyScenario(sc);
                                   const scKey = `${rowKey}-sc-${sc.scenarioId || sIdx}`;
                                   const isCodeOpen =
@@ -1202,9 +1331,8 @@ export default function IntegrationRouteMatrixTable({
                                     sc,
                                     getEpIdentityKey(ep),
                                   );
-                                  const isSelectedSc = selectedScenarioKeys.has(
-                                    scIdentityKey,
-                                  );
+                                  const isSelectedSc =
+                                    selectedScenarioKeys.has(scIdentityKey);
 
                                   return (
                                     <div
@@ -1226,7 +1354,9 @@ export default function IntegrationRouteMatrixTable({
                                             type="checkbox"
                                             checked={isSelectedSc}
                                             onChange={() =>
-                                              toggleSelectScenario(scIdentityKey)
+                                              toggleSelectScenario(
+                                                scIdentityKey,
+                                              )
                                             }
                                             aria-label={`Select scenario ${sc.title || sIdx + 1}`}
                                             className="mt-1 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-emerald-500 focus:ring-0 cursor-pointer shrink-0"
@@ -1251,10 +1381,27 @@ export default function IntegrationRouteMatrixTable({
                                               >
                                                 {catInfo.label}
                                               </span>
+                                              <span
+                                                className={`px-1.5 py-0.2 rounded border font-semibold ${
+                                                  scPassed
+                                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                                                    : scFailed
+                                                      ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
+                                                      : "bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)]"
+                                                }`}
+                                              >
+                                                {scPassed
+                                                  ? "Executed · Pass"
+                                                  : scFailed
+                                                    ? "Executed · Fail"
+                                                    : "Not run"}
+                                              </span>
                                               <span className="px-1.5 py-0.2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                                                 {sc.userEdited
                                                   ? "Edited"
-                                                  : sc.origin === "AI_GENERATED" || sc.origin === "AI"
+                                                  : sc.origin ===
+                                                        "AI_GENERATED" ||
+                                                      sc.origin === "AI"
                                                     ? "AI"
                                                     : sc.origin || "AI"}
                                               </span>
@@ -1454,8 +1601,8 @@ export default function IntegrationRouteMatrixTable({
                                           ) : (
                                             <div className="text-[11px] font-mono text-[var(--color-text-muted)] py-2">
                                               No inline snippet available. Click{" "}
-                                              <strong>Edit Code</strong> to
-                                              open the test file in Monaco.
+                                              <strong>Edit Code</strong> to open
+                                              the test file in Monaco.
                                             </div>
                                           )}
                                         </div>

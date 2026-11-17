@@ -8,6 +8,7 @@ import {
   deleteProjectApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
+import { getGithubOAuthUrl } from "../../../services/auth.service";
 import Button from "../../common/Button";
 
 function GithubIcon({ size = 16, className = "" }) {
@@ -188,16 +189,31 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
                 browse your repository list directly.
               </p>
             </div>
-            <a
-              href={`https://github.com/login/oauth/authorize?client_id=${
-                import.meta.env.VITE_GITHUB_CLIENT_ID || ""
-              }&scope=repo,user:email`}
+            <button
+              type="button"
+              onClick={() => {
+                const oauthUrl = getGithubOAuthUrl("connect");
+                if (!oauthUrl) {
+                  showToast({
+                    type: "error",
+                    title: "GitHub OAuth Unavailable",
+                    message: "VITE_GITHUB_CLIENT_ID is not configured.",
+                  });
+                  return;
+                }
+                sessionStorage.setItem("covai.githubOAuthMode", "connect");
+                sessionStorage.setItem(
+                  "covai.githubConnectReturn",
+                  `${window.location.pathname}${window.location.search}`,
+                );
+                window.location.href = oauthUrl;
+              }}
               className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer shadow-xs"
               id="connect-github-import-btn"
             >
               <GithubIcon size={13} />
               <span>Connect with GitHub</span>
-            </a>
+            </button>
           </div>
         ) : (
           <RepoList

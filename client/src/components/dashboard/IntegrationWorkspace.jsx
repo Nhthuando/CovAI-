@@ -1068,6 +1068,7 @@ export default function IntegrationWorkspace({
         null,
         {
           targetEndpoint: epKey,
+          targetEndpoints: [epKey],
           targetTestNames,
           selectedScenarioIds: scenarioIds,
         },
@@ -1100,14 +1101,12 @@ export default function IntegrationWorkspace({
       .map((s) => s.title || s.testName)
       .filter(Boolean);
 
-    if (scenarioIds.length === 0 && targetTestNames.length === 0) {
-      setError("Selected endpoints have no test scenarios yet. Generate tests for them first.");
-      return;
-    }
-
+    const targetEndpoints = selectedEps.map(
+      (ep) => `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
+    );
     const targetLabel =
       selectedEps.length === 1
-        ? `${(selectedEps[0].method || "GET").toUpperCase()} ${selectedEps[0].path || "/"}`
+        ? targetEndpoints[0]
         : `${selectedEps.length} selected endpoints`;
 
     setError("");
@@ -1127,6 +1126,7 @@ export default function IntegrationWorkspace({
         null,
         {
           targetEndpoint: targetLabel,
+          targetEndpoints,
           targetTestNames,
           selectedScenarioIds: scenarioIds,
         },
@@ -1160,6 +1160,16 @@ export default function IntegrationWorkspace({
 
     if (scenarioIds.length === 0 && targetTestNames.length === 0) return;
 
+    const targetEndpoints = Array.from(
+      new Set(
+        selectedScenarios
+          .filter((s) => s.method || s.path)
+          .map(
+            (s) =>
+              `${(s.method || "GET").toUpperCase()} ${s.fullPath || s.path || "/"}`,
+          ),
+      ),
+    );
     const targetLabel = `${selectedScenarios.length} selected scenario${selectedScenarios.length > 1 ? "s" : ""}`;
     setError("");
     setCancellationNotice("");
@@ -1173,6 +1183,7 @@ export default function IntegrationWorkspace({
         null,
         {
           targetEndpoint: targetLabel,
+          ...(targetEndpoints.length > 0 ? { targetEndpoints } : {}),
           targetTestNames,
           selectedScenarioIds: scenarioIds,
         },
@@ -1726,11 +1737,11 @@ export default function IntegrationWorkspace({
     // Group and deduplicate scenarios across endpoints and workspace.aiTests
     const scenariosByEndpointMap = {};
 
-    // 1. Ingest scenarios from AI tests / workspace.aiTests
+    // 1. Ingest scenarios from AI tests / workspace.aiTests (exclude un-executed synthetic repo file wrappers)
     (workspace?.aiTests || []).forEach((t) => {
-      if (!t) return;
+      if (!t || String(t.id || "").startsWith("existing_test_")) return;
       (t.requests || []).forEach((r, idx) => {
-        if (!r) return;
+        if (!r || r.origin === "PROJECT_EXISTING") return;
         const rMethod = (r.method || "GET").toUpperCase();
         const rPath = r.path || "";
         const matchedEp = findMatchingEndpoint(rMethod, rPath);
@@ -1789,6 +1800,15 @@ export default function IntegrationWorkspace({
       }
 
       epScenarios.forEach((s, idx) => {
+        const scStatusUpper = String(s.status || "").toUpperCase();
+        const isExecuted = scStatusUpper === "PASSED" || scStatusUpper === "PASS" || scStatusUpper === "FAILED" || scStatusUpper === "FAIL";
+        const isRepoTest =
+          !s.aiTestId ||
+          String(s.aiTestId).startsWith("existing_test_") ||
+          s.origin === "PROJECT_EXISTING";
+        const isUnrunRepoTest = isRepoTest && !isExecuted;
+        if (isUnrunRepoTest) return;
+
         const scenarioId = s.id || `${epKey}::scenario_${idx}`;
         const sTitle = s.title || s.testName || `Scenario ${idx + 1}`;
         const existingIdx = scenariosByEndpointMap[epKey].findIndex(
@@ -2012,20 +2032,48 @@ export default function IntegrationWorkspace({
                 <span>{isScanningEndpoints ? "Scanning APIs..." : "Scan APIs"}</span>
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setCancellationNotice("");
-                  setSetupAutoRun(false);
-                  setSetupModalOpen(true);
-                }}
-                disabled={!projectAccess.can("ai.use") || isJobActive}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
-                title="Configure test framework (Supertest / Playwright API) and dependencies"
-              >
-                <SlidersHorizontal size={13} className="text-[var(--color-primary)]" />
-                <span>Test Setup</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCancellationNotice("");
+                    setSetupAutoRun(false);
+                    setSetupModalOpen(true);
+                  }}
+                  disabled={!projectAccess.can("ai.use") || isJobActive}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  title="Configure test framework (Supertest / Playwright API) and dependencies"
+                >
+                  <SlidersHorizontal size={13} className="text-[var(--color-primary)]" />
+                  <span>Test Setup</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleRunApprovedTests(false)}
+                  disabled={
+                    !projectAccess.can("tests.run") ||
+                    isJobActive ||
+                    pendingAction === "RUN"
+                  }
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  title="Run existing project integration tests & approved scenarios to measure coverage"
+                >
+                  {pendingAction === "RUN" ||
+                  (isJobActive && activeJobType === "EXECUTE") ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Play size={12} fill="currentColor" />
+                  )}
+                  <span>
+                    {pendingAction === "RUN"
+                      ? "Starting..."
+                      : isJobActive && activeJobType === "EXECUTE"
+                        ? "Running Coverage..."
+                        : "Run Coverage"}
+                  </span>
+                </button>
+              </>
             )}
 
             {/* Version History & Diff Drawer Button */}
@@ -2045,129 +2093,135 @@ export default function IntegrationWorkspace({
           </div>
         </div>
 
-        {/* ── 2. UNIFIED TELEMETRY STRIP (Displayed only after APIs have been scanned) ── */}
+        {/* ── 2. UNIFIED TELEMETRY STRIP (Asymmetric Hierarchy) ── */}
         {hasScanned && (
-          <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/50">
-            <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-[var(--color-border)] overflow-hidden">
-              {/* Cell 1: Endpoint Coverage (Hero Metric) */}
-              <div className="px-4 py-3 flex flex-col justify-between gap-1.5">
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
+          <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60">
+            <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
+              {/* Primary Anchor: Endpoint Coverage */}
+              <div className="lg:col-span-5 px-4 py-3 flex flex-col justify-between gap-2">
+                <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
                   <span>Endpoint coverage</span>
                   <span className="font-mono tabular-nums text-[var(--color-text-muted)]">
-                    {overallStats.testedApis}/{overallStats.totalApis}
+                    {overallStats.testedApis}/{overallStats.totalApis}{" "}
+                    {overallStats.totalApis === 1 ? "route" : "routes"}
                   </span>
                 </div>
-                <div className="flex items-baseline gap-2 font-mono tabular-nums">
-                  <span
-                    className={`text-xl font-bold tracking-tight ${
-                      overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
-                        ? "text-emerald-400"
-                        : "text-[var(--color-primary)]"
-                    }`}
-                  >
-                    {overallStats.apiCoverageRate}%
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">
-                    routes covered
-                  </span>
-                </div>
-                <div className="w-full bg-[var(--color-surface-secondary)] h-1 rounded-sm overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
-                        ? "bg-emerald-400"
-                        : "bg-[var(--color-primary)]"
-                    }`}
-                    style={{ width: `${overallStats.apiCoverageRate}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Cell 2: Discovered APIs */}
-              <div className="px-4 py-3 flex flex-col justify-between gap-1">
-                <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
-                  Discovered routes
-                </span>
-                <div className="flex items-baseline gap-2 font-mono tabular-nums">
-                  <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
-                    {overallStats.totalApis}
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">
-                    {overallStats.uncoveredApis > 0
-                      ? `${overallStats.uncoveredApis} uncovered`
-                      : "all covered"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Cell 3: Test Scenarios */}
-              <div className="px-4 py-3 flex flex-col justify-between gap-1">
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
-                  <span>Test scenarios</span>
-                  {overallStats.totalScenariosCount > 0 && (
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="flex items-baseline gap-2 font-mono tabular-nums">
                     <span
-                      className={`font-mono tabular-nums ${
-                        overallStats.scenarioPassRate === 100
+                      className={`text-2xl font-bold tracking-tight ${
+                        overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
                           ? "text-emerald-400"
-                          : overallStats.failedScenariosCount > 0
-                            ? "text-rose-400"
-                            : "text-[var(--color-text-muted)]"
+                          : "text-[var(--color-primary)]"
                       }`}
                     >
-                      {overallStats.scenarioPassRate}% pass
+                      {overallStats.apiCoverageRate}%
                     </span>
-                  )}
-                </div>
-                <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
-                  <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
-                    {overallStats.passedScenariosCount}
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">
-                    / {overallStats.totalScenariosCount} passed
-                  </span>
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      verified
+                    </span>
+                  </div>
+                  <div className="flex-1 max-w-[160px] bg-[var(--color-surface-secondary)] h-1.5 rounded-sm overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
+                          ? "bg-emerald-400"
+                          : "bg-[var(--color-primary)]"
+                      }`}
+                      style={{ width: `${overallStats.apiCoverageRate}%` }}
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Cell 4: Execution Health */}
-              <button
-                type="button"
-                onClick={() => setActiveTab("report")}
-                className="px-4 py-3 flex flex-col justify-between gap-1 text-left hover:bg-[var(--color-surface-secondary)]/50 transition-colors cursor-pointer"
-                title="Open Executive Report & 5-layer diagnostics"
-              >
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
-                  <span>Execution health</span>
-                  <span className="font-mono tabular-nums text-[var(--color-text-muted)]">
-                    {((execution?.durationMs || 0) / 1000).toFixed(1)}s
+              {/* Supporting Metrics Strip */}
+              <div className="lg:col-span-7 grid grid-cols-3 divide-x divide-[var(--color-border)]">
+                {/* Discovered Routes */}
+                <div className="px-4 py-3 flex flex-col justify-between gap-1">
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)]">
+                    Discovered
                   </span>
+                  <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
+                    <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
+                      {overallStats.totalApis}
+                    </span>
+                    <span className="text-[11px] text-[var(--color-text-muted)] truncate">
+                      {overallStats.uncoveredApis > 0
+                        ? `${overallStats.uncoveredApis} uncovered`
+                        : "all covered"}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 font-mono tabular-nums">
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
-                        ? "bg-[var(--color-text-muted)]"
-                        : failedScenariosList.length === 0
-                          ? "bg-emerald-400"
-                          : "bg-rose-400"
-                    }`}
-                  />
-                  <span
-                    className={`text-sm font-semibold ${
-                      overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
-                        ? "text-[var(--color-text-secondary)]"
-                        : failedScenariosList.length === 0
-                          ? "text-emerald-400"
-                          : "text-rose-400"
-                    }`}
-                  >
-                    {overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
-                      ? "Not run yet"
-                      : failedScenariosList.length === 0
-                        ? "All healthy"
-                        : `${failedScenariosList.length} failed`}
-                  </span>
+
+                {/* Test Scenarios */}
+                <div className="px-4 py-3 flex flex-col justify-between gap-1">
+                  <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
+                    <span>Scenarios</span>
+                    {overallStats.totalScenariosCount > 0 && (
+                      <span
+                        className={`font-mono text-[11px] tabular-nums ${
+                          overallStats.scenarioPassRate === 100
+                            ? "text-emerald-400"
+                            : overallStats.failedScenariosCount > 0
+                              ? "text-rose-400"
+                              : "text-[var(--color-text-muted)]"
+                        }`}
+                      >
+                        {overallStats.scenarioPassRate}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1 font-mono tabular-nums">
+                    <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
+                      {overallStats.passedScenariosCount}
+                    </span>
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      / {overallStats.totalScenariosCount} passed
+                    </span>
+                  </div>
                 </div>
-              </button>
+
+                {/* Execution Health */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("report")}
+                  className="px-4 py-3 flex flex-col justify-between gap-1 text-left hover:bg-[var(--color-surface-secondary)]/50 transition-colors cursor-pointer"
+                  title="Open Executive Report & diagnostics"
+                >
+                  <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
+                    <span>Health</span>
+                    <span className="font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]">
+                      {((execution?.durationMs || 0) / 1000).toFixed(1)}s
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 font-mono tabular-nums">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
+                          ? "bg-[var(--color-text-muted)]"
+                          : failedScenariosList.length === 0
+                            ? "bg-emerald-400"
+                            : "bg-rose-400"
+                      }`}
+                    />
+                    <span
+                      className={`text-sm font-semibold truncate ${
+                        overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
+                          ? "text-[var(--color-text-secondary)]"
+                          : failedScenariosList.length === 0
+                            ? "text-emerald-400"
+                            : "text-rose-400"
+                      }`}
+                    >
+                      {overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
+                        ? "Not run yet"
+                        : failedScenariosList.length === 0
+                          ? "All healthy"
+                          : `${failedScenariosList.length} failed`}
+                    </span>
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2413,14 +2467,14 @@ export default function IntegrationWorkspace({
                 }}
                 onGenerateTest={(ep) =>
                   handleGenerateClick([
-                    `${(ep.method || "GET").toUpperCase()} ${ep.path}`,
+                    `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
                   ])
                 }
                 onGenerateSelected={(selectedEps) =>
                   handleGenerateClick(
                     selectedEps.map(
                       (ep) =>
-                        `${(ep.method || "GET").toUpperCase()} ${ep.path || ep.fullPath || "/"}`,
+                        `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
                     ),
                   )
                 }

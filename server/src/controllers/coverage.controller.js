@@ -1707,6 +1707,9 @@ export const runSupertestCoverage = async (req, res) => {
     }
 
     const targetEndpoint = req.body?.targetEndpoint || null;
+    const targetEndpoints = Array.isArray(req.body?.targetEndpoints)
+      ? req.body.targetEndpoints.filter(Boolean)
+      : [];
     const targetTestNames = Array.isArray(req.body?.targetTestNames)
       ? req.body.targetTestNames.filter(Boolean)
       : [];
@@ -1715,6 +1718,7 @@ export const runSupertestCoverage = async (req, res) => {
       : [];
     const supertestPayload = {
       ...(targetEndpoint ? { targetEndpoint } : {}),
+      ...(targetEndpoints.length > 0 ? { targetEndpoints } : {}),
       ...(targetTestNames.length > 0 ? { targetTestNames } : {}),
       ...(selectedScenarioIds.length > 0 ? { selectedScenarioIds } : {}),
     };

@@ -1164,6 +1164,8 @@ const executeBuildIntegrationWorkspace = async (
               id: true,
               type: true,
               status: true,
+              payloadJson: true,
+              resultJson: true,
               createdAt: true,
               startedAt: true,
               finishedAt: true,
@@ -1197,6 +1199,48 @@ const executeBuildIntegrationWorkspace = async (
       j.type === "PLAYWRIGHT_SYSTEM_TEST" ||
       j.type === "CYPRESS_SYSTEM_TEST",
   );
+
+  // Extract which endpoints were actually targeted/analyzed in the latest Supertest execution
+  let isFullSupertestAnalysis = false;
+  const analyzedEndpointSet = new Set();
+  const latestSuccessSupertestJob = (jobs || []).find(
+    (j) =>
+      (j.type === "SUPERTEST_COVERAGE" || j.type === "PLAYWRIGHT_API") &&
+      j.status === "SUCCESS",
+  );
+  if (latestSuccessSupertestJob) {
+    let jResult = {};
+    let jPayload = {};
+    try {
+      jResult =
+        typeof latestSuccessSupertestJob.resultJson === "string"
+          ? JSON.parse(latestSuccessSupertestJob.resultJson)
+          : latestSuccessSupertestJob.resultJson || {};
+    } catch (_) {}
+    try {
+      jPayload =
+        typeof latestSuccessSupertestJob.payloadJson === "string"
+          ? JSON.parse(latestSuccessSupertestJob.payloadJson)
+          : latestSuccessSupertestJob.payloadJson || {};
+    } catch (_) {}
+
+    const list = Array.isArray(jResult?.analyzedEndpoints)
+      ? jResult.analyzedEndpoints
+      : Array.isArray(jPayload?.targetEndpoints) && jPayload.targetEndpoints.length > 0
+        ? jPayload.targetEndpoints
+        : null;
+
+    if (!list) {
+      isFullSupertestAnalysis = true;
+    } else if (list.includes("*")) {
+      isFullSupertestAnalysis = true;
+    } else {
+      for (const item of list) {
+        const norm = String(item || "").trim().toUpperCase();
+        if (norm) analyzedEndpointSet.add(norm);
+      }
+    }
+  }
 
   // 2. Load API Endpoints (Cached by DB, memory, and fs)
   const startAst = Date.now();
@@ -2370,6 +2414,35 @@ const executeBuildIntegrationWorkspace = async (
       return acc + pt.approvedReqs.filter((r) => isMatch(r, ep)).length;
     }, 0);
 
+    const epSignatureUpper = `${String(ep.method || "GET").toUpperCase()} ${String(ep.fullPath || ep.path || "/").trim()}`.toUpperCase();
+    const hasActualRun = passedCount + failedCount > 0;
+    const aiGeneratedCount = parsedTests.reduce((acc, pt) => {
+      if (String(pt.test?.id || pt.id || "").startsWith("existing_test_")) return acc;
+      return acc + pt.requests.filter((r) => isMatch(r, ep)).length;
+    }, 0);
+    const wasAnalyzed =
+      isFullSupertestAnalysis ||
+      analyzedEndpointSet.has(epSignatureUpper) ||
+      hasActualRun;
+
+    const visibleScenarios = wasAnalyzed
+      ? cleanScenarios.filter((s) => {
+          const isRepo =
+            !s.aiTestId ||
+            String(s.aiTestId).startsWith("existing_test_") ||
+            s.origin === "PROJECT_EXISTING";
+          if (!isRepo) return true;
+          return s.status === "passed" || s.status === "failed";
+        })
+      : cleanScenarios.filter(
+          (s) => s.aiTestId && !String(s.aiTestId).startsWith("existing_test_"),
+        );
+
+    const finalExecutedCount = hasActualRun ? executedCount : 0;
+    if (!hasActualRun && aiGeneratedCount === 0) {
+      status = wasAnalyzed ? "UNCOVERED" : "DISCOVERED";
+    }
+
     return {
       id: ep.id || `${ep.method}:${ep.fullPath}`,
       method: ep.method,
@@ -2377,8 +2450,9 @@ const executeBuildIntegrationWorkspace = async (
       route: ep.fullPath,
       description: ep.description || buildEndpointDescription(ep),
       status,
-      testCount: executedCount, // Legacy for UI if needed
-      executedCount,
+      wasAnalyzed,
+      testCount: finalExecutedCount, // Legacy for UI if needed
+      executedCount: finalExecutedCount,
       passedCount,
       failedCount,
       skippedCount: mappedScenarios.filter((s) => s.status === "pending")
@@ -2510,7 +2584,7 @@ const executeBuildIntegrationWorkspace = async (
       provenance: ep.provenance,
       generatedCount,
       approvedCount,
-      scenarios: cleanScenarios,
+      scenarios: visibleScenarios,
     };
   });
 

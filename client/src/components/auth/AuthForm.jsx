@@ -11,7 +11,11 @@ import {
   CheckCircle2,
   Loader2,
 } from "lucide-react";
-import { loginApi, registerApi } from "../../services/auth.service";
+import {
+  loginApi,
+  registerApi,
+  getGithubOAuthUrl,
+} from "../../services/auth.service";
 import { consumeAuthReturn } from "../../lib/authReturn";
 import { queryClient } from "../../lib/queryClient";
 
@@ -140,10 +144,13 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
   }
 
   const handleGithubOAuth = () => {
-    const clientId =
-      import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQyAORXbj6NeqAB";
-    const redirectUri = `${window.location.origin}/auth/github/callback`;
-    window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=user:email repo&redirect_uri=${redirectUri}`;
+    const oauthUrl = getGithubOAuthUrl("login");
+    if (!oauthUrl) {
+      setServerMessage("GitHub OAuth is not configured.");
+      return;
+    }
+    sessionStorage.setItem("covai.githubOAuthMode", "login");
+    window.location.href = oauthUrl;
   };
 
   return (

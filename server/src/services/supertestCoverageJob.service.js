@@ -579,7 +579,37 @@ export const processSupertestCoverageJob = async (jobId) => {
           .filter(Boolean)
       : [];
     const targetEndpoint = parsedPayload?.targetEndpoint || null;
-    const isTargetedRun = targetTestNames.length > 0 || selectedScenarioIds.length > 0;
+    const rawTargetEndpoints = Array.isArray(parsedPayload?.targetEndpoints)
+      ? parsedPayload.targetEndpoints
+          .map((ep) => String(ep).trim())
+          .filter(Boolean)
+      : [];
+    const targetEndpoints = rawTargetEndpoints.map((ep) => ep.toUpperCase());
+    const targetEndpointSet = new Set(targetEndpoints);
+    const targetEndpointSpecs = rawTargetEndpoints
+      .map((ep) => {
+        const parts = ep.split(/\s+/);
+        const method = (parts[0] || "").toUpperCase();
+        const epPath = parts.slice(1).join(" ").trim();
+        if (!epPath) return null;
+        const cleanPath = epPath.replace(/\/+$/, "") || "/";
+        const escaped = cleanPath
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          .replace(/:([a-zA-Z0-9_]+)/g, "[^/\\s'\"`?]+");
+        return {
+          method,
+          path: cleanPath,
+          pathLower: cleanPath.toLowerCase(),
+          pathRegex: new RegExp(`^${escaped}(?:\\?.*)?$`, "i"),
+          contentRegex: new RegExp(escaped, "i"),
+        };
+      })
+      .filter(Boolean);
+    const targetEndpointPaths = targetEndpointSpecs.map((s) => s.path);
+    const isTargetedRun =
+      targetTestNames.length > 0 ||
+      selectedScenarioIds.length > 0 ||
+      targetEndpoints.length > 0;
     const targetNameSet = new Set(targetTestNames);
     const targetIdSet = new Set(
       selectedScenarioIds.flatMap((id) =>
@@ -640,11 +670,15 @@ export const processSupertestCoverageJob = async (jobId) => {
             !isDraftTest &&
             (approvedScenarios.size === 0 || isExplicitlyApproved);
           const isEnabled = r.enabled !== false;
+          const epSignature = `${String(r.method || "").toUpperCase()} ${String(r.path || "").trim()}`.trim().toUpperCase();
           const matchesTarget =
             targetNameSet.has(r.testName) ||
             targetNameSet.has(testName) ||
             targetIdSet.has(r.scenarioId) ||
-            targetIdSet.has(`${t.id}::${r.scenarioId}`);
+            targetIdSet.has(`${t.id}::${r.scenarioId}`) ||
+            (targetNameSet.size === 0 &&
+              targetIdSet.size === 0 &&
+              targetEndpointSet.has(epSignature));
           const shouldRun = isTargetedRun
             ? isEnabled && matchesTarget
             : isApproved && isEnabled;
@@ -745,28 +779,104 @@ export const processSupertestCoverageJob = async (jobId) => {
       if (matchedFiles.length > 0) {
         supertestFiles.splice(0, supertestFiles.length, ...matchedFiles);
       }
-    }
+    } else if (isTargetedRun && targetEndpointSpecs.length > 0) {
+      const { extractTestRequests } = await import("./testSourceParser.service.js");
+      const matchedFiles = [];
+      const matchedTestNames = new Set();
 
-    // Preserve previous runtime evidence when running a targeted subset so other endpoints keep their runtime trace
-    let previousRuntimeEvidence = [];
-    if (isTargetedRun) {
-      const prevEvCandidates = [
-        path.join(rootDir, "coverage", "integration", "runtime-evidence.json"),
-        path.join(rootDir, "coverage", "runtime-evidence.json"),
-        path.join(rootDir, ".covai-temp", "runtime-evidence.json"),
-      ];
-      for (const cand of prevEvCandidates) {
-        if (fs.existsSync(cand)) {
-          try {
-            const parsed = JSON.parse(fs.readFileSync(cand, "utf8"));
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              previousRuntimeEvidence = parsed;
-              break;
+      for (const filePath of supertestFiles) {
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+          let fileMatched = false;
+
+          const parsedReqs = extractTestRequests(content, filePath);
+          for (const req of parsedReqs) {
+            const reqMethod = String(req.method || "").toUpperCase();
+            const reqPath = String(req.path || "").split("?")[0].replace(/\/+$/, "") || "/";
+            const isMatch = targetEndpointSpecs.some(
+              (spec) =>
+                (!spec.method || !reqMethod || spec.method === reqMethod) &&
+                (spec.pathRegex.test(reqPath) || reqPath.toLowerCase() === spec.pathLower),
+            );
+            if (isMatch) {
+              fileMatched = true;
+              if (req.testName) matchedTestNames.add(req.testName);
             }
-          } catch (_) {}
+          }
+
+          if (!fileMatched) {
+            fileMatched = targetEndpointSpecs.some((spec) => spec.contentRegex.test(content));
+          }
+
+          if (fileMatched) {
+            matchedFiles.push(filePath);
+          }
+        } catch (err) {
+          console.warn(`[SupertestCoverageJob] Could not inspect ${filePath}:`, err?.message);
         }
       }
+
+      if (matchedFiles.length === 0) {
+        await stagePreparedPublication(async (tx) => {
+          await tx.testRun.create({
+            data: {
+              id: randomUUID(),
+              snapshotId,
+              type: "SUPERTEST",
+              totalTests: 0,
+              passedTests: 0,
+              failedTests: 0,
+              skippedTests: 0,
+              durationMs: 0,
+              status: "PASSED",
+              startedAt: job.startedAt || new Date(),
+              finishedAt: new Date(),
+            },
+          });
+        });
+
+        await markJobSuccess(jobId, {
+          coverage: { lines: 0, branches: 0, functions: 0, statements: 0 },
+          supertest: {
+            version: supertestInfo.version,
+            testFileCount: 0,
+            configFile: supertestInfo.configFile,
+            exitCode: 0,
+          },
+          analyzedEndpoints: targetEndpoints,
+        });
+
+        await addJobLog(
+          jobId,
+          "INFO",
+          JSON.stringify({
+            stage: "COMPLETE",
+            label: "Selected endpoints analyzed (0 test scenarios found; marked Uncovered).",
+            progress: 100,
+          }),
+        );
+
+        try {
+          const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+          invalidateCoverageCache(snapshotId);
+          const { invalidateEndpointCache } = await import("./integrationWorkspace.service.js");
+          invalidateEndpointCache(snapshotId);
+        } catch (_) {}
+
+        return;
+      }
+
+      supertestFiles.splice(0, supertestFiles.length, ...matchedFiles);
+      const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (matchedTestNames.size > 0) {
+        testNamePattern = Array.from(matchedTestNames).map(escapeRegex).join("|");
+      } else {
+        testNamePattern = targetEndpointPaths.map(escapeRegex).join("|");
+      }
     }
+
+    // Targeted runs report only the newly executed endpoints & scenarios (unselected tests remain skipped/not run)
+    const previousRuntimeEvidence = [];
 
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => {});
     await updateJobProgress(jobId, 10);
@@ -850,61 +960,10 @@ export const processSupertestCoverageJob = async (jobId) => {
       aiTests,
       rootDir,
     });
-    // SCRUM-141: Persist Supertest test results (merging with previous TestRun when targeted)
+    // SCRUM-141: Persist Supertest test results (only executed/targeted scenarios)
     if (supertestResults) {
-      let finalScenarios = supertestResults.scenarios || [];
-      let finalDurationMs = supertestResults.durationMs || 0;
-
-      if (isTargetedRun) {
-        const prevTestRun = await prisma.testRun
-          .findFirst({
-            where: {
-              snapshotId,
-              type: "SUPERTEST",
-              status: { not: "CANCELED" },
-            },
-            orderBy: { startedAt: "desc" },
-            include: { scenarios: true },
-          })
-          .catch(() => null);
-
-        const newlyExecutedScenarios = (
-          supertestResults.scenarios || []
-        ).filter(
-          (s) =>
-            s.status === "passed" ||
-            s.status === "failed" ||
-            targetTestNames.some(
-              (t) => s.title === t || (s.title && s.title.includes(t)),
-            ),
-        );
-
-        if (
-          prevTestRun &&
-          Array.isArray(prevTestRun.scenarios) &&
-          prevTestRun.scenarios.length > 0
-        ) {
-          const mergedByTitle = new Map();
-          for (const prevSc of prevTestRun.scenarios) {
-            mergedByTitle.set(prevSc.title, {
-              title: prevSc.title,
-              suiteName: prevSc.suiteName,
-              status: prevSc.status,
-              duration: prevSc.duration || 0,
-              failureMessage: prevSc.failureMessage || null,
-              failureMessages: prevSc.failureMessage
-                ? [prevSc.failureMessage]
-                : [],
-            });
-          }
-          for (const newSc of newlyExecutedScenarios) {
-            mergedByTitle.set(newSc.title, newSc);
-          }
-          finalScenarios = Array.from(mergedByTitle.values());
-        } else {
-          finalScenarios = newlyExecutedScenarios;
-        }
-      }
+      const finalScenarios = supertestResults.scenarios || [];
+      const finalDurationMs = supertestResults.durationMs || 0;
 
       const formattedScenarios = formatScenariosForPrisma(finalScenarios);
       const passedCount = finalScenarios.filter(
@@ -1106,6 +1165,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         exitCode: runResult.exitCode,
       },
       storageBasePath: storageResult.baseStoragePath,
+      analyzedEndpoints: isTargetedRun && targetEndpoints.length > 0 ? targetEndpoints : ["*"],
     });
 
     await addJobLog(

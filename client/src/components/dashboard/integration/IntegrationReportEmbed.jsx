@@ -632,38 +632,51 @@ export default function IntegrationReportEmbed({
         }
       `}</style>
 
-      {/* ── 1. REPORT HEADER WITH AUDIT BADGES ── */}
-      <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center shrink-0">
-            <FileText size={22} />
+      {/* ── 1. REPORT HEADER ── */}
+      <div className="p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-md bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20 text-[var(--color-primary)] flex items-center justify-center shrink-0 mt-0.5">
+            <FileText size={18} />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-[var(--color-text)] m-0">
-                API Integration Executive Audit Report
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold tracking-tight text-[var(--color-text)] m-0">
+                API Integration Audit Report
               </h2>
               <span
-                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase border ${
+                className={`px-2 py-0.5 rounded-md text-[11px] font-medium border ${
                   verdict === "PRODUCTION_READY"
                     ? "bg-emerald-500/10 text-[var(--color-success)] border-emerald-500/25"
                     : verdict === "REGRESSION_DETECTED"
                     ? "bg-rose-500/10 text-[var(--color-danger)] border-rose-500/25"
                     : verdict === "PENDING_ANALYSIS"
                     ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
-                    : "bg-amber-500/10 text-amber-500 border-amber-500/25"
+                    : "bg-amber-500/10 text-amber-400 border-amber-500/25"
                 }`}
               >
                 {verdict === "PENDING_ANALYSIS"
-                  ? "PENDING ANALYSIS"
-                  : `Grade ${qualityGrade} • ${verdict.replace(/_/g, " ")}`}
+                  ? "Pending analysis"
+                  : verdict === "PRODUCTION_READY"
+                  ? "Production ready"
+                  : verdict === "REGRESSION_DETECTED"
+                  ? "Regression detected"
+                  : "Needs attention"}
               </span>
             </div>
-            <p className="text-xs text-[var(--color-text-secondary)] font-mono m-0 mt-0.5">
-              Project: #{projectId?.substring(0, 8) || "active"} • Snapshot: #
-              {snapshotId?.substring(0, 8) || "latest"} • Engine: Supertest / Node • Evaluated:{" "}
-              {new Date().toLocaleDateString()}
-            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums">
+              <span>
+                Project <strong className="text-[var(--color-text-secondary)] font-medium">#{projectId?.substring(0, 8) || "active"}</strong>
+              </span>
+              <span>
+                Snapshot <strong className="text-[var(--color-text-secondary)] font-medium">#{snapshotId?.substring(0, 8) || "latest"}</strong>
+              </span>
+              <span>
+                Engine <strong className="text-[var(--color-text-secondary)] font-medium">Supertest / Node</strong>
+              </span>
+              <span>
+                Evaluated <strong className="text-[var(--color-text-secondary)] font-medium">{new Date().toLocaleDateString()}</strong>
+              </span>
+            </div>
           </div>
         </div>
 
@@ -671,7 +684,7 @@ export default function IntegrationReportEmbed({
           <button
             type="button"
             onClick={handleExportJson}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer"
             title="Download full executive report JSON"
           >
             <Download size={13} />
@@ -680,7 +693,7 @@ export default function IntegrationReportEmbed({
           <button
             type="button"
             onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer"
             title="Print or export report to PDF"
           >
             <Printer size={13} />
@@ -701,7 +714,7 @@ export default function IntegrationReportEmbed({
             <button
               type="button"
               onClick={onRunCoverage}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer"
             >
               <Zap size={12} />
               <span>Run Coverage</span>
@@ -710,177 +723,182 @@ export default function IntegrationReportEmbed({
         </div>
       )}
 
-      {/* ── 2. EXECUTIVE KPI DASHBOARD (6 High-Density KPI Cards) ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 print-break-inside-avoid">
-        {/* KPI 1: Quality Health Score */}
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3 shadow-xs">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              Quality Score
-            </span>
-            <ShieldCheck size={13} className="text-[var(--color-primary)]" />
+      {/* ── 2. EXECUTIVE SCORE ANCHOR & METRICS STRIP ── */}
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden print-break-inside-avoid">
+        {/* Hero Anchor: Quality Score */}
+        <div className="lg:col-span-4 p-4 flex items-center justify-between gap-4 bg-[var(--color-surface-secondary)]/20">
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-secondary)]">
+              <ShieldCheck size={14} className="text-[var(--color-primary)]" />
+              <span>Quality score</span>
+            </div>
+            <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
+              <span className="text-3xl font-bold tracking-tight text-[var(--color-text)]">
+                {effectiveHasExecuted ? qualityScore : "—"}
+              </span>
+              {effectiveHasExecuted && (
+                <span className="text-xs text-[var(--color-text-muted)]">/ 100</span>
+              )}
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">
+              {effectiveHasExecuted
+                ? "Weighted route coverage, pass rate & layer health"
+                : "Run coverage to compute audit score"}
+            </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-xl font-bold font-mono tabular-nums text-[var(--color-text)]">
-              {effectiveHasExecuted ? qualityScore : "—"}
-            </span>
-            {effectiveHasExecuted && (
-              <span className="text-xs font-mono text-[var(--color-text-muted)]">/ 100</span>
-            )}
-          </div>
-          <div className="text-[10px] font-semibold text-[var(--color-primary)] mt-1 font-mono">
-            {effectiveHasExecuted ? `Grade: ${qualityGrade}` : "Pending analysis"}
-          </div>
+
+          {effectiveHasExecuted && (
+            <div className="w-12 h-12 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 flex flex-col items-center justify-center shrink-0">
+              <span className="text-[10px] text-[var(--color-text-muted)] leading-none">
+                Grade
+              </span>
+              <span className="text-lg font-bold font-mono text-[var(--color-primary)] leading-tight">
+                {qualityGrade}
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* KPI 2: Endpoint Coverage */}
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3 shadow-xs">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              Endpoint Cov.
-            </span>
-            <Database size={13} className="text-sky-400" />
+        {/* Supporting 5 Metrics */}
+        <div className="lg:col-span-8 grid grid-cols-2 sm:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-[var(--color-border)]">
+          {/* Metric 1: Endpoint Coverage */}
+          <div className="p-3.5 flex flex-col justify-between gap-1.5">
+            <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
+              <span>Endpoint cov.</span>
+              <Database size={12} className="text-sky-400" />
+            </div>
+            <div className="flex items-baseline gap-1 font-mono tabular-nums">
+              <span className="text-lg font-bold text-[var(--color-primary)]">
+                {effectiveHasExecuted ? `${coverageRate}%` : "—"}
+              </span>
+              <span className="text-[11px] text-[var(--color-text-muted)]">
+                {totalTested}/{totalDiscovered}
+              </span>
+            </div>
+            <div className="w-full bg-[var(--color-surface-secondary)] h-1 rounded-sm overflow-hidden">
+              <div
+                className="bg-[var(--color-primary)] h-full transition-all"
+                style={{ width: `${effectiveHasExecuted ? coverageRate : 0}%` }}
+              />
+            </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-xl font-bold font-mono tabular-nums text-[var(--color-primary)]">
-              {effectiveHasExecuted ? `${coverageRate}%` : "—"}
-            </span>
-            <span className="text-xs font-mono tabular-nums text-[var(--color-text-muted)]">
-              ({totalTested}/{totalDiscovered})
-            </span>
-          </div>
-          <div className="w-full bg-[var(--color-surface-secondary)] h-1 rounded-full overflow-hidden mt-1.5">
-            <div
-              className="bg-[var(--color-primary)] h-full transition-all"
-              style={{ width: `${effectiveHasExecuted ? coverageRate : 0}%` }}
-            />
-          </div>
-        </div>
 
-        {/* KPI 3: Scenario Pass Rate */}
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3 shadow-xs">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              Pass Rate
-            </span>
-            <CheckCircle2 size={13} className="text-[var(--color-success)]" />
+          {/* Metric 2: Pass Rate */}
+          <div className="p-3.5 flex flex-col justify-between gap-1">
+            <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
+              <span>Pass rate</span>
+              <CheckCircle2 size={12} className="text-[var(--color-success)]" />
+            </div>
+            <div className="font-mono tabular-nums">
+              <span
+                className={`text-lg font-bold ${
+                  !effectiveHasExecuted
+                    ? "text-[var(--color-text-muted)]"
+                    : passRate === 100
+                    ? "text-[var(--color-success)]"
+                    : "text-[var(--color-danger)]"
+                }`}
+              >
+                {effectiveHasExecuted && (totalExecuted > 0 || totalScenarios > 0) ? `${passRate}%` : "—"}
+              </span>
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums truncate">
+              {effectiveHasExecuted ? `${totalPassed} pass / ${totalFailed} fail` : "Not run yet"}
+            </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span
-              className={`text-xl font-bold font-mono tabular-nums ${
-                !effectiveHasExecuted
-                  ? "text-[var(--color-text-muted)]"
-                  : passRate === 100
-                  ? "text-[var(--color-success)]"
-                  : "text-[var(--color-danger)]"
-              }`}
-            >
-              {effectiveHasExecuted && (totalExecuted > 0 || totalScenarios > 0) ? `${passRate}%` : "—"}
-            </span>
-          </div>
-          <div className="text-[10px] text-[var(--color-text-secondary)] mt-1 font-mono truncate">
-            {effectiveHasExecuted ? `${totalPassed} pass • ${totalFailed} fail` : "Not run yet"}
-          </div>
-        </div>
 
-        {/* KPI 4: 5-Layer Regressions */}
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3 shadow-xs">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              5-Layer Health
-            </span>
-            <Layers size={13} className="text-purple-400" />
+          {/* Metric 3: 5-Layer Regressions */}
+          <div className="p-3.5 flex flex-col justify-between gap-1">
+            <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
+              <span>Layer health</span>
+              <Layers size={12} className="text-purple-400" />
+            </div>
+            <div className="flex items-baseline gap-1 font-mono tabular-nums">
+              <span
+                className={`text-lg font-bold ${
+                  !effectiveHasExecuted
+                    ? "text-[var(--color-text-muted)]"
+                    : totalFailed === 0
+                    ? "text-[var(--color-success)]"
+                    : "text-[var(--color-danger)]"
+                }`}
+              >
+                {effectiveHasExecuted ? totalFailed : "—"}
+              </span>
+              {effectiveHasExecuted && (
+                <span className="text-[11px] text-[var(--color-text-muted)]">issues</span>
+              )}
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+              {!effectiveHasExecuted
+                ? "Pending"
+                : totalFailed === 0
+                ? "All layers OK"
+                : "Regressions found"}
+            </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span
-              className={`text-xl font-bold font-mono tabular-nums ${
-                !effectiveHasExecuted
-                  ? "text-[var(--color-text-muted)]"
-                  : totalFailed === 0
-                  ? "text-[var(--color-success)]"
-                  : "text-[var(--color-danger)]"
-              }`}
-            >
-              {effectiveHasExecuted ? totalFailed : "—"}
-            </span>
-            {effectiveHasExecuted && (
-              <span className="text-xs text-[var(--color-text-muted)]">Regressions</span>
-            )}
-          </div>
-          <div className="text-[10px] text-[var(--color-text-secondary)] mt-1 font-mono">
-            {!effectiveHasExecuted
-              ? "Pending analysis"
-              : totalFailed === 0
-              ? "All Layers OK"
-              : "Regressions Detected"}
-          </div>
-        </div>
 
-        {/* KPI 5: Execution Performance */}
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3 shadow-xs">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              Latency & Time
-            </span>
-            <Clock size={13} className="text-amber-400" />
+          {/* Metric 4: Duration */}
+          <div className="p-3.5 flex flex-col justify-between gap-1">
+            <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
+              <span>Run time</span>
+              <Clock size={12} className="text-amber-400" />
+            </div>
+            <div className="font-mono tabular-nums">
+              <span className="text-lg font-bold text-[var(--color-text)]">
+                {(durationMs / 1000).toFixed(1)}s
+              </span>
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums">
+              ~{avgDurationMs}ms / case
+            </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-xl font-bold font-mono text-[var(--color-text)]">
-              {(durationMs / 1000).toFixed(1)}s
-            </span>
-            <span className="text-xs font-mono text-[var(--color-text-muted)]">total</span>
-          </div>
-          <div className="text-[10px] text-[var(--color-text-secondary)] mt-1 font-mono">
-            ~{avgDurationMs}ms / scenario
-          </div>
-        </div>
 
-        {/* KPI 6: Scenario Origin */}
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3 shadow-xs">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              Scenarios Total
-            </span>
-            <Zap size={13} className="text-[var(--color-primary)]" />
-          </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-xl font-bold font-mono text-[var(--color-text)]">
-              {totalScenarios}
-            </span>
-            <span className="text-xs font-mono text-[var(--color-text-muted)]">cases</span>
-          </div>
-          <div className="text-[10px] text-[var(--color-text-secondary)] mt-1 font-mono truncate">
-            {allScenarios.filter((s) => s.origin === "PROJECT_EXISTING" || !s.origin).length > 0
-              ? `Project: ${allScenarios.filter((s) => s.origin === "PROJECT_EXISTING" || !s.origin).length} • AI: ${allScenarios.filter((s) => s.origin === "AI_GENERATED").length}`
-              : `AI: ${overview.unmodifiedAiScenarios || 0} • Custom: ${overview.modifiedScenarios || 0}`}
+          {/* Metric 5: Scenarios Total */}
+          <div className="p-3.5 flex flex-col justify-between gap-1 col-span-2 sm:col-span-1">
+            <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
+              <span>Scenarios</span>
+              <Zap size={12} className="text-[var(--color-primary)]" />
+            </div>
+            <div className="flex items-baseline gap-1 font-mono tabular-nums">
+              <span className="text-lg font-bold text-[var(--color-text)]">
+                {totalScenarios}
+              </span>
+              <span className="text-[11px] text-[var(--color-text-muted)]">total</span>
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums truncate">
+              {allScenarios.filter((s) => s.origin === "PROJECT_EXISTING" || !s.origin).length > 0
+                ? `Repo: ${allScenarios.filter((s) => s.origin === "PROJECT_EXISTING" || !s.origin).length} / AI: ${allScenarios.filter((s) => s.origin === "AI_GENERATED").length}`
+                : `AI: ${overview.unmodifiedAiScenarios || 0} / Custom: ${overview.modifiedScenarios || 0}`}
+            </div>
           </div>
         </div>
       </div>
 
       {/* ── 2.5 API COVERAGE & AUDIT BREAKDOWN: COVERED VS UNCOVERED ── */}
-      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 shadow-xs print-break-inside-avoid space-y-4">
+      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 print-break-inside-avoid space-y-4">
         <div className="flex flex-wrap items-center justify-between pb-2.5 border-b border-[var(--color-border)] gap-2">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center">
+            <div className="w-6 h-6 rounded-md bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center">
               <Layers size={14} />
             </div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
-              API Coverage & Contract Audit (AST Scanned vs Supertest Traced)
+            <h3 className="text-sm font-semibold text-[var(--color-text)] m-0">
+              Endpoint & contract coverage
             </h3>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold border border-[var(--color-primary)]/20">
-              {totalTested} / {totalDiscovered} APIs Tested ({coverageRate}%)
+            <span className="text-[11px] font-mono tabular-nums px-2 py-0.5 rounded-md bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold border border-[var(--color-primary)]/20">
+              {totalTested}/{totalDiscovered} APIs ({coverageRate}%)
             </span>
           </div>
-          <div className="flex items-center gap-3 text-[11px] font-mono">
-            <span className="text-[var(--color-success)] flex items-center gap-1 font-semibold">
-              <CheckCircle2 size={12} /> {coveredRoutes.length} Covered
+          <div className="flex items-center gap-3 text-[11px] font-mono tabular-nums">
+            <span className="text-[var(--color-success)] flex items-center gap-1 font-medium">
+              <CheckCircle2 size={12} /> {coveredRoutes.length} covered
             </span>
-            <span className="text-amber-500 flex items-center gap-1 font-semibold">
-              <AlertTriangle size={12} /> {uncoveredRoutes.length} Uncovered
+            <span className="text-amber-400 flex items-center gap-1 font-medium">
+              <AlertTriangle size={12} /> {uncoveredRoutes.length} uncovered
             </span>
             {failedRoutes.length > 0 && (
-              <span className="text-[var(--color-danger)] flex items-center gap-1 font-semibold">
-                <XCircle size={12} /> {failedRoutes.length} Regressions
+              <span className="text-[var(--color-danger)] flex items-center gap-1 font-medium">
+                <XCircle size={12} /> {failedRoutes.length} failed
               </span>
             )}
           </div>

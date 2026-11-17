@@ -3,6 +3,7 @@ import {
   login,
   register,
   oAuthGithub,
+  connectGithub,
   githubOAuthAccess,
   getGithubRepositories,
 } from "../controllers/auth.controller.js";
@@ -24,6 +25,7 @@ router.post("/logout", authMiddleware, (req, res) => {
 router.post("/forgotPassword", authLimiter, forgotPassword);
 router.post("/resetPassword/:token", authLimiter, resetPassword);
 router.get("/github/callback", oAuthGithub);
+router.post("/github/connect", authMiddleware, connectGithub);
 router.post("/github/access", authMiddleware, githubOAuthAccess);
 router.get("/github/repositories", authMiddleware, getGithubRepositories);
 
