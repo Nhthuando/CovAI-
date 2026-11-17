@@ -270,6 +270,11 @@ export const detectIntegrationFrameworks = async (rootDir) => {
 
     return {
         ...rawResult,
+        summary: {
+            hasDependencies,
+            hasTestFiles,
+            missingPackages: permutationDetails?.missingPackages || [],
+        },
         framework: primaryFramework || permutationDetails.targetFramework || permutationDetails.inferredFramework || (hasTestFiles ? "supertest" : null),
         version: supertestVersion || playwrightVersion,
         pathway: hasTestFiles ? "BROWNFIELD" : "GREENFIELD",

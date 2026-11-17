@@ -7,8 +7,17 @@ export function DeltaIndicator({
   showLabel = true,
   className = "",
   invertColor = false, // if true, positive is bad (e.g. failure rate)
+  hasBaseline = false,
 }) {
   if (delta === null || delta === undefined || Number.isNaN(Number(delta))) {
+    if (hasBaseline) {
+      return (
+        <span className={`inline-flex items-center gap-1 text-[11px] font-mono text-[var(--ud-text-muted)] ${className}`}>
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--ud-pass)]" />
+          <span>Baseline established</span>
+        </span>
+      );
+    }
     return (
       <span className={`inline-flex items-center gap-1 text-[11px] font-mono text-[var(--ud-text-muted)] ${className}`}>
         <Minus size={11} />

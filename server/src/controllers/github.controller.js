@@ -1,5 +1,6 @@
 import fs from "fs";
 import { GitHubCloneService } from "../services/githubClone.service.js";
+import { GitHubRepositoryAccessService } from "../services/github.service.js";
 import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { buildCfgForSnapshot } from "../services/buildCfg.service.js";
@@ -24,6 +25,35 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
 
     const owner = match[1];
     const repo = match[2].replace(".git", "");
+
+    // If user has linked GitHub, check if repository is private via API
+    if (req.user?.id) {
+      try {
+        const userToken = await GitHubRepositoryAccessService.getGitHubToken(
+          req.user.id,
+        );
+        if (userToken) {
+          const apiRes = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}`,
+            {
+              headers: {
+                Authorization: `Bearer ${userToken}`,
+                Accept: "application/vnd.github.v3+json",
+                "User-Agent": "CovAI-App",
+              },
+            },
+          );
+          if (apiRes.ok) {
+            const repoData = await apiRes.json();
+            if (repoData.private) {
+              return res
+                .status(400)
+                .json({ message: "This Repository is private" });
+            }
+          }
+        }
+      } catch (_) {}
+    }
 
     // Cloning by URL is public
     const cloneResult = await GitHubCloneService.cloneRepository(
@@ -89,7 +119,23 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
     });
   } catch (error) {
     console.error("Error cloning GitHub repository by URL:", error);
-    res.status(500).json({ message: "Error during repository cloning." });
+    const errMsg = error.message || "";
+    if (
+      errMsg.includes("This Repository is private") ||
+      errMsg.includes("Authentication failed") ||
+      errMsg.includes("could not read Username") ||
+      errMsg.includes("terminal prompts disabled") ||
+      errMsg.includes("Access denied") ||
+      errMsg.includes("Repository not found") ||
+      error.statusCode === 400 ||
+      error.statusCode === 403 ||
+      error.statusCode === 404
+    ) {
+      return res.status(400).json({ message: "This Repository is private" });
+    }
+    const statusCode = error.statusCode || 500;
+    const message = error.message || "Error during repository cloning.";
+    res.status(statusCode).json({ message });
   }
 };
 

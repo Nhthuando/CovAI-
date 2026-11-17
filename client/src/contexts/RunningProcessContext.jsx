@@ -2,7 +2,10 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { getJobDetailApi } from "../services/job.service.js";
 import { invalidateCoverageQueries } from "../hooks/useCoverageQuery.js";
 
-const RunningProcessContext = createContext(null);
+// Provider and consumers can briefly hold different module versions during HMR.
+// Preserve the Context identity so existing providers still satisfy new hooks.
+const RunningProcessContext = import.meta.hot?.data.runningProcessContext || createContext(null);
+if (import.meta.hot) import.meta.hot.data.runningProcessContext = RunningProcessContext;
 
 const STORAGE_KEY = "covai_running_processes";
 const SUGGESTIONS_STORAGE_PREFIX = "covai_snapshot_suggestions_";

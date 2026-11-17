@@ -90,18 +90,27 @@ export const extractTestRequests = (sourceCode, filePath) => {
     };
 
     const isRequestCall = (callee) => {
-        // match: request(app).get or (0, _supertest.default)(app).get
+        // match: request(app).get, (0, _supertest.default)(app).get, or Playwright request.get / apiContext.post / page.request.get
         if (callee.type === "MemberExpression") {
             const obj = callee.object;
             const prop = callee.property;
-            
-            if (obj.type === "CallExpression" && prop.type === "Identifier") {
-                const c = obj.callee;
-                const isDirectRequest = c.name === "request";
-                const isBabelSupertest = (c.type === "SequenceExpression" && c.expressions?.some(e => (e.property?.name === "default" || e.name?.includes("supertest")))) ||
-                                         (c.type === "MemberExpression" && c.property?.name === "default" && c.object?.name?.includes("supertest"));
-                if (isDirectRequest || isBabelSupertest) {
-                    return prop.name.toLowerCase();
+
+            if (prop.type === "Identifier") {
+                const verb = prop.name.toLowerCase();
+                if (obj.type === "CallExpression") {
+                    const c = obj.callee;
+                    const isDirectRequest = c.name === "request";
+                    const isBabelSupertest = (c.type === "SequenceExpression" && c.expressions?.some(e => (e.property?.name === "default" || e.name?.includes("supertest")))) ||
+                                             (c.type === "MemberExpression" && c.property?.name === "default" && c.object?.name?.includes("supertest"));
+                    if (isDirectRequest || isBabelSupertest) {
+                        return verb;
+                    }
+                }
+                if (obj.type === "Identifier" && ["request", "apicontext", "apirequest", "reqcontext"].includes(obj.name.toLowerCase())) {
+                    return verb;
+                }
+                if (obj.type === "MemberExpression" && obj.property?.name === "request") {
+                    return verb;
                 }
             }
         }
@@ -114,7 +123,12 @@ export const extractTestRequests = (sourceCode, filePath) => {
         const isDescribe = (callee) => {
             if (!callee) return false;
             if (callee.type === "Identifier" && callee.name === "describe") return true;
-            if (callee.type === "MemberExpression" && callee.object?.name === "describe") return true;
+            if (callee.type === "MemberExpression") {
+                if (callee.object?.name === "describe") return true;
+                // Playwright: test.describe(...) or test.describe.serial(...)
+                if (callee.object?.name === "test" && callee.property?.name === "describe") return true;
+                if (callee.object?.type === "MemberExpression" && callee.object.object?.name === "test" && callee.object.property?.name === "describe") return true;
+            }
             return false;
         };
 
@@ -149,6 +163,24 @@ export const extractTestRequests = (sourceCode, filePath) => {
                     let testPayload = null;
                     let testQueryParams = null;
                     let testExpectedStatus = null;
+                    let testExpectedStatuses = null;
+
+                    const isStatusExpression = (expr) => {
+                        if (!expr) return false;
+                        const isStatusProp =
+                            expr.type === "MemberExpression" &&
+                            (expr.property?.name === "status" || expr.property?.name === "statusCode");
+                        const isStatusCall =
+                            expr.type === "CallExpression" &&
+                            expr.callee?.property?.name === "status";
+                        return isStatusProp || isStatusCall;
+                    };
+
+                    const getStatusObjectName = (expr) => {
+                        if (!expr) return "";
+                        if (expr.type === "CallExpression") return expr.callee?.object?.name || "";
+                        return expr.object?.name || "";
+                    };
 
                     const scanTestBody = (bNode) => {
                         if (!bNode) return;
@@ -177,18 +209,35 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     testQueryParams = extractLiteralOrObject(arg);
                                 }
                             }
-                            if ((propName === "toBe" || propName === "toEqual") && bNode.arguments?.[0]) {
+                            if ((propName === "toBe" || propName === "toEqual" || propName === "toStrictEqual") && bNode.arguments?.[0]) {
                                 const argVal = bNode.arguments[0];
                                 const targetObj = bNode.callee?.object;
                                 const targetArg = targetObj?.arguments?.[0];
-                                if (targetArg?.property?.name === "status" || targetArg?.property?.name === "statusCode") {
-                                    if (argVal.type === "Literal") {
-                                        const objName = targetArg?.object?.name || "";
+                                if (isStatusExpression(targetArg) && argVal.type === "Literal" && typeof argVal.value === "number") {
+                                    const objName = getStatusObjectName(targetArg);
+                                    const isSetupOrTeardown = /^(created|create|seed|setup|init|verify|teardown|cleanup|after)/i.test(objName);
+                                    if ((!testExpectedStatus && !isSetupOrTeardown) || (!isSetupOrTeardown && (objName === "res" || objName === "response" || /res$/i.test(objName)))) {
+                                        testExpectedStatus = argVal.value;
+                                    } else if (!testExpectedStatus) {
+                                        testExpectedStatus = argVal.value;
+                                    }
+                                }
+                            }
+                            // Support expect([404, 400]).toContain(res.status) and expect(res.status).toBeOneOf([404, 400])
+                            if (propName === "toContain" && bNode.arguments?.[0]) {
+                                const argVal = bNode.arguments[0];
+                                const targetObj = bNode.callee?.object;
+                                const targetArg = targetObj?.arguments?.[0];
+                                if (targetArg?.type === "ArrayExpression" && isStatusExpression(argVal)) {
+                                    const nums = (targetArg.elements || [])
+                                        .filter((el) => el?.type === "Literal" && typeof el.value === "number")
+                                        .map((el) => el.value);
+                                    if (nums.length > 0) {
+                                        const objName = getStatusObjectName(argVal);
                                         const isSetupOrTeardown = /^(created|create|seed|setup|init|verify|teardown|cleanup|after)/i.test(objName);
-                                        if ((!testExpectedStatus && !isSetupOrTeardown) || (!isSetupOrTeardown && (objName === "res" || objName === "response" || /res$/i.test(objName)))) {
-                                            testExpectedStatus = argVal.value;
-                                        } else if (!testExpectedStatus) {
-                                            testExpectedStatus = argVal.value;
+                                        if (!isSetupOrTeardown || !testExpectedStatus) {
+                                            testExpectedStatuses = nums;
+                                            testExpectedStatus = nums[0];
                                         }
                                     }
                                 }
@@ -240,7 +289,9 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     testFile: filePath,
                                     payload: testPayload,
                                     queryParams: qParams,
-                                    expectedStatus: testExpectedStatus
+                                    expectedStatus: testExpectedStatus,
+                                    ...(testExpectedStatuses ? { expectedStatuses: testExpectedStatuses } : {}),
+                                    code: node.range ? sourceCode.slice(node.range[0], node.range[1]) : undefined,
                                 });
                             }
                         }

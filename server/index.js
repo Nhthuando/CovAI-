@@ -1,3 +1,11 @@
+import projectEditorRoutes from './src/routes/projectEditor.route.js';
+let attachProjectEditorGateway;
+try {
+  const mod = await import('./src/realtime/projectEditor.gateway.js');
+  attachProjectEditorGateway = mod.attachProjectEditorGateway;
+} catch (err) {
+  console.warn('[Server] Project editor gateway deferred (run npm install):', err.message);
+}
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -48,6 +56,8 @@ import fileManagerRoute from "./src/routes/fileManager.route.js";
 import webhookRoute from "./src/routes/webhook.route.js";
 import reportRoute from "./src/routes/report.route.js";
 import gitRoute from "./src/routes/git.route.js";
+import portfolioRoute from "./src/routes/portfolio.route.js";
+import aiQuotaSettingsRoute from "./src/routes/aiQuotaSettings.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -58,6 +68,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
+  maxHttpBufferSize: 2 * 1024 * 1024 + 65536,
   cors: {
     origin: [
       process.env.CLIENT_URL || "http://localhost:5173",
@@ -97,6 +108,7 @@ app.use(globalLimiter);
 app.use("/api/auth", authRoute);
 app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
+app.use('/api/projects', projectEditorRoutes);
 app.use('/api/projects', projectMemberRoutes);
 app.use('/api/projects', projectEventRoutes);
 app.use('/api/invitations', projectInvitationRoutes);
@@ -132,6 +144,8 @@ app.use("/api/analytics", analyticsRoute);
 app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/file-manager", fileManagerRoute);
 app.use("/api/git", gitRoute);
+app.use("/api/portfolio", portfolioRoute);
+app.use("/api/settings/ai-quotas", aiQuotaSettingsRoute);
 app.use("/api/reports", reportRoute);
 app.use("/webhook", webhookRoute);
 
@@ -160,6 +174,9 @@ io.on("connection", (socket) => {
 // Make io available globally for services
 global.io = io;
 attachProjectSubscriptions(io);
+if (typeof attachProjectEditorGateway === 'function') {
+  attachProjectEditorGateway(io);
+}
 
 async function startServer() {
   try {

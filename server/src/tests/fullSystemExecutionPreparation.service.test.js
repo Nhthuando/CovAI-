@@ -15,7 +15,7 @@ describe('Full Stack suite selection',()=>{
         const execution={rootDir:path.join(root,'client'),testFile:'tests/system/real.spec.js'};
         expect((await prepareFullSystemExecution({rootDir:root,execution})).execution.testFile).toBe(path.join(root,'tests/system/real.spec.js'));
         expect(resolveSystemTestFile(root,path.join(root,'client'),'client/e2e/mock.spec.js')).toBe(path.join(root,'client/e2e/mock.spec.js'));
-        await expect(prepareFullSystemExecution({rootDir:root,execution:{...execution,testFile:'client/e2e/mock.spec.js'}})).rejects.toThrow('Switch to Frontend mode');
+        await expect(prepareFullSystemExecution({rootDir:root,execution:{...execution,testFile:'client/e2e/mock.spec.js'}})).rejects.toThrow('Generate Full Stack tests');
         expect(()=>resolveSystemTestFile(root,path.join(root,'client'),'missing.spec.js')).toThrow('No other suite was run');
     });
     it('reuses a verified repository suite even when discovery selects the client package',async()=>{
@@ -26,34 +26,28 @@ describe('Full Stack suite selection',()=>{
         expect(result.execution.testDirectory).toBe('tests/system');
         expect(generate).not.toHaveBeenCalled();
     });
-    it('generates from the complete snapshot when the runner is in a nested frontend',async()=>{
-        const root=fixture();write(root,'client/e2e/mock.spec.js',mock);
-        const generate=jest.fn().mockResolvedValue({code,verificationRuns:2});
-        const result=await prepareFullSystemExecution({rootDir:root,execution:{rootDir:path.join(root,'client'),testDirectory:'e2e'},dependencies:{generate}});
-        expect(generate).toHaveBeenCalledWith(expect.objectContaining({rootDir:root}));
-        expect(result.execution.rootDir).toBe(root);
-        expect(result.execution.testFile).toBe(path.join(root,'tests/system/ai-generated.spec.js'));
-        expect(fs.readFileSync(result.execution.testFile,'utf8')).toBe(code);
-        expect(fs.existsSync(path.join(root,'client/tests/system'))).toBe(false);
+    it('does not generate or write tests implicitly in a nested frontend',async()=>{
+        const root=fixture();write(root,'client/e2e/mock.spec.js',mock);const generate=jest.fn();
+        await expect(prepareFullSystemExecution({rootDir:root,execution:{rootDir:path.join(root,'client'),testDirectory:'e2e'},dependencies:{generate}})).rejects.toMatchObject({statusCode:409});
+        expect(generate).not.toHaveBeenCalled();expect(fs.existsSync(path.join(root,'tests/system'))).toBe(false);
     });
     it('prefers the full suite while leaving frontend mocks unchanged',async()=>{
         const root=fixture();write(root,'tests/system/real.spec.js',code);write(root,'tests/e2e/mock.spec.js',mock);const generate=jest.fn();
         const result=await prepareFullSystemExecution({rootDir:root,execution:{rootDir:root,testDirectory:'tests/e2e'},dependencies:{generate}});
         expect(result.execution.testDirectory).toBe('tests/system');expect(generate).not.toHaveBeenCalled();expect(fs.readFileSync(path.join(root,'tests/e2e/mock.spec.js'),'utf8')).toBe(mock);
     });
-    it('generates and verifies a separate full suite when only frontend mocks exist',async()=>{
-        const root=fixture();write(root,'tests/e2e/mock.spec.js',mock);const generate=jest.fn().mockResolvedValue({code,verificationRuns:2});
-        const result=await prepareFullSystemExecution({rootDir:root,execution:{rootDir:root,testDirectory:'tests/e2e'},dependencies:{generate}});
-        expect(generate).toHaveBeenCalledTimes(1);expect(result.generated.verificationRuns).toBe(2);expect(result.execution.testDirectory).toBe('tests/system');
-        expect(fs.readFileSync(path.join(root,result.generated.filePath),'utf8')).toBe(code);expect(fs.readFileSync(path.join(root,'tests/e2e/mock.spec.js'),'utf8')).toBe(mock);
+    it('preserves frontend mocks while requiring reviewed Full Stack tests',async()=>{
+        const root=fixture();write(root,'tests/e2e/mock.spec.js',mock);const generate=jest.fn();
+        await expect(prepareFullSystemExecution({rootDir:root,execution:{testDirectory:'tests/e2e'},dependencies:{generate}})).rejects.toThrow('review and apply');
+        expect(generate).not.toHaveBeenCalled();expect(fs.readFileSync(path.join(root,'tests/e2e/mock.spec.js'),'utf8')).toBe(mock);
     });
     it('keeps handwritten tests that already use the real application',async()=>{
         const root=fixture();write(root,'tests/e2e/real.spec.js',code);const generate=jest.fn();
         expect((await prepareFullSystemExecution({rootDir:root,execution:{testDirectory:'tests/e2e'},dependencies:{generate}})).execution.testDirectory).toBe('tests/e2e');expect(generate).not.toHaveBeenCalled();
     });
-    it('does not save a failed generated candidate',async()=>{
+    it('does not call generation for an empty suite',async()=>{
         const root=fixture();const generate=jest.fn().mockResolvedValue({failed:true,error:'verification failed'});
-        await expect(prepareFullSystemExecution({rootDir:root,execution:{},dependencies:{generate}})).rejects.toThrow('verification failed');expect(fs.existsSync(path.join(root,'tests/system'))).toBe(false);
+        await expect(prepareFullSystemExecution({rootDir:root,execution:{},dependencies:{generate}})).rejects.toMatchObject({statusCode:409});expect(generate).not.toHaveBeenCalled();expect(fs.existsSync(path.join(root,'tests/system'))).toBe(false);
     });
     it('rejects an explicitly selected mocked file instead of running a different scenario',async()=>{
         const root=fixture();write(root,'tests/e2e/mock.spec.js',mock);const generate=jest.fn();

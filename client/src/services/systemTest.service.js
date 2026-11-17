@@ -1,5 +1,8 @@
 import { getAIModelHeaders } from './aiModel.service.js';
-import axios from "axios";
+import axiosLibrary from "axios";
+import { prepareEditorRequest } from './editorAwareRequest';
+const axios = axiosLibrary.create();
+axios.interceptors.request.use(async config => { await prepareEditorRequest(config.url, {method: config.method}); return config; });
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -31,7 +34,7 @@ export const getSystemTestFrameworks = async (projectId, snapshotId = null) => {
  */
 export const runSystemTest = async (
   snapshotId,
-  { framework = "playwright", executionMode = "frontend", testFile = null } = {}
+  { framework = "playwright", executionMode = "full", testFile = null } = {}
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -116,7 +119,7 @@ export const getSystemTestEvidence = async (
  */
 export const generateColdStartSystemTests = async (
   snapshotId,
-  { framework = "playwright", routes = ["/"], executionMode = "frontend" } = {}
+  { framework = "playwright", routes = ["/"], executionMode = "full" } = {}
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -150,6 +153,9 @@ export const updateSystemTestFileContent = async (
   content,
   options = {}
 ) => {
+  const { saveCollaborativeSnapshotFile } = await import('../lib/editor/editorModelRegistry');
+  const live = await saveCollaborativeSnapshotFile(snapshotId, filePath, content);
+  if (live) return live;
   const headers = getAuthHeaders();
   const response = await axios.put(
     `${API_BASE}/coverage/${snapshotId}/system/tests/content`,
@@ -166,7 +172,7 @@ export const runSingleSystemTest = async (
   snapshotId,
   filePath,
   framework = "playwright",
-  executionMode = "frontend"
+  executionMode = "full"
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -193,8 +199,8 @@ export const optimizeSystemTest = async (
   return response.data;
 };
 
-export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data } = {}) => {
-  const response = await axios({ url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
+export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data, signal } = {}) => {
+  const response = await axios({ signal, url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
   return response.data.data;
 };
 

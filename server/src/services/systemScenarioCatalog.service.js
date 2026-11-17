@@ -1,3 +1,5 @@
+import { describeAssertionOutcome, outcomeBindings, isVagueExpectedOutcome } from './systemExpectedOutcome.service.js';
+import { validateFullSystemTest } from './systemTestEvidence.service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -19,26 +21,30 @@ const readTest = (rootDir, filePath) => {
     return fs.readFileSync(absolute, 'utf8');
 };
 
-const assertionOutcome = code => {
-    const quoted = code.match(/getBy(?:Text|TestId|Label|Placeholder)\(\s*(['"`])([^'"`]+)\1/)?.[2]
-        || code.match(/getByRole\([^)]*name\s*:\s*(['"`])([^'"`]+)\1/)?.[2];
-    const subject = quoted ? `“${quoted}”` : 'The asserted value';
-    const matcher = code.match(/\.(toBeVisible|toBeHidden|toBeEnabled|toBeDisabled|toBeChecked|toHaveText|toContainText|toHaveClass|toHaveValue|toBe|toEqual)\((.*?)\)\s*$/s);
-    if (!matcher) return code;
-    const value = matcher[2]?.trim();
-    const descriptions = { toBeVisible: 'is visible', toBeHidden: 'is hidden', toBeEnabled: 'is enabled', toBeDisabled: 'is disabled', toBeChecked: 'is checked', toHaveText: `has text ${value}`, toContainText: `contains text ${value}`, toHaveClass: `has class ${value}`, toHaveValue: `has value ${value}`, toBe: `equals ${value}`, toEqual: `equals ${value}` };
-    return `${subject} ${descriptions[matcher[1]]}`;
-};
-
 const draftFromTest = (content, site, analysis) => {
     const body = content.slice(site.start, site.end);
+    const bindings = outcomeBindings(body);
     const actions = [...body.matchAll(/await\s+((?!expect\b)[^;\n]+)(?:;|\n|$)/g)]
         .map(match => match[1].trim()).filter(Boolean).slice(0, 12);
     const assertions = analysis.assertionSites
         .filter(assertion => assertion.scenarioLine === site.line && assertion.supported)
-        .map(assertion => assertionOutcome(assertion.code.trim())).slice(0, 12);
+        .map(assertion => describeAssertionOutcome(assertion.code.trim(), bindings)).filter(Boolean).slice(0, 12);
     return { flowJson: actions, inputJson: actions.filter(action => /\.(?:fill|type|selectOption|check|press)\s*\(/.test(action)), expectedJson: assertions };
 };
+
+// Execution-only discovery does not update the owner's catalog or mark any
+// expected outcome as confirmed. It also works for generated, disposable tests.
+export const discoverExecutionScenarios = ({rootDir,testFiles}) => testFiles.flatMap(filePath=>{
+    const content=readTest(rootDir,filePath),analysis=analyzeSystemTestFile({content,filePath});
+    const occurrences=new Map();
+    return analysis.scenarioSites.map(site=>{
+        const occurrence=occurrences.get(site.title) || 0;
+        occurrences.set(site.title,occurrence+1);
+        const scenarioKey=scenarioIdentity(filePath,site.title,occurrence);
+        const row={id:scenarioKey,scenarioKey,filePath,title:site.title,reviewState:'DRAFT',criterionIds:[],requirementRevisionId:null,...draftFromTest(content,site,analysis),testHash:digest(content),assertionHashes:analysis.assertionSites.filter(assertion=>assertion.scenarioLine===site.line).map(assertion=>assertion.hash).sort()};
+        return {...row,scenarioHash:scenarioReviewHash(row)};
+    });
+});
 
 export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir }) => {
     const files = scanSystemTestFiles(rootDir).playwrightFiles.map(file => file.filePath);
@@ -66,19 +72,31 @@ export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir })
                 const draft = { snapshotId, scenarioKey, source: 'IMPORTED', filePath, title: site.title, ...draftFromTest(content, site, analysis), criterionIds: [], reviewState: 'DRAFT', scenarioHash: '', testHash, assertionHashes: assertions };
                 draft.scenarioHash = scenarioReviewHash(draft);
                 await client.systemScenario.create({ data: draft });
-            } else if (existing.testHash !== testHash || JSON.stringify(existing.assertionHashes) !== JSON.stringify(assertions)) {
+            } else if (existing.testHash !== testHash || JSON.stringify(existing.assertionHashes) !== JSON.stringify(assertions) || existing.expectedJson?.some(isVagueExpectedOutcome)) {
                 const extracted = draftFromTest(content, site, analysis);
                 const changed = { ...existing, testHash, assertionHashes: assertions,
                     flowJson: existing.flowJson?.length ? existing.flowJson : extracted.flowJson,
                     inputJson: existing.inputJson?.length ? existing.inputJson : extracted.inputJson,
-                    expectedJson: existing.expectedJson?.length ? existing.expectedJson : extracted.expectedJson };
+                    expectedJson: existing.expectedJson?.length && !existing.expectedJson.some(isVagueExpectedOutcome) ? existing.expectedJson : extracted.expectedJson };
                 await client.systemScenario.update({ where: { id: existing.id }, data: { testHash, assertionHashes: assertions, flowJson: changed.flowJson, inputJson: changed.inputJson, expectedJson: changed.expectedJson, scenarioHash: scenarioReviewHash(changed), reviewState: 'STALE', reviewedByUserId: null, reviewedAt: null } });
             }
         }
     }
     const all = await client.systemScenario.findMany({ where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] });
     for (const scenario of all) if (scenario.filePath && !seen.has(scenario.scenarioKey)) await client.systemScenario.delete({ where: { id: scenario.id } });
-    return { scenarios: await client.systemScenario.findMany({ where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] }), discoveryStatus: files.length ? 'DISCOVERED' : 'NO_TESTS', unsupportedFeatures };
+    return { scenarios: fullStackCatalog(await client.systemScenario.findMany({ where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] }),rootDir), discoveryStatus: files.length ? 'DISCOVERED' : 'NO_TESTS', unsupportedFeatures };
+};
+
+export const fullStackCatalog = (scenarios, rootDir) => {
+    const files = new Map();
+    return scenarios.map(row => {
+        if (!row.filePath) return {...row,fullStackCompatible:false,executionIssue:'This scenario does not have an executable test file.'};
+        if (!files.has(row.filePath)) {
+            try { validateFullSystemTest(readTest(rootDir,row.filePath)); files.set(row.filePath,null); }
+            catch(error) { files.set(row.filePath,error.statusCode ? error.message : 'Test file could not be checked.'); }
+        }
+        return {...row,fullStackCompatible:!files.get(row.filePath),executionIssue:files.get(row.filePath)};
+    });
 };
 
 export const createManualScenario = async ({ client, snapshotId, input }) => {
@@ -117,6 +135,7 @@ export const confirmScenarioExpected = async ({ client, snapshotId, rootDir, sce
     if (!scenario) throw new ServiceError('Scenario not found', 404);
     if (scenario.scenarioHash !== expectedScenarioHash) throw new ServiceError('Scenario changed; reload before confirming', 409);
     if (!scenario.expectedJson?.some(nonempty)) throw new ServiceError('Add an Expected outcome before confirming', 422);
+    if (scenario.expectedJson.some(isVagueExpectedOutcome)) throw new ServiceError('Describe which item should change and its expected state before confirming.',422);
     if (scenario.filePath && digest(readTest(rootDir, scenario.filePath)) !== scenario.testHash) throw new ServiceError('Test file changed; sync before confirming', 409);
     return client.systemScenario.update({ where: { id: scenario.id }, data: { reviewState: 'EXPECTED_CONFIRMED', reviewedByUserId: userId, reviewedAt: new Date() } });
 };
@@ -142,9 +161,14 @@ export const reviewScenario = async ({ client, snapshotId, rootDir, scenarioId, 
     return client.systemScenario.update({ where: { id: scenario.id }, data: { requirementRevisionId: revisionId, scenarioHash: scenarioReviewHash(next), reviewState: 'REVIEWED', reviewedByUserId: userId, reviewedAt: new Date() } });
 };
 
-export const evaluateRunReadiness = async ({ client, snapshotId, rootDir, revisionId, testFiles, reviewMode = 'legacy', scenarioIds = [] }) => {
+export const evaluateRunReadiness = async ({ client, snapshotId, rootDir, revisionId, testFiles, reviewMode = 'legacy', scenarioIds = [], executionMode }) => {
     const blockers = [];
-    if (reviewMode === 'scenario') {
+    if (executionMode === 'full') for (const filePath of testFiles) {
+        try { validateFullSystemTest(readTest(rootDir,filePath)); }
+        catch (error) { blockers.push({filePath,code:'FULL_STACK_TEST_REQUIRED',message:`${filePath}: ${error.statusCode ? error.message : 'Test file could not be checked'}`}); }
+    }
+
+    if (['scenario','execution'].includes(reviewMode)) {
         if (!scenarioIds.length) blockers.push({ code: 'NO_SELECTION', message: 'Select at least one scenario to run' });
         const all = await client.systemScenario.findMany({ where: { snapshotId, filePath: { in: testFiles } } });
         const selected = all.filter(scenario => scenarioIds.includes(scenario.id));
@@ -159,7 +183,8 @@ export const evaluateRunReadiness = async ({ client, snapshotId, rootDir, revisi
                 const fileRows = all.filter(scenario => scenario.filePath === filePath);
                 for (const scenario of fileRows.filter(item => scenarioIds.includes(item.id))) {
                     if (scenario.testHash !== hash || scenario.reviewState === 'STALE') blockers.push({ scenarioKey: scenario.scenarioKey, code: 'TEST_CHANGED', message: `Sync ${filePath} before running` });
-                    if (!['EXPECTED_CONFIRMED', 'REVIEWED'].includes(scenario.reviewState)) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'EXPECTED_UNCONFIRMED', message: `Confirm the expected outcome for ${scenario.title}` });
+                    if (reviewMode==='scenario' && (!scenario.expectedJson?.length || scenario.expectedJson.some(isVagueExpectedOutcome))) blockers.push({scenarioKey:scenario.scenarioKey,code:'EXPECTED_DESCRIPTION_REQUIRED',message:`Describe the expected item and state for ${scenario.title}`});
+                    if (reviewMode==='scenario' && !['EXPECTED_CONFIRMED', 'REVIEWED'].includes(scenario.reviewState)) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'EXPECTED_UNCONFIRMED', message: `Confirm the expected outcome for ${scenario.title}` });
                     const matching = analysis.scenarioSites.filter(site => site.title === scenario.title);
                     if (matching.length !== 1 || !analysis.assertionSites.some(site => site.scenarioLine === matching[0]?.line && site.supported)) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'ASSERTION_REQUIRED', message: `A supported assertion is required for ${scenario.title}` });
                     if (fileRows.filter(item => item.title === scenario.title).length !== 1) blockers.push({ scenarioKey: scenario.scenarioKey, code: 'AMBIGUOUS_SCENARIO', message: `Use unique scenario titles in ${filePath}` });

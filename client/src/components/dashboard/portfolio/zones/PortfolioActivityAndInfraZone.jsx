@@ -1,13 +1,19 @@
 import { useState } from "react";
-import { Activity, Server, Cpu, CheckCircle2, ShieldCheck, ExternalLink, Zap } from "lucide-react";
+import { Activity, Server, CheckCircle2 } from "lucide-react";
 import { PillarBadge } from "../../unified/primitives/PillarBadge.jsx";
 
 export function PortfolioActivityAndInfraZone({
   activityFeed = [],
+  runnerInfrastructure = null,
   onInspectRun,
   className = "",
 }) {
   const [filterType, setFilterType] = useState("all"); // "all" | "test" | "ai" | "failed"
+
+  const activeWorkers = runnerInfrastructure?.activeWorkers ?? 3;
+  const runningJobs = runnerInfrastructure?.runningJobsCount ?? 0;
+  const queuedJobs = runnerInfrastructure?.queuedJobsCount ?? 0;
+  const isRedisConnected = runnerInfrastructure?.isRedisConnected ?? true;
 
   const filteredEvents = activityFeed.filter((evt) => {
     if (filterType === "test") return evt.type === "TEST_EXECUTION";
@@ -171,16 +177,18 @@ export function PortfolioActivityAndInfraZone({
                 <span className="text-[var(--ud-text-muted)]">Runner Status:</span>
                 <span className="inline-flex items-center gap-1 text-[var(--ud-pass)] font-bold">
                   <CheckCircle2 size={12} />
-                  Engine Ready
+                  {isRedisConnected ? "Engine & Redis Online" : "Local Host Mode"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[var(--ud-text-muted)]">Sandbox Concurrency:</span>
-                <span className="text-[var(--ud-text)] font-bold">3 Parallel Workers</span>
+                <span className="text-[var(--ud-text)] font-bold">{activeWorkers} Parallel Workers</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[var(--ud-text-muted)]">Queue Depth:</span>
-                <span className="text-[var(--ud-text)] font-bold">0 Pending Jobs</span>
+                <span className="text-[var(--ud-text-muted)]">Active / Queued:</span>
+                <span className="text-[var(--ud-unit)] font-bold">
+                  {runningJobs} Running • {queuedJobs} Queued
+                </span>
               </div>
             </div>
 

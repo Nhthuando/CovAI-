@@ -10,6 +10,33 @@ const roots=[];
 const root=()=>{const directory=fs.mkdtempSync(path.join(os.tmpdir(),'covai-evidence-'));roots.push(directory);return directory;};
 afterEach(()=>{for(const directory of roots.splice(0)) fs.rmSync(directory,{recursive:true,force:true});});
 describe('real system execution and evidence',()=>{
+  it('keeps scenario screenshots as checkpoints without relaying them as live frames',async()=>{
+    const source=fs.readFileSync(new URL('../services/systemAssessmentJob.service.js',import.meta.url),'utf8');
+    const start=source.indexOf('const onEvent = async (');
+    const end=source.indexOf('const report = await withProjectDependencyCache',start);
+    expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
+    const frames=[],recorded=[],transport=[],events=[],checkpoints=[];
+    const dependencies={
+      job:{snapshotId:'snapshot',userId:'user',snapshot:{rootDir:'/workspace'}},
+      assessment:{id:'assessment'},prisma:{},
+      catalog:[{filePath:'test.spec.js',title:'scenario',scenarioKey:'scenario-key'}],
+      recordSystemLiveFrame:frame=>recorded.push(frame),
+      global:{io:{to:()=>({emit:(event,payload)=>frames.push({event,payload})})}},
+      currentProjectOperation:()=>({projectId:'project'}),
+      deliverScopedProjectTransport:payload=>transport.push(payload),
+      storeScenarioScreenshot:()=> 'checkpoint.png',
+      persistRunArtifacts:async input=>{checkpoints.push(input);return [{id:'artifact'}];},
+      emit:async event=>events.push(event),
+    };
+    const onEvent=new Function(...Object.keys(dependencies),`${source.slice(start,end)} return onEvent;`)(...Object.values(dependencies));
+    await onEvent({runIndex:0,type:'SCENARIO_ENDED',screenshotBody:'blank-page',filePath:'test.spec.js',title:'scenario'});
+    expect(frames).toEqual([]);expect(recorded).toEqual([]);expect(transport).toEqual([]);
+    expect(checkpoints[0].artifacts[0]).toEqual(expect.objectContaining({purpose:'CHECKPOINT',relativePath:'checkpoint.png'}));
+    expect(events[0]).toEqual(expect.objectContaining({type:'SCENARIO_ENDED',payload:expect.objectContaining({artifactId:'artifact'})}));
+    await onEvent({runIndex:0,type:'LIVE_FRAME',frame:'live-page'});
+    expect(frames).toEqual([{event:'system-run:frame',payload:expect.objectContaining({frame:'live-page'})}]);
+    expect(recorded).toHaveLength(1);expect(transport).toHaveLength(1);
+  });
   it('limits a selected scenario run to its literal Playwright title',()=>{
     const directory=root();fs.mkdirSync(path.join(directory,'e2e'));
     const file=path.join(directory,'e2e/items.spec.js');
@@ -51,7 +78,7 @@ describe('real system execution and evidence',()=>{
     expect(()=>validateFullSystemTest("await page.route('**/api/**', () => {});")).toThrow(/real backend/);
     expect(()=>validateFullSystemTest("await page.goto('/'); await page.reload();")).not.toThrow();
   });
-  it('fails explicitly when full-system configuration is absent',()=>{expect(()=>readFullSystemConfig(root())).toThrow(/Choose Frontend Dev Server/);});
+  it('fails explicitly when full-system configuration is absent',()=>{expect(()=>readFullSystemConfig(root())).toThrow(/Full Stack startup setup is missing|Generate and apply a Full Stack test draft/);});
   it('persists PNG evidence and rejects files outside the snapshot',()=>{
     const directory=root();const source=path.join(directory,'shot.png');
     fs.writeFileSync(source,Buffer.from([137,80,78,71,13,10,26,10,0]));
@@ -65,6 +92,9 @@ describe('real system execution and evidence',()=>{
     const result=prepareSystemPlaywright({rootDir:directory,execution:{testDirectory:'tests/system'},executionMode:'full',backendUrl:'http://127.0.0.1:4500',frontendPort:4173,runKey:'run'});
     expect(fs.readFileSync(path.join(result.directory,'playwright.config.mjs'),'utf8')).toContain("screenshot:'on'");
     const fixture=fs.readFileSync(path.join(result.directory,'fixture.mjs'),'utf8');
+    expect(fixture).toContain('Page.startScreencast');
+    expect(fixture).toContain('Page.screencastFrameAck');
+    expect(fixture).toContain('Page.stopScreencast');
     expect(fixture).toContain('route.continue');expect(fixture).not.toContain('route.fulfill');
     expect(fixture).toContain('playwright.request.newContext({baseURL:backend');
     expect(fixture).toContain('await request.dispose()');

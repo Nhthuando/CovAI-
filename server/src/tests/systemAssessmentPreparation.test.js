@@ -16,6 +16,26 @@ const fixture=()=>{
 const proposal={frontend:{directory:'client'},backend:{directory:'server',healthPath:'/api/todos'},database:{engine:'mysql',initSql:'.covai/generated-schema.sql'},schemaSql:'CREATE TABLE todos(id INT PRIMARY KEY,title VARCHAR(255));',missingInformation:[]};
 afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 describe('automatic Run preparation',()=>{
+    it('discovers imported scenarios for execution without changing their reviewed state',async()=>{
+        const root=fixture();
+        write(root,'server/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5'}}));
+        write(root,'server/index.js',"import express from 'express';const app=express();app.get('/',(_req,res)=>res.send('ready'));");
+        const result=await prepareAutomaticAssessment({rootDir:root,input:{autoDiscover:true,runner:'playwright',executionMode:'full',headed:true}});
+        expect(result.input).toMatchObject({reviewMode:'execution',headed:true,scenarioIds:[result.catalog[0].id]});
+        expect(result.catalog[0]).toMatchObject({title:'read todos',reviewState:'DRAFT'});
+    });
+    it('generates missing tests only when requested, then discovers the generated execution catalog',async()=>{
+        const root=fixture();
+        write(root,'server/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5'}}));
+        const before=fs.readFileSync(path.join(root,'server/tests/todo.spec.js'),'utf8');
+        const discover=jest.fn().mockImplementationOnce(()=>{const error=new Error('no tests');error.code='SYSTEM_TESTS_NOT_FOUND';throw error;}).mockReturnValue({runner:'playwright',executionMode:'full',testFiles:['tests/generated.spec.js'],coverageScope:{frontend:{root:'client',sourceDirectory:'.'},backend:{root:'server',sourceDirectory:'.'}},repeatRuns:2});
+        const prepareMissing=jest.fn(async()=>{write(root,'tests/generated.spec.js',"import {test,expect} from '@playwright/test';test('generated',()=>{expect(true).toBe(true);});");return {filePath:'tests/generated.spec.js',verificationRuns:2};});
+        const result=await prepareAutomaticAssessment({rootDir:root,input:{autoDiscover:true,allowGenerate:true,executionMode:'full',runner:'playwright'},dependencies:{discover,prepareMissing}});
+        expect(prepareMissing).toHaveBeenCalledTimes(1);
+        expect(result.catalog[0]).toMatchObject({title:'generated',reviewState:'DRAFT'});
+        expect(result.generatedTests).toMatchObject({verificationRuns:2});
+        expect(fs.readFileSync(path.join(root,'server/tests/todo.spec.js'),'utf8')).toBe(before);
+    });
     it('prepares missing setup before discovery from an imported backend subdirectory without .git',async()=>{
         const root=fixture(),generate=jest.fn().mockResolvedValue(JSON.stringify(proposal)),progress=jest.fn();
         const result=await prepareAutomaticAssessment({rootDir:path.join(root,'server'),input:{autoDiscover:true,runner:'playwright',executionMode:'full',model:'gemini-2.5-flash'},onProgress:progress,dependencies:{generate}});
@@ -52,12 +72,12 @@ describe('automatic Run preparation',()=>{
         await expect(prepareAutomaticAssessment({rootDir:root,input:{executionMode:'full'},signal:{aborted:true},dependencies:{generate}})).rejects.toThrow('canceled');
         expect(generate).not.toHaveBeenCalled();
     });
-    it('automatically prepares compatible tests and rediscovers when Full Stack has only mocked tests',async()=>{
+    it('requires explicit reviewed Apply when Full Stack has only mocked tests',async()=>{
         const root=fixture(),setup=async()=>({config:{backend:{directory:'server'}}});
-        const discover=jest.fn().mockImplementationOnce(()=>{const error=new Error('Mocked tests only');error.code='FULL_STACK_TESTS_REQUIRED';throw error;}).mockReturnValue({testFiles:['new.spec.mjs'],runner:'playwright',executionMode:'full',coverageScope:{},repeatRuns:2});
-        const prepareTests=jest.fn().mockResolvedValue({verificationRuns:2});
-        const result=await prepareAutomaticAssessment({rootDir:root,input:{runner:'playwright',executionMode:'full'},dependencies:{setup,discover,prepareTests}});
-        expect(prepareTests).toHaveBeenCalledTimes(1);expect(discover).toHaveBeenCalledTimes(2);expect(result.input.testFiles).toEqual(['new.spec.mjs']);
+        const discover=jest.fn().mockImplementation(()=>{const error=new Error('Mocked tests only');error.code='FULL_STACK_TESTS_REQUIRED';throw error;});
+        const prepareTests=jest.fn();
+        await expect(prepareAutomaticAssessment({rootDir:root,input:{runner:'playwright',executionMode:'full'},dependencies:{setup,discover,prepareTests}})).rejects.toMatchObject({statusCode:409});
+        expect(prepareTests).not.toHaveBeenCalled();expect(discover).toHaveBeenCalledTimes(1);
     });
     it('does not publish setup if canceled while waiting for AI',async()=>{
         const root=fixture(),controller=new AbortController();

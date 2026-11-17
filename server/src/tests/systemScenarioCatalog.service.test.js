@@ -25,6 +25,18 @@ const createFixture = () => {
 };
 
 describe('system scenario catalog', () => {
+    it('executes an imported draft without confirming its business expectations',async()=>{
+        const fixture=createFixture();
+        try {
+            const synced=await syncSystemScenarioCatalog({client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir});
+            const row=synced.scenarios[0];
+            const args={client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir,testFiles:[fixture.filePath],scenarioIds:[row.id],executionMode:'full'};
+            expect(await evaluateRunReadiness({...args,reviewMode:'execution'})).toMatchObject({ready:true,blockers:[]});
+            expect(await evaluateRunReadiness({...args,reviewMode:'scenario'})).toMatchObject({ready:false,blockers:expect.arrayContaining([expect.objectContaining({code:'EXPECTED_UNCONFIRMED'})])});
+            expect([...fixture.rows.values()][0].reviewState).toBe('DRAFT');
+            expect(fixture.client.systemScenario.update).not.toHaveBeenCalled();
+        } finally {fs.rmSync(fixture.rootDir,{recursive:true,force:true});}
+    });
     it('blocks ambiguous duplicate titles before live evidence can be assigned to the wrong scenario', async () => {
         const fixture = createFixture();
         try {
@@ -39,7 +51,7 @@ describe('system scenario catalog', () => {
             const result = await syncSystemScenarioCatalog({ client: fixture.client, snapshotId: 'snapshot', rootDir: fixture.rootDir });
             expect(result.discoveryStatus).toBe('DISCOVERED');
             expect(result.scenarios).toHaveLength(1);
-            expect(result.scenarios[0]).toMatchObject({ title: 'checkout', reviewState: 'DRAFT', inputJson: [], expectedJson: ['“Receipt” is visible'] });
+            expect(result.scenarios[0]).toMatchObject({ title: 'checkout', reviewState: 'DRAFT', inputJson: [], expectedJson: ['Text \"Receipt\" is visible.'] });
             const readiness = await evaluateRunReadiness({ client: fixture.client, snapshotId: 'snapshot', rootDir: fixture.rootDir, revisionId: 'revision', testFiles: [fixture.filePath] });
             expect(readiness.ready).toBe(false);
             expect(readiness.blockers[0].code).toBe('REVIEW_REQUIRED');
@@ -72,4 +84,24 @@ describe('system scenario catalog', () => {
             await expect(reviewScenario({ client: fixture.client, snapshotId: 'snapshot', rootDir: fixture.rootDir, scenarioId: row.id, expectedScenarioHash: row.scenarioHash, revisionId: 'revision', expectedRequirementHash: 'hash', assertionIds: ['assertion'], userId: 'owner' })).rejects.toMatchObject({ statusCode: 422 });
         } finally { fs.rmSync(fixture.rootDir, { recursive: true, force: true }); }
     });
+    it('replaces a vague imported outcome and invalidates its old confirmation', async()=>{
+        const fixture=createFixture();
+        try {
+            await syncSystemScenarioCatalog({client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir});
+            const row=[...fixture.rows.values()][0];row.expectedJson=['Visible'];row.reviewState='EXPECTED_CONFIRMED';
+            const oldHash=row.scenarioHash;
+            const result=await syncSystemScenarioCatalog({client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir});
+            expect(row.expectedJson).toEqual(['Text "Receipt" is visible.']);expect(row.reviewState).toBe('STALE');
+            expect(row.scenarioHash).toBe(oldHash); // identical restored wording still requires renewed confirmation
+            expect(result.scenarios[0].fullStackCompatible).toBe(true);
+            await expect(confirmScenarioExpected({client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir,scenarioId:row.id,expectedScenarioHash:'outdated-hash',userId:'owner'})).rejects.toMatchObject({statusCode:409});
+            await confirmScenarioExpected({client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir,scenarioId:row.id,expectedScenarioHash:row.scenarioHash,userId:'owner'});
+            expect(row.reviewState).toBe('EXPECTED_CONFIRMED');
+
+            fs.appendFileSync(path.join(fixture.rootDir,fixture.filePath),"\nawait page.route('**/api/**',()=>{});");
+            const mocked=await syncSystemScenarioCatalog({client:fixture.client,snapshotId:'snapshot',rootDir:fixture.rootDir});
+            expect(mocked.scenarios[0].fullStackCompatible).toBe(false);
+        } finally {fs.rmSync(fixture.rootDir,{recursive:true,force:true});}
+    });
+
 });

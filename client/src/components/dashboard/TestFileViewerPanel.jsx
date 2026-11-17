@@ -20,7 +20,7 @@ import {
   X,
   TrendingUp,
 } from "lucide-react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor from "./editor/CollaborativeCodeEditor";
 import { updateFileContentApi, createProjectFileApi } from "../../services/project.service.js";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 import { resolveTestOrFunctionLine, resolveTestBlockRange } from "../../services/navigation.service.js";
@@ -1462,7 +1462,7 @@ export default function TestFileViewerPanel({
         {/* State 4: Test file found & Editor Mode */}
         {isFound && viewMode === "editor" && (
           <div style={{ flex: 1, minHeight: 0, height: "100%", width: "100%" }}>
-            <MonacoEditor
+            <MonacoEditor projectId={projectId} snapshotId={snapshotId} filePath={testFilePath}
               height="100%"
               minHeight="100%"
               language={getLanguage(testFilePath)}

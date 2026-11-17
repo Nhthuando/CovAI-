@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useCallback } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { fetchCoverageDashboardData } from "./useCoverageQuery.js";
 import {
@@ -16,7 +16,7 @@ import { adaptUnifiedDashboard } from "../services/unifiedDashboard/unifiedDashb
 /**
  * Fetch 100% real data across Unified Aggregation API + Unit, Integration, and System testing layers in parallel.
  */
-export async function fetchAllTestingLayers({ snapshotId, projectId }) {
+export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = false }) {
   if (!snapshotId) {
     return {
       unifiedBackendRaw: null,
@@ -32,7 +32,7 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
 
   // FAST PATH: Single unified endpoint returns aggregated data across all 3 tiers in < 300ms
   try {
-    const unifiedRes = await getUnifiedQualityDashboard(snapshotId);
+    const unifiedRes = await getUnifiedQualityDashboard(snapshotId, { refresh });
     if (unifiedRes?.data) {
       return {
         unifiedBackendRaw: unifiedRes.data,
@@ -57,7 +57,7 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
       }),
 
       // 2. Integration Workspace
-      getIntegrationWorkspace(snapshotId)
+      getIntegrationWorkspace(snapshotId, { skipAutoScan: true })
         .then((res) => res?.data || null)
         .catch((err) => {
           errorsByLayer.integration = err.message || "Failed to load integration workspace";
@@ -112,33 +112,45 @@ export function useUnifiedDashboard({
   snapshots = EMPTY_SNAPSHOTS,
 }) {
   const effectiveSnapshotId = snapshotId || snapshots[0]?.id || "";
+  const isEnabled = Boolean(effectiveSnapshotId && projectId);
+  const isForceRefreshingRef = useRef(false);
 
   const query = useQuery({
     queryKey: ["unifiedDashboard", effectiveSnapshotId, projectId || null],
-    queryFn: () => fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId }),
-    enabled: Boolean(effectiveSnapshotId),
-    placeholderData: keepPreviousData,
-    staleTime: 2 * 60 * 1000, // 2 minutes cache freshness
+    queryFn: () => {
+      const isRefresh = isForceRefreshingRef.current;
+      isForceRefreshingRef.current = false;
+      return fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId, refresh: isRefresh });
+    },
+    enabled: isEnabled,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey?.[1] === effectiveSnapshotId ? previousData : undefined,
+    staleTime: 15_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     gcTime: 30 * 60 * 1000,
   });
 
-  const vm = useMemo(() => {
-    if (!effectiveSnapshotId) {
-      return adaptUnifiedDashboard({
-        context: {
-          projectId,
-          projectName,
-          snapshotId: "",
-          snapshots,
-        },
-      });
+  const forceRefresh = useCallback(async () => {
+    if (!effectiveSnapshotId) return;
+    isForceRefreshingRef.current = true;
+    try {
+      return await query.refetch();
+    } finally {
+      isForceRefreshingRef.current = false;
     }
+  }, [effectiveSnapshotId, query]);
 
-    if (!query.data && query.isLoading) {
+  const vm = useMemo(() => {
+    if (!effectiveSnapshotId || !projectId) {
       return null;
     }
 
-    return adaptUnifiedDashboard({
+    if (!query.data && (query.isLoading || query.isFetching)) {
+      return null;
+    }
+
+    const adapted = adaptUnifiedDashboard({
       unifiedBackendRaw: query.data?.unifiedBackendRaw || null,
       unitRaw: query.data?.unitRaw || null,
       integrationRaw: query.data?.integrationRaw || null,
@@ -151,8 +163,16 @@ export function useUnifiedDashboard({
         snapshots,
       },
     });
+
+    if (adapted && adapted.context) {
+      const latestSyncTime = query.dataUpdatedAt || adapted.context.updatedAt || Date.now();
+      adapted.context.updatedAt = latestSyncTime;
+    }
+
+    return adapted;
   }, [
     query.data,
+    query.dataUpdatedAt,
     query.isLoading,
     projectId,
     projectName,
@@ -163,11 +183,12 @@ export function useUnifiedDashboard({
   return {
     vm,
     errorsByLayer: query.data?.errorsByLayer || { unit: null, integration: null, system: null },
-    isLoading: Boolean(effectiveSnapshotId) ? query.isLoading : false,
-    isFetching: Boolean(effectiveSnapshotId) ? query.isFetching : false,
-    isError: Boolean(effectiveSnapshotId) ? query.isError : false,
+    isLoading: isEnabled ? query.isLoading : false,
+    isFetching: isEnabled ? query.isFetching : false,
+    isError: isEnabled ? query.isError : false,
     error: query.error,
     refetch: query.refetch,
+    forceRefresh,
   };
 }
 

@@ -35,7 +35,8 @@ export const persistRunArtifacts = async ({ client, assessmentId, rootDir, artif
                 if (!fs.existsSync(destination)) fs.writeFileSync(destination,bytes,{flag:'wx'});
                 else if (crypto.createHash('sha256').update(fs.readFileSync(destination)).digest('hex') !== inspected.sha256) throw new ServiceError('Artifact identity collision',409);
             }
-            saved.push(await writeClient.systemRunArtifact.create({ data: { assessmentId, scenarioKey: matches.length === 1 ? matches[0].scenarioKey : null, kind: artifact.kind, ...inspected } }));
+            const record = await writeClient.systemRunArtifact.create({ data: { assessmentId, scenarioKey: matches.length === 1 ? matches[0].scenarioKey : null, kind: artifact.kind, runIndex:artifact.runIndex || null, attemptIndex:artifact.attemptIndex ?? null, stepKey:artifact.stepKey || null, purpose:artifact.purpose || (artifact.kind === 'TRACE' ? 'FAILURE' : 'FINAL'), ...inspected } });
+            saved.push({...record,filePath:artifact.filePath,title:artifact.title});
         } catch (error) {
             if (error.statusCode) continue;
             throw error;
@@ -45,8 +46,30 @@ export const persistRunArtifacts = async ({ client, assessmentId, rootDir, artif
 });
 
 export const readOwnedRunArtifact = ({ rootDir, artifact }) => {
+    if(artifact.expiredAt)throw new ServiceError('This evidence has expired under the retention policy',410);
     if (!fs.existsSync(containedPath(rootDir,artifact.relativePath))) rootDir = resolveSystemRepositoryRoot(rootDir);
     const inspected = inspectRunArtifact({ rootDir, relativePath: artifact.relativePath, kind: artifact.kind });
     if (inspected.sha256 !== artifact.sha256 || inspected.byteSize !== artifact.byteSize) throw new ServiceError('Artifact hash mismatch', 409);
     return { bytes: fs.readFileSync(containedPath(rootDir, artifact.relativePath)), mimeType: inspected.mimeType };
+};
+
+// Candidate runs are read-only operations, but their verified artifacts must
+// survive the operation copy so a later explicit Apply can publish a report.
+export const preserveCandidateArtifacts = ({rootDir,report}) => {
+    const operation=currentProjectOperation();
+    if(!operation)return;
+    const destinationRoot=resolveSystemRepositoryRoot(path.join(operation.originalRootDir,operation.analysisRelative));
+    const retained=[];
+    for(const artifact of (report.evidenceArtifacts||[]).slice(0,500)) {
+        try {
+            const inspected=inspectRunArtifact({rootDir,relativePath:artifact.relativePath,kind:artifact.kind});
+            const target=containedPath(destinationRoot,inspected.relativePath);
+            fs.mkdirSync(path.dirname(target),{recursive:true});
+            const bytes=fs.readFileSync(containedPath(rootDir,inspected.relativePath));
+            if(!fs.existsSync(target))fs.writeFileSync(target,bytes,{flag:'wx'});
+            else if(crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex')!==inspected.sha256)throw new ServiceError('Candidate artifact identity mismatch',409);
+            retained.push({...artifact,...inspected});
+        }catch(error){if(!error.statusCode && error.code!=='ENOENT')throw error;}
+    }
+    report.evidenceArtifacts=retained;
 };

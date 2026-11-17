@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { getAccessToken, handleUnauthorizedResponse } from "../../lib/authSession.js";
 
 import {
   getCoverageSummary,
@@ -7,16 +8,20 @@ import {
   getTestExecution,
   runCoverageByType,
 } from "../../services/coverage.service.js";
+import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery.js";
+
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
+function getAuthHeaders() {
+  const token = getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function handleResponse(res) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("userName");
-      localStorage.removeItem("userEmail");
-      window.location.href = "/login";
+      await handleUnauthorizedResponse();
     }
     throw new Error(data.message || "Failed API call");
   }
@@ -843,6 +848,9 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     try {
       await runCoverageByType(snapshotId, "system");
       await fetchData();
+      if (snapshotId) {
+        invalidateCoverageQueries(snapshotId);
+      }
     } catch (err) {
       setError(err.message || "Unable to run System Test.");
     } finally {

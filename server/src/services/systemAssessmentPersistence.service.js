@@ -1,3 +1,7 @@
+import { buildSystemReportProjection } from './systemReportProjection.service.js';
+import { persistRunArtifacts } from './systemRunArtifact.service.js';
+import { scoreSystemSuite } from './systemScenarioVerdict.service.js';
+import path from 'node:path';
 import prisma from '../config/prisma.js';
 import { randomUUID } from 'node:crypto';
 import { currentProjectOperation,stagePreparedPublication } from './projectOperationWorkspace.service.js';
@@ -50,16 +54,28 @@ export const publishAppliedAssessment = async input => {
 const publishAppliedAssessmentNow = async ({ job, report, input, requirementRevisionId, client = prisma,assessmentId }) => {
     // A unique jobId makes publication idempotent. All records commit together.
     const publish = async tx => {
+        assessmentId ||= randomUUID();
         const existing = await tx.systemTestAssessment.findUnique({where:{jobId:job.id}});
         if (existing) return existing;
+        report.scenarioSnapshot = tx.systemScenario ? await tx.systemScenario.findMany({where:{snapshotId:job.snapshotId,filePath:{in:input.testFiles}}}) : report.scenarioSnapshot || [];
+        report.presentation = buildSystemReportProjection({assessment:{id:assessmentId,snapshotId:job.snapshotId,requirementRevisionId},report});
         const testRunId = await persistAssessmentRunsNow({report, snapshotId:job.snapshotId, executionMode:input.executionMode, client:tx});
-        return tx.systemTestAssessment.create({data:{
+        const saved = await tx.systemTestAssessment.create({data:{
             ...(assessmentId ? {id:assessmentId} : {}),
             jobId:job.id, snapshotId:job.snapshotId, requirementRevisionId,
+            ...(report.suiteVersionId ? {suiteVersionId:report.suiteVersionId} : {}),
             runner:input.runner, executionMode:input.executionMode, status:'COMPLETED',
             sourceHash:report.sourceHash, testHash:report.testHash, scopeHash:report.scopeHash,
             testRunId, reportJson:JSON.parse(JSON.stringify({...report,input})),
         }});
+        const operation=currentProjectOperation();
+        if(operation && report.evidenceArtifacts?.length) {
+            const artifacts=await persistRunArtifacts({client:tx,assessmentId:saved.id,rootDir:path.join(operation.originalRootDir,operation.analysisRelative),artifacts:report.evidenceArtifacts,catalog:report.scenarioSnapshot});
+            report.qualityScore=scoreSystemSuite({report,catalog:report.scenarioSnapshot,verdicts:report.scenarioVerdicts||[],artifacts});
+            report.presentation=buildSystemReportProjection({assessment:{...saved},report,artifacts});
+            await tx.systemTestAssessment.update({where:{id:saved.id},data:{reportJson:JSON.parse(JSON.stringify({...report,input}))}});
+        }
+        return saved;
     };
     return typeof client.$transaction === 'function' ? client.$transaction(publish) : publish(client);
 };

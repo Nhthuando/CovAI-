@@ -226,7 +226,7 @@ export function computeBenchmarkAndQuadrantData(projects = []) {
     const x = Number(p.unifiedCoveragePct ?? 0);
     const y = p.passRatePct !== null && p.passRatePct !== undefined ? Number(p.passRatePct) : 0;
 
-    let quadrantId = "critical-risk";
+    let quadrantId;
     if (x >= coverageCutoff && y >= passRateCutoff) {
       quadrantId = "healthy-stars";
     } else if (x < coverageCutoff && y >= passRateCutoff) {

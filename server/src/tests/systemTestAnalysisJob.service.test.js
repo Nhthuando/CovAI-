@@ -5,12 +5,13 @@ const lifecycle = {
   addJobLog: jest.fn(), getJobById: jest.fn(), markJobFailed: jest.fn(),
   markJobRunning: jest.fn(), markJobSuccess: jest.fn(), updateJobProgress: jest.fn(),
 };
-const prismaMock = { testRun: { create: jest.fn() }, aiTest:{create:jest.fn()} };
+const prismaMock = { testRun: { create: jest.fn() }, aiTest:{create:jest.fn()},systemScenario:{count:jest.fn(async()=>2)} };
 const saveJobOutput = jest.fn();
 const resolveSystemTestExecution = jest.fn();
 const runSystemTests = jest.fn();
 const parseSystemTestResult = jest.fn();
 const prepareFullSystemExecution = jest.fn();
+const scanSystemTestFiles=jest.fn(()=>({playwrightFiles:[{filePath:'tests/system/imported.spec.js'}],cypressFiles:[]}));
 
 await jest.unstable_mockModule("../config/prisma.js", () => ({ default: prismaMock }));
 await jest.unstable_mockModule("../services/job.service.js", () => lifecycle);
@@ -18,6 +19,7 @@ await jest.unstable_mockModule("../services/jobOutput.service.js", () => ({ save
 await jest.unstable_mockModule("../services/systemTestDetection.service.js", () => ({ resolveSystemTestExecution }));
 await jest.unstable_mockModule("../services/systemTestRunner.service.js", () => ({ runSystemTests }));
 await jest.unstable_mockModule("../services/systemTestResultParser.service.js", () => ({ parseSystemTestResult }));
+await jest.unstable_mockModule('../utils/testFileParser.js',()=>({scanSystemTestFiles,parseTestFileDetails:jest.fn(()=>({scenarios:[]}))}));
 await jest.unstable_mockModule('../services/fullSystemExecutionPreparation.service.js',()=>({prepareFullSystemExecution,resolveSystemTestFile: (_root,_runner,file)=>file}));
 await jest.unstable_mockModule("../services/coverageSummaryParser.service.js", () => ({ parseCoverageSummary: jest.fn() }));
 await jest.unstable_mockModule("../services/coverageFileParser.service.js", () => ({ parseCoverageFilesForSnapshot: jest.fn() }));
@@ -28,7 +30,7 @@ const { processSystemTestAnalysisJob } = await import("../services/systemTestAna
 
 const job = {
   id: "job-1", status: "RUNNING", projectId: "project-1", snapshotId: "snapshot-1", userId: "user-1",
-  payloadJson: JSON.stringify({ runner: "playwright" }), snapshot: { rootDir: "C:/snapshot" },
+  payloadJson: JSON.stringify({ runner: "playwright",allowAutoGenerate:true }), snapshot: { rootDir: "C:/snapshot" },
 };
 const execution = { runner: "playwright", reportDirectory: "C:/snapshot/.covai-system-test", reportPath: "report.json", coverageDir: "missing-coverage" };
 const testRun = { totalTests: 2, passedTests: 2, failedTests: 0, skippedTests: 0, stabilityScorePct: 100, durationMs: 12, status: "PASSED", startedAt: new Date(), finishedAt: new Date() };

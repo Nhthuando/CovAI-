@@ -3,25 +3,24 @@ import {
   LayoutDashboard,
   Files,
   Settings,
-  BarChart3,
   GitGraph,
   GitBranch,
   Layers,
   Network,
   Terminal,
   ShieldCheck,
+  History,
 } from "lucide-react";
 import { useState } from "react";
 
 const TOP_ITEMS = [
-  { id: "overview", icon: LayoutDashboard, label: "Overview" },
   { id: "explorer", icon: Files, label: "Explorer" },
-  { id: "git", icon: GitGraph, label: "Git Control" },
-  { id: "coverage", icon: BarChart3, label: "Coverage" },
-  { id: "trustworthiness", icon: ShieldCheck, label: "Đánh giá chatbot" },
-  { id: "jobs", icon: Layers, label: "Snapshots & Jobs" },
+  { id: "overview", icon: LayoutDashboard, label: "Overview" },
+  { id: "version-control", icon: GitBranch, label: "Version Control" },
+  { id: "trustworthiness", icon: ShieldCheck, label: "Chatbot Evaluation" },
+  { id: "jobs", icon: History, label: "Activity Log" },
   { id: "architecture", icon: Network, label: "Architecture" },
-  { id: "logic-analysis", icon: GitBranch, label: "Logic Analysis" },
+  { id: "logic-analysis", icon: GitGraph, label: "Logic Analysis" },
 ];
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];

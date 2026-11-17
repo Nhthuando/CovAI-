@@ -38,14 +38,17 @@ const readApiEvidence = (result, rootDir) => {
   } catch { return []; }
 };
 
-const readReport = (resultPath) => {
+const readReport = (resultPath, fallbackOutput = "") => {
   if (!fs.existsSync(resultPath)) {
     throw new ServiceError(`System test report was not created: ${resultPath}`, 422);
   }
 
   try {
     const raw = fs.readFileSync(resultPath, "utf8").trim();
-    if (!raw) throw new Error("report is empty");
+    if (!raw) {
+      const detail = String(fallbackOutput || "").replace(/\x1b\[[0-9;]*m/g, "").trim().slice(-600);
+      throw new Error(detail ? `report is empty (${detail})` : "report is empty");
+    }
     try {
       return JSON.parse(raw);
     } catch {
@@ -330,7 +333,7 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
   };
 };
 
-export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedAt, rootDir = null }) => {
+export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedAt, rootDir = null, stderr = "" }) => {
   if (!["playwright", "cypress"].includes(runner)) {
     throw new ServiceError("Unsupported system test runner", 400);
   }
@@ -339,7 +342,7 @@ export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedA
   if (Number.isNaN(start.getTime()) || Number.isNaN(finish.getTime())) {
     throw new ServiceError("System test timestamps are invalid", 422);
   }
-  const report = readReport(resultPath);
+  const report = readReport(resultPath, stderr);
   return runner === "playwright"
     ? normalisePlaywright(report, start, finish, rootDir)
     : normaliseCypress(report, start, finish, rootDir);

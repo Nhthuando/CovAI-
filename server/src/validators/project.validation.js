@@ -31,3 +31,32 @@ export function parseCreateProject(body) {
         data: result.data,
     };
 }
+
+export const updateProjectLifecycleSchema = z.object({
+    lifecycleStatus: z.enum([
+        "NOT_STARTED",
+        "DOING",
+        "PAUSED",
+        "COMPLETED",
+        "CANCELLED",
+    ]).optional(),
+    isPinned: z.boolean().optional(),
+}).refine(
+    (data) => data.lifecycleStatus !== undefined || data.isPinned !== undefined,
+    { message: "At least one of lifecycleStatus or isPinned must be provided" }
+);
+
+export function parseUpdateProjectLifecycleStatus(body) {
+    const result = updateProjectLifecycleSchema.safeParse(body);
+    if (!result.success) {
+        return {
+            success: false,
+            error: result.error.issues[0],
+        };
+    }
+    return {
+        success: true,
+        data: result.data,
+    };
+}
+

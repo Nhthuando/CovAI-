@@ -304,6 +304,7 @@ export default function IntegrationScenarioEditorModal({
   onSaveAndApply,
 }) {
   const [code, setCode] = useState(initialCode || "");
+  const [charCount, setCharCount] = useState((initialCode || "").length);
   const [scenarioName, setScenarioName] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("HAPPY_PATH");
   const [expectedStatus, setExpectedStatus] = useState(200);
@@ -312,12 +313,65 @@ export default function IntegrationScenarioEditorModal({
 
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
+  const codeRef = useRef(initialCode || "");
+  const validationTimerRef = useRef(null);
+  const completionDisposableRef = useRef(null);
 
   const { theme } = useTheme();
   const isDark = theme !== "light";
 
   const effectiveMethod = (targetEndpoint?.method || "GET").toUpperCase();
   const effectivePath = targetEndpoint?.path || targetEndpoint?.route || "/";
+
+  const syncMarkersForCode = useCallback(
+    (source) => {
+      if (!source) {
+        setMarkers([]);
+        if (editorRef.current && monacoRef.current) {
+          const model = editorRef.current.getModel();
+          if (model) {
+            monacoRef.current.editor.setModelMarkers(model, "scenario-validator", []);
+          }
+        }
+        return [];
+      }
+      const calculatedMarkers = getScenarioMonacoMarkers(source, targetEndpoint);
+      setMarkers(calculatedMarkers);
+      if (editorRef.current && monacoRef.current) {
+        const model = editorRef.current.getModel();
+        if (model) {
+          monacoRef.current.editor.setModelMarkers(model, "scenario-validator", calculatedMarkers);
+        }
+      }
+      return calculatedMarkers;
+    },
+    [targetEndpoint]
+  );
+
+  const applyProgrammaticCode = useCallback(
+    (nextCode) => {
+      const val = nextCode || "";
+      codeRef.current = val;
+      setCode(val);
+      setCharCount(val.length);
+      if (editorRef.current && editorRef.current.getValue() !== val) {
+        editorRef.current.setValue(val);
+      }
+      syncMarkersForCode(val);
+    },
+    [syncMarkersForCode]
+  );
+
+  // Cleanup debounce timer & completion provider on unmount
+  useEffect(() => {
+    return () => {
+      if (validationTimerRef.current) clearTimeout(validationTimerRef.current);
+      if (completionDisposableRef.current) {
+        completionDisposableRef.current.dispose();
+        completionDisposableRef.current = null;
+      }
+    };
+  }, []);
 
   // Initialize modal state on open
   useEffect(() => {
@@ -334,87 +388,70 @@ export default function IntegrationScenarioEditorModal({
           title: defaultTitle,
           expectedStatus: 200,
         });
-        setCode(generated);
+        applyProgrammaticCode(generated);
       } else {
         setIsCustomEdited(true);
-        setCode(initialCode || "");
-        const extracted = extractTestName(initialCode || "");
+        const nextInitial = initialCode || "";
+        applyProgrammaticCode(nextInitial);
+        const extracted = extractTestName(nextInitial);
         setScenarioName(extracted || "Integration Scenario");
       }
     }
-  }, [isOpen, isAddMode, effectiveMethod, effectivePath, initialCode]);
+  }, [isOpen, isAddMode, effectiveMethod, effectivePath, initialCode, applyProgrammaticCode]);
 
-  // Synchronize Monaco red squiggly underlines on code changes
-  useEffect(() => {
-    if (!code) {
-      setMarkers([]);
-      return;
-    }
+  // Register completion providers for matchers and supertest verbs (once per mount)
+  const handleEditorDidMount = useCallback(
+    (editor, monaco) => {
+      editorRef.current = editor;
+      monacoRef.current = monaco;
 
-    const calculatedMarkers = getScenarioMonacoMarkers(code, targetEndpoint);
-    setMarkers(calculatedMarkers);
-
-    if (editorRef.current && monacoRef.current) {
-      const model = editorRef.current.getModel();
-      if (model) {
-        monacoRef.current.editor.setModelMarkers(model, "scenario-validator", calculatedMarkers);
+      if (completionDisposableRef.current) {
+        completionDisposableRef.current.dispose();
       }
-    }
-  }, [code, targetEndpoint]);
+      completionDisposableRef.current = monaco.languages.registerCompletionItemProvider("javascript", {
+        triggerCharacters: [".", "("],
+        provideCompletionItems: (model, position) => {
+          const lineContent = model.getLineContent(position.lineNumber);
+          const textUntilPosition = lineContent.substring(0, position.column - 1);
 
-  // Register completion providers for matchers and supertest verbs
-  const handleEditorDidMount = useCallback((editor, monaco) => {
-    editorRef.current = editor;
-    monacoRef.current = monaco;
+          const suggestions = [];
 
-    // Register snippet autocompletions for Jest matchers & Supertest methods
-    monaco.languages.registerCompletionItemProvider("javascript", {
-      triggerCharacters: [".", "("],
-      provideCompletionItems: (model, position) => {
-        const lineContent = model.getLineContent(position.lineNumber);
-        const textUntilPosition = lineContent.substring(0, position.column - 1);
-
-        const suggestions = [];
-
-        // When typing . after expect(...)
-        if (textUntilPosition.includes("expect(") || textUntilPosition.endsWith(".")) {
-          Array.from(VALID_JEST_MATCHERS).forEach((matcher) => {
-            suggestions.push({
-              label: matcher,
-              kind: monaco.languages.CompletionItemKind.Method,
-              insertText: `${matcher}(\${1})`,
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              detail: `Jest Matcher: .${matcher}()`,
-              documentation: `Asserts value matches ${matcher} in Jest runner.`,
+          // When typing . after expect(...)
+          if (textUntilPosition.includes("expect(") || textUntilPosition.endsWith(".")) {
+            Array.from(VALID_JEST_MATCHERS).forEach((matcher) => {
+              suggestions.push({
+                label: matcher,
+                kind: monaco.languages.CompletionItemKind.Method,
+                insertText: `${matcher}(\${1})`,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                detail: `Jest Matcher: .${matcher}()`,
+                documentation: `Asserts value matches ${matcher} in Jest runner.`,
+              });
             });
-          });
-        }
+          }
 
-        // When typing after request(app).
-        if (textUntilPosition.includes("request(") && textUntilPosition.endsWith(".")) {
-          ["get", "post", "put", "patch", "delete"].forEach((verb) => {
-            suggestions.push({
-              label: verb,
-              kind: monaco.languages.CompletionItemKind.Method,
-              insertText: `${verb}('\${1:/path}')`,
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              detail: `Supertest ${verb.toUpperCase()} request`,
+          // When typing after request(app).
+          if (textUntilPosition.includes("request(") && textUntilPosition.endsWith(".")) {
+            ["get", "post", "put", "patch", "delete"].forEach((verb) => {
+              suggestions.push({
+                label: verb,
+                kind: monaco.languages.CompletionItemKind.Method,
+                insertText: `${verb}('\${1:/path}')`,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                detail: `Supertest ${verb.toUpperCase()} request`,
+              });
             });
-          });
-        }
+          }
 
-        return { suggestions };
-      },
-    });
+          return { suggestions };
+        },
+      });
 
-    // Run initial marker sync
-    const initialMarkers = getScenarioMonacoMarkers(code, targetEndpoint);
-    setMarkers(initialMarkers);
-    const model = editor.getModel();
-    if (model) {
-      monaco.editor.setModelMarkers(model, "scenario-validator", initialMarkers);
-    }
-  }, [code, targetEndpoint]);
+      // Run initial marker sync
+      syncMarkersForCode(codeRef.current);
+    },
+    [syncMarkersForCode]
+  );
 
   // When user changes category in Add Mode
   const handleCategoryChange = (catId) => {
@@ -433,9 +470,9 @@ export default function IntegrationScenarioEditorModal({
         title: newTitle,
         expectedStatus: cat.status,
       });
-      setCode(generated);
+      applyProgrammaticCode(generated);
     } else {
-      setCode((prev) => replaceTestNameInCode(prev, newTitle));
+      applyProgrammaticCode(replaceTestNameInCode(codeRef.current, newTitle));
     }
   };
 
@@ -449,9 +486,9 @@ export default function IntegrationScenarioEditorModal({
         title: newName,
         expectedStatus,
       });
-      setCode(generated);
+      applyProgrammaticCode(generated);
     } else {
-      setCode((prev) => replaceTestNameInCode(prev, newName));
+      applyProgrammaticCode(replaceTestNameInCode(codeRef.current, newName));
     }
   };
 
@@ -464,13 +501,14 @@ export default function IntegrationScenarioEditorModal({
       title: scenarioName,
       expectedStatus,
     });
-    setCode(generated);
+    applyProgrammaticCode(generated);
   };
 
   // Simple Beautify / Re-indent code
   const handleFormatCode = () => {
     try {
-      const lines = code.split("\n");
+      const currentVal = editorRef.current?.getValue() ?? codeRef.current;
+      const lines = currentVal.split("\n");
       let indentLevel = 0;
       const formattedLines = lines.map((rawLine) => {
         const line = rawLine.trim();
@@ -492,7 +530,7 @@ export default function IntegrationScenarioEditorModal({
 
         return result;
       });
-      setCode(formattedLines.join("\n"));
+      applyProgrammaticCode(formattedLines.join("\n"));
     } catch {
       // Non-fatal
     }
@@ -518,15 +556,37 @@ export default function IntegrationScenarioEditorModal({
   const isTitleEmpty = !scenarioName.trim();
   const hasErrors = errorMarkers.length > 0 || isTitleEmpty || isDuplicateTitle;
 
+  const editorOptions = useMemo(
+    () => ({
+      minimap: { enabled: false },
+      fontSize: 13,
+      lineNumbers: "on",
+      scrollBeyondLastLine: false,
+      automaticLayout: true,
+      fontFamily: "var(--font-mono)",
+      tabSize: 2,
+      quickSuggestions: true,
+      suggestOnTriggerCharacters: true,
+      wordBasedSuggestions: true,
+      hover: { enabled: true, delay: 100 },
+      renderLineHighlight: "all",
+    }),
+    []
+  );
+
   // Validate and submit
   const handleSave = () => {
-    if (hasErrors) {
-      if (errorMarkers.length > 0) {
-        handleJumpToMarker(errorMarkers[0]);
+    const latestCode = editorRef.current?.getValue() ?? codeRef.current;
+    codeRef.current = latestCode;
+    const latestMarkers = syncMarkersForCode(latestCode);
+    const latestErrors = latestMarkers.filter((m) => m.severity === 8);
+    if (latestErrors.length > 0 || isTitleEmpty || isDuplicateTitle) {
+      if (latestErrors.length > 0) {
+        handleJumpToMarker(latestErrors[0]);
       }
       return;
     }
-    onSave(code);
+    onSave(latestCode);
   };
 
   if (!isOpen) return null;
@@ -720,37 +780,32 @@ export default function IntegrationScenarioEditorModal({
             height="100%"
             defaultLanguage="javascript"
             theme={isDark ? "vs-dark" : "light"}
-            value={code}
+            defaultValue={code}
             onMount={handleEditorDidMount}
             onChange={(value) => {
-              setCode(value || "");
-              setIsCustomEdited(true);
-              const extracted = extractTestName(value || "");
-              if (extracted && extracted !== scenarioName) {
-                setScenarioName(extracted);
+              const nextVal = value || "";
+              codeRef.current = nextVal;
+              if (validationTimerRef.current) {
+                clearTimeout(validationTimerRef.current);
               }
+              validationTimerRef.current = setTimeout(() => {
+                setIsCustomEdited(true);
+                setCharCount(nextVal.length);
+                const extracted = extractTestName(nextVal);
+                if (extracted) {
+                  setScenarioName((prev) => (prev !== extracted ? extracted : prev));
+                }
+                syncMarkersForCode(nextVal);
+              }, 250);
             }}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 13,
-              lineNumbers: "on",
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              fontFamily: "var(--font-mono)",
-              tabSize: 2,
-              quickSuggestions: true,
-              suggestOnTriggerCharacters: true,
-              wordBasedSuggestions: true,
-              hover: { enabled: true, delay: 100 },
-              renderLineHighlight: "all",
-            }}
+            options={editorOptions}
           />
         </div>
 
         {/* 4. Sleek IDE Footer */}
         <div className="h-14 px-6 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-muted)] min-w-0">
-            <span>{code.length} characters</span>
+            <span>{charCount} characters</span>
             {errorMarkers.length > 0 && (
               <>
                 <span>&bull;</span>

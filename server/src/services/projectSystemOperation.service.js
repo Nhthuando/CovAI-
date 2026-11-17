@@ -14,7 +14,8 @@ export const runPreparedSystemJob = async (jobId,run,lease) => {
     const capability = job.type === 'SYSTEM_TEST_IMPROVEMENT' && input.autoApply ? 'evidence.approve' : 'tests.run';
     const access = await resolveProjectAccess({projectId:job.projectId,userId:job.userId,capability});
     const admitted = await prisma.projectOperation.findUnique({where:{primaryJobId:jobId}});
-    const publish = job.type === 'SYSTEM_TEST_MUTATION' ? false : job.type === 'SYSTEM_TEST_IMPROVEMENT' ? Boolean(input.autoApply) : true;
+    // Running or preparing tests must never publish generated/config/runtime files.
+    const publish = job.type === 'SYSTEM_TEST_IMPROVEMENT' && Boolean(input.autoApply);
     return withPreparedProjectWorkspace({projectId:job.projectId,snapshotId:job.snapshotId,userId:job.userId,capability,
         expectedWorkspaceRevision:admitted?.capturedWorkspaceRevision ?? access.project.workspaceRevision,
         primaryJobId:jobId,type:job.type,input,publish},async context => {

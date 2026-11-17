@@ -7,6 +7,7 @@ import { updateJobStatus } from "./jobUpdate.service.js";
 import { buildAiPayload } from "./aiContextBuilder.service.js";
 import { buildFinalPrompt } from "./aiPromptBuilder.service.js";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { processAiSuggestions } from "./aiSuggestionParser.service.js";
 
 /**
@@ -63,7 +64,9 @@ const processPreparedAiSuggestJob = async (jobId) => {
 
         // SCRUM-312: Call Gemini
         await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
-        const responseText = await generateText(finalPrompt, JSON.parse(job.payloadJson || '{}').model || process.env.GEMINI_MODEL || 'gemini-3.8-flash');
+        const responseText = await withGeminiChannel("UNIT_TEST", () =>
+            generateText(finalPrompt, JSON.parse(job.payloadJson || '{}').model || process.env.GEMINI_MODEL || 'gemini-3.8-flash')
+        );
         
         if (!responseText) {
             throw new Error("Gemini returned an empty response.");

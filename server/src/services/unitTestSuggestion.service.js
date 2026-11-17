@@ -1210,6 +1210,42 @@ export const extractSourceGapsAndDecisions = ({ sourceCode = "", fileCoverageDat
     };
 };
 
+// Resolve shared targets before generating code or capturing proposal versions.
+export const resolveMultiFrameworkTargets = (suggestions, sourceFile, existingContents = {}, primaryFramework = "jest", vitestIncludes = []) => {
+    if (new Set(suggestions.map(s => s.framework)).size < 2) return suggestions;
+    const groups = new Map();
+    for (const suggestion of suggestions) {
+        const target = normalizePath(suggestion.targetTestFile);
+        if (!groups.has(target)) groups.set(target, []);
+        groups.get(target).push(suggestion);
+    }
+    return suggestions.map(suggestion => {
+        const target = normalizePath(suggestion.targetTestFile);
+        const group = groups.get(target);
+        if (new Set(group.map(s => s.framework)).size < 2) return suggestion;
+        const content = existingContents[target] || "";
+        const owner = /\bfrom\s*['"]vitest['"]|\bvi\s*\./.test(content) ? "vitest"
+            : /\bjest\s*\.|\brequire\s*\(/.test(content) ? "jest" : primaryFramework;
+        const keeper = group.find(s => s.framework === owner) || group[0];
+        if (suggestion.framework === keeper.framework) return suggestion;
+        const ext = path.posix.extname(target) || path.posix.extname(sourceFile) || ".js";
+        const base = path.posix.basename(normalizePath(sourceFile), path.posix.extname(sourceFile));
+        let nextTarget = path.posix.join(path.posix.dirname(target), `${base}.${suggestion.framework}.test${ext}`);
+        if (suggestion.framework === "vitest" && vitestIncludes.length) {
+            const pattern = vitestIncludes.find(p => typeof p === "string" && !p.startsWith("!") && p !== target);
+            if (pattern) {
+                // Materialize a filename from static include globs, including Vitest's default extglob.
+                nextTarget = pattern.replace(/\{([^{}]+)\}/g, (_, choices) => choices.split(",")[0])
+                    .replace(/\?\([^)]*\)/g, "").replace(/\[jt\]/g, ext.includes("t") ? "t" : "j")
+                    .replace(/\*\*\//g, "").replace(/\*+/g, `${base}.vitest`).replace(/\?/g, "x");
+            } else {
+                throw new ServiceError("Vitest include must allow a separate test file for multi-framework suggestions", 409);
+            }
+        }
+        return { ...suggestion, targetTestFile: nextTarget };
+    });
+};
+
 /**
  * Generates suggestion for a single framework.
  */
@@ -1221,7 +1257,8 @@ const generateSuggestionForFramework = async ({
     sourceCode,
     coverageDetails,
     isTest,
-    filePath
+    filePath,
+    targetTestFile
 }) => {
     return generateAiUnitTestSuite({
         userId,
@@ -1231,7 +1268,8 @@ const generateSuggestionForFramework = async ({
         sourceCode,
         coverageDetails,
         isTest,
-        filePath
+        filePath,
+        targetTestFile
     });
 };
 
@@ -1489,9 +1527,29 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         frameworksToGenerate = ["jest"];
     }
 
+    let targets = frameworksToGenerate.map(framework => ({ framework }));
+    if (frameworksToGenerate.length > 1) {
+        const existingContents = {};
+        targets = targets.map(target => {
+            const info = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, target.framework);
+            existingContents[normalizePath(info.relativePath)] = info.content;
+            return { ...target, targetTestFile: info.relativePath };
+        });
+        let vitestIncludes = [];
+        for (const config of ["vitest.config.js", "vitest.config.ts", "vitest.config.mjs", "vitest.config.mts", "backend/vitest.config.js", "backend/vitest.config.ts"]) {
+            const configPath = path.join(snapshot.rootDir, config);
+            if (!fs.existsSync(configPath)) continue;
+            const configCode = fs.readFileSync(configPath, "utf8");
+            const include = configCode.match(/\binclude\s*:\s*\[((?:"[^"]*"|'[^']*'|[^\]])*)\]/);
+            if (include) vitestIncludes = [...include[1].matchAll(/['"]([^'"]+)['"]/g)].map(m => m[1]);
+            break;
+        }
+        targets = resolveMultiFrameworkTargets(targets, sourceFileToInspect, existingContents, supportedFrameworks[0] || "jest", vitestIncludes);
+    }
+
     // 4. Concurrently generate suggestions for all requested frameworks
     const suggestions = await Promise.all(
-        frameworksToGenerate.map(fw =>
+        targets.map(({ framework: fw, targetTestFile }) =>
             generateSuggestionForFramework({
                 userId,
                 framework: fw,
@@ -1500,7 +1558,8 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
                 sourceCode,
                 coverageDetails,
                 isTest,
-                filePath
+                filePath,
+                targetTestFile
             })
         )
     );

@@ -1,35 +1,59 @@
 import { useState } from "react";
-import { Database, Layers, ArrowLeftRight, Download, Play, Clock, Sparkles } from "lucide-react";
-import { SegmentedFilter } from "../../unified/primitives/SegmentedFilter.jsx";
+import { ArrowLeftRight, Download, Play, Clock, RefreshCw } from "lucide-react";
+import { useToast } from "../../ToastContext.jsx";
+import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
 import { PortfolioGatePopover } from "../primitives/PortfolioGatePopover.jsx";
 import { Button } from "../../../common/Button.jsx";
 import ConfirmDialog from "../../../common/ConfirmDialog.jsx";
+import { batchRunSuitesApi } from "../../../../services/portfolio.service.js";
 
 export function PortfolioCommandHeader({
   vm,
-  dataMode = "live",
-  onChangeDataMode,
   onOpenCompareModal,
   onOpenExportModal,
   onSelectStatusFilter,
   onBatchRunCompleted,
+  isSyncing = false,
+  onForceRefresh = null,
   className = "",
 }) {
+  const { addToast } = useToast?.() || {};
   const [showConfirmBatchRun, setShowConfirmBatchRun] = useState(false);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
 
   const kpis = vm?.kpis || {};
   const metadata = vm?.metadata || {};
-  const activeProjectsCount = metadata.activeProjectsCount ?? vm?.projects?.length ?? 0;
+  const totalProjectsCount = vm?.projects?.length ?? 0;
+  const activeProjectsCount = metadata.activeProjectsCount ?? 0;
   const totalSnapshotsCount = metadata.totalSnapshotsCount ?? 0;
+  const runnableProjectsCount =
+    (vm?.lifecycleCounts?.DOING || 0) + (vm?.lifecycleCounts?.NOT_STARTED || 0) || totalProjectsCount;
 
-  const handleStartBatchRun = () => {
+  const canCompare = totalProjectsCount >= 2;
+  const canBatchRun = runnableProjectsCount > 0 && !isBatchRunning;
+
+  const handleManualRefresh = async () => {
+    if (onForceRefresh) {
+      await onForceRefresh();
+      addToast?.({
+        title: "Metrics Synchronized",
+        message: "Projects quality portfolio refreshed with latest testing data.",
+        type: "success",
+      });
+    }
+  };
+
+  const handleStartBatchRun = async () => {
     setShowConfirmBatchRun(false);
     setIsBatchRunning(true);
-    setTimeout(() => {
-      setIsBatchRunning(false);
+    try {
+      await batchRunSuitesApi({ pillars: ["unit", "integration"] });
       onBatchRunCompleted?.();
-    }, 2500);
+    } catch (err) {
+      console.error("Batch test execution failed:", err);
+    } finally {
+      setIsBatchRunning(false);
+    }
   };
 
   return (
@@ -58,34 +82,32 @@ export function PortfolioCommandHeader({
               {totalSnapshotsCount} Total Snapshot{totalSnapshotsCount !== 1 ? "s" : ""}
             </span>
             <span className="text-[var(--ud-border)] hidden sm:inline">•</span>
-            <div className="inline-flex items-center gap-1 font-sans">
-              <Clock size={12} className="shrink-0 text-[var(--ud-text-muted)]" />
-              <span>
-                Last synced {metadata.lastSyncedAt ? "just now" : "recently"}
+            <div className="inline-flex items-center gap-1.5 font-sans">
+              <span className="inline-flex items-center gap-1 text-[11px] text-[var(--ud-text-muted)]">
+                <Clock size={11} className="shrink-0" />
+                <span>
+                  Updated {fmtRelativeTime(metadata.lastSyncedAt || new Date().toISOString())}
+                </span>
               </span>
+
+              {/* Manual Refresh Button matching GlobalCommandHeader exactly */}
+              <button
+                type="button"
+                onClick={handleManualRefresh}
+                disabled={isSyncing}
+                aria-label="Refresh portfolio metrics"
+                className="inline-flex items-center justify-center p-1 rounded-[var(--radius-sm)] border border-[var(--ud-border)] hover:bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] transition-colors cursor-pointer disabled:opacity-50"
+                title="Refresh portfolio metrics immediately"
+              >
+                <RefreshCw size={11} className={isSyncing ? "animate-spin text-[var(--color-primary)]" : ""} />
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Right Side: Mode Switcher + Gate Badge + Compare + Batch Run + Export */}
+        {/* Right Side: Gate Badge + Compare + Batch Run + Export */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* 1. Global Data Mode Switcher (Live State vs Demo Showcase) */}
-          {onChangeDataMode && (
-            <SegmentedFilter
-              idPrefix="portfolio-data-mode"
-              options={[
-                { label: "Live State", value: "live", icon: Database },
-                { label: "Demo Showcase", value: "demo", icon: Layers },
-              ]}
-              value={dataMode}
-              onChange={onChangeDataMode}
-              size="sm"
-            />
-          )}
-
-          <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
-
-          {/* 2. Portfolio Quality Gate Summary Badge & Popover */}
+          {/* 1. Portfolio Quality Gate Summary Badge & Popover */}
           <PortfolioGatePopover
             gateBreakdown={kpis.gateBreakdown}
             totalProjects={activeProjectsCount}
@@ -94,33 +116,58 @@ export function PortfolioCommandHeader({
 
           <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
 
-          {/* 3. Compare Projects Action */}
-          <Button
-            id="portfolio-btn-compare"
-            variant="secondary"
-            size="sm"
-            icon={ArrowLeftRight}
-            onClick={() => onOpenCompareModal?.()}
-            title="Side-by-side comparison of 2-3 projects"
+          {/* 2. Compare Projects Action */}
+          <span
+            title={
+              !canCompare
+                ? "Need at least 2 projects to compare"
+                : "Side-by-side comparison of 2-3 projects"
+            }
           >
-            Compare Projects
-          </Button>
+            <Button
+              id="portfolio-btn-compare"
+              variant="secondary"
+              size="sm"
+              icon={ArrowLeftRight}
+              disabled={!canCompare}
+              onClick={() => canCompare && onOpenCompareModal?.()}
+              title={
+                !canCompare
+                  ? "Need at least 2 projects to compare"
+                  : "Side-by-side comparison of 2-3 projects"
+              }
+            >
+              Compare Projects
+            </Button>
+          </span>
 
-          {/* 4. Batch Run Suites Action */}
-          <Button
-            id="portfolio-btn-batch-run"
-            variant="primary"
-            size="sm"
-            icon={Play}
-            loading={isBatchRunning}
-            disabled={isBatchRunning || activeProjectsCount === 0}
-            onClick={() => setShowConfirmBatchRun(true)}
-            title="Execute test suites across pinned projects"
+          {/* 3. Batch Run Suites Action */}
+          <span
+            title={
+              activeProjectsCount === 0
+                ? "No active projects in Doing/Not Started state to run"
+                : "Execute test suites across active projects"
+            }
           >
-            {isBatchRunning ? "Running Suites..." : "Batch Run"}
-          </Button>
+            <Button
+              id="portfolio-btn-batch-run"
+              variant="primary"
+              size="sm"
+              icon={Play}
+              loading={isBatchRunning}
+              disabled={!canBatchRun}
+              onClick={() => canBatchRun && setShowConfirmBatchRun(true)}
+              title={
+                activeProjectsCount === 0
+                  ? "No active projects in Doing/Not Started state to run"
+                  : "Execute test suites across active projects"
+              }
+            >
+              {isBatchRunning ? "Running Suites..." : "Batch Run"}
+            </Button>
+          </span>
 
-          {/* 5. Export Portfolio Report Action */}
+          {/* 4. Export Portfolio Report Action */}
           <Button
             id="portfolio-btn-export"
             variant="outline"
@@ -152,4 +199,3 @@ export function PortfolioCommandHeader({
 }
 
 export default PortfolioCommandHeader;
-

@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useProjectsPortfolio } from "../../../hooks/useProjectsPortfolio.js";
 import { PortfolioCommandHeader } from "./zones/PortfolioCommandHeader.jsx";
 import { PortfolioExecutiveKpiRow } from "./zones/PortfolioExecutiveKpiRow.jsx";
@@ -11,8 +12,6 @@ import { SlideOverInspectorDrawer } from "../unified/inspector/SlideOverInspecto
 import { ZoneErrorBoundary } from "../unified/primitives/ZoneErrorBoundary.jsx";
 
 export function ProjectsPortfolioDashboard({
-  dataMode = "live",
-  onChangeDataMode,
   favorites = [],
   onTogglePin,
   onOpenProjectOverview,
@@ -22,10 +21,10 @@ export function ProjectsPortfolioDashboard({
   onAskAi,
   className = "",
 }) {
-  const { vm, isLoading, isError, error, refetch } = useProjectsPortfolio({
-    dataMode,
-    favorites,
-  });
+  const { vm, isFetching, isInitialLoading, refetch, forceRefresh } =
+    useProjectsPortfolio({
+      favorites,
+    });
 
   const [highlightedProjectId, setHighlightedProjectId] = useState(null);
   const [selectedForCompareIds, setSelectedForCompareIds] = useState([]);
@@ -33,6 +32,12 @@ export function ProjectsPortfolioDashboard({
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [inspectedRunItem, setInspectedRunItem] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const queryClient = useQueryClient();
+
+  const handleStatusChange = useCallback(() => {
+    refetch();
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+  }, [refetch, queryClient]);
 
   const handleToggleCompare = useCallback((projectId) => {
     setSelectedForCompareIds((prev) => {
@@ -70,10 +75,16 @@ export function ProjectsPortfolioDashboard({
   const handleInspectRun = useCallback((runEvent) => {
     setInspectedRunItem({
       id: runEvent.id,
+      runId: runEvent.runId || runEvent.id,
+      snapshotId: runEvent.snapshotId,
+      projectId: runEvent.projectId,
+      inspectorType: "run",
       title: `${runEvent.projectName} • ${runEvent.type}`,
       pillar: runEvent.pillar,
+      type: runEvent.type,
+      startedAt: runEvent.timestamp || new Date().toISOString(),
       outcome: runEvent.outcome,
-      durationMs: 4000,
+      durationMs: runEvent.durationMs || 4000,
       timestamp: runEvent.timestamp,
       summary: runEvent.summary,
       rawItem: runEvent,
@@ -98,6 +109,28 @@ export function ProjectsPortfolioDashboard({
     [onAskAi]
   );
 
+  if (isInitialLoading) {
+    return (
+      <div
+        className={`unified-dashboard portfolio-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
+      >
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6 animate-pulse">
+          <div className="h-14 rounded-lg bg-[var(--ud-surface)] border border-[var(--ud-border)]" />
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-24 rounded-lg bg-[var(--ud-surface)] border border-[var(--ud-border)]" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-64 rounded-lg bg-[var(--ud-surface)] border border-[var(--ud-border)]" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`unified-dashboard portfolio-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
@@ -107,12 +140,12 @@ export function ProjectsPortfolioDashboard({
         <ZoneErrorBoundary zoneTitle="Portfolio Command Header" onRetry={refetch}>
           <PortfolioCommandHeader
             vm={vm}
-            dataMode={dataMode}
-            onChangeDataMode={onChangeDataMode}
             onOpenCompareModal={() => setIsCompareModalOpen(true)}
             onOpenExportModal={() => setIsExportModalOpen(true)}
             onSelectStatusFilter={setStatusFilter}
             onBatchRunCompleted={refetch}
+            isSyncing={isFetching}
+            onForceRefresh={forceRefresh}
           />
         </ZoneErrorBoundary>
 
@@ -120,6 +153,7 @@ export function ProjectsPortfolioDashboard({
         <ZoneErrorBoundary zoneTitle="Executive KPIs" onRetry={refetch}>
           <PortfolioExecutiveKpiRow
             kpis={vm?.kpis}
+            lifecycleCounts={vm?.lifecycleCounts}
             onSelectStatusFilter={setStatusFilter}
             onFocusAttentionQueue={handleFocusAttentionQueue}
           />
@@ -141,10 +175,11 @@ export function ProjectsPortfolioDashboard({
             onNavigateWorkspace={onNavigateWorkspace}
             onDeleteProject={onDeleteProject}
             onExportProject={(proj) => {
-              onAskAiAboutProject?.(proj);
+              handleAskAiAboutProject?.(proj);
             }}
             onAskAiAboutProject={handleAskAiAboutProject}
             onAddProject={onAddProject}
+            onStatusChange={handleStatusChange}
           />
         </ZoneErrorBoundary>
 
@@ -153,6 +188,8 @@ export function ProjectsPortfolioDashboard({
           <PortfolioBenchmarkAndRiskZone
             analytics={vm?.analytics}
             attentionQueue={vm?.attentionQueue}
+            projects={vm?.projects}
+            timeRoiAnalytics={vm?.timeRoiAnalytics}
             selectedProjectId={highlightedProjectId}
             onSelectProject={handleSelectBenchmarkProject}
             onNavigateProjectWorkspace={(projId, pillar, focus) =>
@@ -166,6 +203,7 @@ export function ProjectsPortfolioDashboard({
         <ZoneErrorBoundary zoneTitle="Activity & Runner Infrastructure" onRetry={refetch}>
           <PortfolioActivityAndInfraZone
             activityFeed={vm?.activityFeed}
+            runnerInfrastructure={vm?.runnerInfrastructure}
             onInspectRun={handleInspectRun}
           />
         </ZoneErrorBoundary>

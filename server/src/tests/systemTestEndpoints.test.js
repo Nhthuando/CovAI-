@@ -137,6 +137,10 @@ jest.unstable_mockModule('../services/systemTestFrameworkDetection.service.js', 
     detectSystemTestFrameworksForSnapshot: jest.fn().mockResolvedValue({}),
 }));
 
+const mockCreateGenerationDraft = jest.fn();
+jest.unstable_mockModule('../services/systemGenerationProposal.service.js', () => ({createSystemGenerationDraft:mockCreateGenerationDraft}));
+beforeEach(()=>{prismaMock.projectSnapshot.findUnique.mockReset();prismaMock.projectSnapshot.findFirst.mockReset();});
+
 const {
     runSystemTestCoverage,
     getSystemTestSummary,
@@ -145,58 +149,28 @@ const {
     generateColdStartSystemTestsController,
 } = await import('../controllers/coverage.controller.js');
 
-describe('Cold-start system test persistence', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-        mockExistsSync.mockReturnValue(true);
-        prismaMock.aiTest.create.mockResolvedValue({ id: 'ai-test-1' });
-        mockGenerateColdStart.mockResolvedValue({
-            framework: 'playwright', filePath: 'tests/e2e/covai-generated.spec.js',
-            code: 'generated test code', suiteCount: 1, scenarioCount: 2,
-            suites: ['Smoke'], scenarios: ['Root loads'], configCreated: true,
-            configPath: 'playwright.config.mjs',
-        });
-    });
-
-    it.each(['playwright', 'cypress'])('saves %s tests with the project ID from the owned snapshot', async (framework) => {
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
-            id: 'snap-1', projectId: 'owned-project', rootDir: '/repo',
-            project: { ownerId: 'user-1' },
-        });
-        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-        await generateColdStartSystemTestsController({
-            user: { id: 'user-1' }, params: { snapshotId: 'snap-1' },
-            body: { framework, projectId: 'untrusted-client-project' },
-        }, res);
-        expect(prismaMock.aiTest.create).toHaveBeenCalledWith({
-            data: expect.objectContaining({
-                projectId: 'owned-project', snapshotId: 'snap-1',
-                mode: framework === 'cypress' ? 'CYPRESS_E2E' : 'PLAYWRIGHT_E2E',
-                content: 'generated test code',
-            }),
-        });
-        expect(res.status).toHaveBeenCalledWith(200);
-    });
-
-    it.each([{ ownerId: 'other-user' }, null])('rejects snapshots without matching ownership (%j)', async (project) => {
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
-            id: 'snap-1', projectId: 'owned-project', rootDir: '/repo', project,
-        });
-        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-        await generateColdStartSystemTestsController({
-            user: { id: 'user-1' }, params: { snapshotId: 'snap-1' }, body: {},
-        }, res);
-        expect(res.status).toHaveBeenCalledWith(404);
-        expect(mockGenerateColdStart).not.toHaveBeenCalled();
+describe('System generation draft endpoint', () => {
+    beforeEach(()=>{jest.clearAllMocks();mockCreateGenerationDraft.mockReset();});
+    it.each(['playwright','cypress'])('delegates %s generation to draft storage without direct file publication', async framework=>{
+        const draft={draftId:'draft-1',applied:false,verificationStatus:'NOT_VERIFIED'};
+        mockCreateGenerationDraft.mockResolvedValue(draft);
+        const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
+        await generateColdStartSystemTestsController({user:{id:'user-1'},params:{snapshotId:'snap-1'},body:{framework,projectId:'untrusted-client-project'}},res);
+        expect(mockCreateGenerationDraft).toHaveBeenCalledWith(expect.objectContaining({snapshotId:'snap-1',userId:'user-1',framework,executionMode:'full'}));
+        expect(mockCreateGenerationDraft.mock.calls[0][0]).not.toHaveProperty('projectId');
+        expect(res.json).toHaveBeenCalledWith(expect.objectContaining({success:true,data:draft}));
         expect(prismaMock.aiTest.create).not.toHaveBeenCalled();
     });
-
-    it('requires authentication before looking up a snapshot', async () => {
-        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-        await generateColdStartSystemTestsController({ params: { snapshotId: 'snap-1' }, body: {} }, res);
-        expect(res.status).toHaveBeenCalledWith(401);
-        expect(prismaMock.projectSnapshot.findUnique).not.toHaveBeenCalled();
-        expect(prismaMock.aiTest.create).not.toHaveBeenCalled();
+    it('propagates a scoped access denial without generation fallback',async()=>{
+        mockCreateGenerationDraft.mockRejectedValue(Object.assign(new Error('Snapshot not found'),{statusCode:404}));
+        const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
+        await generateColdStartSystemTestsController({user:{id:'other'},params:{snapshotId:'snap-1'},body:{}},res);
+        expect(res.status).toHaveBeenCalledWith(404);expect(mockGenerateColdStart).not.toHaveBeenCalled();
+    });
+    it('requires authentication before draft access',async()=>{
+        const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
+        await generateColdStartSystemTestsController({params:{snapshotId:'snap-1'},body:{}},res);
+        expect(res.status).toHaveBeenCalledWith(401);expect(mockCreateGenerationDraft).not.toHaveBeenCalled();
     });
 });
 
@@ -276,8 +250,15 @@ describe('System Test Phase 4 Endpoints', () => {
             await runSystemTestCoverage(req, res);
             expect(res.status).toHaveBeenCalledWith(400);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-                message: expect.stringContaining('executionMode must be'),
+                message: expect.stringContaining('Full Stack only'),
             }));
+        });
+
+        it('rejects a new Frontend run instead of silently changing its semantics',async()=>{
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap-1',projectId:'p-1',rootDir:'/repo',project:{ownerId:'user-1'}});
+            const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
+            await runSystemTestCoverage({user:{id:'user-1'},params:{snapshotId:'snap-1'},body:{executionMode:'frontend'}},res);
+            expect(res.status).toHaveBeenCalledWith(400);expect(mockCreateSystemTestAnalysisJob).not.toHaveBeenCalled();
         });
 
         it('rejects invalid existing Full Stack setup before creating a job', async () => {
@@ -309,7 +290,7 @@ describe('System Test Phase 4 Endpoints', () => {
             expect(mockAddJobToQueue).toHaveBeenCalled();
         });
 
-        it('queues job successfully with Playwright and frontend mode by default', async () => {
+        it('queues job successfully with Playwright and full mode by default', async () => {
             prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
                 id: 'snap-1',
                 projectId: 'p-1',
@@ -330,13 +311,13 @@ describe('System Test Phase 4 Endpoints', () => {
                 snapshotId: 'snap-1',
                 userId: 'user-1',
                 runner: 'playwright',
-                executionMode: 'frontend',
+                executionMode: 'full',
                 testFile: null,
             });
             expect(mockAddJobToQueue).toHaveBeenCalledWith(
                 'SYSTEM_TEST_ANALYSIS',
                 'job-system-test-123',
-                expect.objectContaining({ snapshotId: 'snap-1', runner: 'playwright', executionMode: 'frontend' })
+                expect.objectContaining({ snapshotId: 'snap-1', runner: 'playwright', executionMode: 'full' })
             );
             expect(res.status).toHaveBeenCalledWith(202);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
@@ -344,7 +325,7 @@ describe('System Test Phase 4 Endpoints', () => {
                 jobId: 'job-system-test-123',
                 data: expect.objectContaining({
                     runner: 'playwright',
-                    executionMode: 'frontend',
+                    executionMode: 'full',
                 }),
             }));
         });

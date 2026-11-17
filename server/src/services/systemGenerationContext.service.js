@@ -1,3 +1,4 @@
+import { extractValidationFacts, buildTestDesignChecklist } from './systemValidationFacts.service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {startFullSystem} from './fullSystemLifecycle.service.js';
@@ -291,6 +292,16 @@ export const collectSystemGenerationContext = (
 
   // Harvest frontend UI context & backend endpoints
   const frontendHarvest = harvestFrontendContext(sourceCode);
+  let validationFacts = [];
+  let testDesign = [];
+  try {
+    validationFacts = extractValidationFacts({ files: sourceCode });
+    testDesign = buildTestDesignChecklist({ facts: validationFacts });
+  } catch (error) {
+    console.warn('[systemGenerationContext] Validation fact extraction failed:', error);
+    validationFacts = [];
+    testDesign = [];
+  }
   let backendEndpoints = [];
   try {
     backendEndpoints = extractValidEndpoints(sourceCode);
@@ -307,6 +318,8 @@ export const collectSystemGenerationContext = (
     uiActions: frontendHarvest.uiActions,
     clientApiCalls: frontendHarvest.clientApiCalls,
     backendEndpoints,
+    validationFacts,
+    testDesign,
   };
 };
 
@@ -315,7 +328,7 @@ export const observeSystemApplication = async ({ rootDir, jobId, environmentRoot
   let browser;
   try {
     const {preparePlaywrightBrowsers}=await import('./systemTestRunner.service.js');
-    const browserEnv=await preparePlaywrightBrowsers(fileURLToPath(new URL('../../',import.meta.url)),jobId);
+    const browserEnv=await preparePlaywrightBrowsers(fileURLToPath(new URL('../../',import.meta.url)),jobId,{signal});
     const { chromium } = await import('@playwright/test');
     const executable=chromium.executablePath().split(path.sep),revision=executable.findIndex(part=>/^chromium-\d+$/.test(part));
     const executablePath=revision<0?chromium.executablePath():path.join(browserEnv.PLAYWRIGHT_BROWSERS_PATH,...executable.slice(revision));

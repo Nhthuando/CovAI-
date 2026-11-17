@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, AlertCircle, Info, X } from "lucide-react";
 import Button from "./Button";
@@ -31,11 +31,26 @@ export default function ConfirmDialog({
   loading = false,
   children,
 }) {
+  const dialog = useRef(null);
+  const titleId = useId();
+  useEffect(() => {
+    if (!isOpen) return;
+    const previous = document.activeElement;
+    dialog.current?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, [isOpen]);
   // Keyboard shortcut: Esc to close
   useEffect(() => {
     if (!isOpen) return;
 
     const handleKeyDown = (e) => {
+      if (e.key === 'Tab') {
+        const items = [...(dialog.current?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex="0"]') || [])].filter(item => item.getClientRects().length);
+        const first = items[0], last = items.at(-1);
+        if (!first) { e.preventDefault(); return; }
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { e.preventDefault(); first.focus(); }
+      }
       if (e.key === "Escape" && !loading) {
         onClose();
       }
@@ -90,13 +105,15 @@ export default function ConfirmDialog({
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="confirm-dialog-title"
+      aria-labelledby={titleId}
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans animate-in fade-in duration-150"
       onClick={!loading ? onClose : undefined}
     >
       <div
+        ref={dialog}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 shadow-xl text-[var(--color-text)] relative animate-in zoom-in-95 duration-150"
+        className="w-full max-w-md max-h-[calc(100dvh-32px)] overflow-y-auto bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 shadow-xl text-[var(--color-text)] relative animate-in zoom-in-95 duration-150"
       >
         {/* Close Button in corner */}
         <button
@@ -118,7 +135,7 @@ export default function ConfirmDialog({
           </div>
           <div>
             <h3
-              id="confirm-dialog-title"
+              id={titleId}
               className="text-base font-bold text-[var(--color-text)] tracking-tight"
             >
               {title}
@@ -135,7 +152,7 @@ export default function ConfirmDialog({
         {children && <div className="mt-3 mb-2">{children}</div>}
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-2.5 mt-5">
+        <div className="flex flex-wrap items-center justify-end gap-2.5 mt-5">
           <Button
             type="button"
             variant="secondary"

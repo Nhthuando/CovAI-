@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   FileCode,
+  Clock,
   FileCode2,
   GitBranch,
   Cpu,
@@ -169,6 +170,20 @@ export const isCallbackOrAnonymousName = (name) => {
 /**
  * 4-Category Decision Table Matrix with Resizable & Draggable Columns
  */
+function MatrixColumnDivider({ index, isDragging, onMouseDown, onDoubleClick, isLight }) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize columns ${index + 1} and ${index + 2}`}
+      className="w-px shrink-0 self-stretch cursor-col-resize bg-[var(--color-border)]"
+      style={{ opacity: isDragging ? 1 : isLight ? 0.7 : 0.5 }}
+      onMouseDown={onMouseDown}
+      onDoubleClick={onDoubleClick}
+    />
+  );
+}
+
 function CategoryMatrix4Cards({
   fn,
   isLight,
@@ -1721,6 +1736,29 @@ export default function UnitTestTraceabilityMatrix({
                         </div>
                       ) : hasPending ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          {fileSugs[0]?.telemetry && (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontFamily: "var(--font-mono)",
+                                color: "#a5b4fc",
+                                background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.12)",
+                                border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.25)",
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 3,
+                              }}
+                              title={`Generation: ${fileSugs[0].telemetry.durationSeconds || (fileSugs[0].telemetry.durationMs / 1000).toFixed(1)}s · ${fileSugs[0].telemetry.tokens?.total || 0} tokens`}
+                            >
+                              <Clock size={10} className="text-indigo-400" />
+                              <span>{fileSugs[0].telemetry.durationSeconds || (fileSugs[0].telemetry.durationMs / 1000).toFixed(1)}s</span>
+                              <span style={{ opacity: 0.4 }}>•</span>
+                              <Zap size={10} className="text-amber-400" />
+                              <span>{(fileSugs[0].telemetry.tokens?.total || 0).toLocaleString()} tok</span>
+                            </span>
+                          )}
                           {onReviewDiff && (
                             <button
                               onClick={(e) => {

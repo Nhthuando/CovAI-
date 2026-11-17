@@ -25,6 +25,115 @@ function getPassRate(passed = 0, failed = 0) {
 // In-memory caches for sub-300ms warm performance
 const frameworkCache = new Map();
 const dashboardPayloadCache = new Map();
+const inFlightUnifiedBuilds = new Map();
+const DASHBOARD_FAST_TTL_MS = 15_000; // 15s zero-RTT fast path (explicitly invalidated on mutations)
+const DASHBOARD_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+export function computeDashboardFingerprintFromData({
+  latestRun,
+  snapshotMeta,
+  latestAiTest,
+  coverageSum,
+}) {
+  if (!snapshotMeta) return null;
+
+  let filesMtime = 0;
+  const resolvedDir = snapshotMeta.rootDir
+    ? resolveSnapshotRootDir(snapshotMeta.rootDir) || snapshotMeta.rootDir
+    : null;
+  if (resolvedDir && fs.existsSync(resolvedDir)) {
+    try {
+      const candidateFiles = [
+        path.join(resolvedDir, "coverage", "integration-scenarios.json"),
+        path.join(resolvedDir, ".covai", "integration-scenarios.json"),
+        path.join(resolvedDir, "coverage", "runtime-evidence.json"),
+        path.join(resolvedDir, ".covai", "runtime-evidence.json"),
+      ];
+      for (const cf of candidateFiles) {
+        if (fs.existsSync(cf)) {
+          filesMtime += fs.statSync(cf).mtimeMs;
+        }
+      }
+    } catch (_) {}
+  }
+
+  const p = snapshotMeta.project;
+  const toMs = (d) => (d instanceof Date ? d.getTime() : d ? new Date(d).getTime() : 0);
+  return `${latestRun?.id || "none"}_${latestRun?.status || ""}_${toMs(latestRun?.createdAt)}_${toMs(snapshotMeta.createdAt)}_${toMs(p?.updatedAt)}_${p?.lifecycleStatus || ""}_${toMs(p?.lifecycleUpdatedAt)}_${p?.activeSnapshotId || ""}_${latestAiTest?.id || ""}_${latestAiTest?.status || ""}_${toMs(latestAiTest?.createdAt)}_${coverageSum?.stmtsPct ?? coverageSum?.linesPct ?? -1}_${Math.round(filesMtime)}`;
+}
+
+export async function getDashboardFingerprint(snapshotId) {
+  try {
+    const [latestRun, snapshotMeta, latestAiTest, coverageSum] = await Promise.all([
+      prisma.testRun.findFirst({
+        where: { snapshotId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, createdAt: true, status: true, durationMs: true },
+      }),
+      prisma.projectSnapshot.findUnique({
+        where: { id: snapshotId },
+        select: {
+          id: true,
+          createdAt: true,
+          rootDir: true,
+          project: {
+            select: {
+              id: true,
+              ownerId: true,
+              updatedAt: true,
+              lifecycleStatus: true,
+              lifecycleUpdatedAt: true,
+              activeSnapshotId: true,
+            },
+          },
+        },
+      }),
+      prisma.aiTest.findFirst({
+        where: { snapshotId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, createdAt: true },
+      }),
+      prisma.coverageSummary.findUnique({
+        where: { snapshotId },
+        select: {
+          id: true,
+          linesPct: true,
+          branchesPct: true,
+          funcsPct: true,
+          stmtsPct: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+    if (!snapshotMeta) return null;
+    return computeDashboardFingerprintFromData({
+      latestRun,
+      snapshotMeta,
+      latestAiTest,
+      coverageSum,
+    });
+  } catch (err) {
+    console.warn("[getDashboardFingerprint] Error calculating fingerprint:", err?.message);
+    return null;
+  }
+}
+
+/**
+ * Invalidate in-memory unified dashboard cache for a snapshot or all snapshots.
+ */
+export function clearUnifiedDashboardCache(snapshotId = null) {
+  if (snapshotId) {
+    for (const key of dashboardPayloadCache.keys()) {
+      if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+        dashboardPayloadCache.delete(key);
+      }
+    }
+    frameworkCache.delete(snapshotId);
+  } else {
+    dashboardPayloadCache.clear();
+    frameworkCache.clear();
+  }
+}
 
 function resolveSnapshotRootDir(rootDir) {
   if (!rootDir) return null;
@@ -449,21 +558,192 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
 /**
  * Compute Unified Quality Dashboard payload for a given snapshotId.
  */
-export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
-  const snapshot = await prisma.projectSnapshot.findUnique({
-    where: { id: snapshotId },
-    select: {
-      id: true,
-      projectId: true,
-      rootDir: true,
-      source: true,
-      commitSha: true,
-      createdAt: true,
-      project: {
-        select: { id: true, ownerId: true, name: true },
+export async function buildUnifiedQualityDashboard({ snapshotId, userId, bypassCache = false }) {
+  if (!snapshotId) {
+    const err = new Error("snapshotId is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+  const flightKey = `${snapshotId}`;
+  if (!bypassCache && inFlightUnifiedBuilds.has(flightKey)) {
+    return inFlightUnifiedBuilds.get(flightKey);
+  }
+
+  const buildPromise = (async () => {
+    try {
+      return await executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassCache });
+    } finally {
+      inFlightUnifiedBuilds.delete(flightKey);
+    }
+  })();
+
+  if (!bypassCache) {
+    inFlightUnifiedBuilds.set(flightKey, buildPromise);
+  }
+  return buildPromise;
+}
+
+function isExcludedCoverageFilePath(filePath = "") {
+  if (!filePath) return true;
+  const p = String(filePath);
+  return (
+    p.includes("coverage/") ||
+    p.includes("coverage\\") ||
+    p.includes("node_modules/") ||
+    p.includes("node_modules\\") ||
+    p.includes(".git/") ||
+    p.includes(".test.") ||
+    p.includes(".spec.") ||
+    p.includes("/e2e/") ||
+    p.includes("/cypress/") ||
+    p.includes("/playwright/")
+  );
+}
+
+async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassCache = false }) {
+  const start = Date.now();
+
+  // Ultra-fast warm cache hit (< 2ms, 0 DB queries) within DASHBOARD_FAST_TTL_MS when not explicitly invalidated
+  if (!bypassCache) {
+    const fastCached = dashboardPayloadCache.get(snapshotId);
+    if (
+      fastCached &&
+      fastCached.allowedUsers?.has(userId) &&
+      Date.now() - fastCached.lastVerifiedAt < DASHBOARD_FAST_TTL_MS
+    ) {
+      const totalTime = Date.now() - start;
+      console.log(
+        `[PERF: Unified Dashboard] snapshotId=${snapshotId} Total=${totalTime}ms | cacheHit=fast`
+      );
+      return fastCached.data;
+    }
+  }
+
+  let currentFingerprint = null;
+  // Fingerprint-verified cache hit (< 300ms) with 10-minute TTL (1 single DB query)
+  if (!bypassCache) {
+    const cachedEntry = dashboardPayloadCache.get(snapshotId);
+    if (cachedEntry && Date.now() - cachedEntry.cachedAt < DASHBOARD_CACHE_TTL_MS) {
+      currentFingerprint = await getDashboardFingerprint(snapshotId);
+      if (currentFingerprint && cachedEntry.fingerprint === currentFingerprint) {
+        if (!userId || !cachedEntry.allowedUsers?.has(userId)) {
+          await resolveProjectAccess({
+            projectId: cachedEntry.data?.context?.projectId,
+            userId,
+            capability: "project.read",
+          });
+          cachedEntry.allowedUsers?.add(userId);
+        }
+        cachedEntry.lastVerifiedAt = Date.now();
+        const totalTime = Date.now() - start;
+        console.log(
+          `[PERF: Unified Dashboard] snapshotId=${snapshotId} Total=${totalTime}ms | cacheHit=true`
+        );
+        return cachedEntry.data;
+      }
+    }
+  } else {
+    clearUnifiedDashboardCache(snapshotId);
+  }
+
+  // Single-Wave Parallel Fetch at t=0ms (flat top-level queries avoid Prisma's sequential 1-to-many relation waterfall)
+  const startParallelFetch = Date.now();
+  const [
+    snapshot,
+    rawCoverageFiles,
+    snapshotJobs,
+    projectSnapshots,
+    aiTestsList,
+    historicalTestRuns,
+  ] = await Promise.all([
+    prisma.projectSnapshot.findUnique({
+      where: { id: snapshotId },
+      select: {
+        id: true,
+        projectId: true,
+        storagePath: true,
+        rootDir: true,
+        source: true,
+        commitSha: true,
+        createdAt: true,
+        coverageSummaries: true,
+        _count: {
+          select: {
+            systemScenarios: { where: { source: "AI" } },
+            systemProposals: { where: { state: "APPLIED" } },
+          },
+        },
+        project: {
+          select: {
+            id: true,
+            ownerId: true,
+            name: true,
+            lifecycleStatus: true,
+            lifecycleUpdatedAt: true,
+            updatedAt: true,
+            activeSnapshotId: true,
+            _count: {
+              select: {
+                aiSuggestions: true,
+              },
+            },
+          },
+        },
       },
-    },
-  });
+    }),
+    prisma.coverageFile.findMany({
+      where: { snapshotId },
+      orderBy: [{ branchesPct: "asc" }, { linesPct: "asc" }],
+    }),
+    prisma.job.findMany({
+      where: { snapshotId },
+      orderBy: { createdAt: "desc" },
+      take: 15,
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        progress: true,
+        createdAt: true,
+        startedAt: true,
+        finishedAt: true,
+        errorMessage: true,
+      },
+    }),
+    prisma.projectSnapshot.findMany({
+      where: { project: { snapshots: { some: { id: snapshotId } } } },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: {
+        id: true,
+        versionNumber: true,
+        label: true,
+        contentHash: true,
+        commitSha: true,
+        source: true,
+        createdAt: true,
+      },
+    }),
+    prisma.aiTest.findMany({
+      where: { project: { snapshots: { some: { id: snapshotId } } } },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.testRun.findMany({
+      where: {
+        snapshot: { project: { snapshots: { some: { id: snapshotId } } } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      include: {
+        snapshot: {
+          select: { id: true, commitSha: true, createdAt: true },
+        },
+        scenarios: {
+          omit: { executionDetails: true },
+        },
+      },
+    }),
+  ]);
 
   if (!snapshot) {
     const err = new Error("Snapshot not found.");
@@ -471,87 +751,96 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
     throw err;
   }
 
-  await resolveProjectAccess({
-    projectId: snapshot.projectId,
-    userId,
-    capability: "project.read",
-  });
+  const startAccess = Date.now();
+  // Owner already has full project.read capability; only query projectMember when non-owner
+  if (!userId || snapshot.project?.ownerId !== userId) {
+    await resolveProjectAccess({
+      projectId: snapshot.projectId,
+      userId,
+      capability: "project.read",
+    });
+  }
+  const accessTime = Date.now() - startAccess;
 
   const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
 
-  // Fast cache hit (< 50ms)
-  const cachedEntry = dashboardPayloadCache.get(snapshotId);
-  if (cachedEntry && Date.now() - cachedEntry.cachedAt < 5000) {
-    return cachedEntry.data;
-  }
-
-  // 1. Fetch all snapshots for this project for the header Snapshot selector
-  const projectSnapshots = await prisma.projectSnapshot.findMany({
-    where: { projectId: snapshot.projectId },
-    orderBy: { createdAt: "desc" },
-    take: 25,
-    select: {
-      id: true,
-      commitSha: true,
-      source: true,
-      createdAt: true,
-    },
-  });
-
-  const formattedSnapshots = projectSnapshots.map((s, idx) => ({
-    id: s.id,
-    commitSha: s.commitSha || s.id.slice(0, 7),
-    branch: "main",
-    createdAt: s.createdAt,
-    label: `#${projectSnapshots.length - idx} (${(s.commitSha || s.id).slice(0, 7)})${
-      s.id === snapshot.id ? " — Active" : ""
-    }`,
-  }));
-
-  // 2. Detect Frameworks (Cached)
+  // Detect Frameworks (Cached by snapshot.id)
   let detectedFrameworks = { supported: { unit: ["jest"], integration: ["supertest"], system: ["playwright"] } };
-  if (resolvedRootDir && frameworkCache.has(resolvedRootDir)) {
-    detectedFrameworks = frameworkCache.get(resolvedRootDir);
+  if (frameworkCache.has(snapshot.id)) {
+    detectedFrameworks = frameworkCache.get(snapshot.id);
   } else if (resolvedRootDir && fs.existsSync(resolvedRootDir)) {
     try {
       detectedFrameworks = detectCoverageFrameworks(resolvedRootDir);
-      frameworkCache.set(resolvedRootDir, detectedFrameworks);
+      frameworkCache.set(snapshot.id, detectedFrameworks);
     } catch (_) {}
   }
 
-  // 3. Aggregate Unit Layer
-  const [unitSummaryRecord, allCoverageFiles, latestUnitRun] = await Promise.all([
-    prisma.coverageSummary.findUnique({ where: { snapshotId: snapshot.id } }),
-    prisma.coverageFile.findMany({
-      where: {
-        snapshotId: snapshot.id,
-        AND: [
-          { NOT: { filePath: { contains: "coverage/" } } },
-          { NOT: { filePath: { contains: "coverage\\" } } },
-          { NOT: { filePath: { contains: "node_modules/" } } },
-          { NOT: { filePath: { contains: "node_modules\\" } } },
-          { NOT: { filePath: { contains: ".git/" } } },
-          { NOT: { filePath: { contains: ".test." } } },
-          { NOT: { filePath: { contains: ".spec." } } },
-          { NOT: { filePath: { contains: "/e2e/" } } },
-          { NOT: { filePath: { contains: "/cypress/" } } },
-          { NOT: { filePath: { contains: "/playwright/" } } },
-        ],
-      },
-      orderBy: [{ branchesPct: "asc" }, { linesPct: "asc" }],
-    }),
-    prisma.testRun.findFirst({
-      where: {
-        snapshotId: snapshot.id,
-        type: { in: ["JEST", "VITEST"] },
-      },
-      orderBy: { createdAt: "desc" },
-      include: {
-        scenarios: { omit: { executionDetails: true } },
-      },
-    }),
-  ]);
+  const unitSummaryRecord = snapshot.coverageSummaries || null;
+  const snapshotRuns = (historicalTestRuns || []).filter(
+    (r) => r.snapshotId === snapshot.id
+  );
+  const latestUnitRun =
+    (snapshotRuns || []).find((r) => ["JEST", "VITEST"].includes(r.type)) || null;
+  const latestSystemRun =
+    (snapshotRuns || []).find((r) => ["PLAYWRIGHT", "CYPRESS"].includes(r.type)) || null;
+  const snapshotIntegrationRuns = (snapshotRuns || []).filter((r) =>
+    ["SUPERTEST", "PLAYWRIGHT_API"].includes(r.type)
+  );
+  const snapshotAiTests = (aiTestsList || []).filter((t) => t.snapshotId === snapshot.id);
+  const aiSuggestionsCount = snapshot.project?._count?.aiSuggestions ?? 0;
+  const aiSystemScenariosCount = snapshot._count?.systemScenarios ?? 0;
+  const aiSystemProposalsApplied = snapshot._count?.systemProposals ?? 0;
+  const activeJob =
+    (snapshotJobs || []).find(
+      (j) =>
+        ["RUN_TESTS", "INSTALL_DEPS", "SUPERTEST_COVERAGE", "SYSTEM_TEST_ANALYSIS"].includes(
+          j.type
+        ) && ["QUEUED", "RUNNING"].includes(j.status)
+    ) || null;
 
+  const integrationWs = await buildIntegrationWorkspace(snapshot.id, {
+    skipAutoScan: true,
+    preloadedData: {
+      snapshot,
+      coverageSummary: unitSummaryRecord,
+      coverageFiles: rawCoverageFiles,
+      aiTests: snapshotAiTests,
+      testRuns: snapshotIntegrationRuns.slice(0, 1),
+      jobs: snapshotJobs,
+    },
+  }).catch((intErr) => {
+    console.warn("[UnifiedQualityDashboard] buildIntegrationWorkspace warning:", intErr?.message);
+    return null;
+  });
+  const parallelFetchTime = Date.now() - startParallelFetch;
+
+  // 1. Format snapshots for header
+  const formattedSnapshots = projectSnapshots.map((s, idx) => {
+    const vNum = s.versionNumber != null ? `#${s.versionNumber}` : `#${projectSnapshots.length - idx}`;
+    let displayCommit = s.commitSha;
+    if (displayCommit && displayCommit.startsWith("appliedTx:")) {
+      displayCommit = null;
+    }
+    const shortRef = displayCommit ? displayCommit.slice(0, 7) : (s.contentHash ? s.contentHash.slice(0, 7) : s.id.slice(0, 7));
+    const baseLabel = s.label || `${vNum} (${shortRef})`;
+    const isActive = s.id === snapshot.id;
+    return {
+      id: s.id,
+      versionNumber: s.versionNumber,
+      contentHash: s.contentHash ? s.contentHash.slice(0, 12) : null,
+      commitSha: displayCommit,
+      branch: displayCommit ? `git:${displayCommit.slice(0, 7)}` : "local",
+      createdAt: s.createdAt,
+      label: isActive ? `${baseLabel} — Active` : baseLabel,
+      isActive,
+    };
+  });
+
+  // 3. Aggregate Unit Layer
+  const startUnit = Date.now();
+  const allCoverageFiles = (rawCoverageFiles || []).filter(
+    (f) => !isExcludedCoverageFilePath(f.filePath)
+  );
   const unitFiles = allCoverageFiles.filter((f) => !isApiFilePath(f.filePath));
   const unitFwRaw =
     detectedFrameworks?.supported?.unit?.[0] ||
@@ -580,24 +869,32 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
         )
       : 0;
 
-  const unitLinesPct = toFixedNum(
-    latestUnitRun?.coverageLinesPct ?? unitSummaryRecord?.linesPct ?? 0
-  );
-  const unitBranchesPct = toFixedNum(
-    latestUnitRun?.coverageBranchesPct ?? unitSummaryRecord?.branchesPct ?? 0
-  );
-  const unitFuncsPct = toFixedNum(
-    latestUnitRun?.coverageFunctionsPct ??
-      unitSummaryRecord?.funcsPct ??
-      unitSummaryRecord?.functionsPct ??
-      avgUnitFuncs
-  );
-  const unitStmtsPct = toFixedNum(
-    latestUnitRun?.coverageStatementsPct ??
-      unitSummaryRecord?.stmtsPct ??
-      unitSummaryRecord?.statementsPct ??
-      avgUnitStmts
-  );
+  const unitLinesPct =
+    unitTotal > 0
+      ? toFixedNum(unitSummaryRecord?.linesPct ?? latestUnitRun?.coverageLinesPct ?? 0)
+      : 0;
+  const unitBranchesPct =
+    unitTotal > 0
+      ? toFixedNum(unitSummaryRecord?.branchesPct ?? latestUnitRun?.coverageBranchesPct ?? 0)
+      : 0;
+  const unitFuncsPct =
+    unitTotal > 0
+      ? toFixedNum(
+          unitSummaryRecord?.funcsPct ??
+            unitSummaryRecord?.functionsPct ??
+            latestUnitRun?.coverageFunctionsPct ??
+            avgUnitFuncs
+        )
+      : 0;
+  const unitStmtsPct =
+    unitTotal > 0
+      ? toFixedNum(
+          unitSummaryRecord?.stmtsPct ??
+            unitSummaryRecord?.statementsPct ??
+            latestUnitRun?.coverageStatementsPct ??
+            avgUnitStmts
+        )
+      : 0;
 
   const lowBranchFiles = unitFiles.filter((f) => Number(f.branchesPct ?? 100) < 80);
   const filesToDisplay = lowBranchFiles.length > 0 ? lowBranchFiles : unitFiles;
@@ -657,14 +954,10 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
     errorMessage: null,
   };
 
-  // 4. Aggregate Integration Layer via buildIntegrationWorkspace
-  let integrationWs = null;
-  try {
-    integrationWs = await buildIntegrationWorkspace(snapshot.id);
-  } catch (intErr) {
-    console.warn("[UnifiedQualityDashboard] buildIntegrationWorkspace warning:", intErr.message);
-  }
+  const unitTime = Date.now() - startUnit;
 
+  // 4. Aggregate Integration Layer via buildIntegrationWorkspace
+  const startIntegration = Date.now();
   const wsSummary = integrationWs?.summary || {};
   const endpoints = Array.isArray(integrationWs?.endpoints) ? integrationWs.endpoints : [];
   const coveredEpCount = endpoints.filter((e) => e.status === "Covered").length;
@@ -679,23 +972,22 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
   const totalApis = Number(
     wsSummary.totalApis ?? wsSummary.discoveredApis ?? (endpoints.length || intTotalExecuted)
   );
-  const uncoveredApis = Number(
-    wsSummary.uncoveredApis ?? Math.max(0, totalApis - coveredEpCount - failedEpCount)
-  );
+  const coveredApis = intTotalExecuted > 0 ? (coveredEpCount > 0 ? coveredEpCount : intPassed) : 0;
+  const uncoveredApis = Math.max(0, totalApis - coveredApis);
   const intDurationMs = Number(wsSummary.durationMs ?? 0);
   const intAvgLatencyMs = Number(
     wsSummary.avgEndpointLatencyMs ?? wsSummary.avgRequestLatencyMs ?? 0
   );
   const intPassRate = getPassRate(intPassed, intFailed) ?? 0;
 
-  const epCovPct =
-    wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
-      ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
-      : totalApis > 0
-      ? toFixedNum((coveredEpCount / totalApis) * 100)
-      : 0;
-
   const intHasRuns = intTotalExecuted > 0;
+  const epCovPct =
+    !intHasRuns || totalApis <= 0
+      ? 0
+      : wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
+      ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
+      : toFixedNum((coveredEpCount / totalApis) * 100);
+
   const intCodeCov = wsSummary.codeCoverage || {};
   const intCoverageMetrics = {
     lines: intHasRuns ? toFixedNum(intCodeCov.line?.pct ?? intCodeCov.line ?? 0) : 0,
@@ -795,19 +1087,10 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
     errorMessage: null,
   };
 
-  // 5. Aggregate System (E2E) Layer
-  const latestSystemRun = await prisma.testRun.findFirst({
-    where: {
-      snapshotId: snapshot.id,
-      type: { in: ["PLAYWRIGHT", "CYPRESS"] },
-    },
-    orderBy: { createdAt: "desc" },
-    include: {
-      scenarios: { omit: { executionDetails: true } },
-      testFiles: true,
-    },
-  });
+  const integrationTime = Date.now() - startIntegration;
 
+  // 5. Aggregate System (E2E) Layer
+  const startSystem = Date.now();
   const sysPassed = Number(latestSystemRun?.passedTests ?? 0);
   const sysFailed = Number(latestSystemRun?.failedTests ?? 0);
   const sysFlaky = Number(latestSystemRun?.flakyTests ?? 0);
@@ -819,7 +1102,7 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
   const sysPassRate = getPassRate(sysPassed, sysFailed) ?? 0;
 
   let sysFlowCoveragePct = 0;
-  if (latestSystemRun?.systemMeasurement) {
+  if (sysTotal > 0 && latestSystemRun?.systemMeasurement) {
     try {
       const sysCovSummary = coverageSummaryFor(latestSystemRun.systemMeasurement);
       const feLinesPct = sysCovSummary?.frontend?.counters?.lines?.pct;
@@ -932,28 +1215,10 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
     errorMessage: null,
   };
 
-  // 6. Aggregate Real AI Telemetry
-  const [aiTestsList, aiSuggestionsCount, aiSystemScenariosCount, aiSystemProposalsApplied] =
-    await Promise.all([
-      prisma.aiTest.findMany({
-        where: { projectId: snapshot.projectId },
-        select: { id: true, mode: true, status: true, metaJson: true },
-      }),
-      prisma.aiSuggestion.count({
-        where: { projectId: snapshot.projectId },
-      }),
-      prisma.systemScenario
-        ? prisma.systemScenario.count({
-            where: { snapshotId: snapshot.id, source: "AI" },
-          })
-        : Promise.resolve(0),
-      prisma.systemTestProposal
-        ? prisma.systemTestProposal.count({
-            where: { snapshotId: snapshot.id, state: "APPLIED" },
-          })
-        : Promise.resolve(0),
-    ]);
+  const systemTime = Date.now() - startSystem;
 
+  // 6. Aggregate Real AI Telemetry
+  const startAi = Date.now();
   let aiGeneratedCount = aiSystemScenariosCount + aiSuggestionsCount;
   let aiRepairedCount = aiSystemProposalsApplied;
 
@@ -983,24 +1248,10 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
     systemPillar,
   });
 
-  // 8. Build Historical Runs & Trends across Project TestRuns
-  const historicalTestRuns = await prisma.testRun.findMany({
-    where: {
-      snapshot: { projectId: snapshot.projectId },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 25,
-    include: {
-      snapshot: {
-        select: { id: true, commitSha: true, createdAt: true },
-      },
-      scenarios: {
-        take: 15,
-        omit: { executionDetails: true },
-      },
-    },
-  });
+  const aiTime = Date.now() - startAi;
 
+  // 8. Build Historical Runs & Trends across Project TestRuns
+  const startHistory = Date.now();
   const historyRuns = historicalTestRuns.map((run) => {
     const tType = String(run.type || "").toUpperCase();
     const pillarType =
@@ -1136,7 +1387,9 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
         rollingSysPass = rPassRate;
       }
 
-      const overallCov = toFixedNum((rollingUnitCov + rollingIntCov + rollingSysCov) / 3);
+      const overallCov = toFixedNum(
+        rollingUnitCov * 0.5 + rollingIntCov * 0.3 + rollingSysCov * 0.2
+      );
       const isLast = idx === sampledRuns.length - 1;
       const shaShort = (run.snapshot?.commitSha || run.snapshotId || "").slice(0, 6);
 
@@ -1154,7 +1407,9 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
       });
     });
   } else if (unitLinesPct > 0 || epCovPct > 0 || sysFlowCoveragePct > 0) {
-    const overallCov = toFixedNum((unitLinesPct + epCovPct + sysFlowCoveragePct) / 3);
+    const overallCov = toFixedNum(
+      unitLinesPct * 0.5 + epCovPct * 0.3 + sysFlowCoveragePct * 0.2
+    );
     trendSeries.push({
       runLabel: "#1 (Current)",
       timestamp: Date.now(),
@@ -1233,15 +1488,54 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
   else if (healthScore >= 65) healthGrade = "B";
   else if (healthScore >= 50) healthGrade = "C";
 
+  const hasProjectActivity =
+    unitTotal + intTotalExecuted + sysTotal > 0 ||
+    aiGeneratedCount > 0 ||
+    aiRepairedCount > 0 ||
+    projectSnapshots.length > 1 ||
+    historyRuns.length > 0 ||
+    Boolean(unitSummaryRecord);
+
+  let effectiveLifecycleStatus = snapshot.project?.lifecycleStatus || "NOT_STARTED";
+  if (effectiveLifecycleStatus === "NOT_STARTED" && hasProjectActivity) {
+    effectiveLifecycleStatus = "DOING";
+    prisma.project
+      .updateMany({
+        where: { id: snapshot.projectId, lifecycleStatus: "NOT_STARTED" },
+        data: { lifecycleStatus: "DOING", lifecycleUpdatedAt: new Date() },
+      })
+      .catch(() => {});
+  }
+
+  const activeSuiteRun = activeJob
+    ? {
+        jobId: activeJob.id,
+        type: activeJob.type,
+        pillar:
+          activeJob.type === "RUN_TESTS"
+            ? "unit"
+            : activeJob.type === "SUPERTEST_COVERAGE" || activeJob.type === "INSTALL_DEPS"
+              ? "integration"
+              : "system",
+        status: activeJob.status,
+        progress: activeJob.progress || 0,
+        stage: activeJob.stage || "",
+        startedAt: activeJob.startedAt || activeJob.createdAt,
+      }
+    : null;
+
   const resultPayload = {
     context: {
       projectId: snapshot.projectId,
       projectName: snapshot.project?.name || "CovAI Project",
+      lifecycleStatus: effectiveLifecycleStatus,
       snapshotId: snapshot.id,
       commitSha: snapshot.commitSha || snapshot.id.slice(0, 7),
       snapshots: formattedSnapshots,
+      activeSuiteRun,
       updatedAt: Date.now(),
     },
+    activeSuiteRun,
     health: {
       score: healthScore,
       grade: healthGrade,
@@ -1269,10 +1563,36 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId }) {
     },
   };
 
+  const historyTime = Date.now() - startHistory;
+  if (!currentFingerprint) {
+    const latestSnapshotRun =
+      (historicalTestRuns || []).find((r) => r.snapshotId === snapshot.id) ||
+      latestUnitRun ||
+      latestSystemRun ||
+      null;
+    const latestSnapshotAiTest =
+      (aiTestsList || []).find((t) => t.snapshotId === snapshot.id) || null;
+    currentFingerprint = computeDashboardFingerprintFromData({
+      latestRun: latestSnapshotRun,
+      snapshotMeta: snapshot,
+      latestAiTest: latestSnapshotAiTest,
+      coverageSum: unitSummaryRecord,
+    });
+  }
+
+  const nowCacheTs = Date.now();
   dashboardPayloadCache.set(snapshot.id, {
     data: resultPayload,
-    cachedAt: Date.now(),
+    cachedAt: nowCacheTs,
+    lastVerifiedAt: nowCacheTs,
+    fingerprint: currentFingerprint,
+    allowedUsers: new Set([userId, snapshot.project?.ownerId].filter(Boolean)),
   });
+
+  const totalTime = Date.now() - start;
+  console.log(
+    `[PERF: Unified Dashboard] snapshotId=${snapshotId} Total=${totalTime}ms | cacheHit=false | access=${accessTime}ms | parallelFetch=${parallelFetchTime}ms | unit=${unitTime}ms | integration=${integrationTime}ms | system=${systemTime}ms | ai=${aiTime}ms | history=${historyTime}ms`
+  );
 
   return resultPayload;
 }

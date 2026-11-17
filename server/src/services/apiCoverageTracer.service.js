@@ -13,7 +13,7 @@ import { normalizeFilePath } from "./unifiedCoverageEngine.service.js";
  * Helper to calculate percentage safely.
  */
 const safePct = (covered, total) => {
-    if (!total || total === 0) return 100;
+    if (!total || total <= 0) return 0;
     return Number(((covered / total) * 100).toFixed(2));
 };
 

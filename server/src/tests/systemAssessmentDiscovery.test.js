@@ -11,6 +11,16 @@ const fixture = () => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cova
 const write = (root, file, content) => { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, content); };
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 describe('Automatic system assessment discovery', () => {
+    it('resolves custom monorepo directories before a setup file has been applied',()=>{
+        const root=fixture();
+        write(root,'package.json',JSON.stringify({workspaces:['apps/*'],scripts:{dev:'turbo run dev'}}));
+        write(root,'apps/shop/package.json',JSON.stringify({scripts:{dev:'vite'},devDependencies:{vite:'7'}}));
+        write(root,'apps/orders/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5'}}));
+        write(root,'apps/orders/index.js',"import http from 'node:http';");
+        write(root,'tests/system/order.spec.js',"import {test,expect} from '@playwright/test';test('orders',()=>{expect(true).toBe(true);});");
+        expect(discoverSystemAssessment({rootDir:root,executionMode:'full'}).coverageScope).toEqual({frontend:{root:'apps/shop',sourceDirectory:'.'},backend:{root:'apps/orders',sourceDirectory:'.'}});
+        expect(fs.existsSync(path.join(root,'.covai/system-test.json'))).toBe(false);
+    });
     it('reads explicit test environment from the original without copying credential files', () => {
         const root = fixture(); write(root, 'server/.env', 'PRIVATE_SETTING=production'); write(root, 'server/.env.test', 'STRIPE_SECRET_KEY=test-fixture-value\nDATABASE_URL=unused-remote-url');
         const workspace = createAssessmentWorkspace({rootDir:root});

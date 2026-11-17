@@ -1,4 +1,5 @@
 import { Terminal } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const FOOTER_COLS = [
   {
@@ -13,20 +14,20 @@ const FOOTER_COLS = [
   {
     heading: "Platform",
     links: [
-      { label: "Jest Integration", href: "#" },
-      { label: "Vitest Engine", href: "#" },
-      { label: "CFG Analyzer", href: "#" },
-      { label: "Istanbul Metrics", href: "#" },
-      { label: "API Reference", href: "#" },
+      { label: "Jest Integration", href: "#feature-test-synthesis" },
+      { label: "Vitest Engine", href: "#feature-test-synthesis" },
+      { label: "CFG Analyzer", href: "#feature-cfg-analysis" },
+      { label: "Istanbul Metrics", href: "#feature-coverage-metrics" },
+      { label: "API Reference", href: "https://github.com/Nhthuando/CovAI-/tree/develop/docs/specs" },
     ],
   },
   {
     heading: "Security & Legal",
     links: [
-      { label: "Privacy Policy", href: "#" },
-      { label: "Terms of Service", href: "#" },
-      { label: "Sandbox Security", href: "#" },
-      { label: "Data Telemetry", href: "#" },
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Terms of Service", href: "/terms" },
+      { label: "Sandbox Security", href: "#feature-sandbox-execution" },
+      { label: "Data Telemetry", href: "/telemetry" },
     ],
   },
 ];
@@ -118,12 +119,30 @@ export default function Footer() {
               <ul className="space-y-2 list-none p-0 m-0">
                 {col.links.map((link) => (
                   <li key={link.label}>
-                    <a
-                      href={link.href}
-                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
-                    >
-                      {link.label}
-                    </a>
+                    {link.href.startsWith("/") ? (
+                      <Link
+                        to={link.href}
+                        className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
+                      >
+                        {link.label}
+                      </Link>
+                    ) : link.href.startsWith("http") ? (
+                      <a
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
+                      >
+                        {link.label}
+                      </a>
+                    ) : (
+                      <a
+                        href={link.href}
+                        className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
+                      >
+                        {link.label}
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>

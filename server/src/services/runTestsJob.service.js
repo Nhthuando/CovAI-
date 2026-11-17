@@ -34,7 +34,7 @@ import {
     ensureWorkspaceNodeModulesLinked,
     cleanupWorkspaceNodeModulesLinks
 } from "./dependencyResolution.service.js";
-import { currentProjectOperation } from "./projectOperationWorkspace.service.js";
+import { currentProjectOperation, deferPreparedCommit, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const JEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -1370,7 +1370,7 @@ export const healAllTestFiles = (_rootDir, _specificFiles = []) => {
  * SCRUM-139: Run npm install in rootDir via Docker if dependencies missing.
  * @returns {Promise<void>}
  */
-const runNpmInstall = async (jobId, rootDir) => {
+export const runNpmInstall = async (jobId, rootDir) => {
     const rootPkg = path.join(rootDir, "package.json");
     const hasRootPkg = fs.existsSync(rootPkg);
     const nodeModulesDir = path.join(rootDir, "node_modules");
@@ -1656,7 +1656,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const rootJestBin = resolveJestBin(rootDir, isEsmProject, customJestCommand);
         const rootWorkerFlags = getOptimalWorkerFlags(rootFiles.length, customJestCommand);
-        let jestCmd = `${rootJestBin} --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
+        let jestCmd = `${rootJestBin} --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
 
         let tempConfigCreated = false;
         const tempConfigName = "covai-jest-runner.json";
@@ -2777,7 +2777,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 ? subScopedCoverageFiles.map(f => ` --collectCoverageFrom="${f}"`).join("")
                 : (fs.existsSync(path.join(targetDir, "src")) ? ' --collectCoverageFrom="src/**/*.{js,jsx,ts,tsx}" --collectCoverageFrom="!src/**/*.d.ts"' : '');
             const subWorkerFlags = getOptimalWorkerFlags(subFiles.length);
-            const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
+            const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
 
             let subResult;
             try {
@@ -3581,6 +3581,8 @@ export const processRunTestsJob = async (jobId) => {
     const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
     const coverageDir = path.join(rootDir, "coverage");
     const unitCoverageDir = path.join(rootDir, "coverage", "unit");
+    const reportedScenarios = [];
+    let hasPersistedTestRun = false;
     if (!fs.existsSync(unitCoverageDir)) {
         try { fs.mkdirSync(unitCoverageDir, { recursive: true }); } catch { }
     }
@@ -3638,18 +3640,46 @@ export const processRunTestsJob = async (jobId) => {
         }
     } catch { }
 
+    const covBackupDir = path.join(rootDir, ".covai-backup-coverage");
+    try { fs.mkdirSync(covBackupDir, { recursive: true }); } catch (_) {}
     for (const dir of candidateDirs) {
         if (!fs.existsSync(dir)) continue;
         for (const sf of staleCoverageFiles) {
             const p = path.join(dir, sf);
             if (fs.existsSync(p)) {
-                try { fs.unlinkSync(p); } catch { }
+                try {
+                    const backupKey = path.relative(rootDir, p).replace(/[/\\]/g, "_");
+                    fs.copyFileSync(p, path.join(covBackupDir, backupKey));
+                    fs.unlinkSync(p);
+                } catch { }
             }
         }
     }
 
+    // ── Granular Progress Reporter Helper ─────────────────────────────────
+    const reportUnitProgress = async (progress, stage, message) => {
+        await updateJobProgress(jobId, progress).catch(() => { });
+        try {
+            const { emitDashboardJobProgress } = await import("./dashboardEvents.service.js");
+            emitDashboardJobProgress(job.snapshot?.projectId, {
+                snapshotId,
+                jobId,
+                pillar: "unit",
+                progress,
+                stage,
+                message: message || stage
+            }).catch(() => {});
+        } catch (_) {}
+    };
+
     // ── SCRUM-144: Progress 10% — started ───────────────────────────────────
-    await updateJobProgress(jobId, 10).catch(() => { });
+    await reportUnitProgress(10, "Starting unit test execution", "Initializing test runner and sandbox...");
+    try {
+        import("./dashboardEvents.service.js").then(({ emitDashboardRunStatus, emitDashboardJobProgress }) => {
+            emitDashboardRunStatus(job.snapshot?.projectId, { snapshotId, jobId, pillar: "unit", status: "RUNNING" }).catch(() => {});
+            emitDashboardJobProgress(job.snapshot?.projectId, { snapshotId, jobId, pillar: "unit", progress: 10, stage: "Starting unit test execution" }).catch(() => {});
+        }).catch(() => {});
+    } catch (_) {}
     await addJobLog(jobId, "INFO", "RUN_TESTS pipeline started.").catch(() => { });
 
     const createdNodeModulesLinks = [];
@@ -3673,7 +3703,7 @@ export const processRunTestsJob = async (jobId) => {
         }
 
         // ── SCRUM-144: Progress 25% — sau install ─────────────────────────────
-        await updateJobProgress(jobId, 25).catch(() => { });
+        await reportUnitProgress(25, "Dependencies ready", "Dependencies verified and linked.");
 
         // ── SCRUM-140: Discover and classify unit test files ──────────────────
         await addJobLog(jobId, "INFO", "Step 2/4: Scanning and classifying test files (Jest & Vitest)...").catch(() => { });
@@ -3705,7 +3735,7 @@ export const processRunTestsJob = async (jobId) => {
 
         if (runBoth) {
             // Concurrent execution of Vitest and Jest to maximize CPU utilization and halve execution time
-            await updateJobProgress(jobId, 45).catch(() => { });
+            await reportUnitProgress(45, "Running test suite", "Executing unit tests in sandbox...");
             await addJobLog(jobId, "INFO", `[CONCURRENT] Running ${vitestFiles.length} Vitest and ${jestFiles.length} Jest files in parallel...`).catch(() => { });
 
             const [vOutcome, jOutcome] = await Promise.allSettled([
@@ -3718,18 +3748,21 @@ export const processRunTestsJob = async (jobId) => {
                 })()
             ]);
 
-            if (vOutcome.status === "rejected") {
-                await addJobLog(jobId, "WARN", `[VITEST] Vitest execution warning: ${vOutcome.reason?.message}`).catch(() => { });
-            }
-            if (jOutcome.status === "fulfilled") {
-                runnerResult = jOutcome.value || { exitCode: 0 };
-            } else {
-                await addJobLog(jobId, "WARN", `[JEST] Jest execution warning: ${jOutcome.reason?.message}`).catch(() => { });
-            }
+            const runnerOutputs = [vOutcome, jOutcome].map(outcome =>
+                outcome.status === "fulfilled"
+                    ? outcome.value
+                    : { exitCode: null, stderr: outcome.reason?.message || "Runner did not complete" });
+            const unsuccessfulRunner = runnerOutputs.find(output => output?.exitCode === null)
+                || runnerOutputs.find(output => output?.exitCode !== 0);
+            runnerResult = {
+                exitCode: unsuccessfulRunner ? unsuccessfulRunner.exitCode : 0,
+                stdout: runnerOutputs.map(output => output?.stdout).filter(Boolean).join("\n"),
+                stderr: runnerOutputs.map(output => output?.stderr).filter(Boolean).join("\n"),
+            };
 
             // Step 2c: Merge coverage & test results
             syncCoverageDirectories(coverageDir, unitCoverageDir);
-            await updateJobProgress(jobId, 75).catch(() => { });
+            await reportUnitProgress(75, "Mapping metrics", "Correlating code metrics and execution traces...");
             await addJobLog(jobId, "INFO", "Step 3/4: Merging coverage results from Jest & Vitest...").catch(() => { });
 
             const jestFinalPath = fs.existsSync(path.join(coverageDir, "jest-coverage-final.json"))
@@ -3808,9 +3841,10 @@ export const processRunTestsJob = async (jobId) => {
 
             // Save TestRun for JEST
             try {
-                const jestRunData = parseJestResults(unitCoverageDir) || parseJestResults(coverageDir);
+                const jestRunData = parseJestResults(unitCoverageDir, { rootDir }) || parseJestResults(coverageDir, { rootDir });
                 if (jestRunData) {
                     const { scenarios, ...runProps } = jestRunData;
+                    reportedScenarios.push(...scenarios);
                     const formattedScenarios = formatScenariosForPrisma(scenarios);
                     const dataPayload = {
                         snapshotId,
@@ -3821,6 +3855,7 @@ export const processRunTestsJob = async (jobId) => {
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                     await prisma.testRun.create({ data: dataPayload });
+                    hasPersistedTestRun = true;
                     await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${jestRunData.totalTests} tests (${jestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
@@ -3829,9 +3864,10 @@ export const processRunTestsJob = async (jobId) => {
 
             // Save TestRun for VITEST
             try {
-                const vitestRunData = parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir);
+                const vitestRunData = parseVitestResults(unitCoverageDir, { rootDir }) || parseVitestResults(coverageDir, { rootDir });
                 if (vitestRunData) {
                     const { scenarios, ...runProps } = vitestRunData;
+                    reportedScenarios.push(...scenarios);
                     const formattedScenarios = formatScenariosForPrisma(scenarios);
                     const dataPayload = {
                         snapshotId,
@@ -3842,6 +3878,7 @@ export const processRunTestsJob = async (jobId) => {
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                     await prisma.testRun.create({ data: dataPayload });
+                    hasPersistedTestRun = true;
                     await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${vitestRunData.totalTests} tests (${vitestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
@@ -3849,16 +3886,17 @@ export const processRunTestsJob = async (jobId) => {
             }
 
         } else if (hasVitest) {
-            await updateJobProgress(jobId, 50).catch(() => { });
+            await reportUnitProgress(50, "Collecting outputs", "Collecting test runner output and coverage...");
             await addJobLog(jobId, "INFO", `[VITEST] Running ${vitestFiles.length} Vitest files...`).catch(() => { });
             const { runVitestCoverage } = await import("./vitestRunner.service.js");
             runnerResult = await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles, { coverageDir: unitCoverageDir });
             syncCoverageDirectories(coverageDir, unitCoverageDir);
-            await updateJobProgress(jobId, 70).catch(() => { });
+            await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
 
-            const testResults = parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir) || parseJestResults(unitCoverageDir) || parseJestResults(coverageDir);
+            const testResults = parseVitestResults(unitCoverageDir, { rootDir }) || parseVitestResults(coverageDir, { rootDir });
             if (testResults) {
                 const { scenarios, ...testRunData } = testResults;
+                reportedScenarios.push(...scenarios);
                 const formattedScenarios = formatScenariosForPrisma(scenarios);
                 const dataPayload = {
                     snapshotId,
@@ -3869,18 +3907,20 @@ export const processRunTestsJob = async (jobId) => {
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                 await prisma.testRun.create({ data: dataPayload });
+                hasPersistedTestRun = true;
                 await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else if (hasJest) {
-            await updateJobProgress(jobId, 50).catch(() => { });
+            await reportUnitProgress(50, "Collecting outputs", "Collecting test runner output and coverage...");
             await addJobLog(jobId, "INFO", `[JEST] Running ${jestFiles.length} Jest files...`).catch(() => { });
             runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand, { coverageDir: unitCoverageDir });
             syncCoverageDirectories(coverageDir, unitCoverageDir);
-            await updateJobProgress(jobId, 70).catch(() => { });
+            await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
 
-            const testResults = parseJestResults(unitCoverageDir) || parseJestResults(coverageDir) || parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir);
+            const testResults = parseJestResults(unitCoverageDir, { rootDir }) || parseJestResults(coverageDir, { rootDir });
             if (testResults) {
                 const { scenarios, ...testRunData } = testResults;
+                reportedScenarios.push(...scenarios);
                 const formattedScenarios = formatScenariosForPrisma(scenarios);
                 const dataPayload = {
                     snapshotId,
@@ -3891,6 +3931,7 @@ export const processRunTestsJob = async (jobId) => {
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                 await prisma.testRun.create({ data: dataPayload });
+                hasPersistedTestRun = true;
                 await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else {
@@ -3939,7 +3980,7 @@ export const processRunTestsJob = async (jobId) => {
                 await addJobLog(jobId, "INFO", "[RUN_TESTS] Running fallback runner...").catch(() => { });
                 runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, [], job.snapshot?.jestCommand);
             }
-            await updateJobProgress(jobId, 70).catch(() => { });
+            await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
         }
 
         // ── SCRUM-140/Problem 1 & 3: Check test execution result ─────────────
@@ -3981,17 +4022,21 @@ export const processRunTestsJob = async (jobId) => {
             }
         }
 
-        if (runnerResult && runnerResult.exitCode !== 0 && runnerResult.exitCode !== null) {
+        if (runnerResult && (runnerResult.exitCode !== 0 || reportedScenarios.some(scenario => scenario.isSuiteLevelFailure))) {
             const jobOutputModule = await import("./jobOutput.service.js").catch(() => ({}));
             const jobFetcher = jobOutputModule.getJobOutput || jobOutputModule.getOutputByJob;
             const jobOutput = typeof jobFetcher === "function" ? await jobFetcher(jobId).catch(() => null) : null;
-            const fullOutput = (jobOutput?.stderr || "") + "\n" + (jobOutput?.stdout || "");
+            const fullOutput = [runnerResult.stderr, runnerResult.stdout, jobOutput?.stderr, jobOutput?.stdout].filter(Boolean).join("\n");
             const modResError = parseModuleResolutionError(fullOutput, rootDir);
+            const brokenSuite = reportedScenarios.find((scenario) => scenario.isSuiteLevelFailure);
 
             // Case 1: Fatal crash / Runner failed before generating valid coverage
-            // When hasValidCoverage is true, assertion failures (exit code 1) must NEVER fail the job!
-            if (!hasValidCoverage) {
-                const existingSummary = await prisma.coverageSummary.findUnique({ where: { snapshotId } });
+            // Suite-load errors invalidate coverage. Assertion failures can still produce usable coverage.
+            if (!hasValidCoverage || runnerResult.exitCode === null || modResError || brokenSuite) {
+                const existingSummary = await prisma.coverageSummary.findUnique({
+                    where: { snapshotId },
+                    select: { stmtsPct: true, branchesPct: true, funcsPct: true, linesPct: true },
+                });
                 const previousCoverage = existingSummary ? {
                     statements: existingSummary.stmtsPct,
                     branches: existingSummary.branchesPct,
@@ -4001,9 +4046,11 @@ export const processRunTestsJob = async (jobId) => {
 
                 let failMessage = modResError
                     ? `Test suite failed to run: Cannot find module '${modResError.missingModule}' from '${cleanStoragePath(modResError.testFile)}'`
-                    : `Test execution failed with exit code ${runnerResult.exitCode}`;
+                    : brokenSuite?.failureMessages?.[0] || (runnerResult.exitCode === null
+                        ? "Test runner stopped before finishing"
+                        : `Test execution failed with exit code ${runnerResult.exitCode}`);
 
-                if (!modResError) {
+                if (!modResError && !brokenSuite) {
                     const syntaxMatch = fullOutput.match(/(?:SyntaxError|ReferenceError|TypeError|RangeError|Error):[^\n\r]+/);
                     if (syntaxMatch) {
                         failMessage = `Test execution failed: ${cleanStorageText(syntaxMatch[0])}`;
@@ -4014,7 +4061,7 @@ export const processRunTestsJob = async (jobId) => {
 
                 // Persist failed test run in DB for accurate history
                 try {
-                    await prisma.testRun.create({
+                    if (!hasPersistedTestRun) await prisma.testRun.create({
                         data: {
                             snapshotId,
                             type: hasVitest && !hasJest ? "VITEST" : "JEST",
@@ -4035,12 +4082,14 @@ export const processRunTestsJob = async (jobId) => {
                                         modResError?.missingDependency ? `[MISSING_DEPENDENCY]:${JSON.stringify(modResError.missingDependency)}` : null,
                                         cleanStorageText(fullOutput.slice(0, 1000))
                                     ].filter(Boolean),
-                                    testFile: cleanStoragePath(modResError?.testFile) || null
+                                    testFile: cleanStoragePath(modResError?.testFile || brokenSuite?.testFile) || null
                                 }]
                             }
                         }
                     });
-                } catch { }
+                } catch (persistErr) {
+                    console.warn("[processRunTestsJob] Error saving fatal TestRun:", persistErr.message);
+                }
 
                 const failErr = new Error(failMessage);
                 failErr.moduleResolutionError = modResError;
@@ -4057,8 +4106,7 @@ export const processRunTestsJob = async (jobId) => {
             ).catch(() => { });
 
             try {
-                const existingTestRun = await prisma.testRun.findFirst({ where: { snapshotId }, orderBy: { createdAt: "desc" } });
-                if (!existingTestRun) {
+                if (!hasPersistedTestRun) {
                     await prisma.testRun.create({
                         data: {
                             snapshotId,
@@ -4084,7 +4132,9 @@ export const processRunTestsJob = async (jobId) => {
                         }
                     });
                 }
-            } catch (_) { }
+            } catch (persistErr) {
+                console.warn("[processRunTestsJob] Error saving assertion failure TestRun:", persistErr.message);
+            }
         }
 
         // Re-compute and normalize coverage-summary.json totals to exclude API and frontend files
@@ -4245,13 +4295,37 @@ export const processRunTestsJob = async (jobId) => {
         syncCoverageDirectories(coverageDir, unitCoverageDir);
 
         if (rawOrigRootDir || origRootDir) {
-            syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
+            const publishArtifacts = () => syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
+            if (opContext?.preparedPublications) deferPreparedCommit(publishArtifacts);
+            else publishArtifacts();
         }
 
         // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
         let summaryResult = null;
         try {
             summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+            if (summaryResult?.total) {
+                try {
+                    await stagePreparedPublication(async (tx) => {
+                        const latestUnitRun = await tx.testRun.findFirst({
+                            where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+                            orderBy: { createdAt: "desc" },
+                            select: { id: true },
+                        });
+                        if (latestUnitRun?.id) {
+                            await tx.testRun.update({
+                                where: { id: latestUnitRun.id },
+                                data: {
+                                    coverageLinesPct: summaryResult.total.lines?.pct ?? 0,
+                                    coverageBranchesPct: summaryResult.total.branches?.pct ?? 0,
+                                    coverageFunctionsPct: summaryResult.total.functions?.pct ?? 0,
+                                    coverageStatementsPct: summaryResult.total.statements?.pct ?? 0,
+                                },
+                            });
+                        }
+                    });
+                } catch (_) {}
+            }
             await addJobLog(
                 jobId,
                 "INFO",
@@ -4276,7 +4350,7 @@ export const processRunTestsJob = async (jobId) => {
         await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "found" : "not found"}`).catch(() => { });
 
         // ── SCRUM-144: Progress 85% — sau parse ──────────────────────────────
-        await updateJobProgress(jobId, 85).catch(() => { });
+        await reportUnitProgress(85, "Persisting results", "Saving test execution records...");
 
         // ── SCRUM-142: Store results to Firebase ──────────────────────────────
         await addJobLog(jobId, "INFO", "Step 4/4: Saving coverage files to Firebase...").catch(() => { });
@@ -4293,7 +4367,7 @@ export const processRunTestsJob = async (jobId) => {
         }
 
         // ── SCRUM-144: Progress 100% — completed ──────────────────────────────
-        await updateJobProgress(jobId, 100).catch(() => { });
+        await reportUnitProgress(100, "Completed", "Unit test suite completed successfully.");
 
         // Check if job was already canceled (by user or timeout) before transition
         const jobBeforeSuccess = await getJobById(jobId).catch(() => null);
@@ -4310,6 +4384,12 @@ export const processRunTestsJob = async (jobId) => {
             exitCode: runnerResult?.exitCode ?? 0
         });
         await addJobLog(jobId, "INFO", "RUN_TESTS pipeline completed successfully.").catch(() => { });
+        try {
+            import("./dashboardEvents.service.js").then(({ emitDashboardRunStatus, emitDashboardJobProgress }) => {
+                emitDashboardJobProgress(job.snapshot?.projectId, { snapshotId, jobId, pillar: "unit", progress: 100, stage: "Complete" }).catch(() => {});
+                emitDashboardRunStatus(job.snapshot?.projectId, { snapshotId, jobId, pillar: "unit", status: "SUCCESS" }).catch(() => {});
+            }).catch(() => {});
+        } catch (_) {}
 
         // Invalidate in-memory coverage & testSuites cache
         try {
@@ -4343,6 +4423,11 @@ export const processRunTestsJob = async (jobId) => {
         }
         await addJobLog(jobId, "ERROR", `Pipeline failed: ${error.message}`).catch(() => { });
         await markJobFailed(jobId, error).catch(() => { });
+        try {
+            import("./dashboardEvents.service.js").then(({ emitDashboardRunStatus }) => {
+                emitDashboardRunStatus(job.snapshot?.projectId, { snapshotId, jobId, pillar: "unit", status: "FAILED" }).catch(() => {});
+            }).catch(() => {});
+        } catch (_) {}
 
         // Fail pending BUILD_CFG if this fails
         try {

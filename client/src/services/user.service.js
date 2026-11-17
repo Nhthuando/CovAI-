@@ -28,7 +28,14 @@ export async function updateUserProfileApi(userData) {
   });
 
   if (!res.ok) {
-    throw new Error("Failed to update user profile");
+    const errorData = await res.json().catch(() => null);
+    const errorMessage =
+      errorData?.error?.name?.[0] ||
+      errorData?.message ||
+      "Failed to update user profile";
+    const err = new Error(errorMessage);
+    err.data = errorData;
+    throw err;
   }
 
   return await res.json();

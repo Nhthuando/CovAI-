@@ -28,11 +28,12 @@ import {
   Code2,
   Terminal,
 } from "lucide-react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor from "./editor/CollaborativeCodeEditor";
 import { useTheme } from "../../contexts/ThemeContext";
 import { GitPanel } from "./GitPanel";
 import {
   getFileContentApi,
+  getFileContentFromCache,
   updateFileContentApi,
 } from "../../services/project.service";
 import { getFileCoverage } from "../../services/coverage.service";
@@ -496,13 +497,30 @@ export default function Editor({
     }
   }, [draftUserId, projectId, snapshotId, fileContents]);
 
-  // Invalidate cache and reload current file when external sync occurs (e.g. Git pull / checkout)
+  // When an external sync occurs (e.g. Git pull / checkout), refresh the current active file
   useEffect(() => {
-    if (refreshTrigger) {
-      fetchedRef.current.clear();
-      setFileContents(previous => Object.fromEntries(Object.entries(previous).filter(([, file]) => file.draft !== undefined && file.draft !== file.content)));
+    if (refreshTrigger && activeTabId && projectId) {
+      fetchedRef.current.delete(activeTabId);
+      getFileContentApi(projectId, activeTabId, { snapshotId, forceFresh: true })
+        .then((res) => {
+          if (res?.data) {
+            setFileContents((prev) => ({
+              ...prev,
+              [activeTabId]: {
+                ...prev[activeTabId],
+                content: res.data.content,
+                version: res.data.version,
+                snapshotId: res.data.snapshotId,
+                workspaceRevision: res.data.workspaceRevision,
+                loading: false,
+                error: null,
+              },
+            }));
+          }
+        })
+        .catch(() => {});
     }
-  }, [refreshTrigger]);
+  }, [refreshTrigger, activeTabId, projectId, snapshotId]);
 
   // Coverage state
   const [fileCoverage, setFileCoverage] = useState(null);
@@ -636,11 +654,36 @@ export default function Editor({
   useEffect(() => {
     if (!activeTabId || !projectId) return;
 
-    if (
-      fileContents[activeTabId]?.content !== undefined ||
-      fileContents[activeTabId]?.loading
-    )
+    // 1. If already loaded in state, nothing to do
+    if (fileContents[activeTabId]?.content !== undefined) return;
+
+    // 2. Synchronous cache check: instantaneous 0ms display without spinner
+    const cached = getFileContentFromCache(projectId, activeTabId, snapshotId);
+    if (cached && typeof cached.content === "string") {
+      let recovered = null;
+      try {
+        recovered = JSON.parse(
+          sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"
+        );
+      } catch {
+        /* ignore */
+      }
+      setFileContents((prev) => ({
+        ...prev,
+        [activeTabId]: {
+          content: cached.content,
+          version: recovered?.version || cached.version,
+          draft: typeof recovered?.draft === "string" ? recovered.draft : undefined,
+          snapshotId: cached.snapshotId,
+          workspaceRevision: cached.workspaceRevision,
+          loading: false,
+          error: null,
+        },
+      }));
       return;
+    }
+
+    if (fileContents[activeTabId]?.loading) return;
     if (fetchedRef.current.has(activeTabId)) return;
 
     fetchedRef.current.add(activeTabId);
@@ -653,7 +696,13 @@ export default function Editor({
     getFileContentApi(projectId, activeTabId, { snapshotId })
       .then((res) => {
         let recovered = null;
-        try { recovered = JSON.parse(sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"); } catch { /* Invalid local recovery data is ignored. */ }
+        try {
+          recovered = JSON.parse(
+            sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"
+          );
+        } catch {
+          /* ignore */
+        }
         setFileContents((prev) => ({
           ...prev,
           [activeTabId]: {
@@ -668,6 +717,7 @@ export default function Editor({
         }));
       })
       .catch((err) => {
+        fetchedRef.current.delete(activeTabId);
         setFileContents((prev) => ({
           ...prev,
           [activeTabId]: {
@@ -677,7 +727,7 @@ export default function Editor({
           },
         }));
       });
-  }, [activeTabId, projectId, snapshotId, fileContents, draftStorageKey]);
+  }, [activeTabId, projectId, snapshotId, draftStorageKey]);
 
   const currentFile = fileContents[activeTabId] || {};
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -794,7 +844,7 @@ export default function Editor({
         },
       }));
     } catch (err) {
-      if (err.status === 409) setConflict({ path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
+      if (err.status === 409) setConflict({ projectId, original: file.content, path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
       setSaveError(err.message || "Could not save file");
     } finally {
       setSaving(false);
@@ -804,7 +854,7 @@ export default function Editor({
   saveHandlerRef.current = handleSave;
 
   const handleCopyCurrentCode = () => {
-    const code = currentFile.draft ?? currentFile.content ?? "";
+    const code = editorRef.current?.getValue() ?? currentFile.draft ?? currentFile.content ?? "";
     if (!code) return;
     navigator.clipboard.writeText(code);
     setCopiedCode(true);
@@ -1399,7 +1449,7 @@ export default function Editor({
           ) : previewMode && isMarkdown ? (
             <MarkdownPreview key="md-preview" content={codeContent} />
           ) : (
-            <MonacoEditor
+            <MonacoEditor projectId={projectId} snapshotId={snapshotId} filePath={activeTabId}
               key={`${activeTabId}-${resolvedTheme}`}
               height="100%"
               language={lang}
@@ -1487,7 +1537,11 @@ export default function Editor({
           <span>Spaces: 2</span>
         </div>
       </div>
-      <FileConflictDialog conflict={conflict} loading={saving} onClose={() => setConflict(null)} onReload={async () => {
+      <FileConflictDialog conflict={conflict} loading={saving} onMerged={async (content, latest) => {
+        const result = await updateFileContentApi(projectId, conflict.path, content, {snapshotId:conflict.snapshotId, expectedVersion:latest.version});
+        setFileContents(previous => ({...previous,[conflict.path]:{...latest,content,draft:undefined,version:result.data.version,workspaceRevision:result.data.workspaceRevision,loading:false,error:null}}));
+        setConflict(null); setSaveError("");
+      }} onClose={() => setConflict(null)} onReload={async () => {
         if (!conflict) return;
         downloadEditorDraft(conflict.path, conflict.draft);
         setSaving(true);

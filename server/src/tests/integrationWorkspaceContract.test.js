@@ -2,6 +2,14 @@ import { jest } from '@jest/globals';
 
 // Mock dependencies before dynamic imports
 const prismaMock = {
+    project: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+    },
+    projectMember: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+    },
     projectSnapshot: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
@@ -206,6 +214,7 @@ describe('Integration Workspace & Endpoint Contracts (Task 2 & 3)', () => {
         it('resolves projectId fallback when snapshotId is a projectId', async () => {
             // findUnique by snapshotId fails
             prismaMock.projectSnapshot.findUnique.mockResolvedValue(null);
+            prismaMock.project.findFirst.mockResolvedValue({ id: 'cmvhxwejv000hr0o1sykm9qjv', ownerId: 'u1' });
             // findFirst by projectId succeeds
             prismaMock.projectSnapshot.findFirst.mockResolvedValue({
                 id: 'latest-snap-id',
@@ -241,6 +250,8 @@ describe('Integration Workspace & Endpoint Contracts (Task 2 & 3)', () => {
                 projectId: 'p1',
                 project: { ownerId: 'different-user' },
             });
+            prismaMock.project.findFirst.mockResolvedValue(null);
+            prismaMock.projectMember.findFirst.mockResolvedValue(null);
 
             const req = { user: { id: 'u1' }, params: { snapshotId: 'snap-1' } };
             const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };

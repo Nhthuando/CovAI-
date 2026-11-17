@@ -21,7 +21,7 @@ export const readFullSystemConfig = (rootDir, {allowMissing = false} = {}) => {
   rootDir = resolveSystemRepositoryRoot(rootDir);
   const file = containedPath(rootDir, '.covai/system-test.json');
   if (!fs.existsSync(file) && allowMissing) return null;
-  if (!fs.existsSync(file)) throw new ServiceError('Full Stack is not configured. Add .covai/system-test.json with frontend, backend, database and schema configuration. Choose Frontend Dev Server to run browser tests without this setup.', 422);
+  if (!fs.existsSync(file)) throw new ServiceError('Full Stack startup setup is missing. Open Check setup in System Test, review the detected services and apply startup setup before running.', 422);
   let config;
   try { config = JSON.parse(fs.readFileSync(file,'utf8')); } catch { throw new ServiceError('Invalid .covai/system-test.json',422); }
   if(!config || typeof config !== 'object' || Array.isArray(config)) throw new ServiceError('System test configuration must be a JSON object.',422);
@@ -54,22 +54,35 @@ export const readFullSystemConfig = (rootDir, {allowMissing = false} = {}) => {
 };
 
 export const resolveSystemRepositoryRoot = rootDir => {
- const root = fs.realpathSync(rootDir);
- if (fs.existsSync(path.join(root, '.covai/system-test.json'))) return root;
- // An ingestion/analysis step may select a deeply nested workspace package.
- // A containing workspace must explicitly claim it before we widen the scope.
- for(let ancestor=path.dirname(root),depth=0;ancestor!==path.dirname(ancestor)&&depth<8;ancestor=path.dirname(ancestor),depth++) {
-   const file=path.join(ancestor,'package.json');
-   if(!fs.existsSync(file))continue;
-   let pkg;try{pkg=JSON.parse(fs.readFileSync(file,'utf8'));}catch{continue;}
-   if(isWorkspaceMember(ancestor,pkg,path.relative(ancestor,root).replaceAll('\\','/')))return fs.realpathSync(ancestor);
- }
- const parent = path.dirname(root);
- const hasFrontendSibling = ['client','frontend','web'].some(name => fs.existsSync(path.join(parent,name,'package.json')));
- if (/^(server|backend|api)$/i.test(path.basename(root)) && (fs.existsSync(path.join(parent, '.git')) || hasFrontendSibling)) {
-   const relative = path.relative(fs.realpathSync(parent), root);
-   if (relative.startsWith('..') || path.isAbsolute(relative)) throw new ServiceError('Repository root escapes the snapshot',422);
-   return fs.realpathSync(parent);
- }
- return root;
+  if (!rootDir || typeof rootDir !== 'string') return rootDir;
+  let root = rootDir;
+  try {
+    root = fs.realpathSync(rootDir);
+  } catch (_) {
+    root = rootDir;
+  }
+  if (fs.existsSync(path.join(root, '.covai/system-test.json'))) return root;
+  // An ingestion/analysis step may select a deeply nested workspace package.
+  // A containing workspace must explicitly claim it before we widen the scope.
+  for(let ancestor=path.dirname(root),depth=0;ancestor!==path.dirname(ancestor)&&depth<8;ancestor=path.dirname(ancestor),depth++) {
+    const file=path.join(ancestor,'package.json');
+    if(!fs.existsSync(file))continue;
+    let pkg;try{pkg=JSON.parse(fs.readFileSync(file,'utf8'));}catch{continue;}
+    if(isWorkspaceMember(ancestor,pkg,path.relative(ancestor,root).replaceAll('\\','/'))) {
+      try { return fs.realpathSync(ancestor); } catch (_) { return ancestor; }
+    }
+  }
+  const parent = path.dirname(root);
+  const hasFrontendSibling = ['client','frontend','web'].some(name => fs.existsSync(path.join(parent,name,'package.json')));
+  if (/^(server|backend|api)$/i.test(path.basename(root)) && (fs.existsSync(path.join(parent, '.git')) || hasFrontendSibling)) {
+    try {
+      const realParent = fs.realpathSync(parent);
+      const relative = path.relative(realParent, root);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) throw new ServiceError('Repository root escapes the snapshot',422);
+      return realParent;
+    } catch (_) {
+      return parent;
+    }
+  }
+  return root;
 };

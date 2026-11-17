@@ -1,4 +1,6 @@
+import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
+import { handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -20,12 +22,7 @@ async function handleResponse(res) {
 
     if (!res.ok) {
         if (res.status === 401) {
-            localStorage.removeItem("token");
-            localStorage.removeItem("user");
-            localStorage.removeItem("userName");
-            localStorage.removeItem("userEmail");
-
-            window.location.href = "/login";
+            await handleUnauthorizedResponse();
         }
 
         const msg = data.message || `API error (${res.status})`;
@@ -42,7 +39,7 @@ export async function getCoverageSummary(snapshotId, type = null) {
     const url = type
         ? `${BASE_URL}/coverage/${snapshotId}/summary?type=${encodeURIComponent(type)}`
         : `${BASE_URL}/coverage/${snapshotId}/summary`;
-    const res = await fetch(
+    const res = await editorAwareFetch(
         url,
         {
             headers: getAuthHeaders(),
@@ -53,7 +50,7 @@ export async function getCoverageSummary(snapshotId, type = null) {
 }
 
 export async function getSystemCoverageSummary(snapshotId) {
-    const res = await fetch(
+    const res = await editorAwareFetch(
         `${BASE_URL}/coverage/${snapshotId}/system/summary`,
         {
             headers: getAuthHeaders(),
@@ -83,7 +80,7 @@ export async function getCoverageFiles(
         params.append("type", type);
     }
 
-    const res = await fetch(
+    const res = await editorAwareFetch(
         `${BASE_URL}/coverage/${snapshotId}/files?${params}`,
         {
             headers: getAuthHeaders(),
@@ -94,7 +91,7 @@ export async function getCoverageFiles(
 }
 
 export async function runSupertestCoverage(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/supertest/run`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/supertest/run`, {
         method: "POST",
         headers: getAuthHeaders(),
     });
@@ -103,7 +100,7 @@ export async function runSupertestCoverage(snapshotId) {
 }
 
 export async function getTestExecution(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/test-execution`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/test-execution`, {
         headers: getAuthHeaders(),
     });
 
@@ -111,7 +108,7 @@ export async function getTestExecution(snapshotId) {
 }
 
 export async function getCoverageFrameworks(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/frameworks`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/frameworks`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -124,12 +121,22 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
         ...(framework ? { framework } : {}),
         ...(executionMode ? { executionMode } : {}),
         ...(isRestart ? { restart: true } : {}),
+        ...(options?.targetEndpoint ? { targetEndpoint: options.targetEndpoint } : {}),
+        ...(Array.isArray(options?.targetEndpoints) && options.targetEndpoints.length > 0
+            ? { targetEndpoints: options.targetEndpoints }
+            : {}),
+        ...(Array.isArray(options?.targetTestNames) && options.targetTestNames.length > 0
+            ? { targetTestNames: options.targetTestNames }
+            : {}),
+        ...(Array.isArray(options?.selectedScenarioIds) && options.selectedScenarioIds.length > 0
+            ? { selectedScenarioIds: options.selectedScenarioIds }
+            : {}),
     };
     const hasBody = Object.keys(bodyPayload).length > 0;
     const url = isRestart
         ? `${BASE_URL}/coverage/${snapshotId}/${coverageType}/run?restart=true`
         : `${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`;
-    const res = await fetch(url, {
+    const res = await editorAwareFetch(url, {
         method: "POST",
         headers: hasBody ? { ...headers, "Content-Type": "application/json" } : headers,
         body: hasBody ? JSON.stringify(bodyPayload) : undefined,
@@ -138,7 +145,7 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
 }
 
 export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
-    const response = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence`, {headers:getAuthHeaders(),signal});
+    const response = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence`, {headers:getAuthHeaders(),signal});
     if (!response.ok) throw new Error('Evidence could not be loaded');
     return response.blob();
 }
@@ -153,7 +160,7 @@ export async function installMissingDependency(snapshotId, packageName, isDev = 
 }
 
 export async function getFileCoverage(snapshotId, filePath) {
-    const res = await fetch(
+    const res = await editorAwareFetch(
         `${BASE_URL}/coverage/${snapshotId}/file-coverage?filePath=${encodeURIComponent(filePath)}`,
         {
             headers: getAuthHeaders(),
@@ -163,7 +170,7 @@ export async function getFileCoverage(snapshotId, filePath) {
 }
 
 export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ filePath, projectId, ...(framework ? { framework } : {}) }),
@@ -195,7 +202,7 @@ export async function getCoverageFunctions(
         params.append("type", type);
     }
 
-    const res = await fetch(
+    const res = await editorAwareFetch(
         `${BASE_URL}/coverage/${snapshotId}/functions?${params}`,
         {
             headers: getAuthHeaders(),
@@ -206,7 +213,7 @@ export async function getCoverageFunctions(
 }
 
 export async function getCoverageTestSuites(snapshotId, type = "unit") {
-    const res = await fetch(
+    const res = await editorAwareFetch(
         `${BASE_URL}/coverage/${snapshotId}/test-suites?type=${encodeURIComponent(type)}`,
         {
             headers: getAuthHeaders(),
@@ -216,15 +223,19 @@ export async function getCoverageTestSuites(snapshotId, type = "unit") {
     return handleResponse(res);
 }
 
-export async function getIntegrationWorkspace(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace`, {
+export async function getIntegrationWorkspace(snapshotId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.skipAutoScan) params.set("skipAutoScan", "true");
+    if (options.scan) params.set("scan", "true");
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace${qs}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
 }
 
 export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
@@ -233,7 +244,7 @@ export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggesti
 }
 
 export async function saveAiSystemTest(snapshotId, options = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/save-ai-test`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/system/save-ai-test`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(options),
@@ -242,7 +253,7 @@ export async function saveAiSystemTest(snapshotId, options = {}) {
 }
 
 export async function getIntegrationHistory(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/history`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/history`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -251,7 +262,7 @@ export async function getIntegrationHistory(snapshotId) {
 export async function getIntegrationVersionHistory(snapshotId, options = {}) {
     const params = new URLSearchParams(options);
     const queryString = params.toString() ? `?${params.toString()}` : "";
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/version-history${queryString}`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/version-history${queryString}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -259,7 +270,7 @@ export async function getIntegrationVersionHistory(snapshotId, options = {}) {
 
 export async function compareIntegrationVersions(snapshotId, versionAId, versionBId, type = "ANALYZE") {
     const params = new URLSearchParams({ versionAId, versionBId, type });
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/version-compare?${params.toString()}`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/version-compare?${params.toString()}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -267,7 +278,7 @@ export async function compareIntegrationVersions(snapshotId, versionAId, version
 
 export async function getHistoricalWorkspaceVersion(snapshotId, versionId, type = "ANALYZE") {
     const params = new URLSearchParams({ type });
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/version/${versionId}?${params.toString()}`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/version/${versionId}?${params.toString()}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -280,7 +291,7 @@ export async function getBeforeAfterComparison(projectId, options = {}) {
     }
     const params = new URLSearchParams(cleanOptions);
     const queryString = params.toString() ? `?${params.toString()}` : "";
-    const res = await fetch(`${BASE_URL}/coverage/project/${projectId}/comparison${queryString}`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/project/${projectId}/comparison${queryString}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -288,7 +299,7 @@ export async function getBeforeAfterComparison(projectId, options = {}) {
 
 export async function getSourceFileDiff(projectId, options = {}) {
     const params = new URLSearchParams(options);
-    const res = await fetch(`${BASE_URL}/coverage/project/${projectId}/comparison/source-file?${params.toString()}`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/project/${projectId}/comparison/source-file?${params.toString()}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -297,14 +308,14 @@ export async function getSourceFileDiff(projectId, options = {}) {
 
 
 export async function getIntegrationDetection(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/frameworks`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/frameworks`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
 }
 
 export async function installIntegrationDependencies(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/install-dependencies`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/install-dependencies`, {
         method: "POST",
         headers: getAuthHeaders(),
     });
@@ -312,7 +323,7 @@ export async function installIntegrationDependencies(snapshotId) {
 }
 
 export async function generateIntegrationTests(snapshotId, { framework = "supertest", targetEndpoints = [], force = false } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/generate-tests`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/generate-tests`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ framework, targetEndpoints, force }),
@@ -321,7 +332,7 @@ export async function generateIntegrationTests(snapshotId, { framework = "supert
 }
 
 export async function regenerateIntegrationScenario(snapshotId, { scenarioId, framework, failureContext } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/regenerate-scenario`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/regenerate-scenario`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ scenarioId, framework, failureContext }),
@@ -330,7 +341,7 @@ export async function regenerateIntegrationScenario(snapshotId, { scenarioId, fr
 }
 
 export async function updateIntegrationScenario(snapshotId, scenarioId, updateData = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/scenarios/${scenarioId}`, {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/scenarios/${scenarioId}`, {
         method: "PUT",
         headers: getAuthHeaders(),
         body: JSON.stringify(updateData),
@@ -338,17 +349,21 @@ export async function updateIntegrationScenario(snapshotId, scenarioId, updateDa
     return handleResponse(res);
 }
 
-export async function applyIntegrationTests(snapshotId, { testIds = [], targetFilePath = "", fileName = "" } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/apply-tests`, {
+export async function applyIntegrationTests(snapshotId, { testIds = [], selectedScenarios = [], targetFilePath = "", fileName = "" } = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/apply-tests`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ testIds, targetFilePath, fileName }),
+        body: JSON.stringify({ testIds, selectedScenarios, targetFilePath, fileName }),
     });
     return handleResponse(res);
 }
 
-export async function getUnifiedQualityDashboard(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unified-dashboard`, {
+export async function getUnifiedQualityDashboard(snapshotId, options = {}) {
+    const isRefresh = Boolean(options?.refresh || options?.bypassCache);
+    const url = isRefresh
+        ? `${BASE_URL}/coverage/${snapshotId}/unified-dashboard?refresh=true`
+        : `${BASE_URL}/coverage/${snapshotId}/unified-dashboard`;
+    const res = await editorAwareFetch(url, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
@@ -364,3 +379,26 @@ export async function getUnifiedTestRunInspection(snapshotId, runId) {
     return handleResponse(res);
 }
 
+export async function getSuitesReadiness(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suites-readiness`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function approveIntegrationScenarios(snapshotId, { approvedTestIds = [], approveAll = false } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/approve`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ approvedTestIds, approveAll }),
+    });
+    return handleResponse(res);
+}
+
+export async function confirmBatchSystemScenarios(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/confirm-batch`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}

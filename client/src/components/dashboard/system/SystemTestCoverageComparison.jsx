@@ -1,4 +1,5 @@
 const labels = { lines: 'Lines', branches: 'Branches', functions: 'Functions', statements: 'Statements' };
+const bar = (value, color) => <div className="ml-auto mt-1 h-1 w-20 overflow-hidden rounded bg-[var(--color-surface-secondary)]" aria-hidden="true"><div style={{width:`${Number.isFinite(value) ? Math.max(0,Math.min(100,value)) : 0}%`,background:color}} className="h-full" /></div>;
 const percentage = value => Number.isFinite(value) ? `${value.toFixed(2)}%` : 'Not measured';
 
 export default function SystemTestCoverageComparison({ changes }) {
@@ -13,7 +14,7 @@ export default function SystemTestCoverageComparison({ changes }) {
         <tbody>{Object.entries(labels).filter(([metric]) => metrics[metric]).map(([metric, label]) => {
           const value = metrics[metric];
           const delta = value.percentagePoints;
-          return <tr key={metric} className="border-t border-[var(--color-border)]"><th scope="row" className="py-2 text-left font-normal">{label}</th><td className="py-2 text-right">{percentage(value.before)}</td><td className="py-2 text-right">{percentage(value.after)}</td><td className={`py-2 pl-3 text-right ${delta > 0 ? 'text-[var(--color-success)]' : delta < 0 ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-muted)]'}`}>{Number.isFinite(delta) ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}` : '—'}</td></tr>;
+          return <tr key={metric} className="border-t border-[var(--color-border)]"><th scope="row" className="py-2 text-left font-normal">{label}</th><td className="py-2 text-right">{percentage(value.before)}{bar(value.before,'#94a3b8')}</td><td className="py-2 text-right">{percentage(value.after)}{bar(value.after,'#059669')}</td><td className={`py-2 pl-3 text-right ${delta > 0 ? 'text-[var(--color-success)]' : delta < 0 ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-muted)]'}`}>{Number.isFinite(delta) ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)}` : '—'}</td></tr>;
         })}</tbody>
       </table>
     </div>)}</div>

@@ -1,7 +1,7 @@
 import { installIntegrationDependenciesService,detectIntegrationFrameworksService } from '../services/integrationApiService.service.js';
 import { requestedAiModel } from '../utils/selectedAiModel.js';
 import fs from "fs";
-import { parseCreateProject } from "../validators/project.validation.js";
+import { parseCreateProject, parseUpdateProjectLifecycleStatus } from "../validators/project.validation.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
 import { processRunTestsJob } from "../services/runTestsJob.service.js";
 import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.service.js";
@@ -9,7 +9,8 @@ import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionP
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
-import { createAiSuggestJob } from "../services/job.service.js";
+import { createAiSuggestJob, createPlaywrightSystemCoverageJob } from "../services/job.service.js";
+import { detectAndSaveProject } from "../services/playwrightDetection.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import {
   generateText,
@@ -47,6 +48,8 @@ import {
   deleteProjectEntry,
   createProjectCheckpoint,
   restoreProjectCheckpoint,
+  activateProjectSnapshot,
+  updateProjectLifecycleStatus,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { getArchitectureAiSummary } from "../services/architectureAiSummary.service.js";
@@ -190,10 +193,14 @@ class ProjectController {
           rootDir: p.rootDir,
           jestConfigPath: p.jestConfigPath,
           storageBasePath: p.storageBasePath,
+          lifecycleStatus: p.lifecycleStatus || "NOT_STARTED",
+          lifecycleUpdatedAt: p.lifecycleUpdatedAt || p.updatedAt,
+          isPinned: Boolean(p.isPinned),
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
           snapshotCount: p._count.snapshots,
           latestSnapshotId: p.snapshots?.[0]?.id || null,
+          activeSnapshotId: p.activeSnapshotId || p.snapshots?.[0]?.id || null,
         })),
       });
     } catch (error) {
@@ -225,6 +232,46 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to get project",
+      });
+    }
+  }
+
+  /**
+   * PATCH /projects/:id/status
+   */
+  async updateProjectStatus(req, res) {
+    try {
+      const { id } = req.params;
+      const validation = parseUpdateProjectLifecycleStatus(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error.message,
+        });
+      }
+
+      const updated = await updateProjectLifecycleStatus({
+        projectId: id,
+        userId: req.user.id,
+        ...validation.data,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      console.error("[updateProjectStatus] Error:", error);
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message,
+          code: error.code,
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update project status",
       });
     }
   }
@@ -282,6 +329,32 @@ class ProjectController {
   /**
    * POST /projects/:id/snapshots/:snapshotId/restore
    */
+    /**
+   * POST /projects/:id/snapshots/:snapshotId/activate
+   */
+  async activateSnapshot(req, res) {
+    try {
+      const { snapshotId } = req.params;
+      const data = await activateProjectSnapshot({
+        projectId: req.params.id,
+        snapshotId,
+        userId: req.user.id,
+      });
+      return res.status(200).json(data);
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
+      }
+      console.error("[activateSnapshot] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to activate snapshot",
+      });
+    }
+  }
+
   async restoreSnapshot(req, res) {
     try {
       const { snapshotId } = req.params;
@@ -524,14 +597,26 @@ class ProjectController {
 
   async deleteEntry(req, res) {
     try {
+      const filePath = req.query.path || req.body?.path;
+      const snapshotId = req.query.snapshotId || req.body?.snapshotId;
+      const expectedWorkspaceRevision = req.query.expectedWorkspaceRevision !== undefined
+        ? Number(req.query.expectedWorkspaceRevision)
+        : req.body?.expectedWorkspaceRevision;
+      const expectedVersion = req.query.expectedVersion
+        ? (typeof req.query.expectedVersion === "string" ? JSON.parse(req.query.expectedVersion) : req.query.expectedVersion)
+        : req.body?.expectedVersion;
+      const requestId = req.query.requestId || req.body?.requestId;
+
       const result = await deleteProjectEntry(
         req.params.id,
         req.user.id,
-        req.query.path,
-          { snapshotId: req.query.snapshotId,
-            expectedWorkspaceRevision: req.query.expectedWorkspaceRevision === undefined ? undefined : Number(req.query.expectedWorkspaceRevision),
-            expectedVersion: req.query.expectedVersion ? JSON.parse(req.query.expectedVersion) : undefined,
-            requestId: req.query.requestId },
+        filePath,
+        {
+          snapshotId,
+          expectedWorkspaceRevision,
+          expectedVersion,
+          requestId,
+        },
       );
       return res.status(200).json({ success: true, data: result });
     } catch (error) {
@@ -1794,7 +1879,7 @@ class ProjectController {
   async detectPlaywrightFramework(req, res, next) {
     try {
       const { id } = req.params;
-      const result = await detectAndSavePlaywright(id);
+      const result = await detectAndSaveProject(id);
       res.json({
         success: true,
         message: "Playwright detection completed",

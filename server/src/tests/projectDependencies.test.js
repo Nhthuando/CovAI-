@@ -13,6 +13,22 @@ const fixture=(pkg={scripts:{dev:'vite'},devDependencies:{vite:'7'}})=>{
 };
 const tooling=root=>{fs.mkdirSync(path.join(root,'node_modules/vite'),{recursive:true});fs.writeFileSync(path.join(root,'node_modules/vite/package.json'),'{"name":"vite","type":"module","main":"index.js"}');fs.writeFileSync(path.join(root,'node_modules/vite/index.js'),'throw new Error("resolution must not execute application packages");');};
 afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+it('allows a queued preparation to recover after an earlier caller fails',async()=>{
+    const directory=fixture({});
+    let failFirst;
+    let markStarted;
+    const started=new Promise(resolve=>{markStarted=resolve;});
+    const firstRun=jest.fn(()=>new Promise(resolve=>{failFirst=()=>resolve({success:false,stderr:'temporary registry failure'});markStarted();}));
+    const secondRun=jest.fn(async()=>({success:true}));
+    const first=prepareProjectDependencies({directory,dependencies:{run:firstRun,verify:async()=>{}}});
+    const firstFailure=expect(first).rejects.toThrow('temporary registry failure');
+    const second=prepareProjectDependencies({directory,dependencies:{run:secondRun,verify:async()=>{}}});
+    await started;
+    failFirst();
+    await firstFailure;
+    await expect(second).resolves.toMatchObject({directory});
+    expect(secondRun).toHaveBeenCalledTimes(1);
+});
 it('copies job-local prepared dependencies into independent runs without sharing mutable files',async()=>{
     const first=fixture(),second=fixture();
     for(const root of [first,second])fs.writeFileSync(path.join(root,'package-lock.json'),'{}');
@@ -129,4 +145,19 @@ it('serializes three simultaneous preparations sharing one workspace receipt',as
     expect(run).toHaveBeenCalledTimes(1);
     expect(maximum).toBe(1);
     expect(verify).toHaveBeenCalledTimes(3);
+});
+it('accepts installed CLI-only tooling without an importable entry point (react-scripts)',async()=>{
+    const directory=fixture({scripts:{start:'react-scripts start'},dependencies:{'react-scripts':'5'}});
+    fs.mkdirSync(path.join(directory,'node_modules/react-scripts/bin'),{recursive:true});
+    fs.writeFileSync(path.join(directory,'node_modules/react-scripts/package.json'),'{"name":"react-scripts","bin":{"react-scripts":"./bin/react-scripts.js"}}');
+    await expect(verifyRuntimeTooling({directory,repositoryRoot:directory,pkg:{dependencies:{'react-scripts':'5'}}})).resolves.toBeUndefined();
+});
+it('finds hoisted workspace tooling and reports only the packages that are really missing',async()=>{
+    const root=fixture({workspaces:['apps/*']});const app=path.join(root,'apps/web');fs.mkdirSync(app,{recursive:true});
+    tooling(root);
+    await expect(verifyRuntimeTooling({directory:app,repositoryRoot:root,pkg:{devDependencies:{vite:'7',nodemon:'3'}}})).rejects.toThrow('Application dependencies are incomplete: nodemon.');
+});
+it('does not borrow tooling installed above the repository root',async()=>{
+    const outer=fixture({});tooling(outer);const repo=path.join(outer,'repo');fs.mkdirSync(repo);
+    await expect(verifyRuntimeTooling({directory:repo,repositoryRoot:repo,pkg:{devDependencies:{vite:'7'}}})).rejects.toMatchObject({code:'AUT_DEPENDENCY_MISSING'});
 });

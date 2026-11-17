@@ -8,7 +8,7 @@ import { publishProjectEvent } from './projectEvent.service.js';
 const hash = token => createHash('sha256').update(token).digest('hex');
 const expiry = () => new Date(Date.now() + 7 * 24 * 3600 * 1000);
 const projection = {
-    id: true, canonicalEmail: true, role: true, status: true, revision: true,
+    id: true, canonicalEmail: true, role: true, disciplineRole: true, status: true, revision: true,
     expiresAt: true, createdAt: true, invitedBy: { select: { name: true } },
     deliveries: { orderBy: { createdAt: 'desc' }, take: 1, select: { status: true, lastErrorCode: true, attempts: true } },
 };
@@ -29,13 +29,13 @@ export async function listProjectInvitations({ projectId, userId, cursor, limit 
     ]);
     return { invitations: invitations.slice(0, limit).map(publicInvitation), total, nextCursor: invitations.length > limit ? invitations[limit - 1].id : null };
 }
-export async function createProjectInvitation({ projectId, userId, email, role, requestId }) {
+export async function createProjectInvitation({ projectId, userId, email, role, disciplineRole = null, requestId }) {
     const canonicalEmail = email.trim().toLowerCase();
     return withProjectGuard({ projectId, userId, capability: 'members.manage' }, async (tx, access) => {
         if (requestId) {
             const previous = await tx.projectInvitation.findUnique({ where: { projectId_invitedByUserId_requestId: { projectId, invitedByUserId: userId, requestId } }, select: projection });
             if (previous) {
-                if (previous.canonicalEmail !== canonicalEmail || previous.role !== role) throw new ServiceError('Request ID reused with different invitation', 409, 'IDEMPOTENCY_CONFLICT');
+                if (previous.canonicalEmail !== canonicalEmail || previous.role !== role || (previous.disciplineRole ?? null) !== disciplineRole) throw new ServiceError('Request ID reused with different invitation', 409, 'IDEMPOTENCY_CONFLICT');
                 return publicInvitation(previous);
             }
         }
@@ -45,7 +45,7 @@ export async function createProjectInvitation({ projectId, userId, email, role, 
         await tx.projectInvitation.updateMany({ where: { projectId, canonicalEmail, status: 'PENDING', expiresAt: { lte: new Date() } }, data: { status: 'EXPIRED', revision: { increment: 1 } } });
         if (await tx.projectInvitation.findFirst({ where: { projectId, canonicalEmail, status: 'PENDING' } })) throw new ServiceError('An invitation is already pending for this email', 409, 'INVITATION_PENDING');
         const token = randomBytes(32).toString('hex');
-        const row = await tx.projectInvitation.create({ data: { projectId, canonicalEmail, role, tokenHash: hash(token), expiresAt: expiry(), invitedByUserId: userId, requestId }, select: projection });
+        const row = await tx.projectInvitation.create({ data: { projectId, canonicalEmail, role, disciplineRole, tokenHash: hash(token), expiresAt: expiry(), invitedByUserId: userId, requestId }, select: projection });
         await delivery(tx, row, token);
         await publishProjectEvent({ tx, projectId, actorId: userId, type: 'invitation.changed', resourceId: row.id });
         return publicInvitation(row);
@@ -79,7 +79,7 @@ async function matchedInvitation({ token, userId, db = prisma }) {
 }
 export async function inspectProjectInvitation({ token, userId }) {
     const row = await matchedInvitation({ token, userId });
-    return { id: row.id, projectId: row.projectId, projectName: row.project.name, project: row.project, role: row.role, email: row.canonicalEmail, status: row.status, expiresAt: row.expiresAt, invitedBy: row.invitedBy };
+    return { id: row.id, projectId: row.projectId, projectName: row.project.name, project: row.project, role: row.role, disciplineRole: row.disciplineRole, email: row.canonicalEmail, status: row.status, expiresAt: row.expiresAt, invitedBy: row.invitedBy };
 }
 export async function consumeProjectInvitation({ token, userId, decline = false }) {
     const preview = await matchedInvitation({ token, userId });
@@ -93,7 +93,7 @@ export async function consumeProjectInvitation({ token, userId, decline = false 
             return { projectId: row.projectId, role: active.role, accepted: true };
         }
         if (!decline) await tx.projectMember.upsert({ where: { projectId_userId: { projectId: row.projectId, userId } },
-            create: { projectId: row.projectId, userId, role: row.role, addedByUserId: row.invitedByUserId }, update: {} });
+            create: { projectId: row.projectId, userId, role: row.role, disciplineRole: row.disciplineRole, addedByUserId: row.invitedByUserId }, update: {} });
         await tx.projectInvitation.update({ where: { id: row.id }, data: { status: decline ? 'DECLINED' : 'ACCEPTED', acceptedByUserId: userId, acceptedAt: new Date(), revision: { increment: 1 } } });
         await tx.invitationDelivery.updateMany({ where: { invitationId: row.id, status: { in: ['QUEUED', 'FAILED', 'SENDING'] } }, data: { status: 'CANCELED', encryptedPayload: null } });
         const project = await tx.project.update({ where: { id: row.projectId }, data: { accessRevision: { increment: 1 } } });

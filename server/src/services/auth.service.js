@@ -5,12 +5,13 @@ import bcrypt from "bcryptjs";
 const JWT_TTL = "15m";
 
 export const register = async (name, email, password) => {
-  const existEmail = await prisma.user.findUnique({ where: { email } });
+  const normalizedEmail = email.trim().toLowerCase();
+  const existEmail = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   if (existEmail) throw new Error("Account already exists!");
 
   const hashedPass = await bcrypt.hash(password, 10);
   const user = await prisma.user.create({
-    data: { email, passwordHash: hashedPass, name },
+    data: { email: normalizedEmail, passwordHash: hashedPass, name },
   });
 
   const accessToken = jwt.sign(
@@ -35,12 +36,13 @@ export const register = async (name, email, password) => {
     accessToken,
     refreshToken,
     userName: name,
-    userEmail: email,
+    userEmail: normalizedEmail,
   };
 };
 
 export const login = async (email, password) => {
-  const user = await prisma.user.findUnique({ where: { email } });
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   if (!user) throw new Error("Incorrect email or password!");
 
   const checkPass = await bcrypt.compare(password, user.passwordHash);

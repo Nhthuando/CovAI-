@@ -1,3 +1,4 @@
+import { editorEnabled } from '../../../shared/editorProtocol.js';
 import { resolveProjectAccess } from '../services/projectAccess.service.js';
 import { listProjectMembers, changeProjectMemberRole, removeProjectMember, leaveProject } from '../services/projectMember.service.js';
 import { listProjectInvitations, createProjectInvitation, changeProjectInvitation, inspectProjectInvitation, consumeProjectInvitation } from '../services/projectInvitation.service.js';
@@ -23,8 +24,8 @@ const handle = (operation, status = 200) => async (req, res) => {
             ...(error.details ? { details: error.details } : {}) });
     }
 };
-export const access = handle(req => resolveProjectAccess({ ...actor(req), capability: 'project.read' }).then(({ project, role, capabilities }) => ({
-    role, capabilities, project: { id: project.id, name: project.name, ownerId: project.ownerId, accessRevision: project.accessRevision, workspaceRevision: project.workspaceRevision },
+export const access = handle(req => resolveProjectAccess({ ...actor(req), capability: 'project.read' }).then(({ project, role, disciplineRole, capabilities }) => ({
+    role, disciplineRole, capabilities, features: { liveEditing: editorEnabled() }, project: { id: project.id, name: project.name, ownerId: project.ownerId, accessRevision: project.accessRevision, workspaceRevision: project.workspaceRevision },
 })));
 export const members = handle(req => listProjectMembers({ ...actor(req), ...parse(pageSchema, req.query) }));
 export const changeMember = handle(req => changeProjectMemberRole({ ...actor(req), memberId: req.params.memberId, ...parse(memberChangeSchema, req.body) }));

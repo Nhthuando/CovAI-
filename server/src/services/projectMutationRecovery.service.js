@@ -110,8 +110,7 @@ export const recoverProjectMutationMarkers = async ({ tx, project, snapshot, roo
             }
         } else if (marker.kind === 'CREATE_FOLDER') {
             if (actualExists) {
-                if ((await fs.readdir(target)).length) throw projectFileError('RECOVERY_REQUIRED','Created folder changed after interruption');
-                await fs.rmdir(target);
+                await fs.rm(target, { recursive: true, force: true });
             }
         } else if (marker.kind === 'RENAME_ENTRY') {
             const destination = await resolveContainedProjectPath(containedSnapshot,marker.newPath);

@@ -92,6 +92,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     const testArgs = normalizedFiles.map(quoteForShell).join(" ");
     const usesEsm = shouldUseNodeJestDirect(resolvedRoot);
     const nodePathCandidates = [
+        "/app/node_modules",
         path.join(resolvedRoot, "node_modules"),
         path.join(resolvedRoot, "server", "node_modules"),
         path.join(resolvedRoot, "backend", "node_modules"),
@@ -144,6 +145,9 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
 
     const relCovDir = path.relative(resolvedRoot, coverageDir).replace(/\\/g, "/") || "coverage/integration";
     let jestCmd = `${jestBinary} --runInBand --testEnvironment=node --coverage --coverageDirectory="${relCovDir}" --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000${setupArgs}`;
+    if (options?.testNamePattern && typeof options.testNamePattern === "string" && options.testNamePattern.trim()) {
+        jestCmd += ` --testNamePattern=${quoteForShell(options.testNamePattern.trim())}`;
+    }
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {

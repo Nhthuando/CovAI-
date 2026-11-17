@@ -57,12 +57,13 @@ export const listProjectJobs = async (req, res) => {
 
     const projectAccess = await resolveProjectAccess({projectId,userId,capability:'project.read'});
 
-    await throttledCleanup(userId);
+    void throttledCleanup(userId).catch(() => {});
 
     const jobs = await withDbRetry(() =>
       prisma.job.findMany({
         where: { projectId: projectId, ...(projectAccess.role !== 'OWNER' ? { type: { notIn: ['AI_EVALUATION', 'AI_EVALUATION_PREPARE'] } } : {}) },
         orderBy: { createdAt: "desc" },
+        take: 50,
       })
     );
 
@@ -122,6 +123,7 @@ export const getJobDetail = async (req, res) => {
           errorMessage: true,
           startedAt: true,
           finishedAt: true,
+          computeTimeMs: true,
           userId: true,
           projectId: true,
           logs: true,

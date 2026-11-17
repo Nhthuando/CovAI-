@@ -1,6 +1,7 @@
 import { z } from "zod";
 import prisma from "../config/prisma.js";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { hasCredential } from "../validators/aiContext.validation.js";
 import { memoryFingerprint } from "./projectMemory.service.js";
 import { boundHistory, messageOrder } from "./chatContext.service.js";
@@ -14,7 +15,8 @@ export const parseMemoryExtraction = (text, userContent) => {
 };
 
 export const processChatContextMaintenance = async (data, dependencies = {}) => {
-    const generate = dependencies.generate || generateText;
+    const rawGenerate = dependencies.generate || generateText;
+    const generate = (...args) => withGeminiChannel("CHATBOX", () => rawGenerate(...args));
     const { projectId, userId, sessionId, userMessageId } = data;
     let failed = false;
     try {

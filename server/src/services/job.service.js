@@ -9,11 +9,17 @@ import prisma from "../config/prisma.js";
 import { admitProjectOperation } from "./projectOperation.service.js";
 import { operationSnapshot, currentProjectOperation, withOperationPublishGuard, stagePreparedPublication, deferPreparedCommit } from "./projectOperationWorkspace.service.js";
 import { resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import { assertEditorSnapshotChangeAllowed } from './projectEditorBridge.service.js';
 import { deliverProjectEvent, publishProjectEvent } from "./projectEvent.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { notificationService } from "./notification.service.js";
 import { reuseSnapshotHistory } from "./snapshotReuse.service.js";
 import { abortJob, isJobCanceled } from "./jobCancellation.service.js";
+import {
+  emitPortfolioRunStarted,
+  emitPortfolioRunProgress,
+  emitPortfolioRunCompleted,
+} from "../realtime/portfolioSocket.emitter.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -116,7 +122,7 @@ export const cleanupStaleJobsForProject = async (projectId, client = prisma) => 
       projectId,
       status: { in: ["QUEUED", "RUNNING"] },
     },
-    select: { id: true, type: true, status: true, startedAt: true, createdAt: true, updatedAt: true },
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
   });
 
   const now = Date.now();
@@ -184,7 +190,7 @@ export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
   };
   const activeJobs = await client.job.findMany({
     where,
-    select: { id: true, type: true, status: true, startedAt: true, createdAt: true, updatedAt: true },
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
   });
 
   const now = Date.now();
@@ -388,7 +394,7 @@ export const createSnapshotIngestJob = async ({
     return { reused: true, result: cached };
   }
 
-  return prisma.$transaction(async (tx) => {
+  return withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx) => {
     const [project, user] = await Promise.all([
       tx.project.findUnique({ where: { id: projectId }, select: { id: true } }),
       tx.user.findUnique({ where: { id: userId }, select: { id: true } }),
@@ -398,10 +404,12 @@ export const createSnapshotIngestJob = async ({
     if (!user) throw new ServiceError("User not found", 404);
 
     await assertNoActiveJob(projectId, "INGEST", tx);
+    await assertEditorSnapshotChangeAllowed(tx, projectId);
 
     const snapshot = await tx.projectSnapshot.create({
       data: { projectId, source: "ZIP", checksum, storagePath },
     });
+    await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
 
     const job = await tx.job.create({
       data: {
@@ -463,6 +471,52 @@ export const createIngestJobForSnapshot = async ({
   return job;
 };
 
+const TEST_AND_AI_JOB_TYPES = new Set([
+  'RUN_TESTS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'SUPERTEST_COVERAGE',
+  'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT', 'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION',
+  'AI_TESTS', 'AI_SUGGEST', 'AI_INTEGRATION_RUN', 'AI_SYSTEM_GENERATE', 'SYSTEM_COLD_START_GENERATE',
+  'CYPRESS_SYSTEM_TEST', 'CYPRESS_SYSTEM_COVERAGE', 'PLAYWRIGHT_SYSTEM_TEST', 'PLAYWRIGHT_SYSTEM_COVERAGE'
+]);
+
+export const autoTransitionProjectToDoingIfNeeded = async (projectId) => {
+  if (!projectId) return;
+  try {
+    const proj = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, lifecycleStatus: true, ownerId: true },
+    });
+    if (proj && proj.lifecycleStatus === 'NOT_STARTED') {
+      const updateResult = await prisma.project.updateMany({
+        where: { id: projectId, lifecycleStatus: 'NOT_STARTED' },
+        data: { lifecycleStatus: 'DOING', lifecycleUpdatedAt: new Date() },
+      });
+      if (updateResult.count > 0) {
+        try {
+          const { clearPortfolioCache } = await import('./portfolioDashboard.service.js');
+          clearPortfolioCache(proj.ownerId);
+        } catch (_) {}
+        try {
+          const { clearUnifiedDashboardCache } = await import('./unifiedQualityDashboard.service.js');
+          clearUnifiedDashboardCache();
+        } catch (_) {}
+        try {
+          const { emitPortfolioProjectUpdated } = await import('../realtime/portfolioSocket.emitter.js');
+          emitPortfolioProjectUpdated({
+            projectId,
+            userId: proj.ownerId,
+            lifecycleStatus: 'DOING',
+            action: 'AUTO_TRANSITION',
+          });
+        } catch (_) {}
+        try {
+          const { emitDashboardMetricsUpdated } = await import('./dashboardEvents.service.js');
+          emitDashboardMetricsUpdated(projectId, { reason: 'project-status-updated', lifecycleStatus: 'DOING' }).catch(() => {});
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+};
+
 export const createSnapshotJob = async ({
   projectId,
   snapshotId,
@@ -481,6 +535,10 @@ export const createSnapshotJob = async ({
       `Invalid job type. Must be one of: ${JOB_TYPES.join(", ")}`,
       400,
     );
+  }
+
+  if (TEST_AND_AI_JOB_TYPES.has(type)) {
+    void autoTransitionProjectToDoingIfNeeded(projectId);
   }
 
   if (['RUN_TESTS','ANALYSIS','AI_TESTS','AI_SUGGEST','SUPERTEST_COVERAGE','INSTALL_DEPS','RUN_VITEST_TESTS','VITEST_COVERAGE','BUILD_CFG','PERFORMANCE_ANALYSIS','CODE_HYGIENE','QUALITY_ANALYSIS','SECURITY_ANALYSIS','SYSTEM_TEST_ANALYSIS','SYSTEM_TEST_ASSESSMENT','SYSTEM_TEST_IMPROVEMENT','SYSTEM_TEST_MUTATION'].includes(type)) {
@@ -559,7 +617,36 @@ export const updateJobProgress = async (jobId, progress) => {
 
   await addJobLog(jobId, "INFO", `Progress ${clamped}%`);
   await emitSharedJobState(job);
+  try {
+    emitPortfolioRunProgress({
+      projectId: job.projectId,
+      snapshotId: job.snapshotId,
+      jobId: job.id,
+      jobType: job.type,
+      progress: clamped,
+      userId: job.userId,
+    });
+  } catch (_) {}
   return job;
+};
+
+export const invalidateAllDashboardCaches = async (snapshotId, userId) => {
+  try {
+    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
+    if (snapshotId) clearUnifiedDashboardCache(snapshotId);
+  } catch (_) {}
+  try {
+    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(userId || null);
+  } catch (_) {}
+  try {
+    const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+    if (snapshotId) invalidateCoverageCache(snapshotId);
+  } catch (_) {}
+  try {
+    const { invalidateEndpointCache } = await import("./integrationWorkspace.service.js");
+    if (snapshotId) invalidateEndpointCache(snapshotId);
+  } catch (_) {}
 };
 
 export const markJobRunning = async (jobId) => {
@@ -581,6 +668,21 @@ export const markJobRunning = async (jobId) => {
     data: { status: "RUNNING", startedAt: new Date() },
   });
 
+  if (TEST_AND_AI_JOB_TYPES.has(job.type)) {
+    await autoTransitionProjectToDoingIfNeeded(job.projectId);
+  }
+
+  try {
+    emitPortfolioRunStarted({
+      projectId: job.projectId,
+      snapshotId: job.snapshotId,
+      jobId: job.id,
+      jobType: job.type,
+      userId: job.userId,
+      startedAt: job.startedAt,
+    });
+  } catch (_) {}
+
   await addJobLog(jobId, "INFO", "Job started");
   return job;
 };
@@ -591,13 +693,42 @@ export const markJobSuccess = async (jobId,resultJson) => {
     await stagePreparedPublication(async tx => {
       const completed = await markJobSuccessInternal(jobId,resultJson,tx,false);
       deferPreparedCommit(async()=>{
-        await notificationService.createJobFinishedNotification(jobId);
+        await invalidateAllDashboardCaches(current?.snapshotId, current?.userId);
+        await emitSharedJobState(completed || { ...current, status: 'SUCCESS', progress: 100 });
+        try {
+          emitPortfolioRunCompleted({
+            projectId: current?.projectId,
+            snapshotId: current?.snapshotId,
+            jobId: current?.id || jobId,
+            jobType: current?.type,
+            status: "SUCCESS",
+            durationMs: completed?.computeTimeMs || 0,
+            userId: current?.userId,
+          });
+        } catch (_) {}
+        try {
+          await notificationService.createJobFinishedNotification(jobId);
+        } catch (error) {
+          console.error(`[job.service] Notification failed for job ${jobId}:`, error);
+        }
       });
     });
     return {...current,status:'SUCCESS'};
   }
   const job = await withOperationPublishGuard(tx => markJobSuccessInternal(jobId,resultJson,tx,false));
+  await invalidateAllDashboardCaches(job?.snapshotId, job?.userId);
   await emitSharedJobState(job);
+  try {
+    emitPortfolioRunCompleted({
+      projectId: job.projectId,
+      snapshotId: job.snapshotId,
+      jobId: job.id,
+      jobType: job.type,
+      status: "SUCCESS",
+      durationMs: job.computeTimeMs || 0,
+      userId: job.userId,
+    });
+  } catch (_) {}
   try { await notificationService.createJobFinishedNotification(jobId); }
   catch (error) { console.error(`[job.service] Notification failed for job ${jobId}:`,error); }
   return job;
@@ -686,6 +817,19 @@ export const markJobFailed = async (jobId, error) => {
   });
 
   await addJobLog(job.id, "ERROR", `Job failed: ${normalizedError.message}`);
+  await invalidateAllDashboardCaches(job.snapshotId, job.userId);
+  await emitSharedJobState(job);
+  try {
+    emitPortfolioRunCompleted({
+      projectId: job.projectId,
+      snapshotId: job.snapshotId,
+      jobId: job.id,
+      jobType: job.type,
+      status: "FAILED",
+      durationMs: job.computeTimeMs || 0,
+      userId: job.userId,
+    });
+  } catch (_) {}
   return job;
 };
 
