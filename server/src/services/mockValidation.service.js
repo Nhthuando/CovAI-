@@ -578,17 +578,38 @@ export function validateAndNormalizeMocks({
     }
 
     // 3. Rule 7: Validate the specific function used as a spy assertion.
+    const extractMemberChain = (node) => {
+        if (!node) return null;
+        if (t.isIdentifier(node)) return [node.name];
+        if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+            const prefix = extractMemberChain(node.object);
+            if (!prefix) return null;
+            const propName = node.computed
+                ? (t.isStringLiteral(node.property) ? node.property.value : null)
+                : (t.isIdentifier(node.property) ? node.property.name : null);
+            if (!propName) return null;
+            return [...prefix, propName];
+        }
+        return null;
+    };
+
     const spies = [];
     traverse(ast, {
         CallExpression(p) {
             const { callee, arguments: args } = p.node;
             if (t.isMemberExpression(callee) && t.isIdentifier(callee.object, { name: runnerObjName }) &&
-                t.isIdentifier(callee.property, { name: "spyOn" }) && t.isIdentifier(args[0]) && t.isStringLiteral(args[1])) {
-                const binding = p.scope.getBinding(args[0].name);
+                t.isIdentifier(callee.property, { name: "spyOn" }) && t.isStringLiteral(args[1])) {
+                const targetChain = extractMemberChain(args[0]);
+                if (!targetChain || targetChain.length === 0) return;
+                const rootName = targetChain[0];
+                const binding = p.scope.getBinding(rootName);
                 const hook = p.getFunctionParent()?.parentPath;
                 const hookScope = hook?.isCallExpression() && ["beforeEach", "beforeAll"].includes(hook.node.callee.name)
                     ? hook.scope : null;
-                if (binding) spies.push({ binding, method: args[1].value, scope: p.scope, hookScope });
+                if (binding) {
+                    const fullPath = [...targetChain, args[1].value].join(".");
+                    spies.push({ binding, method: args[1].value, fullPath, scope: p.scope, hookScope });
+                }
             }
         },
     });
@@ -601,14 +622,16 @@ export function validateAndNormalizeMocks({
                 ? callee.object.object : callee.object;
             if (!t.isCallExpression(expectation) || !t.isIdentifier(expectation.callee, { name: "expect" })) return;
             const target = expectation.arguments[0];
-            const object = t.isMemberExpression(target) ? target.object : target;
-            if (!t.isIdentifier(object)) return;
-            const info = testImports.importedBindings.get(object.name);
-            const binding = p.scope.getBinding(object.name);
+            const chain = extractMemberChain(target);
+            if (!chain || chain.length === 0) return;
+            const rootName = chain[0];
+            const info = testImports.importedBindings.get(rootName);
+            const binding = p.scope.getBinding(rootName);
             if (!info?.specifier.startsWith(".") || !binding || mockedModuleKeys.has(info.canonicalKey)) return;
-            const member = t.isMemberExpression(target) && (target.computed ? target.property.value : target.property.name);
-            if (member && spies.some(spy => {
-                if (spy.binding !== binding || spy.method !== member) return false;
+            const fullPath = chain.join(".");
+            const member = chain.length > 1 ? chain.slice(1).join(".") : null;
+            if (chain.length > 1 && spies.some(spy => {
+                if (spy.binding !== binding || spy.fullPath !== fullPath) return false;
                 for (let scope = p.scope; scope; scope = scope.parent) {
                     if (scope === spy.scope || scope === spy.hookScope) return true;
                 }
@@ -621,7 +644,7 @@ export function validateAndNormalizeMocks({
             diagnostics.push({
                 severity: "warning",
                 rule: "UNMOCKED_SPY_ASSERTION",
-                message: `Assertion expects '${object.name}${member ? "." + member : ""}' to have been called, but '${info.specifier}' is not mocked.`,
+                message: `Assertion expects '${rootName}${member ? "." + member : ""}' to have been called, but '${info.specifier}' is not mocked.`,
                 line: p.node.loc?.start?.line,
             });
         },
@@ -767,8 +790,10 @@ export function extractAssertionPropertyRequirements(code = "") {
                     if (key) props.add(key);
                 }
             }
-            // Check expect(x.prop)
-            if (t.isCallExpression(callee.object) && t.isIdentifier(callee.object.callee, { name: "expect" })) {
+            // Check expect(x.prop) — but not spy/mock call assertions such as expect(res.status).toHaveBeenCalledWith(...),
+            // where `status` is a method on a response double rather than a data field the mock must return.
+            if (t.isCallExpression(callee.object) && t.isIdentifier(callee.object.callee, { name: "expect" }) &&
+                !/^(?:toHaveBeenCalled|toHaveBeenLastCalledWith|toHaveBeenNthCalledWith|toHaveReturned|toHaveLastReturnedWith|toHaveNthReturnedWith|toBeCalled|lastCalledWith|nthCalledWith|toReturn)/.test(matcher)) {
                 const expectArg = callee.object.arguments?.[0];
                 if (t.isMemberExpression(expectArg) && t.isIdentifier(expectArg.property) && expectArg.property.name !== "length") {
                     props.add(expectArg.property.name);

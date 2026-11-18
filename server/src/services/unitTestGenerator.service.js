@@ -14,7 +14,8 @@ import { generateText as generateFeatureText } from './gemini.service.js';
 import { withGeminiFeature } from './geminiRouting.service.js';
 const generateText = (...args) => measureUnitTestPhase('ai', () => withGeminiFeature('unit-test', () => generateFeatureText(...args)));
 import { parseJavaScriptCode } from "./babelParser.service.js";
-import { assembleUnitTestCandidate, removeGeneratedNoCheckDirective } from './unitTestChangeSet.service.js';
+import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
+import { assembleUnitTestCandidate, removeGeneratedNoCheckDirective, testContentHash } from './unitTestChangeSet.service.js';
 import { sourceInputContracts } from './unitTestInputContracts.service.js';
 import { assertUnitTestTarget } from './unitTestFilePolicy.service.js';
 import { measureUnitTestPhase } from './unitTestWork.service.js';
@@ -22,11 +23,8 @@ import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service
 import { describeNativeCommonJsDependencies, validateAndNormalizeMocks, validateMockContracts } from "./mockValidation.service.js";
 import { renderNativeCommonJsMockHarness } from './nativeCommonJsMockHarness.service.js';
 import { analyzeDataAccessContracts } from "./dataAccessContractAnalyzer.service.js";
-import { inspectUnitTestQuality } from './unitTestQualityGate.service.js';
-import {
-    assembleUnitTestContext,
-    buildIsolationMockContracts,
-} from "./unitTestContextEngineering.service.js";
+import { inspectUnitTestQuality, proposeVerifiedFrameworkRepair } from './unitTestQualityGate.service.js';
+import { existingTestContractsPreserved } from './unitTestVerification.service.js';
 import {
     computeRelativeImportPath,
     formatLineRanges,
@@ -166,8 +164,36 @@ ${nativeHarnessExample}
   const pathContract =
     "Trace each input through normalization, validation/regex guards and early returns BEFORE choosing a later branch's expected result. An input rejected by an earlier guard cannot test a downstream result-type/error branch. Use an input accepted by all preceding guards, or isolate the real dependency with a supported mock. Never mock the function under test. Derive exact error messages from the reached return statement, not from the test title. Do not invent a passing test or weaken an assertion just to claim coverage of an unreachable branch.";
 
-    const exportedSymbols = unitTestContext?.astMetadata?.exportedSymbolNames || [];
+    const runtimeSymbols = (unitTestContext?.astMetadata?.exportedSymbols || [])
+        .filter(s => s && s.exportKind !== "type" && s.name !== "default");
+    const rawNames = (unitTestContext?.astMetadata?.exportedSymbolNames || []).filter(n => n && n !== "default");
+    const exportedSymbols = runtimeSymbols.length > 0
+        ? Array.from(new Set(runtimeSymbols.map(s => (s.name === "default" ? (s.localName || "defaultExport") : s.name)).filter(Boolean)))
+        : rawNames;
     const exportedSymbolsStr = exportedSymbols.length > 0 ? exportedSymbols.join(", ") : "All exported module members";
+    const defaultRuntimeSym = runtimeSymbols.find(s => s.isDefault);
+    const namedRuntimeSyms = runtimeSymbols.filter(s => !s.isDefault);
+    const isCjsSource = !/^\s*(?:import|export)\s+/m.test(sourceCode || "") && /(?:module\.exports|exports\.)/.test(sourceCode || "");
+    let importExample = `import { ... } from '${cleanImportPath}';`;
+    if (isCjsSource && !isVitest) {
+        if (defaultRuntimeSym && namedRuntimeSyms.length === 0) {
+            importExample = `const ${defaultRuntimeSym.name || "targetModule"} = require('${cleanImportPath}');`;
+        } else if (namedRuntimeSyms.length > 0) {
+            importExample = `const { ${namedRuntimeSyms.slice(0, 4).map(s => s.name).join(", ")} } = require('${cleanImportPath}');`;
+        } else {
+            importExample = `const targetModule = require('${cleanImportPath}');`;
+        }
+    } else {
+        if (defaultRuntimeSym && namedRuntimeSyms.length > 0) {
+            const defAlias = defaultRuntimeSym.name || "defaultExport";
+            importExample = `import ${defAlias}, { ${namedRuntimeSyms.slice(0, 4).map(s => s.name).join(", ")} } from '${cleanImportPath}';`;
+        } else if (defaultRuntimeSym) {
+            const defAlias = defaultRuntimeSym.name || "defaultExport";
+            importExample = `import ${defAlias} from '${cleanImportPath}';`;
+        } else if (namedRuntimeSyms.length > 0) {
+            importExample = `import { ${namedRuntimeSyms.slice(0, 4).map(s => s.name).join(", ")} } from '${cleanImportPath}';`;
+        }
+    }
     const unexportedWarning = unitTestContext?.indirectTesting?.indirectGuidancePrompt || "";
     const mockInstructionsStr = unitTestContext?.mockContracts?.mockInstructions || "";
     const hasPrisma = Boolean(
@@ -199,7 +225,7 @@ ${nativeHarnessExample}
     );
     let mongooseMockDirective = "";
     if (definesMongooseModel(sourceCode)) {
-        mongooseMockDirective = `For schema tests, use real Mongoose Schema and model behavior in memory. Mock only connection and persistence. Construct the document and check validateSync before assertions. A valid document has no validation error. Use the installed version's return contract. Check metadata with Model.schema.path, Model.modelName and Model.collection.name. Do not infer an undeclared default or collection name.
+        mongooseMockDirective = `For schema tests, use real Mongoose Schema and model behavior in memory. Mock only connection and persistence. Construct the document and check validateSync before assertions. A valid document has no validation error (validateSync() returns undefined in Mongoose 7/8). Use 24-character hex strings (e.g. '507f1f77bcf86cd799439011') or new mongoose.Types.ObjectId() for ObjectId fields. Test declared default values by omitting defaulted fields and asserting their resolved defaults. Check error.errors[field] when required or enum constraints are violated. Use the installed version's return contract. Check metadata with Model.schema.path, Model.modelName and Model.collection.name. Do not infer an undeclared default or collection name.
 Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
     } else if (hasMongoose) {
         const preambleCode = unitTestContext?.mockContracts?.mockPreambleCode || "";
@@ -297,7 +323,7 @@ which tests the source file: ${cleanSource}
 - Target Source File: ${cleanSource}
 
 ### 2. TARGET FILE & IMPORT CONTRACT
-- Source Module Import Path: "${cleanImportPath}" (e.g. import { ... } from '${cleanImportPath}';)
+- Source Module Import Path: "${cleanImportPath}" (e.g. ${importExample})
 - EXPORTED PUBLIC SYMBOLS (ONLY import and call these directly): ${exportedSymbolsStr}
 ${unexportedWarning}
 - MODEL SCHEMA INVARIANT: When testing Sequelize/Mongoose model definitions (e.g. defineVersionModel(sequelize)), ALWAYS import the exported function from "${cleanImportPath}". In expect(mockSequelize.define).toHaveBeenCalledWith(...) assertions, guarantee that every property object is properly closed with braces and comma (e.g. id: { type: ..., primaryKey: true },) before the next property or before the options object ({ tableName: ... }).
@@ -422,7 +448,7 @@ We need to generate a comprehensive unit test suite to achieve >=90% to 100% cov
 - Branch reachability contract: ${pathContract}
 
 ### 2. TARGET FILE & IMPORT CONTRACT
-- Source Module Import Path: "${cleanImportPath}" (MUST import from: '${cleanImportPath}'; DO NOT guess other folders!)
+- Source Module Import Path: "${cleanImportPath}" (MUST import using: ${importExample}; DO NOT guess other folders or use reserved keyword \`default\` as a named import!)
 - EXPORTED PUBLIC SYMBOLS (ONLY import and call these directly): ${exportedSymbolsStr}
 ${unexportedWarning}
 
@@ -534,7 +560,7 @@ Write new test descriptions, comments, and explanations in English. Preserve exi
  */
 export const autoHealAstSyntax = (
   codeString,
-  { framework = "jest", filePath = "", maxRetries = 6 } = {},
+  { framework = "jest", filePath = "", maxRetries = 6, sourceCode = "", isMongooseModel = false } = {},
 ) => {
   if (!codeString || typeof codeString !== "string") {
     return { success: false, code: codeString, error: "Empty code" };
@@ -549,7 +575,7 @@ export const autoHealAstSyntax = (
         }
         if (typeof cleanAndDeduplicateTestContent === "function") {
             try {
-                currentCode = cleanAndDeduplicateTestContent(currentCode, "", filePath, { framework });
+                currentCode = cleanAndDeduplicateTestContent(currentCode, "", filePath, { framework, sourceCode, isMongooseModel });
             } catch (_) {}
             if (typeof deduplicateAstDeclarations === 'function') {
                 try {
@@ -700,6 +726,8 @@ export const parseAndSanitizeAiTestResponse = ({
   rawResponse = "",
   framework = "jest",
   cleanSource = "",
+  sourceCode = "",
+  rootDir = "",
 }) => {
     const errors = [];
     if (!rawResponse || typeof rawResponse !== "string") {
@@ -872,17 +900,18 @@ export const parseAndSanitizeAiTestResponse = ({
     }
 
     // 5. AST Syntax Validation & Universal Self-Healing via Babel Parser (Rule 5 & Rule 9)
+    const isMongooseModel = definesMongooseModel(sourceCode);
     let codeToValidate = parsedJson.fullUpdatedContent || parsedJson.suggestedTestCode;
-    const healResult = autoHealAstSyntax(codeToValidate, { framework, filePath: cleanSource });
+    const healResult = autoHealAstSyntax(codeToValidate, { framework, filePath: cleanSource, sourceCode, isMongooseModel });
     let syntaxValid = healResult.success;
 
     if (syntaxValid) {
         if (parsedJson.fullUpdatedContent) {
-            const healedFull = autoHealAstSyntax(parsedJson.fullUpdatedContent, { framework, filePath: cleanSource });
+            const healedFull = autoHealAstSyntax(parsedJson.fullUpdatedContent, { framework, filePath: cleanSource, sourceCode, isMongooseModel });
             if (healedFull.success) parsedJson.fullUpdatedContent = healedFull.code;
         }
         if (parsedJson.suggestedTestCode) {
-            const healedSuggested = autoHealAstSyntax(parsedJson.suggestedTestCode, { framework, filePath: cleanSource });
+            const healedSuggested = autoHealAstSyntax(parsedJson.suggestedTestCode, { framework, filePath: cleanSource, sourceCode, isMongooseModel });
             if (healedSuggested.success) parsedJson.suggestedTestCode = healedSuggested.code;
         }
     } else {
@@ -924,6 +953,7 @@ export const parseAndSanitizeAiTestResponse = ({
             const mockCheck = validateAndNormalizeMocks({
                 code: parsedJson[field],
                 sourceFile: cleanSource,
+                rootDir,
                 framework
             });
             if (mockCheck.modified && mockCheck.code) {
@@ -1108,6 +1138,8 @@ export const generateAiUnitTestSuite = async ({
             rawResponse: responseText,
             framework,
             cleanSource,
+            sourceCode,
+            rootDir: snapshot?.rootDir || "",
         });
 
         if (parseCheck.success && parseCheck.parsed) {
@@ -1165,7 +1197,38 @@ export const generateAiUnitTestSuite = async ({
         rootDir: snapshot.rootDir, testFile: testFileInfo.relativePath, sourceFile: cleanSource,
         framework, code: aiParsedResult.fullUpdatedContent || '', original: testFileInfo.content || '',
     });
-    let qualityGate = inspectCandidate();
+    const applyVerifiedFrameworkRepair = (gate) => {
+        if (!gate?.findings?.length) return gate;
+        const currentCode = aiParsedResult.fullUpdatedContent || '';
+        const originalCode = testFileInfo.content || '';
+        const repair = proposeVerifiedFrameworkRepair(currentCode, originalCode, gate.findings, { framework });
+        if (!repair?.content || repair.content === currentCode) return gate;
+        try {
+            if (!existingTestContractsPreserved(originalCode, repair.content)) return gate;
+        } catch {
+            return gate;
+        }
+        const rechecked = inspectUnitTestQuality({
+            rootDir: snapshot.rootDir, testFile: testFileInfo.relativePath, sourceFile: cleanSource,
+            framework, code: repair.content, original: originalCode,
+        });
+        if (rechecked.findings.length <= gate.findings.length) {
+            aiParsedResult.fullUpdatedContent = repair.content;
+            aiParsedResult.suggestedTestCode = repair.content;
+            if (aiParsedResult.changeSet) {
+                aiParsedResult.changeSet = {
+                    ...aiParsedResult.changeSet,
+                    content: repair.content,
+                    candidateHash: testContentHash(repair.content),
+                    afterHash: testContentHash(repair.content),
+                    repairs: [...(aiParsedResult.changeSet.repairs || []), { action: repair.action }]
+                };
+            }
+            return rechecked;
+        }
+        return gate;
+    };
+    let qualityGate = applyVerifiedFrameworkRepair(inspectCandidate());
     // Run collection only for candidates that passed static inspection.
     if (!qualityGate.findings.length && validateCollection && (framework === "vitest" || testFileInfo.relativePath?.includes("vitest"))) {
         const candidateCode = aiParsedResult.fullUpdatedContent || "";
@@ -1207,7 +1270,7 @@ export const generateAiUnitTestSuite = async ({
             }
         }
     }
-    qualityGate = inspectCandidate();
+    qualityGate = applyVerifiedFrameworkRepair(inspectCandidate());
 
     // 6. Format Final Primary Suggestion
     const cleanRepoPath = (p) => {

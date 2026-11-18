@@ -16,12 +16,38 @@ import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import {
+  createSnapshotJob,
   createInstallDepsJob,
   createRunTestsJob,
   createSupertestCoverageJob,
   createVitestCoverageJob,
   createSystemTestAnalysisJob,
 } from "../services/job.service.js";
+
+async function enqueueUnitTestJob({ projectId, snapshotId, userId, type, payloadJson }) {
+  const existingJob = await prisma.job.findFirst({
+    where: {
+      projectId,
+      snapshotId,
+      type,
+      status: { in: ["QUEUED", "RUNNING"] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (existingJob) {
+    return { queued: true, reused: true, job: existingJob };
+  }
+
+  const job = await createSnapshotJob({
+    projectId,
+    snapshotId,
+    userId,
+    type,
+    payloadJson,
+  });
+  await addJobToQueue(type, job.id, { projectId, snapshotId });
+  return { queued: true, reused: false, job };
+}
 const STALE_JOB_TIMEOUT_MS = 25 * 60 * 1000;
 import {
   jobQueue,
@@ -3463,6 +3489,25 @@ export const suggestUnitTestcase = async (req, res) => {
             return res.status(400).json({ success: false, message: "Valid projectId is required." });
         }
 
+        if (req.body?.async === true || req.query?.async === 'true') {
+            const queuedData = await enqueueUnitTestJob({
+                projectId: actualProjectId,
+                snapshotId: actualSnapshotId,
+                userId,
+                type: "UNIT_TEST_SUGGEST",
+                payloadJson: {
+                    projectId: actualProjectId,
+                    snapshotId: actualSnapshotId,
+                    userId,
+                    filePath,
+                    validationMode,
+                    framework,
+                    selectedAiModel: requestedAiModel(req),
+                },
+            });
+            return res.status(queuedData.reused ? 200 : 202).json({ success: true, data: queuedData });
+        }
+
         const result = await suggestUnitTestcases({
             projectId: actualProjectId,
             snapshotId: actualSnapshotId,
@@ -5038,6 +5083,26 @@ export const applySuggestion = async (req, res) => {
             return res.status(400).json({ success: false, message: "Valid projectId is required." });
         }
 
+        if (req.body?.async === true || req.query?.async === 'true') {
+            const queuedData = await enqueueUnitTestJob({
+                projectId: actualProjectId,
+                snapshotId: actualSnapshotId,
+                userId,
+                type: "UNIT_TEST_APPLY",
+                payloadJson: {
+                    projectId: actualProjectId,
+                    snapshotId: actualSnapshotId,
+                    userId,
+                    suggestion,
+                    suggestions,
+                    requestId,
+                    skipBackgroundJob,
+                    requireCoverageGoal: requireCoverageGoal === true,
+                },
+            });
+            return res.status(queuedData.reused ? 200 : 202).json({ success: true, data: queuedData });
+        }
+
         const result = await applyUnitTestSuggestion({
             snapshotId: actualSnapshotId,
             projectId: actualProjectId,
@@ -5745,6 +5810,26 @@ export const suggestUnitTestcaseAll = async (req, res) => {
         const actualProjectId = projectId || snapshot.projectId || snapshot.project?.id;
         if (!actualProjectId) {
             return res.status(400).json({ success: false, message: "Valid projectId is required." });
+        }
+
+        if (req.body?.async === true || req.query?.async === 'true') {
+            const queuedData = await enqueueUnitTestJob({
+                projectId: actualProjectId,
+                snapshotId: actualSnapshotId,
+                userId,
+                type: "UNIT_TEST_SUGGEST",
+                payloadJson: {
+                    projectId: actualProjectId,
+                    snapshotId: actualSnapshotId,
+                    userId,
+                    filePath: "all",
+                    filePaths,
+                    validationMode,
+                    framework,
+                    selectedAiModel: requestedAiModel(req),
+                },
+            });
+            return res.status(queuedData.reused ? 200 : 202).json({ success: true, data: queuedData });
         }
 
         const result = await suggestUnitTestcases({

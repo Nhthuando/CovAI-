@@ -1,5 +1,7 @@
-import { buildJwtMockCode } from './authDependencyMockCode.js';
+import { buildBcryptMockCode, buildJwtMockCode } from './authDependencyMockCode.js';
 import { jestMongooseMockCode } from './jestMongooseMock.js';
+import { definesMongooseModel } from './mongooseModelDraft.service.js';
+import { isImportTimeProcessExitScript } from './commonJsTestDraft.service.js';
 import { deduplicateAstDeclarations } from './testHelperRegistry.service.js';
 import fs from "fs";
 import path from "path";
@@ -2364,7 +2366,18 @@ export const healMissingDependencyMocks = (content, rawOutput = "", options = {}
                     : `jest.mock('${pkgName}', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') ? undefined : (({ children }) => children || null) }), { virtual: true });`;
             } else if (pkgName === "jsonwebtoken") {
                 mockBlock = buildJwtMockCode(isVitest ? "vitest" : "jest");
-            } else if (pkgName === "mongoose") {
+            } else if (pkgName === "bcrypt" || pkgName === "bcryptjs") {
+                mockBlock = buildBcryptMockCode(isVitest ? "vitest" : "jest");
+            } else if (pkgName === "razorpay" || pkgName === "razorpay/dist/utils/razorpay-utils") {
+                const fnM = isVitest ? "vi.fn" : "jest.fn";
+                const mCall = isVitest ? "vi.mock" : "jest.mock";
+                const virtOpt = isVitest ? "" : ", { virtual: true }";
+                if (pkgName === "razorpay") {
+                    mockBlock = `${mCall}('razorpay', () => {\n  const _rzp = { orders: { create: ${fnM}().mockResolvedValue({ id: 'order_mock_123', amount: 50000, currency: 'INR', status: 'created' }), fetch: ${fnM}().mockResolvedValue({ id: 'order_mock_123', status: 'paid' }) }, payments: { fetch: ${fnM}().mockResolvedValue({ id: 'pay_mock_123', status: 'captured' }) }, refunds: { create: ${fnM}().mockResolvedValue({ id: 'rfnd_mock_123', status: 'processed' }) } };\n  const Rzp = Object.assign(${fnM}(function () { return _rzp; }), _rzp);\n  ${isVitest ? "return { default: Rzp, ..._rzp };" : "Rzp.default = Rzp; return Rzp;"}\n}${virtOpt});`;
+                } else {
+                    mockBlock = `${mCall}('razorpay/dist/utils/razorpay-utils', () => ({ validateWebhookSignature: ${fnM}(() => true), validatePaymentVerification: ${fnM}(() => true) })${virtOpt});`;
+                }
+            } else if (pkgName === "mongoose" && !options.isMongooseModel && !(options.sourceCode && definesMongooseModel(options.sourceCode))) {
                 mockBlock = isVitest
                     ? `const _sampleMongooseItem = { _id: '507f1f77bcf86cd799439011', id: '1', name: 'Sample Item', category: { _id: '1', name: 'General' }, status: 'ACTIVE', email: 'sample@example.com' };\nclass _MockObjectId { constructor(id) { this.id = id || '507f1f77bcf86cd799439011'; this._bsontype = 'ObjectID'; } toString() { return String(this.id); } toHexString() { return String(this.id); } valueOf() { return String(this.id); } equals(other) { return String(this) === String(other); } static isValid(id) { return typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id); } }\nclass _MockSchema { constructor(obj = {}) { this.obj = obj; this.methods = {}; this.statics = {}; this.paths = {}; } static Types = { ObjectId: _MockObjectId }; index() { return this; } pre() { return this; } post() { return this; } plugin() { return this; } virtual() { return { get: () => this, set: () => this }; } path() { return { validate: () => this, required: () => this, default: () => this }; } add() { return this; } set() { return this; } }\nconst _createQueryMock = (result = [_sampleMongooseItem]) => ({\n  exec: vi.fn(() => Promise.resolve(result)),\n  populate: vi.fn().mockReturnThis(),\n  sort: vi.fn().mockReturnThis(),\n  limit: vi.fn().mockReturnThis(),\n  skip: vi.fn().mockReturnThis(),\n  lean: vi.fn(() => Promise.resolve(result)),\n  select: vi.fn().mockReturnThis(),\n  where: vi.fn().mockReturnThis(),\n  distinct: vi.fn().mockReturnThis(),\n  then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),\n  catch: (reject) => Promise.resolve(result).catch(reject),\n  finally: (cb) => Promise.resolve(result).finally(cb)\n});\nconst _createMongooseModelProxy = () => {\n  const fn = vi.fn((doc = {}) => ({\n    ..._sampleMongooseItem,\n    ...doc,\n    save: vi.fn((cb) => { const saved = { ..._sampleMongooseItem, ...doc }; if (typeof cb === 'function') cb(null, saved); return Promise.resolve(saved); }),\n    validate: vi.fn((cb) => { if (typeof cb === 'function') cb(null); return Promise.resolve(); }),\n    validateSync: vi.fn(() => null),\n    toObject: vi.fn(() => ({ ..._sampleMongooseItem, ...doc })),\n    toJSON: vi.fn(() => ({ ..._sampleMongooseItem, ...doc })),\n    isModified: vi.fn(() => false),\n    set: vi.fn().mockReturnThis(),\n    get: vi.fn((k) => doc[k]),\n    populate: vi.fn().mockReturnThis()\n  }));\n  Object.assign(fn, {\n    find: vi.fn(() => _createQueryMock([_sampleMongooseItem])),\n    findOne: vi.fn(() => _createQueryMock(_sampleMongooseItem)),\n    findById: vi.fn(() => _createQueryMock(_sampleMongooseItem)),\n    findOneAndUpdate: vi.fn(() => _createQueryMock(_sampleMongooseItem)),\n    findByIdAndUpdate: vi.fn(() => _createQueryMock(_sampleMongooseItem)),
     findByIdAndDelete: vi.fn(() => _createQueryMock(_sampleMongooseItem)),\n    deleteOne: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n    deleteMany: vi.fn(() => Promise.resolve({ deletedCount: 1 })),\n    create: vi.fn((doc) => Promise.resolve({ _id: '507f1f77bcf86cd799439011', id: '1', ...(Array.isArray(doc) ? doc[0] : doc) })),\n    countDocuments: vi.fn(() => Promise.resolve(1)),\n    distinct: vi.fn(() => Promise.resolve(['sample'])),\n    aggregate: vi.fn(() => Promise.resolve([_sampleMongooseItem])),\n    insertMany: vi.fn((docs) => Promise.resolve(Array.isArray(docs) ? docs : [docs])),\n    validate: vi.fn(() => Promise.resolve()),\n    schema: { path: vi.fn(() => ({ validate: vi.fn(), required: vi.fn() })), paths: {}, obj: {} }\n  });\n  return fn;\n};\nvi.mock('mongoose', () => ({\n  default: { model: vi.fn(() => _createMongooseModelProxy()), Schema: _MockSchema, Types: { ObjectId: _MockObjectId }, connect: vi.fn(() => Promise.resolve()), disconnect: vi.fn(() => Promise.resolve()), connection: { on: vi.fn(), once: vi.fn(), readyState: 1 }, set: vi.fn() },\n  model: vi.fn(() => _createMongooseModelProxy()),\n  Schema: _MockSchema,\n  Types: { ObjectId: _MockObjectId },\n  connect: vi.fn(() => Promise.resolve()),\n  disconnect: vi.fn(() => Promise.resolve()),\n  connection: { on: vi.fn(), once: vi.fn(), readyState: 1 },\n  set: vi.fn()\n}));`
@@ -2601,14 +2614,30 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
     );
 
-    // 0.6. Heal illegal reserved keyword assignments like `const fnRef: any = default;` or `let target = default;`
-    // In JS/TS, `default` is a reserved keyword and cannot appear as a standalone expression/identifier.
-    cleaned = cleaned.replace(
-        /^[ \t]*(const|let|var)\s+([a-zA-Z0-9_$]+)(?:\s*:\s*any)?\s*=\s*default\s*;?[ \t]*\r?$/gm,
-        (match, kind, varName) => {
-            return `${kind} ${varName}${isTsFile ? ": any" : ""} = (typeof defaultExport !== 'undefined' ? defaultExport : (typeof targetModule !== 'undefined' ? targetModule.default : undefined));`;
-        }
-    );
+    // 0.6. Heal illegal reserved keyword imports/assignments like `import { default } from '...'` or `const fnRef: any = default;`
+    // In JS/TS, `default` is a reserved keyword and cannot appear as a standalone identifier or unaliased named import.
+    cleaned = cleaned
+        .replace(
+            /^([ \t]*import\s*)\{\s*default\s*\}(\s*from\s*['"][^'"]+['"]\s*;?)/gm,
+            "$1defaultExport$2"
+        )
+        .replace(
+            /^([ \t]*import\s*)\{\s*default\s*,\s*([^}]+)\}(\s*from\s*['"][^'"]+['"]\s*;?)/gm,
+            (_, prefix, rest, suffix) => `${prefix}defaultExport, { ${rest.trim()} }${suffix}`
+        )
+        .replace(
+            /^([ \t]*import\s*)\{([^}]*?),\s*default(?:\s*,\s*([^}]*))?\}(\s*from\s*['"][^'"]+['"]\s*;?)/gm,
+            (_, prefix, before, after, suffix) => {
+                const kept = [before, after].map(s => (s || "").trim()).filter(Boolean).join(", ");
+                return kept ? `${prefix}defaultExport, { ${kept} }${suffix}` : `${prefix}defaultExport${suffix}`;
+            }
+        )
+        .replace(
+            /^[ \t]*(const|let|var)\s+([a-zA-Z0-9_$]+)(?:\s*:\s*any)?\s*=\s*default\s*;?[ \t]*\r?$/gm,
+            (match, kind, varName) => {
+                return `${kind} ${varName}${isTsFile ? ": any" : ""} = (typeof defaultExport !== 'undefined' ? defaultExport : (typeof targetModule !== 'undefined' ? targetModule.default : undefined));`;
+            }
+        );
     cleaned = cleaned.replace(/^[ \t]*let\s+target\s*=\s*default\s*;?[ \t]*\r?$/gm, "let target = (typeof defaultExport !== 'undefined' ? defaultExport : undefined);");
     cleaned = cleaned.replace(/\btypeof\s+default\b/g, "typeof (typeof defaultExport !== 'undefined' ? defaultExport : undefined)");
     cleaned = cleaned.replace(/\bnew\s+default\s*\(/g, "new (typeof defaultExport !== 'undefined' ? defaultExport : Object)(");
@@ -3583,7 +3612,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
 
     // Heal worker tests (retry, analysis.job, logger, models) and throwing process.exit mock
-    if (cleaned.includes("worker") && (cleaned.includes("process.exit") || cleaned.includes("retryAsync") || cleaned.includes("bootstrapWorker"))) {
+    if (cleaned.includes("bootstrapWorker") || cleaned.includes("analysis.job") || cleaned.includes("retryAsync") || cleaned.includes("Worker bootstrap failed") || cleaned.includes("sigintListener")) {
         if (!cleaned.includes("jest.mock('../src/utils/retry'") && !cleaned.includes('jest.mock("../src/utils/retry"')) {
             cleaned = `jest.mock('../src/utils/retry', () => ({\n  retryAsync: jest.fn(async (fn) => await fn()),\n}));\n` + cleaned;
         }
@@ -3684,7 +3713,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
 
     // Heal universal mocks for downstream local dependencies (Idempotent patch)
-    if (cleaned.includes("mockCreateUniversalStub") || cleaned.includes("_createStubMaker") || cleaned.includes("stubFn()")) {
+    if (!cleaned.includes("getOwnPropertyDescriptor") && (cleaned.includes("mockCreateUniversalStub") || cleaned.includes("_createStubMaker") || cleaned.includes("stubFn()"))) {
         if (!cleaned.includes("Symbol.iterator")) {
             cleaned = cleaned.replace(
                 /if\s*\(\s*prop\s*===\s*['"]then['"]\s*\|\|\s*(?:prop\s*===\s*['"]catch['"]\s*\|\|\s*)?typeof\s+prop\s*===\s*['"]symbol['"]\s*\)\s*return\s+undefined\s*;/g,
@@ -4137,10 +4166,28 @@ const { models } = { models: _mMod };`;
         }
     }
 
-    // 17. In worker unit tests, spyOn process.exit so background worker bootstrap doesn't terminate Jest worker process
-    if (cleaned.includes("src/worker") || cleaned.includes("worker.js")) {
-        if (!cleaned.includes("jest.spyOn(process, 'exit')")) {
-            cleaned = "jest.spyOn(process, 'exit').mockImplementation(() => {});\n" + cleaned;
+    // 17. In worker / seeding / process.exit unit tests, spyOn process.exit so scripts don't terminate the test runner
+    const sourceCallsExit = Boolean(options.sourceCode && (/\bprocess\s*\.\s*(?:exit|abort)\s*\(/.test(options.sourceCode) || isImportTimeProcessExitScript(options.sourceCode)));
+    const targetsExitScript = sourceCallsExit || cleaned.includes("src/worker") || cleaned.includes("worker.js") || /seeding/i.test(filePath || "");
+    if (targetsExitScript) {
+        const exitRunner = (isVitestTestCode(cleaned, { ...options, filePath }) || options.framework === "vitest") ? "vi" : "jest";
+        const hasScopedExitSpy = /(?:beforeEach|test|it)\s*\([\s\S]*?(?:jest|vi)\.spyOn\s*\(\s*process\s*,\s*['"]exit['"]/.test(cleaned);
+        const hasTopLevelExitSpy = /(?:jest|vi)\.spyOn\s*\(\s*process\s*,\s*['"]exit['"]/.test(cleaned);
+        const hasTopLevelLocalImport = /(?:^|\n)[ \t]*(?:const|let|var)\s+[^=\n]+=\s*require\s*\(\s*['"]\./.test(cleaned) ||
+            /(?:^|\n)[ \t]*require\s*\(\s*['"]\./.test(cleaned);
+        if (!hasScopedExitSpy && /\b(?:describe|test|it)\s*\(/.test(cleaned) && !cleaned.includes("src/worker") && !cleaned.includes("worker.js")) {
+            const firstDescribeOpen = cleaned.search(/describe\s*\([^,]+,\s*(?:async\s*)?\(\s*\)\s*=>\s*\{/);
+            if (firstDescribeOpen !== -1) {
+                cleaned = cleaned.replace(
+                    /(describe\s*\([^,]+,\s*(?:async\s*)?\(\s*\)\s*=>\s*\{)/,
+                    `$1\n  beforeEach(() => { ${exitRunner}.spyOn(process, 'exit').mockImplementation(() => {}); });`
+                );
+            } else {
+                cleaned = `beforeEach(() => { ${exitRunner}.spyOn(process, 'exit').mockImplementation(() => {}); });\n` + cleaned;
+            }
+        }
+        if (!hasTopLevelExitSpy && (cleaned.includes("src/worker") || cleaned.includes("worker.js") || hasTopLevelLocalImport)) {
+            cleaned = `${exitRunner}.spyOn(process, 'exit').mockImplementation(() => {});\n` + cleaned;
         }
     }
 
@@ -4268,10 +4315,18 @@ for (const _rp of _sanitizerRelPrismaPaths) {
     }
 
     // 19b. Ensure Mongoose is safely mocked if imported in tests to prevent database connection failures and 10000ms buffering timeouts
-    const hasExistingMongooseMock = /(?:jest|vi)\.mock\(\s*['"`]mongoose['"`]/i.test(cleaned);
+    const hasExistingMongooseMock = /(?:jest|vi)\.(?:mock|unstable_mockModule)\(\s*['"`]mongoose['"`]/i.test(cleaned);
     const usesMongoose = (/from\s+['"]mongoose['"]/.test(cleaned) || /require\(['"]mongoose['"]\)/.test(cleaned) || cleaned.includes("mongoose.model") || cleaned.includes("new mongoose.Schema"));
+    const hasControllerReqRes = /\b(?:req\s*,\s*res|createMockReqResNext)\b/.test(cleaned);
+    const isModelsFile = /(?:^|[\\/])models?[\\/]/i.test(filePath || options.sourceFile || "");
+    const isMongooseModelTest = Boolean(
+        options.isMongooseModel ||
+        (options.sourceCode && definesMongooseModel(options.sourceCode)) ||
+        /\b(?:requireActual|importActual)\s*\(\s*['"]mongoose['"]\s*\)/.test(cleaned) ||
+        (!hasControllerReqRes && (isModelsFile || /\bvalidateSync\s*\(|\.schema\.path\s*\(|\.modelName\b/.test(cleaned)))
+    );
 
-    if (usesMongoose && !hasExistingMongooseMock) {
+    if (usesMongoose && !hasExistingMongooseMock && !isMongooseModelTest) {
         const isVitestSuite = isVitestTestCode(cleaned) || options.framework === "vitest";
         const mongooseMockCode = isVitestSuite ? `
 // Universal Mongoose In-Memory Proxy Mock to prevent database connection attempts and 10000ms buffering timeouts

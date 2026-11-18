@@ -45,8 +45,8 @@ function walkAst(node, visitor) {
 function getRootIdentifier(node) {
     if (!node) return null;
     if (node.type === 'Identifier') return node;
-    if (node.type === 'MemberExpression') return getRootIdentifier(node.object);
-    if (node.type === 'CallExpression') return getRootIdentifier(node.callee);
+    if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') return getRootIdentifier(node.object);
+    if (node.type === 'CallExpression' || node.type === 'OptionalCallExpression') return getRootIdentifier(node.callee);
     return null;
 }
 
@@ -55,10 +55,10 @@ function requestAccesses(fn) {
     const req = fn.params[0]?.name;
     if (req !== 'req') return [];
     walkAst(fn.body, node => {
-        if (node.type !== 'MemberExpression') return;
+        if (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression') return;
         const segments = [];
         let current = node;
-        while (current?.type === 'MemberExpression') {
+        while (current?.type === 'MemberExpression' || current?.type === 'OptionalMemberExpression') {
             const property = current.computed
                 ? current.property.type === 'StringLiteral' && current.property.value
                 : current.property.name;
@@ -308,6 +308,55 @@ export function synthesizeFixture(contract, paramName = '', index = 0) {
     return 'sample_value';
 }
 
+const STRING_ONLY_PROTOTYPE_METHODS = new Set([
+    'trim', 'trimStart', 'trimEnd', 'trimLeft', 'trimRight',
+    'toLowerCase', 'toUpperCase', 'toLocaleLowerCase', 'toLocaleUpperCase',
+    'split', 'startsWith', 'endsWith', 'replace', 'replaceAll',
+    'match', 'matchAll', 'search', 'substring', 'substr',
+    'charAt', 'charCodeAt', 'codePointAt',
+    'padStart', 'padEnd', 'repeat', 'normalize', 'localeCompare',
+    'isWellFormed', 'toWellFormed',
+    'anchor', 'big', 'blink', 'bold', 'fixed', 'fontcolor', 'fontsize',
+    'italics', 'link', 'small', 'strike', 'sub', 'sup'
+]);
+
+const STRING_OR_ARRAY_PROTOTYPE_METHODS = new Set([
+    'slice', 'includes', 'indexOf', 'lastIndexOf', 'concat', 'at'
+]);
+
+const ARRAY_ONLY_PROTOTYPE_METHODS = new Set([
+    'map', 'filter', 'forEach', 'reduce', 'reduceRight', 'find', 'findIndex',
+    'findLast', 'findLastIndex', 'some', 'every', 'flatMap', 'flat',
+    'push', 'pop', 'shift', 'unshift', 'splice', 'join', 'sort', 'reverse',
+    'toReversed', 'toSorted', 'toSpliced', 'with', 'fill', 'copyWithin', 'entries', 'keys', 'values'
+]);
+
+const COMMON_PROTOTYPE_PROPERTIES = new Set([
+    'length', 'toString', 'valueOf', 'hasOwnProperty', 'constructor'
+]);
+
+const LOCAL_MODULE_EXTENSIONS = [
+    '', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs',
+    '/index.ts', '/index.tsx', '/index.mts', '/index.js', '/index.jsx', '/index.mjs', '/index.cjs'
+];
+
+function resolveLocalModule(rootDir, fromFile, specifier) {
+    if (!rootDir || !fromFile || typeof specifier !== 'string' || !specifier.startsWith('.')) return null;
+    const absFrom = path.isAbsolute(fromFile) ? fromFile : path.join(rootDir, fromFile);
+    const rawTarget = path.resolve(path.dirname(absFrom), specifier);
+    const bases = [rawTarget];
+    if (/\.[cm]?jsx?$/i.test(rawTarget)) {
+        bases.push(rawTarget.replace(/\.[cm]?jsx?$/i, ''));
+    }
+    for (const base of bases) {
+        for (const ext of LOCAL_MODULE_EXTENSIONS) {
+            const hit = localFile(rootDir, base + ext);
+            if (hit) return hit;
+        }
+    }
+    return null;
+}
+
 function inferParamUsagesFromBody(fn, jsdocMap) {
     const paramNames = (fn.params || []).map(p => {
         const v = p.type === 'AssignmentPattern' ? p.left : p.type === 'RestElement' ? p.argument : p;
@@ -330,6 +379,8 @@ function inferParamUsagesFromBody(fn, jsdocMap) {
     });
 
     const arrayParams = new Set();
+    const stringParams = new Set();
+    const stringOrArrayParams = new Set();
     const itemVars = new Map();
     const itemProperties = new Map();
     const directProperties = new Map();
@@ -353,16 +404,18 @@ function inferParamUsagesFromBody(fn, jsdocMap) {
             }
         }
 
-        // Array methods: .map, .filter, .forEach, .reduce, .find, .some, .every
-        if (node.type === 'CallExpression' && node.callee?.type === 'MemberExpression') {
+        // Array methods: .map, .filter, .forEach, .reduce, .find, .some, .every, etc.
+        if ((node.type === 'CallExpression' || node.type === 'OptionalCallExpression') &&
+            (node.callee?.type === 'MemberExpression' || node.callee?.type === 'OptionalMemberExpression')) {
             const root = getRootIdentifier(node.callee.object);
             const method = node.callee.property?.name;
-            if (['map', 'filter', 'forEach', 'reduce', 'find', 'some', 'every', 'flatMap'].includes(method) && root?.name) {
+            if (ARRAY_ONLY_PROTOTYPE_METHODS.has(method) && root?.name) {
                 for (const [pName, set] of aliases) {
                     if (set.has(root.name)) {
                         arrayParams.add(pName);
                         const cb = node.arguments[0];
-                        if (cb && ['ArrowFunctionExpression', 'FunctionExpression'].includes(cb.type)) {
+                        if (['map', 'filter', 'forEach', 'reduce', 'find', 'some', 'every', 'flatMap'].includes(method) &&
+                            cb && ['ArrowFunctionExpression', 'FunctionExpression'].includes(cb.type)) {
                             const itemParam = method === 'reduce' ? cb.params[1] : cb.params[0];
                             if (itemParam?.type === 'Identifier') {
                                 itemVars.get(pName).add(itemParam.name);
@@ -413,16 +466,57 @@ function inferParamUsagesFromBody(fn, jsdocMap) {
             }
         }
 
-        // Direct property accesses: options.maxTurns
-        if (node.type === 'MemberExpression' && !node.computed && node.object?.type === 'Identifier') {
+        // Direct property accesses: options.maxTurns (excluding String/Array/common prototype members)
+        if ((node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') && !node.computed && node.object?.type === 'Identifier') {
             for (const [pName, set] of aliases) {
                 if (set.has(node.object.name)) {
                     const prop = node.property?.name || (node.property?.type === 'StringLiteral' ? node.property.value : null);
-                    if (prop && prop !== 'length') {
-                        if (!directProperties.get(pName).has(prop)) {
-                            directProperties.get(pName).set(prop, { kind: 'string', sampleValues: new Set() });
+                    if (!prop || COMMON_PROTOTYPE_PROPERTIES.has(prop)) continue;
+                    if (STRING_ONLY_PROTOTYPE_METHODS.has(prop)) {
+                        stringParams.add(pName);
+                        continue;
+                    }
+                    if (STRING_OR_ARRAY_PROTOTYPE_METHODS.has(prop)) {
+                        stringOrArrayParams.add(pName);
+                        continue;
+                    }
+                    if (ARRAY_ONLY_PROTOTYPE_METHODS.has(prop)) {
+                        arrayParams.add(pName);
+                        continue;
+                    }
+                    if (!directProperties.get(pName).has(prop)) {
+                        directProperties.get(pName).set(prop, { kind: 'string', sampleValues: new Set() });
+                    }
+                }
+            }
+        }
+
+        // Chained string/array prototype calls on parameter (e.g. msg.trim().toLowerCase(), msg.slice(0, 2).includes('a'))
+        if ((node.type === 'CallExpression' || node.type === 'OptionalCallExpression') &&
+            (node.callee?.type === 'MemberExpression' || node.callee?.type === 'OptionalMemberExpression')) {
+            const root = getRootIdentifier(node.callee.object);
+            const method = node.callee.property?.name;
+            if (root?.name && method) {
+                for (const [pName, set] of aliases) {
+                    if (set.has(root.name)) {
+                        if (STRING_ONLY_PROTOTYPE_METHODS.has(method)) {
+                            stringParams.add(pName);
+                        } else if (STRING_OR_ARRAY_PROTOTYPE_METHODS.has(method)) {
+                            stringOrArrayParams.add(pName);
                         }
                     }
+                }
+            }
+        }
+
+        // typeof param === 'string'
+        if (node.type === 'BinaryExpression' && ['===', '==', '!==', '!='].includes(node.operator)) {
+            const typeofSide = node.left?.type === 'UnaryExpression' && node.left.operator === 'typeof' ? node.left
+                : (node.right?.type === 'UnaryExpression' && node.right.operator === 'typeof' ? node.right : null);
+            const litSide = typeofSide === node.left ? node.right : node.left;
+            if (typeofSide?.argument?.type === 'Identifier' && litSide?.type === 'StringLiteral' && litSide.value === 'string') {
+                for (const [pName, set] of aliases) {
+                    if (set.has(typeofSide.argument.name)) stringParams.add(pName);
                 }
             }
         }
@@ -537,12 +631,44 @@ function inferParamUsagesFromBody(fn, jsdocMap) {
         }
     });
 
-    return { arrayParams, itemProperties, directProperties };
+    return { arrayParams, stringParams, stringOrArrayParams, itemProperties, directProperties };
 }
 
-export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
+function collectExitInfoFromBody(node) {
+    const exitCodes = [];
+    let callsProcessExit = false;
+    walkAst(node, n => {
+        if (n.type === 'CallExpression' && n.callee?.type === 'MemberExpression' &&
+            !n.callee.computed && n.callee.object?.name === 'process' &&
+            ['exit', 'abort'].includes(n.callee.property?.name)) {
+            callsProcessExit = true;
+            const arg0 = n.arguments?.[0];
+            if (arg0?.type === 'NumericLiteral') exitCodes.push(arg0.value);
+        }
+    });
+    return { callsProcessExit, exitCodes: [...new Set(exitCodes)] };
+}
+
+function unwrapTopLevelCall(expr) {
+    let cur = expr;
+    while (cur) {
+        if (cur.type === 'AwaitExpression' || (cur.type === 'UnaryExpression' && cur.operator === 'void')) {
+            cur = cur.argument;
+            continue;
+        }
+        if (cur.type === 'CallExpression' && cur.callee?.type === 'MemberExpression' &&
+            ['then', 'catch', 'finally'].includes(cur.callee.property?.name)) {
+            cur = cur.callee.object;
+            continue;
+        }
+        break;
+    }
+    return cur;
+}
+
+export function sourceInputContracts(source, { rootDir, sourceFile, _depth = 0 } = {}) {
     const parsed = parseJavaScriptCode(source);
-    if (!parsed.success) return { functions: new Map(), evidence: source };
+    if (!parsed.success) return { functions: new Map(), exportedValues: new Map(), evidence: source };
     const types = new Map();
     let evidence = source;
 
@@ -588,8 +714,9 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
         }
     }
 
-    // Index top-level functions for specifier/export matching
+    // Index top-level functions and values for specifier/export matching
     const topLevelFns = new Map();
+    const topLevelValues = new Map();
     const dependencies = new Set();
     for (const item of parsed.ast.program.body) {
         if (item.type === 'ImportDeclaration' && item.importKind !== 'type') {
@@ -607,79 +734,153 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
                 }
                 if (decl.id?.type === 'Identifier' && ['ArrowFunctionExpression', 'FunctionExpression'].includes(decl.init?.type)) {
                     topLevelFns.set(decl.id.name, decl.init);
+                } else if (decl.id?.type === 'Identifier' && decl.init) {
+                    topLevelValues.set(decl.id.name, decl.init.type);
                 }
             }
+        } else if (item.type === 'ClassDeclaration' && item.id?.name) {
+            topLevelValues.set(item.id.name, 'ClassDeclaration');
         }
     }
 
     const functions = new Map();
+    const exportedValues = new Map();
+
+    const loadReExportContracts = (specifier) => {
+        if (!rootDir || !sourceFile || _depth >= 1 || !specifier?.startsWith('.')) return null;
+        const resolved = resolveLocalModule(rootDir, sourceFile, specifier);
+        if (!resolved) return null;
+        try {
+            const targetCode = fs.readFileSync(resolved, 'utf8');
+            if (targetCode.length > 250000) return null;
+            return sourceInputContracts(targetCode, { rootDir, sourceFile: resolved, _depth: _depth + 1 });
+        } catch {
+            return null;
+        }
+    };
 
     for (const item of parsed.ast.program.body) {
         let entries = [];
         const jsdoc = parseJsdocComments(item.leadingComments || item.declaration?.leadingComments || []);
 
+        if (item.type === 'ExportAllDeclaration') {
+            if (item.exportKind === 'type') continue;
+            const targetContracts = loadReExportContracts(item.source?.value);
+            if (targetContracts) {
+                for (const [fnName, contract] of targetContracts.functions.entries()) {
+                    if (fnName !== 'default' && !contract.isDefault && !functions.has(fnName)) {
+                        functions.set(fnName, { ...contract, isDefault: false });
+                    }
+                }
+                for (const [valName, valMeta] of (targetContracts.exportedValues || new Map()).entries()) {
+                    if (valName !== 'default' && !valMeta.isDefault && !exportedValues.has(valName)) {
+                        exportedValues.set(valName, { ...valMeta, isDefault: false });
+                    }
+                }
+            }
+            continue;
+        }
+
         if (item.type === 'ExportNamedDeclaration') {
+            if (item.exportKind === 'type') continue;
             const declaration = item.declaration;
             if (declaration?.type === 'FunctionDeclaration') {
-                entries = [[declaration.id.name, declaration]];
+                entries = [[declaration.id.name, declaration, false]];
             } else if (declaration?.type === 'VariableDeclaration') {
-                entries = declaration.declarations
-                    .filter(d => d.id.type === 'Identifier' && ['ArrowFunctionExpression', 'FunctionExpression'].includes(d.init?.type))
-                    .map(d => [d.id.name, d.init]);
+                for (const d of declaration.declarations) {
+                    if (d.id.type !== 'Identifier') continue;
+                    if (['ArrowFunctionExpression', 'FunctionExpression'].includes(d.init?.type)) {
+                        entries.push([d.id.name, d.init, false]);
+                    } else if (d.init?.type === 'Identifier' && topLevelFns.has(d.init.name)) {
+                        entries.push([d.id.name, topLevelFns.get(d.init.name), false]);
+                    } else {
+                        exportedValues.set(d.id.name, { name: d.id.name, kind: d.init?.type || 'constant', isDefault: false });
+                    }
+                }
+            } else if (declaration?.type === 'ClassDeclaration' && declaration.id?.name) {
+                exportedValues.set(declaration.id.name, { name: declaration.id.name, kind: 'ClassDeclaration', isDefault: false });
             } else if (item.specifiers) {
+                const targetContracts = item.source?.value ? loadReExportContracts(item.source.value) : null;
                 for (const spec of item.specifiers) {
+                    if (spec.exportKind === 'type') continue;
                     const local = spec.local?.name;
-                    const exp = spec.exported?.name || local;
-                    if (topLevelFns.has(local)) entries.push([exp, topLevelFns.get(local)]);
+                    const exp = spec.exported?.name || spec.exported?.value || local;
+                    const isDef = exp === 'default';
+                    if (targetContracts) {
+                        const targetFn = local === 'default'
+                            ? (targetContracts.functions.get('default') || [...targetContracts.functions.values()].find(f => f.isDefault))
+                            : targetContracts.functions.get(local);
+                        if (targetFn) {
+                            functions.set(exp, { ...targetFn, name: exp, isDefault: isDef });
+                        } else if (exp) {
+                            exportedValues.set(exp, { name: exp, kind: 're-export', isDefault: isDef });
+                        }
+                    } else if (topLevelFns.has(local)) {
+                        entries.push([exp, topLevelFns.get(local), isDef]);
+                    } else if (exp) {
+                        exportedValues.set(exp, { name: exp, kind: topLevelValues.get(local) || 'named-export', isDefault: isDef });
+                    }
                 }
             }
         } else if (item.type === 'ExportDefaultDeclaration') {
             const decl = item.declaration;
             if (decl.type === 'FunctionDeclaration') {
-                entries = [[decl.id?.name || 'default', decl]];
+                entries = [[decl.id?.name || 'default', decl, true]];
             } else if (['ArrowFunctionExpression', 'FunctionExpression'].includes(decl.type)) {
-                entries = [['default', decl]];
+                entries = [['default', decl, true]];
             } else if (decl.type === 'Identifier' && topLevelFns.has(decl.name)) {
-                entries = [[decl.name, topLevelFns.get(decl.name)]];
+                entries = [[decl.name, topLevelFns.get(decl.name), true]];
+            } else if (decl.type === 'Identifier') {
+                exportedValues.set(decl.name, { name: decl.name, kind: topLevelValues.get(decl.name) || 'constant', isDefault: true });
+            } else {
+                exportedValues.set('default', { name: 'default', kind: decl.type || 'object', isDefault: true });
             }
         } else if (item.type === 'ExpressionStatement' && item.expression?.type === 'AssignmentExpression') {
             const left = item.expression.left;
             const right = item.expression.right;
-            if (left.type === 'MemberExpression' && left.object?.name === 'module' && left.property?.name === 'exports') {
+            if (left.type === 'MemberExpression' && !left.computed && left.object?.name === 'module' && left.property?.name === 'exports') {
                 if (right.type === 'ObjectExpression') {
                     for (const prop of right.properties) {
-                        if (prop.type === 'ObjectProperty') {
+                        if (prop.type === 'ObjectMethod') {
+                            const expName = prop.key?.name || prop.key?.value;
+                            if (expName) entries.push([expName, prop, false]);
+                        } else if (prop.type === 'ObjectProperty') {
                             const expName = prop.key?.name || prop.key?.value;
                             const val = prop.value;
                             if (['ArrowFunctionExpression', 'FunctionExpression'].includes(val?.type)) {
-                                entries.push([expName, val]);
+                                entries.push([expName, val, false]);
                             } else if (val?.type === 'Identifier' && topLevelFns.has(val.name)) {
-                                entries.push([expName, topLevelFns.get(val.name)]);
+                                entries.push([expName, topLevelFns.get(val.name), false]);
+                            } else if (expName) {
+                                exportedValues.set(expName, { name: expName, kind: val?.type || 'constant', isDefault: false });
                             }
                         }
                     }
                 } else if (['ArrowFunctionExpression', 'FunctionExpression'].includes(right.type)) {
-                    entries.push(['default', right]);
+                    entries.push(['default', right, true]);
                 } else if (right.type === 'Identifier' && topLevelFns.has(right.name)) {
-                    entries.push([right.name, topLevelFns.get(right.name)]);
+                    entries.push([right.name, topLevelFns.get(right.name), true]);
+                } else if (right.type === 'Identifier') {
+                    exportedValues.set(right.name, { name: right.name, kind: topLevelValues.get(right.name) || 'constant', isDefault: true });
                 }
-            }
-            if (left.type === 'MemberExpression' && (
+            } else if (left.type === 'MemberExpression' && !left.computed && (
                 left.object?.name === 'exports' ||
-                (left.object?.type === 'MemberExpression' && left.object.object?.name === 'module' && left.object.property?.name === 'exports')
+                (left.object?.type === 'MemberExpression' && !left.object.computed && left.object.object?.name === 'module' && left.object.property?.name === 'exports')
             )) {
                 const expName = left.property?.name || left.property?.value;
                 if (expName) {
                     if (['ArrowFunctionExpression', 'FunctionExpression'].includes(right.type)) {
-                        entries.push([expName, right]);
+                        entries.push([expName, right, false]);
                     } else if (right.type === 'Identifier' && topLevelFns.has(right.name)) {
-                        entries.push([expName, topLevelFns.get(right.name)]);
+                        entries.push([expName, topLevelFns.get(right.name), false]);
+                    } else {
+                        exportedValues.set(expName, { name: expName, kind: right?.type || 'constant', isDefault: false });
                     }
                 }
             }
         }
 
-        for (const [name, fn] of entries) {
+        for (const [name, fn, isDefaultExport = false] of entries) {
             const bodyInference = inferParamUsagesFromBody(fn, jsdoc);
             const requestEvidence = requestAccesses(fn);
 
@@ -747,9 +948,16 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
                     }
                 }
 
-                // 5. AST body object inference (only fill missing fields without overwriting TS/JSDoc nested structures)
-                if (type.kind === 'unknown' || type.kind === 'object') {
-                    const dMap = bodyInference.directProperties.get(pName);
+                // 4b. AST body string inference (String.prototype methods keep/infer kind: 'string' instead of 'object')
+                const dMap = bodyInference.directProperties.get(pName);
+                const hasDirectProps = Boolean(dMap && dMap.size > 0);
+                if (type.kind === 'unknown' && !bodyInference.arrayParams.has(pName) &&
+                    (bodyInference.stringParams.has(pName) || (bodyInference.stringOrArrayParams.has(pName) && !hasDirectProps))) {
+                    type.kind = 'string';
+                }
+
+                // 5. AST body object inference (only fill missing fields without overwriting TS/JSDoc/string structures)
+                if ((type.kind === 'unknown' || type.kind === 'object') && !bodyInference.stringParams.has(pName)) {
                     if (dMap && dMap.size > 0) {
                         type.kind = 'object';
                         const fields = { ...(type.fields || {}) };
@@ -783,16 +991,75 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
                 return contractObj;
             });
 
-            functions.set(name, { name, parameters, ...observableContract(fn, dependencies), requestEvidence });
+            functions.set(name, { name, isDefault: Boolean(isDefaultExport), parameters, ...observableContract(fn, dependencies), requestEvidence });
         }
     }
 
     const entryPoints = parsed.ast.program.body.flatMap(statement => {
-        const call = statement.expression;
-        const name = call?.type === 'CallExpression' && call.callee.name;
-        const fn = topLevelFns.get(name);
-        return fn ? [{ name, importTime: true, parameters: fn.params.map(param => param.name || param.left?.name || null),
-            ...observableContract(fn, dependencies) }] : [];
+        if (statement.type !== 'ExpressionStatement') return [];
+        const call = unwrapTopLevelCall(statement.expression);
+        if (call?.type !== 'CallExpression') return [];
+        if (call.callee?.type === 'MemberExpression' && !call.callee.computed &&
+            call.callee.object?.name === 'process' && ['exit', 'abort'].includes(call.callee.property?.name)) {
+            const arg0 = call.arguments?.[0];
+            return [{
+                name: 'top-level-process-exit',
+                importTime: true,
+                parameters: [],
+                callsProcessExit: true,
+                exitCodes: arg0?.type === 'NumericLiteral' ? [arg0.value] : [],
+                async: false,
+                returns: [],
+                dependencyCalls: []
+            }];
+        }
+        if (['ArrowFunctionExpression', 'FunctionExpression'].includes(call.callee?.type)) {
+            const exitInfo = collectExitInfoFromBody(call.callee.body);
+            return [{
+                name: call.callee.id?.name || '<iife>',
+                importTime: true,
+                isIife: true,
+                parameters: (call.callee.params || []).map(p => p.name || p.left?.name || null),
+                ...exitInfo,
+                ...observableContract(call.callee, dependencies)
+            }];
+        }
+        const name = call.callee?.name;
+        const fn = name && topLevelFns.get(name);
+        if (fn) {
+            const exitInfo = collectExitInfoFromBody(fn.body);
+            return [{
+                name,
+                importTime: true,
+                parameters: fn.params.map(param => param.name || param.left?.name || null),
+                ...exitInfo,
+                ...observableContract(fn, dependencies)
+            }];
+        }
+        if (call.callee?.type === 'MemberExpression' && call.arguments?.some(a => ['ArrowFunctionExpression', 'FunctionExpression'].includes(a?.type))) {
+            let callsExit = false;
+            const exitCodes = new Set();
+            for (const arg of call.arguments) {
+                if (['ArrowFunctionExpression', 'FunctionExpression'].includes(arg?.type)) {
+                    const info = collectExitInfoFromBody(arg.body);
+                    if (info.callsProcessExit) callsExit = true;
+                    info.exitCodes.forEach(c => exitCodes.add(c));
+                }
+            }
+            if (callsExit) {
+                return [{
+                    name: `${getRootIdentifier(call.callee)?.name || 'chain'}.${call.callee.property?.name || 'call'}`,
+                    importTime: true,
+                    parameters: [],
+                    callsProcessExit: true,
+                    exitCodes: [...exitCodes],
+                    async: true,
+                    returns: [],
+                    dependencyCalls: []
+                }];
+            }
+        }
+        return [];
     });
     const requestRoutes = findRegisteredRequestContracts(rootDir, sourceFile, functions);
     for (const fn of functions.values()) {
@@ -806,7 +1073,7 @@ export function sourceInputContracts(source, { rootDir, sourceFile } = {}) {
             }
         }
     }
-    return { functions, evidence, entryPoints, requestRoutes };
+    return { functions, exportedValues, evidence, entryPoints, requestRoutes };
 }
 
 // Expand only finite local fixtures; never evaluate project code to discover inputs.
@@ -879,13 +1146,23 @@ export function sourceTargets(call, testFile, rootDir, sourceFile, contracts) {
         const imported = importedSource({ node: { callee: target }, scope }, testFile, rootDir);
         const init = binding.path.node.init;
         const specifier = init?.callee?.name === 'require' ? init.arguments[0]?.value : null;
-        const dependency = typeof specifier === 'string' && specifier.startsWith('.') &&
-            ['', '.js', '.cjs', '.ts', '/index.js'].map(suffix => localFile(rootDir,
-                path.resolve(path.dirname(testFile), specifier + suffix))).find(Boolean);
+        const dependency = resolveLocalModule(rootDir, testFile, specifier);
         if (imported !== sourceFile && dependency !== sourceFile) return [];
         const property = binding.path.node.id?.properties?.find(prop => prop.value?.name === target.name);
-        const name = node.property?.name || binding.path.node.imported?.name || property?.key.name ||
-            (contracts.size === 1 ? contracts.keys().next().value : null);
+        const isDefaultImport = binding.path.isImportDefaultSpecifier() ||
+            (binding.path.isVariableDeclarator() && binding.path.node.id?.type === 'Identifier' && node.type !== 'MemberExpression');
+        let name = node.property?.name || binding.path.node.imported?.name || property?.key.name || null;
+        if (!name && isDefaultImport) {
+            if (contracts.has('default')) {
+                name = 'default';
+            } else {
+                const defaultEntry = [...contracts.values()].find(c => c.isDefault);
+                name = defaultEntry?.name || (contracts.size === 1 ? contracts.keys().next().value : null);
+            }
+        }
+        if (!name && contracts.size === 1) {
+            name = contracts.keys().next().value;
+        }
         return contracts.has(name) ? [{ ...contracts.get(name), localName: target.name }] : [];
     });
     return [...new Map(matches.map(target => [target.name, target])).values()];

@@ -33,6 +33,8 @@ import { needsUnitTestSuggestion } from '../../../shared/unitTestCoverageGoal.js
 import { canonicalizeFilePath } from '../utils/pathSanitizer.js';
 import { mergeUnitTestSuggestions } from './unitTestSuggestionBatch.service.js';
 import { measureUnitTestPhase, queueUnitTestSuggestion, withUnitTestTimings } from './unitTestWork.service.js';
+import { isImportTimeProcessExitScript, proposeImportTimeExitScriptDraft } from './commonJsTestDraft.service.js';
+import { definesMongooseModel, proposeMongooseModelFallbackTests } from './mongooseModelDraft.service.js';
 
 export { buildStandardUnitTestPrompt, classifyFeasibleCoverage };
 
@@ -75,7 +77,10 @@ export const buildUnitTestPrompt = (options = {}) => {
         sourceCode,
         coverageDetails,
         framework,
-        existingTestCode: actualTestFileInfo.content
+        existingTestCode: actualTestFileInfo.content,
+        sourceFile: actualCleanSource,
+        targetTestFile: actualTargetTest,
+        rootDir
     });
 
     return buildStandardUnitTestPrompt({
@@ -320,62 +325,131 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     const cleanSource = sanitizeSourceFilePath(rootDir, sourceFile);
     const cleanImportPath = computeRelativeImportPath(targetTestFile, cleanSource, rootDir);
     const isTs = /\.[cm]?tsx?$/i.test(cleanSource || "") || /\.[cm]?tsx?$/i.test(targetTestFile || "");
+    const effectiveTestFile = targetTestFile || `tests/${baseName || path.basename(cleanSource || "sample", path.extname(cleanSource || ".js"))}.test${isTs ? ".ts" : ".js"}`;
 
-    // Extract function, class, and export names from sourceCode (AST + Regex)
+    // Mongoose Schema / Model preservation fallback
+    if (sourceCode && definesMongooseModel(sourceCode)) {
+        const modelDraft = proposeMongooseModelFallbackTests({
+            sourceCode,
+            sourceFile: cleanSource,
+            testFile: effectiveTestFile,
+            framework,
+            cleanImportPath,
+            existingContent
+        });
+        if (modelDraft) return modelDraft;
+    }
+
+    // Import-time process.exit script isolation fallback (never top-level require/import)
+    const hasEsmSyntax = /^\s*(?:import|export)\s+/m.test(sourceCode || "");
+    const hasCjsExports = /module\.exports|exports\.[a-zA-Z0-9_$]+\s*=/.test(sourceCode || "");
+    const isCommonJS = !isVitest && !isTs && !hasEsmSyntax && (hasCjsExports || /require\s*\(/.test(sourceCode || ""));
+    if (sourceCode && !existingContent?.trim() && isImportTimeProcessExitScript(sourceCode)) {
+        if (!hasEsmSyntax) {
+            const cjsExitDraft = proposeImportTimeExitScriptDraft({
+                sourceCode,
+                sourceFile: cleanSource,
+                testFile: effectiveTestFile,
+                framework,
+                original: existingContent
+            });
+            if (cjsExitDraft) {
+                return {
+                    explanation: cjsExitDraft.explanation,
+                    suggestedTestCode: cjsExitDraft.fullUpdatedContent.trim(),
+                    fullUpdatedContent: cjsExitDraft.fullUpdatedContent
+                };
+            }
+        } else {
+            const runner = isVitest ? "vi" : "jest";
+            const runnerImp = isVitest
+                ? "import { describe, test, expect, vi } from 'vitest';\n"
+                : (isTs ? "import { describe, test, expect, jest } from '@jest/globals';\n" : "");
+            const esmScriptCode = `${runnerImp}describe('${baseName || "script"} import-time execution', () => {\n` +
+                `    test('intercepts process.exit during dynamic module evaluation', async () => {\n` +
+                `        let finish;\n` +
+                `        const completed = new Promise(resolve => { finish = resolve; });\n` +
+                `        const exitSpy = ${runner}.spyOn(process, 'exit').mockImplementation(code => { finish(code); });\n` +
+                `        const timer = setTimeout(() => finish(undefined), 50);\n` +
+                `        try {\n` +
+                `            await import('${cleanImportPath}');\n` +
+                `            const code = await completed;\n` +
+                `            expect(exitSpy).toHaveBeenCalled();\n` +
+                `            expect([0, 1, undefined]).toContain(code);\n` +
+                `        } finally {\n` +
+                `            clearTimeout(timer);\n` +
+                `            exitSpy.mockRestore();\n` +
+                `        }\n` +
+                `    });\n` +
+                `});\n`;
+            return {
+                explanation: "Isolate ESM import-time process.exit execution with dynamic import and spyOn(process, 'exit').",
+                suggestedTestCode: esmScriptCode.trim(),
+                fullUpdatedContent: esmScriptCode
+            };
+        }
+    }
+
+    // Extract function, class, and export names from sourceCode (AST + Regex fallback only when AST yields 0)
     const nonCallableExportNames = new Set(["prisma", "db", "database", "redis", "redisclient", "bull", "queue", "app", "server", "router"]);
-    const exportedFunctions = [];
+    const exportedEntries = [];
+    const pushEntry = (name, isDefault = false, type = "function") => {
+        if (!name || name === "default" || nonCallableExportNames.has(name.toLowerCase())) return;
+        const safeName = name === "defaultExport" ? "defaultExport" : name;
+        if (!exportedEntries.some(e => e.name === name && e.isDefault === isDefault)) {
+            exportedEntries.push({ name, safeName, isDefault, type });
+        }
+    };
     if (sourceCode) {
         try {
-            const astMeta = analyzeSourceAst(sourceCode);
-            if (astMeta && astMeta.exportedSymbolNames && astMeta.exportedSymbolNames.length > 0) {
-                for (const name of astMeta.exportedSymbolNames) {
-                    if (name && !exportedFunctions.includes(name) && !nonCallableExportNames.has(name.toLowerCase())) {
-                        exportedFunctions.push(name);
-                    }
+            const astMeta = analyzeSourceAst(sourceCode, rootDir && cleanSource ? { rootDir, sourceFile: cleanSource } : {});
+            if (astMeta && Array.isArray(astMeta.exportedSymbols)) {
+                for (const sym of astMeta.exportedSymbols) {
+                    if (!sym || sym.exportKind === "type") continue;
+                    const resolvedName = sym.name === "default" ? (sym.localName || "defaultExport") : sym.name;
+                    pushEntry(resolvedName, Boolean(sym.isDefault), sym.type || "function");
                 }
             }
         } catch (_) { }
 
-        // Fallback regex matching ESM and CommonJS
-        const fnMatches = [...sourceCode.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
-        for (const m of fnMatches) {
-            if (m[1] && !exportedFunctions.includes(m[1]) && !nonCallableExportNames.has(m[1].toLowerCase())) {
-                exportedFunctions.push(m[1]);
+        if (exportedEntries.length === 0) {
+            // Fallback regex matching ESM and CommonJS only when AST yielded zero symbols
+            const fnMatches = [...sourceCode.matchAll(/export\s+(default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
+            for (const m of fnMatches) {
+                if (m[2]) pushEntry(m[2], Boolean(m[1]), "function");
             }
-        }
-        const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
-        for (const m of namedExpMatches) {
-            for (const s of m[1].split(",")) {
-                const clean = s.trim().split(/\s+as\s+/)[0].trim();
-                if (clean && !exportedFunctions.includes(clean)) exportedFunctions.push(clean);
-            }
-        }
-        const cjsObjMatch = sourceCode.match(/module\.exports\s*=\s*\{([^}]+)\}/s);
-        if (cjsObjMatch) {
-            for (const s of cjsObjMatch[1].split(",")) {
-                const clean = s.trim().split(":")[0].trim();
-                if (clean && /^[a-zA-Z0-9_$]+$/.test(clean) && !exportedFunctions.includes(clean)) {
-                    exportedFunctions.push(clean);
+            const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
+            for (const m of namedExpMatches) {
+                for (const s of m[1].split(",")) {
+                    const cleanSpec = s.trim();
+                    if (!cleanSpec || /^type\s+/.test(cleanSpec)) continue;
+                    const parts = cleanSpec.split(/\s+as\s+/);
+                    const local = parts[0].trim();
+                    const exported = (parts[1] || local).trim();
+                    const isDef = exported === "default";
+                    pushEntry(isDef ? (local || "defaultExport") : exported, isDef, "named-export");
                 }
             }
-        }
-        const cjsSingleMatch = sourceCode.match(/module\.exports\s*=\s*([a-zA-Z0-9_$]+)\s*;?/);
-        if (cjsSingleMatch && !['null', 'undefined', 'true', 'false'].includes(cjsSingleMatch[1])) {
-            const single = cjsSingleMatch[1];
-            if (!exportedFunctions.includes(single)) {
-                exportedFunctions.push(single);
+            const cjsObjMatch = sourceCode.match(/module\.exports\s*=\s*\{([^}]+)\}/s);
+            if (cjsObjMatch) {
+                for (const s of cjsObjMatch[1].split(",")) {
+                    const clean = s.trim().split(":")[0].trim();
+                    if (clean && /^[a-zA-Z0-9_$]+$/.test(clean)) {
+                        pushEntry(clean, false, "function");
+                    }
+                }
+            }
+            const cjsSingleMatch = sourceCode.match(/module\.exports\s*=\s*([a-zA-Z0-9_$]+)\s*;?/);
+            if (cjsSingleMatch && !["null", "undefined", "true", "false"].includes(cjsSingleMatch[1])) {
+                pushEntry(cjsSingleMatch[1], true, "function");
+            }
+            const cjsNamed = [...sourceCode.matchAll(/(?:module\.)?exports\.([a-zA-Z0-9_$]+)\s*=/g)];
+            for (const m of cjsNamed) {
+                if (m[1]) pushEntry(m[1], false, "function");
             }
         }
-        const cjsNamed = [...sourceCode.matchAll(/exports\.([a-zA-Z0-9_$]+)\s*=/g)];
-        for (const m of cjsNamed) {
-            if (m[1] && !exportedFunctions.includes(m[1])) exportedFunctions.push(m[1]);
-        }
     }
-
-    // Detect if module under test is CommonJS
-    const hasEsmSyntax = /^\s*(?:import|export)\s+/m.test(sourceCode || "");
-    const hasCjsExports = /module\.exports|exports\.[a-zA-Z0-9_$]+\s*=/.test(sourceCode || "");
-    const isCommonJS = !isVitest && !isTs && !hasEsmSyntax && (hasCjsExports || /require\s*\(/.test(sourceCode || ""));
+    const exportedFunctions = Array.from(new Set(exportedEntries.map(e => e.name)));
 
     // Extract real parameter names accessed from req.body, req.query, req.params, req.file
     const bodyKeys = new Set();
@@ -568,7 +642,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 try {
                     const inst = new target();
                     let proto = Object.getPrototypeOf(inst);
-                    while (proto && proto !== Object.prototype && proto !== Array.prototype && proto.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient', 'Array'].includes(proto.constructor.name)) {
+                    while (proto && proto !== Object.prototype && proto !== Array.prototype && proto.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient', 'Array', 'Map', 'Set', 'WeakMap', 'WeakSet', 'RegExp', 'Date', 'Error', 'Promise'].includes(proto.constructor.name)) {
                         for (const p of Object.getOwnPropertyNames(proto)) {
                             if (!dangerousMethods.has(p) && typeof inst[p] === 'function') {
                                 list.push({ name: p, fn: inst[p].bind(inst) });
@@ -903,7 +977,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             if (inst && (typeof inst === 'object' || typeof inst === 'function')) {
                 const methods = new Set(Object.keys(inst).filter(k => typeof inst[k] === 'function' && !dangerousMethods.has(k)));
                 let p = Object.getPrototypeOf(inst);
-                while (p && p !== Object.prototype && p.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(p.constructor.name)) {
+                while (p && p !== Object.prototype && p !== Array.prototype && p.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient', 'Array', 'Map', 'Set', 'WeakMap', 'WeakSet', 'RegExp', 'Date', 'Error', 'Promise'].includes(p.constructor.name)) {
                     for (const name of Object.getOwnPropertyNames(p)) {
                         if (name !== 'constructor' && typeof p[name] === 'function' && !dangerousMethods.has(name)) {
                             methods.add(name);
@@ -1030,13 +1104,22 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     }
 
     const linesComment = uncoveredLines && uncoveredLines.length > 0 ? ` for lines: ${uncoveredLines.join(", ")}` : "";
-    const suiteBody = [sharedHelperDef, ...testCases].filter(Boolean).join("\n\n");
+    const callsProcessExitInExports = /\bprocess\s*\.\s*(?:exit|abort)\s*\(/.test(sourceCode || "");
+    const exitRunner = isVitest ? "vi" : "jest";
+    const exitGuardHooks = callsProcessExitInExports
+        ? `    let _exitSpy;\n    beforeEach(() => { _exitSpy = ${exitRunner}.spyOn(process, 'exit').mockImplementation(() => {}); });\n    afterEach(() => { _exitSpy?.mockRestore(); });`
+        : "";
+    const suiteBody = [exitGuardHooks, sharedHelperDef, ...testCases].filter(Boolean).join("\n\n");
     const newTests = `
 describe('${baseName} unit tests', () => {
     // Tests specifically targeting >=90% to 100% branch and statement coverage${linesComment}
 ${suiteBody}
 });
 `;
+
+    const defaultEntry = exportedEntries.find(e => e.isDefault) || null;
+    const namedFns = Array.from(new Set(exportedEntries.filter(e => !e.isDefault).map(e => e.safeName)))
+        .filter(n => n !== defaultEntry?.safeName);
 
     if (existingContent && existingContent.trim()) {
         let updatedContent = existingContent.trimEnd();
@@ -1055,7 +1138,7 @@ ${suiteBody}
         const importedIdentifier = cjsDefaultImportMatch ? cjsDefaultImportMatch[1] : (esmDefaultImportMatch ? esmDefaultImportMatch[1] : null);
 
         // Check which imported symbols are missing from existingContent
-        const missingImports = exportedFunctions.filter(fn => {
+        const missingImports = namedFns.filter(fn => {
             if (fn === "default") return false;
             const declRegex = new RegExp(`(?:import\\s+.*?\\b${fn}\\b|const\\s+.*?\\b${fn}\\b|let\\s+.*?\\b${fn}\\b|function\\s+${fn}\\b|class\\s+${fn}\\b)`, "m");
             return !declRegex.test(updatedContent);
@@ -1088,20 +1171,24 @@ ${suiteBody}
             }
         }
 
-        if (exportedFunctions.includes("default") && !/\bdefaultExport\b/.test(updatedContent)) {
-            if (importedIdentifier) {
-                const defaultStmt = `const defaultExport = ${importedIdentifier};\n`;
-                const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
-                if (firstDescribeIdx !== -1) {
-                    updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n" + defaultStmt + updatedContent.slice(firstDescribeIdx);
-                } else {
-                    updatedContent = defaultStmt + updatedContent;
-                }
-            } else if (!updatedContent.includes(cleanImportPath)) {
-                if (isCommonJS) {
-                    updatedContent = `const defaultExport = require('${cleanImportPath}');\n` + updatedContent;
-                } else {
-                    updatedContent = `import defaultExport from '${cleanImportPath}';\n` + updatedContent;
+        if (defaultEntry) {
+            const defName = defaultEntry.safeName;
+            const hasDefDecl = new RegExp(`(?:import\\s+${defName}\\b|(?:const|let|var)\\s+${defName}\\b)`).test(updatedContent);
+            if (!hasDefDecl) {
+                if (importedIdentifier) {
+                    const defaultStmt = `const ${defName} = ${importedIdentifier};\n`;
+                    const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
+                    if (firstDescribeIdx !== -1) {
+                        updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n" + defaultStmt + updatedContent.slice(firstDescribeIdx);
+                    } else {
+                        updatedContent = defaultStmt + updatedContent;
+                    }
+                } else if (!updatedContent.includes(cleanImportPath)) {
+                    if (isCommonJS) {
+                        updatedContent = `const ${defName} = require('${cleanImportPath}');\n` + updatedContent;
+                    } else {
+                        updatedContent = `import ${defName} from '${cleanImportPath}';\n` + updatedContent;
+                    }
                 }
             }
         }
@@ -1121,28 +1208,31 @@ ${suiteBody}
     }
 
     const testRunnerImport = isVitest
-        ? "import { describe, test, expect } from 'vitest';\n"
-        : (isTs ? "import { describe, test, it, expect } from '@jest/globals';\n" : "");
-
-    const hasDefault = exportedFunctions.includes("default");
-    const namedFns = exportedFunctions.filter(f => f !== "default");
+        ? (callsProcessExitInExports
+            ? "import { describe, test, expect, beforeEach, afterEach } from 'vitest';\n"
+            : "import { describe, test, expect } from 'vitest';\n")
+        : (isTs
+            ? (callsProcessExitInExports
+                ? "import { describe, test, it, expect, jest, beforeEach, afterEach } from '@jest/globals';\n"
+                : "import { describe, test, it, expect } from '@jest/globals';\n")
+            : "");
 
     let importStatement = "";
     if (isCommonJS) {
-        if (hasDefault && namedFns.length > 0) {
-            importStatement = `const defaultExport = require('${cleanImportPath}');\nconst { ${namedFns.join(", ")} } = defaultExport || {};\n`;
-        } else if (hasDefault) {
-            importStatement = `const defaultExport = require('${cleanImportPath}');\n`;
+        if (defaultEntry && namedFns.length > 0) {
+            importStatement = `const ${defaultEntry.safeName} = require('${cleanImportPath}');\nconst { ${namedFns.join(", ")} } = ${defaultEntry.safeName} || {};\n`;
+        } else if (defaultEntry) {
+            importStatement = `const ${defaultEntry.safeName} = require('${cleanImportPath}');\n`;
         } else if (namedFns.length > 0) {
             importStatement = `const { ${namedFns.join(", ")} } = require('${cleanImportPath}');\n`;
         } else {
             importStatement = `const importedModule = require('${cleanImportPath}');\n`;
         }
     } else {
-        if (hasDefault && namedFns.length > 0) {
-            importStatement = `import defaultExport, { ${namedFns.join(", ")} } from '${cleanImportPath}';\n`;
-        } else if (hasDefault) {
-            importStatement = `import defaultExport from '${cleanImportPath}';\n`;
+        if (defaultEntry && namedFns.length > 0) {
+            importStatement = `import ${defaultEntry.safeName}, { ${namedFns.join(", ")} } from '${cleanImportPath}';\n`;
+        } else if (defaultEntry) {
+            importStatement = `import ${defaultEntry.safeName} from '${cleanImportPath}';\n`;
         } else if (namedFns.length > 0) {
             importStatement = `import { ${namedFns.join(", ")} } from '${cleanImportPath}';\n`;
         } else {
@@ -1284,8 +1374,8 @@ export const findAssociatedSourceFile = (rootDir, testFilePath) => {
  * - exceptionPoints: throw, catch, promise-reject
  * Falls back safely to regex parsing if source contains experimental or malformed syntax.
  */
-export const extractAstMetadata = (sourceCode = "") => {
-    const analysis = analyzeSourceAst(sourceCode);
+export const extractAstMetadata = (sourceCode = "", options = {}) => {
+    const analysis = analyzeSourceAst(sourceCode, options);
     return {
         exportedSymbols: analysis.exportedSymbolNames || analysis.exportedSymbols.map(s => s.name),
         exportedSymbolDetails: analysis.exportedSymbols || [],

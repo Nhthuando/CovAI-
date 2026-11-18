@@ -383,7 +383,7 @@ export default function SuggestTestcaseModal({
       });
       if (matches.length > 0) return matches;
     }
-    return cleanTarget === cleanPath(targetFilePath || "") ? targetFunctionsList || [] : [];
+    return cleanTarget === cleanDisplayPath(targetFilePath || "") ? targetFunctionsList || [] : [];
   }, [selectedFile, allFunctions, targetFilePath, targetFunctionsList]);
 
   // Manual Studio state: active function & category
@@ -398,6 +398,7 @@ export default function SuggestTestcaseModal({
   // Code editor content & syntax sanity
   const [codeContent, setCodeContent] = useState("");
   const [syntaxStatus, setSyntaxStatus] = useState({ valid: true, error: null });
+  const [applyFeedback, setApplyFeedback] = useState(null);
 
   // Sync state on modal open
   useEffect(() => {
@@ -412,7 +413,7 @@ export default function SuggestTestcaseModal({
         const fPath = fn.filePath || "";
         return fPath === initialFile || cleanDisplayPath(fPath) === cleanDisplayPath(initialFile);
       });
-      const isTargetFile = cleanPath(initialFile) === cleanPath(targetFilePath || "");
+      const isTargetFile = cleanDisplayPath(initialFile) === cleanDisplayPath(targetFilePath || "");
       const resolvedFns = fns.length > 0 ? fns : isTargetFile ? targetFunctionsList || [] : [];
       const initialFn = (isTargetFile ? targetFunction : "") || resolvedFns[0]?.functionName || resolvedFns[0]?.name || "";
       setSelectedFunc(initialFn);
@@ -501,7 +502,6 @@ export default function SuggestTestcaseModal({
   };
 
   // Submit action for manual test apply
-  const [applyFeedback, setApplyFeedback] = useState(null);
   const handleApplyManual = async () => {
     if (!selectedFunc.trim()) {
       setApplyFeedback({ error: true, message: "Enter a function name to test." });

@@ -1,6 +1,8 @@
 import { buildBcryptMockCode, buildJwtMockCode } from './authDependencyMockCode.js';
 import { jestMongooseMockCode } from './jestMongooseMock.js';
 import { definesMongooseModel } from './mongooseModelDraft.service.js';
+import { isImportTimeProcessExitScript } from './commonJsTestDraft.service.js';
+import { buildFixtureRecord } from './mockAdapters/fixtureBuilder.js';
 import fs from "fs";
 import path from "path";
 import { parseJavaScriptCode } from "./babelParser.service.js";
@@ -368,16 +370,22 @@ export const buildDecisionTableMatrix = ({
     const existingTestAnalysis = parseExistingTestAst(existingTestCode, filePath);
     const existingTests = existingTestAnalysis.tests || [];
 
+    const defaultExportName = (() => {
+        const first = exportedSymbols.find(s => s.exportKind !== "type");
+        if (!first) return "mainFunction";
+        return first.name === "default" ? (first.localName || "defaultExport") : first.name;
+    })();
+
     // Helper to identify function containing a specific line number
     const findEnclosingFunction = (targetLine) => {
         if (!targetLine || typeof targetLine !== "number") {
-            return exportedSymbols[0]?.name || "mainFunction";
+            return defaultExportName;
         }
 
         const allCandidates = [];
 
         for (const s of exportedSymbols) {
-            if (s.type === "constant") continue;
+            if (s.type === "constant" || s.exportKind === "type") continue;
             const start = s.startLine || s.loc?.start?.line || s.line;
             const end = s.endLine || s.loc?.end?.line;
             if (start) {
@@ -423,14 +431,14 @@ export const buildDecisionTableMatrix = ({
             return preceding[0].name;
         }
 
-        return exportedSymbols[0]?.name || "mainFunction";
+        return defaultExportName;
     };
 
     let counter = 1;
 
     // --- CATEGORY A: HAPPY PATH (Standard Valid Flow & Core Logic Path Traversal) ---
     for (const exp of exportedSymbols) {
-        if (exp.type === "constant") continue;
+        if (exp.type === "constant" || exp.exportKind === "type") continue;
         const isFnUncovered = uncoveredFunctions.some(uf => uf.name === exp.name);
 
         // Check if function parameter expects a collection
@@ -545,7 +553,8 @@ export const buildDecisionTableMatrix = ({
     }
 
     if (matrixEntries.length === 0) {
-        const defaultFn = exportedSymbols[0]?.name || "defaultExport";
+        const firstExp = exportedSymbols.find(s => s.exportKind !== "type");
+        const defaultFn = firstExp ? (firstExp.name === "default" ? (firstExp.localName || "defaultExport") : firstExp.name) : "defaultExport";
         const hasExistingHappyTest = existingTests.some(t => !t.isSkipped && t.category === "HAPPY_PATH");
         matrixEntries.push({
             id: `TC-HAPPY-${String(counter++).padStart(2, "0")}`,
@@ -567,7 +576,7 @@ export const buildDecisionTableMatrix = ({
 
     // --- CATEGORY B: BOUNDARY VALUE ANALYSIS ---
     for (const exp of exportedSymbols) {
-        if (exp.type === "constant") continue;
+        if (exp.type === "constant" || exp.exportKind === "type") continue;
 
         // Boundary B1: Zero, negative number, max safe integer
         const hasExistingB1 = existingTests.some(t =>
@@ -957,7 +966,7 @@ export const buildDecisionTableMatrix = ({
 
     // If no explicit exception points found, add general error handling test
     if (exceptionPoints.length === 0 && exportedSymbols.length > 0) {
-        const defaultFn = exportedSymbols[0]?.name || "mainFunction";
+        const defaultFn = defaultExportName;
         const hasExistingErrorTest = existingTests.some(t => !t.isSkipped && t.category === "ERROR_HANDLING");
         matrixEntries.push({
             id: `TC-ERR-${String(counter++).padStart(2, "0")}`,
@@ -1094,7 +1103,7 @@ export const buildIndirectTestingStrategy = (paramsOrHelpers, maybeAstMetadata, 
 
     // Resilient fallback: body regex matching if no edges found
     if (calleeToCallersMap.size === 0 && sourceCode) {
-        const allFuncs = [...internalFunctions, ...exportedSymbols.filter(s => s.type !== "constant")];
+        const allFuncs = [...internalFunctions, ...exportedSymbols.filter(s => s.type !== "constant" && s.exportKind !== "type")];
         for (const f of allFuncs) {
             const name = f.name;
             const declPattern = new RegExp(`(?:function\\s+${name}|const\\s+${name}\\s*=|let\\s+${name}\\s*=|var\\s+${name}\\s*=)([\\s\\S]*?)(?=(?:function\\s+[a-zA-Z0-9_$]+|const\\s+[a-zA-Z0-9_$]+\\s*=|let\\s+[a-zA-Z0-9_$]+\\s*=|var\\s+[a-zA-Z0-9_$]+\\s*=|module\\.exports|export\\s+default|export\\s+\\{|$))`);
@@ -1110,7 +1119,7 @@ export const buildIndirectTestingStrategy = (paramsOrHelpers, maybeAstMetadata, 
         }
     }
 
-    const exportedNamesSet = new Set(exportedSymbols.filter(s => s.type !== "constant").map(s => s.name));
+    const exportedNamesSet = new Set(exportedSymbols.filter(s => s.type !== "constant" && s.exportKind !== "type").map(s => s.name));
 
     // For each internal helper, backtrack callers using BFS to find public exported callers and call chains
     for (const helper of internalFunctions) {
@@ -1677,7 +1686,7 @@ export const buildIsolationMockContracts = ({
     }
 
     // 2.1.1 Detect bcrypt / bcryptjs / argon2
-    const usesBcrypt = /(?:require\(['"](?:bcrypt|bcryptjs|argon2)['"]\)|from\s+['"](?:bcrypt|bcryptjs|argon2)['"])/i.test(codeToInspect);
+    const usesBcrypt = /(?:require\(['"](?:bcrypt|bcryptjs|argon2)['"]\)|from\s+['"](?:bcrypt|bcryptjs|argon2)['"]|\bbcrypt\.(?:hash|compare|genSalt|hashSync|compareSync)\b)/i.test(codeToInspect);
     let bcryptMockCode = "";
     if (usesBcrypt) {
         detectedDependencies.push("bcrypt-crypto");
@@ -1692,6 +1701,55 @@ export const buildIsolationMockContracts = ({
         detectedDependencies.push("jwt-auth");
         jwtMockCode = `// 2.1.2 Universal JWT (jsonwebtoken) Mock\n` +
             buildJwtMockCode(framework);
+    }
+
+    // 2.1.3 Detect Razorpay SDK
+    const usesRazorpay = /(?:require\(['"]razorpay(?:\/[^'"]*)?['"]\)|from\s+['"]razorpay(?:\/[^'"]*)?['"]|\bnew\s+Razorpay\b|\brazorpayInstance\b)/i.test(codeToInspect);
+    let razorpayMockCode = "";
+    if (usesRazorpay) {
+        detectedDependencies.push("razorpay-payments");
+        const fnM = isVitest ? "vi.fn" : "jest.fn";
+        const mockCall = isVitest ? "vi.mock" : "jest.mock";
+        const virtOpt = isVitest ? "" : ", { virtual: true }";
+        razorpayMockCode = `// 2.1.3 Universal Razorpay Payments SDK Mock\n` +
+            `${mockCall}('razorpay', () => {\n` +
+            `  const _razorpayInstance = {\n` +
+            `    orders: {\n` +
+            `      create: ${fnM}().mockResolvedValue({ id: 'order_mock_123', amount: 50000, currency: 'INR', receipt: 'rcpt_1', status: 'created' }),\n` +
+            `      fetch: ${fnM}().mockResolvedValue({ id: 'order_mock_123', amount: 50000, currency: 'INR', status: 'paid' }),\n` +
+            `      all: ${fnM}().mockResolvedValue({ items: [] })\n` +
+            `    },\n` +
+            `    payments: {\n` +
+            `      fetch: ${fnM}().mockResolvedValue({ id: 'pay_mock_123', order_id: 'order_mock_123', status: 'captured', amount: 50000 }),\n` +
+            `      capture: ${fnM}().mockResolvedValue({ id: 'pay_mock_123', status: 'captured' }),\n` +
+            `      refund: ${fnM}().mockResolvedValue({ id: 'rfnd_mock_123', status: 'processed' })\n` +
+            `    },\n` +
+            `    refunds: {\n` +
+            `      create: ${fnM}().mockResolvedValue({ id: 'rfnd_mock_123', status: 'processed' }),\n` +
+            `      fetch: ${fnM}().mockResolvedValue({ id: 'rfnd_mock_123', status: 'processed' })\n` +
+            `    },\n` +
+            `    customers: {\n` +
+            `      create: ${fnM}().mockResolvedValue({ id: 'cust_mock_123' }),\n` +
+            `      fetch: ${fnM}().mockResolvedValue({ id: 'cust_mock_123' })\n` +
+            `    }\n` +
+            `  };\n` +
+            `  const RazorpayMock = Object.assign(${fnM}(function () { return _razorpayInstance; }), _razorpayInstance);\n` +
+            `  ${isVitest ? "return { default: RazorpayMock, ..._razorpayInstance };" : "RazorpayMock.default = RazorpayMock; return RazorpayMock;"}\n` +
+            `}${virtOpt});\n` +
+            `${mockCall}('razorpay/dist/utils/razorpay-utils', () => ({\n` +
+            `  validateWebhookSignature: ${fnM}(() => true),\n` +
+            `  validatePaymentVerification: ${fnM}(() => true),\n` +
+            `  default: { validateWebhookSignature: ${fnM}(() => true), validatePaymentVerification: ${fnM}(() => true) }\n` +
+            `})${virtOpt});\n\n`;
+    }
+
+    // 2.1.4 Detect process.exit / import-time entry scripts
+    const usesProcessExit = /\bprocess\s*\.\s*(?:exit|abort)\s*\(/.test(sourceCode || "");
+    const isCommonJsSource = !/^\s*(?:import\s+|export\s+)/m.test(sourceCode || "") &&
+        /(?:require\s*\(|module\.exports|exports\.)/.test(sourceCode || "");
+    const isImportTimeEntry = isImportTimeProcessExitScript(sourceCode || "");
+    if (usesProcessExit || isImportTimeEntry) {
+        detectedDependencies.push("process-exit");
     }
 
     // 2.2. Detect Sequelize
@@ -2040,50 +2098,219 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         }
     }
 
+    let universalMockResult = null;
+    try {
+        universalMockResult = generateUniversalMocks({
+            rootDir: rootDir || "",
+            sourceCode,
+            sourceFile: sourceFile || "",
+            existingTestCode,
+            targetTestFile: targetTestFile || "",
+            framework: framework || "jest"
+        });
+    } catch (_) {
+        universalMockResult = null;
+    }
+
     // 8. Detect Downstream Local Services & Models (Pure RAM Isolation)
     const localRequires = [...new Set([...sourceCode.matchAll(/(?:require\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"])/g)].map(m => m[1] || m[2]))]
         .filter(reqPath => !/(?:\/types\/|\.d\.ts$|definition)/i.test(reqPath))
-        .filter(reqPath => !/(?:^|[\\/])(?:utils?|helpers?|validators?|formatters?|math|evaluator|presets?|constants?|locales?|fixtures?|types?|schemas?|data|tier\d+)(?:[\\/]|$|\.|$)/i.test(reqPath))
+        .filter(reqPath => !/(?:^|[\\/])(?:utils?|helpers?|validators?|formatters?|math|evaluator|presets?|constants?|locales?|fixtures?|types?|schemas?|data|tier\d+(?:[-_][a-z0-9_-]*)?)(?:[\\/]|$|\.)/i.test(reqPath))
         .filter(reqPath => !usesPrisma || !/prisma/i.test(reqPath));
     let localServicesMockCode = "";
-    if (localRequires.length > 0) {
+    const suppressVitestCjsTopLevelMocks = Boolean(isVitest && isImportTimeEntry && isCommonJsSource);
+    if (localRequires.length > 0 && !suppressVitestCjsTopLevelMocks) {
         detectedDependencies.push("downstream-local-services");
+        const contractsList = universalMockResult?.contractReport?.contracts || [];
+        const contractFixture = buildFixtureRecord(contractsList);
+        const defaultItemBase = {
+            id: 1,
+            _id: "507f1f77bcf86cd799439011",
+            name: "Sample Item",
+            title: "Sample Title",
+            status: "ACTIVE",
+            score: 85,
+            ambiguity: 15,
+            clarity: 85,
+            completeness: 90,
+            consistency: 90,
+            filename: "sample.pdf",
+            reply: "Sample assistant reply",
+            response: "Sample assistant response",
+            text: "Sample assistant text",
+            message: "Sample assistant message",
+            content: "Sample assistant content",
+            answer: "Sample assistant answer",
+            success: true,
+            ok: true,
+            data: { reply: "Sample assistant reply", text: "Sample assistant text", items: [] },
+            choices: [{ message: { role: "assistant", content: "Sample assistant content" } }],
+            analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 },
+            ...contractFixture
+        };
+        const defaultItemJson = JSON.stringify(defaultItemBase);
+        const contractMethodLines = (fnMakerVar) => {
+            const linesOut = [];
+            const seenMethods = new Set([
+                "find", "findOne", "findById", "findOneAndUpdate", "findByIdAndUpdate",
+                "findOneAndDelete", "findByIdAndDelete", "exists", "countDocuments",
+                "create", "insertMany", "deleteOne", "deleteMany", "updateOne", "updateMany",
+                "aggregate", "distinct", "save", "validate", "validateSync", "schema",
+                "orders", "payments", "refunds", "validateWebhookSignature"
+            ]);
+            for (const c of contractsList) {
+                if (!c?.method || seenMethods.has(c.method) || !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(c.method)) continue;
+                seenMethods.add(c.method);
+                if (c.isAsync === false && !(c.chainedMethods && c.chainedMethods.length > 0)) {
+                    const syncVal = c.expectedReturnType === "array" ? `[${defaultItemJson}]`
+                        : (c.expectedReturnType === "number" ? "1" : (c.expectedReturnType === "boolean" ? "true" : defaultItemJson));
+                    linesOut.push(`    ${c.method}: ${fnMakerVar}(() => ${syncVal}),`);
+                } else if (c.expectedReturnType === "array" || (c.chainedMethods && c.chainedMethods.length > 0)) {
+                    const arrVal = c.expectedReturnType === "array" ? `[${defaultItemJson}]` : defaultItemJson;
+                    linesOut.push(`    ${c.method}: ${fnMakerVar}(() => _createQuery(${arrVal})),`);
+                }
+            }
+            return linesOut.join("\n");
+        };
+
+        const buildSharedStubBody = (fnMakerExpr, isVitestMode) => {
+            const extraMethods = contractMethodLines("fnMaker");
+            return (
+                `  const _defaultItem = Object.assign(${defaultItemJson}, { toJSON() { return { ...this }; }, toObject() { return { ...this }; }, save: fnMaker(function () { return Promise.resolve(this); }), validate: fnMaker(() => Promise.resolve()), validateSync: fnMaker(() => undefined) });\n` +
+                `  const _createQuery = (resolvedVal) => {\n` +
+                `    const getPromise = () => ${isVitestMode ? "shouldReject" : "_mockShouldReject"} ? Promise.reject(new Error('Mocked downstream failure')) : Promise.resolve(resolvedVal);\n` +
+                `    const query = {\n` +
+                `      populate: fnMaker(() => query),\n` +
+                `      select: fnMaker(() => query),\n` +
+                `      sort: fnMaker(() => query),\n` +
+                `      limit: fnMaker(() => query),\n` +
+                `      skip: fnMaker(() => query),\n` +
+                `      lean: fnMaker(() => query),\n` +
+                `      where: fnMaker(() => query),\n` +
+                `      equals: fnMaker(() => query),\n` +
+                `      session: fnMaker(() => query),\n` +
+                `      distinct: fnMaker(() => query),\n` +
+                `      or: fnMaker(() => query),\n` +
+                `      and: fnMaker(() => query),\n` +
+                `      collation: fnMaker(() => query),\n` +
+                `      hint: fnMaker(() => query),\n` +
+                `      exec: fnMaker(() => getPromise()),\n` +
+                `      then: (onFulfilled, onRejected) => getPromise().then(onFulfilled, onRejected),\n` +
+                `      catch: (onRejected) => getPromise().catch(onRejected),\n` +
+                `      finally: (cb) => getPromise().finally(cb)\n` +
+                `    };\n` +
+                `    return query;\n` +
+                `  };\n` +
+                `  const stubFn = () => fnMaker(() => {\n` +
+                `    if (${isVitestMode ? "shouldReject" : "_mockShouldReject"}) return Promise.reject(new Error('Mocked downstream failure'));\n` +
+                `    return Promise.resolve({ ..._defaultItem });\n` +
+                `  });\n` +
+                `  const baseProps = {\n` +
+                `    models: new Proxy({}, { get: (t, p) => (p === 'then' ? undefined : (t[p] || (t[p] = stubFn()))) }),\n` +
+                `    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n` +
+                `    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n` +
+                `    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message })),\n` +
+                `    find: fnMaker(() => _createQuery([_defaultItem])),\n` +
+                `    findOne: fnMaker(() => _createQuery(_defaultItem)),\n` +
+                `    findById: fnMaker(() => _createQuery(_defaultItem)),\n` +
+                `    findOneAndUpdate: fnMaker(() => _createQuery(_defaultItem)),\n` +
+                `    findByIdAndUpdate: fnMaker(() => _createQuery(_defaultItem)),\n` +
+                `    findOneAndDelete: fnMaker(() => _createQuery(_defaultItem)),\n` +
+                `    findByIdAndDelete: fnMaker(() => _createQuery(_defaultItem)),\n` +
+                `    exists: fnMaker(() => _createQuery({ _id: '507f1f77bcf86cd799439011' })),\n` +
+                `    countDocuments: fnMaker(() => _createQuery(1)),\n` +
+                `    create: fnMaker((doc) => Promise.resolve({ ..._defaultItem, ...(Array.isArray(doc) ? doc[0] : (doc || {})) })),\n` +
+                `    insertMany: fnMaker((docs) => Promise.resolve(Array.isArray(docs) ? docs : [docs])),\n` +
+                `    deleteOne: fnMaker(() => _createQuery({ deletedCount: 1, acknowledged: true })),\n` +
+                `    deleteMany: fnMaker(() => _createQuery({ deletedCount: 1, acknowledged: true })),\n` +
+                `    updateOne: fnMaker(() => _createQuery({ matchedCount: 1, modifiedCount: 1, acknowledged: true })),\n` +
+                `    updateMany: fnMaker(() => _createQuery({ matchedCount: 1, modifiedCount: 1, acknowledged: true })),\n` +
+                `    aggregate: fnMaker(() => _createQuery([_defaultItem])),\n` +
+                `    distinct: fnMaker(() => _createQuery(['sample'])),\n` +
+                `    save: fnMaker(function () { return Promise.resolve({ ..._defaultItem }); }),\n` +
+                `    validate: fnMaker(() => Promise.resolve()),\n` +
+                `    validateSync: fnMaker(() => undefined),\n` +
+                `    schema: { path: fnMaker(() => ({ validate: fnMaker(), required: fnMaker() })), paths: {}, obj: {} },\n` +
+                `    orders: {\n` +
+                `      create: fnMaker(() => Promise.resolve({ id: 'order_mock_123', amount: 50000, currency: 'INR', status: 'created' })),\n` +
+                `      fetch: fnMaker(() => Promise.resolve({ id: 'order_mock_123', status: 'paid' })),\n` +
+                `      all: fnMaker(() => Promise.resolve({ items: [] }))\n` +
+                `    },\n` +
+                `    payments: {\n` +
+                `      fetch: fnMaker(() => Promise.resolve({ id: 'pay_mock_123', status: 'captured' })),\n` +
+                `      capture: fnMaker(() => Promise.resolve({ id: 'pay_mock_123', status: 'captured' })),\n` +
+                `      refund: fnMaker(() => Promise.resolve({ id: 'rfnd_mock_123', status: 'processed' }))\n` +
+                `    },\n` +
+                `    refunds: {\n` +
+                `      create: fnMaker(() => Promise.resolve({ id: 'rfnd_mock_123', status: 'processed' })),\n` +
+                `      fetch: fnMaker(() => Promise.resolve({ id: 'rfnd_mock_123', status: 'processed' }))\n` +
+                `    },\n` +
+                `    validateWebhookSignature: fnMaker(() => true)${extraMethods ? ",\n" + extraMethods.replace(/,\n?$/, "") : ""}\n` +
+                `  };\n` +
+                `  const _materializeProp = (target, prop, receiverProxy) => {\n` +
+                `    if (typeof prop !== 'string' || prop === 'then' || prop === 'catch' || prop === 'finally' || prop === '__esModule') return undefined;\n` +
+                `    if (prop === 'default') {\n` +
+                `      Object.defineProperty(target, 'default', { value: receiverProxy, writable: true, enumerable: false, configurable: true });\n` +
+                `      return target.default;\n` +
+                `    }\n` +
+                `    if (!(prop in target)) {\n` +
+                `      const fn = stubFn();\n` +
+                `      Object.defineProperty(target, prop, { value: new Proxy(fn, handler), writable: true, enumerable: true, configurable: true });\n` +
+                `    }\n` +
+                `    return target[prop];\n` +
+                `  };\n` +
+                `  const handler = {\n` +
+                `    get: (target, prop, receiver) => {\n` +
+                `      if (prop === Symbol.iterator) return function* () { yield* []; };\n` +
+                `      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
+                `      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
+                `      if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+                `      if (prop === '__esModule') return true;\n` +
+                `      if (prop in target) {\n` +
+                `        const val = target[prop];\n` +
+                `        if (typeof target === 'function' && typeof val === 'function' && typeof prop === 'string' && prop.startsWith('mock')) {\n` +
+                `          return val.bind(target);\n` +
+                `        }\n` +
+                `        return val;\n` +
+                `      }\n` +
+                `      return _materializeProp(target, prop, receiver);\n` +
+                `    },\n` +
+                `    has: (target, prop) => {\n` +
+                `      if (prop === 'then' || prop === 'catch' || prop === 'finally') return false;\n` +
+                `      return (prop in target) || typeof prop === 'string';\n` +
+                `    },\n` +
+                `    getOwnPropertyDescriptor: (target, prop) => {\n` +
+                `      const desc = Object.getOwnPropertyDescriptor(target, prop);\n` +
+                `      if (desc) return desc;\n` +
+                `      if (typeof prop === 'string' && prop !== 'then' && prop !== 'catch' && prop !== 'finally' && prop !== '__esModule' && prop !== 'default') {\n` +
+                `        _materializeProp(target, prop, target);\n` +
+                `        return Object.getOwnPropertyDescriptor(target, prop);\n` +
+                `      }\n` +
+                `      return undefined;\n` +
+                `    },\n` +
+                `    defineProperty: (target, prop, desc) => Reflect.defineProperty(target, prop, desc),\n` +
+                `    set: (target, prop, value) => Reflect.set(target, prop, value),\n` +
+                `    ownKeys: (target) => Reflect.ownKeys(target),\n` +
+                `    deleteProperty: (target, prop) => Reflect.deleteProperty(target, prop)\n` +
+                `  };\n` +
+                `  const rootFn = fnMaker(function (doc) { return Object.assign({}, _defaultItem, doc || {}); });\n` +
+                `  Object.assign(rootFn, baseProps);\n`
+            );
+        };
+
         if (isVitest) {
             localServicesMockCode = `// 8. Universal RAM Mocks for Downstream Local Dependencies\n` +
                 `const { mockCreateUniversalStub, setStubRejectMode } = vi.hoisted(() => {\n` +
                 `  let shouldReject = false;\n` +
                 `  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (() => ({}));\n` +
-                `  const stubFn = () => fnMaker(() => {\n` +
-                `    if (shouldReject) return Promise.reject(new Error('Mocked downstream failure'));\n` +
-                `    return Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } });\n` +
-                `  });\n` +
-                `  const handler = {\n` +
-                `    get: (target, prop) => {\n` +
-                `      if (prop === Symbol.iterator) return function* () { yield* []; };\n` +
-                `      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
-                `      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
-                `      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
-                `      if (prop === '__esModule') return true;\n` +
-                `      if (prop === 'populate' || prop === 'sort' || prop === 'limit' || prop === 'skip' || prop === 'select' || prop === 'where') return () => new Proxy(stubFn(), handler);\n` +
-                `      if (prop === 'exec' || prop === 'lean') return () => Promise.resolve([{ id: 1, name: 'Sample Item' }]);\n` +
-                `      if (prop === 'countDocuments') return () => Promise.resolve(5);\n` +
-                `      if (prop === 'create') return (doc) => Promise.resolve({ id: 1, ...doc });\n` +
-                `      if (prop === 'deleteOne' || prop === 'deleteMany') return () => Promise.resolve({ deletedCount: 1 });\n` +
-                `      if (!(prop in target)) {\n` +
-                `        if (prop === 'default') target[prop] = new Proxy(stubFn(), handler);\n` +
-                `        else target[prop] = new Proxy(stubFn(), handler);\n` +
-                `      }\n` +
-                `      return target[prop];\n` +
-                `    },\n` +
-                `    has: (target, prop) => {\n` +
-                `      if (prop === 'then' || prop === 'catch') return false;\n` +
-                `      return true;\n` +
-                `    },\n` +
-                `    apply: () => Promise.resolve({ id: 1, name: 'Sample Item' })\n` +
+                `  const _createStubMaker = () => {\n` +
+                buildSharedStubBody("vi.fn", true) +
+                `    const defaultProxy = new Proxy(rootFn, handler);\n` +
+                `    const moduleObj = Object.assign({ default: defaultProxy }, baseProps);\n` +
+                `    return new Proxy(moduleObj, handler);\n` +
                 `  };\n` +
-                `  const universalStub = new Proxy({}, handler);\n` +
                 `  return {\n` +
-                `    mockCreateUniversalStub: () => universalStub,\n` +
+                `    mockCreateUniversalStub: () => _createStubMaker(),\n` +
                 `    setStubRejectMode: (mode) => { shouldReject = Boolean(mode); }\n` +
                 `  };\n` +
                 `});\n`;
@@ -2110,35 +2337,10 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
                 `var setStubRejectMode = globalThis.__setStubRejectMode = (mode) => { _mockShouldReject = Boolean(mode); };\n` +
                 `var _createStubMaker = () => {\n` +
                 `  const fnMaker = typeof jest !== 'undefined' ? jest.fn : (() => ({}));\n` +
-                `  const stubFn = () => fnMaker(() => {\n` +
-                `    if (_mockShouldReject) return Promise.reject(new Error('Mocked downstream failure'));\n` +
-                `    return Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } });\n` +
-                `  });\n` +
-                `  const baseTarget = {\n` +
-                `    models: new Proxy({}, { get: (t, p) => (p === 'then' ? undefined : (t[p] || (t[p] = stubFn()))) }),\n` +
-                `    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n` +
-                `    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n` +
-                `    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n` +
-                `  };\n` +
-                `  const handler = {\n` +
-                `    get: (target, prop) => {\n` +
-                `      if (prop === Symbol.iterator) return function* () { yield* []; };\n` +
-                `      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
-                `      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
-                `      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
-                `      if (prop === '__esModule') return true;\n` +
-                `      if (!(prop in target)) {\n` +
-                `        if (prop === 'default') target[prop] = target;\n` +
-                `        else {\n` +
-                `          const fn = stubFn();\n` +
-                `          target[prop] = new Proxy(fn, handler);\n` +
-                `        }\n` +
-                `      }\n` +
-                `      return target[prop];\n` +
-                `    },\n` +
-                `    has: (target, prop) => (prop !== 'then' && prop !== 'catch')\n` +
-                `  };\n` +
-                `  return new Proxy(baseTarget, handler);\n` +
+                buildSharedStubBody("jest.fn", false) +
+                `  const outerProxy = new Proxy(rootFn, handler);\n` +
+                `  Object.defineProperty(rootFn, 'default', { value: outerProxy, writable: true, enumerable: false, configurable: true });\n` +
+                `  return outerProxy;\n` +
                 `};\n` +
                 `var mockCreateUniversalStub = globalThis.__mockCreateUniversalStub = globalThis.__mockCreateUniversalStub || (() => _createStubMaker());\n`;
             for (const reqPath of localRequires) {
@@ -2157,26 +2359,12 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
                     localServicesMockCode += `jest.mock('${p}', () => {\n` +
                         `  const maker = (typeof mockCreateUniversalStub === 'function' ? mockCreateUniversalStub : globalThis.__mockCreateUniversalStub);\n` +
                         `  if (typeof maker === 'function') return maker();\n` +
-                        `  const fnM = typeof jest !== 'undefined' ? jest.fn : (() => ({}));\n` +
-                        `  const stubFn = () => fnM(() => Promise.resolve({ id: 1, name: 'Sample Item', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n` +
-                        `  const handler = {\n` +
-                        `    get: (t, p) => {\n` +
-                        `      if (p === Symbol.iterator) return function* () { yield* []; };\n` +
-                        `      if (p === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
-                        `      if (p === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
-                        `      if (p === '__esModule') return true;\n` +
-                        `      if (p === 'then' || p === 'catch' || typeof p === 'symbol') return undefined;\n` +
-                        `      if (!(p in t)) {\n` +
-                        `        if (p === 'default') t[p] = t;\n` +
-                        `        else {\n` +
-                        `          const fn = stubFn();\n` +
-                        `          t[p] = new Proxy(fn, handler);\n` +
-                        `        }\n` +
-                        `      }\n` +
-                        `      return t[p];\n` +
-                        `    }\n` +
-                        `  };\n` +
-                        `  return new Proxy({}, handler);\n` +
+                        `  const fnMaker = typeof jest !== 'undefined' ? jest.fn : (() => ({}));\n` +
+                        `  const _mockShouldReject = false;\n` +
+                        buildSharedStubBody("jest.fn", false) +
+                        `  const outerProxy = new Proxy(rootFn, handler);\n` +
+                        `  Object.defineProperty(rootFn, 'default', { value: outerProxy, writable: true, enumerable: false, configurable: true });\n` +
+                        `  return outerProxy;\n` +
                         `}, { virtual: true });\n`;
                 }
             }
@@ -2184,7 +2372,36 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         }
     }
 
-    const trimmedPreamble = `${envMockCode}${prismaMockCode}${mongooseMockCode}${bcryptMockCode}${jwtMockCode}${sequelizeMockCode}${redisMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${controllerMockCode}${timersMockCode}`.trim();
+    // 9. Append non-overlapping adapter mocks from universalMockResult
+    let adapterMockCode = "";
+    if (!suppressVitestCjsTopLevelMocks && Array.isArray(universalMockResult?.mocks)) {
+        const coveredSources = new Set();
+        if (usesPrisma) coveredSources.add("@prisma/client");
+        if (usesMongoose) coveredSources.add("mongoose");
+        if (usesBcrypt) { coveredSources.add("bcrypt"); coveredSources.add("bcryptjs"); coveredSources.add("argon2"); }
+        if (usesJwt) coveredSources.add("jsonwebtoken");
+        if (usesSequelize) coveredSources.add("sequelize");
+        if (usesRedis) { coveredSources.add("redis"); coveredSources.add("ioredis"); }
+        if (usesAxios) coveredSources.add("axios");
+        if (usesBull) { coveredSources.add("bull"); coveredSources.add("bullmq"); }
+        if (usesRazorpay) { coveredSources.add("razorpay"); coveredSources.add("razorpay/dist/utils/razorpay-utils"); }
+        for (const r of localRequires) coveredSources.add(r);
+        for (const m of universalMockResult.mocks) {
+            if (!m?.mockCode || coveredSources.has(m.source)) continue;
+            if (/^\s*(?:import|export)\s+/.test(m.mockCode)) continue;
+            if (/(?:jest|vi)\.mock\s*\(\s*['"]/.test(m.mockCode)) {
+                const modMatch = m.mockCode.match(/(?:jest|vi)\.mock\s*\(\s*['"]([^'"]+)['"]/);
+                if (modMatch && coveredSources.has(modMatch[1])) continue;
+                adapterMockCode += m.mockCode.trim() + "\n\n";
+            }
+        }
+    }
+
+    const effectiveMongooseMockCode = suppressVitestCjsTopLevelMocks ? "" : mongooseMockCode;
+    const effectiveBcryptMockCode = suppressVitestCjsTopLevelMocks ? "" : bcryptMockCode;
+    const effectiveJwtMockCode = suppressVitestCjsTopLevelMocks ? "" : jwtMockCode;
+    const effectiveRazorpayMockCode = suppressVitestCjsTopLevelMocks ? "" : razorpayMockCode;
+    const trimmedPreamble = `${envMockCode}${prismaMockCode}${effectiveMongooseMockCode}${effectiveBcryptMockCode}${effectiveJwtMockCode}${effectiveRazorpayMockCode}${sequelizeMockCode}${redisMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${adapterMockCode}${controllerMockCode}${timersMockCode}`.trim();
     const mockPreambleCode = trimmedPreamble ? trimmedPreamble + "\n\n" : "";
 
     const mockInstructions = [
@@ -2194,6 +2411,8 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         detectedDependencies.includes("mongoose-db") ? "- Mongoose DB: Mongoose models are mocked with thenable in-memory proxy. Queries resolve mock documents without connecting to MongoDB. In model validation and error handling scenarios (e.g. malformed attributes), operations like validate() and save() resolve in RAM without buffering or 10000ms timeouts. In assertions on ObjectId fields (userId, _id), compare string representations using .toString() (e.g. expect(doc.userId.toString()).toBe('<hex>')) to avoid AssertionError buffer mismatches." : null,
         detectedDependencies.includes("jwt-auth") ? "- JSON Web Tokens (JWT): `jwt.verify` and `jwt.sign` are mocked with mock user payloads and tokens in RAM without external signing dependencies. For verifyToken middleware, pass cookies: { jwt: 'mock_token' }." : null,
         detectedDependencies.includes("bcrypt-crypto") ? "- Password Hashing (Bcrypt): Bcrypt functions (hash, compare) are stubbed in RAM. Never run expensive native hashing in tests." : null,
+        detectedDependencies.includes("razorpay-payments") ? "- Razorpay Payments SDK: `new Razorpay(...)` and `razorpayInstance.orders.create` / `payments.fetch` / `validateWebhookSignature` are mocked in RAM without external network calls." : null,
+        detectedDependencies.includes("process-exit") ? `- Process Exit & Import-Time Scripts: NEVER invoke top-level require/import of a script that calls process.exit() on load. Inside each test, install ${isVitest ? "createRequire + require.cache replacements" : "jest.resetModules() + jest.doMock(...)"} AND ${isVitest ? "vi" : "jest"}.spyOn(process, 'exit').mockImplementation(...) BEFORE loading the script, and restore both in finally.` : null,
         detectedDependencies.includes("sequelize-db") ? "- Sequelize DB: Sequelize models and queries are mocked in RAM. Queries resolve mock instances without DB connections." : null,
         detectedDependencies.includes("redis-cache") ? "- Redis Cache: Redis/ioredis operations are routed to in-memory mock client (get, set, del, keys, flushall). Never connect to a real Redis server." : null,
         detectedDependencies.includes("axios-http") ? "- Axios HTTP: Always mock network calls. To test error branches, use `_mockAxios.post.mockRejectedValueOnce(new Error('Network Error'))`." : null,
@@ -2203,20 +2422,6 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         detectedDependencies.includes("timers-async") ? `- Asynchronous & Timers: Wrap asynchronous logic in async/await. For timers/delays, use ${isVitest ? 'vi.useFakeTimers()' : 'jest.useFakeTimers()'} and advance timers immediately.` : null,
         detectedDependencies.includes("downstream-local-services") ? "- Downstream Services & Models: All local services and models are stubbed in RAM. Never import unmocked downstream files that connect to databases." : null
     ].filter(Boolean).join("\n");
-
-    let universalMockResult = null;
-    try {
-        universalMockResult = generateUniversalMocks({
-            rootDir: rootDir || "",
-            sourceCode,
-            sourceFile: sourceFile || "",
-            existingTestCode,
-            targetTestFile: targetTestFile || "",
-            framework: framework || "jest"
-        });
-    } catch (_) {
-        universalMockResult = null;
-    }
 
     return {
         detectedDependencies,
@@ -2242,7 +2447,7 @@ export const assembleUnitTestContext = ({
     rootDir = null
 }) => {
     // 1. Phase 1: AST Analysis & Coverage Gap Mapping
-    const astMetadata = analyzeSourceAst(sourceCode);
+    const astMetadata = analyzeSourceAst(sourceCode, rootDir && sourceFile ? { rootDir, sourceFile } : {});
     const coverageGaps = mapCoverageGaps({
         astMetadata,
         fileCoverageData: coverageDetails?.rawCoverageData || coverageDetails,
@@ -2275,9 +2480,15 @@ export const assembleUnitTestContext = ({
     });
 
     // 5. Build Engineered Context Prompt Block
+    const publicSymbolsDesc = (astMetadata?.exportedSymbols || [])
+        .filter(s => s && s.exportKind !== "type" && s.name !== "default")
+        .map(s => (s.isDefault ? `${s.name} (default export)` : s.name))
+        .filter(Boolean)
+        .join(", ");
+
     const engineeredPromptContext = [
         `### SECTION 1: PUBLIC APIS & INDIRECT TESTING DIRECTIVE`,
-        `Exported Public Symbols: ${(astMetadata?.exportedSymbolNames || []).filter(Boolean).join(", ") || "All exported members"}`,
+        `Exported Public Symbols: ${publicSymbolsDesc || "All exported members"}`,
         indirectTesting.indirectGuidancePrompt,
         "",
         `### SECTION 2: ISOLATION MOCK CONTRACTS`,

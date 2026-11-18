@@ -2501,6 +2501,43 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, requestedF
             mergedTransform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
         }
 
+        if (process.env.COVAI_ISOLATED_SOURCE_DEFECTS) {
+            try {
+                const defectEntries = JSON.parse(process.env.COVAI_ISOLATED_SOURCE_DEFECTS);
+                if (Array.isArray(defectEntries) && defectEntries.length > 0) {
+                    const shimName = "covai-jest-defect-shim.cjs";
+                    const shimPath = path.join(rootDir, shimName);
+                    const { createRequire } = await import("node:module");
+                    const babelJestPath = createRequire(import.meta.url).resolve("babel-jest").replace(/\\/g, "/");
+                    const shimCode =
+                        `const babelJest = require(${JSON.stringify(babelJestPath)});\n` +
+                        `const inner = (babelJest.default || babelJest).createTransformer ? (babelJest.default || babelJest).createTransformer() : (babelJest.default || babelJest);\n` +
+                        `const defects = ${JSON.stringify(defectEntries)};\n` +
+                        `module.exports = {\n` +
+                        `  process(sourceText, sourcePath, options) {\n` +
+                        `    const norm = String(sourcePath || '').replace(/\\\\/g, '/');\n` +
+                        `    const hit = defects.find(d => d.file && (norm.endsWith('/' + d.file) || norm === d.file));\n` +
+                        `    let patched = sourceText;\n` +
+                        `    if (hit && Array.isArray(hit.symbols) && hit.symbols.length) {\n` +
+                        `      const stubs = hit.symbols.map(s => 'var ' + s + ' = function __covaiIsolatedSourceDefect() { throw new ReferenceError(' + JSON.stringify(s + ' is not defined') + '); };').join('\\n');\n` +
+                        `      patched = sourceText + '\\n' + stubs + '\\n';\n` +
+                        `    }\n` +
+                        `    return inner.process(patched, sourcePath, options);\n` +
+                        `  },\n` +
+                        `  getCacheKey(sourceText, sourcePath, options) {\n` +
+                        `    return (inner.getCacheKey ? inner.getCacheKey(sourceText, sourcePath, options) : '') + ':' + JSON.stringify(defects);\n` +
+                        `  }\n` +
+                        `};\n`;
+                    fs.writeFileSync(shimPath, shimCode, "utf8");
+                    createdHarnessFiles.add(shimPath);
+                    for (const k of Object.keys(mergedTransform)) {
+                        if (/j|t|x/.test(k)) delete mergedTransform[k];
+                    }
+                    mergedTransform["^.+\\.[cm]?[jt]sx?$"] = `<rootDir>/${shimName}`;
+                }
+            } catch (_) {}
+        }
+
         const resolvedModuleFileExtensions = Array.from(new Set([
             ...(Array.isArray(projectJestConfig?.moduleFileExtensions) ? projectJestConfig.moduleFileExtensions : []),
             "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "node"

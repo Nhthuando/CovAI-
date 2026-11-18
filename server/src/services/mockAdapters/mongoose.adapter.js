@@ -2,7 +2,10 @@ import { buildFixtureRecord, buildReturnValueFromContract } from "./fixtureBuild
 
 const QUERY_METHODS = new Set([
     "find", "findOne", "findById", "findOneAndUpdate", "findByIdAndUpdate",
-    "findOneAndDelete", "findByIdAndDelete", "countDocuments",
+    "findOneAndDelete", "findByIdAndDelete", "findOneAndReplace", "findByIdAndRemove",
+    "findOneAndRemove", "countDocuments", "estimatedDocumentCount", "exists",
+    "deleteOne", "deleteMany", "updateOne", "updateMany", "replaceOne",
+    "aggregate", "distinct",
 ]);
 
 function makeChainableHelper(fn) {
@@ -18,9 +21,15 @@ function makeChainableHelper(fn) {
         `      equals: ${fn}(() => query),\n` +
         `      lean: ${fn}(() => query),\n` +
         `      session: ${fn}(() => query),\n` +
+        `      distinct: ${fn}(() => query),\n` +
+        `      or: ${fn}(() => query),\n` +
+        `      and: ${fn}(() => query),\n` +
+        `      collation: ${fn}(() => query),\n` +
+        `      hint: ${fn}(() => query),\n` +
         `      exec: ${fn}(() => Promise.resolve(resolvedValue)),\n` +
         `      then: (onFulfilled, onRejected) => Promise.resolve(resolvedValue).then(onFulfilled, onRejected),\n` +
         `      catch: (onRejected) => Promise.resolve(resolvedValue).catch(onRejected),\n` +
+        `      finally: (cb) => Promise.resolve(resolvedValue).finally(cb),\n` +
         `    };\n` +
         `    return query;\n` +
         `  };\n`
@@ -73,11 +82,18 @@ export const mongooseAdapter = {
         if (!methods.has("findOne")) methods.set("findOne", `findOne: ${fn}(() => createChainableQuery(${JSON.stringify(rec)}))`);
         if (!methods.has("create")) methods.set("create", `create: ${fn}((doc) => Promise.resolve({ ...${JSON.stringify(rec)}, ...(doc || {}) }))`);
         if (!methods.has("countDocuments")) methods.set("countDocuments", `countDocuments: ${fn}(() => createChainableQuery(1))`);
+        if (!methods.has("deleteOne")) methods.set("deleteOne", `deleteOne: ${fn}(() => createChainableQuery({ deletedCount: 1, acknowledged: true }))`);
+        if (!methods.has("deleteMany")) methods.set("deleteMany", `deleteMany: ${fn}(() => createChainableQuery({ deletedCount: 1, acknowledged: true }))`);
+        if (!methods.has("updateOne")) methods.set("updateOne", `updateOne: ${fn}(() => createChainableQuery({ matchedCount: 1, modifiedCount: 1, acknowledged: true }))`);
+        if (!methods.has("updateMany")) methods.set("updateMany", `updateMany: ${fn}(() => createChainableQuery({ matchedCount: 1, modifiedCount: 1, acknowledged: true }))`);
+        if (!methods.has("exists")) methods.set("exists", `exists: ${fn}(() => createChainableQuery({ _id: '507f1f77bcf86cd799439011' }))`);
+        if (!methods.has("aggregate")) methods.set("aggregate", `aggregate: ${fn}(() => createChainableQuery([${JSON.stringify(rec)}]))`);
+        if (!methods.has("distinct")) methods.set("distinct", `distinct: ${fn}(() => createChainableQuery(['sample']))`);
 
         const methodEntries = Array.from(methods.values()).join(",\n    ");
         const modelFactory =
             `  const modelMock = Object.assign(\n` +
-            `    ${fn}(function (data) { return { ...${JSON.stringify(rec)}, ...(data || {}), save: ${fn}().mockResolvedValue({ ...${JSON.stringify(rec)}, ...(data || {}) }) }; }),\n` +
+            `    ${fn}(function (data) { const inst = { ...${JSON.stringify(rec)}, ...(data || {}) }; inst.save = ${fn}().mockResolvedValue(inst); inst.validate = ${fn}().mockResolvedValue(undefined); inst.validateSync = ${fn}(() => undefined); inst.toObject = ${fn}(() => ({ ...inst })); inst.toJSON = ${fn}(() => ({ ...inst })); return inst; }),\n` +
             `    {\n    ${methodEntries}\n    }\n` +
             `  );\n`;
 
@@ -99,12 +115,31 @@ export const mongooseAdapter = {
                 `  };\n` +
                 `  return { default: mongooseMock, ...mongooseMock };\n` +
                 `});`;
-        } else {
+        } else if (!isVitest) {
+            const namedBindings = (dependency?.bindings || [])
+                .map(b => b.importedName)
+                .filter(n => n && n !== "default" && n !== "*");
+            const attachLines = [
+                `  modelMock.default = modelMock;`,
+                ...namedBindings.map(n => `  modelMock[${JSON.stringify(n)}] = modelMock;`)
+            ].join("\n");
             mockCode =
                 `${mockApi}('${importSource}', () => {\n` +
                 makeChainableHelper(fn) +
                 modelFactory +
-                `  return { default: modelMock };\n` +
+                `${attachLines}\n` +
+                `  return modelMock;\n` +
+                `});`;
+        } else {
+            const namedBindings = (dependency?.bindings || [])
+                .map(b => b.importedName)
+                .filter(n => n && n !== "default" && n !== "*");
+            const namedProps = namedBindings.map(n => `, ${n}: modelMock`).join("");
+            mockCode =
+                `${mockApi}('${importSource}', () => {\n` +
+                makeChainableHelper(fn) +
+                modelFactory +
+                `  return { default: modelMock${namedProps} };\n` +
                 `});`;
         }
 

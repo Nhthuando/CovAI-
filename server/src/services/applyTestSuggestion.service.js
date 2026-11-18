@@ -48,7 +48,8 @@ import {
 import { runVitestCoverage } from "./vitestRunner.service.js";
 import { findVitestConfig } from "./vitestProjectGroups.service.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
-import { hasAssertionFailure, repairGeneratedTestInputs } from "./generatedTestInputRepair.service.js";
+import { hasAssertionFailure, repairGeneratedTestInputs, testBlocks } from "./generatedTestInputRepair.service.js";
+import { attemptControlledMockRepair } from "./controlledMockRepair.service.js";
 import { repairGeneratedTestExpectations } from './generatedTestExpectationRepair.service.js';
 import { upsertCoverageFileRows } from './coverageFilePersistence.service.js';
 import { assembleUnitTestCandidate, applyTestRepairEdits, testContentHash } from './unitTestChangeSet.service.js';
@@ -1591,17 +1592,30 @@ function composeTestCandidate(rootDir, suggestion, relTestPath, write = false) {
     }
 
     const modulePathContext = { rootDir, testFile: relTestPath, sourceFile: suggestion.sourceFile || suggestion.targetSourceFile };
-    if (reviewedHash || suggestion.changeSet || suggestion.status === 'EDITED' || suggestion[verifiedTestRepairs]) {
-        const proposed = reviewedHash ? suggestion.fullUpdatedContent : normalizeTestFrameworkCode(
-            suggestion.fullUpdatedContent || suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code || '',
-            { framework: suggestion.framework, filePath: relTestPath });
+    if (reviewedHash || suggestion.changeSet || suggestion.status === 'EDITED' || suggestion[verifiedTestRepairs] ||
+        (suggestion.status === 'GENERATED' && typeof suggestion.fullUpdatedContent === 'string' && suggestion.fullUpdatedContent.trim())) {
+        const proposed = (reviewedHash || suggestion.status === 'GENERATED')
+            ? suggestion.fullUpdatedContent
+            : normalizeTestFrameworkCode(
+                suggestion.fullUpdatedContent || suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code || '',
+                { framework: suggestion.framework, filePath: relTestPath });
         const rebased = rebaseGeneratedTestModulePaths(proposed, modulePathContext);
         if (reviewedHash && rebased !== proposed) {
             throw new ServiceError('A relative module path in this draft needs to be updated for the test file location. Regenerate and review the draft before applying.', 409, 'TEST_DRAFT_CHANGED');
         }
-        const changes = assembleUnitTestCandidate({ original: originalContent,
-            proposed: rebased,
-            testFile: relTestPath, repairs: suggestion[verifiedTestRepairs]?.edits || [],strictRepairs:suggestion.status === 'EDITED', preserveReviewedLayout: Boolean(reviewedHash) });
+        let changes;
+        try {
+            changes = assembleUnitTestCandidate({ original: originalContent,
+                proposed: rebased,
+                testFile: relTestPath, repairs: suggestion[verifiedTestRepairs]?.edits || [], strictRepairs: suggestion.status === 'EDITED', preserveReviewedLayout: Boolean(reviewedHash) });
+        } catch (assembleErr) {
+            if (suggestion.status === 'GENERATED' && !reviewedHash && !suggestion.changeSet) {
+                const newContent = writeContent(rebased);
+                return { targetTestFile: relTestPath, changed: newContent !== originalContent, originalContent, newContent,
+                    changeSet: { content: newContent, candidateHash: testContentHash(newContent), baseHash: testContentHash(originalContent), additions: [], repairs: [], needsReview: [] } };
+            }
+            throw assembleErr;
+        }
         if (suggestion.status === 'EDITED' && changes.needsReview.length) throw new ServiceError('The edited candidate changes existing cases outside a verified repair. Review a scoped repair before applying.',409);
         if (reviewedHash && changes.candidateHash !== reviewedHash) {
             throw new ServiceError('The reviewed draft changes protected test content. Regenerate and review it.', 409, 'TEST_DRAFT_CHANGED');
@@ -3820,7 +3834,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     const fileBackups = new Map(); // targetFullPath -> originalContent | null
     const stagedFilesByPath = new Map(); // normalizedRelPath -> sha256(content)
     const enforceQualityGate = !runCoverageFn || itemsToApply.some(item => item.qualityGate || item.status === 'GENERATED');
-    const qualityGate = { status: 'READY', cases: [], findings: [], attempts: [], repairs: [], accepted: 0 };
+    const qualityGate = { status: 'READY', cases: [], findings: [], isolatedDefects: [], attempts: [], repairs: [], accepted: 0 };
     let baselineRepairs = {repairs:new Map(),baseline:null};
 
     try {
@@ -3838,6 +3852,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             if (!fileBackups.has(resolvedTargetFull)) {
                 fileBackups.set(resolvedTargetFull, fs.existsSync(resolvedTargetFull) ? result.originalContent : null);
             }
+            let itemIsolatedDefects = [];
             if (enforceQualityGate) {
                 const inspect = code => inspectUnitTestQuality({ rootDir, testFile: sug.testFile, sourceFile: sug.sourceFile,
                     framework: sug.framework, code, original: result.originalContent });
@@ -3853,6 +3868,48 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                         result.changeSet = { ...result.changeSet, candidateHash: testContentHash(result.newContent) };
                         report = verified;
                     }
+                }
+                // R2: Quarantine only test cases referencing proven unbound exports (e.g. placeOrder)
+                // when valid sibling test cases remain in the same file.
+                const fileIsolated = (report.isolatedDefects || []).filter(d => d.symbol);
+                if (fileIsolated.length > 0) {
+                    const isolatedSet = new Set(fileIsolated.flatMap(d => d.testCaseIds || []));
+                    const blocks = testBlocks(result.newContent);
+                    const remainingBlocks = blocks.filter(b => !isolatedSet.has(b.fullName));
+                    if (remainingBlocks.length > 0 && isolatedSet.size > 0) {
+                        const ranges = blocks
+                            .filter(b => isolatedSet.has(b.fullName) && b.statement?.node?.start != null && b.statement?.node?.end != null)
+                            .map(b => ({ start: b.statement.node.start, end: b.statement.node.end }))
+                            .sort((a, b) => b.start - a.start);
+                        let quarantined = result.newContent;
+                        for (const r of ranges) {
+                            quarantined = `${quarantined.slice(0, r.start)}/* [COVAI ISOLATED SOURCE DEFECT] */\n${quarantined.slice(r.end)}`;
+                        }
+                        if (sug.sourceFile && (sug.framework || 'jest') === 'jest') {
+                            const relSrc = computeRelativeImportPath(result.targetTestFile, sug.sourceFile, rootDir);
+                            const syms = [...new Set(fileIsolated.map(d => d.symbol).filter(Boolean))];
+                            const stubDecls = syms.map(s => `var ${s} = function () { throw new ReferenceError(${JSON.stringify(`${s} is not defined`)}); };`).join('\\n');
+                            const guardBlock =
+                                `jest.mock(${JSON.stringify(relSrc)}, () => {\n` +
+                                `  if (process.env.COVAI_ISOLATED_SOURCE_DEFECTS) return jest.requireActual(${JSON.stringify(relSrc)});\n` +
+                                `  const _fs = require('fs'), _path = require('path');\n` +
+                                `  const _p = require.resolve(${JSON.stringify(relSrc)});\n` +
+                                `  const _m = { exports: {} };\n` +
+                                `  new Function('exports', 'require', 'module', '__filename', '__dirname', _fs.readFileSync(_p, 'utf8') + '\\n${stubDecls}\\n')(_m.exports, require, _m, _p, _path.dirname(_p));\n` +
+                                `  return _m.exports;\n` +
+                                `});\n`;
+                            quarantined = `${guardBlock}\n${quarantined}`;
+                        }
+                        result.newContent = quarantined;
+                        result.changed = result.originalContent !== result.newContent;
+                        result.changeSet = { ...result.changeSet, candidateHash: testContentHash(result.newContent) };
+                        report = {
+                            ...report,
+                            findings: report.findings.filter(f => !(f.code === 'C' && f.defectScope === 'EXPORT_SYMBOL')),
+                        };
+                    }
+                    itemIsolatedDefects = fileIsolated;
+                    qualityGate.isolatedDefects.push(...fileIsolated);
                 }
                 qualityGate.cases.push(...report.cases);
                 qualityGate.findings.push(...report.findings);
@@ -3870,6 +3927,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 changed: result.changed,
                 changeSet:result.changeSet,
                 testRepairs: repair,
+                ...(itemIsolatedDefects.length > 0 ? { isolatedDefects: itemIsolatedDefects } : {}),
                 status: "APPLIED"
             });
 
@@ -4022,6 +4080,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     // Determine testing framework and scope regression tests to target packages
     const detected = detectTestingFrameworks(rootDir);
     for (const item of appliedList) {
+        if (item.status === 'FAILED') continue;
         if (!['jest', 'vitest'].includes(item.framework)) {
             const content = fs.readFileSync(path.join(rootDir, item.testFile), "utf8");
             item.framework = classifyTestFile(content, item.testFile, detected.detectedFrameworks);
@@ -4040,8 +4099,6 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         appliedList.find(item => item.testFile === file)?.framework || classifyTestFile(fs.readFileSync(path.join(rootDir, file),'utf8'),file)]));
     const allowedSkippedByFile = Object.fromEntries(testFilesToRun.map(file => [file,
         parseExistingTestAst(fileBackups.get(path.join(rootDir, file)) ?? (!modifiedFiles.has(file) ? fs.readFileSync(path.join(rootDir,file),'utf8') : ''), file).tests.filter(test => test.isSkipped).map(test => test.runnerTitle || test.fullTitle || test.title)]));
-    const verifiedTestHashes = enforceQualityGate ? new Map(testFilesToRun.map(file => [file, qualityFileHash(rootDir, file)])) : new Map();
-    const changedTestFiles = () => [...verifiedTestHashes].filter(([file, hash]) => hash !== qualityFileHash(rootDir, file)).map(([file]) => file);
     const targetSourceFiles = [...new Set([...sourceFilesInspected, ...findLogicSourceFiles(rootDir, { bypassCache: true }).map(file =>
         file.relativePath || (file.absolutePath ? path.relative(rootDir,file.absolutePath).replace(/\\/g,'/') : file.filePath)).filter(Boolean)])];
     const hasTargetVitestConfig = Boolean(
@@ -4075,9 +4132,14 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             const orig = fs.readFileSync(fullP, "utf8");
             let cleaned = cleanAndDeduplicateTestContent(orig, "", fullP, { framework: frameworkByFile[tf] || framework });
             cleaned = healImportPathsInTestCode(cleaned, tf, rootDir);
-            if (cleaned !== orig) fs.writeFileSync(fullP, cleaned, "utf8");
+            if (cleaned !== orig) {
+                fs.writeFileSync(fullP, cleaned, "utf8");
+                stagedFilesByPath.set(normalizeCovPath(tf), sha256Text(cleaned));
+            }
         }
     }
+    const verifiedTestHashes = enforceQualityGate ? new Map(testFilesToRun.map(file => [file, qualityFileHash(rootDir, file)])) : new Map();
+    const changedTestFiles = () => [...verifiedTestHashes].filter(([file, hash]) => hash !== qualityFileHash(rootDir, file)).map(([file]) => file);
 
     // Generate distinct runId and isolated sealed run directory
     const runId = crypto.randomUUID();
@@ -4115,6 +4177,18 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         } catch (_) {}
     }
 
+    const prevIsolatedDefectsEnv = process.env.COVAI_ISOLATED_SOURCE_DEFECTS;
+    if (qualityGate.isolatedDefects.length > 0) {
+        const grouped = new Map();
+        for (const d of qualityGate.isolatedDefects) {
+            if (!d.file || !d.symbol) continue;
+            if (!grouped.has(d.file)) grouped.set(d.file, new Set());
+            grouped.get(d.file).add(d.symbol);
+        }
+        process.env.COVAI_ISOLATED_SOURCE_DEFECTS = JSON.stringify(
+            [...grouped.entries()].map(([file, syms]) => ({ file, symbols: [...syms] }))
+        );
+    }
     try {
         if (typeof runCoverageFn === "function") {
             const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: 0, hermeticMocks: hermeticMockEnvironment, useHermeticMock: true });
@@ -4129,6 +4203,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         runnerExitCode = 1;
         rawOutput += "\n" + runErr.message;
     } finally {
+        if (prevIsolatedDefectsEnv === undefined) delete process.env.COVAI_ISOLATED_SOURCE_DEFECTS;
+        else process.env.COVAI_ISOLATED_SOURCE_DEFECTS = prevIsolatedDefectsEnv;
         runnerElapsedMs += Math.max(1, Date.now() - runExecutionStartTime);
     }
 
@@ -4192,15 +4268,72 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         let healed = false;
         try {
             const missingDep = extractMissingDependency(combinedOutput);
-            if (enforceQualityGate && (!missingDep || !classifiedFailures.length || classifiedFailures.some(failure => failure.code !== 'E'))) break;
-            if (enforceQualityGate && !inspectWorkspaceDependency({ rootDir, ...missingDep }).inPackageJson) break;
-            if (missingDep) {
+            const hasNonAutoRewritableMismatch = classifiedFailures.length > 0 &&
+                classifiedFailures.every(failure => failure.code === 'D' || failure.code === 'A');
+            if (enforceQualityGate && hasNonAutoRewritableMismatch) break;
+            if (missingDep && (!enforceQualityGate || inspectWorkspaceDependency({ rootDir, ...missingDep }).inPackageJson)) {
                 const repair = await resolveUnitTestDependency({ rootDir, output: combinedOutput, attempted: attemptedPackageInstalls });
                 healed = repair.resolved;
                 qualityGate.repairs.push({ iteration: healIterations, code: 'E', action: 'RESTORE_DECLARED_DEPENDENCY',
                     packageName: missingDep.packageName, status: repair.status || 'UNRESOLVED', timestamp: new Date().toISOString() });
             }
-            // Generated drafts may retry a diagnosed dependency failure. An assertion
+            if (!healed && enforceQualityGate) {
+                for (const item of appliedList) {
+                    if (item.status === 'FAILED' || !item.testFile) continue;
+                    const absTest = path.resolve(rootDir, item.testFile);
+                    if (!fs.existsSync(absTest)) continue;
+                    const currentCode = fs.readFileSync(absTest, 'utf8');
+                    const originalCode = fileBackups.get(absTest) ?? '';
+                    const absSource = item.sourceFile ? path.resolve(rootDir, item.sourceFile) : null;
+                    const sourceCode = absSource && fs.existsSync(absSource) ? fs.readFileSync(absSource, 'utf8') : '';
+                    let repairedCode = null;
+                    let repairAction = null;
+
+                    const controlled = attemptControlledMockRepair({
+                        testCode: currentCode,
+                        sourceCode,
+                        sourceFile: item.sourceFile || '',
+                        testFile: item.testFile,
+                        rootDir,
+                        framework: item.framework || (isVitest ? 'vitest' : 'jest'),
+                        errorMessage: combinedOutput,
+                        stackTrace: combinedOutput,
+                        attempt: healIterations,
+                        maxAttempts: maxHealIterations,
+                    });
+                    if (controlled.repaired && controlled.code && controlled.code !== currentCode &&
+                        existingTestContractsPreserved(originalCode, controlled.code)) {
+                        repairedCode = controlled.code;
+                        repairAction = `CONTROLLED_MOCK_REPAIR_${controlled.classification?.classification || 'E'}`;
+                    }
+
+                    if (!repairedCode) {
+                        const report = inspectUnitTestQuality({
+                            rootDir, testFile: item.testFile, sourceFile: item.sourceFile,
+                            framework: item.framework, code: currentCode, original: originalCode,
+                        });
+                        const fwRepair = proposeVerifiedFrameworkRepair(currentCode, originalCode, report.findings, { framework: item.framework });
+                        if (fwRepair?.content && fwRepair.content !== currentCode &&
+                            existingTestContractsPreserved(originalCode, fwRepair.content)) {
+                            repairedCode = fwRepair.content;
+                            repairAction = fwRepair.action;
+                        }
+                    }
+
+                    if (repairedCode) {
+                        fs.writeFileSync(absTest, repairedCode, 'utf8');
+                        verifiedTestHashes.set(item.testFile, qualityFileHash(rootDir, item.testFile));
+                        stagedFilesByPath.set(normalizeCovPath(item.testFile), sha256Text(repairedCode));
+                        item.changeSet = { ...item.changeSet, candidateHash: testContentHash(repairedCode) };
+                        healed = true;
+                        qualityGate.repairs.push({
+                            iteration: healIterations, code: 'E', action: repairAction,
+                            testFile: item.testFile, status: 'READY_FOR_RERUN', timestamp: new Date().toISOString(),
+                        });
+                    }
+                }
+            }
+            // Generated drafts may retry a diagnosed mock/framework/dependency failure. An assertion
             // failure alone never authorizes a change to a fixture or expected value.
             if (enforceQualityGate && !healed) break;
 
@@ -4653,6 +4786,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     });
     const coverageIsValid = verification.valid && hasValidCoverageArtifact && isProvenanceValid && goalStatus !== 'UNAVAILABLE' && invalidCoverageSources.length === 0 && missingCoverageSources.length === 0 && regressedSources.length === 0 && (!requireCoverageGoal || goalStatus === 'MET');
     let targetsVerified = true;
+    const activeAppliedItems = appliedList.filter(i => i.status !== 'FAILED');
     const postApplyManifest = buildTestSuiteManifest({
         executionId: runId,
         projectId: actualProjectId,
@@ -4660,7 +4794,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         rootDir,
         testFiles: testFilesToRun,
         framework: isVitest ? "vitest" : "jest",
-        appliedSuggestionIds: appliedList.map(i => i.suggestionId || i.testFile).filter(Boolean),
+        appliedSuggestionIds: activeAppliedItems.map(i => i.suggestionId || i.testFile).filter(Boolean),
         coverageArtifactPath: sealedFinalFile,
     });
     let coverageDiagnostics = null;
@@ -4721,18 +4855,18 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             const scopeValidation = validateExecutionScopeAndArtifacts({
                 baselineManifest,
                 postApplyManifest,
-                expectedAppliedTestFiles: appliedList.map(i => i.testFile).filter(Boolean),
-                reusedExistingTests: appliedList.every(i => Boolean(i.reusedExistingTest)),
+                expectedAppliedTestFiles: activeAppliedItems.map(i => i.testFile).filter(Boolean),
+                reusedExistingTests: activeAppliedItems.every(i => Boolean(i.reusedExistingTest)),
                 stagedFilesByPath,
                 discoveredTestFiles: (detected?.testFiles || []).map(f => f.path),
-                appliedSuggestions: appliedList,
+                appliedSuggestions: activeAppliedItems,
             });
             const coverageComparison = compareTargetedCoverage({
                 baselineCoverage,
                 postApplyCoverage: rawFinal,
                 targetSourceFiles: proposalSources,
             });
-            qualityGate.coverage = verifyQualityCoverage({ items: appliedList, baseline: baselineCoverage, candidate: rawFinal });
+            qualityGate.coverage = verifyQualityCoverage({ items: activeAppliedItems, baseline: baselineCoverage, candidate: rawFinal });
             targetsVerified = scopeValidation.valid && qualityGate.coverage.every(item => item.verified);
             baselineAlreadyCovered = !validationOnly && scopeValidation.valid &&
                 coverageComparison.allTargetsAtThreshold &&
@@ -4835,8 +4969,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     }
     const versionBatch = saveVerifiedUnitTestBatch({ snapshotId, rootDir, projectId: actualProjectId, runId, verification,
         coverage: rawSum?.total,
-        files: [...new Set(appliedList.map(item => item.testFile))].map(testFile => {
-            const item = appliedList.find(entry => entry.testFile === testFile);
+        files: [...new Set(appliedList.filter(item => item.status !== 'FAILED').map(item => item.testFile))].map(testFile => {
+            const item = appliedList.find(entry => entry.testFile === testFile && entry.status !== 'FAILED');
             const full = path.join(rootDir, testFile);
             return { ...item, originalContent: fileBackups.get(full) ?? null, updatedContent: fs.readFileSync(full, 'utf8') };
         }) });
@@ -5178,7 +5312,10 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     const dodEvaluation = verifyQuantitativeDoD({
         coverage: finalNewCoverage,
         testResults: normalizedTestResults,
-        testCode: [...new Set(appliedList.map(item => item.testFile))].map(file => fs.readFileSync(path.join(rootDir, file), 'utf8')).join('\n'),
+        testCode: [...new Set(appliedList.filter(item => item.status !== 'FAILED').map(item => item.testFile))]
+            .filter(file => fs.existsSync(path.join(rootDir, file)))
+            .map(file => fs.readFileSync(path.join(rootDir, file), 'utf8'))
+            .join('\n'),
         rootDir
     });
 

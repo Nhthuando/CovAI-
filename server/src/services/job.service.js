@@ -38,6 +38,8 @@ const JOB_TYPES = Object.freeze([
   "PERFORMANCE_ANALYSIS",
   "AI_SUGGEST",
   "AI_TESTS",
+  "UNIT_TEST_SUGGEST",
+  "UNIT_TEST_APPLY",
   "ANALYSIS",
   "QUALITY_ANALYSIS",
   "SECURITY_ANALYSIS",
@@ -100,6 +102,8 @@ const INACTIVE_HEARTBEAT_TIMEOUT_MS = 6 * 60 * 1000; // 6 minutes of zero logs/a
 
 const LONG_RUNNING_JOB_TYPES = [
   "AI_TESTS",
+  "UNIT_TEST_SUGGEST",
+  "UNIT_TEST_APPLY",
   "RUN_TESTS",
   "VITEST_COVERAGE",
   "RUN_VITEST_TESTS",
@@ -481,7 +485,7 @@ export const createIngestJobForSnapshot = async ({
 const TEST_AND_AI_JOB_TYPES = new Set([
   'RUN_TESTS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'SUPERTEST_COVERAGE',
   'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT', 'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION',
-  'AI_TESTS', 'AI_SUGGEST', 'AI_INTEGRATION_RUN', 'AI_SYSTEM_GENERATE', 'SYSTEM_COLD_START_GENERATE',
+  'AI_TESTS', 'AI_SUGGEST', 'UNIT_TEST_SUGGEST', 'UNIT_TEST_APPLY', 'AI_INTEGRATION_RUN', 'AI_SYSTEM_GENERATE', 'SYSTEM_COLD_START_GENERATE',
   'CYPRESS_SYSTEM_TEST', 'CYPRESS_SYSTEM_COVERAGE', 'PLAYWRIGHT_SYSTEM_TEST', 'PLAYWRIGHT_SYSTEM_COVERAGE'
 ]);
 
@@ -552,7 +556,7 @@ export const createSnapshotJob = async ({
     const admitted = await admitProjectOperation({projectId,snapshotId,userId,type,input:payloadJson || {},requestId});
     return {...admitted.job,reused:admitted.reused,operationId:admitted.operationId};
   }
-  await resolveProjectAccess({projectId,userId,capability:type.startsWith('AI_') ? 'ai.use' : 'tests.run'});
+  await resolveProjectAccess({projectId,userId,capability:(type.startsWith('AI_') || type === 'UNIT_TEST_SUGGEST') ? 'ai.use' : 'tests.run'});
 
   const [snapshot, user] = await Promise.all([
     prisma.projectSnapshot.findUnique({

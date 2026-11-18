@@ -207,20 +207,20 @@ export async function getFileCoverage(snapshotId, filePath) {
     return handleResponse(res);
 }
 
-export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null, validationMode = 'fast') {
+export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null, validationMode = 'fast', asyncMode = false) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ filePath, projectId, validationMode, ...(framework ? { framework } : {}) }),
+        body: JSON.stringify({ filePath, projectId, validationMode, ...(asyncMode ? { async: true } : {}), ...(framework ? { framework } : {}) }),
     });
     return handleResponse(res);
 }
 
-export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null, validationMode = 'full' } = {}) {
+export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null, validationMode = 'full', async: asyncMode = true } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase-all`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ filePaths, projectId, validationMode, ...(framework ? { framework } : {}) }),
+        body: JSON.stringify({ filePaths, projectId, validationMode, async: Boolean(asyncMode), ...(framework ? { framework } : {}) }),
     });
     return handleResponse(res);
 }
@@ -282,20 +282,20 @@ export async function getIntegrationWorkspace(snapshotId, options = {}) {
     return handleResponse(res);
 }
 
-export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, requireCoverageGoal, requestId } = {}) {
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, requireCoverageGoal, requestId, async: asyncMode = false } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-test-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), requireCoverageGoal, requestId }),
+        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), requireCoverageGoal, requestId, ...(asyncMode ? { async: true } : {}) }),
     });
     return handleResponse(res);
 }
 
-export async function applyAllUnitTestSuggestions(snapshotId, { suggestions = [], projectId, skipBackgroundJob } = {}) {
+export async function applyAllUnitTestSuggestions(snapshotId, { suggestions = [], projectId, skipBackgroundJob, async: asyncMode = true } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-all-test-suggestions`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
+        body: JSON.stringify({ suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), async: Boolean(asyncMode) }),
     });
     return handleResponse(res);
 }

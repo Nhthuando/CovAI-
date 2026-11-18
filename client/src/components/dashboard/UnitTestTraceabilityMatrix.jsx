@@ -1601,32 +1601,6 @@ export default function UnitTestTraceabilityMatrix({
                               <span>Review Diff</span>
                             </button>
                           )}
-                          {onApplyAllFileSuggestions && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onApplyAllFileSuggestions(group.filePath, fileSugs);
-                              }}
-                              style={{
-                                padding: "3px 10px",
-                                borderRadius: 5,
-                                background: "#16a34a",
-                                border: "1px solid #15803d",
-                                color: "#ffffff",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                boxShadow: "0 1px 3px rgba(22, 163, 74, 0.35)",
-                              }}
-                              title="Apply generated tests for this file and run verification"
-                            >
-                              <Zap size={12} />
-                              <span>Apply Tests</span>
-                            </button>
-                          )}
                         </div>
                       ) : (hasPassed || isFileFullyCovered) ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -2564,49 +2538,6 @@ export default function UnitTestTraceabilityMatrix({
                                             >
                                               <FileDiff size={12} style={{ color: "#6366f1" }} />
                                               <span>Review Diff</span>
-                                            </button>
-                                          )}
-                                          {onApplyAllFileSuggestions && (
-                                            <button
-                                              onClick={() => onApplyAllFileSuggestions(fn.filePath, fileSugs)}
-                                              disabled={isApplying}
-                                              style={{
-                                                padding: "3px 12px",
-                                                borderRadius: 5,
-                                                background: "#16a34a",
-                                                border: "1px solid #15803d",
-                                                color: "#ffffff",
-                                                fontSize: 11,
-                                                fontWeight: 700,
-                                                cursor: isApplying ? "wait" : "pointer",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 5,
-                                              }}
-                                              className="hover:opacity-90"
-                                              title="Safely merge tests into suite and run verification"
-                                            >
-                                              {isApplying ? (
-                                                <>
-                                                  <Loader2 size={12} className="animate-spin" />
-                                                  <span>
-                                                    {isBulkApplying
-                                                      ? (bulkApplyPhase === "merge"
-                                                          ? "Merging..."
-                                                          : bulkApplyPhase === "verify"
-                                                            ? "Verifying..."
-                                                            : bulkApplyPhase === "sync"
-                                                              ? "Syncing..."
-                                                              : "Applying...")
-                                                      : "Applying & Verifying..."}
-                                                  </span>
-                                                </>
-                                              ) : (
-                                                <>
-                                                  <Zap size={12} />
-                                                  <span>Apply Tests</span>
-                                                </>
-                                              )}
                                             </button>
                                           )}
                                         </div>

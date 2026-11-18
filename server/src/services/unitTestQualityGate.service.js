@@ -232,14 +232,26 @@ export function inspectUnitTestQuality({ rootDir, testFile, sourceFile, code, or
         }));
     }
     const sourceAst = source && parseJavaScriptCode(sourceCode, { filePath: sourceFile });
+    const isolatedDefects = [];
     if (sourceAst?.success) {
+        const blocks = testBlocks(code);
         for (const { name, line } of unboundCommonJsExports(sourceAst.ast)) {
+            // Symbol-level attribution: only test cases that reference the unbound export are quarantined,
+            // so valid sibling tests (e.g. verifyPayment) remain READY.
+            const symbolPattern = new RegExp(`(?<![\\w$])${name.replace(/[$]/g, '\\$')}(?![\\w$])`);
+            const testCaseIds = blocks
+                .filter(block => symbolPattern.test(code.slice(block.callback.node.start, block.callback.node.end)) ||
+                    symbolPattern.test(block.title || ''))
+                .map(block => block.fullName);
+            const diagnostic = `Source defect at ${sourceFile}:${line}: '${name}' is exported but never declared or imported.`;
             findings.push(finding('C', context, {
                 classification: 'POTENTIAL_SOURCE_DEFECT', confidence: 'medium', sourceLine: line,
+                defectSymbol: name, defectScope: 'EXPORT_SYMBOL', isolatedTestCaseIds: testCaseIds,
                 reason: `The source exports '${name}' without declaring or importing it.`,
                 evidence: [bounded(sourceCode.split(/\r?\n/)[line - 1])],
                 correction: 'Restore the intended source implementation or confirm that the export should be removed.',
             }));
+            isolatedDefects.push({ symbol: name, file: sourceFile, line, testFile, testCaseIds, diagnostic });
         }
     }
     const schemas = /['"]mongoose['"]/.test(sourceCode) ? analyzeMongooseSchemas(sourceCode) : [];
@@ -263,7 +275,8 @@ export function inspectUnitTestQuality({ rootDir, testFile, sourceFile, code, or
         } });
         // A rejected-input test intentionally uses out-of-contract data.
         const testsRejection = /\b(?:invalid|reject|error|throw|malformed|fail|missing|empty|undefined|null|non.array)\b/i.test(block.title)
-            || assertions.some(item => item.method === 'toThrow');
+            || assertions.some(item => item.method === 'toThrow')
+            || /\.validateSync\s*\(\s*\)\s*(?:\?\.\s*errors|\.\s*errors)/.test(code.slice(block.callback.node.start, block.callback.node.end));
         if (!testsRejection && contract) {
             for (const violation of inputContractViolations(block, absoluteTest, rootDir, source, contract.functions)) {
                 findings.push(finding('B', testCase, {
@@ -319,7 +332,7 @@ export function inspectUnitTestQuality({ rootDir, testFile, sourceFile, code, or
             }));
         }
     }
-    return { cases, findings };
+    return { cases, findings, isolatedDefects };
 }
 
 export function analyzeUnitTestFailures({ rootDir, items, results, output = '' }) {
@@ -343,10 +356,12 @@ export function analyzeUnitTestFailures({ rootDir, items, results, output = '' }
                 framework: item.framework, hasComparison: expected != null && actual != null,
             });
             const sourceLine = item.sourceFile && message.split('\n').find(line => line.replaceAll('\\', '/').includes(item.sourceFile + ':'));
-            const undefinedExport = sourceLine && findUnboundCommonJsExport(rootDir, item.sourceFile, message);
+            const undefinedExport = item.sourceFile && findUnboundCommonJsExport(rootDir, item.sourceFile, message);
             if (undefinedExport) {
                 failures.push(finding('C', { testFile: item.testFile, sourceFile: item.sourceFile, testCaseId: assertion?.fullName || assertion?.title || null }, {
-                    sourceLine: undefinedExport.line, sourceLocation: sourceLine.trim(),
+                    classification: 'POTENTIAL_SOURCE_DEFECT', confidence: 'medium',
+                    defectSymbol: undefinedExport.name, defectScope: 'EXPORT_SYMBOL',
+                    sourceLine: undefinedExport.line, sourceLocation: sourceLine?.trim() || null,
                     reason: `The source exports '${undefinedExport.name}' without declaring or importing it.`,
                     evidence: [message], correction: 'Restore the intended source implementation or confirm that the export should be removed.',
                 }));

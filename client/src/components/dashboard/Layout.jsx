@@ -264,49 +264,12 @@ function LayoutInner() {
   const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
   const [unifiedSummary, setUnifiedSummary] = useState(null);
-  const [project, setProject] = useState(null);
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
-  const chatSnapshotId = searchParams.get("snapshotId") || project?.activeSnapshotId ||
-    project?.latestSnapshotId || project?.snapshots?.[0]?.id ||
-    (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId;
   const [aiPanelOwner, setAiPanelOwner] = useState(null);
-  const aiPanelScope = `${user?.id}:${project?.id}`;
-  const isAiPanelVisible = aiPanelOpen && aiPanelOwner === aiPanelScope;
   const [chatTestContext, setChatTestContext] = useState({});
   const updateChatTestContext = useCallback(detail => {
     setChatTestContext(previous => JSON.stringify(previous[detail.testType]) === JSON.stringify(detail) ? previous : { ...previous, [detail.testType]: detail });
   }, []);
-  const selectedChatTest = chatTestContext[coverageType];
-  const activeChatTest = project?.id && chatSnapshotId && activeActivity === 'coverage' && selectedChatTest?.projectId === project.id &&
-    selectedChatTest?.snapshotId === chatSnapshotId ? selectedChatTest : null;
-  const activeOverviewSummary = activeActivity === "overview" && unifiedSummary?.projectId === project?.id &&
-    unifiedSummary?.snapshotId === chatSnapshotId ? unifiedSummary : null;
-  const screenContext = useMemo(
-    () => ({
-      activity: activeActivity,
-      testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
-      filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
-      unifiedSummary: activeOverviewSummary || undefined,
-      testRunId: activeChatTest?.testRunId,
-      scenarioId: activeChatTest?.scenarioId,
-      displayedMetrics: activeOverviewSummary && project?.id && chatSnapshotId ? {
-        kind: "overview", projectId: project.id, snapshotId: chatSnapshotId,
-        state: activeOverviewSummary.state || "ready",
-        healthScore: activeOverviewSummary.healthScore,
-        healthGrade: activeOverviewSummary.healthGrade,
-        qualityGate: activeOverviewSummary.qualityGateLabel,
-        totalTests: activeOverviewSummary.totalExecutedTests,
-        passedTests: activeOverviewSummary.passedTests,
-        failedTests: activeOverviewSummary.failedTests,
-        overallCoveragePct: activeOverviewSummary.overallCoveragePct,
-        unitLinesPct: activeOverviewSummary.unitLinesPct,
-        unitBranchesPct: activeOverviewSummary.unitBranchesPct,
-        apiCoveragePct: activeOverviewSummary.apiCoveragePct,
-        systemFlowPct: activeOverviewSummary.systemFlowPct,
-      } : activeChatTest?.displayedMetrics,
-    }),
-    [activeActivity, coverageType, activeTabId, activeOverviewSummary, activeChatTest, project?.id, chatSnapshotId]
-  );
   const isFullWidthWorkspace = [
     "architecture",
     "overview",
@@ -397,8 +360,86 @@ function LayoutInner() {
     return () => window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
   }, []);
 
-  const [projects, setProjects] = useState([]);
+  const resolveCachedProjectsList = useCallback(() => {
+    const direct = queryClient.getQueryData(["projects", user?.id]);
+    if (Array.isArray(direct) && direct.length > 0) return direct;
+
+    const allProjectQueries = queryClient.getQueriesData({ queryKey: ["projects"] });
+    for (const [, data] of allProjectQueries) {
+      if (Array.isArray(data) && data.length > 0) return data;
+    }
+
+    const portfolioRaw = queryClient.getQueryData(["projectsPortfolio", "live"]);
+    const portfolioProjects =
+      portfolioRaw?.data?.projects || portfolioRaw?.projects || null;
+    if (Array.isArray(portfolioProjects) && portfolioProjects.length > 0) {
+      return portfolioProjects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description || "",
+        repoUrl: p.repoUrl || null,
+        defaultBranch: p.defaultBranch || "main",
+        lifecycleStatus: p.lifecycleStatus || "NOT_STARTED",
+        lifecycleUpdatedAt: p.lifecycleUpdatedAt || p.updatedAt || null,
+        isPinned: Boolean(p.isPinned),
+        activeSnapshotId: p.snapshotId || p.activeSnapshotId || null,
+        latestSnapshotId: p.snapshotId || p.latestSnapshotId || null,
+        snapshots: p.snapshotId ? [{ id: p.snapshotId }] : [],
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      }));
+    }
+    return [];
+  }, [queryClient, user?.id]);
+
+  const [projects, setProjects] = useState(() => resolveCachedProjectsList());
+  const [project, setProject] = useState(() => {
+    const cached = resolveCachedProjectsList();
+    if (Array.isArray(cached) && cached.length > 0) {
+      if (initialProjectId) {
+        return cached.find((p) => p.id === initialProjectId) || null;
+      }
+      return cached[0] || null;
+    }
+    return null;
+  });
   const projectAccess = useProjectAccess(project?.id);
+  const chatSnapshotId = searchParams.get("snapshotId") || project?.activeSnapshotId ||
+    project?.latestSnapshotId || project?.snapshots?.[0]?.id ||
+    (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId;
+  const aiPanelScope = `${user?.id}:${project?.id}`;
+  const isAiPanelVisible = aiPanelOpen && aiPanelOwner === aiPanelScope;
+  const selectedChatTest = chatTestContext[coverageType];
+  const activeChatTest = project?.id && chatSnapshotId && activeActivity === 'coverage' && selectedChatTest?.projectId === project.id &&
+    selectedChatTest?.snapshotId === chatSnapshotId ? selectedChatTest : null;
+  const activeOverviewSummary = activeActivity === "overview" && unifiedSummary?.projectId === project?.id &&
+    unifiedSummary?.snapshotId === chatSnapshotId ? unifiedSummary : null;
+  const screenContext = useMemo(
+    () => ({
+      activity: activeActivity,
+      testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
+      filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
+      unifiedSummary: activeOverviewSummary || undefined,
+      testRunId: activeChatTest?.testRunId,
+      scenarioId: activeChatTest?.scenarioId,
+      displayedMetrics: activeOverviewSummary && project?.id && chatSnapshotId ? {
+        kind: "overview", projectId: project.id, snapshotId: chatSnapshotId,
+        state: activeOverviewSummary.state || "ready",
+        healthScore: activeOverviewSummary.healthScore,
+        healthGrade: activeOverviewSummary.healthGrade,
+        qualityGate: activeOverviewSummary.qualityGateLabel,
+        totalTests: activeOverviewSummary.totalExecutedTests,
+        passedTests: activeOverviewSummary.passedTests,
+        failedTests: activeOverviewSummary.failedTests,
+        overallCoveragePct: activeOverviewSummary.overallCoveragePct,
+        unitLinesPct: activeOverviewSummary.unitLinesPct,
+        unitBranchesPct: activeOverviewSummary.unitBranchesPct,
+        apiCoveragePct: activeOverviewSummary.apiCoveragePct,
+        systemFlowPct: activeOverviewSummary.systemFlowPct,
+      } : activeChatTest?.displayedMetrics,
+    }),
+    [activeActivity, coverageType, activeTabId, activeOverviewSummary, activeChatTest, project?.id, chatSnapshotId]
+  );
   useEffect(() => {
     setAiPanelOpen(false);
     setAiPanelOwner(`${user?.id}:${project?.id}`);
@@ -599,9 +640,9 @@ function LayoutInner() {
                   Array.isArray(tree)
                     ? null
                     : {
-                        snapshotId: tree.snapshotId,
-                        expectedWorkspaceRevision: tree.workspaceRevision,
-                      }
+                      snapshotId: tree.snapshotId,
+                      expectedWorkspaceRevision: tree.workspaceRevision,
+                    }
                 );
                 setFileTree(sourceTree || []);
                 if (sourceTree && sourceTree.length > 0) {
@@ -658,7 +699,7 @@ function LayoutInner() {
 
           if (activeActivity === "overview") {
             window.setTimeout(() => {
-              loadProjectFileTree().catch(() => {});
+              loadProjectFileTree().catch(() => { });
             }, 600);
           } else {
             await loadProjectFileTree();
@@ -820,8 +861,8 @@ function LayoutInner() {
       setProjects((prev) =>
         Array.isArray(prev)
           ? prev.map((p) =>
-              p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
-            )
+            p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
+          )
           : prev
       );
       queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
@@ -1056,8 +1097,8 @@ function LayoutInner() {
         tab.id === normOld
           ? { ...tab, id: normNew, name: normNew.split("/").pop() }
           : tab.id.startsWith(`${normOld}/`)
-          ? { ...tab, id: `${normNew}${tab.id.slice(normOld.length)}` }
-          : tab,
+            ? { ...tab, id: `${normNew}${tab.id.slice(normOld.length)}` }
+            : tab,
       ),
     );
     if (activeTabId === normOld) setActiveTabId(normNew);
@@ -1221,8 +1262,8 @@ function LayoutInner() {
                     (project.lifecycleStatus && project.lifecycleStatus !== "NOT_STARTED"
                       ? project.lifecycleStatus
                       : unifiedSummary?.projectId === project.id && unifiedSummary?.lifecycleStatus
-                      ? unifiedSummary.lifecycleStatus
-                      : project.lifecycleStatus) || "NOT_STARTED"
+                        ? unifiedSummary.lifecycleStatus
+                        : project.lifecycleStatus) || "NOT_STARTED"
                   }
                   onStatusChange={(newStatus) => {
                     setProject((prev) =>
@@ -1260,8 +1301,8 @@ function LayoutInner() {
                     <span className="flex-shrink-0 select-none">/</span>
                     <span
                       className={`truncate max-w-[100px] md:max-w-[180px] ${isLast
-                          ? "text-[var(--color-text)] font-semibold"
-                          : "text-[var(--color-text-secondary)] font-medium"
+                        ? "text-[var(--color-text)] font-semibold"
+                        : "text-[var(--color-text-secondary)] font-medium"
                         }`}
                       title={cleanFilePath}
                     >
@@ -1304,11 +1345,10 @@ function LayoutInner() {
                       navigate(`${location.pathname}?${params.toString()}`);
                     }
                   }}
-                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${
-                    isActive
-                      ? "text-[var(--color-primary)] font-semibold"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
-                  }`}
+                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${isActive
+                    ? "text-[var(--color-primary)] font-semibold"
+                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
+                    }`}
                   title={`${tab.label} Suite`}
                 >
                   {isActive && (
@@ -1375,8 +1415,8 @@ function LayoutInner() {
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}
               className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${sidebarOpen
-                  ? "text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                ? "text-[var(--color-primary)]"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }`}
               title={
                 sidebarOpen
@@ -1399,8 +1439,8 @@ function LayoutInner() {
               aria-expanded={isAiPanelVisible}
               aria-controls="covai-chatbot"
               className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer flex items-center gap-1 ${isAiPanelVisible
-                  ? "text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                ? "text-[var(--color-primary)]"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }`}
               title={
                 isAiPanelVisible
@@ -1581,8 +1621,8 @@ function LayoutInner() {
                   project?.snapshots?.[0]?.id ||
                   (project?.id || initialProjectId
                     ? localStorage.getItem(
-                        `latestSnapshot_${project?.id || initialProjectId}`
-                      )
+                      `latestSnapshot_${project?.id || initialProjectId}`
+                    )
                     : null) ||
                   testPromptSnapshotId
                 }
@@ -1717,66 +1757,66 @@ function LayoutInner() {
           )}
         </motion.div>
         <>
-              {isAiPanelVisible && !isMobile && (
-                <PanelResizer
-                  onMouseDown={handleAiPanelResize}
-                  isDragging={isDraggingAiPanel}
-                  onDoubleClick={handleResetAiPanelWidth}
-                  currentWidth={aiPanelWidth}
-                  defaultWidth={DEFAULT_AI_PANEL_WIDTH}
-                  side="right"
-                  label="COV Assistant"
-                />
-              )}
-              <motion.div
-                id="covai-chatbot"
-                aria-label="AI Chatbot"
-                role="complementary"
-                key={`ai-panel:${user?.id}:${project?.id}`}
-                initial={
-                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+          {isAiPanelVisible && !isMobile && (
+            <PanelResizer
+              onMouseDown={handleAiPanelResize}
+              isDragging={isDraggingAiPanel}
+              onDoubleClick={handleResetAiPanelWidth}
+              currentWidth={aiPanelWidth}
+              defaultWidth={DEFAULT_AI_PANEL_WIDTH}
+              side="right"
+              label="COV Assistant"
+            />
+          )}
+          <motion.div
+            id="covai-chatbot"
+            aria-label="AI Chatbot"
+            role="complementary"
+            key={`ai-panel:${user?.id}:${project?.id}`}
+            initial={
+              isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+            }
+            animate={
+              isMobile
+                ? { x: 0, opacity: 1 }
+                : { width: aiPanelWidth, opacity: 1 }
+            }
+            exit={
+              isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+            }
+            transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+            style={
+              isMobile
+                ? {
+                  position: "fixed",
+                  top: 42,
+                  bottom: 26,
+                  right: 0,
+                  width: "100%",
+                  maxWidth: 360,
+                  display: isAiPanelVisible ? undefined : "none",
+                  overflow: "hidden",
+                  zIndex: 35,
+                  boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
                 }
-                animate={
-                  isMobile
-                    ? { x: 0, opacity: 1 }
-                    : { width: aiPanelWidth, opacity: 1 }
-                }
-                exit={
-                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
-                }
-                transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-                style={
-                  isMobile
-                    ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      right: 0,
-                      width: "100%",
-                      maxWidth: 360,
-                      display: isAiPanelVisible ? undefined : "none",
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                    }
-                    : { overflow: "hidden", flexShrink: 0, display: isAiPanelVisible ? undefined : "none" }
-                }
-              >
-                <RetainedPanel key={`${user?.id}:${project?.id}`} active={isAiPanelVisible}>
-                <AIPanel
-                  onClose={closeChatbot}
-                  key={`${user?.id}:${project?.id}`}
-                  screenContext={screenContext}
-                  projectId={project?.id}
-                  snapshotId={chatSnapshotId}
-                  fileTree={fileTree}
-                  pendingAiSuggestion={pendingAiSuggestion}
-                  onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
-                  onOpenFile={handleOpenFileByPath}
-                  onRunAnalysis={handleTriggerRunAnalysis}
-                />
-                </RetainedPanel>
-              </motion.div>
+                : { overflow: "hidden", flexShrink: 0, display: isAiPanelVisible ? undefined : "none" }
+            }
+          >
+            <RetainedPanel key={`${user?.id}:${project?.id}`} active={isAiPanelVisible}>
+              <AIPanel
+                onClose={closeChatbot}
+                key={`${user?.id}:${project?.id}`}
+                screenContext={screenContext}
+                projectId={project?.id}
+                snapshotId={chatSnapshotId}
+                fileTree={fileTree}
+                pendingAiSuggestion={pendingAiSuggestion}
+                onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
+                onOpenFile={handleOpenFileByPath}
+                onRunAnalysis={handleTriggerRunAnalysis}
+              />
+            </RetainedPanel>
+          </motion.div>
         </>
       </motion.div>
       <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--color-surface)] border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] font-mono whitespace-nowrap overflow-x-auto select-none">
@@ -1846,7 +1886,6 @@ function LayoutInner() {
               testPromptSnapshotId
             }
             onClose={handleCloseCFG}
-            snapshotId={searchParams.get("snapshotId") || undefined}
             initialFile={cfgInitialContext?.initialFile}
             initialFunc={cfgInitialContext?.initialFunc}
             initialLine={cfgInitialContext?.initialLine}

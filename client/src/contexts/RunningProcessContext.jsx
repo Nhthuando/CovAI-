@@ -25,6 +25,7 @@ const initialProcesses = {
   },
   suggestion: {
     isGenerating: false,
+    jobId: null,
     snapshotId: null,
     projectId: null,
     type: "unit",
@@ -37,6 +38,7 @@ const initialProcesses = {
   },
   bulkApply: {
     isApplying: false,
+    jobId: null,
     snapshotId: null,
     projectId: null,
     type: "unit",
@@ -64,13 +66,12 @@ function loadStoredProcesses(sessionUserId) {
       loadedAnalysis.isRunning = false;
     }
     const loadedSuggestion = { ...initialProcesses.suggestion, ...(parsed.suggestion || {}) };
-    // In-memory async generation loops cannot survive browser reloads
-    if (loadedSuggestion.isGenerating) {
+    // Only reset if there is no server-backed jobId
+    if (loadedSuggestion.isGenerating && !loadedSuggestion.jobId) {
       loadedSuggestion.isGenerating = false;
     }
     const loadedBulkApply = { ...initialProcesses.bulkApply, ...(parsed.bulkApply || {}) };
-    // In-memory bulk apply loop cannot survive browser reloads
-    if (loadedBulkApply.isApplying) {
+    if (loadedBulkApply.isApplying && !loadedBulkApply.jobId) {
       loadedBulkApply.isApplying = false;
     }
 
@@ -290,6 +291,151 @@ export function RunningProcessProvider({ children, sessionUserId }) {
     };
   }, [processes.analysis.isRunning, processes.analysis.jobId, processes.analysis.snapshotId, scheduleAutoDismiss]);
 
+  // Background poller for queued UNIT_TEST_SUGGEST job (survives project switches)
+  useEffect(() => {
+    const { isGenerating, jobId, snapshotId } = processes.suggestion;
+    if (!isGenerating || !jobId) return;
+
+    let isDisposed = false;
+    let timer = null;
+
+    const poll = async () => {
+      if (isDisposed) return;
+      try {
+        const response = await getJobDetailApi(jobId);
+        if (isDisposed) return;
+        const job = response?.job;
+        if (!job) {
+          timer = setTimeout(poll, 2500);
+          return;
+        }
+        if (job.status === "SUCCESS") {
+          let parsed = null;
+          try {
+            parsed = job.result ?? (job.resultJson ? JSON.parse(job.resultJson) : null);
+          } catch (_) {}
+          if (snapshotId && Array.isArray(parsed?.suggestions) && parsed.suggestions.length > 0) {
+            const grouped = {};
+            for (const sug of parsed.suggestions) {
+              const key = sug.sourceFile || sug.filePath || (Array.isArray(sug.sourceFiles) ? sug.sourceFiles[0] : null);
+              if (!key) continue;
+              if (!grouped[key]) grouped[key] = [];
+              grouped[key].push({
+                ...sug,
+                suggestionId: sug.suggestionId || sug.id || `${key}-sug-${grouped[key].length + 1}`,
+              });
+            }
+            if (Object.keys(grouped).length > 0) {
+              const existing = getSuggestions(snapshotId) || {};
+              saveSuggestions(snapshotId, { ...existing, ...grouped });
+            }
+          }
+          setProcesses((prev) => ({
+            ...prev,
+            suggestion: {
+              ...prev.suggestion,
+              isGenerating: false,
+              completedAt: Date.now(),
+              completedMessage: "✓ Generated inline test suggestions!",
+            },
+          }));
+          scheduleAutoDismiss("suggestion", 3500);
+          return;
+        }
+        if (["FAILED", "CANCELED"].includes(job.status)) {
+          setProcesses((prev) => ({
+            ...prev,
+            suggestion: {
+              ...prev.suggestion,
+              isGenerating: false,
+              completedAt: Date.now(),
+              completedMessage: job.errorMessage || `${job.status}: suggestion job failed.`,
+            },
+          }));
+          scheduleAutoDismiss("suggestion", 4500);
+          return;
+        }
+        timer = setTimeout(poll, 2500);
+      } catch (_) {
+        if (!isDisposed) timer = setTimeout(poll, 3500);
+      }
+    };
+
+    poll();
+    return () => {
+      isDisposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [processes.suggestion.isGenerating, processes.suggestion.jobId, processes.suggestion.snapshotId, scheduleAutoDismiss]);
+
+  // Background poller for queued UNIT_TEST_APPLY job (survives project switches)
+  useEffect(() => {
+    const { isApplying, jobId, snapshotId } = processes.bulkApply;
+    if (!isApplying || !jobId) return;
+
+    let isDisposed = false;
+    let timer = null;
+
+    const poll = async () => {
+      if (isDisposed) return;
+      try {
+        const response = await getJobDetailApi(jobId);
+        if (isDisposed) return;
+        const job = response?.job;
+        if (!job) {
+          timer = setTimeout(poll, 2500);
+          return;
+        }
+        if (job.status === "SUCCESS") {
+          let parsed = null;
+          try {
+            parsed = job.result ?? (job.resultJson ? JSON.parse(job.resultJson) : null);
+          } catch (_) {}
+          setProcesses((prev) => ({
+            ...prev,
+            bulkApply: {
+              ...prev.bulkApply,
+              isApplying: false,
+              completedAt: Date.now(),
+              result: parsed,
+              progressPct: 100,
+              stats: "Done",
+              phase: "done",
+              step: "✓ Successfully applied test suggestions!",
+            },
+          }));
+          scheduleAutoDismiss("bulkApply", 3500);
+          if (snapshotId) invalidateCoverageQueries(snapshotId);
+          return;
+        }
+        if (["FAILED", "CANCELED"].includes(job.status)) {
+          setProcesses((prev) => ({
+            ...prev,
+            bulkApply: {
+              ...prev.bulkApply,
+              isApplying: false,
+              completedAt: Date.now(),
+              progressPct: 100,
+              phase: "error",
+              step: job.errorMessage || `${job.status}: apply job failed.`,
+            },
+          }));
+          scheduleAutoDismiss("bulkApply", 4500);
+          return;
+        }
+        timer = setTimeout(poll, 2500);
+      } catch (_) {
+        if (!isDisposed) timer = setTimeout(poll, 3500);
+      }
+    };
+
+    poll();
+    return () => {
+      isDisposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [processes.bulkApply.isApplying, processes.bulkApply.jobId, processes.bulkApply.snapshotId, scheduleAutoDismiss]);
+
   // Methods for Analysis Process
   const startAnalysis = useCallback(({ snapshotId, projectId, type = "unit", jobId = null }) => {
     if (autoDismissTimersRef.current.analysis) {
@@ -357,7 +503,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
   }, [scheduleAutoDismiss]);
 
   // Methods for Inline Suggestion Process
-  const startSuggestion = useCallback(({ snapshotId, projectId, type = "unit", totalFiles = 0, initialMessage = "" }) => {
+  const startSuggestion = useCallback(({ snapshotId, projectId, type = "unit", totalFiles = 0, initialMessage = "", jobId = null }) => {
     if (autoDismissTimersRef.current.suggestion) {
       clearTimeout(autoDismissTimersRef.current.suggestion);
       delete autoDismissTimersRef.current.suggestion;
@@ -366,6 +512,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
       ...prev,
       suggestion: {
         isGenerating: true,
+        jobId: jobId || prev.suggestion.jobId || null,
         snapshotId,
         projectId,
         type,
@@ -413,6 +560,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
   const startBulkApply = useCallback(({
     snapshotId,
     projectId,
+    jobId = null,
     totalCount = 0,
     totalFiles = 0,
     totalSugs = 0,
@@ -431,6 +579,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
       ...prev,
       bulkApply: {
         isApplying: true,
+        jobId: jobId || prev.bulkApply.jobId || null,
         snapshotId,
         projectId,
         type,

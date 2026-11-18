@@ -102,6 +102,75 @@ export const classifyBusinessLogicFiles = (rootDir) => {
     return categories;
 };
 
+const REEXPORT_EXTENSIONS = [
+    "",
+    ".ts",
+    ".tsx",
+    ".mts",
+    ".cts",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    "/index.ts",
+    "/index.tsx",
+    "/index.mts",
+    "/index.cts",
+    "/index.js",
+    "/index.jsx",
+    "/index.mjs",
+    "/index.cjs"
+];
+
+const resolveLocalModuleFile = (rootDir, fromFile, specifier) => {
+    if (!rootDir || !fromFile || !specifier || typeof specifier !== "string" || !specifier.startsWith(".")) {
+        return null;
+    }
+    try {
+        const absFrom = path.isAbsolute(fromFile) ? fromFile : path.join(rootDir, fromFile);
+        const rawTarget = path.resolve(path.dirname(absFrom), specifier);
+        const bases = [rawTarget];
+        if (/\.[cm]?jsx?$/i.test(rawTarget)) {
+            bases.push(rawTarget.replace(/\.[cm]?jsx?$/i, ""));
+        }
+        for (const base of bases) {
+            for (const ext of REEXPORT_EXTENSIONS) {
+                const candidate = base + ext;
+                try {
+                    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                        return candidate;
+                    }
+                } catch {
+                    // ignore stat errors
+                }
+            }
+        }
+    } catch {
+        // ignore invalid path errors
+    }
+    return null;
+};
+
+const collectPatternIdentifiers = (pattern, targetSet) => {
+    if (!pattern || !targetSet) return;
+    if (pattern.type === "Identifier" && pattern.name) {
+        targetSet.add(pattern.name);
+    } else if (pattern.type === "AssignmentPattern") {
+        collectPatternIdentifiers(pattern.left, targetSet);
+    } else if (pattern.type === "RestElement") {
+        collectPatternIdentifiers(pattern.argument, targetSet);
+    } else if (pattern.type === "ObjectPattern") {
+        for (const prop of pattern.properties || []) {
+            if (prop.type === "RestElement") collectPatternIdentifiers(prop.argument, targetSet);
+            else if (prop.value) collectPatternIdentifiers(prop.value, targetSet);
+        }
+    } else if (pattern.type === "ArrayPattern") {
+        for (const el of pattern.elements || []) {
+            if (el) collectPatternIdentifiers(el, targetSet);
+        }
+    }
+};
+
 /**
  * 1.2 ABSTRACT SYNTAX TREE (AST) ANALYSIS VIA BABEL PARSER
  *
@@ -110,7 +179,15 @@ export const classifyBusinessLogicFiles = (rootDir) => {
  * 2. Private / Internal Functions: Helpers that must be tested INDIRECTLY.
  * 3. Decision Points & Exception Points: Branching conditionals and throw/catch statements.
  */
-export const analyzeSourceAst = (sourceCode = "") => {
+export const analyzeSourceAst = (sourceCode = "", optionsOrFilePath = {}) => {
+    const options = typeof optionsOrFilePath === "string"
+        ? { filePath: optionsOrFilePath }
+        : (optionsOrFilePath || {});
+    const reExportDepth = Number(options._reExportDepth || 0);
+    const rootDir = options.rootDir || null;
+    const sourceFile = options.sourceFile || options.filePath || null;
+    const visitedFiles = options._visitedFiles instanceof Set ? options._visitedFiles : new Set();
+
     const exportedSymbols = [];
     const internalFunctions = [];
     const decisionPoints = [];
@@ -118,6 +195,12 @@ export const analyzeSourceAst = (sourceCode = "") => {
     const declaredClasses = new Map();
     const declaredObjects = new Map();
     const declaredInstances = new Map();
+    const declaredFunctions = new Map();
+    const declaredConstants = new Map();
+    const moduleBindings = new Set();
+    const unboundCommonJsExports = [];
+    const reExportSources = [];
+    const cjsExportSites = [];
     const mongooseModels = [];
     const callEdges = [];
     const sourceImports = new Map();
@@ -136,6 +219,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
             mongooseModels: [],
             unexportedFunctions: [],
             exportedSymbolNames: [],
+            unboundCommonJsExports: [],
             infeasibleNodes: [],
             ast: null,
             callEdges: [],
@@ -143,6 +227,11 @@ export const analyzeSourceAst = (sourceCode = "") => {
             sourceImports: {},
             formattedImports: {}
         };
+    }
+
+    if (rootDir && sourceFile) {
+        const absSelf = path.isAbsolute(sourceFile) ? sourceFile : path.join(rootDir, sourceFile);
+        visitedFiles.add(path.normalize(absSelf).toLowerCase());
     }
 
     const lines = sourceCode.split(/\r?\n/);
@@ -197,8 +286,110 @@ export const analyzeSourceAst = (sourceCode = "") => {
             return { methods, constructorParams };
         };
 
+        const resolveDeclaredIdentifier = (idName) => {
+            if (!idName) return null;
+            if (declaredFunctions.has(idName)) {
+                const fn = declaredFunctions.get(idName);
+                return {
+                    type: "function",
+                    isAsync: Boolean(fn.isAsync),
+                    params: fn.params || [],
+                    methods: [],
+                    className: null,
+                    startLine: fn.startLine,
+                    endLine: fn.endLine,
+                    line: fn.line,
+                    loc: fn.loc
+                };
+            }
+            if (declaredClasses.has(idName)) {
+                const cls = declaredClasses.get(idName);
+                return {
+                    type: "class",
+                    isAsync: false,
+                    params: cls.constructorParams || [],
+                    methods: cls.methods || [],
+                    className: cls.name,
+                    startLine: cls.startLine || cls.line,
+                    endLine: cls.endLine || cls.line,
+                    line: cls.line,
+                    loc: cls.loc
+                };
+            }
+            if (declaredObjects.has(idName)) {
+                const obj = declaredObjects.get(idName);
+                return {
+                    type: "object",
+                    isAsync: false,
+                    params: [],
+                    methods: obj.methods || [],
+                    className: null,
+                    startLine: obj.startLine || obj.line,
+                    endLine: obj.endLine || obj.line,
+                    line: obj.line,
+                    loc: obj.loc
+                };
+            }
+            if (declaredInstances.has(idName)) {
+                const inst = declaredInstances.get(idName);
+                const cls = inst.className ? declaredClasses.get(inst.className) : null;
+                return {
+                    type: "class-instance",
+                    isAsync: false,
+                    params: [],
+                    methods: cls?.methods || [],
+                    className: inst.className || null,
+                    startLine: inst.line,
+                    endLine: inst.line,
+                    line: inst.line
+                };
+            }
+            if (declaredConstants.has(idName)) {
+                const c = declaredConstants.get(idName);
+                return {
+                    type: c.type || "constant",
+                    isAsync: false,
+                    params: [],
+                    methods: c.methods || [],
+                    className: c.className || null,
+                    startLine: c.startLine || c.line,
+                    endLine: c.endLine || c.line,
+                    line: c.line,
+                    loc: c.loc
+                };
+            }
+            return null;
+        };
+
+        const setExported = (meta) => {
+            const key = (meta.isDefault ? "default:" : "named:") + meta.name;
+            exportedMap.set(key, meta);
+        };
+
+        const extractObjectLiteralMethods = (objNode) => {
+            const objMethods = [];
+            for (const p of objNode?.properties || []) {
+                if (p.type === "SpreadElement") continue;
+                const pName = p.key?.name || p.key?.value;
+                if (pName && (p.type === "ObjectMethod" || p.value?.type === "ArrowFunctionExpression" || p.value?.type === "FunctionExpression")) {
+                    objMethods.push({
+                        name: pName,
+                        isAsync: Boolean(p.async || p.value?.async),
+                        params: extractParamNames(p.params || p.value?.params),
+                        line: p.loc?.start?.line || 1,
+                        startLine: p.loc?.start?.line || 1,
+                        endLine: p.loc?.end?.line || 1,
+                        loc: p.loc
+                    });
+                }
+            }
+            return objMethods;
+        };
+
         const walk = (node, parent) => {
             if (!node || typeof node !== "object") return;
+
+            const inTopLevelScope = scopeStack.length === 0;
 
             let pushedScope = null;
             if (node.type === "FunctionDeclaration" && node.id?.name) {
@@ -210,6 +401,59 @@ export const analyzeSourceAst = (sourceCode = "") => {
             }
             if (pushedScope) {
                 scopeStack.push(pushedScope);
+            }
+
+            // --- Track Module-Level Bindings & Declarations ---
+            if (inTopLevelScope) {
+                if (node.type === "FunctionDeclaration" && node.id?.name) {
+                    moduleBindings.add(node.id.name);
+                    if (!declaredFunctions.has(node.id.name)) {
+                        declaredFunctions.set(node.id.name, {
+                            name: node.id.name,
+                            isAsync: Boolean(node.async),
+                            params: extractParamNames(node.params),
+                            line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc
+                        });
+                    }
+                } else if (node.type === "ClassDeclaration" && node.id?.name) {
+                    moduleBindings.add(node.id.name);
+                } else if (node.type === "TSEnumDeclaration" && node.id?.name) {
+                    moduleBindings.add(node.id.name);
+                } else if (node.type === "VariableDeclarator") {
+                    collectPatternIdentifiers(node.id, moduleBindings);
+                    if (node.id?.type === "Identifier" && node.id.name) {
+                        const varName = node.id.name;
+                        const init = node.init;
+                        if (init?.type === "ArrowFunctionExpression" || init?.type === "FunctionExpression") {
+                            declaredFunctions.set(varName, {
+                                name: varName,
+                                isAsync: Boolean(init.async),
+                                params: extractParamNames(init.params),
+                                line: node.loc?.start?.line || 1,
+                                startLine: init.loc?.start?.line || node.loc?.start?.line || 1,
+                                endLine: init.loc?.end?.line || node.loc?.end?.line || node.loc?.start?.line || 1,
+                                loc: init.loc || node.loc
+                            });
+                        } else if (init?.type !== "ClassExpression" && init?.type !== "NewExpression" && init?.type !== "ObjectExpression") {
+                            declaredConstants.set(varName, {
+                                type: "constant",
+                                className: null,
+                                methods: [],
+                                line: node.loc?.start?.line || 1,
+                                startLine: node.loc?.start?.line || 1,
+                                endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                                loc: node.loc
+                            });
+                        }
+                    }
+                } else if (node.type === "ImportDeclaration") {
+                    for (const spec of node.specifiers || []) {
+                        if (spec.local?.name) moduleBindings.add(spec.local.name);
+                    }
+                }
             }
 
             // --- 0. IMPORT DECLARATIONS (ESM & CJS) ---
@@ -253,7 +497,10 @@ export const analyzeSourceAst = (sourceCode = "") => {
                     name: node.id.name,
                     methods,
                     constructorParams,
-                    line: node.loc?.start?.line || 1
+                    line: node.loc?.start?.line || 1,
+                    startLine: node.loc?.start?.line || 1,
+                    endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                    loc: node.loc
                 });
             } else if (node.type === "VariableDeclarator" && node.id?.name && node.init?.type === "ClassExpression") {
                 const { methods, constructorParams } = extractClassMethods(node.init);
@@ -261,7 +508,10 @@ export const analyzeSourceAst = (sourceCode = "") => {
                     name: node.id.name,
                     methods,
                     constructorParams,
-                    line: node.loc?.start?.line || 1
+                    line: node.loc?.start?.line || 1,
+                    startLine: node.loc?.start?.line || 1,
+                    endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                    loc: node.loc
                 });
             }
 
@@ -269,148 +519,224 @@ export const analyzeSourceAst = (sourceCode = "") => {
             if (node.type === "VariableDeclarator" && node.id?.name && node.init?.type === "NewExpression") {
                 const className = node.init.callee?.name;
                 if (className) {
-                    declaredInstances.set(node.id.name, { className, varName: node.id.name });
+                    declaredInstances.set(node.id.name, { className, varName: node.id.name, line: node.loc?.start?.line || 1 });
                 }
             }
 
             // --- Track Object Literals with functions: const x = { async foo() {} } ---
             if (node.type === "VariableDeclarator" && node.id?.name && node.init?.type === "ObjectExpression") {
                 const objName = node.id.name;
-                const objMethods = [];
-                for (const prop of node.init.properties || []) {
-                    const pName = prop.key?.name || prop.key?.value;
-                    if (pName) {
-                        if (prop.type === "ObjectMethod") {
-                            objMethods.push({
-                                name: pName,
-                                isAsync: Boolean(prop.async),
-                                params: extractParamNames(prop.params),
-                                line: prop.loc?.start?.line || 1
-                            });
-                        } else if (prop.value?.type === "ArrowFunctionExpression" || prop.value?.type === "FunctionExpression") {
-                            objMethods.push({
-                                name: pName,
-                                isAsync: Boolean(prop.value.async),
-                                params: extractParamNames(prop.value.params),
-                                line: prop.loc?.start?.line || 1
-                            });
-                        }
-                    }
-                }
+                const objMethods = extractObjectLiteralMethods(node.init);
                 if (objMethods.length > 0) {
-                    declaredObjects.set(objName, { name: objName, methods: objMethods, line: node.loc?.start?.line || 1 });
+                    declaredObjects.set(objName, {
+                        name: objName,
+                        methods: objMethods,
+                        line: node.loc?.start?.line || 1,
+                        startLine: node.loc?.start?.line || 1,
+                        endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                        loc: node.loc
+                    });
+                } else if (inTopLevelScope) {
+                    declaredConstants.set(objName, {
+                        type: "object",
+                        className: null,
+                        methods: [],
+                        line: node.loc?.start?.line || 1,
+                        startLine: node.loc?.start?.line || 1,
+                        endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                        loc: node.loc
+                    });
                 }
             }
 
             // --- 1. ESM EXPORTS ---
             if (node.type === "ExportNamedDeclaration") {
-                if (node.declaration) {
-                    if (node.declaration.id?.name) {
-                        const isClass = node.declaration.type === "ClassDeclaration";
-                        const classInfo = isClass ? extractClassMethods(node.declaration) : null;
-                        if (isClass) {
-                            declaredClasses.set(node.declaration.id.name, {
-                                name: node.declaration.id.name,
-                                methods: classInfo.methods,
-                                constructorParams: classInfo.constructorParams,
-                                line: node.loc?.start?.line || 1
-                            });
-                        }
-                        exportedMap.set(node.declaration.id.name, {
-                            name: node.declaration.id.name,
-                            type: isClass ? "class" : "function",
-                            line: node.loc?.start?.line || 1,
-                            startLine: node.loc?.start?.line || 1,
-                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
-                            loc: node.loc,
-                            isDefault: false,
-                            params: isClass ? classInfo.constructorParams : extractParamNames(node.declaration.params),
-                            methods: isClass ? classInfo.methods : [],
-                            calls: []
-                        });
-                    }
-                    if (Array.isArray(node.declaration.declarations)) {
-                        for (const d of node.declaration.declarations) {
-                            if (d.id?.name) {
-                                const isFn = d.init?.type === "ArrowFunctionExpression" || d.init?.type === "FunctionExpression";
-                                const isNew = d.init?.type === "NewExpression";
-                                const className = isNew ? d.init.callee?.name : null;
-                                const isObj = d.init?.type === "ObjectExpression";
-                                
-                                let objMethods = [];
-                                if (isObj) {
-                                    for (const p of d.init.properties || []) {
-                                        const pName = p.key?.name || p.key?.value;
-                                        if (pName && (p.type === "ObjectMethod" || p.value?.type === "ArrowFunctionExpression" || p.value?.type === "FunctionExpression")) {
-                                            objMethods.push({
-                                                name: pName,
-                                                isAsync: Boolean(p.async || p.value?.async),
-                                                params: extractParamNames(p.params || p.value?.params),
-                                                line: p.loc?.start?.line || 1,
-                                                startLine: p.loc?.start?.line || 1,
-                                                endLine: p.loc?.end?.line || 1,
-                                                loc: p.loc
-                                            });
-                                        }
+                if (node.exportKind === "type") {
+                    // Skip TypeScript type-only exports
+                } else {
+                    if (node.declaration) {
+                        const declType = node.declaration.type;
+                        const isTypeOnlyDecl =
+                            declType === "TSInterfaceDeclaration" ||
+                            declType === "TSTypeAliasDeclaration" ||
+                            declType === "TSDeclareFunction" ||
+                            node.declaration.declare === true;
+
+                        if (!isTypeOnlyDecl) {
+                            if (node.declaration.id?.name) {
+                                const isClass = declType === "ClassDeclaration";
+                                const classInfo = isClass ? extractClassMethods(node.declaration) : null;
+                                if (isClass) {
+                                    declaredClasses.set(node.declaration.id.name, {
+                                        name: node.declaration.id.name,
+                                        methods: classInfo.methods,
+                                        constructorParams: classInfo.constructorParams,
+                                        line: node.loc?.start?.line || 1,
+                                        startLine: node.loc?.start?.line || 1,
+                                        endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                                        loc: node.loc
+                                    });
+                                }
+                                setExported({
+                                    name: node.declaration.id.name,
+                                    localName: node.declaration.id.name,
+                                    type: isClass ? "class" : "function",
+                                    isAsync: Boolean(!isClass && node.declaration.async),
+                                    line: node.loc?.start?.line || 1,
+                                    startLine: node.loc?.start?.line || 1,
+                                    endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                                    loc: node.loc,
+                                    isDefault: false,
+                                    isReExport: false,
+                                    source: null,
+                                    exportKind: "value",
+                                    params: isClass ? classInfo.constructorParams : extractParamNames(node.declaration.params),
+                                    methods: isClass ? classInfo.methods : [],
+                                    calls: []
+                                });
+                            }
+                            if (Array.isArray(node.declaration.declarations)) {
+                                for (const d of node.declaration.declarations) {
+                                    if (d.id?.name) {
+                                        const isFn = d.init?.type === "ArrowFunctionExpression" || d.init?.type === "FunctionExpression";
+                                        const isNew = d.init?.type === "NewExpression";
+                                        const className = isNew ? d.init.callee?.name : null;
+                                        const isObj = d.init?.type === "ObjectExpression";
+                                        const isAlias = d.init?.type === "Identifier";
+                                        const objMethods = isObj ? extractObjectLiteralMethods(d.init) : [];
+
+                                        setExported({
+                                            name: d.id.name,
+                                            localName: isAlias ? d.init.name : d.id.name,
+                                            type: isFn ? "function" : (isNew ? "class-instance" : (isObj ? "object" : "constant")),
+                                            isAsync: Boolean(isFn && d.init?.async),
+                                            className,
+                                            methods: objMethods,
+                                            line: d.loc?.start?.line || node.loc?.start?.line || 1,
+                                            startLine: d.loc?.start?.line || node.loc?.start?.line || 1,
+                                            endLine: d.loc?.end?.line || node.loc?.end?.line || 1,
+                                            loc: d.loc || node.loc,
+                                            isDefault: false,
+                                            isReExport: false,
+                                            source: null,
+                                            exportKind: "value",
+                                            params: isFn ? extractParamNames(d.init?.params) : [],
+                                            calls: [],
+                                            _resolveFromLocal: isAlias
+                                        });
                                     }
                                 }
-
-                                exportedMap.set(d.id.name, {
-                                    name: d.id.name,
-                                    type: isFn ? "function" : (isNew ? "class-instance" : (isObj ? "object" : "constant")),
-                                    className,
-                                    methods: objMethods,
-                                    line: d.loc?.start?.line || node.loc?.start?.line || 1,
-                                    startLine: d.loc?.start?.line || node.loc?.start?.line || 1,
-                                    endLine: d.loc?.end?.line || node.loc?.end?.line || 1,
-                                    loc: d.loc || node.loc,
-                                    isDefault: false,
-                                    params: isFn ? extractParamNames(d.init?.params) : [],
-                                    calls: []
+                            }
+                        }
+                    }
+                    if (Array.isArray(node.specifiers)) {
+                        const reExportSrc = node.source?.value || null;
+                        if (reExportSrc) {
+                            reExportSources.push({
+                                kind: "named",
+                                source: reExportSrc,
+                                line: node.loc?.start?.line || 1,
+                                specifiers: node.specifiers
+                                    .filter(s => s.exportKind !== "type")
+                                    .map(s => ({
+                                        type: s.type,
+                                        local: s.local?.name || "*",
+                                        exported: s.exported?.name || s.exported?.value || s.local?.name
+                                    }))
+                            });
+                        }
+                        for (const s of node.specifiers) {
+                            if (s.exportKind === "type") continue;
+                            if (s.type === "ExportNamespaceSpecifier") {
+                                const nsName = s.exported?.name || s.exported?.value;
+                                if (nsName) {
+                                    setExported({
+                                        name: nsName,
+                                        localName: "*",
+                                        type: "namespace-export",
+                                        isAsync: false,
+                                        line: s.loc?.start?.line || node.loc?.start?.line || 1,
+                                        startLine: node.loc?.start?.line || 1,
+                                        endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                                        loc: s.loc || node.loc,
+                                        isDefault: false,
+                                        isReExport: true,
+                                        source: reExportSrc,
+                                        exportKind: "value",
+                                        params: [],
+                                        methods: [],
+                                        calls: []
+                                    });
+                                }
+                                continue;
+                            }
+                            const exportedName = s.exported?.name || s.exported?.value || s.local?.name;
+                            const localName = s.local?.name || exportedName;
+                            if (exportedName) {
+                                const isDefaultAlias = exportedName === "default";
+                                const safeName = isDefaultAlias
+                                    ? (localName && localName !== "default" ? localName : "defaultExport")
+                                    : exportedName;
+                                setExported({
+                                    name: safeName,
+                                    localName,
+                                    type: "named-export",
+                                    isAsync: false,
+                                    line: s.loc?.start?.line || node.loc?.start?.line || 1,
+                                    startLine: s.loc?.start?.line || node.loc?.start?.line || 1,
+                                    endLine: s.loc?.end?.line || node.loc?.end?.line || node.loc?.start?.line || 1,
+                                    loc: s.loc || node.loc,
+                                    isDefault: isDefaultAlias,
+                                    isReExport: Boolean(reExportSrc),
+                                    source: reExportSrc,
+                                    exportKind: "value",
+                                    params: [],
+                                    methods: [],
+                                    calls: [],
+                                    _resolveFromLocal: !reExportSrc
                                 });
                             }
                         }
                     }
                 }
-                if (Array.isArray(node.specifiers)) {
-                    for (const s of node.specifiers) {
-                        const name = s.exported?.name || s.local?.name;
-                        if (name) {
-                            exportedMap.set(name, {
-                                name,
-                                type: "named-export",
-                                line: node.loc?.start?.line || 1,
-                                isDefault: false,
-                                params: [],
-                                calls: []
-                            });
-                        }
-                    }
-                }
             } else if (node.type === "ExportDefaultDeclaration") {
-                const name = node.declaration?.id?.name || "default";
-                const isClass = node.declaration?.type === "ClassDeclaration";
-                const isFn = node.declaration?.type === "FunctionDeclaration" || node.declaration?.type === "ArrowFunctionExpression";
-                const isNew = node.declaration?.type === "NewExpression";
-                const className = isNew ? node.declaration.callee?.name : (node.declaration?.name || null);
-                
+                const decl = node.declaration;
+                const declType = decl?.type;
+                const isClass = declType === "ClassDeclaration" || declType === "ClassExpression";
+                const isFn = declType === "FunctionDeclaration" || declType === "FunctionExpression" || declType === "ArrowFunctionExpression";
+                const isNew = declType === "NewExpression";
+                const isObj = declType === "ObjectExpression";
+                const isIdentifier = declType === "Identifier";
+                const localName = isIdentifier ? decl.name : (decl?.id?.name || null);
+                const name = localName || "defaultExport";
+                const className = isNew ? decl.callee?.name : (isIdentifier ? decl.name : (decl?.id?.name || null));
+
                 let defaultMethods = [];
+                let constructorParams = [];
                 if (isClass) {
-                    const classInfo = extractClassMethods(node.declaration);
+                    const classInfo = extractClassMethods(decl);
                     defaultMethods = classInfo.methods;
-                    if (node.declaration.id?.name) {
-                        declaredClasses.set(node.declaration.id.name, {
-                            name: node.declaration.id.name,
+                    constructorParams = classInfo.constructorParams;
+                    if (decl.id?.name) {
+                        declaredClasses.set(decl.id.name, {
+                            name: decl.id.name,
                             methods: defaultMethods,
-                            constructorParams: classInfo.constructorParams,
-                            line: node.loc?.start?.line || 1
+                            constructorParams,
+                            line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc
                         });
                     }
+                } else if (isObj) {
+                    defaultMethods = extractObjectLiteralMethods(decl);
                 }
 
-                exportedMap.set(name, {
+                setExported({
                     name,
-                    type: isClass ? "class" : (isFn ? "function" : (isNew ? "class-instance" : "default-export")),
+                    localName,
+                    type: isClass ? "class" : (isFn ? "function" : (isNew ? "class-instance" : (isObj ? "object" : (isIdentifier ? "constant" : "default-export")))),
+                    isAsync: Boolean(isFn && decl?.async),
                     className,
                     methods: defaultMethods,
                     line: node.loc?.start?.line || 1,
@@ -418,82 +744,204 @@ export const analyzeSourceAst = (sourceCode = "") => {
                     endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
                     loc: node.loc,
                     isDefault: true,
-                    params: isFn ? extractParamNames(node.declaration.params) : [],
-                    calls: []
+                    isReExport: false,
+                    source: null,
+                    exportKind: "value",
+                    params: isClass ? constructorParams : (isFn ? extractParamNames(decl.params) : []),
+                    calls: [],
+                    _resolveFromLocal: isIdentifier
                 });
+            } else if (node.type === "ExportAllDeclaration") {
+                if (node.exportKind !== "type" && node.source?.value) {
+                    reExportSources.push({
+                        kind: "all",
+                        source: node.source.value,
+                        line: node.loc?.start?.line || 1
+                    });
+                }
             }
 
             // --- 2. COMMONJS EXPORTS ---
             if (node.type === "AssignmentExpression" && node.left) {
-                const leftStart = node.left.start;
-                const leftEnd = node.left.end;
-                const leftCode = typeof leftStart === "number" && typeof leftEnd === "number" ? sourceCode.slice(leftStart, leftEnd) : "";
+                const left = node.left;
+                const isModuleExportsRoot =
+                    left.type === "MemberExpression" &&
+                    !left.computed &&
+                    left.object?.type === "Identifier" &&
+                    left.object.name === "module" &&
+                    left.property?.type === "Identifier" &&
+                    left.property.name === "exports";
 
-                if (leftCode.startsWith("module.exports")) {
+                const isCjsProp =
+                    left.type === "MemberExpression" &&
+                    !left.computed &&
+                    left.property?.type === "Identifier" &&
+                    (
+                        (left.object?.type === "Identifier" && left.object.name === "exports") ||
+                        (left.object?.type === "MemberExpression" &&
+                            !left.object.computed &&
+                            left.object.object?.type === "Identifier" &&
+                            left.object.object.name === "module" &&
+                            left.object.property?.type === "Identifier" &&
+                            left.object.property.name === "exports")
+                    );
+
+                if (isModuleExportsRoot) {
                     if (node.right?.type === "ObjectExpression") {
                         for (const prop of node.right.properties || []) {
+                            if (prop.type === "SpreadElement") continue;
                             const pName = prop.key?.name || prop.key?.value;
-                            if (pName) {
-                                const isMethod = prop.type === "ObjectMethod" || prop.value?.type === "ArrowFunctionExpression" || prop.value?.type === "FunctionExpression";
-                                exportedMap.set(pName, {
-                                    name: pName,
-                                    type: isMethod ? "function" : "constant",
+                            if (!pName) continue;
+                            const isInlineFn = prop.type === "ObjectMethod" || prop.value?.type === "ArrowFunctionExpression" || prop.value?.type === "FunctionExpression";
+                            const isId = prop.value?.type === "Identifier";
+                            const localName = isId ? prop.value.name : pName;
+                            if (isId && inTopLevelScope) {
+                                cjsExportSites.push({
+                                    name: prop.value.name,
                                     line: prop.loc?.start?.line || node.loc?.start?.line || 1,
-                                    startLine: prop.loc?.start?.line || node.loc?.start?.line || 1,
-                                    endLine: prop.loc?.end?.line || node.loc?.end?.line || 1,
-                                    loc: prop.loc || node.loc,
-                                    isDefault: false,
-                                    params: isMethod ? extractParamNames(prop.params || prop.value?.params) : [],
-                                    calls: []
+                                    column: prop.value.loc?.start?.column ?? prop.loc?.start?.column ?? 0
                                 });
                             }
+                            setExported({
+                                name: pName,
+                                localName,
+                                type: isInlineFn ? "function" : "constant",
+                                isAsync: Boolean(isInlineFn && (prop.async || prop.value?.async)),
+                                line: prop.loc?.start?.line || node.loc?.start?.line || 1,
+                                startLine: prop.loc?.start?.line || node.loc?.start?.line || 1,
+                                endLine: prop.loc?.end?.line || node.loc?.end?.line || 1,
+                                loc: prop.loc || node.loc,
+                                isDefault: false,
+                                isReExport: false,
+                                source: null,
+                                exportKind: "value",
+                                params: isInlineFn ? extractParamNames(prop.params || prop.value?.params) : [],
+                                methods: [],
+                                calls: [],
+                                _resolveFromLocal: isId
+                            });
                         }
                     } else if (node.right?.type === "NewExpression") {
-                        const className = node.right.callee?.name;
-                        exportedMap.set("default", {
-                            name: "default",
+                        const className = node.right.callee?.name || null;
+                        setExported({
+                            name: "defaultExport",
+                            localName: null,
                             type: "class-instance",
+                            isAsync: false,
                             className,
                             line: node.loc?.start?.line || 1,
                             startLine: node.loc?.start?.line || 1,
                             endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
                             loc: node.loc,
                             isDefault: true,
+                            isReExport: false,
+                            source: null,
+                            exportKind: "value",
                             params: [],
                             methods: [],
                             calls: []
                         });
-                    } else if (node.right?.id?.name || node.right?.name) {
-                        const idName = node.right.id?.name || node.right.name;
+                    } else if (node.right?.type === "ArrowFunctionExpression" || node.right?.type === "FunctionExpression") {
+                        const fnName = node.right.id?.name || "defaultExport";
+                        setExported({
+                            name: fnName,
+                            localName: node.right.id?.name || null,
+                            type: "function",
+                            isAsync: Boolean(node.right.async),
+                            className: null,
+                            line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc,
+                            isDefault: true,
+                            isReExport: false,
+                            source: null,
+                            exportKind: "value",
+                            params: extractParamNames(node.right.params),
+                            methods: [],
+                            calls: []
+                        });
+                    } else if (node.right?.type === "ClassExpression") {
+                        const clsName = node.right.id?.name || "defaultExport";
+                        const classInfo = extractClassMethods(node.right);
+                        setExported({
+                            name: clsName,
+                            localName: node.right.id?.name || null,
+                            type: "class",
+                            isAsync: false,
+                            className: node.right.id?.name || null,
+                            line: node.loc?.start?.line || 1,
+                            startLine: node.loc?.start?.line || 1,
+                            endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
+                            loc: node.loc,
+                            isDefault: true,
+                            isReExport: false,
+                            source: null,
+                            exportKind: "value",
+                            params: classInfo.constructorParams,
+                            methods: classInfo.methods,
+                            calls: []
+                        });
+                    } else if (node.right?.type === "Identifier") {
+                        const idName = node.right.name;
+                        if (inTopLevelScope) {
+                            cjsExportSites.push({
+                                name: idName,
+                                line: node.loc?.start?.line || 1,
+                                column: node.right.loc?.start?.column ?? 0
+                            });
+                        }
                         const isClass = declaredClasses.has(idName);
-                        exportedMap.set(idName, {
+                        setExported({
                             name: idName,
+                            localName: idName,
                             type: isClass ? "class" : "function",
+                            isAsync: false,
                             className: isClass ? idName : null,
                             line: node.loc?.start?.line || 1,
                             startLine: node.loc?.start?.line || 1,
                             endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
                             loc: node.loc,
                             isDefault: true,
+                            isReExport: false,
+                            source: null,
+                            exportKind: "value",
                             params: [],
                             methods: isClass ? declaredClasses.get(idName).methods : [],
-                            calls: []
+                            calls: [],
+                            _resolveFromLocal: true
                         });
                     }
-                } else if (leftCode.startsWith("exports.")) {
-                    const propName = leftCode.replace(/^exports\./, "").trim();
+                } else if (isCjsProp) {
+                    const propName = left.property?.name;
                     if (propName) {
-                        const isMethod = node.right?.type === "ArrowFunctionExpression" || node.right?.type === "FunctionExpression";
-                        exportedMap.set(propName, {
+                        const isInlineFn = node.right?.type === "ArrowFunctionExpression" || node.right?.type === "FunctionExpression";
+                        const isId = node.right?.type === "Identifier";
+                        const localName = isId ? node.right.name : propName;
+                        if (isId && inTopLevelScope) {
+                            cjsExportSites.push({
+                                name: node.right.name,
+                                line: node.loc?.start?.line || 1,
+                                column: node.right.loc?.start?.column ?? 0
+                            });
+                        }
+                        setExported({
                             name: propName,
-                            type: isMethod ? "function" : "constant",
+                            localName,
+                            type: isInlineFn ? "function" : "constant",
+                            isAsync: Boolean(isInlineFn && node.right?.async),
                             line: node.loc?.start?.line || 1,
                             startLine: node.loc?.start?.line || 1,
                             endLine: node.loc?.end?.line || node.loc?.start?.line || 1,
                             loc: node.loc,
                             isDefault: false,
-                            params: isMethod ? extractParamNames(node.right.params) : [],
-                            calls: []
+                            isReExport: false,
+                            source: null,
+                            exportKind: "value",
+                            params: isInlineFn ? extractParamNames(node.right.params) : [],
+                            methods: [],
+                            calls: [],
+                            _resolveFromLocal: isId
                         });
                     }
                 }
@@ -503,7 +951,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
             if (parent && (parent.type === "Program" || parent.type === "BlockStatement")) {
                 if (node.type === "FunctionDeclaration" && node.id?.name) {
                     const fnName = node.id.name;
-                    if (!exportedMap.has(fnName)) {
+                    if (!exportedMap.has("named:" + fnName) && !exportedMap.has("default:" + fnName)) {
                         internalMap.set(fnName, {
                             name: fnName,
                             line: node.loc?.start?.line || 1,
@@ -521,7 +969,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
                     for (const d of node.declarations || []) {
                         if (d.id?.name && (d.init?.type === "ArrowFunctionExpression" || d.init?.type === "FunctionExpression")) {
                             const fnName = d.id.name;
-                            if (!exportedMap.has(fnName)) {
+                            if (!exportedMap.has("named:" + fnName) && !exportedMap.has("default:" + fnName)) {
                                 internalMap.set(fnName, {
                                     name: fnName,
                                     line: d.loc?.start?.line || node.loc?.start?.line || 1,
@@ -664,30 +1112,176 @@ export const analyzeSourceAst = (sourceCode = "") => {
 
         walk(parseRes.ast, null);
 
-        // Resolve callers for internal functions and callee calls for exports
-        for (const [name, meta] of exportedMap.entries()) {
-            internalMap.delete(name);
-            meta.calls = Array.from(new Set(callEdges.filter(c => c.caller === name).map(c => c.callee)));
+        // Compute unboundCommonJsExports after full AST walk (covers hoisted declarations)
+        const CJS_WRAPPER_GLOBALS = new Set([
+            "module", "exports", "require", "__filename", "__dirname",
+            "undefined", "null", "true", "false"
+        ]);
+        const seenUnbound = new Set();
+        for (const site of cjsExportSites) {
+            if (
+                !moduleBindings.has(site.name) &&
+                !CJS_WRAPPER_GLOBALS.has(site.name) &&
+                !Object.hasOwn(globalThis, site.name)
+            ) {
+                const sig = `${site.name}:${site.line}:${site.column}`;
+                if (!seenUnbound.has(sig)) {
+                    seenUnbound.add(sig);
+                    unboundCommonJsExports.push({
+                        name: site.name,
+                        line: site.line,
+                        column: site.column,
+                        reason: `Identifier '${site.name}' is exported in CommonJS module.exports without being declared or imported.`
+                    });
+                }
+            }
+        }
+
+        // Resolve 1-hop re-exports when rootDir & sourceFile are provided
+        const resolvedTargetCache = new Map();
+        const loadReExportTarget = (specifier) => {
+            if (!rootDir || !sourceFile || reExportDepth >= 1 || !specifier?.startsWith(".")) return null;
+            if (resolvedTargetCache.has(specifier)) return resolvedTargetCache.get(specifier);
+            const resolvedPath = resolveLocalModuleFile(rootDir, sourceFile, specifier);
+            if (!resolvedPath) {
+                resolvedTargetCache.set(specifier, null);
+                return null;
+            }
+            const normKey = path.normalize(resolvedPath).toLowerCase();
+            if (visitedFiles.has(normKey)) {
+                resolvedTargetCache.set(specifier, null);
+                return null;
+            }
+            try {
+                const stat = fs.statSync(resolvedPath);
+                if (stat.size > 500000) {
+                    resolvedTargetCache.set(specifier, null);
+                    return null;
+                }
+                const targetCode = fs.readFileSync(resolvedPath, "utf8");
+                const nextVisited = new Set(visitedFiles);
+                nextVisited.add(normKey);
+                const analysis = analyzeSourceAst(targetCode, {
+                    rootDir,
+                    sourceFile: resolvedPath,
+                    _reExportDepth: reExportDepth + 1,
+                    _visitedFiles: nextVisited
+                });
+                resolvedTargetCache.set(specifier, analysis);
+                return analysis;
+            } catch {
+                resolvedTargetCache.set(specifier, null);
+                return null;
+            }
+        };
+
+        for (const reExp of reExportSources) {
+            const targetAnalysis = loadReExportTarget(reExp.source);
+            if (!targetAnalysis) continue;
+            if (reExp.kind === "all") {
+                for (const sym of targetAnalysis.exportedSymbols || []) {
+                    if (sym.isDefault || sym.exportKind === "type") continue;
+                    const mapKey = "named:" + sym.name;
+                    if (!exportedMap.has(mapKey)) {
+                        exportedMap.set(mapKey, {
+                            ...sym,
+                            isDefault: false,
+                            isReExport: true,
+                            source: reExp.source,
+                            exportKind: "value",
+                            calls: Array.isArray(sym.calls) ? [...sym.calls] : []
+                        });
+                    }
+                }
+            } else if (reExp.kind === "named") {
+                for (const spec of reExp.specifiers || []) {
+                    if (spec.type === "ExportNamespaceSpecifier") continue;
+                    const exportedName = spec.exported;
+                    const isDefaultAlias = exportedName === "default";
+                    const safeName = isDefaultAlias
+                        ? (spec.local && spec.local !== "default" ? spec.local : "defaultExport")
+                        : exportedName;
+                    const mapKey = (isDefaultAlias ? "default:" : "named:") + safeName;
+                    const existing = exportedMap.get(mapKey);
+                    const targetSym = (targetAnalysis.exportedSymbols || []).find(sym =>
+                        spec.local === "default" ? sym.isDefault : sym.name === spec.local
+                    );
+                    if (existing && targetSym) {
+                        existing.type = targetSym.type || existing.type;
+                        existing.isAsync = Boolean(targetSym.isAsync);
+                        existing.params = Array.isArray(targetSym.params) ? targetSym.params : [];
+                        existing.methods = Array.isArray(targetSym.methods) ? targetSym.methods : [];
+                        existing.className = targetSym.className || existing.className || null;
+                        existing.startLine = targetSym.startLine || existing.startLine;
+                        existing.endLine = targetSym.endLine || existing.endLine;
+                    }
+                }
+            }
+        }
+
+        // Post-walk resolution for local identifier exports and caller/internal linkage
+        const localNameToExportedNames = new Map();
+        for (const meta of exportedMap.values()) {
+            if (meta._resolveFromLocal && meta.localName) {
+                const resolved = resolveDeclaredIdentifier(meta.localName);
+                if (resolved) {
+                    meta.type = resolved.type;
+                    meta.isAsync = Boolean(resolved.isAsync);
+                    if (Array.isArray(resolved.params) && resolved.params.length > 0) {
+                        meta.params = resolved.params;
+                    }
+                    if ((!meta.methods || meta.methods.length === 0) && Array.isArray(resolved.methods) && resolved.methods.length > 0) {
+                        meta.methods = resolved.methods;
+                    }
+                    if (!meta.className && resolved.className) {
+                        meta.className = resolved.className;
+                    }
+                    if (resolved.startLine) meta.startLine = resolved.startLine;
+                    if (resolved.endLine) meta.endLine = resolved.endLine;
+                    if (resolved.line) meta.line = resolved.line;
+                    if (resolved.loc) meta.loc = resolved.loc;
+                }
+            }
+            delete meta._resolveFromLocal;
+
+            internalMap.delete(meta.name);
+            if (meta.localName) {
+                internalMap.delete(meta.localName);
+                if (!localNameToExportedNames.has(meta.localName)) {
+                    localNameToExportedNames.set(meta.localName, new Set());
+                }
+                localNameToExportedNames.get(meta.localName).add(meta.name);
+            }
+
+            meta.calls = Array.from(new Set(
+                callEdges
+                    .filter(c => c.caller === meta.name || (meta.localName && c.caller === meta.localName))
+                    .map(c => c.callee)
+            ));
 
             // Connect methods from declaredClasses or declaredObjects if not already attached
             if (!meta.methods || meta.methods.length === 0) {
                 if (meta.className && declaredClasses.has(meta.className)) {
                     meta.methods = declaredClasses.get(meta.className).methods;
-                } else if (declaredClasses.has(name)) {
-                    meta.methods = declaredClasses.get(name).methods;
-                } else if (declaredObjects.has(name)) {
-                    meta.methods = declaredObjects.get(name).methods;
-                } else if (declaredInstances.has(name)) {
-                    const inst = declaredInstances.get(name);
+                } else if (declaredClasses.has(meta.name)) {
+                    meta.methods = declaredClasses.get(meta.name).methods;
+                } else if (meta.localName && declaredClasses.has(meta.localName)) {
+                    meta.methods = declaredClasses.get(meta.localName).methods;
+                } else if (declaredObjects.has(meta.name)) {
+                    meta.methods = declaredObjects.get(meta.name).methods;
+                } else if (meta.localName && declaredObjects.has(meta.localName)) {
+                    meta.methods = declaredObjects.get(meta.localName).methods;
+                } else if (declaredInstances.has(meta.name)) {
+                    const inst = declaredInstances.get(meta.name);
                     if (inst?.className && declaredClasses.has(inst.className)) {
                         meta.methods = declaredClasses.get(inst.className).methods;
                         meta.className = inst.className;
                     }
-                } else if ((name === "default" || meta.isDefault) && declaredClasses.size === 1) {
+                } else if (meta.isDefault && declaredClasses.size === 1) {
                     const singleClass = Array.from(declaredClasses.values())[0];
                     meta.methods = singleClass.methods;
                     meta.className = singleClass.name;
-                } else if ((name === "default" || meta.isDefault) && declaredObjects.size === 1) {
+                } else if (meta.isDefault && declaredObjects.size === 1) {
                     const singleObj = Array.from(declaredObjects.values())[0];
                     meta.methods = singleObj.methods;
                 }
@@ -698,7 +1292,10 @@ export const analyzeSourceAst = (sourceCode = "") => {
         for (const [fnName, meta] of internalMap.entries()) {
             const callers = callEdges
                 .filter(c => c.callee === fnName && c.caller !== fnName)
-                .map(c => c.caller);
+                .flatMap(c => {
+                    const mapped = localNameToExportedNames.get(c.caller);
+                    return mapped && mapped.size > 0 ? Array.from(mapped) : [c.caller];
+                });
             meta.callers = Array.from(new Set(callers));
             internalFunctions.push(meta);
         }
@@ -706,18 +1303,55 @@ export const analyzeSourceAst = (sourceCode = "") => {
 
     // Resilient fallback if AST parsing could not discover exports
     if (exportedSymbols.length === 0) {
-        const expMatches = [...sourceCode.matchAll(/export\s+(?:async\s+)?(?:default\s+)?(?:function|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
+        const expMatches = [...sourceCode.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
         for (const m of expMatches) {
             if (m[1] && !exportedSymbols.some(s => s.name === m[1])) {
-                exportedSymbols.push({ name: m[1], type: "function", isDefault: false, line: 1, params: [], calls: [], methods: [] });
+                const isDef = /\bexport\s+default\b/.test(m[0]);
+                exportedSymbols.push({
+                    name: m[1],
+                    localName: m[1],
+                    type: "function",
+                    isAsync: /\basync\b/.test(m[0]),
+                    isDefault: isDef,
+                    isReExport: false,
+                    source: null,
+                    exportKind: "value",
+                    line: 1,
+                    startLine: 1,
+                    endLine: 1,
+                    params: [],
+                    calls: [],
+                    methods: []
+                });
             }
         }
         const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
         for (const m of namedExpMatches) {
             for (const s of m[1].split(",")) {
-                const clean = s.trim().split(/\s+as\s+/)[0].trim();
-                if (clean && !exportedSymbols.some(item => item.name === clean)) {
-                    exportedSymbols.push({ name: clean, type: "named-export", isDefault: false, line: 1, params: [], calls: [], methods: [] });
+                const trimmedSpec = s.trim();
+                if (!trimmedSpec || /^type\s+/.test(trimmedSpec)) continue;
+                const parts = trimmedSpec.split(/\s+as\s+/);
+                const local = parts[0].trim();
+                const exported = (parts[1] || local).trim();
+                const isDef = exported === "default";
+                const name = isDef ? (local && local !== "default" ? local : "defaultExport") : exported;
+                if (name && !exportedSymbols.some(item => item.name === name)) {
+                    exportedSymbols.push({
+                        name,
+                        localName: local,
+                        type: "named-export",
+                        isAsync: false,
+                        isDefault: isDef,
+                        isReExport: false,
+                        source: null,
+                        exportKind: "value",
+                        line: 1,
+                        startLine: 1,
+                        endLine: 1,
+                        params: [],
+                        calls: [],
+                        methods: []
+                    });
                 }
             }
         }
@@ -726,8 +1360,45 @@ export const analyzeSourceAst = (sourceCode = "") => {
             for (const s of cjsObjMatch[1].split(",")) {
                 const clean = s.trim().split(":")[0].trim();
                 if (clean && /^[a-zA-Z0-9_$]+$/.test(clean) && !exportedSymbols.some(item => item.name === clean)) {
-                    exportedSymbols.push({ name: clean, type: "function", isDefault: false, line: 1, params: [], calls: [], methods: [] });
+                    exportedSymbols.push({
+                        name: clean,
+                        localName: clean,
+                        type: "function",
+                        isAsync: false,
+                        isDefault: false,
+                        isReExport: false,
+                        source: null,
+                        exportKind: "value",
+                        line: 1,
+                        startLine: 1,
+                        endLine: 1,
+                        params: [],
+                        calls: [],
+                        methods: []
+                    });
                 }
+            }
+        }
+        const cjsSingleMatch = sourceCode.match(/module\.exports\s*=\s*([a-zA-Z0-9_$]+)\s*;?/);
+        if (cjsSingleMatch && !["null", "undefined", "true", "false"].includes(cjsSingleMatch[1])) {
+            const single = cjsSingleMatch[1];
+            if (!exportedSymbols.some(item => item.name === single)) {
+                exportedSymbols.push({
+                    name: single,
+                    localName: single,
+                    type: "function",
+                    isAsync: false,
+                    isDefault: true,
+                    isReExport: false,
+                    source: null,
+                    exportKind: "value",
+                    line: 1,
+                    startLine: 1,
+                    endLine: 1,
+                    params: [],
+                    calls: [],
+                    methods: []
+                });
             }
         }
     }
@@ -755,7 +1426,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
     if (internalFunctions.length === 0) {
         const fnMatches = [...sourceCode.matchAll(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/g)];
         for (const m of fnMatches) {
-            if (m[1] && !exportedSymbols.some(s => s.name === m[1]) && !internalFunctions.some(item => item.name === m[1])) {
+            if (m[1] && !exportedSymbols.some(s => s.name === m[1] || s.localName === m[1]) && !internalFunctions.some(item => item.name === m[1])) {
                 const helperCallRegex = new RegExp(`\\b${m[1]}\\s*\\(`);
                 const callers = exportedSymbols
                     .filter(exp => {
@@ -793,6 +1464,13 @@ export const analyzeSourceAst = (sourceCode = "") => {
         ])
     );
 
+    const exportedSymbolNames = Array.from(new Set(
+        exportedSymbols
+            .filter(s => s.exportKind !== "type")
+            .map(s => (s.name === "default" ? (s.localName || "defaultExport") : s.name))
+            .filter(Boolean)
+    ));
+
     return {
         exportedSymbols,
         internalFunctions,
@@ -805,7 +1483,8 @@ export const analyzeSourceAst = (sourceCode = "") => {
         declaredObjects: Array.from(declaredObjects.values()),
         mongooseModels: detectedModels,
         unexportedFunctions: internalFunctions.map(f => f.name),
-        exportedSymbolNames: exportedSymbols.map(s => s.name),
+        exportedSymbolNames,
+        unboundCommonJsExports,
         infeasibleNodes,
         ast: parseRes.success ? parseRes.ast : null,
         callEdges,

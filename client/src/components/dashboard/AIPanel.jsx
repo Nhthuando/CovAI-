@@ -36,6 +36,7 @@ import {
   Trash2,
   Edit2,
   Search,
+  AlertCircle,
 } from "lucide-react";
 
 import {
@@ -63,6 +64,7 @@ import { branchAiConversation, getAiContext } from "../../services/aiContext.ser
 import Button from "../common/Button";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery";
+import { evaluateUnitTestApplyResponse } from "../../services/unitTestReview";
 import { isTestFile } from "./CoverageTypeDashboard";
 
 /* ── Clean and Normalize Path Utilities ─────────────────── */
@@ -447,6 +449,48 @@ function TestSuggestionCard({
 
       {/* Code block */}
       <CodeBlock code={current.suggestedTestCode} language="javascript" />
+
+      {/* Inline Apply Error & Source Defect Isolation Diagnostics */}
+      {(current.testRunError || (Array.isArray(current.isolatedDefects) && current.isolatedDefects.length > 0)) && (
+        <div
+          className="px-3 py-2 space-y-2"
+          style={{
+            background: "var(--color-surface)",
+            borderTop: "1px solid var(--color-border)",
+          }}
+        >
+          {current.testRunError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md px-3 py-2 text-xs bg-rose-500/10 text-rose-400 border border-rose-500/20"
+            >
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <span className="font-mono tabular-nums break-words">{current.testRunError}</span>
+            </div>
+          )}
+          {Array.isArray(current.isolatedDefects) && current.isolatedDefects.length > 0 && (
+            <div
+              role="status"
+              className="rounded-md px-3 py-2 text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 space-y-1 font-mono tabular-nums"
+            >
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertCircle size={13} className="shrink-0" />
+                <span>Isolated target source defect(s):</span>
+              </div>
+              {current.isolatedDefects.map((defect, idx) => (
+                <div key={`${defect.symbol || "defect"}-${defect.file || ""}-${defect.line || idx}`} className="pl-5 text-[11px]">
+                  <span className="font-semibold text-amber-300">{defect.symbol || "Source defect"}</span>
+                  {defect.file && (
+                    <span> ({defect.file}{defect.line ? `:${defect.line}` : ""})</span>
+                  )}
+                  {": "}
+                  <span>{defect.diagnostic || defect.reason || defect.message || "Unfixable target source defect"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Actions footer */}
       <div
@@ -2910,6 +2954,13 @@ export default function AIPanel({
     }
   }, [pendingAiSuggestion, isRestoring, isLoadingSession, isTyping]);
 
+  const isMatchingSuggestion = (s, target) => {
+    if (!s || !target) return false;
+    if (target.suggestionId && s.suggestionId) return s.suggestionId === target.suggestionId;
+    if (target.id && s.id) return s.id === target.id;
+    return s.framework === target.framework;
+  };
+
   const handleApplySuggestion = async (msgId, suggestion) => {
     if (!projectId || !suggestion) return;
 
@@ -2917,21 +2968,21 @@ export default function AIPanel({
       prev.map((m) => {
         if (m.id !== msgId) return m;
         const updatedList = (m.testSuggestions || []).map((s) =>
-          s.framework === suggestion.framework ? { ...s, isApplying: true } : s,
+          isMatchingSuggestion(s, suggestion)
+            ? { ...s, isApplying: true, testRunError: null, isolatedDefects: null }
+            : s,
         );
         return {
           ...m,
           testSuggestions: updatedList,
-          testSuggestion:
-            m.testSuggestion?.framework === suggestion.framework
-              ? { ...m.testSuggestion, isApplying: true }
-              : m.testSuggestion,
+          testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+            ? { ...m.testSuggestion, isApplying: true, testRunError: null, isolatedDefects: null }
+            : m.testSuggestion,
         };
       }),
     );
 
     try {
-      const contentToWrite = suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
       let previousContent = "";
       const current = await readTestFile(suggestion.targetTestFile);
       if (current) {
@@ -2941,8 +2992,13 @@ export default function AIPanel({
         }
       }
 
+      let applyWarning = null;
+      let applyDefects = null;
+      let applyWasWritten = true;
+      let applyMessage = null;
+
       if (snapshotId) {
-        await applyUnitTestSuggestion(snapshotId, {
+        const res = await applyUnitTestSuggestion(snapshotId, {
           suggestion: {
             ...suggestion,
             projectId,
@@ -2954,9 +3010,60 @@ export default function AIPanel({
           projectId,
           skipBackgroundJob: true,
         });
+
+        const evalResult = evaluateUnitTestApplyResponse(res, suggestion);
+        if (!evalResult.ok) {
+          const applyErr = new Error(evalResult.error);
+          applyErr.isolatedDefects = evalResult.isolatedDefects;
+          throw applyErr;
+        }
+
+        applyDefects = evalResult.isolatedDefects?.length ? evalResult.isolatedDefects : null;
+        applyWarning = evalResult.warning || null;
+        applyWasWritten = Boolean(evalResult.applied);
+        applyMessage = evalResult.message || null;
+
+        if (evalResult.outcome === "NO_CHANGES") {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== msgId) return m;
+              const updatedList = (m.testSuggestions || []).map((s) =>
+                isMatchingSuggestion(s, suggestion)
+                  ? {
+                      ...s,
+                      applied: false,
+                      isApplying: false,
+                      testRunError: null,
+                      isolatedDefects: applyDefects,
+                    }
+                  : s,
+              );
+              return {
+                ...m,
+                testSuggestions: updatedList,
+                testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+                  ? {
+                      ...m.testSuggestion,
+                      applied: false,
+                      isApplying: false,
+                      testRunError: null,
+                      isolatedDefects: applyDefects,
+                    }
+                  : m.testSuggestion,
+              };
+            }),
+          );
+          invalidateCoverageQueries(snapshotId);
+          showToast({
+            type: "info",
+            title: "No Changes Needed",
+            message: evalResult.message,
+          });
+          return;
+        }
       } else {
         const contentToWrite =
-          suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
+          suggestion.fullUpdatedContent || suggestion.suggestedTestCode || suggestion.code;
 
         if (suggestion.isExisting) {
           await updateFileContentApi(
@@ -2978,58 +3085,87 @@ export default function AIPanel({
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
-              ? { ...s, applied: true, previousContent, isExisting: Boolean(current), isApplying: false }
+            isMatchingSuggestion(s, suggestion)
+              ? {
+                  ...s,
+                  applied: applyWasWritten,
+                  previousContent,
+                  isExisting: Boolean(current),
+                  isApplying: false,
+                  testRunError: null,
+                  isolatedDefects: applyDefects,
+                }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? {
-                    ...m.testSuggestion,
-                    applied: true,
-                    previousContent,
-                    isExisting: Boolean(current),
-                    isApplying: false,
-                  }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? {
+                  ...m.testSuggestion,
+                  applied: applyWasWritten,
+                  previousContent,
+                  isExisting: Boolean(current),
+                  isApplying: false,
+                  testRunError: null,
+                  isolatedDefects: applyDefects,
+                }
+              : m.testSuggestion,
           };
         }),
       );
 
-      if (snapshotId) {
+      if (snapshotId && applyWasWritten) {
         invalidateCoverageQueries(snapshotId);
       }
 
-      showToast({
-        type: "success",
-        title: "Test Applied",
-        message: `Applied ${suggestion.framework?.toUpperCase()} test case to ${suggestion.targetTestFile}`,
-      });
+      if (!applyWasWritten) {
+        showToast({
+          type: "info",
+          title: "Draft Verified (Not Applied)",
+          message:
+            applyWarning ||
+            applyMessage ||
+            `Verified ${suggestion.framework?.toUpperCase() || "test"} draft without writing ${suggestion.targetTestFile} to disk.`,
+        });
+      } else if (applyWarning) {
+        showToast({
+          type: "warning",
+          title: "Test Applied with Warnings",
+          message: applyWarning,
+        });
+      } else {
+        showToast({
+          type: "success",
+          title: "Test Applied",
+          message: `Applied ${suggestion.framework?.toUpperCase()} test case to ${suggestion.targetTestFile}`,
+        });
+      }
       // Stays in current view without redirecting
     } catch (err) {
+      const errMsg = err.message || "Unable to apply test case to file.";
+      const errDefects = Array.isArray(err.isolatedDefects) && err.isolatedDefects.length > 0
+        ? err.isolatedDefects
+        : null;
       showToast({
         type: "error",
         title: "Apply Failed",
-        message: err.message || "Unable to apply test case to file.",
+        message: errMsg,
       });
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
-              ? { ...s, isApplying: false }
+            isMatchingSuggestion(s, suggestion)
+              ? { ...s, applied: false, isApplying: false, testRunError: errMsg, isolatedDefects: errDefects }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, isApplying: false }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? { ...m.testSuggestion, applied: false, isApplying: false, testRunError: errMsg, isolatedDefects: errDefects }
+              : m.testSuggestion,
           };
         }),
       );
@@ -3052,15 +3188,14 @@ export default function AIPanel({
       prev.map((m) => {
         if (m.id !== msgId) return m;
         const updatedList = (m.testSuggestions || []).map((s) =>
-          s.framework === suggestion.framework ? { ...s, isUndoing: true } : s,
+          isMatchingSuggestion(s, suggestion) ? { ...s, isUndoing: true } : s,
         );
         return {
           ...m,
           testSuggestions: updatedList,
-          testSuggestion:
-            m.testSuggestion?.framework === suggestion.framework
-              ? { ...m.testSuggestion, isUndoing: true }
-              : m.testSuggestion,
+          testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+            ? { ...m.testSuggestion, isUndoing: true }
+            : m.testSuggestion,
         };
       }),
     );
@@ -3072,17 +3207,16 @@ export default function AIPanel({
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
+            isMatchingSuggestion(s, suggestion)
               ? { ...s, applied: false, isUndoing: false }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, applied: false, isUndoing: false }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? { ...m.testSuggestion, applied: false, isUndoing: false }
+              : m.testSuggestion,
           };
         }),
       );
@@ -3103,17 +3237,16 @@ export default function AIPanel({
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
+            isMatchingSuggestion(s, suggestion)
               ? { ...s, isUndoing: false }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, isUndoing: false }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? { ...m.testSuggestion, isUndoing: false }
+              : m.testSuggestion,
           };
         }),
       );

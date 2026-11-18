@@ -50,6 +50,7 @@ export default function UnitTestGuidedWorkflow({
   onBulkSuggest,
   onOpenSuggestModal = null,
   isBulkSuggesting = false,
+  hasCompletedSuggest = false,
   pendingSuggestionsCount = 0,
   pendingFilesCount = 0,
   onApplyAll,
@@ -108,12 +109,13 @@ export default function UnitTestGuidedWorkflow({
     Number(rawTotals?.statements?.covered || 0) > 0
   );
 
-  const isStatusCompleted = summary?.latestRunStatus && !["RUNNING", "PENDING", "running", "pending"].includes(summary.latestRunStatus);
+  const isStatusCompleted = summary?.latestRunStatus && !["RUNNING", "PENDING", "QUEUED", "running", "pending", "queued"].includes(summary.latestRunStatus);
   const hasBaselineRun = Boolean(
+    !running &&
     summary && (
       hasCoveredItems ||
-      (hasExecuted && !running) ||
-      (Number(testTotals?.total || 0) > 0 && !running) ||
+      hasExecuted ||
+      Number(testTotals?.total || 0) > 0 ||
       isLatestRunFailed ||
       isStatusCompleted ||
       summary?.hasRun
@@ -138,6 +140,7 @@ export default function UnitTestGuidedWorkflow({
   // If baseline has already run -> Stage 2 (Suggest Tests)
   // Otherwise -> Stage 1 (Baseline Measurement)
   const getInitialActiveStage = () => {
+    if (running && pendingSuggestionsCount === 0) return 1;
     if (is100Percent || isFeasibleLogicCovered) return 4;
     if (pendingSuggestionsCount > 0) return 3;
     if (hasBaselineRun) return 2;
@@ -146,6 +149,7 @@ export default function UnitTestGuidedWorkflow({
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [currentStage, setCurrentStage] = useState(getInitialActiveStage);
+  const [maxUnlockedStage, setMaxUnlockedStage] = useState(getInitialActiveStage);
   const [selectedStage, setSelectedStage] = useState(null);
   const currentViewStep = selectedStage !== null ? selectedStage : currentStage;
 
@@ -162,9 +166,25 @@ export default function UnitTestGuidedWorkflow({
 
   // Reset workflow view when switching snapshots
   React.useEffect(() => {
-    setCurrentStage(getInitialActiveStage());
+    const initial = getInitialActiveStage();
+    setCurrentStage(initial);
+    setMaxUnlockedStage(initial);
     setSelectedStage(null);
   }, [snapshotId]);
+
+  // Keep maxUnlockedStage monotonically synced with sequential progression (1 -> 2 -> 3 -> 4)
+  React.useEffect(() => {
+    setMaxUnlockedStage((prev) => Math.max(prev, currentStage));
+  }, [currentStage]);
+
+  // If a baseline Run Tests job is actively running while on Stage 1 or 2, keep Stage 1 active (not Completed)
+  React.useEffect(() => {
+    if (running && currentStage <= 2 && pendingSuggestionsCount === 0) {
+      setCurrentStage(1);
+      setMaxUnlockedStage(1);
+      setSelectedStage(null);
+    }
+  }, [running, currentStage, pendingSuggestionsCount]);
 
   // When analysis completes while user is on Stage 1, auto-advance to Stage 2
   const prevRunningRef = React.useRef(running);
@@ -184,15 +204,26 @@ export default function UnitTestGuidedWorkflow({
     prevRunningRef.current = running;
   }, [running, isLatestRunFailed, currentStage, pendingSuggestionsCount, is100Percent, isFeasibleLogicCovered]);
 
-  // When AI finishes generating suggestions, auto-advance to Stage 3 for review & apply
+  // When AI finishes generating suggestions (or suggest job completes), unlock & advance to Stage 3
   const prevPendingCountRef = React.useRef(pendingSuggestionsCount);
   React.useEffect(() => {
     if (prevPendingCountRef.current === 0 && pendingSuggestionsCount > 0) {
       setCurrentStage(3);
+      setMaxUnlockedStage((prev) => Math.max(prev, 3));
       setSelectedStage(null);
     }
     prevPendingCountRef.current = pendingSuggestionsCount;
   }, [pendingSuggestionsCount]);
+
+  React.useEffect(() => {
+    if (!isBulkSuggesting && (hasCompletedSuggest || pendingSuggestionsCount > 0 || hasAnyV2)) {
+      setMaxUnlockedStage((prev) => Math.max(prev, 3));
+      if (currentStage === 2) {
+        setCurrentStage(3);
+        setSelectedStage(null);
+      }
+    }
+  }, [isBulkSuggesting, hasCompletedSuggest, pendingSuggestionsCount, hasAnyV2, currentStage]);
 
   // When 100% or feasible logic coverage is verified, update to Stage 4
   React.useEffect(() => {
@@ -221,10 +252,20 @@ export default function UnitTestGuidedWorkflow({
       shortTitle: "Suggest Tests",
       desc: "Analyze AST coverage gaps and generate targeted unit tests",
       icon: FileCode2,
-      isDone: pendingSuggestionsCount > 0 || is100Percent || isFeasibleLogicCovered,
+      isDone: !isBulkSuggesting && (pendingSuggestionsCount > 0 || hasCompletedSuggest || is100Percent || isFeasibleLogicCovered || hasAnyV2 || maxUnlockedStage >= 3),
       isActive: currentStage === 2,
       isViewing: currentViewStep === 2,
-      badge: pendingSuggestionsCount > 0 ? `${pendingSuggestionsCount} tests ready` : (is100Percent ? "Fully Optimized" : isFeasibleLogicCovered ? "Feasible Covered" : "Ready to Suggest")
+      badge: isBulkSuggesting
+        ? "⚡ Suggesting..."
+        : pendingSuggestionsCount > 0
+        ? `${pendingSuggestionsCount} tests ready`
+        : is100Percent
+        ? "Fully Optimized"
+        : isFeasibleLogicCovered
+        ? "Feasible Covered"
+        : (hasCompletedSuggest || hasAnyV2 || maxUnlockedStage >= 3)
+        ? "✓ Completed"
+        : "Ready to Suggest"
     },
     {
       num: 3,
@@ -233,10 +274,16 @@ export default function UnitTestGuidedWorkflow({
       shortTitle: "Review & Apply",
       desc: "Review business logic mappings & safely merge into test suites",
       icon: Layers,
-      isDone: hasBaselineRun && pendingSuggestionsCount === 0 && (linesPct > 0 || is100Percent || isFeasibleLogicCovered),
+      isDone: !isBulkApplying && !isBulkSuggesting && pendingSuggestionsCount === 0 && (is100Percent || isFeasibleLogicCovered || hasAnyV2 || maxUnlockedStage >= 4),
       isActive: currentStage === 3,
       isViewing: currentViewStep === 3,
-      badge: pendingSuggestionsCount > 0 ? `Review (${pendingSuggestionsCount})` : "Merged"
+      badge: isBulkApplying
+        ? "⚡ Applying..."
+        : pendingSuggestionsCount > 0
+        ? `Review (${pendingSuggestionsCount})`
+        : (is100Percent || isFeasibleLogicCovered || hasAnyV2 || maxUnlockedStage >= 4)
+        ? "Merged"
+        : "Pending"
     },
     {
       num: 4,
@@ -352,7 +399,7 @@ export default function UnitTestGuidedWorkflow({
         {/* Stage Navigation Quick Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
-            onClick={() => setSelectedStage(Math.max(1, currentViewStep - 1))}
+            onClick={() => setSelectedStage((prev) => Math.max(1, (prev !== null ? prev : currentStage) - 1))}
             disabled={currentViewStep <= 1}
             style={{
               padding: "4px 8px",
@@ -375,8 +422,8 @@ export default function UnitTestGuidedWorkflow({
           </button>
 
           <button
-            onClick={() => setSelectedStage(Math.min(4, currentViewStep + 1))}
-            disabled={currentViewStep >= 4}
+            onClick={() => setSelectedStage((prev) => Math.min(maxUnlockedStage, (prev !== null ? prev : currentStage) + 1))}
+            disabled={currentViewStep >= maxUnlockedStage}
             style={{
               padding: "4px 8px",
               borderRadius: 5,
@@ -385,13 +432,13 @@ export default function UnitTestGuidedWorkflow({
               color: isLight ? "#475569" : "#cbd5e1",
               fontSize: 11,
               fontWeight: 600,
-              cursor: currentViewStep >= 4 ? "not-allowed" : "pointer",
-              opacity: currentViewStep >= 4 ? 0.4 : 1,
+              cursor: currentViewStep >= maxUnlockedStage ? "not-allowed" : "pointer",
+              opacity: currentViewStep >= maxUnlockedStage ? 0.4 : 1,
               display: "flex",
               alignItems: "center",
               gap: 3,
             }}
-            title="Go to next stage"
+            title={currentViewStep >= maxUnlockedStage ? `Complete Stage ${currentViewStep} first to unlock Stage ${Math.min(4, currentViewStep + 1)}` : "Go to next unlocked stage"}
           >
             <span>Next Stage</span>
             <ChevronRight size={12} />
@@ -419,19 +466,6 @@ export default function UnitTestGuidedWorkflow({
               <span>Jump to Stage {currentStage}</span>
             </button>
           )}
-
-          {/* Export Report Action in Top Toolbar */}
-          {(hasExecuted || rawTotals || testTotals || executions) && (
-            <button
-              type="button"
-              onClick={() => setIsExportModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--color-border,#29313D)] bg-[var(--color-surface,#11161D)] text-[var(--color-text,#F8FAFC)] hover:bg-[var(--color-surface-secondary,#171D25)] transition-colors cursor-pointer"
-              title="Export Unit Test Report (Markdown, JSON, Standalone HTML)"
-            >
-              <Download size={13} className="text-[#8B7CFD]" />
-              <span>Export Report</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -450,17 +484,22 @@ export default function UnitTestGuidedWorkflow({
           const isDone = st.isDone;
           const isActive = st.isActive;
           const isViewing = st.isViewing;
+          const isLocked = st.num > maxUnlockedStage;
 
           return (
             <div
               key={st.num}
-              onClick={() => setSelectedStage(st.num)}
+              onClick={() => {
+                if (!isLocked) setSelectedStage(st.num);
+              }}
               role="button"
-              tabIndex={0}
+              tabIndex={isLocked ? -1 : 0}
+              aria-disabled={isLocked}
               style={{
                 borderRadius: 8,
                 padding: "10px 14px",
-                cursor: "pointer",
+                cursor: isLocked ? "not-allowed" : "pointer",
+                opacity: isLocked ? 0.55 : 1,
                 background: isViewing
                   ? (isLight ? "#f5f3ff" : "rgba(99, 102, 241, 0.16)")
                   : isActive
@@ -485,8 +524,8 @@ export default function UnitTestGuidedWorkflow({
                 transition: "all 0.18s ease",
                 position: "relative",
               }}
-              className="hover:scale-[1.01]"
-              title={`Click to view Stage ${st.num} details`}
+              className={isLocked ? "" : "hover:scale-[1.01]"}
+              title={isLocked ? `Complete Stage ${st.num - 1} first to unlock Stage ${st.num}` : `Click to view Stage ${st.num} details`}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -829,41 +868,6 @@ export default function UnitTestGuidedWorkflow({
                       <span>3. Apply All Generated Tests ({pendingSuggestionsCount})</span>
                     </>
                   )}
-                </button>
-              )}
-
-              {pendingSuggestionsCount === 0 && !is100Percent && !isFeasibleLogicCovered && (onOpenSuggestModal || onBulkSuggest) && (
-                <button
-                  onClick={() => {
-                    if (onOpenSuggestModal) {
-                      onOpenSuggestModal({ isBulk: true });
-                    } else if (onBulkSuggest) {
-                      onBulkSuggest();
-                    }
-                  }}
-                  disabled={isBulkSuggesting}
-                  style={{
-                    background: isLight ? "#4f46e5" : "#6d5dfb",
-                    border: isLight ? "1px solid #4338ca" : "1px solid #5b4be7",
-                    color: "#ffffff",
-                    borderRadius: 7,
-                    padding: "9px 18px",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: isBulkSuggesting ? "wait" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                    boxShadow: isLight
-                      ? "0 2px 6px rgba(79, 70, 229, 0.25)"
-                      : "0 2px 10px rgba(109, 93, 251, 0.35)",
-                    transition: "all 0.15s ease",
-                  }}
-                  className="hover:opacity-90"
-                  title="Identify uncovered code and generate unit tests for remaining gaps"
-                >
-                  {isBulkSuggesting ? <Loader2 size={14} className="animate-spin" /> : <FileCode2 size={14} />}
-                  <span>{isBulkSuggesting ? "Analyzing & suggesting..." : "Suggest Next Missing Tests"}</span>
                 </button>
               )}
             </div>

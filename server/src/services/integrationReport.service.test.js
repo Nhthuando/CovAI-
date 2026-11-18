@@ -11,7 +11,8 @@ jest.unstable_mockModule('../config/prisma.js', () => ({
 }));
 
 jest.unstable_mockModule('./aiContextBuilder.service.js', () => ({
-    loadSourceCode: jest.fn()
+    loadSourceCode: jest.fn(),
+    clearSourceCodeCache: jest.fn()
 }));
 
 jest.unstable_mockModule('./apiEndpointParser.service.js', () => ({

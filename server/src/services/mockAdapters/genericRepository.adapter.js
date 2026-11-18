@@ -71,43 +71,134 @@ export const genericRepositoryAdapter = {
         // Local repository / service / native DB driver driven strictly by AST contracts
         const rec = buildFixtureRecord(contracts);
         const bindings = dependency?.bindings || [];
-        const exportProps = new Map();
-        const nestedTargetMethods = new Map();
+
+        const insertPathIntoTree = (tree, parts, leafCode) => {
+            if (!parts.length) return;
+            let cursor = tree;
+            for (let i = 0; i < parts.length - 1; i++) {
+                const seg = parts[i];
+                if (!cursor[seg] || typeof cursor[seg] === "string") {
+                    cursor[seg] = {};
+                }
+                cursor = cursor[seg];
+            }
+            const last = parts[parts.length - 1];
+            if (!cursor[last] || typeof cursor[last] !== "object") {
+                cursor[last] = leafCode;
+            }
+        };
+
+        const renderTree = (node, indent = 4) => {
+            const pad = " ".repeat(indent);
+            const entries = Object.entries(node).map(([k, v]) => {
+                const keyCode = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+                if (typeof v === "string") {
+                    return `${pad}${keyCode}: ${v}`;
+                }
+                return `${pad}${keyCode}: {\n${renderTree(v, indent + 2)}\n${pad}}`;
+            });
+            return entries.join(",\n");
+        };
+
+        const buildContractFnCode = (c, valJson) => {
+            if (Array.isArray(c.chainedMethods) && c.chainedMethods.length > 0) {
+                const chainEntries = c.chainedMethods
+                    .filter(m => !["exec", "then", "catch", "finally"].includes(m))
+                    .map(m => `${m}: ${fn}(() => query)`).join(", ");
+                const queryParts = chainEntries ? `${chainEntries}, ` : "";
+                return `${fn}(() => { const query = { ${queryParts}exec: ${fn}(() => Promise.resolve(${valJson})), then: (ok, err) => Promise.resolve(${valJson}).then(ok, err), catch: (err) => Promise.resolve(${valJson}).catch(err) }; return query; })`;
+            }
+            return formatMockFn(framework, valJson, c.isAsync);
+        };
+
+        const exportTree = {};
+        const defaultTree = {};
+        let hasConstructedRoot = false;
+        let hasDirectCallRoot = false;
 
         for (const c of contracts) {
             const val = buildReturnValueFromContract(c, rec);
             const valJson = val === undefined ? "undefined" : JSON.stringify(val);
-            const isMethodOnObject = c.clientOrModel && c.clientOrModel.includes(".")
-                ? true
-                : bindings.some((b) => b.localName === c.dependencyRoot && (b.importedName === "default" || b.importedName === "*"));
+            const fnCode = buildContractFnCode(c, valJson);
+            const root = c.dependencyRoot || "";
+            const clientOrModel = c.clientOrModel || root;
 
-            if (isMethodOnObject && c.method !== c.dependencyRoot) {
-                nestedTargetMethods.set(c.method, formatMockFn(framework, valJson, c.isAsync));
-            } else {
-                exportProps.set(c.method, formatMockFn(framework, valJson, c.isAsync));
+            let subParts = [];
+            if (clientOrModel && root && clientOrModel.startsWith(root + ".")) {
+                subParts = clientOrModel.slice(root.length + 1).split(".").filter(Boolean);
+            } else if (clientOrModel && clientOrModel !== root && !clientOrModel.includes(".")) {
+                subParts = [];
+            }
+
+            const fullMemberPath = (c.method === root && subParts.length === 0)
+                ? []
+                : [...subParts, c.method].filter(Boolean);
+
+            const matchingNamed = bindings.find(b =>
+                b.importedName && b.importedName !== "default" && b.importedName !== "*" && b.localName === root
+            );
+            const isDefaultOrCjs = bindings.some(b =>
+                (b.importedName === "default" || b.importedName === "*") &&
+                (b.localName === root || fullMemberPath.length > 0)
+            ) || (bindings.length === 0 && fullMemberPath.length > 0);
+
+            if (matchingNamed) {
+                if (matchingNamed.localName !== root) hasConstructedRoot = true;
+                if (fullMemberPath.length === 0) {
+                    exportTree[matchingNamed.importedName] = fnCode;
+                } else {
+                    insertPathIntoTree(exportTree, [matchingNamed.importedName, ...fullMemberPath], fnCode);
+                }
+            } else if (isDefaultOrCjs || subParts.length > 0) {
+                if (bindings.some(b => b.localName && root && b.localName !== root)) {
+                    hasConstructedRoot = true;
+                }
+                if (fullMemberPath.length === 0) {
+                    hasDirectCallRoot = true;
+                } else {
+                    insertPathIntoTree(defaultTree, fullMemberPath, fnCode);
+                }
+            } else if (c.method) {
+                exportTree[c.method] = fnCode;
             }
         }
 
+        const hasNestedDefault = Object.keys(defaultTree).length > 0;
         // Ensure every named import binding exists on the mock module to prevent MOCK_MISSING_EXPORT
         for (const b of bindings) {
-            if (b.importedName && b.importedName !== "default" && b.importedName !== "*" && !exportProps.has(b.importedName)) {
-                if (nestedTargetMethods.size > 0) {
-                    const nestedLines = Array.from(nestedTargetMethods.entries()).map(([k, v]) => `    ${k}: ${v}`).join(",\n");
-                    exportProps.set(b.importedName, `{\n${nestedLines}\n  }`);
+            if (b.importedName && b.importedName !== "default" && b.importedName !== "*" && !(b.importedName in exportTree)) {
+                if (hasNestedDefault) {
+                    exportTree[b.importedName] = { ...defaultTree };
                 } else {
-                    exportProps.set(b.importedName, `${fn}()`);
+                    exportTree[b.importedName] = `${fn}()`;
                 }
             }
         }
 
         const lines = [];
-        if (nestedTargetMethods.size > 0) {
-            const nestedEntries = Array.from(nestedTargetMethods.entries()).map(([k, v]) => `    ${k}: ${v}`).join(",\n");
-            lines.push(`  const defaultObj = {\n${nestedEntries}\n  };`);
+        const propEntries = [];
+
+        if (hasNestedDefault || hasConstructedRoot || hasDirectCallRoot) {
+            const innerObjLiteral = hasNestedDefault ? `{\n${renderTree(defaultTree, 4)}\n  }` : `{}`;
+            if (hasConstructedRoot) {
+                lines.push(`  const innerObj = ${innerObjLiteral};`);
+                lines.push(`  const defaultObj = Object.assign(${fn}(function () { return innerObj; }), innerObj);`);
+            } else if (hasDirectCallRoot && !hasNestedDefault) {
+                lines.push(`  const defaultObj = ${fn}().mockResolvedValue(${JSON.stringify(rec)});`);
+            } else {
+                lines.push(`  const defaultObj = ${innerObjLiteral};`);
+            }
+            propEntries.push(`    default: defaultObj`);
+            for (const topKey of Object.keys(defaultTree)) {
+                if (!(topKey in exportTree)) {
+                    const keyCode = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(topKey) ? topKey : JSON.stringify(topKey);
+                    propEntries.push(`    ${keyCode}: defaultObj[${JSON.stringify(topKey)}]`);
+                }
+            }
         }
-        const propEntries = Array.from(exportProps.entries()).map(([k, v]) => `    ${k}: ${v}`);
-        if (nestedTargetMethods.size > 0) {
-            propEntries.unshift(`    default: defaultObj`);
+
+        if (Object.keys(exportTree).length > 0) {
+            propEntries.push(renderTree(exportTree, 4));
         }
 
         if (propEntries.length === 0) {
@@ -124,7 +215,13 @@ export const genericRepositoryAdapter = {
             };
         }
 
-        const mockCode = `${mockApi}('${src}', () => ({\n${lines.length ? lines.join("\n") + "\n" : ""}${propEntries.join(",\n")}\n}));`;
+        // CommonJS sources load Jest mocks through require(), which returns the factory result as-is.
+        // When the source constructs or calls the module root (e.g. `new Razorpay(...)`), the module itself must be
+        // callable, so expose the callable default with the named members attached instead of a plain namespace object.
+        const callableCjsRoot = !isVitest && (hasConstructedRoot || hasDirectCallRoot);
+        const mockCode = callableCjsRoot
+            ? `${mockApi}('${src}', () => {\n${lines.join("\n")}\n  return Object.assign(defaultObj, {\n${propEntries.join(",\n")}\n  });\n});`
+            : `${mockApi}('${src}', () => {\n${lines.length ? lines.join("\n") + "\n" : ""}  return {\n${propEntries.join(",\n")}\n  };\n});`;
         return {
             status: "GENERATED",
             adapter: "generic-repository",
