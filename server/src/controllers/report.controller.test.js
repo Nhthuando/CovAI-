@@ -30,7 +30,7 @@ jest.unstable_mockModule('../middlewares/auth.middleware.js', () => ({
 const prisma = (await import('../config/prisma.js')).default;
 const { getIntegrationAnalytics } = await import('../services/integrationReport.service.js');
 const { getIntegrationGuidance } = await import('../services/integrationGuidance.service.js');
-const { getIntegrationReport, getIntegrationGuidanceController } = await import('./report.controller.js');
+const { getIntegrationReport, getIntegrationGuidanceController, exportIntegrationReport } = await import('./report.controller.js');
 const { authMiddleware } = await import('../middlewares/auth.middleware.js');
 
 // Setup Express App for Supertest
@@ -39,6 +39,7 @@ app.use(express.json());
 const router = express.Router();
 router.use(authMiddleware);
 router.get('/project/:projectId/integration', getIntegrationReport);
+router.get('/project/:projectId/integration/export', exportIntegrationReport);
 router.get('/project/:projectId/integration/guidance', getIntegrationGuidanceController);
 app.use('/api/reports', router);
 
@@ -202,6 +203,70 @@ describe('report.controller', () => {
             expect(res.status).toBe(500);
             expect(res.body.success).toBe(false);
             expect(res.body.message).toBe("Internal server error");
+        });
+    });
+
+    describe('GET /api/reports/project/:projectId/integration/export', () => {
+        it('exports canonical JSON report with attachment header', async () => {
+            prisma.project.findFirst.mockResolvedValue({
+                id: 'p1',
+                name: 'Class Management API',
+                description: null,
+                repoUrl: null,
+            });
+            getIntegrationAnalytics.mockResolvedValue({
+                isPeakCoverageReport: true,
+                overview: { snapshotId: 'snap-1', totalScenarios: 1, hasScannedEndpoints: true, hasExecutedCoverage: true },
+                latestExecution: { testRunId: 'tr1', totalTests: 1, passedTests: 1, failedTests: 0, durationMs: 500 },
+                routeMatrix: [{ method: 'GET', path: '/api/health', handler: 'health', status: 'COVERED', scenarioCount: 1, passedCount: 1, failedCount: 0 }],
+                history: { executions: [], coverage: [], generations: [] },
+            });
+
+            const res = await request(app).get('/api/reports/project/p1/integration/export?format=json');
+
+            expect(res.status).toBe(200);
+            expect(res.headers['content-type']).toContain('application/json');
+            expect(res.headers['content-disposition']).toContain('class-management-api-integration-report.json');
+            const parsed = JSON.parse(res.text);
+            expect(parsed.schemaVersion).toBe('1.0');
+            expect(parsed.reportType).toBe('integration');
+            expect(parsed.routeMatrix).toHaveLength(1);
+        });
+
+        it('exports genuine PDF binary starting with %PDF-', async () => {
+            prisma.project.findFirst.mockResolvedValue({
+                id: 'p1',
+                name: 'Class Management API',
+                description: null,
+                repoUrl: null,
+            });
+            getIntegrationAnalytics.mockResolvedValue({
+                isPeakCoverageReport: true,
+                overview: { snapshotId: 'snap-1', totalScenarios: 1, hasScannedEndpoints: true, hasExecutedCoverage: true },
+                latestExecution: { testRunId: 'tr1', totalTests: 1, passedTests: 1, failedTests: 0, durationMs: 500 },
+                routeMatrix: [{ method: 'GET', path: '/api/health', handler: 'health', status: 'COVERED', scenarioCount: 1, passedCount: 1, failedCount: 0 }],
+                history: { executions: [], coverage: [], generations: [] },
+            });
+
+            const res = await request(app)
+                .get('/api/reports/project/p1/integration/export?format=pdf')
+                .buffer(true)
+                .parse((resStream, cb) => {
+                    const chunks = [];
+                    resStream.on('data', (c) => chunks.push(c));
+                    resStream.on('end', () => cb(null, Buffer.concat(chunks)));
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.headers['content-type']).toContain('application/pdf');
+            expect(res.headers['content-disposition']).toContain('class-management-api-integration-report.pdf');
+            expect(res.body.subarray(0, 5).toString()).toBe('%PDF-');
+        });
+
+        it('rejects unsupported export format with 400', async () => {
+            const res = await request(app).get('/api/reports/project/p1/integration/export?format=xml');
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
         });
     });
 });

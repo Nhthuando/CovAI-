@@ -214,9 +214,11 @@ export const parseCoverageSummary = async (coverageDir, snapshotId, options = {}
         summary = await upsertCoverageSummary(snapshotId, lines, branches, functions, statements);
     }
 
-    // Write CoverageFile per file (excluding "total" key)
+    // Write CoverageFile per file (excluding "total" key) unless caller handles canonical file persistence separately
     const fileEntries = Object.entries(raw).filter(([key]) => key !== "total");
-    await upsertCoverageFiles(snapshotId, fileEntries, rootDir);
+    if (!options?.skipFileUpsert) {
+        await upsertCoverageFiles(snapshotId, fileEntries, rootDir);
+    }
 
     return {
         summary,

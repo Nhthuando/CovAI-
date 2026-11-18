@@ -56,6 +56,7 @@ import {
   getIntegrationWorkspace,
   applyUnitTestSuggestion,
 } from "../../services/coverage.service";
+import { mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 import DiffReviewModal, { countDiffLines } from "./DiffReviewModal";
@@ -2129,6 +2130,7 @@ export default function AIPanel({
   const [isRestoring, setIsRestoring] = useState(true);
   const [contextInfo, setContextInfo] = useState(null);
   const [contextDialog, setContextDialog] = useState(null);
+  const [integrationFixContext, setIntegrationFixContext] = useState(null);
   const contextRequestRef = useRef(0);
   const sendRef = useRef(false);
   const storageKey = useMemo(() => {
@@ -2938,19 +2940,28 @@ export default function AIPanel({
     }
   };
 
-  // Watch for external suggest trigger (e.g. from Coverage table or Editor)
+  // Watch for external suggest trigger (e.g. from Coverage table, Integration AI Fix, or Editor)
   useEffect(() => {
     if (!pendingAiSuggestion) return;
     if (isRestoring || isLoadingSession || isTyping) return;
-    const { filePath, isBulk, promptText } = pendingAiSuggestion;
+    const {
+      filePath,
+      isBulk,
+      promptText,
+      attachments: pendingAttachments,
+      fixContext,
+    } = pendingAiSuggestion;
     onClearPendingSuggestion?.();
+    if (fixContext) {
+      setIntegrationFixContext(fixContext);
+    }
     if (isBulk) {
       // Bulk test generation is handled exclusively by UnitTestGuidedWorkflow and UnitTestTraceabilityMatrix
       handleSuggestBulk(pendingAiSuggestion);
     } else if (filePath) {
       handleSuggestForFile(filePath);
     } else if (promptText) {
-      handleSend(promptText);
+      handleSend(promptText, Array.isArray(pendingAttachments) ? pendingAttachments : [], null, fixContext || null);
     }
   }, [pendingAiSuggestion, isRestoring, isLoadingSession, isTyping]);
 
@@ -3253,7 +3264,59 @@ export default function AIPanel({
     }
   };
 
-  const handleSend = (text, attachments = [], retryContext = null, replaceFailedMessageId = null) => {
+  const extractScenarioCodeFromReply = (text = "") => {
+    const blocks = [];
+    const regex = /```(?:javascript|js|typescript|ts)?\s*\n([\s\S]*?)```/gi;
+    let m;
+    while ((m = regex.exec(text)) !== null) {
+      if (m[1]?.trim()) blocks.push(m[1].trim());
+    }
+    if (blocks.length === 0) return null;
+    const testBlock = blocks.find((b) => /\b(it|test)\s*\(/.test(b));
+    return testBlock || blocks[0];
+  };
+
+  const handleApplyIntegrationFix = useCallback(
+    async (ctx, code) => {
+      if (!ctx?.snapshotId || !ctx?.aiTestId || !ctx?.scenarioId || !code) return;
+      try {
+        const res = await mutateIntegrationScenarioApi({
+          snapshotId: ctx.snapshotId,
+          aiTestId: ctx.aiTestId,
+          scenarioId: ctx.scenarioId,
+          expectedVersion: ctx.expectedVersion ?? 1,
+          action: "UPDATE",
+          code,
+        });
+        const newVersion = res?.data?.version || res?.version;
+        if (newVersion) {
+          setIntegrationFixContext((prev) =>
+            prev ? { ...prev, expectedVersion: newVersion } : prev,
+          );
+        }
+        invalidateCoverageQueries(ctx.snapshotId);
+        window.dispatchEvent(
+          new CustomEvent("covai:integration-updated", {
+            detail: { snapshotId: ctx.snapshotId },
+          }),
+        );
+        showToast({
+          type: "success",
+          title: "Scenario Fix Applied",
+          message: `Updated "${ctx.testName}" for ${ctx.endpointLabel}. Re-run coverage to verify.`,
+        });
+      } catch (err) {
+        showToast({
+          type: "error",
+          title: "Failed to Apply Fix",
+          message: err?.message || "Could not update the integration test scenario.",
+        });
+      }
+    },
+    [showToast],
+  );
+
+  const handleSend = (text, attachments = [], retryContext = null, replaceFailedMessageId = null, activeFixCtx = integrationFixContext) => {
     if (!text.trim() || sendRef.current || revisionRef.current || isRestoring || isLoadingSession || isTyping) return;
     if (!projectId) {
       showToast({
@@ -3285,10 +3348,10 @@ export default function AIPanel({
     });
     setIsTyping(true);
 
-    return finishSend(userMsg, requestScope, currentHistory);
+    return finishSend(userMsg, requestScope, currentHistory, activeFixCtx);
   };
 
-  const finishSend = async (userMsg, requestScope, currentHistory) => {
+  const finishSend = async (userMsg, requestScope, currentHistory, activeFixCtx = integrationFixContext) => {
     const { content: text, attachments } = userMsg;
     try {
       const resolvedAttachments = (await Promise.all((attachments || []).map(async (attachment) => {
@@ -3323,19 +3386,34 @@ export default function AIPanel({
         fetchSessions();
       }
 
-      setMessages((m) => [
-        ...m,
-        {
-          id: res.data.assistantMessageId || getNextId(),
-          role: "assistant",
-          timestamp: new Date().toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          content: res.data.reply,
-          usedContext: res.data.context?.screenContext,
-        },
-      ]);
+      const fixTarget = activeFixCtx || integrationFixContext;
+      const candidateCode =
+        fixTarget && !fixTarget.isProjectExisting && fixTarget.aiTestId && fixTarget.scenarioId
+          ? extractScenarioCodeFromReply(res.data.reply)
+          : null;
+
+      const answer = {
+        id: res.data.assistantMessageId || getNextId(),
+        role: "assistant",
+        timestamp: new Date().toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        content: res.data.reply,
+        usedContext: res.data.context?.screenContext,
+        ...(candidateCode
+          ? {
+              options: [
+                {
+                  label: "Apply Fix to Scenario",
+                  action: "apply_integration_fix",
+                  onClick: () => handleApplyIntegrationFix(fixTarget, candidateCode),
+                },
+              ],
+            }
+          : {}),
+      };
+      setMessages((m) => [...m, answer]);
       return true;
     } catch (err) {
       if (requestScope !== contextRequestRef.current) return;
@@ -3544,6 +3622,31 @@ export default function AIPanel({
           {onClose && <button type="button" onClick={onClose} aria-label="Close AI Chatbot" title="Close AI Chatbot" className="p-1 rounded cursor-pointer hover:bg-[var(--color-bg)]"><X size={16} /></button>}
         </div>
       </div>
+
+      {/* ── Active Integration AI Fix Context Banner ── */}
+      {integrationFixContext && (
+        <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] flex items-center justify-between gap-2 text-[11px]">
+          <div className="min-w-0 flex items-center gap-1.5">
+            <span className="px-1.5 py-0.5 rounded font-mono font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/25 shrink-0">
+              AI Fix
+            </span>
+            <span className="font-mono text-[var(--color-text)] truncate">
+              {integrationFixContext.endpointLabel}
+            </span>
+            <span className="text-[var(--color-text-muted)] truncate">
+              · {integrationFixContext.testName}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIntegrationFixContext(null)}
+            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer shrink-0"
+            title="Clear AI Fix context"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">

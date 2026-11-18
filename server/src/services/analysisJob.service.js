@@ -105,18 +105,47 @@ export const processAnalysisJob = async (jobId) => {
         }
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'MAP_DEPENDENCIES', label: "Saving analysis results to database...", progress: 85 }));
-        const plannedId = currentProjectOperation()?.preparedPublications ? (await prisma.projectStructureAnalysis.findUnique({where:{snapshotId:job.snapshotId},select:{id:true}}))?.id || randomUUID() : undefined;
+        let existingRow = null;
+        if (typeof prisma?.projectStructureAnalysis?.findUnique === "function") {
+            existingRow = await prisma.projectStructureAnalysis.findUnique({
+                where: { snapshotId: job.snapshotId },
+                select: { id: true, resultJson: true },
+            }).catch(() => null);
+        }
+        const plannedId = currentProjectOperation()?.preparedPublications ? existingRow?.id || randomUUID() : undefined;
+
+        let mergedResult = result;
+        if (existingRow?.resultJson) {
+            try {
+                const prev = typeof existingRow.resultJson === "string"
+                    ? JSON.parse(existingRow.resultJson)
+                    : existingRow.resultJson;
+                if (prev && typeof prev === "object") {
+                    const preserved = {};
+                    if (prev.integrationScan !== undefined) preserved.integrationScan = prev.integrationScan;
+                    if (prev.peakIntegrationReport !== undefined) preserved.peakIntegrationReport = prev.peakIntegrationReport;
+                    if (prev.deletedIntegrationScenarios !== undefined) preserved.deletedIntegrationScenarios = prev.deletedIntegrationScenarios;
+                    if (Object.keys(preserved).length > 0) {
+                        mergedResult = { ...preserved, ...result };
+                    }
+                }
+            } catch (parseErr) {
+                console.warn(`[Job ${jobId}] Could not parse prior structure analysis JSON for metadata preservation:`, parseErr.message);
+            }
+        }
+        const serializedResult = JSON.stringify(mergedResult);
+
         const analysis = await stagePreparedValue(tx => tx.projectStructureAnalysis.upsert({
             where: { snapshotId: job.snapshotId },
             create: {
                 ...(plannedId ? {id:plannedId} : {}),
                 snapshotId: job.snapshotId,
                 schemaVersion: result.schemaVersion,
-                resultJson: JSON.stringify(result),
+                resultJson: serializedResult,
             },
             update: {
                 schemaVersion: result.schemaVersion,
-                resultJson: JSON.stringify(result),
+                resultJson: serializedResult,
             },
         }),{id:plannedId});
 

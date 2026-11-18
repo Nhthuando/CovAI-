@@ -167,6 +167,25 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   const dragOriginRef = useRef({ startX: 0, startY: 0, panX: 0, panY: 0 });
   const canvasRef = useRef(null);
 
+  // Reset component state when switching projects
+  useEffect(() => {
+    setSnapshots([]);
+    setSnapshotId("");
+    setAnalysis(null);
+    setJob(null);
+    setSelectedNodeId(null);
+    setHoveredNodeId(null);
+    setSelectedDomain("All");
+    setSelectedRoles(new Set());
+    setAiError("");
+    setError("");
+  }, [projectId]);
+
+  // Clear job belonging to a different snapshot
+  useEffect(() => {
+    setJob((curr) => (curr && snapshotId && curr.snapshotId !== snapshotId ? null : curr));
+  }, [snapshotId]);
+
   // Load Snapshots
   const loadSnapshots = useCallback(async () => {
     if (!projectId) return;
@@ -198,25 +217,45 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
         snapshotId,
       );
       const data = response.data;
-      setAnalysis(data);
+      const isValidAnalysis = Boolean(
+        data &&
+          typeof data === "object" &&
+          data.graph &&
+          Array.isArray(data.graph.nodes),
+      );
+      setAnalysis(isValidAnalysis ? data : null);
 
-      if (data?.graph?.nodes) {
-        const availableRoles = new Set(data.graph.nodes.map((n) => n.role));
+      if (isValidAnalysis) {
+        const availableRoles = new Set(
+          data.graph.nodes.map((n) => n.role || "unknown"),
+        );
         setSelectedRoles(availableRoles);
 
         if (initialFile) {
           const matched = data.graph.nodes.find(
             (n) => n.relativePath === initialFile || n.id === initialFile,
           );
-          if (matched) setSelectedNodeId(matched.id);
-        } else if (!selectedNodeId && data.graph.nodes.length > 0) {
-          setSelectedNodeId(data.graph.nodes[0].id);
+          if (matched) {
+            setSelectedNodeId(matched.id);
+          } else {
+            setSelectedNodeId(data.graph.nodes[0]?.id || null);
+          }
+        } else {
+          setSelectedNodeId((prev) =>
+            prev && data.graph.nodes.some((n) => n.id === prev)
+              ? prev
+              : data.graph.nodes[0]?.id || null,
+          );
         }
+      } else {
+        setSelectedRoles(new Set());
+        setSelectedNodeId(null);
       }
       setError("");
     } catch (err) {
       if (/Architecture analysis not found/i.test(err.message)) {
         setAnalysis(null);
+        setSelectedNodeId(null);
       } else {
         setError(err.message || "Failed to load architecture analysis.");
       }
@@ -276,6 +315,16 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   const allNodes = analysis?.graph?.nodes || [];
   const allEdges = analysis?.graph?.edges || [];
 
+  const totalFunctionsCount = useMemo(() => {
+    if (typeof analysis?.summary?.totalFunctions === "number") {
+      return analysis.summary.totalFunctions;
+    }
+    return allNodes.reduce(
+      (sum, n) => sum + (Array.isArray(n.functions) ? n.functions.length : 0),
+      0,
+    );
+  }, [analysis?.summary?.totalFunctions, allNodes]);
+
   // Distinct Domains
   const availableDomains = useMemo(() => {
     const set = new Set();
@@ -289,7 +338,8 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   const availableRoles = useMemo(() => {
     const counts = {};
     allNodes.forEach((n) => {
-      counts[n.role] = (counts[n.role] || 0) + 1;
+      const roleKey = n.role || "unknown";
+      counts[roleKey] = (counts[roleKey] || 0) + 1;
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [allNodes]);
@@ -297,7 +347,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   // Filtered nodes based on View Mode + Domain + Role Filter
   const visibleNodes = useMemo(() => {
     return allNodes.filter((node) => {
-      if (selectedRoles.size > 0 && !selectedRoles.has(node.role)) {
+      if (selectedRoles.size > 0 && !selectedRoles.has(node.role || "unknown")) {
         return false;
       }
       if (viewMode === "module" && selectedDomain !== "All") {
@@ -412,6 +462,11 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
     [allNodes, selectedNodeId],
   );
 
+  const selectedAiSummary = useMemo(() => {
+    if (!snapshotId || !selectedNode?.relativePath) return null;
+    return aiSummaryMap[`${snapshotId}:${selectedNode.relativePath}`] || null;
+  }, [aiSummaryMap, snapshotId, selectedNode?.relativePath]);
+
   // Incoming & Outgoing for selected node
   const selectedNodeDeps = useMemo(() => {
     if (!selectedNodeId) return { incoming: [], outgoing: [] };
@@ -436,7 +491,8 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   const handleGenerateAiSummary = useCallback(
     async (filePath, force = false) => {
       if (!filePath || !projectId || !snapshotId) return;
-      if (!force && aiSummaryMap[filePath]) return;
+      const summaryKey = `${snapshotId}:${filePath}`;
+      if (!force && aiSummaryMap[summaryKey]) return;
 
       setIsAiLoading(true);
       setAiError("");
@@ -449,7 +505,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
         if (res.data) {
           setAiSummaryMap((prev) => ({
             ...prev,
-            [filePath]: res.data,
+            [summaryKey]: res.data,
           }));
         }
       } catch (err) {
@@ -465,7 +521,8 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   useEffect(() => {
     const filePath = selectedNode?.relativePath;
     if (!filePath || !projectId || !snapshotId) return;
-    if (aiSummaryMap[filePath]) return;
+    const summaryKey = `${snapshotId}:${filePath}`;
+    if (aiSummaryMap[summaryKey]) return;
 
     let isCancelled = false;
     setIsAiLoading(true);
@@ -476,7 +533,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
         if (!isCancelled && res?.data) {
           setAiSummaryMap((prev) => ({
             ...prev,
-            [filePath]: res.data,
+            [summaryKey]: res.data,
           }));
         }
       })
@@ -826,7 +883,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
               <span>dependencies</span>
               <span className="text-[var(--color-text-muted)]">·</span>
               <span className="font-semibold text-[var(--color-text)]">
-                {analysis.summary.totalFunctions}
+                {totalFunctionsCount}
               </span>
               <span>functions</span>
             </div>
@@ -1467,7 +1524,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                   )}
 
                   {/* AI Architectural Summary Block */}
-                  {aiSummaryMap[selectedNode.relativePath] && !isAiLoading && (
+                  {selectedAiSummary && !isAiLoading && (
                     <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xs">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text)]">
@@ -1493,14 +1550,14 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                         </button>
                       </div>
                       <p className="text-xs text-[var(--color-text)] leading-relaxed font-sans">
-                        {aiSummaryMap[selectedNode.relativePath].fileSummary}
+                        {selectedAiSummary.fileSummary}
                       </p>
                     </div>
                   )}
 
                   {aiError &&
                     !isAiLoading &&
-                    !aiSummaryMap[selectedNode.relativePath] && (
+                    !selectedAiSummary && (
                       <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20 text-xs text-[var(--color-danger)] flex items-center justify-between gap-2">
                         <span className="truncate">{aiError}</span>
                         <button
@@ -1533,7 +1590,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                       </span>
                     </h3>
 
-                    {selectedNode.functions?.length === 0 ? (
+                    {!selectedNode.functions || selectedNode.functions.length === 0 ? (
                       <div className="p-3 text-center text-xs text-[var(--color-text-muted)] border border-dashed border-[var(--color-border)] rounded-[var(--radius-sm)]">
                         No functions detected in this file.
                       </div>
@@ -1551,22 +1608,22 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                               : fn.name);
 
                           const fnAiSummary =
-                            aiSummaryMap[selectedNode.relativePath]
+                            selectedAiSummary
                               ?.functionSummaries?.[fn.id] ||
-                            aiSummaryMap[selectedNode.relativePath]
+                            selectedAiSummary
                               ?.functionSummaries?.[
                               `${displayName}@L${fn.startLine}`
                             ] ||
-                            aiSummaryMap[selectedNode.relativePath]
+                            selectedAiSummary
                               ?.functionSummaries?.[
                               `${displayName} (L${fn.startLine})`
                             ] ||
-                            aiSummaryMap[selectedNode.relativePath]
+                            selectedAiSummary
                               ?.functionSummaries?.[fn.name] ||
                             (isArrow
-                              ? aiSummaryMap[selectedNode.relativePath]
+                              ? selectedAiSummary
                                   ?.functionSummaries?.["arrow function"] ||
-                                aiSummaryMap[selectedNode.relativePath]
+                                selectedAiSummary
                                   ?.functionSummaries?.["anonymous"]
                               : null);
 

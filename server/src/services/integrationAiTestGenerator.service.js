@@ -5,6 +5,10 @@ const traverse = _traverse.default || _traverse;
 import { ServiceError } from "../utils/serviceError.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { normalizeFilePath } from "./unifiedCoverageEngine.service.js";
+import {
+    detectIntegrationLanguage,
+    getEndpointRequiredCases,
+} from "../../../shared/integrationCaseCoverage.js";
 
 /**
  * Integration AI Test Generator Service (Phase 2 - CovAI)
@@ -300,14 +304,27 @@ export const harvestApiDeepContext = ({ endpoint = {}, sourceCode = [] } = {}) =
 export const buildIntegrationTestPrompt = ({
     endpoints = [],
     sourceCode = [],
+    testFiles = [],
     framework = "supertest",
     uncoveredBranches = [],
+    language = null,
 } = {}) => {
     const isPlaywright = framework === "playwright" || String(framework).toLowerCase().includes("playwright");
     const frameworkName = isPlaywright ? "Playwright API Testing (@playwright/test)" : "Supertest + Jest";
+    const existingScenarios = (endpoints || []).flatMap((ep) =>
+        Array.isArray(ep?.existingScenarios) ? ep.existingScenarios : []
+    );
+    const resolvedLanguage = language || detectIntegrationLanguage({
+        existingScenarios,
+        testFiles,
+        sourceCode,
+    });
 
     let prompt = `You are a Principal Software Engineer & QA Architect specializing in Node.js API Testing.\n`;
     prompt += `Your task is to generate comprehensive, production-ready integration tests using **${frameworkName}**.\n\n`;
+    if (resolvedLanguage === "vi") {
+        prompt += `**LANGUAGE RULE (MANDATORY — VIETNAMESE):** Existing project tests and/or controller messages are written in **Vietnamese**. Write all \`describe(...)\` / \`it(...)\` titles and inline comments in natural **Vietnamese**, matching the repository's existing test style.\n\n`;
+    }
 
     prompt += `### 1. TARGET FRAMEWORK SPECIFICATION: ${frameworkName.toUpperCase()}\n\n`;
 
@@ -329,13 +346,10 @@ export const buildIntegrationTestPrompt = ({
         prompt += `- Target file path MUST start with: \`tests/integration/\` (e.g. \`tests/integration/orders.test.js\`).\n\n`;
     }
 
-    prompt += `### 2. MULTI-SCENARIO COVERAGE REQUIREMENTS (MANDATORY 5-TIER STRATEGY)\n`;
-    prompt += `For each API Endpoint, you MUST generate scenarios covering all 5 tiers:\n`;
-    prompt += `1. **Tier 1 — Happy Path (200 / 201)**: Valid payload containing all required fields. Assert exact status code and returned payload data structure.\n`;
-    prompt += `2. **Tier 2 — Negative Validation (400 Bad Request)**: Omit required fields, pass wrong data types (e.g. string for number), or send empty object \`{}\`. Assert 400 Bad Request.\n`;
-    prompt += `3. **Tier 3 — Authentication & Authorization (401 Unauthorized / 403 Forbidden)**: If the route has auth middlewares, verify request without token returns 401, or insufficient role returns 403.\n`;
-    prompt += `4. **Tier 4 — Not Found & Conflicts (404 Not Found / 409 Conflict)**: Query non-existent ID (e.g. \`999999\` or random UUID) expecting 404, or duplicate unique fields expecting 409.\n`;
-    prompt += `5. **Tier 5 — Edge Cases & Boundary Limits**: Empty arrays, negative numbers, special characters, max length boundaries.\n\n`;
+    prompt += `### 2. REQUIRED CASE CONTRACT & ANTI-DUPLICATION RULES\n`;
+    prompt += `- Generate **EXACTLY ONE** dedicated \`${isPlaywright ? "test" : "it"}(...)\` block for each **missing required case** listed on an endpoint.\n`;
+    prompt += `- Do **NOT** duplicate any case already covered in \`Already Covered Existing Scenarios\`.\n`;
+    prompt += `- **STRICT STATUS ASSERTION:** Assert ONE exact HTTP status code per test (e.g. \`expect(res.status).toBe(200)\`, \`400\`, \`404\`). NEVER hedge with \`expect([200, 201, 404]).toContain(res.status)\`.\n\n`;
 
     prompt += `### 3. DEEP API ENDPOINT INVENTORY & SOURCE CONTEXT\n\n`;
 
@@ -343,9 +357,21 @@ export const buildIntegrationTestPrompt = ({
 
     for (const ep of targetList) {
         const deepCtx = harvestApiDeepContext({ endpoint: ep, sourceCode });
+        const requiredHints =
+            Array.isArray(ep.missingCoverageRequested) && ep.missingCoverageRequested.length > 0
+                ? ep.missingCoverageRequested
+                : getEndpointRequiredCases(ep).map((c) => c.promptHint);
 
         prompt += `#### Endpoint: \`${deepCtx.method} ${deepCtx.path}\`\n`;
         prompt += `- Controller File: \`${deepCtx.controllerFile}\`\n`;
+        prompt += `- Missing Required Cases to Generate: ${requiredHints.join(" | ")}\n`;
+
+        if (Array.isArray(ep.existingScenarios) && ep.existingScenarios.length > 0) {
+            prompt += `- **Already Covered Existing Scenarios (DO NOT DUPLICATE)**:\n`;
+            ep.existingScenarios.forEach((ex) => {
+                prompt += `  * \`${ex.testName}\` (${ex.caseLabel || ex.caseKey}, Expected ${ex.expectedStatus || "asserted"})\n`;
+            });
+        }
 
         if (deepCtx.middlewares && deepCtx.middlewares.length > 0) {
             prompt += `- Active Middlewares: ${deepCtx.middlewares.map((m) => m.name || m).join(", ")}\n`;

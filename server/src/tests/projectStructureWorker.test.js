@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 
-const prismaMock = { projectStructureAnalysis: { upsert: jest.fn() } };
+const prismaMock = { projectStructureAnalysis: { findUnique: jest.fn(), upsert: jest.fn() } };
 const lifecycle = {
   getJobById: jest.fn(),
   markJobFailed: jest.fn(),
@@ -36,6 +36,7 @@ beforeEach(() => {
   lifecycle.updateJobProgress.mockResolvedValue({ id: "job-1" });
   lifecycle.markJobSuccess.mockResolvedValue({ id: "job-1", status: "SUCCESS" });
   lifecycle.markJobFailed.mockResolvedValue({ id: "job-1", status: "FAILED" });
+  prismaMock.projectStructureAnalysis.findUnique.mockResolvedValue(null);
   prismaMock.projectStructureAnalysis.upsert.mockResolvedValue({ id: "analysis-1" });
   analyzeProjectStructure.mockReturnValue(completeResult);
 });
@@ -61,5 +62,26 @@ describe("architecture analysis worker", () => {
 
     expect(prismaMock.projectStructureAnalysis.upsert).not.toHaveBeenCalled();
     expect(lifecycle.markJobFailed).toHaveBeenCalledWith("job-1", expect.objectContaining({ message: "Malformed source" }));
+  });
+
+  it("preserves prior integration metadata when persisting architecture analysis", async () => {
+    prismaMock.projectStructureAnalysis.findUnique.mockResolvedValue({
+      id: "analysis-1",
+      resultJson: JSON.stringify({
+        integrationScan: { explicitlyScanned: true, discoveredEndpoints: [{ method: "GET", path: "/api/health" }] },
+        peakIntegrationReport: { isPeakCoverageReport: true },
+        deletedIntegrationScenarios: [{ testName: "obsolete" }],
+      }),
+    });
+
+    await processAnalysisJob("job-1");
+
+    const upsertCall = prismaMock.projectStructureAnalysis.upsert.mock.calls[0][0];
+    const saved = JSON.parse(upsertCall.update.resultJson);
+    expect(saved.summary).toEqual(completeResult.summary);
+    expect(saved.graph).toEqual(completeResult.graph);
+    expect(saved.integrationScan).toEqual({ explicitlyScanned: true, discoveredEndpoints: [{ method: "GET", path: "/api/health" }] });
+    expect(saved.peakIntegrationReport).toEqual({ isPeakCoverageReport: true });
+    expect(saved.deletedIntegrationScenarios).toEqual([{ testName: "obsolete" }]);
   });
 });

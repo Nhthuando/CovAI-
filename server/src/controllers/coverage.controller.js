@@ -104,6 +104,7 @@ import {
   updateScenarioService,
   addScenarioService,
   deleteScenarioService,
+  deleteProjectScenarioService,
   toggleScenarioService,
   regenerateScenarioService,
 } from "../services/scenarioManager.service.js";
@@ -2180,21 +2181,46 @@ const extractRepoRelativePath = (suiteName) => {
  * For type=unit: strictly returns Jest and Vitest test files only.
  */
 export const mapCoverageSuiteResult = (suiteResult) => {
-  const assertions = (suiteResult?.assertionResults || []).filter(Boolean).map((a) => ({
-    ...a,
-    title: a.title || a.fullName || "Test case",
-    status: (a.status || "pending").toLowerCase(),
-    ...(typeof a.message === "string" ? { message: stripAnsi(a.message) } : {}),
-    ...(Array.isArray(a.failureMessages) ? { failureMessages: a.failureMessages.map(stripAnsi) } : {}),
-  }));
-  const passedTests = Math.max(assertions.filter((a) => a.status === "passed").length, suiteResult?.numPassingTests || 0);
-  const failedTests = Math.max(assertions.filter((a) => a.status === "failed").length, suiteResult?.numFailingTests || 0);
-  const totalTests = Math.max(assertions.length, passedTests + failedTests + (suiteResult?.numPendingTests || 0));
-  const status = suiteResult?.status?.toLowerCase() === "failed" || failedTests > 0
-    ? "failed" : passedTests > 0 ? "passed" : "pending";
+  const assertions = (suiteResult?.assertionResults || [])
+    .filter(Boolean)
+    .map((a) => ({
+      ...a,
+      title: a.title || a.fullName || "Test case",
+      status: (a.status || "pending").toLowerCase(),
+      ...(typeof a.message === "string"
+        ? { message: stripAnsi(a.message) }
+        : {}),
+      ...(Array.isArray(a.failureMessages)
+        ? { failureMessages: a.failureMessages.map(stripAnsi) }
+        : {}),
+    }));
+  const passedTests = Math.max(
+    assertions.filter((a) => a.status === "passed").length,
+    suiteResult?.numPassingTests || 0,
+  );
+  const failedTests = Math.max(
+    assertions.filter((a) => a.status === "failed").length,
+    suiteResult?.numFailingTests || 0,
+  );
+  const totalTests = Math.max(
+    assertions.length,
+    passedTests + failedTests + (suiteResult?.numPendingTests || 0),
+  );
+  const status =
+    suiteResult?.status?.toLowerCase() === "failed" || failedTests > 0
+      ? "failed"
+      : passedTests > 0
+        ? "passed"
+        : "pending";
   return {
-    assertions, passedTests, failedTests, totalTests, status,
-    ...(typeof suiteResult?.message === "string" ? { message: stripAnsi(suiteResult.message) } : {}),
+    assertions,
+    passedTests,
+    failedTests,
+    totalTests,
+    status,
+    ...(typeof suiteResult?.message === "string"
+      ? { message: stripAnsi(suiteResult.message) }
+      : {}),
   };
 };
 
@@ -2208,7 +2234,11 @@ export const storedTestRunSuites = (runs) => {
     const byFile = new Map();
     for (const scenario of run.scenarios || []) {
       if (!scenario.testFile) continue;
-      if (!byFile.has(scenario.testFile)) byFile.set(scenario.testFile, { name: scenario.testFile, assertionResults: [] });
+      if (!byFile.has(scenario.testFile))
+        byFile.set(scenario.testFile, {
+          name: scenario.testFile,
+          assertionResults: [],
+        });
       byFile.get(scenario.testFile).assertionResults.push(scenario);
     }
     suites.push(...byFile.values());
@@ -2301,13 +2331,14 @@ export const getCoverageTestSuites = async (req, res) => {
 
     // 1. Locate test-results.json and separate Jest vs Vitest results
     // Operation workspaces may be gone; persisted scenarios still describe the run.
-    const storedRuns = requestedType === "unit"
-      ? await prisma.testRun.findMany({
-          where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
-          include: { scenarios: true },
-          orderBy: { createdAt: "desc" },
-        })
-      : [];
+    const storedRuns =
+      requestedType === "unit"
+        ? await prisma.testRun.findMany({
+            where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+            include: { scenarios: true },
+            orderBy: { createdAt: "desc" },
+          })
+        : [];
     const loadTestResultsFromPaths = (paths, storedSuites = []) => {
       const list = [...storedSuites];
       const seen = new Set();
@@ -2327,7 +2358,10 @@ export const getCoverageTestSuites = async (req, res) => {
         // extractRepoRelativePath handles Docker paths like /app/storage/.../repo/foo.test.js
         // path.relative() fails when mixing Docker linux paths with Windows host paths
         const repoRelative = suite.name
-          ? norm(canonicalizeFilePath(suite.name, snapshotRootDir) || extractRepoRelativePath(suite.name))
+          ? norm(
+              canonicalizeFilePath(suite.name, snapshotRootDir) ||
+                extractRepoRelativePath(suite.name),
+            )
           : "";
         if (!repoRelative) continue;
         map.set(repoRelative, suite);
@@ -2548,36 +2582,38 @@ export const getCoverageTestSuites = async (req, res) => {
 
       const mappedSuite = mapCoverageSuiteResult(suiteResult);
       const assertions = mappedSuite.assertions.map((a) => {
-              let targetFunction = null;
-              try {
-                targetFunction = extractTargetFunction(
-                  a,
-                  baseName,
-                  fileKnownFunctions,
-                );
-              } catch (_) {}
-              const catInfo = classifyTestCategory(
-                a,
-                a?.title || a?.fullName,
-                a?.ancestorTitles,
-              );
-              return {
-                title: a?.title || a?.fullName || "Test case",
-                status: a.status,
-                ...(typeof a.message === "string" ? { message: a.message } : {}),
-                ...(Array.isArray(a.failureMessages) ? { failureMessages: a.failureMessages } : {}),
-                duration: typeof a?.duration === "number" ? a.duration : 0,
-                targetFunction: targetFunction || null,
-                ancestorTitles: Array.isArray(a?.ancestorTitles)
-                  ? a.ancestorTitles
-                  : [],
-                category: catInfo.category,
-                categoryName: catInfo.categoryName,
-                categoryBadge: catInfo.categoryBadge,
-                categoryColor: catInfo.categoryColor,
-                line: a?.location?.line || a?.line || a?.startLine || null,
-              };
-            });
+        let targetFunction = null;
+        try {
+          targetFunction = extractTargetFunction(
+            a,
+            baseName,
+            fileKnownFunctions,
+          );
+        } catch (_) {}
+        const catInfo = classifyTestCategory(
+          a,
+          a?.title || a?.fullName,
+          a?.ancestorTitles,
+        );
+        return {
+          title: a?.title || a?.fullName || "Test case",
+          status: a.status,
+          ...(typeof a.message === "string" ? { message: a.message } : {}),
+          ...(Array.isArray(a.failureMessages)
+            ? { failureMessages: a.failureMessages }
+            : {}),
+          duration: typeof a?.duration === "number" ? a.duration : 0,
+          targetFunction: targetFunction || null,
+          ancestorTitles: Array.isArray(a?.ancestorTitles)
+            ? a.ancestorTitles
+            : [],
+          category: catInfo.category,
+          categoryName: catInfo.categoryName,
+          categoryBadge: catInfo.categoryBadge,
+          categoryColor: catInfo.categoryColor,
+          line: a?.location?.line || a?.line || a?.startLine || null,
+        };
+      });
 
       // pending = file found but no executed assertions; failures take precedence.
       const { passedTests, failedTests, totalTests, status } = mappedSuite;
@@ -3112,7 +3148,8 @@ export const applyIntegrationTestsController = async (req, res) => {
       return res.status(401).json({ success: false, message: "Unauthorized." });
 
     const { snapshotId } = req.params;
-    const { testIds, selectedScenarios, targetFilePath, fileName } = req.body || {};
+    const { testIds, selectedScenarios, targetFilePath, fileName } =
+      req.body || {};
 
     const { applyIntegrationTestsService } =
       await import("../services/integrationApiService.service.js");
@@ -3120,7 +3157,9 @@ export const applyIntegrationTestsController = async (req, res) => {
       snapshotId,
       userId,
       testIds: testIds || [],
-      selectedScenarios: Array.isArray(selectedScenarios) ? selectedScenarios : [],
+      selectedScenarios: Array.isArray(selectedScenarios)
+        ? selectedScenarios
+        : [],
       targetFilePath: targetFilePath || null,
       fileName: fileName || null,
     });
@@ -3309,8 +3348,7 @@ export const getIntegrationWorkspace = async (req, res) => {
 
     const skipAutoScan =
       req.query?.skipAutoScan === "true" || req.query?.skipAutoScan === "1";
-    const scanNow =
-      req.query?.scan === "true" || req.query?.scan === "1";
+    const scanNow = req.query?.scan === "true" || req.query?.scan === "1";
 
     const workspaceData = await buildIntegrationWorkspace(targetSnapshotId, {
       skipAutoScan,
@@ -3988,6 +4026,39 @@ export const addScenario = async (req, res) => {
 export const deleteScenario = async (req, res) => {
   try {
     const { snapshotId, aiTestId, scenarioId } = req.params;
+    const decodedScenarioId = decodeURIComponent(scenarioId);
+    const { filePath, testName, origin } = req.body || {};
+
+    const isExistingProjectId =
+      !aiTestId ||
+      aiTestId === "fallback" ||
+      aiTestId === "existing_test_lookup" ||
+      aiTestId === "workspace_scenario_lookup" ||
+      String(aiTestId).startsWith("existing_test_") ||
+      origin === "PROJECT_EXISTING";
+
+    let dbAiTest = null;
+    if (!isExistingProjectId) {
+      dbAiTest = await prisma.aiTest
+        .findFirst({
+          where: { id: aiTestId, snapshotId },
+          select: { id: true, projectId: true, snapshotId: true },
+        })
+        .catch(() => null);
+    }
+
+    if (!dbAiTest) {
+      const deletedResult = await deleteProjectScenarioService({
+        snapshotId,
+        userId: req.user.id,
+        aiTestId,
+        scenarioId: decodedScenarioId,
+        filePath,
+        testName,
+      });
+      if (snapshotId) invalidateEndpointCache(snapshotId);
+      return res.status(200).json({ success: true, data: deletedResult });
+    }
 
     const targetAiTest = await verifyAiTestOwnership(
       aiTestId,
@@ -3999,7 +4070,7 @@ export const deleteScenario = async (req, res) => {
 
     const updatedTest = await deleteScenarioService(
       targetAiTest.id,
-      decodeURIComponent(scenarioId),
+      decodedScenarioId,
       {
         userId: req.user.id,
         snapshotId: req.params.snapshotId,
@@ -5961,10 +6032,15 @@ export const getSuitesReadinessController = async (req, res) => {
     const userId = req.user?.id;
     const { snapshotId } = req.params;
     const onlyActiveJob =
-      req.query?.mode === "active-job-only" || req.query?.onlyActiveJob === "true";
+      req.query?.mode === "active-job-only" ||
+      req.query?.onlyActiveJob === "true";
     const { getSuitesReadinessService } =
       await import("../services/suitesReadiness.service.js");
-    const data = await getSuitesReadinessService({ snapshotId, userId, onlyActiveJob });
+    const data = await getSuitesReadinessService({
+      snapshotId,
+      userId,
+      onlyActiveJob,
+    });
     return res.status(200).json({ success: true, data });
   } catch (error) {
     console.error("[getSuitesReadinessController] Error:", error);

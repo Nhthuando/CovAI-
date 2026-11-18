@@ -33,3 +33,48 @@ export const fetchIntegrationGuidance = async (projectId) => {
   });
   return handleResponse(res);
 };
+
+export async function downloadIntegrationReportApi(projectId, { snapshotId = null, format = "pdf", signal } = {}) {
+  const query = new URLSearchParams({ format });
+  if (snapshotId) query.set("snapshotId", snapshotId);
+
+  const token =
+    localStorage.getItem("token") ||
+    (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
+
+  const response = await fetch(
+    `${BASE_URL}/reports/project/${encodeURIComponent(projectId)}/integration/export?${query}`,
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal,
+    },
+  );
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      await handleUnauthorizedResponse();
+    }
+    throw new Error(data.message || `Could not export ${format.toUpperCase()} report.`);
+  }
+
+  const blob = await response.blob();
+  if (signal?.aborted) throw new DOMException("Download cancelled", "AbortError");
+
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const candidate = disposition.match(/filename="([^"]+)"/)?.[1];
+  const filename =
+    candidate && /^[a-zA-Z0-9_.-]+$/.test(candidate)
+      ? candidate
+      : `integration-report-${projectId || "project"}.${format}`;
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  return filename;
+}

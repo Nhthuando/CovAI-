@@ -16,7 +16,8 @@ import { processFullTests } from "./fullTestsPostProcessor.service.js";
 import { processCypressTests } from "./cypressPostProcessor.service.js";
 import { processSupertestTests } from "./supertestPostProcessor.service.js";
 import { notificationService } from "./notification.service.js";
-import { invalidateEndpointCache } from "./integrationWorkspace.service.js";
+import { invalidateEndpointCache, discoverProjectIntegrationTests } from "./integrationWorkspace.service.js";
+import { extractTestRequests } from "./testSourceParser.service.js";
 import { saveAiTestsToFilesystem, removeAiTestsFromFilesystem } from "./aiTestStorage.service.js";
 import crypto from "crypto";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
@@ -28,6 +29,10 @@ import { generateVerifiedSystemTests } from './verifiedSystemGeneration.service.
 import { ensurePlaywrightExecutionSteps } from './playwrightExecutionSteps.service.js';
 import { validateSystemTestQuality } from './systemTestQuality.service.js';
 import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.service.js';
+import {
+    getEndpointRequiredCases,
+    getScenarioCaseKey,
+} from '../../../shared/integrationCaseCoverage.js';
 import { currentProjectOperation, operationSnapshot, stagePreparedPublication, assertProjectOperationActive } from './projectOperationWorkspace.service.js';
 import { resolveProjectAccess } from './projectAccess.service.js';
 import { resolveContainedProjectPath } from './projectFileVersion.service.js';
@@ -537,11 +542,17 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 await addJobLog(jobId, "INFO", `Found ${allEndpoints.length} endpoints to generate tests for. Batching in chunks of ${CHUNK_SIZE}...`);
             }
 
-            // Initialize tracker for target endpoints
+            // Initialize tracker for target endpoints using shared required-case contract
             const endpointTracker = new Map();
             targetEndpoints.forEach(ep => {
+                const requiredCases = getEndpointRequiredCases(ep);
                 endpointTracker.set(`${ep.method} ${ep.fullPath}`, {
                     endpoint: ep,
+                    requiredCases,
+                    coveredCaseKeys: new Set(),
+                    preExistingCaseKeys: new Set(),
+                    existingScenarios: [],
+                    generatedCount: 0,
                     happy: false,
                     error: false,
                     negativeNotApplicable: false,
@@ -553,14 +564,187 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 });
             });
 
+            // Shared helper to match request method+path to tracked endpoints
+            const matchEndpoint = (requestPath, requestMethod, validKeys) => {
+                const normMethod = String(requestMethod || "GET").toUpperCase();
+                const cleanPath = String(requestPath || "/").split("?")[0].replace(/\/+$/, "") || "/";
+                for (const key of validKeys) {
+                    const [method, epRoutePath] = key.split(" ");
+                    if (method.toUpperCase() !== normMethod) continue;
+
+                    const cleanRoute = (epRoutePath || "/").replace(/\/+$/, "") || "/";
+
+                    // 1. Exact or parameterized match: e.g. /api/users/:id matches /api/users/123
+                    const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+                    if (new RegExp(regexStr).test(cleanPath)) {
+                        return key;
+                    }
+
+                    // 2. Subpath suffix match
+                    if (cleanRoute !== "/" && cleanRoute !== "") {
+                        const suffixRegexStr = cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+                        if (new RegExp(suffixRegexStr).test(cleanPath)) {
+                            return key;
+                        }
+                    }
+
+                    // 3. Fallback: root "/" mapped to source file resource name
+                    const epData = endpointTracker.get(key);
+                    if (cleanRoute === "/" && epData?.endpoint?.sourceFile) {
+                        const srcBase = epData.endpoint.sourceFile.split("/").pop().replace(/\.(js|ts)$/, "").replace(/[.\-_]/g, "").toLowerCase();
+                        const pathCleaned = cleanPath.replace(/[.\-_/]/g, "").toLowerCase();
+                        if (pathCleaned.includes(srcBase.replace("routes", "").replace("route", ""))) {
+                            return key;
+                        }
+                    }
+                }
+                return null;
+            };
+
             if (targetEndpoints.length === 0) {
                 await addJobLog(jobId, "WARN", "No matching API endpoints detected for generation. Aborting.");
                 await updateGenerationJobStatus({ jobId, status: "SUCCESS", progress: 100 });
                 return { success: true, count: 0, summary: summaryCombined };
             }
 
+            // Pre-seed tracker with preserved user/project existing scenarios so AI only generates missing cases
+            const existingDbTests = await prisma.aiTest.findMany({
+                where: { snapshotId }
+            });
+            const dbAiTestPaths = new Set(
+                existingDbTests.map((t) => String(t.filePath || "").replace(/\\/g, "/").toLowerCase())
+            );
+            const preservedScenarioCandidates = [];
+
+            const projectExistingSuites = job.snapshot?.rootDir
+                ? await discoverProjectIntegrationTests(job.snapshot.rootDir).catch(() => [])
+                : [];
+            const seenProjectPaths = new Set();
+            for (const suite of projectExistingSuites) {
+                const normPath = String(suite.filePath || "").replace(/\\/g, "/").toLowerCase();
+                if (!normPath || dbAiTestPaths.has(normPath) || String(suite.content || "").includes("[AI GENERATED]")) {
+                    continue;
+                }
+                seenProjectPaths.add(normPath);
+                for (const req of suite.requests || []) {
+                    preservedScenarioCandidates.push({
+                        ...req,
+                        origin: req.origin || "PROJECT_EXISTING",
+                        filePath: suite.filePath,
+                    });
+                }
+            }
+
+            for (const tf of payload.testFiles || []) {
+                const normPath = String(tf.path || "").replace(/\\/g, "/").toLowerCase();
+                const content = String(tf.content || "");
+                if (
+                    !normPath ||
+                    seenProjectPaths.has(normPath) ||
+                    dbAiTestPaths.has(normPath) ||
+                    content.includes("[AI GENERATED]") ||
+                    !/supertest|request\s*\(|superagent|chai-http/i.test(content)
+                ) {
+                    continue;
+                }
+                for (const req of extractTestRequests(content, tf.path)) {
+                    preservedScenarioCandidates.push({
+                        ...req,
+                        origin: "PROJECT_EXISTING",
+                        filePath: tf.path,
+                    });
+                }
+            }
+
+            for (const aiRow of existingDbTests) {
+                if (!aiRow.metaJson) continue;
+                try {
+                    const meta = JSON.parse(aiRow.metaJson);
+                    if (meta.framework !== "SUPERTEST") continue;
+                    for (const req of meta.requests || []) {
+                        if (req.userEdited || req.origin === "USER_ADDED" || req.origin === "USER_MODIFIED" || req.origin === "PROJECT_EXISTING") {
+                            preservedScenarioCandidates.push({
+                                ...req,
+                                origin: req.origin || "USER_MODIFIED",
+                                filePath: aiRow.filePath,
+                            });
+                        }
+                    }
+                } catch {}
+            }
+
+            let stagedDeletedSet = new Set();
+            if (typeof prisma?.projectStructureAnalysis?.findUnique === "function") {
+                try {
+                    const saRow = await prisma.projectStructureAnalysis.findUnique({
+                        where: { snapshotId },
+                        select: { resultJson: true },
+                    });
+                    if (saRow?.resultJson) {
+                        const saParsed = typeof saRow.resultJson === "string"
+                            ? JSON.parse(saRow.resultJson)
+                            : saRow.resultJson || {};
+                        for (const d of saParsed?.deletedIntegrationScenarios || []) {
+                            if (d?.testName) stagedDeletedSet.add(String(d.testName).trim().toLowerCase());
+                            if (d?.scenarioId) stagedDeletedSet.add(String(d.scenarioId).trim());
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            const allTrackerKeys = Array.from(endpointTracker.keys());
+            for (const sc of preservedScenarioCandidates) {
+                const scTitleLower = String(sc.testName || "").trim().toLowerCase();
+                if ((scTitleLower && stagedDeletedSet.has(scTitleLower)) || (sc.scenarioId && stagedDeletedSet.has(String(sc.scenarioId).trim()))) {
+                    continue;
+                }
+                const matchedKey = matchEndpoint(sc.path, sc.method, allTrackerKeys);
+                if (!matchedKey) continue;
+                const tr = endpointTracker.get(matchedKey);
+                const caseKey = getScenarioCaseKey({
+                    title: sc.testName,
+                    expectedStatus: sc.expectedStatus,
+                    expectedStatuses: sc.expectedStatuses,
+                    category: sc.category,
+                });
+                const matchedDef = tr.requiredCases.find((rc) => rc.key === caseKey);
+                tr.preExistingCaseKeys.add(caseKey);
+                tr.coveredCaseKeys.add(caseKey);
+                if (caseKey === "HAPPY") tr.happy = true;
+                else tr.error = true;
+                tr.existingScenarios.push({
+                    testName: sc.testName,
+                    expectedStatus: sc.expectedStatus,
+                    expectedStatuses: sc.expectedStatuses,
+                    caseKey,
+                    caseLabel: matchedDef?.label || caseKey,
+                    origin: sc.origin,
+                    filePath: sc.filePath,
+                });
+            }
+
             const MAX_RETRIES = 2;
-            let currentQueue = Array.from(endpointTracker.keys());
+            let currentQueue = [];
+            for (const key of allTrackerKeys) {
+                const tr = endpointTracker.get(key);
+                const missingCases = tr.requiredCases.filter(
+                    (rc) => !tr.coveredCaseKeys.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
+                );
+                if (tr.existingScenarios.length > 0) {
+                    const existingLabels = tr.requiredCases
+                        .filter((rc) => tr.preExistingCaseKeys.has(rc.key))
+                        .map((rc) => rc.label)
+                        .join(", ") || `${tr.existingScenarios.length} scenario(s)`;
+                    if (missingCases.length === 0) {
+                        await addJobLog(jobId, "INFO", `Endpoint ${key} already covers all required cases (${existingLabels}) via existing tests. Skipping duplicate AI generation.`);
+                        continue;
+                    }
+                    await addJobLog(jobId, "INFO", `Endpoint ${key} already covers [${existingLabels}] via existing tests. Generating only missing cases: [${missingCases.map((c) => c.label).join(", ")}].`);
+                }
+                if (missingCases.length > 0) {
+                    currentQueue.push(key);
+                }
+            }
             let generationCycles = 0;
 
             while (currentQueue.length > 0 && generationCycles < 5) { // Limit total cycles to prevent infinite loops
@@ -592,13 +776,20 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                         progress: chunkProgress 
                     }));
 
-                    // We instruct the model precisely for the missing coverage types
+                    // We instruct the model precisely for the missing required contract cases only
+                    const batchNeededCases = new Map();
                     const promptChunk = chunkEndpoints.map(ep => {
-                        const tr = endpointTracker.get(`${ep.method} ${ep.fullPath}`);
-                        let missing = [];
-                        if (!tr.happy) missing.push("Happy Path (200/201)");
-                        if (!tr.error) missing.push("Error Edge Case (400/404/500)");
-                        return { ...ep, missingCoverageRequested: missing };
+                        const key = `${ep.method} ${ep.fullPath}`;
+                        const tr = endpointTracker.get(key);
+                        const missingCases = tr.requiredCases.filter(
+                            (rc) => !tr.coveredCaseKeys.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
+                        );
+                        batchNeededCases.set(key, new Set(missingCases.map((rc) => rc.key)));
+                        return {
+                            ...ep,
+                            missingCoverageRequested: missingCases.map((rc) => rc.promptHint),
+                            existingScenarios: tr.existingScenarios,
+                        };
                     });
 
                     // Correlate constraints relevant to the current batch endpoints
@@ -639,51 +830,13 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                             {
                                 taskType: "integration",
                                 temperature: 0.2,
-                                maxOutputTokens: 1500,
+                                maxOutputTokens: 3500,
                             }
                         ));
                         
                         if (supertestResponseText) {
                             try {
                                 const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, { projectId, snapshotId });
-                                
-                                // Helper to match path with route params and query strings
-                                const matchEndpoint = (requestPath, requestMethod, validKeys) => {
-                                    const cleanPath = requestPath.split("?")[0].replace(/\/+$/, "") || "/";
-                                    for (const key of validKeys) {
-                                        const [method, path] = key.split(" ");
-                                        if (method !== requestMethod) continue;
-                                        
-                                        const cleanRoute = path.replace(/\/+$/, "") || "/";
-                                        
-                                        // 1. Exact or parameterized match: e.g. /api/users/:id matches /api/users/123
-                                        const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
-                                        const regex = new RegExp(regexStr);
-                                        if (regex.test(cleanPath)) {
-                                            return key;
-                                        }
-
-                                        // 2. Subpath suffix match: if key has subpath e.g. "/validate" or "/get/:id"
-                                        // and requestPath is full path "/api/cart/validate" or "/api/food-items/get/123"
-                                        if (cleanRoute !== "/" && cleanRoute !== "") {
-                                            const suffixRegexStr = cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
-                                            if (new RegExp(suffixRegexStr).test(cleanPath)) {
-                                                return key;
-                                            }
-                                        }
-
-                                        // 3. Fallback: if key is root "/" and cleanPath points to the endpoint resource
-                                        const epData = endpointTracker.get(key);
-                                        if (cleanRoute === "/" && epData?.endpoint?.sourceFile) {
-                                            const srcBase = epData.endpoint.sourceFile.split("/").pop().replace(/\.(js|ts)$/, "").replace(/[.\-_]/g, "").toLowerCase();
-                                            const pathCleaned = cleanPath.replace(/[.\-_/]/g, "").toLowerCase();
-                                            if (pathCleaned.includes(srcBase.replace("routes", "").replace("route", ""))) {
-                                                return key;
-                                            }
-                                        }
-                                    }
-                                    return null;
-                                };
 
                                 // VALIDATION: Strict per-endpoint output validation
                                 const validTestsForBatch = [];
@@ -705,20 +858,31 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                         }
                                         
                                         const tr = endpointTracker.get(matchedKey);
-                                        const name = req.testName.toLowerCase();
-                                        
-                                        // Distinguish Happy Path from Error Edge Case
-                                        let isHappy = name.includes('happy') || name.includes('200') || name.includes('201') || name.includes('success');
-                                        let isError = name.includes('error') || name.includes('400') || name.includes('401') || name.includes('404') || name.includes('500') || name.includes('fail') || name.includes('missing') || name.includes('invalid');
-                                        
-                                        if (!isHappy && !isError) {
-                                            // Fallback classification if naming is vague
-                                            isHappy = true;
+                                        const neededSet = batchNeededCases.get(matchedKey) || new Set();
+                                        const caseKey = getScenarioCaseKey({
+                                            title: req.testName,
+                                            expectedStatus: req.expectedStatus,
+                                            expectedStatuses: req.expectedStatuses,
+                                        });
+
+                                        // Enforce strict non-duplication against existing tests and already-generated cases
+                                        if (tr.preExistingCaseKeys.has(caseKey) || !neededSet.has(caseKey)) {
+                                            rejectedScenarios++;
+                                            await addJobLog(jobId, "INFO", `Pruned duplicate/redundant scenario '${req.testName}' for '${matchedKey}': Case '${caseKey}' is already covered.`);
+                                            rejectedRequests.push(req);
+                                            continue;
                                         }
-                                        
-                                        if (isHappy) tr.happy = true;
-                                        if (isError) tr.error = true;
-                                        
+
+                                        neededSet.delete(caseKey);
+                                        tr.coveredCaseKeys.add(caseKey);
+                                        tr.generatedCount++;
+
+                                        if (caseKey === "HAPPY") {
+                                            tr.happy = true;
+                                        } else {
+                                            tr.error = true;
+                                        }
+
                                         // Special case: Simple root health-check endpoints without parameters (like GET /) do not have meaningful error branches
                                         if ((matchedKey.trim().toUpperCase() === "GET /" || matchedKey.trim().toUpperCase().endsWith(" /")) && tr.happy) {
                                             tr.negativeNotApplicable = true;
@@ -768,15 +932,19 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                     // Evaluate missing coverage for the chunk and queue retries
                     for (const key of chunkKeys) {
                         const tr = endpointTracker.get(key);
-                        const isComplete = tr.happy && (tr.error || tr.negativeNotApplicable || tr.generationCompleted);
+                        const missingCases = tr.requiredCases.filter(
+                            (rc) => !tr.coveredCaseKeys.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
+                        );
+                        const isComplete = missingCases.length === 0 || Boolean(tr.generationCompleted);
                         if (!isComplete) {
                             tr.retries++;
                             if (tr.retries <= MAX_RETRIES) {
-                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (Happy: ${tr.happy}, Error: ${tr.error}, Negative Not Applicable: ${Boolean(tr.negativeNotApplicable)}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
+                                const missingLabels = missingCases.map((c) => c.label).join(", ");
+                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (${missingLabels}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
                                 nextQueue.push(key);
                             } else {
                                 tr.failed = true;
-                                await addJobLog(jobId, "ERROR", `Endpoint ${key} exhausted retries. Unresolved coverage.`);
+                                await addJobLog(jobId, "ERROR", `Endpoint ${key} exhausted retries. Unresolved coverage (${missingCases.map((c) => c.label).join(", ")}).`);
                             }
                         }
                     }
@@ -801,13 +969,17 @@ const processAiTestsJobInWorkspace = async (jobId) => {
             const unresolvedEndpoints = [];
 
             for (const [key, tr] of endpointTracker.entries()) {
-                if (tr.happy && tr.error) completelyCovered++;
-                else if (tr.happy || tr.error) {
+                const missing = tr.requiredCases.filter(
+                    (rc) => !tr.coveredCaseKeys.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
+                );
+                if (missing.length === 0) {
+                    completelyCovered++;
+                } else if (tr.coveredCaseKeys.size > 0) {
                     partialCovered++;
-                    unresolvedEndpoints.push(`${key} (Missing: ${!tr.happy ? 'Happy' : 'Error'})`);
+                    unresolvedEndpoints.push(`${key} (Missing: ${missing.map((m) => m.label).join(", ")})`);
                 } else {
                     completelyMissed++;
-                    unresolvedEndpoints.push(`${key} (Missing: Both)`);
+                    unresolvedEndpoints.push(`${key} (Missing: All)`);
                 }
             }
 
@@ -818,9 +990,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
             await updateGenerationJobStatus({ jobId, progress: 85 });
 
             await addJobLog(jobId, "INFO", "Replacing old Supertest tests atomically...");
-            const existingTests = await prisma.aiTest.findMany({
-                where: { snapshotId }
-            });
+            const existingTests = existingDbTests;
             const supertestIds = [];
             const testsToUpdate = [];
             
@@ -828,7 +998,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
 
             const successfullyGeneratedEndpoints = new Set();
             for (const [key, tr] of endpointTracker.entries()) {
-                if (tr.happy || tr.error) successfullyGeneratedEndpoints.add(key);
+                if (tr.generatedCount > 0) successfullyGeneratedEndpoints.add(key);
             }
 
             existingTests.forEach(t => {

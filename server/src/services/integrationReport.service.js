@@ -2,7 +2,231 @@ import prisma from '../config/prisma.js';
 import { loadSourceCode } from './aiContextBuilder.service.js';
 import { extractValidEndpoints } from './apiEndpointParser.service.js';
 import { extractTestRequests } from './testSourceParser.service.js';
-import { isMatchSuite } from './integrationWorkspace.service.js';
+import { isMatchSuite, buildIntegrationWorkspace } from './integrationWorkspace.service.js';
+import { getEndpointCaseCoverage } from '../../../shared/integrationCaseCoverage.js';
+
+export const computeIntegrationCoverageRank = ({
+    coveredEndpoints = 0,
+    endpointCoveragePct = 0,
+    linesPct = 0,
+    stmtsPct = 0,
+    passedTests = 0,
+} = {}) => {
+    return (
+        Math.round(Number(coveredEndpoints || 0) * 100000) +
+        Math.round(Number(endpointCoveragePct || 0) * 100) +
+        Math.round(Number(linesPct || stmtsPct || 0) * 10) +
+        Number(passedTests || 0)
+    );
+};
+
+export const capturePeakIntegrationReportIfHigher = async (
+    snapshotId,
+    { projectId = null, testRunId = null, coverageTotal = null } = {},
+) => {
+    if (!snapshotId || typeof prisma?.projectStructureAnalysis?.upsert !== 'function') {
+        return null;
+    }
+
+    const wsResult = await buildIntegrationWorkspace(snapshotId, { bypassCache: true });
+    const ws = wsResult?.payload || wsResult;
+    if (!ws || !Array.isArray(ws.endpoints)) return null;
+
+    const endpoints = ws.endpoints;
+    const summary = ws.summary || {};
+    const exec = ws.execution || {};
+    const liveCodeCov = summary.codeCoverage || (coverageTotal ? {
+        statement: coverageTotal.statements?.pct ?? 0,
+        branch: coverageTotal.branches?.pct ?? 0,
+        function: coverageTotal.functions?.pct ?? 0,
+        line: coverageTotal.lines?.pct ?? coverageTotal.statements?.pct ?? 0,
+    } : null);
+
+    const routeMatrix = endpoints.map((e) => {
+        const scs = Array.isArray(e.scenarios) ? e.scenarios : [];
+        const passScenarios = scs.filter((s) => s.status === 'passed' || s.executionVerdict === 'PASS').length;
+        const failScenarios = scs.filter((s) => s.status === 'failed' || s.executionVerdict === 'FAIL').length;
+        const isFailed = e.status === 'failed' || (e.failedCount || 0) > 0 || failScenarios > 0;
+        const caseCov = e.caseCoverage || getEndpointCaseCoverage(e, scs);
+        const isCovered = !isFailed && (e.status === 'Covered' || e.status === 'passed' || (e.passedCount || 0) > 0 || passScenarios > 0);
+        return {
+            method: (e.method || 'GET').toUpperCase(),
+            path: e.fullPath || e.path || e.route || '/',
+            handler: e.controllerMethod || e.controllerName || e.handler || 'anonymousHandler',
+            sourceFile: e.sourceFile || e.source?.sourceFile || e.filePath || 'express-router',
+            status: isFailed
+                ? 'FAILED'
+                : isCovered && caseCov.isFullyVerified
+                    ? 'COVERED'
+                    : isCovered
+                        ? 'PARTIAL'
+                        : 'UNCOVERED',
+            scenarioCount: scs.length,
+            passedCount: e.passedCount ?? passScenarios,
+            failedCount: e.failedCount ?? failScenarios,
+            avgDurationMs: e.avgDurationMs || 0,
+            latencyStatus: e.latencyStatus || 'NORMAL',
+            source: e.source || null,
+            caseCoverage: caseCov,
+            scenarios: scs,
+        };
+    });
+
+    const totalDiscovered = endpoints.length;
+    const coveredCount = routeMatrix.filter((r) => r.status === 'COVERED').length;
+    const endpointCovPct = totalDiscovered > 0 ? Number(((coveredCount / totalDiscovered) * 100).toFixed(1)) : 0;
+
+    const allScenarios = endpoints.flatMap((e) =>
+        (e.scenarios || []).map((s) => ({ ...s, targetEndpoint: `${e.method} ${e.path || e.fullPath}` }))
+    );
+    const totalExecuted = exec.totalTests ?? allScenarios.filter((s) => s.status === 'passed' || s.status === 'failed').length;
+    const passedTests = exec.passedTests ?? allScenarios.filter((s) => s.status === 'passed').length;
+    const failedTests = exec.failedTests ?? allScenarios.filter((s) => s.status === 'failed').length;
+    const passRate = totalExecuted > 0 ? Math.round((passedTests / totalExecuted) * 100) : 0;
+
+    const failureLogs = allScenarios
+        .filter((s) => s.status === 'failed' || s.executionVerdict === 'FAIL')
+        .map((s) => ({
+            id: s.id || s.scenarioId || s.title,
+            targetEndpoint: s.targetEndpoint,
+            title: s.title || s.name,
+            failureLayer: s.failureLayer || 'ASSERTION_FAILED',
+            responseStatus: s.actualStatus ?? null,
+            expectedStatus: s.expectedStatus ?? null,
+            errorMessage: s.executionReason || (s.failureMessages && s.failureMessages[0]) || 'Assertion or runtime failure during API test execution.',
+        }));
+
+    const qualityScore = totalDiscovered > 0
+        ? Math.min(100, Math.max(0, Math.round(endpointCovPct * 0.45 + passRate * 0.45 + (failedTests === 0 ? 10 : 0))))
+        : 0;
+    const qualityGrade = qualityScore >= 95 ? 'A+' : qualityScore >= 85 ? 'A' : qualityScore >= 70 ? 'B' : qualityScore >= 50 ? 'C' : 'D';
+    const statusVerdict = failedTests > 0 ? 'REGRESSION_DETECTED' : (endpointCovPct >= 80 && passRate === 100) ? 'PRODUCTION_READY' : 'PARTIAL_COVERAGE';
+
+    const linesPct = liveCodeCov?.line ?? coverageTotal?.lines?.pct ?? 0;
+    const stmtsPct = liveCodeCov?.statement ?? coverageTotal?.statements?.pct ?? linesPct;
+    const score = computeIntegrationCoverageRank({
+        coveredEndpoints: coveredCount,
+        endpointCoveragePct: endpointCovPct,
+        linesPct,
+        stmtsPct,
+        passedTests,
+    });
+
+    const existingRow = await prisma.projectStructureAnalysis.findUnique({
+        where: { snapshotId },
+        select: { schemaVersion: true, resultJson: true },
+    }).catch(() => null);
+
+    let baseObj = {};
+    if (existingRow?.resultJson) {
+        try {
+            baseObj = typeof existingRow.resultJson === 'string'
+                ? JSON.parse(existingRow.resultJson)
+                : existingRow.resultJson || {};
+        } catch (_) {
+            baseObj = {};
+        }
+    }
+
+    const existingScore = baseObj?.peakIntegrationReport?.peakMeta?.score ?? -1;
+    if (baseObj?.peakIntegrationReport && score < existingScore) {
+        return baseObj.peakIntegrationReport;
+    }
+
+    const methodCounts = { GET: 0, POST: 0, PUT: 0, PATCH: 0, DELETE: 0, OTHER: 0 };
+    const methodTested = { GET: 0, POST: 0, PUT: 0, PATCH: 0, DELETE: 0, OTHER: 0 };
+    routeMatrix.forEach((r) => {
+        const m = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method) ? r.method : 'OTHER';
+        methodCounts[m]++;
+        if (r.status === 'COVERED') methodTested[m]++;
+    });
+    const methodDistribution = Object.keys(methodCounts)
+        .map((method) => ({
+            method,
+            total: methodCounts[method],
+            tested: methodTested[method],
+            uncovered: Math.max(0, methodCounts[method] - methodTested[method]),
+            coverageRate: methodCounts[method] > 0 ? Math.round((methodTested[method] / methodCounts[method]) * 100) : 0,
+        }))
+        .filter((m) => m.total > 0);
+
+    const capturedAt = new Date().toISOString();
+    const peakReport = {
+        isPeakCoverageReport: true,
+        peakMeta: {
+            score,
+            coveredEndpoints: coveredCount,
+            totalEndpoints: totalDiscovered,
+            endpointCoveragePct: endpointCovPct,
+            linesPct,
+            stmtsPct,
+            passedTests,
+            totalExecuted,
+            testRunId: testRunId || exec.id || null,
+            capturedAt,
+        },
+        overview: {
+            snapshotId,
+            totalScenarios: allScenarios.length,
+            hasScannedEndpoints: Boolean(ws.generation?.hasScannedEndpoints ?? totalDiscovered > 0),
+            hasExecutedCoverage: totalExecuted > 0,
+        },
+        latestExecution: {
+            testRunId: testRunId || exec.id || null,
+            timestamp: exec.completedAt || exec.timestamp || capturedAt,
+            status: exec.status || (failedTests > 0 ? 'FAILED' : 'PASSED'),
+            totalTests: totalExecuted,
+            passedTests,
+            failedTests,
+            skippedTests: exec.skippedTests || 0,
+            durationMs: exec.durationMs || 0,
+        },
+        apiCoverage: {
+            discoveredApis: totalDiscovered,
+            testedApis: coveredCount,
+            uncoveredApis: Math.max(0, totalDiscovered - coveredCount),
+            coveragePercentage: endpointCovPct,
+            hasScannedEndpoints: Boolean(ws.generation?.hasScannedEndpoints ?? totalDiscovered > 0),
+            hasExecutedCoverage: totalExecuted > 0,
+        },
+        projectCodeCoverage: liveCodeCov ? {
+            timestamp: capturedAt,
+            stmtsPct,
+            linesPct,
+            branchesPct: liveCodeCov.branch ?? coverageTotal?.branches?.pct ?? 0,
+            funcsPct: liveCodeCov.function ?? coverageTotal?.functions?.pct ?? 0,
+        } : null,
+        fileCoverages: summary.fileCoverages || [],
+        routeMatrix,
+        failureLogs,
+        qualityHealth: {
+            score: qualityScore,
+            grade: qualityGrade,
+            verdict: statusVerdict,
+            passRate,
+        },
+        methodDistribution,
+    };
+
+    const nextJson = JSON.stringify({
+        ...baseObj,
+        peakIntegrationReport: peakReport,
+    });
+
+    await prisma.projectStructureAnalysis.upsert({
+        where: { snapshotId },
+        create: {
+            snapshotId,
+            schemaVersion: existingRow?.schemaVersion || 1,
+            resultJson: nextJson,
+        },
+        update: {
+            resultJson: nextJson,
+        },
+    });
+
+    return peakReport;
+};
 
 const isMatch = (parsedReq, discoveredEp) => {
     if (parsedReq.method !== discoveredEp.method) return false;
@@ -472,6 +696,39 @@ export const getIntegrationAnalytics = async (projectId) => {
     report.moduleBreakdown = moduleBreakdown;
     report.performanceMetrics = performanceMetrics;
     report.auditMetadata = auditMetadata;
+
+    const liveScore = computeIntegrationCoverageRank({
+        coveredEndpoints: routeMatrix.filter((r) => r.status === 'COVERED' || r.status === 'PASS').length,
+        endpointCoveragePct: report.apiCoverage?.coveragePercentage || 0,
+        linesPct: report.projectCodeCoverage?.linesPct || 0,
+        stmtsPct: report.projectCodeCoverage?.stmtsPct || 0,
+        passedTests: passedTestsCount,
+    });
+
+    if (typeof prisma?.projectStructureAnalysis?.findUnique === 'function') {
+        try {
+            const analysisRow = await prisma.projectStructureAnalysis.findUnique({
+                where: { snapshotId },
+                select: { resultJson: true },
+            });
+            if (analysisRow?.resultJson) {
+                const parsed = typeof analysisRow.resultJson === 'string'
+                    ? JSON.parse(analysisRow.resultJson)
+                    : analysisRow.resultJson;
+                const savedPeak = parsed?.peakIntegrationReport;
+                if (savedPeak && (savedPeak.peakMeta?.score ?? 0) >= liveScore) {
+                    return {
+                        ...report,
+                        ...savedPeak,
+                        history: report.history,
+                        isPeakCoverageReport: true,
+                    };
+                }
+            }
+        } catch (err) {
+            console.warn('[getIntegrationAnalytics] Peak report lookup warning:', err?.message);
+        }
+    }
 
     return report;
 };

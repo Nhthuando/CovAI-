@@ -4,6 +4,10 @@
  */
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { withAgentContext } from '../agents/registry.js';
+import {
+    detectIntegrationLanguage,
+    getEndpointRequiredCases,
+} from "../../../shared/integrationCaseCoverage.js";
 import { extractDatabaseSchemaConstraints } from "./integrationAiTestGenerator.service.js";
 
 
@@ -70,17 +74,29 @@ export const includeContractContext = (sourceCode = [], testFiles = []) => {
         });
     }
 
-    // 2. Existing Tests (Established Response Schemas & Status Contracts)
-    const existingTests = (testFiles || []).filter(f =>
-        !f.path.includes("node_modules") && (f.path.includes("integration") || f.path.includes("unit") || f.path.includes("api.test"))
-    );
+    // 2. Existing Tests (Established Response Schemas, Status Contracts, and Naming Language/Style)
+    const existingTests = (testFiles || []).filter(f => {
+        const filePath = String(f?.path || "");
+        const content = String(f?.content || "");
+        if (filePath.includes("node_modules") || filePath.includes(".covai-temp")) return false;
+        return (
+            filePath.includes("integration") ||
+            filePath.includes("unit") ||
+            filePath.includes("api.test") ||
+            /supertest|request\s*\(|superagent/i.test(content)
+        );
+    }).sort((a, b) => {
+        const aUser = String(a?.content || "").includes("[AI GENERATED]") ? 1 : 0;
+        const bUser = String(b?.content || "").includes("[AI GENERATED]") ? 1 : 0;
+        return aUser - bUser;
+    });
 
     if (existingTests.length > 0) {
         hasContent = true;
-        segment += "#### Existing Test Suites (Established Request & Response Contracts)\n";
+        segment += "#### Existing Test Suites (Established Contracts, Setup & Naming Language)\n";
         existingTests.slice(0, 4).forEach(f => {
             segment += `##### File: \`${f.path}\`\n\`\`\`javascript\n`;
-            segment += f.content.split("\n").slice(0, 100).join("\n") + "\n```\n\n";
+            segment += f.content.split("\n").slice(0, 120).join("\n") + "\n```\n\n";
         });
     }
 
@@ -125,10 +141,11 @@ export const includeDatabaseSchemaContext = (sourceCode = []) => {
  * @param {Array<{path: string, content: string}>} sourceCode
  * @returns {string}
  */
-export const includeRouteContext = (sourceCode, targetEndpoints = null) => {
+export const includeRouteContext = (sourceCode, targetEndpoints = null, options = {}) => {
     if (!sourceCode || sourceCode.length === 0) return "";
 
     const endpoints = targetEndpoints || extractValidEndpoints(sourceCode);
+    const language = options?.language === "vi" ? "vi" : "en";
 
     let segment = "### VALID API ENDPOINTS (Extracted from Source Code)\n\n";
 
@@ -136,16 +153,44 @@ export const includeRouteContext = (sourceCode, targetEndpoints = null) => {
         segment += "**YOU MUST ONLY USE THESE ENDPOINTS. DO NOT INVENT ANY OTHER ENDPOINTS.**\n\n";
         segment += "| Method | Path | Controller | Middleware | Payload Schema | DB Models | Source File | Required Coverage Focus |\n";
         segment += "|--------|------|------------|------------|----------------|-----------|-------------|-------------------------|\n";
+        const endpointsWithExisting = [];
         for (const ep of endpoints) {
             const controller = ep.controllerMethod || "-";
             const middleware = ep.middleware ? ep.middleware.join(", ") : "-";
             const payload = ep.requestBodySchema ? ep.requestBodySchema.join(", ") : "-";
             const db = ep.databaseModels ? ep.databaseModels.join(", ") : "-";
-            const missing = ep.missingCoverageRequested && ep.missingCoverageRequested.length > 0 ? ep.missingCoverageRequested.join(" AND ") : "Happy Path (200/201) AND Error Edge Case (400/404/500)";
+            const requiredHints =
+                Array.isArray(ep.missingCoverageRequested) && ep.missingCoverageRequested.length > 0
+                    ? ep.missingCoverageRequested
+                    : getEndpointRequiredCases(ep).map((c) => c.promptHint);
+            const missing = requiredHints.join(" AND ");
             segment += `| ${ep.method} | ${ep.fullPath} | ${controller} | ${middleware} | ${payload} | ${db} | ${ep.sourceFile} | ${missing} |\n`;
+            if (Array.isArray(ep.existingScenarios) && ep.existingScenarios.length > 0) {
+                endpointsWithExisting.push(ep);
+            }
         }
         segment += "\n";
-        segment += "**CRITICAL INSTRUCTION:** For each endpoint listed above, you MUST write the scenarios explicitly requested in the 'Required Coverage Focus' column. If 'Happy Path (200/201)' is requested, you MUST name the test containing 'happy' or '200'. If 'Error Edge Case (400/404/500)' is requested, you MUST name the test containing 'error' or '404'. Do NOT invent any endpoints not in this table!\n\n";
+        if (endpointsWithExisting.length > 0) {
+            segment += "#### Already Covered Existing Scenarios (STRICTLY DO NOT DUPLICATE)\n";
+            for (const ep of endpointsWithExisting) {
+                segment += `- **${ep.method} ${ep.fullPath}**:\n`;
+                for (const ex of ep.existingScenarios) {
+                    const statusText = ex.expectedStatus ? `Expected ${ex.expectedStatus}` : "Status asserted";
+                    const caseText = ex.caseLabel || ex.caseKey || "Covered";
+                    segment += `  * \`${ex.testName}\` (${caseText}, ${statusText}) — ALREADY EXISTS, DO NOT regenerate or duplicate this case!\n`;
+                }
+            }
+            segment += "\n";
+        }
+
+        segment += "**CRITICAL INSTRUCTION:** For each endpoint listed above, you MUST write **EXACTLY ONE dedicated `it(...)` test block for EACH individual item** in 'Required Coverage Focus' (do NOT merge two error types such as 400 and 404 into a single test, and do **NOT** generate extra tests for cases already listed under 'Already Covered Existing Scenarios').\n";
+        segment += "**STRICT STATUS ASSERTION RULE:** Inspect the controller implementation and assert a **SINGLE exact HTTP status code** per test (`expect(res.status).toBe(200)`, `expect(res.status).toBe(400)`, `expect(res.status).toBe(404)`). **NEVER** use `expect([...]).toContain(res.status)` with multiple unrelated codes like `[200, 201, 404]` or `[400, 422, 404, 500]`.\n";
+        if (language === "vi") {
+            segment += "**LANGUAGE RULE (MANDATORY — VIETNAMESE):** The existing tests and/or API messages in this repository are in **Vietnamese**. You MUST write ALL `describe(...)` and `it(...)` test descriptions, inline comments, and `suggestions[].message` in **natural Vietnamese** matching the project's existing test style (e.g., `'Thành công (200): Xóa lớp học hợp lệ'`, `'Lỗi dữ liệu (400): Mã lớp học không hợp lệ'`, `'Không tìm thấy (404): Lớp học không tồn tại'`). Do NOT write English test titles!\n";
+        } else {
+            segment += "**LANGUAGE RULE (ENGLISH):** Name each `it(...)` test clearly in English matching its case ('happy path: ...', 'validation 400: ...', '401/403 unauthorized: ...', '404 not found: ...', or '500 edge case: ...').\n";
+        }
+        segment += "Do NOT invent any endpoints not in this table!\n\n";
         segment += "**STRICT SCOPE RESTRICTION (CRITICAL):** The user has SELECTIVELY picked only the endpoints listed in the table above. Even if the provided source code files contain other route definitions (e.g. other endpoints in the same route or controller file), you are STRICTLY FORBIDDEN from generating any `describe()`, `it()`, or `test()` blocks for any endpoint NOT present in the table. Generating tests for unselected routes will cause an immediate rejection.\n\n";
     } else {
         segment += "No specific route definitions were detected. Analyze the source code carefully to identify endpoints.\n\n";
@@ -346,7 +391,20 @@ export const includePathConstraints = (pathConstraints = []) => {
  * @returns {string} The complete prompt string
  */
 export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstraints = []) => {
+    const existingScenarios = Array.isArray(targetEndpoints)
+        ? targetEndpoints.flatMap((ep) => (Array.isArray(ep?.existingScenarios) ? ep.existingScenarios : []))
+        : [];
+    const language = detectIntegrationLanguage({
+        existingScenarios,
+        testFiles: payload?.testFiles || [],
+        sourceCode: payload?.sourceCode || [],
+    });
+
     let prompt = "You are an expert Backend QA Engineer. Your task is to analyze the provided source code, API contracts, existing test suites, and client consumers to generate comprehensive Supertest integration test files for the API endpoints.\n\n";
+
+    if (language === "vi") {
+        prompt += "**OUTPUT LANGUAGE REQUIREMENT:** Existing tests and/or controller messages in this codebase use **Vietnamese**. You MUST write all `describe(...)`, `it(...)` test titles, comments, and `suggestions[].message` in natural **Vietnamese**, while keeping valid JavaScript/Supertest code and matching existing test style.\n\n";
+    }
 
     prompt += "---\n\n";
 
@@ -354,7 +412,7 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstr
         prompt += includeSourceCode(payload.sourceCode);
         prompt += includeDatabaseSchemaContext(payload.sourceCode);
         prompt += includeContractContext(payload.sourceCode, payload.testFiles);
-        prompt += includeRouteContext(payload.sourceCode, targetEndpoints);
+        prompt += includeRouteContext(payload.sourceCode, targetEndpoints, { language });
     }
 
     const effectiveConstraints = (Array.isArray(pathConstraints) && pathConstraints.length > 0)
