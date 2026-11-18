@@ -23,9 +23,9 @@ export default function SystemTestErrorNotice({ message, onDismiss, onOpenLogs, 
   const technical = detailsAt >= 0 ? fullDetail.slice(detailsAt + " Details: ".length) : "";
   const setupRelated = /setup|dependenc|install|environment|database|port|start|health/i.test(message);
   return (
-    <div role="alert" className={`w-full rounded-lg border border-rose-500/20 bg-rose-500/10 p-4 text-sm ${className}`}>
+    <div role="alert" className={`w-full rounded-lg border border-[var(--color-border)] border-l-2 border-l-rose-400/75 bg-rose-500/[0.06] p-4 text-sm ${className}`}>
       <div className="flex items-start gap-3">
-        <AlertCircle size={18} className="mt-0.5 shrink-0 text-rose-400" aria-hidden="true" />
+        <AlertCircle size={17} className="mt-0.5 shrink-0 text-rose-400/90" aria-hidden="true" />
         <div className="min-w-0 flex-1 space-y-1">
           <p className="font-semibold text-[var(--color-text)]">{title}</p>
           {detail && <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--color-text-secondary)]">{detail}</p>}

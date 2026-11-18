@@ -204,7 +204,7 @@ export default function SystemTestSetupDialog({
         event.preventDefault();
         if (!saving) onClose();
       }}
-      className="m-auto max-h-[90vh] w-[min(920px,94vw)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-0 text-[var(--color-text)] shadow-2xl backdrop:bg-black/65 font-sans"
+      className="m-auto max-h-[90vh] w-[min(920px,94vw)] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0 text-[var(--color-text)] backdrop:bg-black/65 font-sans"
     >
       <div className="flex max-h-[90vh] flex-col">
         {/* Header */}

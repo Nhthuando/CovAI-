@@ -3,7 +3,6 @@ import { useProjectAccess } from "../../../hooks/useProjectAccess";
 import { useEffect, useState } from "react";
 import {
   X,
-  Sparkles,
   Plus,
   Trash2,
   Check,
@@ -150,17 +149,17 @@ export default function SystemTestGeneratorModal({
     }`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/65 backdrop-blur-xs font-sans">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/65 font-sans">
       <div
         className={`w-full ${
           result ? "max-w-2xl" : "max-w-xl"
-        } bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] transition-all`}
+        } bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col max-h-[88vh]`}
       >
         {/* Header */}
-        <div className="px-6 py-5 border-b border-[var(--color-border)] flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="p-2.5 rounded-xl bg-[var(--color-primary)]/10 text-[var(--color-primary)] shrink-0">
-              <Sparkles size={18} />
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-primary)] shrink-0">
+              <FileCode2 size={17} />
             </div>
             <div>
               <h3 className="text-base font-semibold text-[var(--color-text)] leading-tight">
@@ -514,7 +513,7 @@ export default function SystemTestGeneratorModal({
                 variant="primary"
                 size="md"
                 className="system-test-primary-action"
-                icon={generating ? Loader2 : Sparkles}
+                icon={generating ? Loader2 : FileCode2}
                 loading={generating}
                 disabled={generating}
                 onClick={handleGenerate}

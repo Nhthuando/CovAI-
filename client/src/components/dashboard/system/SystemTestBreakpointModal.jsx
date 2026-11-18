@@ -93,8 +93,8 @@ export default function SystemTestBreakpointModal({
     scenario.errorMessage || breakpoint.errorMessage || "Test step assertion failed or timed out.";
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Evidence for ${scenario.title || scenario.name}`} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs font-sans">
-      <div className="w-full max-w-3xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div role="dialog" aria-modal="true" aria-label={`Evidence for ${scenario.title || scenario.name}`} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 font-sans">
+      <div className="w-full max-w-3xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-secondary)]/50">
           <div className="flex items-center gap-2.5 overflow-hidden">

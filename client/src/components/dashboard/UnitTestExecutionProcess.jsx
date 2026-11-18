@@ -371,309 +371,142 @@ export default function UnitTestExecutionProcess({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div data-light={isLight ? "true" : "false"} className="flex flex-col gap-3.5">
       {/* ── 1. HEADER STATUS & ACTION BANNER ───────────────────────────── */}
-      <div
-        style={{
-          background: isLight ? "#ffffff" : "var(--color-surface)",
-          border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border)",
-          borderRadius: 14,
-          padding: "16px 20px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: 14,
-          boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.04)" : "none",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {/* Status Icon in Rounded Square */}
-          <div
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 12,
-              background: running
-                ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.15)")
-                : isSuccess
-                  ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
-                  : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)"),
-              border: running
-                ? (isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.35)")
-                : isSuccess
-                  ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.35)")
-                  : (isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.35)"),
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: running
-                ? (isLight ? "#4f46e5" : "#818cf8")
-                : isSuccess
-                  ? (isLight ? "#059669" : "#34d399")
-                  : (isLight ? "#dc2626" : "#f87171"),
-              flexShrink: 0,
-            }}
-          >
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center shrink-0">
             {running ? (
-              <Loader2 size={22} className="animate-spin" />
+              <Loader2 size={17} className="animate-spin text-[var(--color-primary)]" />
             ) : isSuccess ? (
-              <CheckCircle2 size={22} strokeWidth={2.4} />
+              <CheckCircle2 size={17} className="text-emerald-500/75" />
             ) : (
-              <XCircle size={22} strokeWidth={2.4} />
+              <XCircle size={17} className="text-rose-400/80" />
             )}
           </div>
 
-          {/* Title, Badge & Metadata */}
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span
-                style={{
-                  fontSize: 16,
-                  fontWeight: 800,
-                  color: isLight ? "#0f172a" : "var(--color-text)",
-                  letterSpacing: "-0.01em",
-                }}
-              >
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-[var(--color-text)] tracking-tight">
                 Unit Test Execution Process
               </span>
 
-              {/* Status Badge */}
               <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 800,
-                  padding: "2px 8px",
-                  borderRadius: 6,
-                  background: running
-                    ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.2)")
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono border ${
+                  running
+                    ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]"
                     : isSuccess
-                      ? (isLight ? "#dcfce7" : "rgba(16, 185, 129, 0.2)")
-                      : (isLight ? "#fee2e2" : "rgba(239, 68, 68, 0.2)"),
-                  color: running
-                    ? (isLight ? "#4338ca" : "#a5b4fc")
-                    : isSuccess
-                      ? (isLight ? "#15803d" : "#4ade80")
-                      : (isLight ? "#b91c1c" : "#fca5a5"),
-                  border: running
-                    ? (isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.35)")
-                    : isSuccess
-                      ? (isLight ? "1px solid #86efac" : "1px solid rgba(16, 185, 129, 0.35)")
-                      : (isLight ? "1px solid #fca5a5" : "1px solid rgba(239, 68, 68, 0.35)"),
-                }}
+                      ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                      : "bg-rose-500/[0.06] text-rose-300/85 border-rose-500/20"
+                }`}
               >
-                {running ? `RUNNING (${runProgress}%)` : isSuccess ? "SUCCESS (100%)" : jobStatus || "NOT RUN"}
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    running
+                      ? "bg-[var(--color-primary)]"
+                      : isSuccess
+                        ? "bg-emerald-500/65"
+                        : "bg-rose-400/75"
+                  }`}
+                />
+                {running ? `Running (${runProgress}%)` : isSuccess ? "Success (100%)" : jobStatus || "Not run"}
               </span>
 
-              {/* Duration info */}
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  fontSize: 12,
-                  color: isLight ? "#64748b" : "var(--color-text-secondary)",
-                  fontWeight: 600,
-                }}
-              >
-                <Clock size={13} />
-                <span>Duration: <b>{kpis.durationSeconds === "—" ? "—" : kpis.durationSeconds + "s"}</b></span>
+              <span className="inline-flex items-center gap-1 text-xs text-[var(--color-text-muted)] font-mono tabular-nums">
+                <Clock size={12} />
+                <span>{kpis.durationSeconds === "—" ? "—" : `${kpis.durationSeconds}s`}</span>
               </span>
             </div>
 
-            <div
-              style={{
-                fontSize: 12,
-                color: isLight ? "#64748b" : "var(--color-text-secondary)",
-                marginTop: 4,
-                display: "flex",
-                gap: 12,
-              }}
-            >
-              <span>Engine: <b>Vitest & Jest</b></span>
-              <span>Started: <b>{latestJob?.startedAt || latestJob?.createdAt || (running && currentRunStartedAt) ? new Date(latestJob?.startedAt || latestJob?.createdAt || currentRunStartedAt).toLocaleTimeString() : "—"}</b></span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-[var(--color-text-muted)] font-mono">
+              <span>Engine: Vitest & Jest</span>
+              <span>
+                Started:{" "}
+                {latestJob?.startedAt || latestJob?.createdAt || (running && currentRunStartedAt)
+                  ? new Date(latestJob?.startedAt || latestJob?.createdAt || currentRunStartedAt).toLocaleTimeString()
+                  : "—"}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="flex items-center gap-2 shrink-0">
           <button
+            type="button"
             onClick={handleRefreshLogs}
             disabled={isRefreshing}
-            style={{
-              fontSize: 12.5,
-              fontWeight: 650,
-              padding: "7px 14px",
-              borderRadius: 8,
-              cursor: isRefreshing ? "not-allowed" : "pointer",
-              background: isLight ? "#ffffff" : "var(--color-surface-secondary)",
-              color: isLight ? "#334155" : "var(--color-text)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              transition: "all 0.15s ease",
-            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer disabled:opacity-50"
             title="Refresh logs from backend"
           >
-            <RotateCcw size={13} className={isRefreshing ? "animate-spin" : ""} />
+            <RotateCcw size={12} className={isRefreshing ? "animate-spin" : ""} />
             <span>Refresh Logs</span>
           </button>
 
           <button
+            type="button"
             onClick={() => onRunTests && onRunTests({ restart: !!running })}
-            style={{
-              fontSize: 12.5,
-              fontWeight: 700,
-              padding: "7px 16px",
-              borderRadius: 8,
-              cursor: "pointer",
-              background: running ? "#6366f1" : "#4f46e5",
-              color: "#ffffff",
-              border: running ? "1px solid #4f46e5" : "1px solid #4338ca",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              boxShadow: running
-                ? "0 0 10px rgba(99, 102, 241, 0.4), 0 1px 2px rgba(79, 70, 229, 0.2)"
-                : "0 1px 2px rgba(79, 70, 229, 0.2)",
-              transition: "all 0.15s ease",
-            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors duration-150 active:scale-[0.98] cursor-pointer"
             title={running ? "Process is running. Click to restart test execution." : "Run unit tests and collect coverage."}
           >
-            {running ? <RotateCcw size={13} className="animate-spin" /> : <Play size={13} fill="#ffffff" />}
+            {running ? <RotateCcw size={12} className="animate-spin" /> : <Play size={12} fill="currentColor" />}
             <span>{running ? "Re-run Unit Tests" : "Run Unit Tests"}</span>
           </button>
         </div>
       </div>
 
       {/* ── 2. EXECUTION PIPELINE (5 Steps) ────────────────────────────── */}
-      <div
-        style={{
-          background: isLight ? "#ffffff" : "var(--color-surface)",
-          border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border)",
-          borderRadius: 14,
-          padding: "16px 20px",
-          boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.04)" : "none",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 14,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 800,
-              textTransform: "uppercase",
-              letterSpacing: "0.6px",
-              color: isLight ? "#475569" : "var(--color-text-secondary)",
-            }}
-          >
-            EXECUTION PIPELINE
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-[var(--color-text)]">
+            Execution pipeline
           </span>
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: isLight ? "#64748b" : "var(--color-text-muted)",
-            }}
-          >
-            {running ? "In progress (" + runProgress + "%)" : jobStatus === "SUCCESS" ? "All 5/5 steps completed" : jobStatus === "FAILED" ? "Execution failed" : "Waiting for a run"}
+          <span className="text-[11px] font-mono text-[var(--color-text-muted)] tabular-nums">
+            {running
+              ? `In progress (${runProgress}%)`
+              : jobStatus === "SUCCESS"
+                ? "5/5 steps completed"
+                : jobStatus === "FAILED"
+                  ? "Execution failed"
+                  : "Waiting for a run"}
           </span>
         </div>
 
-        {/* 5 Step Cards in Grid */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-            gap: 10,
-          }}
-        >
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
           {pipelineSteps.map((step) => {
             const status = getStepStatus(step.id, step.threshold);
             const isCompleted = status === "completed";
-            const isRunning = status === "running";
+            const isRunningStep = status === "running";
 
             return (
               <div
                 key={step.id}
-                style={{
-                  background: isCompleted
-                    ? (isLight ? "#f0fdf4" : "rgba(16, 185, 129, 0.08)")
-                    : isRunning
-                      ? (isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.08)")
-                      : (isLight ? "#ffffff" : "var(--color-surface-secondary)"),
-                  border: isCompleted
-                    ? (isLight ? "1px solid #86efac" : "1px solid rgba(16, 185, 129, 0.35)")
-                    : isRunning
-                      ? (isLight ? "1px solid #818cf8" : "1px solid rgba(99, 102, 241, 0.35)")
-                      : (isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border)"),
-                  borderRadius: 10,
-                  padding: "12px 14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "space-between",
-                  transition: "all 0.2s ease",
-                }}
+                className={`rounded-md border p-3 flex flex-col justify-between gap-2 transition-colors ${
+                  isRunningStep
+                    ? "bg-[var(--color-surface-secondary)] border-[var(--color-primary)]/50"
+                    : "bg-[var(--color-bg)] border-[var(--color-border)]"
+                }`}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 800,
-                      color: isCompleted
-                        ? (isLight ? "#15803d" : "#4ade80")
-                        : isRunning
-                          ? (isLight ? "#4338ca" : "#a5b4fc")
-                          : (isLight ? "#94a3b8" : "var(--color-text-muted)"),
-                    }}
-                  >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-mono font-medium text-[var(--color-text-muted)]">
                     {step.name}
                   </span>
 
                   {isCompleted ? (
-                    <CheckCircle2 size={14} style={{ color: isLight ? "#16a34a" : "#4ade80" }} />
-                  ) : isRunning ? (
-                    <Loader2 size={14} className="animate-spin" style={{ color: isLight ? "#4f46e5" : "#818cf8" }} />
+                    <CheckCircle2 size={13} className="text-emerald-500/75 shrink-0" />
+                  ) : isRunningStep ? (
+                    <Loader2 size={13} className="animate-spin text-[var(--color-primary)] shrink-0" />
                   ) : status === "failed" ? (
-                    <XCircle size={14} className="text-[var(--color-danger)]" aria-label="Failed" />
+                    <XCircle size={13} className="text-rose-400/80 shrink-0" aria-label="Failed" />
                   ) : (
-                    <div
-                      style={{
-                        width: 14,
-                        height: 14,
-                        borderRadius: "50%",
-                        border: isLight ? "1.5px solid #cbd5e1" : "1.5px solid rgba(255, 255, 255, 0.2)",
-                      }}
-                    />
+                    <span className="w-3 h-3 rounded-full border border-[var(--color-border-strong)] shrink-0" />
                   )}
                 </div>
 
                 <div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 750,
-                      color: isLight ? "#0f172a" : "var(--color-text)",
-                      marginBottom: 2,
-                    }}
-                  >
+                  <div className="text-xs font-semibold text-[var(--color-text)]">
                     {step.title}
                   </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: isLight ? "#64748b" : "var(--color-text-muted)",
-                      lineHeight: "1.3",
-                    }}
-                  >
+                  <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
                     {step.subtext}
                   </div>
                 </div>
@@ -683,310 +516,165 @@ export default function UnitTestExecutionProcess({
         </div>
       </div>
 
-      {/* ── 3. 4 SUMMARY KPI CARDS ─────────────────────────────────────── */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-          gap: 12,
-        }}
-      >
-        {/* Card 1: Executed Test Suites */}
-        <div
-          style={{
-            background: isLight ? "#ffffff" : "var(--color-surface)",
-            border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border)",
-            borderRadius: 12,
-            padding: "14px 18px",
-            boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.04)" : "none",
-          }}
-        >
-          <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: isLight ? "#64748b" : "var(--color-text-muted)", letterSpacing: "0.5px" }}>
-            EXECUTED TEST SUITES
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#10b981", margin: "4px 0", fontFamily: "var(--font-mono, monospace)" }}>
+      {/* ── 3. UNIFIED EXECUTION METRICS STRIP ─────────────────────────── */}
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
+        <div className="px-4 py-3 flex flex-col justify-between gap-1">
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+            Executed test suites
+          </span>
+          <div className="text-xl font-bold font-mono tabular-nums text-[var(--color-text)]">
             {`${kpis.passedSuites}/${kpis.totalSuites || 0}`}
           </div>
-          <div style={{ fontSize: 12, color: isLight ? "#64748b" : "var(--color-text-muted)", fontWeight: 550 }}>
-            {`${kpis.passRate}% Passed`}
-          </div>
+          <span className="text-[11px] font-mono text-[var(--color-text-muted)] tabular-nums">
+            {`${kpis.passRate}% passed`}
+          </span>
         </div>
 
-        {/* Card 2: Total Assertions / Testcases */}
-        <div
-          style={{
-            background: isLight ? "#ffffff" : "var(--color-surface)",
-            border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border)",
-            borderRadius: 12,
-            padding: "14px 18px",
-            boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.04)" : "none",
-          }}
-        >
-          <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: isLight ? "#64748b" : "var(--color-text-muted)", letterSpacing: "0.5px" }}>
-            TOTAL ASSERTIONS / TESTCASES
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: isLight ? "#0f172a" : "var(--color-text)", margin: "4px 0", fontFamily: "var(--font-mono, monospace)" }}>
+        <div className="px-4 py-3 flex flex-col justify-between gap-1">
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+            Total assertions
+          </span>
+          <div className="text-xl font-bold font-mono tabular-nums text-[var(--color-text)]">
             {kpis.totalTests}
           </div>
-          <div style={{ fontSize: 12, color: "#10b981", fontWeight: 650, display: "flex", alignItems: "center", gap: 4 }}>
-            <span>✓</span>
-            <span>Passed</span>
-          </div>
+          <span className="text-[11px] font-mono text-[var(--color-text-muted)] tabular-nums">
+            {kpis.failedTests > 0 ? `${kpis.failedTests} failed` : `${kpis.passedTests} passed`}
+          </span>
         </div>
 
-        {/* Card 3: Execution Duration */}
-        <div
-          style={{
-            background: isLight ? "#ffffff" : "var(--color-surface)",
-            border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border)",
-            borderRadius: 12,
-            padding: "14px 18px",
-            boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.04)" : "none",
-          }}
-        >
-          <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: isLight ? "#64748b" : "var(--color-text-muted)", letterSpacing: "0.5px" }}>
-            EXECUTION DURATION
+        <div className="px-4 py-3 flex flex-col justify-between gap-1">
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+            Execution duration
+          </span>
+          <div className="text-xl font-bold font-mono tabular-nums text-[var(--color-text)]">
+            {kpis.durationSeconds === "—" ? "—" : `${kpis.durationSeconds}s`}
           </div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#6366f1", margin: "4px 0", fontFamily: "var(--font-mono, monospace)" }}>
-            {`${kpis.durationSeconds}s`}
-          </div>
-          <div style={{ fontSize: 12, color: isLight ? "#64748b" : "var(--color-text-muted)", fontWeight: 550 }}>
-            Fast execution
-          </div>
+          <span className="text-[11px] text-[var(--color-text-muted)]">
+            Runner elapsed time
+          </span>
         </div>
 
-        {/* Card 4: Achieved Statement Coverage */}
-        <div
-          style={{
-            background: isLight ? "#ffffff" : "var(--color-surface)",
-            border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border)",
-            borderRadius: 12,
-            padding: "14px 18px",
-            boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.04)" : "none",
-          }}
-        >
-          <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: isLight ? "#64748b" : "var(--color-text-muted)", letterSpacing: "0.5px" }}>
-            ACHIEVED STATEMENT COVERAGE
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#10b981", margin: "4px 0", fontFamily: "var(--font-mono, monospace)" }}>
+        <div className="px-4 py-3 flex flex-col justify-between gap-1">
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+            Statement coverage
+          </span>
+          <div className="text-xl font-bold font-mono tabular-nums text-[var(--color-text)]">
             {`${kpis.statementPct}%`}
           </div>
-          <div style={{ fontSize: 12, color: isLight ? "#64748b" : "var(--color-text-muted)", fontWeight: 550 }}>
-            Full coverage
-          </div>
+          <span className="text-[11px] text-[var(--color-text-muted)]">
+            Measured statements
+          </span>
         </div>
       </div>
 
       {/* ── 4. TERMINAL & EXECUTION CONSOLE WINDOW ─────────────────────── */}
-      <div
-        style={{
-          borderRadius: 14,
-          overflow: "hidden",
-          border: isLight ? "1px solid #cbd5e1" : "1px solid #334155",
-          boxShadow: isLight ? "0 4px 16px rgba(15, 23, 42, 0.06)" : "0 4px 20px rgba(0, 0, 0, 0.4)",
-          background: "#0c1017",
-        }}
-      >
+      <div className="rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface)]">
         {/* Window Title & Navigation Bar */}
-        <div
-          style={{
-            background: isLight ? "#f8fafc" : "#161b22",
-            borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid #30363d",
-            padding: "8px 16px",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 12,
-          }}
-        >
-          {/* Left: macOS Window Controls & Tabs */}
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            {/* macOS 3 dots */}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginRight: 4 }}>
-              <div style={{ width: 11, height: 11, borderRadius: "50%", background: "#ff5f56" }} />
-              <div style={{ width: 11, height: 11, borderRadius: "50%", background: "#ffbd2e" }} />
-              <div style={{ width: 11, height: 11, borderRadius: "50%", background: "#27c93f" }} />
-            </div>
+        <div className="px-4 py-2.5 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
+          {/* Inner Tabs */}
+          <div className="flex items-center gap-1 rounded-md bg-[var(--color-bg)] p-0.5 border border-[var(--color-border)]">
+            <button
+              type="button"
+              onClick={() => setActiveConsoleTab("terminal")}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+                activeConsoleTab === "terminal"
+                  ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent"
+              }`}
+            >
+              <Terminal size={12} />
+              <span>Terminal Output</span>
+            </button>
 
-            {/* Inner Tabs */}
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <button
-                onClick={() => setActiveConsoleTab("terminal")}
-                style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  padding: "5px 12px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  background: activeConsoleTab === "terminal" ? (isLight ? "#ffffff" : "#21262d") : "transparent",
-                  color: activeConsoleTab === "terminal" ? (isLight ? "#0f172a" : "#f0f6fc") : (isLight ? "#64748b" : "#8b949e"),
-                  border: activeConsoleTab === "terminal" ? (isLight ? "1px solid #cbd5e1" : "1px solid #30363d") : "1px solid transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  transition: "all 0.15s ease",
-                }}
-              >
-                <Terminal size={13} />
-                <span>Terminal Output</span>
-              </button>
+            <button
+              type="button"
+              onClick={() => setActiveConsoleTab("pipeline")}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+                activeConsoleTab === "pipeline"
+                  ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent"
+              }`}
+            >
+              <ListOrdered size={12} />
+              <span>Pipeline Steps</span>
+            </button>
 
-              <button
-                onClick={() => setActiveConsoleTab("pipeline")}
-                style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  padding: "5px 12px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  background: activeConsoleTab === "pipeline" ? (isLight ? "#ffffff" : "#21262d") : "transparent",
-                  color: activeConsoleTab === "pipeline" ? (isLight ? "#0f172a" : "#f0f6fc") : (isLight ? "#64748b" : "#8b949e"),
-                  border: activeConsoleTab === "pipeline" ? (isLight ? "1px solid #cbd5e1" : "1px solid #30363d") : "1px solid transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  transition: "all 0.15s ease",
-                }}
-              >
-                <ListOrdered size={13} />
-                <span>Pipeline Steps</span>
-              </button>
-
-              <button
-                onClick={() => setActiveConsoleTab("files")}
-                style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  padding: "5px 12px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  background: activeConsoleTab === "files" ? (isLight ? "#ffffff" : "#21262d") : "transparent",
-                  color: activeConsoleTab === "files" ? (isLight ? "#0f172a" : "#f0f6fc") : (isLight ? "#64748b" : "#8b949e"),
-                  border: activeConsoleTab === "files" ? (isLight ? "1px solid #cbd5e1" : "1px solid #30363d") : "1px solid transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  transition: "all 0.15s ease",
-                }}
-              >
-                <Folder size={13} />
-                <span>{`Executed Test Files (${testSuites.length})`}</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setActiveConsoleTab("files")}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+                activeConsoleTab === "files"
+                  ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent"
+              }`}
+            >
+              <Folder size={12} />
+              <span>{`Executed Test Files (${testSuites.length})`}</span>
+            </button>
           </div>
 
           {/* Right: Search, Auto-scroll, Copy */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="flex items-center gap-2">
             {activeConsoleTab === "terminal" && (
-              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                <Search size={12} style={{ position: "absolute", left: 8, color: "#8b949e" }} />
+              <div className="relative flex items-center">
+                <Search size={12} className="absolute left-2.5 text-[var(--color-text-muted)]" />
                 <input
                   type="text"
                   placeholder="Search logs..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  style={{
-                    fontSize: 11.5,
-                    padding: "4px 8px 4px 26px",
-                    borderRadius: 6,
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
-                    background: isLight ? "#ffffff" : "#0d1117",
-                    color: isLight ? "#0f172a" : "#f0f6fc",
-                    outline: "none",
-                    width: 150,
-                  }}
+                  className="pl-7 pr-2.5 py-1 text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] w-40 font-mono"
                 />
               </div>
             )}
 
             <button
+              type="button"
               onClick={() => setAutoScroll((prev) => !prev)}
-              style={{
-                fontSize: 11.5,
-                fontWeight: 650,
-                padding: "4px 10px",
-                borderRadius: 6,
-                cursor: "pointer",
-                background: autoScroll ? "#4f46e5" : (isLight ? "#ffffff" : "#21262d"),
-                color: autoScroll ? "#ffffff" : (isLight ? "#64748b" : "#8b949e"),
-                border: autoScroll ? "1px solid #4338ca" : (isLight ? "1px solid #cbd5e1" : "1px solid #30363d"),
-                transition: "all 0.15s ease",
-              }}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
+                autoScroll
+                  ? "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-primary)]/50"
+                  : "bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"
+              }`}
               title="Toggle automatic scroll down"
             >
               Auto-scroll
             </button>
 
             <button
+              type="button"
               onClick={handleCopyLogs}
-              style={{
-                fontSize: 11.5,
-                fontWeight: 650,
-                padding: "4px 10px",
-                borderRadius: 6,
-                cursor: "pointer",
-                background: isLight ? "#ffffff" : "#21262d",
-                color: isLight ? "#334155" : "#f0f6fc",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                transition: "all 0.15s ease",
-              }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-bg)] hover:bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer"
               title="Copy terminal logs to clipboard"
             >
-              {copied ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-              <span>{copied ? "Copied!" : "Copy"}</span>
+              {copied ? <Check size={12} className="text-emerald-500/75" /> : <Copy size={12} />}
+              <span>{copied ? "Copied" : "Copy"}</span>
             </button>
           </div>
         </div>
 
         {/* ── Tab Content Area ── */}
         {activeConsoleTab === "terminal" ? (
-          /* Terminal Output Screen */
           <>
             {missingDependency && (
-              <div
-                style={{
-                  padding: "10px 16px",
-                  background: "rgba(239, 68, 68, 0.12)",
-                  borderBottom: "1px solid rgba(239, 68, 68, 0.3)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Package size={15} style={{ color: "#f87171", flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#fca5a5" }}>
-                    Missing Dependency: <code>{missingDependency.packageName}</code>
+              <div className="px-4 py-2.5 bg-rose-500/[0.06] border-b border-rose-500/20 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs">
+                  <Package size={14} className="text-rose-400/80 shrink-0" />
+                  <span className="font-medium text-[var(--color-text)]">
+                    Missing dependency: <code className="font-mono text-rose-300/90">{missingDependency.packageName}</code>
                   </span>
                   {missingDependency.importedFrom && (
-                    <span style={{ fontSize: 11, color: "#94a3b8" }}>
-                      (required by {missingDependency.importedFrom})
+                    <span className="text-[11px] font-mono text-[var(--color-text-muted)]">
+                      ({missingDependency.importedFrom})
                     </span>
                   )}
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => onInstallDependency && onInstallDependency(missingDependency.packageName)}
                   disabled={isInstallingDependency}
-                  style={{
-                    background: "#dc2626",
-                    border: "1px solid #ef4444",
-                    color: "#ffffff",
-                    padding: "4px 12px",
-                    borderRadius: 5,
-                    fontSize: 11.5,
-                    fontWeight: 700,
-                    cursor: isInstallingDependency ? "wait" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {isInstallingDependency ? (
                     <>
@@ -996,122 +684,80 @@ export default function UnitTestExecutionProcess({
                   ) : (
                     <>
                       <Download size={12} />
-                      <span>Install '{missingDependency.packageName}'</span>
+                      <span>Install &apos;{missingDependency.packageName}&apos;</span>
                     </>
                   )}
                 </button>
               </div>
             )}
-          <div
-            style={{
-              padding: "16px 20px",
-              minHeight: 380,
-              maxHeight: 520,
-              overflowY: "auto",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              fontSize: 12.5,
-              lineHeight: 1.6,
-              background: "#0c1017",
-              color: "#e6edf3",
-              wordBreak: "break-word",
-            }}
-          >
-            {logLines.map((line, idx) => renderLogLine(line, idx))}
-            <div ref={terminalEndRef} />
-          </div>
+            <div className="p-4 min-h-[360px] max-h-[500px] overflow-y-auto font-mono text-xs leading-relaxed bg-[#0c1017] text-[#e6edf3] break-words custom-scrollbar">
+              {logLines.map((line, idx) => renderLogLine(line, idx))}
+              <div ref={terminalEndRef} />
+            </div>
           </>
         ) : activeConsoleTab === "pipeline" ? (
-          /* Pipeline Steps Detailed List */
-          <div
-            style={{
-              padding: "18px 20px",
-              minHeight: 380,
-              maxHeight: 520,
-              overflowY: "auto",
-              background: isLight ? "#ffffff" : "#0d1117",
-              color: isLight ? "#0f172a" : "#e6edf3",
-            }}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {pipelineSteps.map((step) => {
-                const status = getStepStatus(step.id, step.threshold);
-                const isCompleted = status === "completed";
-                const isRunning = status === "running";
+          <div className="p-4 min-h-[360px] max-h-[500px] overflow-y-auto bg-[var(--color-bg)] divide-y divide-[var(--color-border)] custom-scrollbar">
+            {pipelineSteps.map((step) => {
+              const status = getStepStatus(step.id, step.threshold);
+              const isCompleted = status === "completed";
+              const isRunningStep = status === "running";
 
-                return (
-                  <div
-                    key={step.id}
-                    style={{
-                      border: isLight ? "1px solid #e2e8f0" : "1px solid #21262d",
-                      borderRadius: 10,
-                      padding: "14px 16px",
-                      background: isLight ? "#f8fafc" : "#161b22",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {isCompleted ? (
-                          <CheckCircle2 size={18} color="#10b981" />
-                        ) : isRunning ? (
-                          <Loader2 size={18} color="#6366f1" className="animate-spin" />
-                        ) : (
-                          status === "failed" ? <XCircle size={18} color="var(--color-danger)" /> : <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid #64748b" }} />
-                        )}
-                        <div>
-                          <span style={{ fontSize: 13, fontWeight: 750 }}>
-                            {`${step.name}: ${step.title}`}
-                          </span>
-                          <span style={{ fontSize: 12, color: isLight ? "#64748b" : "#8b949e", marginLeft: 8 }}>
-                            {`— ${step.subtext}`}
-                          </span>
-                        </div>
+              return (
+                <div key={step.id} className="py-3 first:pt-1 last:pb-1 space-y-1.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      {isCompleted ? (
+                        <CheckCircle2 size={15} className="text-emerald-500/75 shrink-0" />
+                      ) : isRunningStep ? (
+                        <Loader2 size={15} className="animate-spin text-[var(--color-primary)] shrink-0" />
+                      ) : status === "failed" ? (
+                        <XCircle size={15} className="text-rose-400/80 shrink-0" />
+                      ) : (
+                        <span className="w-3.5 h-3.5 rounded-full border border-[var(--color-border-strong)] shrink-0" />
+                      )}
+                      <div>
+                        <span className="text-xs font-semibold text-[var(--color-text)]">
+                          {`${step.name}: ${step.title}`}
+                        </span>
+                        <span className="text-xs text-[var(--color-text-muted)] ml-2">
+                          {step.subtext}
+                        </span>
                       </div>
-
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 750,
-                          padding: "2px 8px",
-                          borderRadius: 6,
-                          background: status === "failed" ? "var(--color-surface)" : isCompleted ? "#dcfce7" : isRunning ? "#e0e7ff" : "#f1f5f9",
-                          color: status === "failed" ? "var(--color-danger)" : isCompleted ? "#15803d" : isRunning ? "#4338ca" : "#64748b",
-                        }}
-                      >
-                        {isCompleted ? "COMPLETED" : isRunning ? "RUNNING" : status === "failed" ? "FAILED" : "PENDING"}
-                      </span>
                     </div>
 
-                    {isCompleted && <div style={{ marginTop: 8, fontSize: 11.5, color: isLight ? "#475569" : "#8b949e", fontFamily: "var(--font-mono, monospace)" }}>
-                      {step.id === 1 && "✓ Docker runtime initialized, workspace isolation active."}
-                      {step.id === 2 && "✓ Node modules & Jest/Vitest dependencies validated."}
-                      {step.id === 3 && `✓ ${testSuites.length} unit test suite specifications discovered.`}
-                      {step.id === 4 && `✓ Test assertions executed with ${(kpis.durationSeconds)}s runtime.`}
-                      {step.id === 5 && `✓ Coverage merged (${kpis.statementPct}% statements achieved).`}
-                    </div>}
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                        status === "failed"
+                          ? "bg-rose-500/[0.06] text-rose-300/85 border-rose-500/20"
+                          : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                      }`}
+                    >
+                      {isCompleted ? "Completed" : isRunningStep ? "Running" : status === "failed" ? "Failed" : "Pending"}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+
+                  {isCompleted && (
+                    <div className="pl-6 text-[11px] font-mono text-[var(--color-text-muted)]">
+                      {step.id === 1 && "Docker runtime initialized, workspace isolation active."}
+                      {step.id === 2 && "Node modules & Jest/Vitest dependencies validated."}
+                      {step.id === 3 && `${testSuites.length} unit test suite specifications discovered.`}
+                      {step.id === 4 && `Test assertions executed with ${kpis.durationSeconds}s runtime.`}
+                      {step.id === 5 && `Coverage merged (${kpis.statementPct}% statements achieved).`}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
-          /* Executed Test Files List */
-          <div
-            style={{
-              padding: "16px 20px",
-              minHeight: 380,
-              maxHeight: 520,
-              overflowY: "auto",
-              background: isLight ? "#ffffff" : "#0d1117",
-              color: isLight ? "#0f172a" : "#e6edf3",
-            }}
-          >
+          <div className="p-4 min-h-[360px] max-h-[500px] overflow-y-auto bg-[var(--color-bg)] custom-scrollbar">
             {testSuites.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: "#8b949e" }}>
-                <Folder size={32} style={{ margin: "0 auto 8px auto", opacity: 0.5 }} />
+              <div className="py-10 text-center text-xs text-[var(--color-text-muted)]">
+                <Folder size={26} className="mx-auto mb-2 opacity-50" />
                 <div>No executed test suite files detected.</div>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
                 {testSuites.map((suite, idx) => {
                   const isPass = suite.status === "passed" && (suite.failedTests || 0) === 0;
                   const durationSec = suite.durationMs ? (suite.durationMs / 1000).toFixed(3) : "—";
@@ -1119,97 +765,78 @@ export default function UnitTestExecutionProcess({
                   const isExpanded = expandedFileId === suite.filePath;
 
                   return (
-                    <div
-                      key={suite.id || `${suite.filePath || 'suite'}-${idx}`}
-                      style={{
-                        border: isLight ? "1px solid #e2e8f0" : "1px solid #21262d",
-                        borderRadius: 8,
-                        background: isLight ? "#f8fafc" : "#161b22",
-                        overflow: "hidden",
-                      }}
-                    >
+                    <div key={suite.id || `${suite.filePath || "suite"}-${idx}`}>
                       <div
-                        style={{
-                          padding: "10px 14px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          cursor: "pointer",
-                        }}
                         onClick={() => setExpandedFileId(isExpanded ? null : suite.filePath)}
+                        className="px-3.5 py-2.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-[var(--color-surface-secondary)]/40 transition-colors"
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div className="flex items-center gap-2.5 min-w-0">
                           <span
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 800,
-                              padding: "2px 6px",
-                              borderRadius: 4,
-                              background: isPass ? "#238636" : "#da3633",
-                              color: "#ffffff",
-                              fontFamily: "var(--font-mono, monospace)",
-                            }}
+                            className={`inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono border shrink-0 ${
+                              isPass
+                                ? "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                                : "bg-rose-500/[0.06] text-rose-300/85 border-rose-500/20"
+                            }`}
                           >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                isPass ? "bg-emerald-500/65" : "bg-rose-400/75"
+                              }`}
+                            />
                             {isPass ? "PASS" : "FAIL"}
                           </span>
-                          <span style={{ fontSize: 13, fontWeight: 650, fontFamily: "var(--font-mono, monospace)" }}>
+                          <span className="text-xs font-mono font-medium text-[var(--color-text)] truncate">
                             {cleanPath}
                           </span>
                         </div>
 
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <span style={{ fontSize: 11.5, color: isLight ? "#64748b" : "#8b949e", fontFamily: "var(--font-mono, monospace)" }}>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
                             {`${durationSec}s`}
                           </span>
 
                           {onOpenFile && (
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onOpenFile(suite.filePath);
                               }}
-                              style={{
-                                fontSize: 11,
-                                padding: "3px 8px",
-                                borderRadius: 4,
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
-                                background: isLight ? "#ffffff" : "#21262d",
-                                color: isLight ? "#334155" : "#f0f6fc",
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer"
                             >
-                              <ExternalLink size={11} />
+                              <ExternalLink size={10} />
                               <span>Open</span>
                             </button>
                           )}
 
-                          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          {isExpanded ? (
+                            <ChevronDown size={13} className="text-[var(--color-text-muted)]" />
+                          ) : (
+                            <ChevronRight size={13} className="text-[var(--color-text-muted)]" />
+                          )}
                         </div>
                       </div>
 
-                      {/* Expanded Assertions */}
                       {isExpanded && (
-                        <div
-                          style={{
-                            padding: "10px 14px",
-                            borderTop: isLight ? "1px solid #e2e8f0" : "1px solid #21262d",
-                            background: isLight ? "#ffffff" : "#0d1117",
-                            fontSize: 12,
-                          }}
-                        >
+                        <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-[var(--color-bg)] text-xs">
                           {(suite.assertions || []).length === 0 ? (
-                            <div style={{ color: "#8b949e" }}>No assertion details recorded for this file.</div>
+                            <div className="text-[var(--color-text-muted)]">
+                              No assertion details recorded for this file.
+                            </div>
                           ) : (
-                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div className="space-y-1.5">
                               {suite.assertions.map((a, aIdx) => (
-                                <div key={aIdx} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                  <span style={{ color: a.status === "passed" ? "#10b981" : "#ef4444" }}>
+                                <div key={aIdx} className="flex items-center gap-2 font-mono text-[11px]">
+                                  <span
+                                    className={
+                                      a.status === "passed"
+                                        ? "text-emerald-500/75"
+                                        : "text-rose-400/80"
+                                    }
+                                  >
                                     {a.status === "passed" ? "✓" : "✗"}
                                   </span>
-                                  <span>{a.title}</span>
+                                  <span className="text-[var(--color-text-secondary)]">{a.title}</span>
                                 </div>
                               ))}
                             </div>
