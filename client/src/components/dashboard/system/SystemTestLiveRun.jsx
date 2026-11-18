@@ -299,43 +299,37 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
 
   return (
     <section
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm dark:shadow-xl overflow-hidden font-sans"
+      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden font-sans"
       aria-label="Live Playwright Execution View"
     >
       {/* Top Header Bar */}
-      <div className="px-5 py-3.5 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
+      <div className="px-4 py-3 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="relative flex h-3.5 w-3.5 shrink-0">
+          <div className="relative flex h-2.5 w-2.5 shrink-0">
             {isScenarioActive && !isAllFinished && (
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-primary)] opacity-75" />
             )}
-            <span className={`relative inline-flex rounded-full h-3.5 w-3.5 ${
+            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
               isAllFinished || (!isScenarioActive && latestScenarioEnd)
-                ? 'bg-emerald-600'
-                : 'bg-blue-600'
+                ? 'bg-emerald-500/80'
+                : 'bg-[var(--color-primary)]'
             }`} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="text-base font-bold text-[var(--color-text)] tracking-wide flex items-center gap-2">
-                <Monitor size={17} className="text-blue-600 dark:text-blue-400" />
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <Monitor size={15} className="text-[var(--color-primary)]" />
                 Playwright Live Runner
               </h2>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border ${
-                isAllFinished
-                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
-                  : !isScenarioActive && latestScenarioEnd
-                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
-                  : 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30'
-              }`}>
-                {isAllFinished ? 'FINISHED' : !isScenarioActive && latestScenarioEnd ? 'SCENARIO COMPLETED' : 'RUNNING'}
+              <span className="px-2 py-0.5 rounded-md text-[10.5px] font-mono font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                {isAllFinished ? 'Finished' : !isScenarioActive && latestScenarioEnd ? 'Scenario completed' : 'Running'}
               </span>
             </div>
             <div className="flex items-center gap-2 mt-1 min-w-0">
-              <span className="text-xs uppercase tracking-wider font-semibold text-blue-700 dark:text-blue-400 shrink-0">
-                {isPreparing ? 'Preparing:' : 'Running Scenario:'}
+              <span className="text-[11px] font-medium text-[var(--color-text-muted)] shrink-0">
+                {isPreparing ? 'Preparing:' : 'Running scenario:'}
               </span>
-              <span className="text-xs font-bold text-[var(--color-text)] bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 px-3 py-0.5 rounded-md truncate max-w-xl shadow-xs font-mono">
+              <span className="text-xs font-medium text-[var(--color-text)] bg-[var(--color-bg)] border border-[var(--color-border)] px-2.5 py-0.5 rounded truncate max-w-xl font-mono">
                 {activeScenarioTitle}
               </span>
             </div>
@@ -346,7 +340,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
           type="button"
           disabled={!mayStop || stopping || !activeJobId || isAllFinished}
           onClick={handleStopRun}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300 hover:bg-rose-500/20 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-rose-500/30 bg-rose-500/[0.07] text-rose-400 hover:bg-rose-500/15 text-xs font-medium transition-colors duration-150 cursor-pointer disabled:opacity-45"
         >
           {stopping ? (
             <>
@@ -355,7 +349,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
             </>
           ) : (
             <>
-              <Square size={13} fill="currentColor" />
+              <Square size={12} fill="currentColor" />
               Stop Run
             </>
           )}
@@ -363,7 +357,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
       </div>
 
       {error && (
-        <div className="px-5 py-2.5 bg-rose-50 dark:bg-rose-500/10 border-b border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
+        <div className="px-4 py-2.5 bg-rose-500/[0.06] border-b border-[var(--color-border)] border-l-2 border-l-rose-400/75 text-rose-300/90 text-xs flex items-center gap-2">
           <AlertCircle size={14} className="shrink-0" />
           <span>{error}</span>
         </div>
@@ -372,63 +366,61 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
       {/* Main Grid: Browser Viewport & Event Console */}
       <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)]">
         {/* Left Column: Simulated Browser Viewport */}
-        <div className="lg:col-span-8 p-4 sm:p-5 flex flex-col justify-between bg-slate-50/70 dark:bg-zinc-950/40 min-h-[500px]">
+        <div className="lg:col-span-8 p-4 flex flex-col justify-between bg-[var(--color-bg)] min-h-[500px]">
           <div>
             {/* Browser Window Chrome */}
-            <div className="rounded-t-xl bg-slate-100 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 px-4 py-2.5 flex items-center gap-3">
-              <div className="flex items-center gap-1.5">
-                <span className="h-3 w-3 rounded-full bg-rose-500 inline-block shadow-xs" />
-                <span className="h-3 w-3 rounded-full bg-amber-500 inline-block shadow-xs" />
-                <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block shadow-xs" />
+            <div className="rounded-t-lg bg-[var(--color-surface-secondary)] border border-[var(--color-border)] px-3.5 py-2 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[11px] font-mono text-[var(--color-text-muted)]">
+                <Monitor size={12} />
+                <span>Chromium Sandbox</span>
               </div>
-              <div className="flex-1 max-w-md mx-auto px-3 py-1 rounded-md bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 text-xs font-mono text-slate-700 dark:text-zinc-300 truncate text-center shadow-xs">
+              <div className="flex-1 max-w-md mx-auto px-3 py-1 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px] font-mono text-[var(--color-text-secondary)] truncate text-center">
                 Isolated test browser (Chromium)
+              </div>
+              <div className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)] shrink-0">
+                16:9
               </div>
             </div>
 
             {/* Viewport Screen: Edge-to-edge 16:9 full viewport with zero side bars */}
-            <div className="rounded-b-xl border-x border-b border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-950 relative overflow-hidden aspect-video flex items-center justify-center">
+            <div className="rounded-b-lg border-x border-b border-[var(--color-border)] bg-[var(--color-surface)] relative overflow-hidden aspect-video flex items-center justify-center">
               {liveFrame ? (
-                <div className="relative w-full h-full bg-slate-900 flex items-center justify-center">
+                <div className="relative w-full h-full bg-[#0b0f14] flex items-center justify-center">
                   <img
                     src={liveFrame}
                     alt="Playwright Real-time Live Stream"
                     className="w-full h-full object-cover block"
                   />
-                  <div className={`absolute top-3 right-3 px-3 py-1 rounded-md text-white text-xs font-mono font-bold flex items-center gap-2 shadow-lg border ${
-                    isAllFinished || (!isScenarioActive && latestScenarioEnd)
-                      ? 'bg-emerald-600/95 border-emerald-400/40'
-                      : 'bg-blue-600/95 border-blue-400/40'
-                  }`}>
-                    <span className={`h-2 w-2 rounded-full bg-white ${isAllFinished || (!isScenarioActive && latestScenarioEnd) ? '' : 'animate-pulse'}`} />
+                  <div className="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-[var(--color-surface)]/95 text-[var(--color-text)] text-[11px] font-mono font-medium flex items-center gap-1.5 border border-[var(--color-border)]">
+                    <span className={`h-1.5 w-1.5 rounded-full ${isAllFinished || (!isScenarioActive && latestScenarioEnd) ? 'bg-emerald-500/85' : 'bg-[var(--color-primary)] animate-pulse'}`} />
                     {isAllFinished ? 'ALL FINISHED' : !isScenarioActive && latestScenarioEnd ? 'SCENARIO FINISHED' : `RUN ${liveState.activeRunIndex} OF 2`}
                   </div>
                 </div>
               ) : checkpoint?.url ? (
-                <div className="relative w-full h-full bg-slate-900 flex items-center justify-center">
+                <div className="relative w-full h-full bg-[#0b0f14] flex items-center justify-center">
                   <img
                     src={checkpoint.url}
                     alt={`Browser checkpoint: ${checkpoint.title || 'Scenario execution'}`}
                     className="w-full h-full object-cover block"
                   />
-                  <div className="absolute bottom-2 left-2 right-2 px-3 py-1.5 rounded-md bg-slate-900/90 backdrop-blur-md text-xs text-slate-200 font-mono flex items-center justify-between border border-slate-800">
+                  <div className="absolute bottom-2 left-2 right-2 px-3 py-1.5 rounded-md bg-[var(--color-surface)]/95 text-[11px] text-[var(--color-text)] font-mono flex items-center justify-between border border-[var(--color-border)]">
                     <span className="truncate">Captured: {checkpoint.title || 'Current Step'}</span>
-                    <span className="shrink-0 text-slate-400">{checkpoint.time}</span>
+                    <span className="shrink-0 text-[var(--color-text-muted)] tabular-nums">{checkpoint.time}</span>
                   </div>
                 </div>
               ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center space-y-3 bg-white dark:bg-zinc-950">
-                  <div className="inline-flex p-3.5 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 shadow-xs">
-                    <Activity size={28} className="animate-pulse" />
+                <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center space-y-3 bg-[var(--color-surface)]">
+                  <div className="inline-flex p-2.5 rounded-lg bg-[var(--color-surface-secondary)] text-[var(--color-primary)] border border-[var(--color-border)]">
+                    <Activity size={24} className="animate-pulse" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-800 dark:text-zinc-100">
+                    <p className="text-sm font-semibold text-[var(--color-text)]">
                       {activeScenarioTitle}
                     </p>
-                    <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1 max-w-md">
                       {isPreparing
                         ? 'Installing dependencies and starting the application. The browser view appears when the first scenario starts.'
-                        : 'Streaming real-time browser actions, mouse cursor, and live assertions.'}
+                        : 'Streaming real-time browser actions, screenshots, and live assertions.'}
                     </p>
                   </div>
                 </div>
@@ -437,35 +429,35 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
           </div>
 
           <div className="mt-3 flex items-center justify-between text-xs text-[var(--color-text-secondary)] font-mono">
-            <span className="flex items-center gap-1.5">
-              <Layers size={14} className="text-blue-600 dark:text-blue-400" />
-              Target: <strong className="text-[var(--color-text)]">{activeScenarioTitle}</strong>
+            <span className="flex items-center gap-1.5 truncate">
+              <Layers size={13} className="text-[var(--color-text-muted)] shrink-0" />
+              Target: <strong className="font-medium text-[var(--color-text)] truncate">{activeScenarioTitle}</strong>
             </span>
-            <span className="text-[var(--color-text-muted)] font-sans text-xs">Live Checkpoints Active</span>
+            <span className="text-[var(--color-text-muted)] font-sans text-xs shrink-0">Live checkpoints active</span>
           </div>
         </div>
 
         {/* Right Column: Execution Events Log Stream */}
-        <div className="lg:col-span-4 p-4 sm:p-5 flex flex-col bg-white dark:bg-zinc-950">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-zinc-800 mb-3 shrink-0">
-            <span className="text-xs font-mono font-bold text-slate-800 dark:text-zinc-200 flex items-center gap-2">
-              <Terminal size={15} className="text-blue-600 dark:text-blue-400" />
+        <div className="lg:col-span-4 p-4 flex flex-col bg-[var(--color-surface)]">
+          <div className="flex items-center justify-between pb-2.5 border-b border-[var(--color-border)] mb-3 shrink-0">
+            <span className="text-xs font-mono font-semibold text-[var(--color-text)] flex items-center gap-2">
+              <Terminal size={14} className="text-[var(--color-text-muted)]" />
               Event Stream ({events.length})
             </span>
-            <span className="text-[11px] font-mono text-slate-500 dark:text-zinc-400">Auto-tail</span>
+            <span className="text-[11px] font-mono text-[var(--color-text-muted)]">Auto-tail</span>
           </div>
 
           <div onScroll={(event) => { const node = event.currentTarget; followsLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48; }} className="flex-1 overflow-y-auto space-y-2 pr-1 font-mono text-xs select-text min-h-[360px] max-h-[580px]">
             {events.length === 0 ? (
               <div className="space-y-2">
-                <p className="flex items-center gap-2 text-slate-500 dark:text-zinc-400">
-                  {isAllFinished ? <AlertCircle size={14} className="shrink-0" /> : <Loader2 size={14} className="animate-spin shrink-0 text-blue-600 dark:text-blue-400" />}
+                <p className="flex items-center gap-2 text-[var(--color-text-muted)]">
+                  {isAllFinished ? <AlertCircle size={14} className="shrink-0" /> : <Loader2 size={14} className="animate-spin shrink-0 text-[var(--color-primary)]" />}
                   {isAllFinished ? 'No test events were recorded for this run.' : 'Waiting for first test event…'}
                 </p>
                 {preparationLogs.length > 0 && (
                   <ol aria-label="Preparation log" className="space-y-1.5 border-l border-[var(--color-border)] pl-3">
                     {preparationLogs.map(log => (
-                      <li key={log.id} className={`break-words leading-relaxed ${log.level === 'ERROR' ? 'text-rose-500 dark:text-rose-400' : 'text-[var(--color-text-secondary)]'}`}>
+                      <li key={log.id} className={`break-words leading-relaxed ${log.level === 'ERROR' ? 'text-rose-400' : 'text-[var(--color-text-secondary)]'}`}>
                         <span className="mr-2 tabular-nums text-[var(--color-text-muted)]">{new Date(log.time).toLocaleTimeString()}</span>
                         {log.message}
                       </li>
@@ -482,30 +474,28 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
                 return (
                   <div
                     key={event.sequence}
-                    className="p-3 rounded-lg bg-slate-50 dark:bg-zinc-900/60 border border-slate-200 dark:border-zinc-800 hover:border-slate-300 dark:hover:border-zinc-700 transition-colors shadow-xs"
+                    className="p-2.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] transition-colors duration-150"
                   >
-                    <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-zinc-400">
-                      <span className="font-semibold">#{event.sequence} · Run {event.runIndex || 1}</span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-sans font-bold uppercase tracking-wider border ${
+                    <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                      <span className="font-medium tabular-nums">#{event.sequence} · Run {event.runIndex || 1}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
                         isPassed
-                          ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                          ? 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)]'
                           : isFailed
-                          ? 'bg-rose-50 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-800'
-                          : isStarted
-                          ? 'bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-800'
-                          : 'bg-slate-100 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300 border-slate-200 dark:border-zinc-700'
+                          ? 'bg-rose-500/[0.07] text-rose-300/90 border-rose-500/25'
+                          : 'bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]'
                       }`}>
                         {event.type.replaceAll('_', ' ')}
                       </span>
                     </div>
 
-                    <div className="mt-2 flex items-start gap-2.5">
-                      {isPassed && <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />}
-                      {isFailed && <XCircle size={15} className="text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />}
-                      {isStarted && <Play size={13} className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5 fill-blue-600 dark:fill-blue-400" />}
+                    <div className="mt-1.5 flex items-start gap-2">
+                      {isPassed && <CheckCircle2 size={14} className="text-emerald-500/80 shrink-0 mt-0.5" />}
+                      {isFailed && <XCircle size={14} className="text-rose-400/90 shrink-0 mt-0.5" />}
+                      {isStarted && <Play size={12} className="text-[var(--color-primary)] shrink-0 mt-0.5" />}
 
                       <div className="min-w-0 flex-1">
-                        <span className="block text-slate-900 dark:text-zinc-100 font-medium text-xs break-words">
+                        <span className="block text-[var(--color-text)] font-medium text-xs break-words">
                           {event.payloadJson?.stepTitle ||
                             event.payloadJson?.title ||
                             event.payloadJson?.status ||
@@ -513,7 +503,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
                         </span>
 
                         {event.payloadJson?.errorMessage && (
-                          <span className="block text-xs text-rose-800 dark:text-rose-300 mt-1.5 break-all bg-rose-50 dark:bg-rose-950/50 p-2 rounded border border-rose-200 dark:border-rose-800/60 font-mono">
+                          <span className="block text-[11px] text-rose-300/90 mt-1.5 break-all bg-rose-500/[0.06] p-2 rounded border border-rose-500/20 font-mono">
                             {event.payloadJson.errorMessage}
                           </span>
                         )}

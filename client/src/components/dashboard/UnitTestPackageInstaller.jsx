@@ -21,8 +21,10 @@ import {
  * immediately triggering test rerun and coverage dashboard refresh.
  */
 export default function UnitTestPackageInstaller({
+  snapshotId = null,
   missingDependencies = [],
   onInstallDependencies,
+  onRerunTests = null,
   isInstalling = false,
   isLight = false,
 }) {
@@ -79,90 +81,39 @@ export default function UnitTestPackageInstaller({
   };
 
   return (
-    <div
-      style={{
-        marginTop: 14,
-        marginBottom: 20,
-        background: isLight
-          ? "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)"
-          : "linear-gradient(180deg, #161b22 0%, #0d1117 100%)",
-        border: pendingPackages.length
-          ? isLight ? "1px solid #f87171" : "1px solid rgba(239, 68, 68, 0.45)"
-          : isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
-        borderRadius: 10,
-        padding: "16px 20px",
-        boxShadow: pendingPackages.length
-          ? "0 4px 20px rgba(239, 68, 68, 0.15)"
-          : isLight ? "0 2px 8px rgba(0,0,0,0.04)" : "0 4px 14px rgba(0, 0, 0, 0.35)",
-        transition: "all 0.2s ease",
-      }}
+    <section
+      data-snapshot-id={snapshotId || undefined}
+      data-light={isLight ? "true" : "false"}
+      className={`mb-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden transition-colors ${
+        pendingPackages.length > 0 ? "border-l-2 border-l-rose-400/65" : ""
+      }`}
     >
       {/* Header bar */}
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          cursor: "pointer",
-          userSelect: "none",
-        }}
         onClick={() => setIsExpanded((prev) => !prev)}
+        className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-[var(--color-surface-secondary)]/40 transition-colors"
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: pendingPackages.length
-                ? "rgba(239, 68, 68, 0.15)"
-                : isLight ? "rgba(99, 102, 241, 0.12)" : "rgba(99, 102, 241, 0.2)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: pendingPackages.length ? "#ef4444" : "#818cf8",
-            }}
-          >
-            <Package size={17} />
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center shrink-0 text-[var(--color-text-secondary)]">
+            <Package size={14} className={pendingPackages.length > 0 ? "text-rose-400/80" : ""} />
           </div>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13.5, fontWeight: 700, color: isLight ? "#0f172a" : "#f1f5f9" }}>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-[var(--color-text)]">
                 Project Dependency Manager
               </span>
               {pendingPackages.length > 0 ? (
-                <span
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 700,
-                    background: "rgba(239, 68, 68, 0.2)",
-                    color: "#f87171",
-                    padding: "2px 8px",
-                    borderRadius: 999,
-                    letterSpacing: "0.4px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  <AlertTriangle size={11} /> {pendingPackages.length} MISSING
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-rose-500/[0.06] text-rose-300/85 border border-rose-500/20">
+                  <AlertTriangle size={11} />
+                  <span>{pendingPackages.length} Missing</span>
                 </span>
               ) : (
-                <span
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 650,
-                    background: isLight ? "rgba(100, 116, 139, 0.12)" : "rgba(255, 255, 255, 0.08)",
-                    color: isLight ? "#475569" : "#94a3b8",
-                    padding: "1px 7px",
-                    borderRadius: 999,
-                  }}
-                >
-                  Workspace Packages
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-mono bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+                  Workspace packages
                 </span>
               )}
             </div>
-            <p style={{ margin: "2px 0 0 0", fontSize: 11.5, color: isLight ? "#64748b" : "#94a3b8" }}>
+            <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5 truncate">
               Install missing packages into your project or monorepo subpackages and automatically re-run test suites.
             </p>
           </div>
@@ -170,23 +121,15 @@ export default function UnitTestPackageInstaller({
 
         <button
           type="button"
-          style={{
-            background: "transparent",
-            border: "none",
-            color: isLight ? "#64748b" : "#94a3b8",
-            cursor: "pointer",
-            padding: 4,
-            display: "flex",
-            alignItems: "center",
-          }}
+          className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer shrink-0"
           title={isExpanded ? "Collapse" : "Expand"}
         >
-          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
         </button>
       </div>
 
       {isExpanded && (
-        <div style={{ marginTop: 14 }}>
+        <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border)] space-y-3">
           {/* 1. Auto-detected Missing Dependency Quick Action Banner */}
           {pendingPackages.length > 0 && (
             <fieldset className="mb-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-3">
@@ -231,15 +174,9 @@ export default function UnitTestPackageInstaller({
           {/* 2. Manual Package Installer Form */}
           <form
             onSubmit={handleInstallManual}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
+            className="flex flex-wrap items-center gap-2.5"
           >
-            {/* Package Name Input */}
-            <div style={{ flex: "1 1 240px", minWidth: 180, position: "relative" }}>
+            <div className="flex-1 min-w-[200px]">
               <input
                 type="text"
                 aria-label="Package names"
@@ -247,134 +184,65 @@ export default function UnitTestPackageInstaller({
                 value={packageNameInput}
                 onChange={(e) => setPackageNameInput(e.target.value)}
                 disabled={isInstalling}
-                style={{
-                  width: "100%",
-                  padding: "8px 12px",
-                  fontSize: 12.5,
-                  borderRadius: 6,
-                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.16)",
-                  background: isLight ? "#ffffff" : "rgba(0, 0, 0, 0.35)",
-                  color: isLight ? "#0f172a" : "#f1f5f9",
-                  outline: "none",
-                  boxSizing: "border-box",
-                }}
+                className="w-full px-3 py-1.5 text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] font-mono"
               />
             </div>
 
-            {/* Subpackage Target (Optional for Monorepo) */}
-            <div style={{ flex: "0 1 150px", minWidth: 120 }}>
-              <div style={{ display: "flex", alignItems: "center", position: "relative" }}>
-                <FolderTree size={13} style={{ position: "absolute", left: 8, color: isLight ? "#64748b" : "#94a3b8" }} />
-                <input
-                  type="text"
-                  placeholder="Target (e.g. backend)"
-                  value={targetSubDir}
-                  onChange={(e) => setTargetSubDir(e.target.value)}
-                  disabled={isInstalling}
-                  title="Target subpackage folder (e.g. backend, server, app). Leave blank for root project."
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px 8px 26px",
-                    fontSize: 12,
-                    borderRadius: 6,
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.16)",
-                    background: isLight ? "#ffffff" : "rgba(0, 0, 0, 0.35)",
-                    color: isLight ? "#0f172a" : "#f1f5f9",
-                    outline: "none",
-                    boxSizing: "border-box",
-                  }}
-                />
-              </div>
+            <div className="w-40 relative flex items-center">
+              <FolderTree size={12} className="absolute left-2.5 text-[var(--color-text-muted)] pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Target (e.g. backend)"
+                value={targetSubDir}
+                onChange={(e) => setTargetSubDir(e.target.value)}
+                disabled={isInstalling}
+                title="Target subpackage folder (e.g. backend, server, app). Leave blank for root project."
+                className="w-full pl-7 pr-2.5 py-1.5 text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] font-mono"
+              />
             </div>
 
-            {/* Save as devDependency Checkbox */}
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 11.5,
-                color: isLight ? "#475569" : "#cbd5e1",
-                cursor: "pointer",
-                userSelect: "none",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <label className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer select-none whitespace-nowrap font-mono">
               <input
                 type="checkbox"
                 checked={isDev}
                 onChange={(e) => setIsDev(e.target.checked)}
                 disabled={isInstalling}
-                style={{ cursor: "pointer" }}
+                className="rounded border-[var(--color-border)] accent-[var(--color-primary)] cursor-pointer"
               />
               <span>--save-dev</span>
             </label>
 
-            {/* Install & Rerun Tests Button */}
             <button
               type="submit"
               disabled={isInstalling || !packageNameInput.trim()}
-              style={{
-                background: isInstalling || !packageNameInput.trim()
-                  ? isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.08)"
-                  : "#4f46e5",
-                border: "none",
-                color: isInstalling || !packageNameInput.trim()
-                  ? isLight ? "#94a3b8" : "rgba(255, 255, 255, 0.3)"
-                  : "#ffffff",
-                padding: "8px 16px",
-                borderRadius: 6,
-                fontSize: 12.5,
-                fontWeight: 650,
-                cursor: isInstalling || !packageNameInput.trim() ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                transition: "all 0.15s ease",
-              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
             >
               {isInstalling ? (
                 <>
-                  <Loader2 size={13} className="animate-spin" />
+                  <Loader2 size={12} className="animate-spin" />
                   <span>Installing...</span>
                 </>
               ) : (
                 <>
-                  <Plus size={14} />
+                  <Plus size={13} />
                   <span>Install & Rerun Tests</span>
                 </>
               )}
             </button>
+
+            {onRerunTests && !packageNameInput.trim() && (
+              <span className="sr-only">Rerun available</span>
+            )}
           </form>
 
           {/* Feedback messages */}
           {installError && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: "8px 12px",
-                borderRadius: 6,
-                background: "rgba(239, 68, 68, 0.12)",
-                border: "1px solid rgba(239, 68, 68, 0.3)",
-                color: "#f87171",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
+            <div className="px-3 py-2 rounded-md border border-rose-500/20 bg-rose-500/[0.06] text-rose-300/85 text-xs flex items-center justify-between gap-2">
               <span className="whitespace-pre-line">{installError}</span>
               <button
                 type="button"
                 onClick={() => setShowConsole((v) => !v)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#fca5a5",
-                  fontSize: 11,
-                  textDecoration: "underline",
-                  cursor: "pointer",
-                }}
+                className="text-[11px] underline text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer shrink-0"
               >
                 {showConsole ? "Hide Log" : "View Output"}
               </button>
@@ -382,59 +250,24 @@ export default function UnitTestPackageInstaller({
           )}
 
           {installOutput && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: "8px 12px",
-                borderRadius: 6,
-                background: "rgba(34, 197, 94, 0.1)",
-                border: "1px solid rgba(34, 197, 94, 0.25)",
-                color: isLight ? "#15803d" : "#4ade80",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <CheckCircle2 size={14} />
+            <div className="px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] text-xs flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={13} className="text-emerald-500/75 shrink-0" />
                 <span>Installed {installedCount} {installedCount === 1 ? "package" : "packages"}. Test rerun queued.</span>
               </div>
               <button
                 type="button"
                 onClick={() => setShowConsole((v) => !v)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: isLight ? "#15803d" : "#4ade80",
-                  fontSize: 11,
-                  textDecoration: "underline",
-                  cursor: "pointer",
-                }}
+                className="text-[11px] underline text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer shrink-0"
               >
                 {showConsole ? "Hide Log" : "View Output"}
               </button>
             </div>
           )}
 
-          {/* Expandable Console Log */}
           {showConsole && (installOutput || installError) && (
-            <div
-              style={{
-                marginTop: 10,
-                background: "#090d13",
-                border: "1px solid rgba(255, 255, 255, 0.12)",
-                borderRadius: 6,
-                padding: "10px 12px",
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                color: "#94a3b8",
-                maxHeight: 180,
-                overflowY: "auto",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, color: "#64748b" }}>
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 font-mono text-[11px] text-[var(--color-text-secondary)] max-h-44 overflow-y-auto whitespace-pre-wrap custom-scrollbar">
+              <div className="flex items-center gap-1.5 mb-1.5 text-[var(--color-text-muted)]">
                 <Terminal size={12} />
                 <span>npm install output</span>
               </div>
@@ -443,7 +276,6 @@ export default function UnitTestPackageInstaller({
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
-

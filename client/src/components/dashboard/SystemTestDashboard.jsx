@@ -17,7 +17,7 @@ import {
   Activity,
 
   Monitor,
-  Sparkles,
+  FileCode2,
   History,
   Settings2,
 } from "lucide-react";
@@ -500,8 +500,8 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       {/* Header: what this page does, plus the primary run action */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold tracking-tight">System Test Coverage</h1>
-          <p className="text-sm text-[var(--color-text-secondary)]">Verify user journeys across the frontend, real API and database.</p>
+          <h1 className="text-base font-semibold tracking-tight text-[var(--color-text)]">System Test Coverage</h1>
+          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Verify user journeys across the frontend, real API and database.</p>
         </div>
       </div>
       <label className="flex flex-wrap items-center gap-3 text-xs">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} ? {row.runner}</option>)}</select></label>
@@ -532,7 +532,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             disabled={!projectAccess.can("tests.run") || !snapshotId || loading || runningTests || checkingSetup}
             onClick={() => handleRunTests()}
             title="Run System Test Analysis (Playwright / Cypress)"
-            className="text-xs h-9 font-semibold"
+            className="text-xs h-8 font-medium"
           >
             {checkingSetup ? "Checking setup..." : runningTests ? "Running (" + Math.max(5, Math.min(100, jobProgress?.progress ?? 5)) + "%)..." : "Run System Test"}
           </Button>
@@ -545,19 +545,19 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       {/* Toolbar: which result is shown, and secondary actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-primary)]/10 px-2.5 py-1.5 text-xs font-semibold text-[var(--color-primary)]">
-            <ShieldCheck size={14} aria-hidden="true" />
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-2.5 py-1 text-xs font-medium text-[var(--color-text)]">
+            <ShieldCheck size={13} className="text-[var(--color-primary)]" aria-hidden="true" />
             {activeFramework === 'cypress' ? 'Cypress' : 'Playwright'} / {modeLabel}
           </span>
-          <span className="text-[11px] border border-[var(--color-border)] rounded-md px-2 py-0.5 text-[var(--color-text-secondary)]">Full system · Real API & database</span>
+          <span className="text-[11px] border border-[var(--color-border)] bg-[var(--color-bg)] rounded-md px-2 py-1 text-[var(--color-text-muted)]">Full system · Real API &amp; database</span>
           <label className="flex min-w-0 items-center gap-2 text-xs text-[var(--color-text-secondary)]">
             <span>Assessment</span>
-            <select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="h-8 max-w-[15rem] rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-2 text-xs text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus)]/40">
+            <select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="h-8 max-w-[15rem] rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-xs text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)]">
               <option value="">Latest completed</option>
               {workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} · {row.runner}</option>)}
             </select>
           </label>
-          {workspace.nextCursor && <button type="button" className="text-xs text-[var(--color-text-secondary)] underline hover:text-[var(--color-text)]" onClick={workspace.loadMore}>Load older</button>}
+          {workspace.nextCursor && <button type="button" className="text-xs text-[var(--color-text-secondary)] underline hover:text-[var(--color-text)] cursor-pointer" onClick={workspace.loadMore}>Load older</button>}
           <Button variant="secondary" size="sm" icon={History} onClick={() => setHistoryOpen(true)} className="text-xs h-8">Version history</Button>
         </div>
 
@@ -566,7 +566,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
           <Button
             variant="secondary"
             size="sm"
-            icon={Sparkles}
+            icon={FileCode2}
             onClick={() => setIsGeneratorOpen(true)}
             disabled={loading || runningTests}
             className="text-xs h-8"
@@ -597,39 +597,39 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             type="button"
             aria-pressed={headedMode}
             onClick={() => setHeadedMode(!headedMode)}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors duration-150 active:scale-[0.98] ${
+            className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer ${
               headedMode
-                ? "border-amber-500/20 bg-amber-500/10 text-amber-400"
-                : "border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                ? "border-amber-500/35 bg-amber-500/[0.08] text-amber-400"
+                : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
             }`}
             title="When on, Playwright opens a visible browser window on this machine and slows actions down"
           >
-            <Monitor size={14} aria-hidden="true" />
+            <Monitor size={13} aria-hidden="true" />
             <span>Desktop window: <strong>{headedMode ? "On" : "Off"}</strong></span>
           </button>
         </div>
       </div>
 
       {workspace.error && <SystemTestErrorNotice message={workspace.error} />}
-      {setupReport && !setupReport.ready && <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs">Startup setup needs attention.<button type="button" onClick={() => setSetupOpen(true)} className="font-medium underline">Review setup</button></p>}
+      {setupReport && !setupReport.ready && <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] border-l-2 border-l-amber-500/70 bg-[var(--color-surface)] px-3.5 py-2.5 text-xs text-[var(--color-text-secondary)]"><span>Startup setup needs attention.</span><button type="button" onClick={() => setSetupOpen(true)} className="font-medium text-[var(--color-text)] underline cursor-pointer">Review setup</button></p>}
       <SystemTestMetricsCards coverageTiers={workspace.assessment?.coverage?.tiers || summary?.coverage?.tiers} summary={workspace.assessment?.presentation ? {...summary,hasRun:true,totalTests:workspace.assessment.presentation.execution.selected,passedTests:workspace.assessment.presentation.execution.passed,failedTests:workspace.assessment.presentation.execution.failed,flakyTests:workspace.assessment.presentation.execution.flaky,skippedTests:workspace.assessment.presentation.execution.skipped,durationMs:workspace.assessment.presentation.execution.elapsedMs,runner:workspace.assessment.runner} : summary} />
 
       {/* Real-time Progress Banner if running */}
       {runningTests && jobProgress && (
-        <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 text-xs text-[var(--color-text)] space-y-2">
-          <div className="flex items-center justify-between font-semibold">
+        <div className="p-3.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] border-l-2 border-l-[var(--color-primary)] text-xs text-[var(--color-text)] space-y-2">
+          <div className="flex items-center justify-between font-medium">
             <div className="flex items-center gap-2">
-              <Loader2 size={15} className="animate-spin text-[var(--color-primary)]" />
+              <Loader2 size={14} className="animate-spin text-[var(--color-primary)]" />
               <span>{`${jobSelection?.executionMode === "full" ? "Full Stack" : "Frontend Dev Server"} · ${jobSelection?.runner || activeFramework} · ${jobProgress.stage || "Executing system tests"}`}</span>
             </div>
-            <span className="font-mono text-[var(--color-primary)]">
+            <span className="font-mono tabular-nums text-[var(--color-text-secondary)]">
               {jobProgress.progress}%
             </span>
           </div>
 
-          <div className="w-full bg-[var(--color-surface-secondary)] h-1.5 rounded-full overflow-hidden">
+          <div className="w-full bg-[var(--color-surface-secondary)] h-1 rounded-sm overflow-hidden">
             <div
-              className="bg-[var(--color-primary)] h-full transition-all duration-300"
+              className="bg-[var(--color-primary)]/80 h-full transition-all duration-300"
               style={{ width: `${jobProgress.progress}%` }}
             />
           </div>
@@ -642,7 +642,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
                 </p>
               )}
               {onOpenJobQueue && (
-                <button type="button" onClick={onOpenJobQueue} className="shrink-0 text-[11px] font-medium text-[var(--color-primary)] underline-offset-2 hover:underline">
+                <button type="button" onClick={onOpenJobQueue} className="shrink-0 text-[11px] font-medium text-[var(--color-primary)] underline-offset-2 hover:underline cursor-pointer">
                   View detailed logs
                 </button>
               )}
@@ -655,22 +655,20 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       <SystemTestErrorNotice message={error} onDismiss={() => setError(null)} onOpenLogs={onOpenJobQueue} onOpenSetup={() => setSetupOpen(true)} />
 
       {/* Sub-Tab Navigation Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] pb-3">
-        <div className="flex flex-wrap items-center gap-1.5 p-1.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)]">
+        <div className="flex flex-wrap items-center gap-5">
           <button
             type="button"
             onClick={() => setActiveSubTab("scenarios")}
-            className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 pb-2.5 px-0.5 text-xs border-b-2 transition-colors duration-150 cursor-pointer ${
               activeSubTab === "scenarios"
-                ? "bg-indigo-600 text-white shadow-md font-bold"
-                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
+                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium"
             }`}
           >
-            <Layers size={17} />
+            <Layers size={14} />
             <span>Scenarios</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-mono ${
-              activeSubTab === "scenarios" ? "bg-white/20 text-white" : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)]"
-            }`}>
+            <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] font-mono">
               Workflow &amp; Specs
             </span>
           </button>
@@ -678,18 +676,21 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
           <button
             type="button"
             onClick={() => setActiveSubTab("live")}
-            className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 pb-2.5 px-0.5 text-xs border-b-2 transition-colors duration-150 cursor-pointer ${
               activeSubTab === "live"
-                ? "bg-indigo-600 text-white shadow-md font-bold"
-                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
+                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium"
             }`}
           >
-            <Activity size={17} />
+            <Activity size={14} />
             <span>Live run</span>
             {(runningTests || activeJobId) && (
-              <span className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-500 font-mono font-bold animate-pulse">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                RUNNING
+              <span className="inline-flex items-center gap-1.5 text-[10.5px] px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] font-mono">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500/85" />
+                </span>
+                Running
               </span>
             )}
           </button>
@@ -697,28 +698,26 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
           <button
             type="button"
             onClick={() => setActiveSubTab("results")}
-            className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 pb-2.5 px-0.5 text-xs border-b-2 transition-colors duration-150 cursor-pointer ${
               activeSubTab === "results"
-                ? "bg-indigo-600 text-white shadow-md font-bold"
-                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
+                : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium"
             }`}
           >
-            <CheckCircle2 size={17} />
+            <CheckCircle2 size={14} />
             <span>Results</span>
             {summary?.totalTests > 0 && (
-              <span className={`text-xs px-2 py-0.5 rounded-full font-mono ${
-                activeSubTab === "results" ? "bg-white/20 text-white" : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)]"
-              }`}>
+              <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] font-mono tabular-nums">
                 {summary.passedTests}/{summary.totalTests} passed
               </span>
             )}
           </button>
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-[var(--color-text-secondary)]">
-          <span>Engine: <strong className="text-[var(--color-text)]">{activeFramework === "cypress" ? "Cypress" : "Playwright"}</strong></span>
+        <div className="flex items-center gap-3 pb-2 text-xs text-[var(--color-text-secondary)]">
+          <span>Engine: <strong className="font-medium text-[var(--color-text)]">{activeFramework === "cypress" ? "Cypress" : "Playwright"}</strong></span>
           {summary?.latestRun?.finishedAt && (
-            <span>Last execution: <strong className="text-[var(--color-text)] font-mono">{new Date(summary.latestRun.finishedAt).toLocaleTimeString()}</strong></span>
+            <span>Last execution: <strong className="font-medium text-[var(--color-text)] font-mono tabular-nums">{new Date(summary.latestRun.finishedAt).toLocaleTimeString()}</strong></span>
           )}
         </div>
       </div>
@@ -777,26 +776,26 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
               initialAssessmentId={activeAssessmentId}
             />
           ) : (
-            <div className="p-8 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-center space-y-4 shadow-sm dark:shadow-xl">
-              <div className="inline-flex p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400">
-                <Activity size={32} />
+            <div className="p-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-center space-y-4">
+              <div className="inline-flex p-2.5 rounded-lg bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-primary)]">
+                <Activity size={24} />
               </div>
-              <div className="max-w-md mx-auto space-y-2">
-                <h3 className="text-lg font-bold text-[var(--color-text)] tracking-tight">
+              <div className="max-w-md mx-auto space-y-1.5">
+                <h3 className="text-sm font-semibold text-[var(--color-text)] tracking-tight">
                   Playwright Live Runner Viewport
                 </h3>
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                  Ready to stream real-time browser actions, traffic light controls, step durations, and state changes as scenarios execute.
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Ready to stream real-time browser actions, screenshots, step durations, and state changes as scenarios execute.
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
                 <Button
                   variant="primary"
-                  size="md"
+                  size="sm"
                   icon={Play}
                   onClick={() => handleRunTests()}
-                  className="!bg-indigo-600 hover:!bg-indigo-500 text-white font-semibold px-5 py-2.5 shadow-md"
+                  className="font-medium"
                 >
                   Start Live Run ({modeLabel})
                 </Button>
@@ -804,14 +803,14 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
                 <button
                   type="button"
                   onClick={() => setHeadedMode(!headedMode)}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                  className={`inline-flex h-8 items-center gap-2 px-3 rounded-md text-xs font-medium border transition-colors duration-150 cursor-pointer ${
                     headedMode
-                      ? "bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-300 shadow-sm"
-                      : "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]/50"
+                      ? "bg-amber-500/[0.08] border-amber-500/35 text-amber-400"
+                      : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
                   }`}
                   title="When active, Playwright opens a visible Chrome browser window on your Windows desktop with slowed actions"
                 >
-                  <Monitor size={14} className={headedMode ? "text-amber-500 dark:text-amber-400" : "text-[var(--color-text-muted)]"} />
+                  <Monitor size={13} className={headedMode ? "text-amber-400" : "text-[var(--color-text-muted)]"} />
                   <span>Desktop Window (Headed): <strong>{headedMode ? "ON" : "OFF"}</strong></span>
                 </button>
               </div>
@@ -823,20 +822,20 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       {/* Sub-Tab 4: Execution Results & History */}
       {activeSubTab === "results" && !workspace.assessment && (
         <div className="space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-[var(--color-text-secondary)]">
-            <span>Results for: <strong className="text-[var(--color-text)]">{modeLabel} · {activeFramework === "cypress" ? "Cypress" : "Playwright"}</strong></span>
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--color-text-secondary)]">
+            <span>Results for: <strong className="font-medium text-[var(--color-text)]">{modeLabel} · {activeFramework === "cypress" ? "Cypress" : "Playwright"}</strong></span>
             {summary?.latestRun?.finishedAt && (
-              <span>Completed at: <strong className="text-[var(--color-text)] font-mono">{new Date(summary.latestRun.finishedAt).toLocaleString()}</strong></span>
+              <span>Completed at: <strong className="font-medium text-[var(--color-text)] font-mono tabular-nums">{new Date(summary.latestRun.finishedAt).toLocaleString()}</strong></span>
             )}
           </div>
 
           {(loading || !matchesSelection) ? (
-            <div role="status" className="py-12 text-center text-sm text-[var(--color-text-secondary)]">
-              <Loader2 size={24} className="animate-spin mx-auto text-indigo-500 dark:text-indigo-400 mb-3" />
+            <div role="status" className="py-12 text-center text-xs text-[var(--color-text-secondary)]">
+              <Loader2 size={22} className="animate-spin mx-auto text-[var(--color-primary)] mb-2.5" />
               Loading {modeLabel} results…
             </div>
           ) : !summary?.hasRun ? (
-            <div className="p-8 border border-[var(--color-border)] rounded-2xl bg-[var(--color-surface)] text-center text-sm text-[var(--color-text-secondary)] space-y-3">
+            <div className="p-8 border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] text-center text-xs text-[var(--color-text-secondary)] space-y-3">
               <p>No {activeFramework === "cypress" ? "Cypress" : "Playwright"} execution results found for {modeLabel}.</p>
               <Button variant="primary" size="sm" icon={Play} disabled={!projectAccess.can("tests.run")} onClick={() => handleRunTests()}>
                 Run Test Suite Now
@@ -846,31 +845,31 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             <>
               {/* Metric Summary Cards */}
               <style>{`@media (prefers-reduced-motion: reduce) { .system-test-workspace *, .system-test-workspace *::before { animation: none!important; transition: none!important; scroll-behavior: auto!important; } }`}</style>
-      <label className="flex flex-wrap items-center gap-3 text-xs">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} ? {row.runner}</option>)}</select></label>
-      {workspace.error && <p role="alert" className="text-sm text-rose-600">{workspace.error}</p>}
-      {workspace.nextCursor && <button type="button" className="text-xs underline" onClick={workspace.loadMore}>Load older assessments</button>}
-      <SystemTestMetricsCards summary={metricsSummary} />
+      <label className="flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-secondary)]">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-text)]"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} · {row.runner}</option>)}</select></label>
+      {workspace.error && <p role="alert" className="text-xs text-rose-400">{workspace.error}</p>}
+      {workspace.nextCursor && <button type="button" className="text-xs underline cursor-pointer" onClick={workspace.loadMore}>Load older assessments</button>}
+      <SystemTestMetricsCards summary={workspace.assessment?.presentation ? {...summary,hasRun:true,totalTests:workspace.assessment.presentation.execution.selected,passedTests:workspace.assessment.presentation.execution.passed,failedTests:workspace.assessment.presentation.execution.failed,flakyTests:workspace.assessment.presentation.execution.flaky,skippedTests:workspace.assessment.presentation.execution.skipped,durationMs:workspace.assessment.presentation.execution.elapsedMs,runner:workspace.assessment.runner} : summary} />
 
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text-secondary)] space-y-2">
-                <p className="font-semibold text-[var(--color-text)]">Executed Spec Files in this run:</p>
-                <ul className="space-y-1 font-mono text-xs text-indigo-600 dark:text-indigo-300 pl-4 list-disc">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
+                <p className="font-medium text-[var(--color-text)]">Executed Spec Files in this run:</p>
+                <ul className="space-y-1 font-mono text-xs text-[var(--color-text-secondary)] pl-4 list-disc">
                   {testFiles.filter(file => file.scenarios?.length).map(file => (
                     <li key={file.filePath}>{file.filePath}</li>
                   ))}
                 </ul>
               </div>
 
-              <div className="flex gap-2 border-b border-[var(--color-border)] pb-3" aria-label="System test result views">
+              <div className="flex gap-5 border-b border-[var(--color-border)]" aria-label="System test result views">
                 {["scenarios", "execution"].map(view => (
                   <button
                     key={view}
                     type="button"
                     aria-pressed={resultView === view}
                     onClick={() => setResultView(view)}
-                    className={`rounded-lg px-4 py-2 text-xs font-bold transition-all cursor-pointer ${
+                    className={`pb-2.5 px-0.5 text-xs border-b-2 transition-colors duration-150 cursor-pointer ${
                       resultView === view
-                        ? "bg-indigo-600 text-white shadow-md"
-                        : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                        ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
+                        : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium"
                     }`}
                   >
                     {view === "scenarios" ? "Scenario Breakdown" : "Execution Timeline"}
@@ -894,12 +893,12 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Layers size={18} className="text-indigo-500 dark:text-indigo-400" />
-                      <h3 className="text-base font-bold text-[var(--color-text)]">
+                      <Layers size={15} className="text-[var(--color-text-muted)]" />
+                      <h3 className="text-sm font-semibold text-[var(--color-text)]">
                         System Test Scenarios &amp; Spec Files
                       </h3>
                     </div>
-                    <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                    <span className="text-xs text-[var(--color-text-muted)] font-mono tabular-nums">
                       {testFiles.filter(file => file.scenarios?.length).length} spec file(s) executed
                     </span>
                   </div>

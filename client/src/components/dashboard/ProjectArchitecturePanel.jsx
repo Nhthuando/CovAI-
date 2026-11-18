@@ -167,24 +167,11 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   const dragOriginRef = useRef({ startX: 0, startY: 0, panX: 0, panY: 0 });
   const canvasRef = useRef(null);
 
-  // Reset component state when switching projects
-  useEffect(() => {
-    setSnapshots([]);
-    setSnapshotId("");
-    setAnalysis(null);
-    setJob(null);
-    setSelectedNodeId(null);
-    setHoveredNodeId(null);
-    setSelectedDomain("All");
-    setSelectedRoles(new Set());
-    setAiError("");
-    setError("");
-  }, [projectId]);
-
-  // Clear job belonging to a different snapshot
-  useEffect(() => {
-    setJob((curr) => (curr && snapshotId && curr.snapshotId !== snapshotId ? null : curr));
-  }, [snapshotId]);
+  // Clear job belonging to a different snapshot via derived value
+  const activeJob =
+    job && (!snapshotId || !job.snapshotId || job.snapshotId === snapshotId)
+      ? job
+      : null;
 
   // Load Snapshots
   const loadSnapshots = useCallback(async () => {
@@ -274,12 +261,16 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
 
   // Polling if job is running
   useEffect(() => {
-    if (!job || !["QUEUED", "RUNNING"].includes(job.status) || !projectId)
+    if (
+      !activeJob ||
+      !["QUEUED", "RUNNING"].includes(activeJob.status) ||
+      !projectId
+    )
       return;
     const poll = async () => {
       try {
         const response = await getProjectJobsApi(projectId);
-        const updated = (response.jobs || []).find((j) => j.id === job.id);
+        const updated = (response.jobs || []).find((j) => j.id === activeJob.id);
         if (!updated) return;
         setJob(updated);
         if (updated.status === "SUCCESS") loadAnalysis();
@@ -292,7 +283,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
     };
     const timer = setInterval(poll, 2500);
     return () => clearInterval(timer);
-  }, [job, loadAnalysis, projectId]);
+  }, [activeJob, loadAnalysis, projectId]);
 
   const startAnalysis = async () => {
     if (!projectId) return;
@@ -465,7 +456,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   const selectedAiSummary = useMemo(() => {
     if (!snapshotId || !selectedNode?.relativePath) return null;
     return aiSummaryMap[`${snapshotId}:${selectedNode.relativePath}`] || null;
-  }, [aiSummaryMap, snapshotId, selectedNode?.relativePath]);
+  }, [aiSummaryMap, snapshotId, selectedNode]);
 
   // Incoming & Outgoing for selected node
   const selectedNodeDeps = useMemo(() => {
@@ -655,18 +646,18 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
     }
   };
 
-  const status = job?.status || (analysis ? "SUCCESS" : null);
+  const status = activeJob?.status || (analysis ? "SUCCESS" : null);
 
   const analysisProgress = useMemo(() => {
     if (status === "SUCCESS") return 100;
-    if (job?.progress !== undefined && job?.progress !== null) {
-      return Math.min(100, Math.max(0, Math.round(job.progress)));
+    if (activeJob?.progress !== undefined && activeJob?.progress !== null) {
+      return Math.min(100, Math.max(0, Math.round(activeJob.progress)));
     }
     if (status === "RUNNING") return 65;
     if (status === "QUEUED") return 15;
     if (loading) return 40;
     return 0;
-  }, [status, job?.progress, loading]);
+  }, [status, activeJob, loading]);
 
   if (!projectId) {
     return (

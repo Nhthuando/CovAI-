@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { getFrameworkRecommendationApi, selectTestingFrameworkApi } from "../../services/project.service";
 
-const labelFor = (framework) => framework === "vitest" ? "Vitest" : "Jest";
+const labelFor = (framework) => (framework === "vitest" ? "Vitest" : "Jest");
 
 export default function FrameworkRecommendationPanel({ projectId, snapshotId, onSelect }) {
   const [data, setData] = useState(null);
@@ -29,7 +29,9 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId, on
     }
   }, [projectId, snapshotId, onSelect]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const selectFramework = async (framework) => {
     if (!projectId || !snapshotId || saving || data?.selectedTestingFramework === framework) return;
@@ -50,59 +52,79 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId, on
   if (!projectId || !snapshotId) return null;
 
   return (
-    <section
-      className="my-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Sparkles size={14} style={{ color: "#a78bfa" }} />
-          <span style={{ color: "var(--color-text)", fontSize: 12, fontWeight: 600 }}>Test framework</span>
+    <section className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal size={13} className="text-[var(--color-text-muted)] shrink-0" />
+            <span className="text-xs font-semibold text-[var(--color-text)]">
+              Test runner framework
+            </span>
+          </div>
+          {data && (
+            <span className="text-xs text-[var(--color-text-muted)] font-mono">
+              Recommended: <strong className="text-[var(--color-text-secondary)] font-medium">{labelFor(data.recommendedFramework)}</strong>
+              {data.projectType ? ` · ${data.projectType}` : ""}
+            </span>
+          )}
         </div>
-        <button onClick={load} disabled={loading || Boolean(saving)} title="Re-analyze" style={{ color: "#8b949e" }}>
-          {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-        </button>
+
+        <div className="flex items-center gap-2">
+          {data && (
+            <div className="inline-flex items-center rounded-md bg-[var(--color-bg)] p-0.5 border border-[var(--color-border)]">
+              {(data.candidates || []).map((candidate) => {
+                const selected = data.selectedTestingFramework === candidate.framework;
+                return (
+                  <button
+                    key={candidate.framework}
+                    type="button"
+                    onClick={() => selectFramework(candidate.framework)}
+                    disabled={Boolean(saving)}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono transition-colors cursor-pointer disabled:opacity-50 ${
+                      selected
+                        ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-medium border border-[var(--color-border)]"
+                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent"
+                    }`}
+                  >
+                    {saving === candidate.framework ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      selected && <CheckCircle2 size={11} className="text-emerald-500/75" />
+                    )}
+                    <span>{labelFor(candidate.framework)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={load}
+            disabled={loading || Boolean(saving)}
+            title="Re-analyze"
+            className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+          </button>
+        </div>
       </div>
 
-      {error && <p style={{ color: "#f87171", fontSize: 11, lineHeight: 1.45, marginTop: 8 }}>{error}</p>}
-      {loading && !data && <p style={{ color: "#8b949e", fontSize: 11, marginTop: 8 }}>Analyzing project…</p>}
-
-      {data && (
-        <>
-          <p style={{ color: "#8b949e", fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
-            Recommended: <strong style={{ color: "var(--color-primary)" }}>{labelFor(data.recommendedFramework)}</strong> · {data.projectType}
-          </p>
-          <div className="flex gap-2" style={{ marginTop: 10 }}>
-            {(data.candidates || []).map((candidate) => {
-              const selected = data.selectedTestingFramework === candidate.framework;
-              return (
-                <button
-                  key={candidate.framework}
-                  onClick={() => selectFramework(candidate.framework)}
-                  disabled={Boolean(saving)}
-                  className="flex-1 rounded-lg transition-colors"
-                  style={{
-                    padding: "7px 8px",
-                    border: `1px solid ${selected ? "rgba(74,222,128,0.6)" : "rgba(255,255,255,0.1)"}`,
-                    background: selected ? "rgba(63,185,80,0.12)" : "rgba(255,255,255,0.03)",
-                    color: selected ? "#86efac" : "#c9d1d9",
-                    fontSize: 11,
-                  }}
-                >
-                  <span className="flex items-center justify-center gap-1">
-                    {saving === candidate.framework ? <Loader2 size={12} className="animate-spin" /> : selected && <CheckCircle2 size={12} />}
-                    {labelFor(candidate.framework)}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          {data.selection?.requiresInstallation && (
-            <p style={{ color: "#fbbf24", fontSize: 10, lineHeight: 1.45, marginTop: 8 }}>
-              The selected framework needs to be installed before running tests.
-            </p>
-          )}
-          {data.explanation?.[0] && <p style={{ color: "#6e7681", fontSize: 10, lineHeight: 1.45, marginTop: 8 }}>{data.explanation[0]}</p>}
-        </>
+      {error && (
+        <p className="mt-2 text-xs text-rose-300/85 m-0">{error}</p>
+      )}
+      {loading && !data && (
+        <p className="mt-2 text-xs text-[var(--color-text-muted)] m-0">Analyzing project...</p>
+      )}
+      {data?.selection?.requiresInstallation && (
+        <p className="mt-2 text-[11px] text-amber-400/80 m-0">
+          The selected framework needs to be installed before running tests.
+        </p>
+      )}
+      {data?.explanation?.[0] && (
+        <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)] m-0 leading-relaxed">
+          {data.explanation[0]}
+        </p>
       )}
     </section>
   );

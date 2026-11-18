@@ -1784,14 +1784,39 @@ export const createProjectFolder = async (
   return res;
 };
 
-export const renameProjectEntry = async (projectId, userId, filePath, _content, newPath, options = {}) => {
-  const res = await mutateProjectWorkspace({ projectId, userId, path: filePath, newPath, kind: 'RENAME_ENTRY', ...options });
+export const renameProjectEntry = async (
+  projectId,
+  userId,
+  filePath,
+  _content,
+  newPath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    newPath,
+    kind: "RENAME_ENTRY",
+    ...options,
+  });
   projectTreeMetaCache.clear();
   return res;
 };
 
-export const deleteProjectEntry = async (projectId, userId, filePath, options = {}) => {
-  const res = await mutateProjectWorkspace({ projectId, userId, path: filePath, kind: 'DELETE_ENTRY', ...options });
+export const deleteProjectEntry = async (
+  projectId,
+  userId,
+  filePath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    kind: "DELETE_ENTRY",
+    ...options,
+  });
   projectTreeMetaCache.clear();
   return res;
 };
@@ -1827,15 +1852,18 @@ export const updateProjectLifecycleStatus = async ({
   });
 
   try {
-    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
     clearPortfolioCache(userId);
   } catch (_) {}
   try {
-    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
+    const { clearUnifiedDashboardCache } =
+      await import("./unifiedQualityDashboard.service.js");
     clearUnifiedDashboardCache();
   } catch (_) {}
   try {
-    const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
+    const { emitPortfolioProjectUpdated } =
+      await import("../realtime/portfolioSocket.emitter.js");
     emitPortfolioProjectUpdated({
       projectId,
       userId,
@@ -1847,8 +1875,12 @@ export const updateProjectLifecycleStatus = async ({
     // Non-fatal if socket emitter not yet initialized
   }
   try {
-    const { emitDashboardMetricsUpdated } = await import("./dashboardEvents.service.js");
-    emitDashboardMetricsUpdated(projectId, { reason: "project-status-updated", lifecycleStatus: updatedProject.lifecycleStatus }).catch(() => {});
+    const { emitDashboardMetricsUpdated } =
+      await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, {
+      reason: "project-status-updated",
+      lifecycleStatus: updatedProject.lifecycleStatus,
+    }).catch(() => {});
   } catch (_) {}
 
   return updatedProject;

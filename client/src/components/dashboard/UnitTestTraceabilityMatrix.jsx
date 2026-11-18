@@ -1251,36 +1251,22 @@ export default function UnitTestTraceabilityMatrix({
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* ── Bi-directional Traceability Matrix Explorer ── */}
       <div
-        style={{
-          background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-          border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-          borderRadius: 10,
-          overflow: "hidden",
-          boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.05)" : "none",
-        }}
+        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden"
       >
         {/* Explorer Header with Search & Controls */}
         <div
-          style={{
-            padding: "14px 18px",
-            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.06)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 12,
-          }}
+          className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between flex-wrap gap-3"
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
+            <span className="text-[13px] font-semibold text-[var(--color-text)]">
               Business Logic ↔ Test Case Traceability Matrix
             </span>
-            <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 500 }}>
+            <span className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
               ({filteredFiles?.length || 0} source files · {(functionTraceability?.length || 0)} business functions)
             </span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {/* CFG & Cyclomatic Complexity summary badge */}
             <div
               onClick={() => {
@@ -1290,46 +1276,32 @@ export default function UnitTestTraceabilityMatrix({
                   onOpenCFG?.();
                 }
               }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "4px 10px",
-                borderRadius: 6,
-                background: selectedCategory === "HIGH_CC" ? "rgba(239, 68, 68, 0.15)" : "rgba(168, 85, 247, 0.12)",
-                border: selectedCategory === "HIGH_CC" ? "1.5px solid #ef4444" : "1px solid rgba(168, 85, 247, 0.3)",
-                color: selectedCategory === "HIGH_CC" ? "#ef4444" : (isLight ? "#7e22ce" : "#c084fc"),
-                fontSize: 11.5,
-                fontWeight: 650,
-                cursor: "pointer",
-              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium cursor-pointer transition-colors duration-150 ${
+                selectedCategory === "HIGH_CC"
+                  ? "border-rose-500/40 bg-rose-500/[0.08] text-rose-400"
+                  : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
+              }`}
               title={`Cyclomatic Complexity (CC): Avg ${avgComplexity.toFixed(1)} | Max ${maxComplexity} (${highestComplexityFn?.cleanName || "peak function"}). Click to filter ${highComplexityCount} functions with CC > 10.`}
             >
-              <GitBranch size={13} />
-              <span>CFG & CC:</span>
-              <span style={{ fontWeight: 700 }}>
-                Avg: <b>{avgComplexity.toFixed(1)}</b>
+              <GitBranch size={12} className="text-[var(--color-text-muted)]" />
+              <span>CFG &amp; CC:</span>
+              <span className="font-mono tabular-nums font-semibold text-[var(--color-text)]">
+                Avg {avgComplexity.toFixed(1)}
               </span>
-              <span style={{ opacity: 0.4 }}>·</span>
+              <span className="opacity-40">·</span>
               <span
-                style={{ fontWeight: 700 }}
+                className="font-mono tabular-nums font-semibold"
                 title={`Peak Complexity = ${maxComplexity} in function ${highestComplexityFn?.cleanName || ""}`}
               >
-                Max: <b style={{ color: maxComplexity > 10 ? "#ef4444" : "inherit" }}>{maxComplexity}</b>
+                Max <span className={maxComplexity > 10 ? (isLight ? "text-rose-600" : "text-rose-300/90") : "text-[var(--color-text)]"}>{maxComplexity}</span>
               </span>
               {highComplexityCount > 0 && (
                 <span
-                  style={{
-                    fontSize: 10,
-                    background: selectedCategory === "HIGH_CC" ? "#ef4444" : "rgba(239, 68, 68, 0.2)",
-                    color: selectedCategory === "HIGH_CC" ? "#ffffff" : "#ef4444",
-                    padding: "1px 6px",
-                    borderRadius: 4,
-                    fontWeight: 700,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 3,
-                  }}
+                  className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded font-semibold inline-flex items-center gap-1 ${
+                    selectedCategory === "HIGH_CC"
+                      ? isLight ? "bg-rose-600 text-white" : "bg-rose-500/25 text-rose-200"
+                      : isLight ? "bg-rose-50 text-rose-700 border border-rose-200" : "bg-rose-500/[0.08] text-rose-300/90 border border-rose-500/20"
+                  }`}
                   title={`${highComplexityCount} functions have high complexity (CC > 10, defect risk). Click to filter.`}
                 >
                   <AlertTriangle size={10} />
@@ -1340,34 +1312,18 @@ export default function UnitTestTraceabilityMatrix({
 
             {/* Search Input */}
             <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-                borderRadius: 6,
-                padding: "4px 8px",
-                fontSize: 12,
-              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)]/60 transition-colors duration-150"
             >
-              <Search size={13} style={{ color: isLight ? "#64748b" : "#8b949e" }} />
+              <Search size={13} className="text-[var(--color-text-muted)]" />
               <input
                 type="text"
                 placeholder="Search function or source file..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  outline: "none",
-                  color: isLight ? "#0f172a" : "#e6edf3",
-                  fontSize: 12,
-                  width: 200,
-                }}
+                className="bg-transparent border-0 outline-none text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] w-[200px]"
               />
               {searchQuery && (
-                <X size={12} style={{ cursor: "pointer", color: "#8b949e" }} onClick={() => setSearchQuery("")} />
+                <X size={12} className="cursor-pointer text-[var(--color-text-muted)] hover:text-[var(--color-text)]" onClick={() => setSearchQuery("")} />
               )}
             </div>
           </div>
@@ -1375,11 +1331,11 @@ export default function UnitTestTraceabilityMatrix({
 
         {/* Traceability List */}
         {(filteredFiles?.length || 0) === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", color: isLight ? "#64748b" : "#8b949e" }}>
-            <FileCode size={28} style={{ margin: "0 auto 10px", opacity: 0.5 }} />
-            <div style={{ fontSize: 13, fontWeight: 600 }}>No matching business functions found</div>
-            <div style={{ fontSize: 11.5, marginTop: 4 }}>
-              Try searching with different keywords or switch to "All Categories".
+          <div className="p-10 text-center text-[var(--color-text-muted)]">
+            <FileCode size={26} className="mx-auto mb-2.5 opacity-45" />
+            <div className="text-[13px] font-semibold text-[var(--color-text-secondary)]">No matching business functions found</div>
+            <div className="text-[11.5px] mt-1">
+              Try searching with different keywords or switch to &quot;All Categories&quot;.
             </div>
           </div>
         ) : (
@@ -1422,7 +1378,12 @@ export default function UnitTestTraceabilityMatrix({
                 (displayBranches >= 100 || (branchesTotalCount != null ? branchesTotalCount === 0 : false)) &&
                 (displayFuncs >= 100 || (group?.functions?.length || 0) === 0) &&
                 displayStmts >= 100;
-              const getColor = (pct) => pct >= 100 ? "#10b981" : pct > 0 ? "#f59e0b" : "#ef4444";
+              const getColor = (pct) =>
+                pct >= 100
+                  ? "var(--color-text-secondary)"
+                  : pct > 0
+                    ? (isLight ? "#b45309" : "#d97706")
+                    : (isLight ? "#be123c" : "#fb7185");
 
               // Separate genuine business functions from internal anonymous callbacks
               const businessFunctions = (group?.functions || []).filter((fn) => !isCallbackOrAnonymousName(fn.cleanName));
@@ -1434,39 +1395,22 @@ export default function UnitTestTraceabilityMatrix({
               return (
                 <div
                   key={group.filePath}
-                  style={{
-                    borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.04)",
-                  }}
+                  className="border-b border-[var(--color-border)] last:border-b-0"
                 >
                   {/* File Row Header */}
                   <div
                     onClick={() => toggleExpandFile(group.filePath)}
-                    style={{
-                      padding: "10px 18px",
-                      background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      cursor: "pointer",
-                      userSelect: "none",
-                      transition: "background 0.15s ease",
-                    }}
-                    className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.04]"}
+                    className="px-4 py-2.5 bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] flex items-center justify-between cursor-pointer select-none transition-colors duration-150 gap-3 flex-wrap"
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {isFileExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      <FileCode size={14} style={{ color: "#6366f1" }} />
+                      {isFileExpanded ? <ChevronDown size={14} className="text-[var(--color-text-muted)]" /> : <ChevronRight size={14} className="text-[var(--color-text-muted)]" />}
+                      <FileCode size={14} className="text-[var(--color-text-muted)]" />
                       <span
-                        style={{
-                          fontSize: 12.5,
-                          fontFamily: "var(--font-mono)",
-                          fontWeight: 700,
-                          color: isLight ? "#0f172a" : "#f8fafc",
-                        }}
+                        className="text-[12.5px] font-mono font-semibold text-[var(--color-text)]"
                       >
                         {cleanPath}
                       </span>
-                      <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e" }}>
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
                         {(businessFunctions?.length || 0) > 0
                         ? `(${businessFunctions.length} business function${businessFunctions.length > 1 ? "s" : ""}${(secondaryCallbacks?.length || 0) > 0 ? ` · ${secondaryCallbacks.length} callback${secondaryCallbacks.length > 1 ? "s" : ""}` : ""})`
                         : (callbackFunctions?.length || 0) > 0
@@ -1475,22 +1419,22 @@ export default function UnitTestTraceabilityMatrix({
                       </span>
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       {/* File Coverage Badges */}
                       {running ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: isLight ? "#4f46e5" : "#818cf8" }}>
+                        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-primary)]">
                           <Loader2 size={12} className="animate-spin" />
-                          <span style={{ fontWeight: 600 }}>Analyzing...</span>
+                          <span className="font-medium">Analyzing...</span>
                         </div>
                       ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: "var(--font-mono)" }}>
+                        <div className="flex items-center gap-2.5 text-[11px] font-mono tabular-nums">
                           <span style={{ color: getColor(displayStmts) }}>
                             Stmts: {displayStmts}%
                           </span>
                           <span style={{ color: getColor(displayBranches) }}>
                             Branches: {displayBranches}%
                           </span>
-                          <span style={{ color: ((group?.functions?.length || 0) === 0) ? (isLight ? "#64748b" : "#94a3b8") : getColor(displayFuncs) }}>
+                          <span style={{ color: ((group?.functions?.length || 0) === 0) ? "var(--color-text-muted)" : getColor(displayFuncs) }}>
                             Funcs: {(group?.functions?.length || 0) === 0 ? "N/A (0 fns)" : `${displayFuncs}%`}
                           </span>
                           <span style={{ color: getColor(displayLines) }}>
@@ -1502,38 +1446,16 @@ export default function UnitTestTraceabilityMatrix({
                       {/* File Action Center: Diff / Apply / Status */}
                       {isSuggesting ? (
                         <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "3px 10px",
-                            borderRadius: 5,
-                            background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)",
-                            border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)",
-                            color: isLight ? "#6d28d9" : "#c4b5fd",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] text-[11px] font-medium"
                         >
-                          <Loader2 size={12} className="animate-spin text-purple-500" />
+                          <Loader2 size={12} className="animate-spin text-[var(--color-primary)]" />
                           <span>Generating...</span>
                         </div>
                       ) : isApplying ? (
                         <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "3px 10px",
-                            borderRadius: 5,
-                            background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)",
-                            border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
-                            color: isLight ? "#15803d" : "#86efac",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] text-[11px] font-medium"
                         >
-                          <Loader2 size={12} className="animate-spin text-green-500" />
+                          <Loader2 size={12} className="animate-spin text-[var(--color-primary)]" />
                           <span>
                             {applyProgressSteps?.[group.filePath]
                               ? (applyProgressSteps[group.filePath].includes("Running")
@@ -1554,24 +1476,13 @@ export default function UnitTestTraceabilityMatrix({
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                           {fileSugs[0]?.telemetry && (
                             <span
-                              style={{
-                                fontSize: 10,
-                                fontFamily: "var(--font-mono)",
-                                color: "#a5b4fc",
-                                background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.12)",
-                                border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.25)",
-                                padding: "2px 6px",
-                                borderRadius: 4,
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 3,
-                              }}
+                              className="text-[10px] font-mono tabular-nums text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                               title={`Generation: ${fileSugs[0].telemetry.durationSeconds || (fileSugs[0].telemetry.durationMs / 1000).toFixed(1)}s · ${fileSugs[0].telemetry.tokens?.total || 0} tokens`}
                             >
-                              <Clock size={10} className="text-indigo-400" />
+                              <Clock size={10} />
                               <span>{fileSugs[0].telemetry.durationSeconds || (fileSugs[0].telemetry.durationMs / 1000).toFixed(1)}s</span>
-                              <span style={{ opacity: 0.4 }}>•</span>
-                              <Zap size={10} className="text-amber-400" />
+                              <span className="opacity-40">•</span>
+                              <Zap size={10} />
                               <span>{(fileSugs[0].telemetry.tokens?.total || 0).toLocaleString()} tok</span>
                             </span>
                           )}
@@ -1581,23 +1492,10 @@ export default function UnitTestTraceabilityMatrix({
                                 e.stopPropagation();
                                 onReviewDiff(group.filePath);
                               }}
-                              style={{
-                                padding: "3px 9px",
-                                borderRadius: 5,
-                                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.2)",
-                                color: isLight ? "#1e293b" : "#f1f5f9",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                              }}
+                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
                               title="Review generated test code diff before applying"
                             >
-                              <FileDiff size={12} style={{ color: "#6366f1" }} />
+                              <FileDiff size={12} className="text-[var(--color-text-muted)]" />
                               <span>Review Diff</span>
                             </button>
                           )}
@@ -1628,26 +1526,21 @@ export default function UnitTestTraceabilityMatrix({
                                 e.stopPropagation();
                                 onReviewDiff(group.filePath);
                               }}
-                              style={{
-                                padding: "2px 7px",
-                                borderRadius: 5,
-                                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.2)",
-                                color: isLight ? "#334155" : "#e2e8f0",
-                                fontSize: 10.5,
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 3,
-                              }}
+                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
                               title="Review diff with original version"
                             >
-                              <FileDiff size={11} style={{ color: "#6366f1" }} />
+                              <FileDiff size={11} className="text-[var(--color-primary)]" />
                               <span>Diff</span>
                             </button>
                           )}
                         </div>
+                      ) : (hasPassed || isFileFullyCovered) ? (
+                        <span
+                          className="text-[11px] font-medium text-[var(--color-text-secondary)] bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center gap-1 px-2 py-0.5 rounded-md"
+                        >
+                          <Check size={12} strokeWidth={2.5} className="text-emerald-500/80" />
+                          <span>{isFileFullyCovered ? "100% Covered" : "Merged"}</span>
+                        </span>
                       ) : hasFailed ? (
                         (() => {
                           const failedSugWithErr = fileSugs.find((s) => s.missingDependency?.packageName || s.testRunError);
@@ -1657,15 +1550,11 @@ export default function UnitTestTraceabilityMatrix({
                           return (
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                               <span
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  color: "#dc2626",
-                                  padding: "2px 7px",
-                                  borderRadius: 4,
-                                  background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-                                  border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
-                                }}
+                                className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${
+                                  isLight
+                                    ? "bg-rose-50 border-rose-200 text-rose-700"
+                                    : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90"
+                                }`}
                               >
                                 {detectedMissingPkg?.packageName ? `Missing '${detectedMissingPkg.packageName}'` : "Failed"}
                               </span>
@@ -1681,19 +1570,11 @@ export default function UnitTestTraceabilityMatrix({
                                     );
                                   }}
                                   disabled={installingDependencyName === detectedMissingPkg.packageName}
-                                  style={{
-                                    padding: "3px 8px",
-                                    borderRadius: 5,
-                                    background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
-                                    border: "none",
-                                    color: "#ffffff",
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    cursor: installingDependencyName === detectedMissingPkg.packageName ? "not-allowed" : "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                  }}
+                                  className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold flex items-center gap-1 transition-colors duration-150 ${
+                                    installingDependencyName === detectedMissingPkg.packageName
+                                      ? "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)] cursor-not-allowed"
+                                      : "bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-primary-foreground)] cursor-pointer"
+                                  }`}
                                   title={`Install missing library '${detectedMissingPkg.packageName}' and retry test suite`}
                                 >
                                   {installingDependencyName === detectedMissingPkg.packageName ? (
@@ -1709,9 +1590,37 @@ export default function UnitTestTraceabilityMatrix({
                                   )}
                                 </button>
                               )}
+                              {onSuggestTestcase && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSuggestTestcase(group.filePath);
+                                  }}
+                                  className={`px-2 py-1 rounded-md border text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150 ${
+                                    isLight
+                                      ? "bg-white hover:bg-rose-50 border-rose-200 text-rose-700"
+                                      : "bg-[var(--color-surface)] hover:bg-rose-500/10 border-rose-500/25 text-rose-300/90"
+                                  }`}
+                                >
+                                  <FileCode2 size={11} />
+                                  <span>Re-generate</span>
+                                </button>
+                              )}
                             </div>
                           );
                         })()
+                      ) : onSuggestTestcase && !isFileFullyCovered ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSuggestTestcase(group.filePath);
+                          }}
+                          className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1.5 transition-colors duration-150"
+                          title="Suggest unit tests for uncovered logic and branches in this file"
+                        >
+                          <FileCode2 size={11} className="text-[var(--color-primary)]" />
+                          <span>Suggest tests</span>
+                        </button>
                       ) : null}
 
                       {/* Prominent File-Level 4-Metric Proof Button */}
@@ -1721,22 +1630,10 @@ export default function UnitTestTraceabilityMatrix({
                           setInspectingFileProof(group.filePath);
                           fetchFileCoverage(group.filePath);
                         }}
-                        style={{
-                          padding: "3px 9px",
-                          borderRadius: 4,
-                          background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)",
-                          border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
-                          color: isLight ? "#2563eb" : "#60a5fa",
-                          fontSize: 11,
-                          fontWeight: 650,
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 4,
-                        }}
+                        className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
                         title="View mathematical 4-metric calculation and Istanbul execution proof for this file"
                       >
-                        <Calculator size={11} />
+                        <Calculator size={11} className="text-[var(--color-text-muted)]" />
                         <span>4-Metric Proof</span>
                       </button>
 
@@ -1745,16 +1642,7 @@ export default function UnitTestTraceabilityMatrix({
                           e.stopPropagation();
                           onOpenFile?.(group.filePath);
                         }}
-                        style={{
-                          padding: "3px 8px",
-                          borderRadius: 4,
-                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
-                          border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-                          color: isLight ? "#475569" : "#cbd5e1",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                        }}
+                        className="px-2 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[11px] font-medium cursor-pointer transition-colors duration-150"
                         title="Open source file in editor"
                       >
                         Open file
@@ -1765,22 +1653,12 @@ export default function UnitTestTraceabilityMatrix({
 
                   {/* Functions in this file */}
                   {isFileExpanded && (
-                    <div style={{ padding: "8px 18px 14px 34px", display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div className="pt-2 px-4 pb-3.5 pl-8 flex flex-col gap-2.5 bg-[var(--color-surface)]">
                       {(group?.functions?.length || 0) === 0 ? (
                         <div
-                          style={{
-                            padding: "12px 16px",
-                            borderRadius: 6,
-                            background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)",
-                            border: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.12)",
-                            fontSize: 12,
-                            color: isLight ? "#64748b" : "#94a3b8",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
+                          className="px-4 py-3 rounded-md bg-[var(--color-bg)] border border-dashed border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)] flex items-center gap-2"
                         >
-                          <Info size={14} style={{ color: "#3b82f6", flexShrink: 0 }} />
+                          <Info size={14} className="text-[var(--color-text-muted)] shrink-0" />
                           <span>
                             No business functions declared in this file. Function traceability, category checklists, and unit test suggestions apply to executable business functions.
                           </span>
@@ -1798,42 +1676,26 @@ export default function UnitTestTraceabilityMatrix({
                         return (
                           <div
                             key={fnId}
-                            style={{
-                              borderRadius: 8,
-                              background: isLight ? "#ffffff" : "rgba(15, 23, 42, 0.5)",
-                              border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.07)",
-                              overflow: "hidden",
-                            }}
+                            className="rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] overflow-hidden"
                           >
                             {/* Function Header Row */}
                             <div
                               onClick={() => toggleExpandFunction(fnId, fn.filePath)}
-                              style={{
-                                padding: "9px 14px",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                cursor: "pointer",
-                                userSelect: "none",
-                                background: isFnExpanded
-                                  ? (isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)")
-                                  : "transparent",
-                              }}
+                              className={`px-3.5 py-2 flex items-center justify-between cursor-pointer select-none transition-colors duration-150 ${
+                                isFnExpanded
+                                  ? "bg-[var(--color-surface-secondary)]"
+                                  : "hover:bg-[var(--color-surface-secondary)]/60"
+                              }`}
                             >
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                {isFnExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                                <Code2 size={14} style={{ color: isCovered ? "#0284c7" : "#f59e0b" }} />
+                                {isFnExpanded ? <ChevronDown size={13} className="text-[var(--color-text-muted)]" /> : <ChevronRight size={13} className="text-[var(--color-text-muted)]" />}
+                                <Code2 size={14} className={isCovered ? "text-[var(--color-text-secondary)]" : "text-amber-500/80"} />
                                 <span
-                                  style={{
-                                    fontSize: 13,
-                                    fontWeight: 700,
-                                    fontFamily: "var(--font-mono)",
-                                    color: isLight ? "#0f172a" : "#f8fafc",
-                                  }}
+                                  className="text-[12.5px] font-semibold font-mono text-[var(--color-text)]"
                                 >
                                   {displayFnName}()
                                 </span>
-                                <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontFamily: "var(--font-mono)" }}>
+                                <span className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
                                   L{fn.startLine || fn.line || 1}
                                   {fn.endLine ? ` - L${fn.endLine}` : ""}
                                 </span>
@@ -1857,19 +1719,7 @@ export default function UnitTestTraceabilityMatrix({
                                       : null;
                                     onOpenFile?.(fn.filePath, fn.startLine, fn.cleanName, fn.endLine, testInfo);
                                   }}
-                                  style={{
-                                    background: "transparent",
-                                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
-                                    borderRadius: 4,
-                                    color: isLight ? "#4f46e5" : "#a5b4fc",
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 3,
-                                    fontSize: 10,
-                                    fontWeight: 650,
-                                    padding: "2px 5px",
-                                  }}
+                                  className="bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer flex items-center gap-1 transition-colors duration-150"
                                   title={`View ${fn.cleanName} code and corresponding unit test in-place at L${fn.startLine}`}
                                 >
                                   <FileCode size={10} />
@@ -1878,18 +1728,13 @@ export default function UnitTestTraceabilityMatrix({
 
                                 {/* Cyclomatic Complexity (CC) Badge */}
                                 <span
-                                  style={{
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    padding: "2px 6px",
-                                    borderRadius: 4,
-                                    background: fn.complexity > 10 ? "rgba(239, 68, 68, 0.12)" : fn.complexity > 5 ? "rgba(245, 158, 11, 0.12)" : "rgba(16, 185, 129, 0.12)",
-                                    color: fn.complexity > 10 ? "#ef4444" : fn.complexity > 5 ? "#f59e0b" : "#10b981",
-                                    border: `1px solid ${fn.complexity > 10 ? "rgba(239, 68, 68, 0.35)" : fn.complexity > 5 ? "rgba(245, 158, 11, 0.35)" : "rgba(16, 185, 129, 0.35)"}`,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 3,
-                                  }}
+                                  className={`text-[10px] font-mono tabular-nums font-medium px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                    fn.complexity > 10
+                                      ? (isLight ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90")
+                                      : fn.complexity > 5
+                                        ? (isLight ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-amber-500/[0.07] border-amber-500/20 text-amber-300/90")
+                                        : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)]"
+                                  }`}
                                   title={`Cyclomatic Complexity (McCabe): CC = ${fn.complexity || 1}`}
                                 >
                                   <GitBranch size={10} />
@@ -1923,36 +1768,15 @@ export default function UnitTestTraceabilityMatrix({
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 {/* Function Status Pill */}
                                 <span
-                                  style={{
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    padding: "2px 8px",
-                                    borderRadius: 4,
-                                    background: (proofData.fnHit || 0) === 0
-                                      ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
+                                  className={`text-[11px] font-medium font-mono tabular-nums px-2 py-0.5 rounded border flex items-center gap-1 ${
+                                    (proofData.fnHit || 0) === 0
+                                      ? (isLight ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90")
                                       : proofData.isFullyCovered
-                                        ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
+                                        ? "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]"
                                         : proofData.isFeasibleLogicCovered
-                                          ? (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)")
-                                          : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)"),
-                                    color: (proofData.fnHit || 0) === 0
-                                      ? (isLight ? "#dc2626" : "#f87171")
-                                      : proofData.isFullyCovered
-                                        ? (isLight ? "#059669" : "#4ade80")
-                                        : proofData.isFeasibleLogicCovered
-                                          ? (isLight ? "#7c3aed" : "#c4b5fd")
-                                          : (isLight ? "#b45309" : "#fbbf24"),
-                                    border: (proofData.fnHit || 0) === 0
-                                      ? (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.3)")
-                                      : proofData.isFullyCovered
-                                        ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)")
-                                        : proofData.isFeasibleLogicCovered
-                                          ? (isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)")
-                                          : (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)"),
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                  }}
+                                          ? (isLight ? "bg-violet-50 border-violet-200 text-violet-700" : "bg-[#8B7CFD]/10 border-[#8B7CFD]/30 text-[#c4b5fd]")
+                                          : (isLight ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-amber-500/[0.07] border-amber-500/20 text-amber-300/90")
+                                  }`}
                                   title={proofData.isFeasibleLogicCovered ? "All executable logic covered. Remaining gaps are verified environment safeguards." : undefined}
                                 >
                                   {(proofData.fnHit || 0) === 0 ? (
@@ -1962,7 +1786,7 @@ export default function UnitTestTraceabilityMatrix({
                                     </>
                                   ) : proofData.isFullyCovered ? (
                                     <>
-                                      <CheckCircle2 size={11} />
+                                      <CheckCircle2 size={11} className="text-emerald-500/80" />
                                       <span>100% Covered ({(fn.tests?.length || 0)} tests)</span>
                                     </>
                                   ) : proofData.isFeasibleLogicCovered ? (
@@ -1978,64 +1802,34 @@ export default function UnitTestTraceabilityMatrix({
                                   )}
                                 </span>
                               </div>
-                              </div>
+                            </div>
 
                             {/* ── EXPANDED 4-METRIC EXECUTION PROOF & DECISION TABLE ── */}
                             {isFnExpanded && (
                               <div
-                                style={{
-                                  padding: "14px 16px",
-                                  borderTop: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.05)",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  gap: 14,
-                                  background: isLight ? "#fbfcfe" : "rgba(0, 0, 0, 0.2)",
-                                }}
+                                className="p-3.5 border-t border-[var(--color-border)] flex flex-col gap-3.5 bg-[var(--color-surface)]"
                               >
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     <div
-                                      style={{
-                                        padding: "4px 10px",
-                                        borderRadius: 6,
-                                        fontSize: 11.5,
-                                        fontWeight: 700,
-                                        background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.25)",
-                                        color: isLight ? "#2563eb" : "#60a5fa",
-                                        border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.4)",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 5,
-                                      }}
+                                      className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] flex items-center gap-1.5"
                                     >
-                                      <Calculator size={12} />
-                                      <span>4-Metric Execution Proof &amp; Traceability</span>
+                                      <Calculator size={12} className="text-[var(--color-primary)]" />
+                                      <span>4-Metric Execution Proof</span>
                                     </div>
 
                                     <button
                                       onClick={() => onOpenCFG?.(fn.filePath, fn.cleanName, fn.startLine)}
-                                      style={{
-                                        padding: "4px 10px",
-                                        borderRadius: 6,
-                                        fontSize: 11.5,
-                                        fontWeight: 700,
-                                        cursor: "pointer",
-                                        background: isLight ? "rgba(147, 51, 234, 0.08)" : "rgba(168, 85, 247, 0.15)",
-                                        color: isLight ? "#7e22ce" : "#c084fc",
-                                        border: isLight ? "1px solid rgba(147, 51, 234, 0.3)" : "1px solid rgba(168, 85, 247, 0.35)",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 5,
-                                      }}
+                                      className="px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] flex items-center gap-1.5 transition-colors duration-150"
                                       title="Open Control Flow Graph (CFG) and inspect Cyclomatic Complexity (CC)"
                                     >
-                                      <GitBranch size={12} />
+                                      <GitBranch size={12} className="text-[var(--color-text-muted)]" />
                                       <span>View CFG Flow Graph &amp; CC Analysis</span>
                                     </button>
                                   </div>
 
-                                  <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8" }}>
-                                    Target function: <code style={{ color: "#6366f1" }}>{fn.cleanName}()</code> · Lines {proofData.startLine}–{proofData.endLine}
+                                  <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
+                                    Target function: <code className="text-[var(--color-text)]">{fn.cleanName}()</code> · Lines {proofData.startLine}–{proofData.endLine}
                                   </span>
                                 </div>
 
@@ -2051,25 +1845,24 @@ export default function UnitTestTraceabilityMatrix({
                                     >
                                       {/* Statements */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: "#6366f1" }}>
-                                            📝 Statements Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <FileText size={12} className="text-[var(--color-text-muted)]" />
+                                            Statements Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.stmtsPct >= 100 ? "#10b981" : "#f59e0b" }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.stmtsPct >= 100
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : isLight ? "text-amber-700" : "text-amber-400/90"
+                                            }`}
+                                          >
                                             {proofData.stmtsPct}% ({proofData.stmtsCoveredCount}/{proofData.stmtsTotalCount})
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           <b>Formula:</b> ({proofData.stmtsCoveredCount} / {proofData.stmtsTotalCount}) × 100% = {proofData.stmtsPct}%. {proofData.stmtsCoveredCount >= proofData.stmtsTotalCount ? "All AST statements in function executed." : `${proofData.stmtsTotalCount - proofData.stmtsCoveredCount} statement(s) not executed.`}
                                         </div>
                                         {proofData?.stmtsInRange?.length > 0 && (
@@ -2077,13 +1870,13 @@ export default function UnitTestTraceabilityMatrix({
                                             {proofData.stmtsInRange.slice(0, 8).map((s, idx) => {
                                               const stmtReason = s.uncoverageReason || s.reason || (s.hits === 0 ? "Bypassed by earlier return/branch guard" : "");
                                               return (
-                                                <div key={idx} title={stmtReason || undefined} style={{ display: "flex", flexDirection: "column", gap: 1, background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
-                                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                                                    <span style={{ color: isLight ? "#334155" : "#cbd5e1" }}>L{s.startLine}: {s.codeSnippet || s.type}</span>
-                                                    <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700, flexShrink: 0 }}>{s.hits}×</span>
+                                                <div key={idx} title={stmtReason || undefined} className="flex flex-col gap-0.5 bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
+                                                  <div className="flex items-center justify-between gap-1.5">
+                                                    <span className="text-[var(--color-text-secondary)]">L{s.startLine}: {s.codeSnippet || s.type}</span>
+                                                    <span className={`font-semibold tabular-nums shrink-0 ${s.hits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>{s.hits}×</span>
                                                   </div>
                                                   {s.hits === 0 && stmtReason && (
-                                                    <div style={{ fontSize: 9, fontFamily: "var(--font-sans)", color: isLight ? "#b45309" : "#fcd34d" }}>
+                                                    <div className={`text-[9px] font-sans ${isLight ? "text-amber-700" : "text-amber-300/85"}`}>
                                                       ↳ Why uncovered: {stmtReason}
                                                     </div>
                                                   )}
@@ -2096,25 +1889,26 @@ export default function UnitTestTraceabilityMatrix({
 
                                       {/* Branches */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: "#0284c7" }}>
-                                            🔀 Branches Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <GitBranch size={12} className="text-[var(--color-text-muted)]" />
+                                            Branches Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.branchesPct >= 100 ? "#10b981" : (proofData.branchesPct > 0 ? "#f59e0b" : "#ef4444") }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.branchesPct >= 100
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : proofData.branchesPct > 0
+                                                  ? (isLight ? "text-amber-700" : "text-amber-400/90")
+                                                  : (isLight ? "text-rose-700" : "text-rose-300/90")
+                                            }`}
+                                          >
                                             {proofData.branchesPct}% {proofData.hasNoBranches ? (proofData.fnHit > 0 ? "(Straight-line)" : "(Unexecuted)") : `(${proofData.branchPathsCovered}/${proofData.branchPathsTotal})`}
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           {proofData.hasNoBranches ? (
                                             proofData.fnHit > 0 ? (
                                               <span><b>Formula:</b> 100% (No conditional branches in this function). Straight-line sequential logic fully executed.</span>
@@ -2122,7 +1916,7 @@ export default function UnitTestTraceabilityMatrix({
                                               <span><b>Formula:</b> 0% (No conditional branches). Straight-line logic not yet executed (0 test hits recorded).</span>
                                             )
                                           ) : (
-                                            <span><b>Formula:</b> ({proofData.branchPathsCovered} / {proofData.branchPathsTotal} paths) × 100% = {proofData.branchesPct}%. Both True & False paths traversed.</span>
+                                            <span><b>Formula:</b> ({proofData.branchPathsCovered} / {proofData.branchPathsTotal} paths) × 100% = {proofData.branchesPct}%. Both True &amp; False paths traversed.</span>
                                           )}
                                         </div>
                                         {proofData?.infeasibleBranches?.length > 0 && (
@@ -2162,13 +1956,13 @@ export default function UnitTestTraceabilityMatrix({
                                               const isFullyCovered = b.status === "fully_covered" || (trueHits > 0 && falseHits > 0) || (meta?.branchesPct ?? 0) >= 100;
 
                                               return (
-                                                <div key={idx} style={{ background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "3px 5px", borderRadius: 3 }}>
-                                                  <div style={{ color: isLight ? "#334155" : "#cbd5e1" }}>L{b.line}: <code>{b.condition}</code></div>
+                                                <div key={idx} className="bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
+                                                  <div className="text-[var(--color-text-secondary)]">L{b.line}: <code>{b.condition}</code></div>
                                                   <div style={{ display: "flex", gap: 8, fontSize: 9.5, marginTop: 1, flexWrap: "wrap" }}>
-                                                    <span style={{ color: trueHits > 0 ? "#10b981" : "#ef4444" }}>True: {trueHits}×</span>
-                                                    <span style={{ color: falseHits > 0 ? "#10b981" : "#ef4444" }}>False: {falseHits}×</span>
-                                                    <span style={{ color: b.isInfeasible ? "#8b5cf6" : isFullyCovered ? "#10b981" : "#f59e0b", fontWeight: 700 }}>
-                                                      {b.isInfeasible ? "[🛡️ Guard Justified]" : isFullyCovered ? "✓ Fully Covered" : "⚠️ Partial"}
+                                                    <span className={trueHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>True: {trueHits}×</span>
+                                                    <span className={falseHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>False: {falseHits}×</span>
+                                                    <span className={b.isInfeasible ? "text-[#8B7CFD]" : isFullyCovered ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-amber-700" : "text-amber-400/90")}>
+                                                      {b.isInfeasible ? "[Guard Justified]" : isFullyCovered ? "Covered" : "Partial"}
                                                     </span>
                                                   </div>
                                                   {!isFullyCovered && !b.isInfeasible && (
@@ -2185,25 +1979,24 @@ export default function UnitTestTraceabilityMatrix({
 
                                       {/* Functions */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: proofData.fnHit > 0 ? "#10b981" : "#ef4444" }}>
-                                            ⚙️ Functions Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <Cpu size={12} className="text-[var(--color-text-muted)]" />
+                                            Functions Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.fnHit > 0 ? "#10b981" : "#ef4444" }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.fnHit > 0
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : (isLight ? "text-rose-700" : "text-rose-300/90")
+                                            }`}
+                                          >
                                             {proofData.fnHit > 0 ? "100% (1/1)" : "0% (0/1)"}
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           {proofData.fnHit > 0 ? (
                                             <span><b>Formula:</b> (1 / 1 declared) × 100% = 100%. Function entry executed <b>{proofData.fnHit} times</b> during test suite run.</span>
                                           ) : (
@@ -2211,49 +2004,48 @@ export default function UnitTestTraceabilityMatrix({
                                           )}
                                         </div>
                                         {proofData.fnHit > 0 ? (
-                                          <div style={{ fontSize: 10, color: isLight ? "#059669" : "#4ade80", background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.1)", padding: "4px 8px", borderRadius: 4, marginTop: 4 }}>
-                                            ✓ Function <code>{fn.cleanName}()</code> entered and exercised in RAM sandbox.
+                                          <div className="text-[10px] text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)] px-2 py-1 rounded mt-1">
+                                            Function <code>{fn.cleanName}()</code> entered and exercised in RAM sandbox.
                                           </div>
                                         ) : (
-                                          <div style={{ fontSize: 10, color: isLight ? "#dc2626" : "#f87171", background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.1)", padding: "4px 8px", borderRadius: 4, marginTop: 4 }}>
-                                            ❌ Function <code>{fn.cleanName}()</code> not yet exercised by unit test suite.
+                                          <div className={`text-[10px] px-2 py-1 rounded mt-1 ${isLight ? "text-rose-700 bg-rose-50" : "text-rose-300/90 bg-rose-500/[0.07]"}`}>
+                                            Function <code>{fn.cleanName}()</code> not yet exercised by unit test suite.
                                           </div>
                                         )}
                                       </div>
 
                                       {/* Lines */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: "#f59e0b" }}>
-                                            📄 Lines Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <ListChecks size={12} className="text-[var(--color-text-muted)]" />
+                                            Lines Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.linesPct >= 100 ? "#10b981" : "#f59e0b" }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.linesPct >= 100
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : isLight ? "text-amber-700" : "text-amber-400/90"
+                                            }`}
+                                          >
                                             {proofData.linesPct}% ({proofData.linesCoveredCount}/{proofData.linesTotalCount})
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           <b>Formula:</b> ({proofData.linesCoveredCount} / {proofData.linesTotalCount}) × 100% = {proofData.linesPct}%. {proofData.linesCoveredCount >= proofData.linesTotalCount ? "All executable lines received hits." : `${proofData.linesTotalCount - proofData.linesCoveredCount} line(s) missing hits.`}
                                         </div>
                                         {proofData?.linesInRange?.length > 0 && (
                                           <div style={{ maxHeight: 110, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
                                             {proofData.linesInRange.slice(0, 8).map((l, idx) => (
-                                              <div key={idx} title={l.hits === 0 ? (l.reason || "Line not reached by current tests") : undefined} style={{ display: "flex", flexDirection: "column", gap: 1, background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
-                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                                  <span>Line {l.line}</span>
-                                                  <span style={{ color: l.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>{l.hits} hits</span>
+                                              <div key={idx} title={l.hits === 0 ? (l.reason || "Line not reached by current tests") : undefined} className="flex flex-col gap-0.5 bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
+                                                <div className="flex items-center justify-between">
+                                                  <span className="text-[var(--color-text-secondary)]">Line {l.line}</span>
+                                                  <span className={`font-semibold tabular-nums ${l.hits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>{l.hits} hits</span>
                                                 </div>
                                                 {l.hits === 0 && l.reason && (
-                                                  <div style={{ fontSize: 9, fontFamily: "var(--font-sans)", color: isLight ? "#b45309" : "#fcd34d" }}>
+                                                  <div className={`text-[9px] font-sans ${isLight ? "text-amber-700" : "text-amber-300/85"}`}>
                                                     ↳ {l.reason}
                                                   </div>
                                                 )}
@@ -2266,32 +2058,24 @@ export default function UnitTestTraceabilityMatrix({
 
                                     {/* Test Suite Attribution Proof ("Which tests executed this function?") */}
                                     <div
-                                      style={{
-                                        borderRadius: 8,
-                                        background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                        border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                        padding: "12px 14px",
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: 8,
-                                      }}
+                                      className="rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] px-3.5 py-3 flex flex-col gap-2"
                                     >
                                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
-                                          <Target size={14} style={{ color: "#6366f1" }} />
-                                          <span>Unit Test Suites Exercising <code>{fn.cleanName}()</code> ({(fn.tests?.length || 0)} tests)</span>
+                                        <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text)]">
+                                          <Target size={13} className="text-[var(--color-text-muted)]" />
+                                          <span>Unit Test Suites Exercising <code className="font-mono">{fn.cleanName}()</code> ({(fn.tests?.length || 0)} tests)</span>
                                         </div>
                                         {(fn.tests?.length || 0) > 0 && fn.tests.every(t => t.status === "passed") &&
                                           !fileSugs.some(s => s.status === "FAILED" || s.testRunError) && (
-                                            <span style={{ fontSize: 11, color: isLight ? "#15803d" : "#4ade80", fontWeight: 650 }}>
-                                              ✓ Matched tests passed
+                                            <span className={`text-[11px] font-medium flex items-center gap-1 ${isLight ? "text-emerald-700" : "text-emerald-400/80"}`}>
+                                              <Check size={11} /> Matched tests passed
                                             </span>
                                           )}
                                       </div>
 
                                       {(!fn.tests || (fn.tests?.length || 0) === 0) ? (
-                                        <div style={{ fontSize: 11, color: isLight ? "#b45309" : "#fbbf24", background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)", padding: "6px 10px", borderRadius: 4 }}>
-                                          No dedicated test assertion specifically named <code>{fn.cleanName}</code> found in suite results.
+                                        <div className="text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] px-2.5 py-1.5 rounded">
+                                          No dedicated test assertion specifically named <code className="text-[var(--color-text)]">{fn.cleanName}</code> found in suite results.
                                           {proofData.fnHit > 0
                                             ? ` Function was traversed indirectly (${proofData.fnHit} hits recorded).`
                                             : " No function execution hits recorded."}
@@ -2314,55 +2098,28 @@ export default function UnitTestTraceabilityMatrix({
                                                   }
                                                 )
                                               }
-                                              style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                justifyContent: "space-between",
-                                                padding: "5px 8px",
-                                                borderRadius: 4,
-                                                background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
-                                                fontSize: 11,
-                                                gap: 8,
-                                                cursor: "pointer",
-                                                border: "1px solid transparent",
-                                                transition: "all 0.12s ease",
-                                              }}
-                                              className="hover:border-indigo-500/40 hover:bg-indigo-500/5 group"
+                                              className="flex items-center justify-between px-2 py-1.5 rounded bg-[var(--color-surface)] border border-transparent hover:border-[var(--color-border-strong)] text-[11px] gap-2 cursor-pointer transition-colors duration-150"
                                               title={`Click to view function ${fn.cleanName}() and test case: ${t.title}`}
                                             >
                                               <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                                                <span style={{ color: t.status === "passed" ? "#10b981" : "#ef4444", fontWeight: 700 }}>
+                                                <span className={`font-semibold ${t.status === "passed" ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>
                                                   {t.status === "passed" ? "✓" : "✗"}
                                                 </span>
                                                 <span
-                                                  style={{
-                                                    fontFamily: "var(--font-mono)",
-                                                    color: isLight ? "#1e293b" : "#e2e8f0",
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
-                                                    whiteSpace: "nowrap",
-                                                    maxWidth: 340,
-                                                  }}
+                                                  className="font-mono text-[var(--color-text)] truncate max-w-[340px]"
                                                   title={t.title}
                                                 >
                                                   {t.title}
                                                 </span>
                                                 <span
-                                                  style={{
-                                                    fontSize: 9.5,
-                                                    fontWeight: 700,
-                                                    padding: "1px 5px",
-                                                    borderRadius: 3,
-                                                    background: t.bg || "rgba(16, 185, 129, 0.12)",
-                                                    color: t.color || "#10b981",
-                                                  }}
+                                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] shrink-0"
                                                 >
                                                   {t.badge || "Happy Path"}
                                                 </span>
                                               </div>
 
                                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                                                <span style={{ fontSize: 10, color: isLight ? "#64748b" : "#8b949e" }}>
+                                                <span className="text-[10px] font-mono tabular-nums text-[var(--color-text-muted)]">
                                                   {t.duration || 0}ms
                                                 </span>
                                                 <button
@@ -2380,18 +2137,7 @@ export default function UnitTestTraceabilityMatrix({
                                                       }
                                                     );
                                                   }}
-                                                  style={{
-                                                    background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.16)",
-                                                    border: "none",
-                                                    color: "#6366f1",
-                                                    cursor: "pointer",
-                                                    fontSize: 10.5,
-                                                    padding: "2px 6px",
-                                                    borderRadius: 4,
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 3,
-                                                  }}
+                                                  className="bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer text-[10.5px] px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors duration-150"
                                                   title={`Open function ${fn.cleanName}() and test suite: ${t.suiteFileName}`}
                                                 >
                                                   <span>{t.suiteFileName}</span>
@@ -2483,23 +2229,11 @@ export default function UnitTestTraceabilityMatrix({
                                       </div>
                                     )}
                                     <div
-                                      style={{
-                                        padding: "8px 12px",
-                                        borderRadius: 6,
-                                        background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
-                                        border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.25)",
-                                        fontSize: 11.5,
-                                        color: isLight ? "#92400e" : "#fde68a",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        flexWrap: "wrap",
-                                        gap: 8,
-                                      }}
+                                      className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-amber-500/70 text-[11.5px] text-[var(--color-text-secondary)] flex items-center justify-between flex-wrap gap-2"
                                     >
                                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                        <AlertCircle size={13} style={{ color: "#f59e0b", flexShrink: 0 }} />
-                                        <span style={{ fontWeight: 700 }}>Coverage Gap:</span>
+                                        <AlertCircle size={13} className="text-amber-500/80 shrink-0" />
+                                        <span className="font-semibold text-[var(--color-text)]">Coverage Gap:</span>
                                         <span>
                                           {proofData.uncoveredLines?.length > 0 ? `${proofData.uncoveredLines.length} uncovered lines` : ""}
                                           {proofData.uncoveredBranches?.length > 0 ? ` (${proofData.uncoveredBranches.length} uncovered branches)` : ""}
@@ -2512,36 +2246,48 @@ export default function UnitTestTraceabilityMatrix({
                                       {hasPending ? (
                                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                            <CheckCircle2 size={12} style={{ color: isLight ? "#15803d" : "#4ade80" }} />
-                                            <span style={{ fontSize: 11.5, fontWeight: 700, color: isLight ? "#15803d" : "#4ade80" }}>
+                                            <CheckCircle2 size={12} className="text-emerald-500/80" />
+                                            <span className="text-[11.5px] font-medium text-[var(--color-text)]">
                                               {(fileSugs?.length || 0)} test suggestion{(fileSugs?.length || 0) > 1 ? "s" : ""} ready
                                             </span>
                                           </div>
                                           {onReviewDiff && (
                                             <button
                                               onClick={() => onReviewDiff(fn.filePath)}
-                                              style={{
-                                                padding: "3px 10px",
-                                                borderRadius: 5,
-                                                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
-                                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.2)",
-                                                color: isLight ? "#1e293b" : "#f1f5f9",
-                                                fontSize: 11,
-                                                fontWeight: 650,
-                                                cursor: "pointer",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 4,
-                                              }}
-                                              className="hover:opacity-90"
+                                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
                                               title="Inspect side-by-side Monaco diff"
                                             >
-                                              <FileDiff size={12} style={{ color: "#6366f1" }} />
+                                              <FileDiff size={12} className="text-[var(--color-text-muted)]" />
                                               <span>Review Diff</span>
                                             </button>
                                           )}
                                         </div>
-                                      ) : null}
+                                      ) : (
+                                        onSuggestTestcase && (
+                                          <button
+                                            onClick={() => onSuggestTestcase(fn.filePath, fn.functionName || fn.name)}
+                                            disabled={isSuggesting}
+                                            className={`px-3 py-1 rounded-md border text-[11px] font-semibold flex items-center gap-1.5 transition-colors duration-150 ${
+                                              isSuggesting
+                                                ? "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)] cursor-wait"
+                                                : "bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-primary-foreground)] cursor-pointer"
+                                            }`}
+                                            title={`Generate unit tests for ${cleanPath} covering uncovered branches and logic`}
+                                          >
+                                            {isSuggesting ? (
+                                              <>
+                                                <Loader2 size={11} className="animate-spin" />
+                                                <span>Generating tests for file...</span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <FileCode2 size={11} />
+                                                <span>Suggest Tests for File</span>
+                                              </>
+                                            )}
+                                          </button>
+                                        )
+                                      )}
                                     </div>
 
                                     {(() => {
@@ -2557,24 +2303,16 @@ export default function UnitTestTraceabilityMatrix({
                                       const missingPkg = errSug?.missingDependency || extractMissingPackageFromError(errText);
                                       return (
                                         <div
-                                          style={{
-                                            padding: "8px 12px",
-                                            borderRadius: 6,
-                                            background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-                                            border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.35)",
-                                            color: isLight ? "#991b1b" : "#fca5a5",
-                                            fontSize: 11,
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            gap: 8,
-                                            flexWrap: "wrap",
-                                          }}
+                                          className={`px-3 py-2 rounded-md border border-l-2 text-[11px] flex items-center justify-between gap-2 flex-wrap ${
+                                            isLight
+                                              ? "bg-rose-50/70 border-rose-200 border-l-rose-500 text-rose-800"
+                                              : "bg-[var(--color-bg)] border-[var(--color-border)] border-l-rose-400/75 text-[var(--color-text-secondary)]"
+                                          }`}
                                         >
                                           <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 220 }}>
-                                            <AlertCircle size={13} style={{ color: "#ef4444", flexShrink: 0 }} />
+                                            <AlertCircle size={13} className="text-rose-400 shrink-0" />
                                             <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                                              <b>Test Runner Error:</b> {errText}
+                                              <b className="text-[var(--color-text)]">Test Runner Error:</b> {errText}
                                             </span>
                                           </div>
                                           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
@@ -2589,20 +2327,11 @@ export default function UnitTestTraceabilityMatrix({
                                                   )
                                                 }
                                                 disabled={installingDependencyName === missingPkg.packageName}
-                                                style={{
-                                                  padding: "4px 10px",
-                                                  borderRadius: 5,
-                                                  background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
-                                                  color: "#ffffff",
-                                                  border: "none",
-                                                  cursor: installingDependencyName === missingPkg.packageName ? "not-allowed" : "pointer",
-                                                  fontSize: 11,
-                                                  fontWeight: 700,
-                                                  display: "flex",
-                                                  alignItems: "center",
-                                                  gap: 4,
-                                                  boxShadow: "0 1px 4px rgba(245, 158, 11, 0.3)",
-                                                }}
+                                                className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold flex items-center gap-1 transition-colors duration-150 ${
+                                                  installingDependencyName === missingPkg.packageName
+                                                    ? "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)] cursor-not-allowed"
+                                                    : "bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-primary-foreground)] cursor-pointer"
+                                                }`}
                                                 title={`Install missing npm package '${missingPkg.packageName}' and automatically re-run tests`}
                                               >
                                                 {installingDependencyName === missingPkg.packageName ? (
@@ -2621,16 +2350,11 @@ export default function UnitTestTraceabilityMatrix({
                                             {onApplyAllFileSuggestions && (
                                               <button
                                                 onClick={() => onApplyAllFileSuggestions(fn.filePath, fileSugs)}
-                                                style={{
-                                                  padding: "4px 10px",
-                                                  borderRadius: 5,
-                                                  background: "#ef4444",
-                                                  color: "#ffffff",
-                                                  border: "none",
-                                                  cursor: "pointer",
-                                                  fontSize: 10.5,
-                                                  fontWeight: 700,
-                                                }}
+                                                className={`px-2.5 py-1 rounded-md border text-[10.5px] font-semibold cursor-pointer transition-colors duration-150 ${
+                                                  isLight
+                                                    ? "bg-white hover:bg-rose-50 border-rose-300 text-rose-700"
+                                                    : "bg-[var(--color-surface)] hover:bg-rose-500/10 border-rose-500/30 text-rose-300/90"
+                                                }`}
                                               >
                                                 Retry
                                               </button>
@@ -2661,21 +2385,11 @@ export default function UnitTestTraceabilityMatrix({
                                   </div>
                                 ) : (
                                   <div
-                                    style={{
-                                      padding: "8px 12px",
-                                      borderRadius: 6,
-                                      background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.08)",
-                                      border: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.25)",
-                                      fontSize: 11.5,
-                                      color: isLight ? "#065f46" : "#6ee7b7",
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 6,
-                                    }}
+                                    className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-emerald-500/60 text-[11.5px] text-[var(--color-text-secondary)] flex items-center gap-1.5"
                                   >
-                                    <CheckCircle2 size={14} style={{ color: "#10b981", flexShrink: 0 }} />
+                                    <CheckCircle2 size={14} className="text-emerald-500/80 shrink-0" />
                                     <span>
-                                      <strong>100% Covered:</strong> This function is fully exercised across statements, branches, and lines with verified execution.
+                                      <strong className="text-[var(--color-text)]">100% Covered:</strong> This function is fully exercised across statements, branches, and lines with verified execution.
                                     </span>
                                   </div>
                                 )}
@@ -2687,7 +2401,7 @@ export default function UnitTestTraceabilityMatrix({
 
                       {/* Secondary Internal Callbacks & Arrow Functions Section */}
                       {secondaryCallbacks?.length > 0 && (
-                        <div style={{ marginTop: 6, paddingTop: 8, borderTop: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255, 255, 255, 0.08)" }}>
+                        <div className="mt-1.5 pt-2 border-t border-dashed border-[var(--color-border)]">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2698,24 +2412,13 @@ export default function UnitTestTraceabilityMatrix({
                                 return next;
                               });
                             }}
-                            style={{
-                              background: "transparent",
-                              border: "none",
-                              cursor: "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              fontSize: 11,
-                              fontWeight: 650,
-                              color: isLight ? "#64748b" : "#94a3b8",
-                              padding: "4px 2px",
-                            }}
+                            className="bg-transparent border-0 cursor-pointer flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] py-1 px-0.5 transition-colors duration-150"
                           >
                             {isCallbacksExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                            <span>{isCallbacksExpanded ? "Hide" : "Show"} {secondaryCallbacks?.length || 0} internal callback{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""} & arrow function{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""}</span>
+                            <span>{isCallbacksExpanded ? "Hide" : "Show"} {secondaryCallbacks?.length || 0} internal callback{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""} &amp; arrow function{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""}</span>
                           </button>
                           {isCallbacksExpanded && (
-                            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 10 }}>
+                            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
                               {secondaryCallbacks.map((fn) => {
                                 const fnId = `${fn.filePath}:${fn.cleanName}`;
                                 const isFnExpanded = expandedFunctions.has(fnId);
@@ -2723,34 +2426,22 @@ export default function UnitTestTraceabilityMatrix({
                                 return (
                                   <div
                                     key={fnId}
-                                    style={{
-                                      borderRadius: 8,
-                                      background: isLight ? "#fbfcfe" : "rgba(15, 23, 42, 0.35)",
-                                      border: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.1)",
-                                      overflow: "hidden",
-                                    }}
+                                    className="rounded-lg bg-[var(--color-bg)] border border-dashed border-[var(--color-border)] overflow-hidden"
                                   >
                                     <div
                                       onClick={() => toggleExpandFunction(fnId, fn.filePath)}
-                                      style={{
-                                        padding: "8px 14px",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        cursor: "pointer",
-                                        userSelect: "none",
-                                      }}
+                                      className="px-3.5 py-2 flex items-center justify-between cursor-pointer select-none hover:bg-[var(--color-surface-secondary)]/60 transition-colors duration-150"
                                     >
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                        {isFnExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                        <Code2 size={13} style={{ color: isCovered ? "#0284c7" : "#f59e0b" }} />
-                                        <span style={{ fontSize: 12, fontWeight: 650, fontFamily: "var(--font-mono)", color: isLight ? "#475569" : "#cbd5e1" }}>
+                                        {isFnExpanded ? <ChevronDown size={12} className="text-[var(--color-text-muted)]" /> : <ChevronRight size={12} className="text-[var(--color-text-muted)]" />}
+                                        <Code2 size={13} className={isCovered ? "text-[var(--color-text-secondary)]" : "text-amber-500/80"} />
+                                        <span className="text-[12px] font-medium font-mono text-[var(--color-text-secondary)]">
                                           {fn.cleanName}()
                                         </span>
-                                        <span style={{ fontSize: 10, color: isLight ? "#64748b" : "#94a3b8", background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)", padding: "1px 5px", borderRadius: 4 }}>
+                                        <span className="text-[10px] text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
                                           callback
                                         </span>
-                                        <span style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", fontFamily: "var(--font-mono)" }}>
+                                        <span className="text-[10.5px] text-[var(--color-text-muted)] font-mono tabular-nums">
                                           L{fn.startLine || 1}{fn.endLine ? ` - L${fn.endLine}` : ""}
                                         </span>
                                         <button
@@ -2758,51 +2449,24 @@ export default function UnitTestTraceabilityMatrix({
                                             e.stopPropagation();
                                             onOpenFile?.(fn.filePath, fn.startLine, fn.cleanName, fn.endLine);
                                           }}
-                                          style={{
-                                            background: "transparent",
-                                            border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
-                                            borderRadius: 4,
-                                            color: isLight ? "#4f46e5" : "#a5b4fc",
-                                            cursor: "pointer",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 3,
-                                            fontSize: 10,
-                                            fontWeight: 650,
-                                            padding: "1px 5px",
-                                          }}
+                                          className="bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 transition-colors duration-150"
                                         >
                                           <FileCode size={9} />
                                           <span>View</span>
                                         </button>
                                         <span
-                                          style={{
-                                            fontSize: 9.5,
-                                            fontWeight: 700,
-                                            padding: "1px 5px",
-                                            borderRadius: 4,
-                                            background: "rgba(16, 185, 129, 0.1)",
-                                            color: "#10b981",
-                                            border: "1px solid rgba(16, 185, 129, 0.3)",
-                                          }}
+                                          className="text-[9.5px] font-mono tabular-nums font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
                                         >
                                           CC: {fn.complexity || 1}
                                         </span>
                                       </div>
                                       <div>
                                         <span
-                                          style={{
-                                            fontSize: 10.5,
-                                            fontWeight: 650,
-                                            padding: "2px 7px",
-                                            borderRadius: 4,
-                                            background: (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
-                                              ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
-                                              : (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)"),
-                                            color: (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
-                                              ? (isLight ? "#dc2626" : "#f87171")
-                                              : (isLight ? "#059669" : "#4ade80"),
-                                          }}
+                                          className={`text-[10.5px] font-mono tabular-nums font-medium px-2 py-0.5 rounded border ${
+                                            (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
+                                              ? (isLight ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90")
+                                              : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                                          }`}
                                         >
                                           {(!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0 ? "Uncovered" : `${fn.hit || fn.tests?.length || 1} hits`}
                                         </span>
@@ -2835,52 +2499,24 @@ export default function UnitTestTraceabilityMatrix({
       {/* ── SECTION 3: FILE 4-METRIC CALCULATION & EXECUTION PROOF MODAL ── */}
       {inspectingFileProof && (
         <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1000,
-            background: "rgba(0, 0, 0, 0.75)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-          }}
+          className="fixed inset-0 z-[1000] bg-black/65 flex items-center justify-center p-5"
           onClick={() => setInspectingFileProof(null)}
         >
           <div
-            style={{
-              width: "100%",
-              maxWidth: 960,
-              maxHeight: "90vh",
-              background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-              border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-              borderRadius: 12,
-              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.4)",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
+            className="w-full max-w-[960px] max-h-[90vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
             <div
-              style={{
-                padding: "16px 20px",
-                borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
+              className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3"
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Calculator size={18} style={{ color: "#6366f1" }} />
+                <Calculator size={17} className="text-[var(--color-primary)] shrink-0" />
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
-                    4-Metric Calculation & Execution Proof: <span style={{ fontFamily: "var(--font-mono)", color: "#6366f1" }}>{cleanDisplayPath(inspectingFileProof)}</span>
+                  <div className="text-[13.5px] font-semibold text-[var(--color-text)]">
+                    4-Metric Calculation &amp; Execution Proof: <span className="font-mono text-[var(--color-text-secondary)]">{cleanDisplayPath(inspectingFileProof)}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8" }}>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
                     Mathematical formulation, Istanbul counter traces, and execution proof for this file
                   </div>
                 </div>
@@ -2889,26 +2525,14 @@ export default function UnitTestTraceabilityMatrix({
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button
                   onClick={() => onOpenFile?.(inspectingFileProof)}
-                  style={{
-                    padding: "4px 10px",
-                    borderRadius: 5,
-                    background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)",
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.15)",
-                    color: isLight ? "#334155" : "#e2e8f0",
-                    fontSize: 11.5,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
+                  className="px-2.5 py-1 rounded-md bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[11.5px] font-medium cursor-pointer flex items-center gap-1.5 transition-colors duration-150"
                 >
-                  <FileCode size={11} />
+                  <FileCode size={12} />
                   <span>View File Code</span>
                 </button>
                 <button
                   onClick={() => setInspectingFileProof(null)}
-                  style={{ background: "transparent", border: "none", color: isLight ? "#64748b" : "#94a3b8", cursor: "pointer", padding: 4 }}
+                  className="bg-transparent border-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer p-1 transition-colors duration-150"
                 >
                   <X size={18} />
                 </button>
@@ -2916,7 +2540,7 @@ export default function UnitTestTraceabilityMatrix({
             </div>
 
             {/* Modal Content */}
-            <div style={{ padding: "16px 20px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="p-5 overflow-y-auto flex flex-col gap-4">
               {(() => {
                 const targetGroup = groupedByFile.find((g) => g.filePath === inspectingFileProof);
                 const meta = targetGroup?.sourceMeta;
@@ -2951,56 +2575,54 @@ export default function UnitTestTraceabilityMatrix({
 
                 return (
                   <>
-                    {/* Top 4 Metrics Summary Cards */}
+                    {/* Unified Top 4 Metrics Summary Strip */}
                     <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                        gap: 10,
-                      }}
+                      className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[var(--color-border)] border border-[var(--color-border)] rounded-lg overflow-hidden"
                     >
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>1. Statements Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: Number(stmtsPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{stmtsPct}%</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{stmtsCovered} / {stmtsTotal} statements covered</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">1. Statements Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${Number(stmtsPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{stmtsPct}%</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{stmtsCovered} / {stmtsTotal} statements covered</div>
                       </div>
 
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>2. Branches Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: Number(branchesPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{branchesPct}%</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{branchesTotal === 0 ? "0 branches (straight-line flow)" : `${branchesCovered} / ${branchesTotal} paths taken`}</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">2. Branches Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${Number(branchesPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{branchesPct}%</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{branchesTotal === 0 ? "0 branches (straight-line flow)" : `${branchesCovered} / ${branchesTotal} paths taken`}</div>
                       </div>
 
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>3. Functions Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: funcsTotal === 0 ? (isLight ? "#64748b" : "#94a3b8") : Number(funcsPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{funcsTotal === 0 ? "N/A (0 fns)" : `${funcsPct}%`}</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{funcsTotal === 0 ? "0 declared functions (N/A)" : `${funcsCovered} / ${funcsTotal} functions invoked`}</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">3. Functions Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${funcsTotal === 0 ? "bg-[var(--color-text-muted)]/50" : Number(funcsPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{funcsTotal === 0 ? "N/A (0 fns)" : `${funcsPct}%`}</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{funcsTotal === 0 ? "0 declared functions (N/A)" : `${funcsCovered} / ${funcsTotal} functions invoked`}</div>
                       </div>
 
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>4. Lines Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: Number(linesPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{linesPct}%</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{linesCovered} / {linesTotal} executable lines hit</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">4. Lines Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${Number(linesPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{linesPct}%</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{linesCovered} / {linesTotal} executable lines hit</div>
                       </div>
                     </div>
 
                     {/* Mathematical Proof Statement */}
                     <div
-                      style={{
-                        padding: "12px 16px",
-                        borderRadius: 8,
-                        background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.08)",
-                        border: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.25)",
-                        fontSize: 12,
-                        color: isLight ? "#065f46" : "#6ee7b7",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
+                      className="px-3.5 py-2.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-emerald-500/60 text-[12px] text-[var(--color-text-secondary)] flex items-center gap-2.5"
                     >
-                      <CheckCheck size={16} style={{ color: "#10b981", flexShrink: 0 }} />
+                      <CheckCheck size={16} className="text-emerald-500/80 shrink-0" />
                       <div>
-                        <strong>Mathematical Proof of 100% Passing Status:</strong> This source file reached 100% across all 4 criteria because:
+                        <strong className="text-[var(--color-text)]">Mathematical Proof of 100% Passing Status:</strong> This source file reached 100% across all 4 criteria because:
                         (1) Every statement in AST was executed;
                         (2) All conditional branches had both truthy and falsy paths traversed by test assertions;
                         (3) All business functions were called in hermetic RAM sandbox; and
@@ -3009,7 +2631,7 @@ export default function UnitTestTraceabilityMatrix({
                     </div>
 
                     {/* Modal Subtabs */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: 8 }}>
+                    <div className="flex items-center gap-4 border-b border-[var(--color-border)]">
                       {[
                         { id: "overview", label: "Overview & Formulas" },
                         { id: "statements", label: `Statements (${fileCov?.statements?.length || stmtsTotal})` },
@@ -3020,16 +2642,11 @@ export default function UnitTestTraceabilityMatrix({
                         <button
                           key={tab.id}
                           onClick={() => setFileModalTab(tab.id)}
-                          style={{
-                            padding: "4px 10px",
-                            borderRadius: 5,
-                            fontSize: 11.5,
-                            fontWeight: fileModalTab === tab.id ? 700 : 550,
-                            cursor: "pointer",
-                            background: fileModalTab === tab.id ? (isLight ? "#6366f1" : "#4f46e5") : "transparent",
-                            color: fileModalTab === tab.id ? "#ffffff" : (isLight ? "#475569" : "#cbd5e1"),
-                            border: "none",
-                          }}
+                          className={`pb-2 px-0.5 text-[12px] cursor-pointer bg-transparent border-x-0 border-t-0 border-b-2 transition-colors duration-150 ${
+                            fileModalTab === tab.id
+                              ? "border-b-[var(--color-primary)] text-[var(--color-text)] font-semibold"
+                              : "border-b-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium"
+                          }`}
                         >
                           {tab.label}
                         </button>
@@ -3038,53 +2655,53 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 1: Overview & Formulas */}
                     {fileModalTab === "overview" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 11.5, color: isLight ? "#334155" : "#cbd5e1" }}>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#6366f1" }}>Statements Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>Statements = ({stmtsCovered} / {stmtsTotal}) × 100% = {stmtsPct}%</div>
+                      <div className="flex flex-col gap-2.5 text-[11.5px] text-[var(--color-text-secondary)]">
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Statements Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">Statements = ({stmtsCovered} / {stmtsTotal}) × 100% = {stmtsPct}%</div>
                         </div>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#0284c7" }}>Branches Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Branches Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">
                             {branchesTotal === 0
                               ? "Branches = 100.0% (Straight-line execution flow: No conditional branches in file)"
                               : `Branches = (${branchesCovered} / ${branchesTotal}) × 100% = ${branchesPct}%`}
                           </div>
                         </div>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#10b981" }}>Functions Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>Functions = ({funcsCovered} / {funcsTotal}) × 100% = {funcsPct}%</div>
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Functions Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">Functions = ({funcsCovered} / {funcsTotal}) × 100% = {funcsPct}%</div>
                         </div>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#f59e0b" }}>Lines Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>Lines = ({linesCovered} / {linesTotal}) × 100% = {linesPct}%</div>
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Lines Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">Lines = ({linesCovered} / {linesTotal}) × 100% = {linesPct}%</div>
                         </div>
                       </div>
                     )}
 
                     {/* Tab 2: Statements Map */}
                     {fileModalTab === "statements" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {fileCov?.statements?.length ? (
                           fileCov.statements.map((s, idx) => (
-                            <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 2, padding: "4px 8px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span style={{ fontFamily: "var(--font-mono)", color: isLight ? "#1e293b" : "#e2e8f0" }}>
+                            <div key={idx} className="flex flex-col gap-0.5 px-2.5 py-1.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[var(--color-text)]">
                                   L{s.startLine}: {s.codeSnippet || s.type}
                                 </span>
-                                <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
-                                  {s.hits} hits ({s.hits > 0 ? "✓ Covered" : "Uncovered"})
+                                <span className={`font-mono tabular-nums font-semibold ${s.hits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>
+                                  {s.hits} hits ({s.hits > 0 ? "Covered" : "Uncovered"})
                                 </span>
                               </div>
                               {s.hits === 0 && (s.uncoverageReason || s.reason) && (
-                                <div style={{ fontSize: 10, color: isLight ? "#b45309" : "#fcd34d" }}>
+                                <div className={`text-[10px] ${isLight ? "text-amber-700" : "text-amber-300/85"}`}>
                                   <b>Reason:</b> {s.uncoverageReason || s.reason}
                                 </div>
                               )}
                             </div>
                           ))
                         ) : (
-                          <div style={{ padding: 20, textAlign: "center", color: isLight ? "#64748b" : "#8b949e" }}>
+                          <div className="p-5 text-center text-[var(--color-text-muted)]">
                             {isLoading ? "Loading detailed statement map..." : "All statements in file executed cleanly."}
                           </div>
                         )}
@@ -3093,16 +2710,16 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 3: Branches Decision Table */}
                     {fileModalTab === "branches" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {fileCov?.branches?.length ? (
                           fileCov.branches.map((b, idx) => (
-                            <div key={idx} style={{ padding: "6px 10px", borderRadius: 6, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: isLight ? "#0f172a" : "#f8fafc" }}>
+                            <div key={idx} className="px-2.5 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono font-semibold text-[var(--color-text)]">
                                   L{b.line}: <code>{b.condition}</code>
                                 </span>
-                                <span style={{ color: b.isInfeasible ? "#8b5cf6" : b.status === "fully_covered" ? "#10b981" : "#f59e0b", fontWeight: 700 }}>
-                                  {b.isInfeasible ? `🛡️ Infeasible Guard Justified (${b.infeasibleMeta?.badge || b.infeasibleMeta?.type || "Environment Guard"})` : b.status === "fully_covered" ? "✓ Both Paths Traversed (100%)" : "⚠️ Partial Branch"}
+                                <span className={`font-medium ${b.isInfeasible ? "text-[#8B7CFD]" : b.status === "fully_covered" ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-amber-700" : "text-amber-400/90")}`}>
+                                  {b.isInfeasible ? `Infeasible Guard Justified (${b.infeasibleMeta?.badge || b.infeasibleMeta?.type || "Environment Guard"})` : b.status === "fully_covered" ? "Both Paths Traversed (100%)" : "Partial Branch"}
                                 </span>
                               </div>
                               {(() => {
@@ -3114,9 +2731,9 @@ export default function UnitTestTraceabilityMatrix({
                                 const trueHits = bCounts[0] ?? (b.paths?.[0]?.hits ?? (b.status === "fully_covered" ? 1 : 0));
                                 const falseHits = bCounts[1] ?? (b.paths?.[1]?.hits ?? (b.status === "fully_covered" ? 1 : 0));
                                 return (
-                                  <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: 10.5, color: isLight ? "#64748b" : "#94a3b8" }}>
-                                    <span>True Path: <b style={{ color: trueHits > 0 ? "#10b981" : "#ef4444" }}>{trueHits} hits</b></span>
-                                    <span>False Path: <b style={{ color: falseHits > 0 ? "#10b981" : "#ef4444" }}>{falseHits} hits</b></span>
+                                  <div className="flex gap-3 mt-1 text-[10.5px] font-mono tabular-nums text-[var(--color-text-muted)]">
+                                    <span>True Path: <b className={trueHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>{trueHits} hits</b></span>
+                                    <span>False Path: <b className={falseHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>{falseHits} hits</b></span>
                                     <span>Type: {b.type || "if"}</span>
                                   </div>
                                 );
@@ -3133,8 +2750,8 @@ export default function UnitTestTraceabilityMatrix({
                             </div>
                           ))
                         ) : (
-                          <div style={{ padding: 20, textAlign: "center", color: isLight ? "#10b981" : "#4ade80" }}>
-                            ✓ This file contains 0 conditional branches (`if`, `? :`, `switch`, `||`, `??`). 100% straight-line logic verified!
+                          <div className="p-5 text-center text-[var(--color-text-secondary)]">
+                            This file contains 0 conditional branches (`if`, `? :`, `switch`, `||`, `??`). 100% straight-line logic verified.
                           </div>
                         )}
                       </div>
@@ -3142,15 +2759,15 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 4: Functions Call Graph */}
                     {fileModalTab === "functions" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {targetGroup?.functions?.map((f, idx) => (
-                          <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
+                          <div key={idx} className="flex items-center justify-between px-2.5 py-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
                             <div>
-                              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "#6366f1" }}>{f.cleanName}()</span>
-                              <span style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", marginLeft: 6 }}>L{f.startLine || 1}–{f.endLine || (f.startLine + 30)}</span>
+                              <span className="font-mono font-semibold text-[var(--color-text)]">{f.cleanName}()</span>
+                              <span className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-muted)] ml-1.5">L{f.startLine || 1}–{f.endLine || (f.startLine + 30)}</span>
                             </div>
-                            <span style={{ color: "#10b981", fontWeight: 700 }}>
-                              {f.hit || f.tests?.length || 1} invocations (✓ 100% Covered)
+                            <span className="font-mono tabular-nums font-medium text-[var(--color-text-secondary)]">
+                              {f.hit || f.tests?.length || 1} invocations (100% Covered)
                             </span>
                           </div>
                         ))}
@@ -3159,23 +2776,23 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 5: Test Suites Traceability */}
                     {fileModalTab === "tests" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {linkedSuites?.length ? (
                           linkedSuites.map((s, idx) => (
-                            <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
-                              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 650, color: isLight ? "#1e293b" : "#e2e8f0" }}>
+                            <div key={idx} className="flex items-center justify-between px-2.5 py-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
+                              <span className="font-mono font-medium text-[var(--color-text)]">
                                 {s.fileName || s.filePath}
                               </span>
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ color: "#10b981", fontWeight: 700 }}>{s.framework || "JEST"}</span>
-                                <button onClick={() => onOpenFile?.(s.filePath)} style={{ background: "transparent", border: "none", color: "#6366f1", cursor: "pointer", fontSize: 10.5 }}>
+                                <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">{s.framework || "JEST"}</span>
+                                <button onClick={() => onOpenFile?.(s.filePath)} className="bg-transparent border-0 text-[var(--color-primary)] hover:underline cursor-pointer text-[10.5px] font-medium">
                                   Open
                                 </button>
                               </div>
                             </div>
                           ))
                         ) : (
-                          <div style={{ padding: 20, textAlign: "center", color: isLight ? "#64748b" : "#8b949e" }}>
+                          <div className="p-5 text-center text-[var(--color-text-muted)]">
                             Executed via hermetic test runner and integrated unit test suites.
                           </div>
                         )}

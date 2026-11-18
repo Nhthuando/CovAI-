@@ -437,7 +437,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
   }, [processes.bulkApply.isApplying, processes.bulkApply.jobId, processes.bulkApply.snapshotId, scheduleAutoDismiss]);
 
   // Methods for Analysis Process
-  const startAnalysis = useCallback(({ snapshotId, projectId, type = "unit", jobId = null }) => {
+  const startAnalysis = useCallback(({ snapshotId, projectId, type = "unit", jobId = null, progress = null }) => {
     if (autoDismissTimersRef.current.analysis) {
       clearTimeout(autoDismissTimersRef.current.analysis);
       delete autoDismissTimersRef.current.analysis;
@@ -450,7 +450,11 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         snapshotId,
         projectId,
         type,
-        progress: 8,
+        // Keep the queue's latest progress when attaching the global indicator
+        // to a job that was already running before the response arrived.
+        progress: typeof progress === "number"
+          ? Math.max(prev.analysis.jobId === jobId ? prev.analysis.progress : 0, progress)
+          : (prev.analysis.jobId === jobId ? prev.analysis.progress : 8),
         step: "Initializing test analysis environment...",
         error: null,
         completedAt: null,

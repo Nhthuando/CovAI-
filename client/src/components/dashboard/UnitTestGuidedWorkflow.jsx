@@ -1,41 +1,33 @@
 import React, { useState, useMemo } from "react";
 import {
   Play,
-  Package,
-  Download,
   FileCode2,
-  Code2,
   Zap,
   RotateCcw,
   CheckCircle2,
-  AlertCircle,
-  Terminal,
   RefreshCw,
   Loader2,
-  ArrowRight,
   ShieldCheck,
   Activity,
   Layers,
-  FileCheck,
   Check,
   FileDiff,
   ChevronLeft,
   ChevronRight,
   Eye,
-  Info,
-  ExternalLink,
+  Download,
 } from "lucide-react";
 import { ExportUnitTestReportModal } from "./modals/ExportUnitTestReportModal.jsx";
 
 /**
  * UnitTestGuidedWorkflow
- * 
+ *
  * Re-architects the Unit Test process into a clean, intuitive 4-stage sequential workflow:
  * Stage 1: Baseline Measurement (Measure initial coverage from Jest & Vitest)
  * Stage 2: AI Gap Suggestion (Identify AST gaps & generate 4-category test matrix)
  * Stage 3: Traceability & Safe Apply (Review mappings & safely merge into test files)
  * Stage 4: Continuous Verification (Re-measure until 100% invariant is achieved)
- * 
+ *
  * Invariant: Users can click and navigate back to ANY stage at any time to inspect
  * baseline metrics, AI suggestions, diffs, and verification guarantees.
  */
@@ -45,7 +37,6 @@ export default function UnitTestGuidedWorkflow({
   runProgress = 0,
   runningStatus = "",
   runStep = "",
-  activeJobId = null,
   onRun,
   onBulkSuggest,
   onOpenSuggestModal = null,
@@ -60,19 +51,12 @@ export default function UnitTestGuidedWorkflow({
   bulkApplyPhase = "",
   summary = null,
   rawTotals = null,
-  executions = null,
+  executions = [],
   testTotals = null,
   scenarios = null,
   hasExecuted = false,
   isLatestRunFailed = false,
-  hasPartialFailures = false,
-  onRefresh,
-  isRefreshing = false,
-  onOpenJobQueue,
   onOpenReviewModal = null,
-  hasReviewableDiffs = false,
-  activeTab = "guided",
-  onChangeTab,
   isLight = false,
   unitTestVersions = {},
   onSwitchVersion = null,
@@ -90,16 +74,11 @@ export default function UnitTestGuidedWorkflow({
       (v) => v.currentVersion === 1 && (v.versions?.length || 0) > 1
     );
   }, [unitTestVersions]);
-  // Determine current active workflow step index (1-based)
   const linesPct = Number(summary?.coverage?.lines || summary?.linesPct || 0);
   const branchesPct = Number(summary?.coverage?.branches || summary?.branchesPct || 0);
   const functionsPct = Number(summary?.coverage?.functions || summary?.funcsPct || 0);
   const statementsPct = Number(summary?.coverage?.statements || summary?.stmtsPct || 0);
 
-
-
-  // Accurate baseline execution detection:
-  // rawTotals?.lines?.total > 0 alone NEVER indicates that tests have run (total is merely AST line count).
   const hasCoveredItems = Boolean(
     linesPct > 0 ||
     statementsPct > 0 ||
@@ -109,7 +88,9 @@ export default function UnitTestGuidedWorkflow({
     Number(rawTotals?.statements?.covered || 0) > 0
   );
 
-  const isStatusCompleted = summary?.latestRunStatus && !["RUNNING", "PENDING", "QUEUED", "running", "pending", "queued"].includes(summary.latestRunStatus);
+  const isStatusCompleted =
+    summary?.latestRunStatus &&
+    !["RUNNING", "PENDING", "QUEUED", "running", "pending", "queued"].includes(summary.latestRunStatus);
   const hasBaselineRun = Boolean(
     !running &&
     summary && (
@@ -122,7 +103,9 @@ export default function UnitTestGuidedWorkflow({
     )
   );
 
-  const is100Percent = hasBaselineRun && !isLatestRunFailed &&
+  const is100Percent =
+    hasBaselineRun &&
+    !isLatestRunFailed &&
     linesPct >= 100 &&
     (branchesPct >= 100 || rawTotals?.branches?.total === 0) &&
     (functionsPct >= 100 || rawTotals?.functions?.total === 0) &&
@@ -133,12 +116,6 @@ export default function UnitTestGuidedWorkflow({
     summary?.coverage?.isFeasibleLogicCovered ||
     summary?.data?.isFeasibleLogicCovered
   );
-
-  // Determine initial workflow stage:
-  // If already 100% verified or maximum feasible coverage reached -> Stage 4
-  // If pending suggestions exist -> Stage 3
-  // If baseline has already run -> Stage 2 (Suggest Tests)
-  // Otherwise -> Stage 1 (Baseline Measurement)
   const getInitialActiveStage = () => {
     if (running && pendingSuggestionsCount === 0) return 1;
     if (is100Percent || isFeasibleLogicCovered) return 4;
@@ -163,8 +140,6 @@ export default function UnitTestGuidedWorkflow({
     }
     return null;
   }, [bulkApplyProgress, bulkApplyStep]);
-
-  // Reset workflow view when switching snapshots
   React.useEffect(() => {
     const initial = getInitialActiveStage();
     setCurrentStage(initial);
@@ -185,8 +160,6 @@ export default function UnitTestGuidedWorkflow({
       setSelectedStage(null);
     }
   }, [running, currentStage, pendingSuggestionsCount]);
-
-  // When analysis completes while user is on Stage 1, auto-advance to Stage 2
   const prevRunningRef = React.useRef(running);
   React.useEffect(() => {
     if (prevRunningRef.current && !running && !isLatestRunFailed) {
@@ -243,7 +216,13 @@ export default function UnitTestGuidedWorkflow({
       isDone: hasBaselineRun && !isLatestRunFailed && !running,
       isActive: currentStage === 1,
       isViewing: currentViewStep === 1,
-      badge: running ? "⚡ In Progress" : (hasBaselineRun && !isLatestRunFailed) ? "✓ Completed" : isLatestRunFailed ? "❌ Failed" : "Action Required"
+      badge: running
+        ? "In progress"
+        : hasBaselineRun && !isLatestRunFailed
+          ? "Completed"
+          : isLatestRunFailed
+            ? "Failed"
+            : "Action required",
     },
     {
       num: 2,
@@ -256,16 +235,16 @@ export default function UnitTestGuidedWorkflow({
       isActive: currentStage === 2,
       isViewing: currentViewStep === 2,
       badge: isBulkSuggesting
-        ? "⚡ Suggesting..."
+        ? "Suggesting..."
         : pendingSuggestionsCount > 0
-        ? `${pendingSuggestionsCount} tests ready`
-        : is100Percent
-        ? "Fully Optimized"
-        : isFeasibleLogicCovered
-        ? "Feasible Covered"
-        : (hasCompletedSuggest || hasAnyV2 || maxUnlockedStage >= 3)
-        ? "✓ Completed"
-        : "Ready to Suggest"
+          ? `${pendingSuggestionsCount} ready`
+          : is100Percent
+            ? "Optimized"
+            : isFeasibleLogicCovered
+              ? "Feasible"
+              : (hasCompletedSuggest || hasAnyV2 || maxUnlockedStage >= 3)
+                ? "Completed"
+                : "Ready",
     },
     {
       num: 3,
@@ -278,12 +257,12 @@ export default function UnitTestGuidedWorkflow({
       isActive: currentStage === 3,
       isViewing: currentViewStep === 3,
       badge: isBulkApplying
-        ? "⚡ Applying..."
+        ? "Applying..."
         : pendingSuggestionsCount > 0
-        ? `Review (${pendingSuggestionsCount})`
-        : (is100Percent || isFeasibleLogicCovered || hasAnyV2 || maxUnlockedStage >= 4)
-        ? "Merged"
-        : "Pending"
+          ? `Review (${pendingSuggestionsCount})`
+          : (is100Percent || isFeasibleLogicCovered || hasAnyV2 || maxUnlockedStage >= 4)
+            ? "Merged"
+            : "Pending",
     },
     {
       num: 4,
@@ -297,190 +276,103 @@ export default function UnitTestGuidedWorkflow({
       isDone: is100Percent || isFeasibleLogicCovered,
       isActive: currentStage === 4,
       isViewing: currentViewStep === 4,
-      badge: is100Percent ? "100% Verified" : isFeasibleLogicCovered ? "✓ Feasible Verified" : "Continuous Loop"
-    }
+      badge: is100Percent ? "100% verified" : isFeasibleLogicCovered ? "Feasible verified" : "Verification",
+    },
   ];
 
   return (
-    <div
-      style={{
-        marginBottom: 20,
-        background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-        border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-        borderRadius: 12,
-        padding: "16px 20px",
-        boxShadow: isLight
-          ? "0 2px 8px -2px rgba(15, 23, 42, 0.06), 0 1px 3px -1px rgba(15, 23, 42, 0.04)"
-          : "0 4px 18px rgba(0, 0, 0, 0.25)",
-      }}
+    <section
+      data-light={isLight ? "true" : "false"}
+      className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3.5"
     >
-      {/* ── Top Bar: Workflow Stepper Header & Next Action Context ── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12,
-          paddingBottom: 14,
-          borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.06)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.15)",
-              border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.35)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: isLight ? "#4f46e5" : "#a5b4fc",
-            }}
-          >
-            <ShieldCheck size={18} />
+      {/* Top Bar: Workflow Header & Stage Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--color-border)]">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center shrink-0 mt-0.5 text-[var(--color-text-secondary)]">
+            <ShieldCheck size={14} />
           </div>
-          <div>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: isLight ? "#0f172a" : "#f8fafc", display: "flex", alignItems: "center", gap: 8 }}>
-              <span>Guided Unit Test Workflow</span>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "1px 7px",
-                  borderRadius: 12,
-                  background: (is100Percent || isFeasibleLogicCovered)
-                    ? (isLight ? "#ecfdf5" : "rgba(34, 197, 94, 0.15)")
-                    : (isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)"),
-                  color: (is100Percent || isFeasibleLogicCovered)
-                    ? (isLight ? "#059669" : "#4ade80")
-                    : (isLight ? "#2563eb" : "#60a5fa"),
-                  border: (is100Percent || isFeasibleLogicCovered)
-                    ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(34, 197, 94, 0.35)")
-                    : (isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)"),
-                  letterSpacing: "0.4px"
-                }}
-              >
-                {is100Percent ? "✓ 100% VERIFIED" : isFeasibleLogicCovered ? "✓ FEASIBLE COVERED" : `ACTIVE STAGE: ${currentStage} / 4`}
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xs font-semibold text-[var(--color-text)] m-0">
+                Unit Test Workflow
+              </h2>
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono tabular-nums bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    (is100Percent || isFeasibleLogicCovered) ? "bg-emerald-500/65" : "bg-[var(--color-primary)]/75"
+                  }`}
+                />
+                {is100Percent ? "100% verified" : isFeasibleLogicCovered ? "Feasible covered" : `Stage ${currentStage} of 4`}
               </span>
 
               {selectedStage !== null && selectedStage !== currentStage && (
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    padding: "1px 7px",
-                    borderRadius: 12,
-                    background: isLight ? "#fef3c7" : "rgba(245, 158, 11, 0.18)",
-                    color: isLight ? "#b45309" : "#fbbf24",
-                    border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.35)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-[var(--color-bg)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
                   <Eye size={10} />
-                  <span>INSPECTING STAGE {currentViewStep}</span>
+                  <span>Inspecting stage {currentViewStep}</span>
                 </span>
               )}
             </div>
 
-            <div style={{ fontSize: 11.5, color: isLight ? "#64748b" : "#94a3b8", marginTop: 2 }}>
-              {currentViewStep === 1 && "Stage 1: Execute initial baseline test run to record coverage metrics from Jest and Vitest."}
-              {currentViewStep === 2 && "Stage 2: AI automatically identifies uncovered branches and generates complementary tests across 4 categories."}
-              {currentViewStep === 3 && (pendingSuggestionsCount > 0 ? `Stage 3: ${pendingSuggestionsCount} generated unit tests ready across ${pendingFilesCount} files. Review business logic mappings and diffs.` : "Stage 3: Review applied test files, diffs, and AST syntax auto-healing details.")}
-              {currentViewStep === 4 && (is100Percent ? "Stage 4: All 4 metrics (Statements, Branches, Functions, Lines) have reached 100% verified coverage!" : isFeasibleLogicCovered ? "Stage 4: Maximum feasible coverage reached — all remaining branch gaps are mathematically justified defensive guards." : "Stage 4: Running background verification to confirm actual test coverage gains.")}
-            </div>
+            <p className="text-[11px] text-[var(--color-text-muted)] m-0 leading-relaxed">
+              {currentViewStep === 1 &&
+                "Stage 1: Execute initial baseline test run to record coverage metrics from Jest and Vitest."}
+              {currentViewStep === 2 &&
+                "Stage 2: Identify uncovered branches and generate complementary tests across 4 categories."}
+              {currentViewStep === 3 &&
+                (pendingSuggestionsCount > 0
+                  ? `Stage 3: ${pendingSuggestionsCount} generated unit tests ready across ${pendingFilesCount} files. Review diffs and apply.`
+                  : "Stage 3: Review applied test files, diffs, and syntax validation details.")}
+              {currentViewStep === 4 &&
+                (is100Percent
+                  ? "Stage 4: All 4 metrics (Statements, Branches, Functions, Lines) have reached 100% verified coverage."
+                  : isFeasibleLogicCovered
+                    ? "Stage 4: Maximum feasible coverage reached — remaining branch gaps are justified defensive guards."
+                    : "Stage 4: Re-run verification to confirm actual test coverage gains.")}
+            </p>
           </div>
         </div>
 
-        {/* Stage Navigation Quick Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {/* Stage Navigation Controls */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
+            type="button"
             onClick={() => setSelectedStage((prev) => Math.max(1, (prev !== null ? prev : currentStage) - 1))}
             disabled={currentViewStep <= 1}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 5,
-              background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.04)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-              color: isLight ? "#475569" : "#cbd5e1",
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: currentViewStep <= 1 ? "not-allowed" : "pointer",
-              opacity: currentViewStep <= 1 ? 0.4 : 1,
-              display: "flex",
-              alignItems: "center",
-              gap: 3,
-            }}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             title="Go to previous stage"
           >
             <ChevronLeft size={12} />
-            <span>Prev Stage</span>
+            <span>Prev</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setSelectedStage((prev) => Math.min(maxUnlockedStage, (prev !== null ? prev : currentStage) + 1))}
             disabled={currentViewStep >= maxUnlockedStage}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 5,
-              background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.04)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-              color: isLight ? "#475569" : "#cbd5e1",
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: currentViewStep >= maxUnlockedStage ? "not-allowed" : "pointer",
-              opacity: currentViewStep >= maxUnlockedStage ? 0.4 : 1,
-              display: "flex",
-              alignItems: "center",
-              gap: 3,
-            }}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             title={currentViewStep >= maxUnlockedStage ? `Complete Stage ${currentViewStep} first to unlock Stage ${Math.min(4, currentViewStep + 1)}` : "Go to next unlocked stage"}
           >
-            <span>Next Stage</span>
+            <span>Next</span>
             <ChevronRight size={12} />
           </button>
 
           {selectedStage !== null && selectedStage !== currentStage && (
             <button
+              type="button"
               onClick={() => setSelectedStage(null)}
-              style={{
-                padding: "4px 9px",
-                borderRadius: 5,
-                background: isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.2)",
-                border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)",
-                color: isLight ? "#4338ca" : "#c7d2fe",
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium transition-colors cursor-pointer"
               title="Return view to current active workflow step"
             >
               <RotateCcw size={11} />
-              <span>Jump to Stage {currentStage}</span>
+              <span>Stage {currentStage}</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* ── Middle: Interactive 4-Stage Stepper Track ── */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-          gap: 12,
-          marginTop: 14,
-          marginBottom: 16,
-        }}
-      >
+      {/* Interactive 4-Stage Stepper */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
         {steps.map((st) => {
-          const StepIcon = st.icon;
           const isDone = st.isDone;
           const isActive = st.isActive;
           const isViewing = st.isViewing;
@@ -495,118 +387,53 @@ export default function UnitTestGuidedWorkflow({
               role="button"
               tabIndex={isLocked ? -1 : 0}
               aria-disabled={isLocked}
-              style={{
-                borderRadius: 8,
-                padding: "10px 14px",
-                cursor: isLocked ? "not-allowed" : "pointer",
-                opacity: isLocked ? 0.55 : 1,
-                background: isViewing
-                  ? (isLight ? "#f5f3ff" : "rgba(99, 102, 241, 0.16)")
-                  : isActive
-                    ? (isLight ? "#f0f9ff" : "rgba(56, 189, 248, 0.08)")
-                    : isDone
-                      ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.07)")
-                      : (isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)"),
-                border: isViewing
-                  ? (isLight ? "2px solid #6366f1" : "2px solid #818cf8")
-                  : isActive
-                    ? (isLight ? "1.5px solid #38bdf8" : "1.5px solid rgba(56, 189, 248, 0.5)")
-                    : isDone
-                      ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
-                      : (isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)"),
-                boxShadow: isViewing
-                  ? (isLight ? "0 0 0 3px rgba(99, 102, 241, 0.15)" : "0 0 12px rgba(129, 140, 248, 0.25)")
-                  : "none",
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "space-between",
-                gap: 8,
-                transition: "all 0.18s ease",
-                position: "relative",
+              onKeyDown={(e) => {
+                if (!isLocked && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  setSelectedStage(st.num);
+                }
               }}
-              className={isLocked ? "" : "hover:scale-[1.01]"}
               title={isLocked ? `Complete Stage ${st.num - 1} first to unlock Stage ${st.num}` : `Click to view Stage ${st.num} details`}
+              className={`rounded-md p-3 transition-colors duration-150 flex flex-col justify-between gap-2 border ${
+                isLocked
+                  ? "cursor-not-allowed opacity-55 bg-[var(--color-bg)]/40 border-[var(--color-border)]"
+                  : isViewing
+                    ? "cursor-pointer bg-[var(--color-surface-secondary)] border-[var(--color-primary)]/50"
+                    : isActive
+                      ? "cursor-pointer bg-[var(--color-bg)] border-[var(--color-border-strong)]"
+                      : "cursor-pointer bg-[var(--color-bg)]/60 border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
+              }`}
             >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <div
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: "50%",
-                      fontSize: 11,
-                      fontWeight: 750,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      background: isViewing
-                        ? "#6366f1"
-                        : isActive
-                          ? "#0284c7"
-                          : isDone
-                            ? "#16a34a"
-                            : (isLight ? "#cbd5e1" : "rgba(255, 255, 255, 0.12)"),
-                      color: "#ffffff",
-                    }}
-                  >
-                    {isDone ? <Check size={12} strokeWidth={3} /> : st.num}
-                  </div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: isViewing || isActive ? 750 : 650,
-                      color: isViewing
-                        ? (isLight ? "#4338ca" : "#c7d2fe")
-                        : isActive
-                          ? (isLight ? "#0369a1" : "#38bdf8")
-                          : isDone
-                            ? (isLight ? "#15803d" : "#86efac")
-                            : (isLight ? "#475569" : "#94a3b8"),
-                    }}
+                    className={`w-5 h-5 rounded-md text-[11px] font-mono font-semibold flex items-center justify-center shrink-0 border ${
+                      isViewing
+                        ? "bg-[var(--color-primary)]/90 text-[var(--color-primary-foreground)] border-transparent"
+                        : isDone
+                          ? "bg-[var(--color-surface-secondary)] text-emerald-500/80 border-[var(--color-border)]"
+                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border-[var(--color-border)]"
+                    }`}
+                  >
+                    {isDone ? <Check size={11} strokeWidth={2.5} /> : st.num}
+                  </span>
+                  <span
+                    className={`text-xs font-semibold truncate ${
+                      isViewing || isActive
+                        ? "text-[var(--color-text)]"
+                        : "text-[var(--color-text-secondary)]"
+                    }`}
                   >
                     {st.shortTitle}
                   </span>
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  {isViewing && (
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 700,
-                        padding: "1px 5px",
-                        borderRadius: 3,
-                        background: isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.3)",
-                        color: isLight ? "#4338ca" : "#c7d2fe",
-                      }}
-                    >
-                      Viewing
-                    </span>
-                  )}
-                  <span
-                    style={{
-                      fontSize: 9.5,
-                      fontWeight: 700,
-                      padding: "1px 6px",
-                      borderRadius: 4,
-                      background: isActive
-                        ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.25)")
-                        : isDone
-                          ? (isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.2)")
-                          : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)"),
-                      color: isActive
-                        ? (isLight ? "#4338ca" : "#a5b4fc")
-                        : isDone
-                          ? (isLight ? "#166534" : "#4ade80")
-                          : (isLight ? "#64748b" : "#64748b"),
-                    }}
-                  >
-                    {st.badge}
-                  </span>
-                </div>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] shrink-0">
+                  {st.badge}
+                </span>
               </div>
 
-              <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+              <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
                 {st.desc}
               </div>
             </div>
@@ -614,147 +441,98 @@ export default function UnitTestGuidedWorkflow({
         })}
       </div>
 
-      {/* ── Bottom Bar: Unified Smart Call-to-Action Bar ── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12,
-          padding: "12px 16px",
-          borderRadius: 8,
-          background: isLight
-            ? (currentStage === 3 ? "#f0fdf4" : "#f8fafc")
-            : (currentStage === 3 ? "rgba(34, 197, 94, 0.08)" : "rgba(255, 255, 255, 0.03)"),
-          border: isLight
-            ? (currentStage === 3 ? "1px solid #bbf7d0" : "1px solid #e2e8f0")
-            : (currentStage === 3 ? "1px solid rgba(34, 197, 94, 0.25)" : "1px solid rgba(255, 255, 255, 0.06)"),
-        }}
-      >
-        {/* Context Status Message */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      {/* Bottom Unified Action Bar */}
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0 text-xs">
           {running ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Loader2 size={16} className={`animate-spin ${isLight ? "text-indigo-600" : "text-indigo-400"}`} />
-              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#4338ca" : "#c7d2fe" }}>
+            <>
+              <Loader2 size={14} className="animate-spin text-[var(--color-primary)] shrink-0" />
+              <span className="font-medium text-[var(--color-text)]">
                 {runningStatus || runStep || `Running test analysis (${Math.round(runProgress || 0)}%)...`}
               </span>
-            </div>
+            </>
           ) : isBulkApplying ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 260 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Loader2 size={16} className="animate-spin text-green-500" />
-                <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#15803d" : "#86efac" }}>
-                  {bulkApplyStep || "Merging test suites with AST syntax auto-healing & TDZ sanitization..."}
+            <div className="flex flex-col gap-1 min-w-[240px]">
+              <div className="flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin text-[var(--color-primary)] shrink-0" />
+                <span className="font-medium text-[var(--color-text)]">
+                  {bulkApplyStep || "Merging test suites with AST syntax auto-healing..."}
                 </span>
                 {effectiveBulkProgress !== null && (
-                  <span
-                    style={{
-                      fontSize: 10.5,
-                      fontWeight: 700,
-                      padding: "1px 6px",
-                      borderRadius: 10,
-                      background: isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.2)",
-                      color: isLight ? "#15803d" : "#4ade80",
-                      border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.4)",
-                    }}
-                  >
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono tabular-nums bg-[var(--color-surface-secondary)] text-emerald-400 border border-[var(--color-border)]">
                     {effectiveBulkProgress}%
                   </span>
                 )}
               </div>
               {effectiveBulkProgress !== null && (
-                <div style={{ width: "100%", height: 3.5, background: isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.12)", borderRadius: 3, overflow: "hidden" }}>
+                <div className="w-full h-1 rounded-sm bg-[var(--color-surface-secondary)] overflow-hidden">
                   <div
-                    style={{
-                      width: `${effectiveBulkProgress}%`,
-                      height: "100%",
-                      background: "linear-gradient(90deg, #22c55e, #16a34a)",
-                      transition: "width 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
-                    }}
+                    className="h-full bg-emerald-500 transition-all duration-300"
+                    style={{ width: `${effectiveBulkProgress}%` }}
                   />
                 </div>
               )}
             </div>
           ) : isBulkSuggesting ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Loader2 size={16} className="animate-spin text-indigo-500" />
-              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#4f46e5" : "#c7d2fe" }}>
-                Scanning AST branch gaps and generating hermetic test suites...
+            <>
+              <Loader2 size={14} className="animate-spin text-[var(--color-primary)] shrink-0" />
+              <span className="font-medium text-[var(--color-text)]">
+                Scanning AST branch gaps and generating test suites...
               </span>
-            </div>
-
+            </>
           ) : currentViewStep === 3 ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <CheckCircle2 size={16} style={{ color: "#16a34a" }} />
-              <div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: isLight ? "#15803d" : "#4ade80" }}>
+            <>
+              <CheckCircle2 size={14} className="text-emerald-500/75 shrink-0" />
+              <span className="text-[var(--color-text-secondary)]">
+                <strong className="font-medium text-[var(--color-text)]">
                   {pendingSuggestionsCount > 0
                     ? `${pendingSuggestionsCount} generated unit tests ready`
                     : "All generated unit tests merged"}
-                </span>
-                <span style={{ fontSize: 11.5, color: isLight ? "#166534" : "#86efac", marginLeft: 6 }}>
-                  {pendingSuggestionsCount > 0
-                    ? `across ${pendingFilesCount} files. Click Apply All to safely merge into project:`
-                    : "into project test suites. Review merged diffs or run verification below:"}
-                </span>
-              </div>
-            </div>
+                </strong>{" "}
+                {pendingSuggestionsCount > 0
+                  ? `across ${pendingFilesCount} files. Review diffs or apply to project.`
+                  : "into project test suites."}
+              </span>
+            </>
           ) : is100Percent ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <CheckCircle2 size={17} style={{ color: "#16a34a" }} />
-              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#15803d" : "#4ade80" }}>
-                Source code has reached 100% coverage across all 4 metrics. Verified hermetic test suite!
+            <>
+              <CheckCircle2 size={14} className="text-emerald-500/75 shrink-0" />
+              <span className="text-[var(--color-text-secondary)]">
+                Source code has reached 100% coverage across all 4 metrics.
               </span>
-            </div>
+            </>
           ) : isFeasibleLogicCovered ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <CheckCircle2 size={17} style={{ color: "#7c3aed" }} />
-              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#6d28d9" : "#c4b5fd" }}>
-                ✓ Maximum Feasible Coverage Reached — All Remaining Gaps are Justified Guards
+            <>
+              <CheckCircle2 size={14} className="text-[#8B7CFD] shrink-0" />
+              <span className="text-[var(--color-text-secondary)]">
+                Maximum Feasible Coverage Reached — All Remaining Gaps are Justified Guards.
               </span>
-            </div>
+            </>
           ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Activity size={15} style={{ color: isLight ? "#4f46e5" : "#a5b4fc" }} />
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: isLight ? "#334155" : "#cbd5e1" }}>
+            <>
+              <Activity size={14} className="text-[var(--color-text-muted)] shrink-0" />
+              <span className="text-[var(--color-text-secondary)]">
                 {hasBaselineRun
-                  ? `Current coverage: Lines ${linesPct}%, Branches ${branchesPct}%. Click Suggest to cover missing branches.`
-                  : "No test execution recorded yet. Click Run Baseline Analysis to start the workflow."}
+                  ? `Current coverage: Lines ${linesPct}%, Branches ${branchesPct}%. Suggest tests to cover missing branches.`
+                  : "No test execution recorded yet. Run baseline analysis to start."}
               </span>
-            </div>
+            </>
           )}
         </div>
 
-        {/* Unified Primary CTA Button */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {/* Action Buttons */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {currentViewStep === 3 ? (
-            /* Action Group for Stage 3: Review Diff + Apply All */
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-
+            <>
               {onOpenReviewModal && (
                 <button
+                  type="button"
                   onClick={onOpenReviewModal}
                   disabled={isBulkApplying}
-                  style={{
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.06)",
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.16)",
-                    color: isLight ? "#1e293b" : "#f1f5f9",
-                    borderRadius: 7,
-                    padding: "9px 16px",
-                    fontSize: 13,
-                    fontWeight: 650,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    transition: "all 0.15s ease",
-                  }}
-                  className="hover:opacity-90"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
                   title="Inspect side-by-side test file changes and assertions in Monaco Diff Editor"
                 >
-                  <FileDiff size={14} style={{ color: isLight ? "#4f46e5" : "#818cf8" }} />
+                  <FileDiff size={13} className="text-[var(--color-text-muted)]" />
                   <span>
                     {pendingSuggestionsCount > 0
                       ? `Review Diffs (${pendingSuggestionsCount})`
@@ -825,31 +603,15 @@ export default function UnitTestGuidedWorkflow({
 
               {pendingSuggestionsCount > 0 && onApplyAll && (
                 <button
+                  type="button"
                   onClick={onApplyAll}
                   disabled={isBulkApplying}
-                  style={{
-                    background: "#16a34a",
-                    border: "1px solid #15803d",
-                    color: "#ffffff",
-                    borderRadius: 7,
-                    padding: "9px 18px",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: isBulkApplying ? "wait" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                    boxShadow: isLight
-                      ? "0 2px 6px rgba(22, 163, 74, 0.25)"
-                      : "0 2px 10px rgba(22, 163, 74, 0.35)",
-                    transition: "all 0.15s ease",
-                  }}
-                  className="hover:opacity-90"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                   title="Safely merge all generated unit tests into their corresponding test files"
                 >
                   {isBulkApplying ? (
                     <>
-                      <Loader2 size={14} className="animate-spin" />
+                      <Loader2 size={13} className="animate-spin" />
                       <span>
                         {bulkApplyPhase === "merge"
                           ? "Merging Tests..."
@@ -864,204 +626,131 @@ export default function UnitTestGuidedWorkflow({
                     </>
                   ) : (
                     <>
-                      <Zap size={14} />
+                      <Zap size={13} />
                       <span>3. Apply All Generated Tests ({pendingSuggestionsCount})</span>
                     </>
                   )}
                 </button>
               )}
-            </div>
+            </>
           ) : currentViewStep === 2 && onBulkSuggest ? (
-            /* Action Group for Stage 2: Suggest Missing Tests */
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {isFeasibleLogicCovered ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <CheckCircle2 size={16} style={{ color: "#7c3aed" }} />
-                  <span style={{ fontSize: 13, fontWeight: 700, color: isLight ? "#6d28d9" : "#c4b5fd" }}>
-                    Feasible Logic Covered — Remaining Gaps are Justified Guards
-                  </span>
-                </div>
-              ) : (
-                <button
-                  onClick={() => {
-                    if (onOpenSuggestModal) {
-                      onOpenSuggestModal({ isBulk: true });
-                    } else if (onBulkSuggest) {
-                      onBulkSuggest();
-                    }
-                  }}
-                  disabled={isBulkSuggesting}
-                  style={{
-                    background: isLight ? "#4f46e5" : "#6d5dfb",
-                    border: isLight ? "1px solid #4338ca" : "1px solid #5b4be7",
-                    color: "#ffffff",
-                    borderRadius: 7,
-                    padding: "9px 18px",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: isBulkSuggesting ? "wait" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                    boxShadow: isLight
-                      ? "0 2px 6px rgba(79, 70, 229, 0.25)"
-                      : "0 2px 10px rgba(109, 93, 251, 0.35)",
-                    transition: "all 0.15s ease",
-                    opacity: isBulkSuggesting ? 0.7 : 1,
-                  }}
-                  className="hover:opacity-90"
-                  title="Identify uncovered code and generate unit tests"
-                >
-                  {isBulkSuggesting ? <Loader2 size={14} className="animate-spin" /> : <FileCode2 size={14} />}
-                  <span>{isBulkSuggesting ? "Analyzing & suggesting..." : "2. Suggest Missing Tests"}</span>
-                </button>
-              )}
-            </div>
+            isFeasibleLogicCovered ? (
+              <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#8B7CFD]">
+                <CheckCircle2 size={14} />
+                <span>Feasible Logic Covered — Remaining Gaps are Justified Guards</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenSuggestModal) {
+                    onOpenSuggestModal({ isBulk: true });
+                  } else if (onBulkSuggest) {
+                    onBulkSuggest();
+                  }
+                }}
+                disabled={isBulkSuggesting}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                title="Identify uncovered code and generate unit tests"
+              >
+                {isBulkSuggesting ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <FileCode2 size={13} />
+                )}
+                <span>{isBulkSuggesting ? "Analyzing & suggesting..." : "2. Suggest Missing Tests"}</span>
+              </button>
+            )
           ) : currentViewStep === 4 ? (
-            /* Action for Stage 4: Continuous Verification */
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <>
               {onOpenReviewModal && (
                 <button
+                  type="button"
                   onClick={onOpenReviewModal}
-                  style={{
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.06)",
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.16)",
-                    color: isLight ? "#1e293b" : "#f1f5f9",
-                    borderRadius: 7,
-                    padding: "9px 14px",
-                    fontSize: 12.5,
-                    fontWeight: 650,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    transition: "all 0.15s ease",
-                  }}
-                  className="hover:opacity-90"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
                   title="Inspect merged test file diffs in Monaco Diff Editor"
                 >
-                  <FileDiff size={14} style={{ color: isLight ? "#4f46e5" : "#818cf8" }} />
+                  <FileDiff size={13} className="text-[var(--color-text-muted)]" />
                   <span>Review Merged Diffs</span>
                 </button>
               )}
               {onBulkSuggest && !is100Percent && !isFeasibleLogicCovered && (
                 <button
+                  type="button"
                   onClick={onBulkSuggest}
                   disabled={isBulkSuggesting}
-                  style={{
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.06)",
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.16)",
-                    color: isLight ? "#4f46e5" : "#a5b4fc",
-                    borderRadius: 7,
-                    padding: "9px 16px",
-                    fontSize: 12.5,
-                    fontWeight: 650,
-                    cursor: isBulkSuggesting ? "wait" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    transition: "all 0.15s ease",
-                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
                   title="Suggest more tests to cover remaining branch gaps"
                 >
-                  {isBulkSuggesting ? <Loader2 size={13} className="animate-spin" /> : <FileCode2 size={13} />}
+                  {isBulkSuggesting ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <FileCode2 size={13} />
+                  )}
                   <span>Suggest Next Missing Tests</span>
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => setIsExportModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[var(--color-border,#29313D)] bg-[var(--color-surface,#11161D)] text-[var(--color-text,#F8FAFC)] hover:bg-[var(--color-surface-secondary,#171D25)] transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
                 title="Export Unit Test Report (Markdown, JSON, Standalone HTML)"
               >
-                <Download size={13} className="text-[#8B7CFD]" />
+                <Download size={13} className="text-[var(--color-primary)]" />
                 <span>Export Report</span>
               </button>
               <button
+                type="button"
                 onClick={() => onRun && onRun({ restart: true })}
                 disabled={running}
-                style={{
-                  background: (is100Percent || isFeasibleLogicCovered) ? "#16a34a" : (isLight ? "#4f46e5" : "#6d5dfb"),
-                  border: (is100Percent || isFeasibleLogicCovered) ? "1px solid #15803d" : (isLight ? "1px solid #4338ca" : "1px solid #5b4be7"),
-                  color: "#ffffff",
-                  borderRadius: 7,
-                  padding: "9px 18px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: running ? "wait" : "pointer",
-                  opacity: 1,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  boxShadow: (is100Percent || isFeasibleLogicCovered)
-                    ? "0 2px 10px rgba(22, 163, 74, 0.35)"
-                    : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(109, 93, 251, 0.35)"),
-                  transition: "all 0.15s ease",
-                }}
-                className="hover:opacity-90"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                 title="Re-run tests to continuously verify coverage"
               >
                 {running ? (
-                  <RotateCcw size={14} className="animate-spin" />
+                  <RotateCcw size={13} className="animate-spin" />
                 ) : (is100Percent || isFeasibleLogicCovered) ? (
-                  <ShieldCheck size={14} />
+                  <ShieldCheck size={13} />
                 ) : (
-                  <RefreshCw size={14} />
+                  <RefreshCw size={13} />
                 )}
                 <span>
                   {running
                     ? `Verifying Tests (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)`
                     : is100Percent
-                      ? "Re-run Verification (100% Guaranteed)"
+                      ? "Re-run Verification (100%)"
                       : isFeasibleLogicCovered
-                        ? "Re-run Verification (Feasible Logic Covered)"
+                        ? "Re-run Verification (Feasible)"
                         : "4. Run Continuous Verification"}
                 </span>
               </button>
-            </div>
+            </>
           ) : (
-            /* Primary CTA for Stage 1: Run Baseline Analysis */
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <button
-                onClick={() => onRun && onRun({ restart: Boolean(hasBaselineRun || running) })}
-                disabled={running}
-                style={{
-                  background: isLight ? "#4f46e5" : "#6d5dfb",
-                  border: isLight ? "1px solid #4338ca" : "1px solid #5b4be7",
-                  color: "#ffffff",
-                  borderRadius: 7,
-                  padding: "9px 18px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: running ? "wait" : "pointer",
-                  opacity: 1,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  boxShadow: running
-                    ? "0 0 10px rgba(99, 102, 241, 0.4), 0 2px 6px rgba(79, 70, 229, 0.25)"
-                    : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(109, 93, 251, 0.35)"),
-                  transition: "all 0.15s ease",
-                }}
-                className="hover:opacity-90"
-                title={running ? "Analysis is running. Click to restart test execution." : "Run Jest and Vitest to measure source code coverage"}
-              >
-                {running ? (
-                  <RotateCcw size={14} className="animate-spin" />
-                ) : hasBaselineRun ? (
-                  <RefreshCw size={14} />
-                ) : (
-                  <Play size={14} fill="currentColor" />
-                )}
-                <span>
-                  {running
-                    ? `Running Analysis (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)`
-                    : hasBaselineRun
-                      ? "1. Re-run Baseline Analysis"
-                      : "1. Run Baseline Analysis"}
-                </span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => onRun && onRun({ restart: Boolean(hasBaselineRun || running) })}
+              disabled={running}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+              title={
+                running
+                  ? "Analysis is running. Click to restart test execution."
+                  : "Run Jest and Vitest to measure source code coverage"
+              }
+            >
+              {running ? (
+                <RotateCcw size={13} className="animate-spin" />
+              ) : hasBaselineRun ? (
+                <RefreshCw size={13} />
+              ) : (
+                <Play size={13} fill="currentColor" />
+              )}
+              <span>
+                {running
+                  ? `Running Analysis (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)`
+                  : hasBaselineRun
+                    ? "1. Re-run Baseline Analysis"
+                    : "1. Run Baseline Analysis"}
+              </span>
+            </button>
           )}
         </div>
       </div>
@@ -1079,6 +768,6 @@ export default function UnitTestGuidedWorkflow({
           scenarios: scenarios || summary?.scenarios || summary?.data?.scenarios || [],
         }}
       />
-    </div>
+    </section>
   );
 }
