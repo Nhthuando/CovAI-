@@ -1,10 +1,20 @@
 import crypto from "node:crypto";
 import { captureWorkspaceFiles } from "./projectWorkspacePublish.service.js";
 import prisma from "../config/prisma.js";
-import { membershipWhere, resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
-import { assertEditorSnapshotChangeAllowed } from './projectEditorBridge.service.js';
-import { publishProjectEvent, deliverProjectEvent } from './projectEvent.service.js';
-import { readVersionedProjectFile,projectEditableWorkspaceRoot } from "./projectFileVersion.service.js";
+import {
+  membershipWhere,
+  resolveProjectAccess,
+  withProjectGuard,
+} from "./projectAccess.service.js";
+import { assertEditorSnapshotChangeAllowed } from "./projectEditorBridge.service.js";
+import {
+  publishProjectEvent,
+  deliverProjectEvent,
+} from "./projectEvent.service.js";
+import {
+  readVersionedProjectFile,
+  projectEditableWorkspaceRoot,
+} from "./projectFileVersion.service.js";
 import { mutateProjectWorkspace } from "./projectMutation.service.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
@@ -36,7 +46,10 @@ import {
 } from "../utils/nodeProjectValidator.js";
 import { validateArchiveLanguage } from "../utils/languageDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
-import { snapshotWorkspaceRoot, resolveSnapshotFile } from "../utils/snapshotWorkspace.js";
+import {
+  snapshotWorkspaceRoot,
+  resolveSnapshotFile,
+} from "../utils/snapshotWorkspace.js";
 import { cleanupProjectStorageAsync } from "./projectStorageCleanup.service.js";
 
 export { ServiceError };
@@ -77,12 +90,19 @@ function buildTree(dirPath, rootPath = dirPath) {
         const lowerName = item.toLowerCase();
         const ext = path.extname(item).toLowerCase();
 
-        if (lowerName.includes(".test.") || lowerName.includes(".spec.")) lang = "test";
+        if (lowerName.includes(".test.") || lowerName.includes(".spec."))
+          lang = "test";
         else if (ext === ".jsx" || ext === ".tsx") lang = "react";
         else if (ext === ".js" || ext === ".mjs" || ext === ".cjs") lang = "js";
         else if (ext === ".ts") lang = "ts";
         else if (ext === ".json") lang = "json";
-        else if (ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less") lang = "css";
+        else if (
+          ext === ".css" ||
+          ext === ".scss" ||
+          ext === ".sass" ||
+          ext === ".less"
+        )
+          lang = "css";
         else if (ext === ".html" || ext === ".htm") lang = "html";
         else if (ext === ".md") lang = "md";
         else if (
@@ -180,10 +200,14 @@ export const createProject = async ({ input, currentUserId }) => {
   // A new project must show up in the portfolio immediately, not after the
   // overview cache expires.
   try {
-    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
     clearPortfolioCache(effectiveOwnerId);
   } catch (error) {
-    console.error("[createProject] Portfolio cache invalidation failed:", error);
+    console.error(
+      "[createProject] Portfolio cache invalidation failed:",
+      error,
+    );
   }
   return project;
 };
@@ -196,7 +220,10 @@ export const createProject = async ({ input, currentUserId }) => {
  * heals the DB state to "DOING" and returns "DOING".
  * Explicit user overrides ("PAUSED", "COMPLETED", "CANCELLED") are never overwritten.
  */
-export const healProjectLifecycleStatusIfNeeded = async (project, options = {}) => {
+export const healProjectLifecycleStatusIfNeeded = async (
+  project,
+  options = {},
+) => {
   if (!project || typeof project !== "object") return "NOT_STARTED";
 
   const currentStatus = project.lifecycleStatus || "NOT_STARTED";
@@ -209,7 +236,7 @@ export const healProjectLifecycleStatusIfNeeded = async (project, options = {}) 
     (s) =>
       (s?._count?.testRuns || 0) > 0 ||
       (s?._count?.systemScenarios || 0) > 0 ||
-      Boolean(s?.coverageSummaries || s?.coverageSummary)
+      Boolean(s?.coverageSummaries || s?.coverageSummary),
   );
 
   const hasActivity =
@@ -462,7 +489,9 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
       }
 
       const resolvedRootDir = resolveProjectRoot(sourcePath);
-      const validation = await validateNodeProject(resolvedRootDir, { autoCreate: true });
+      const validation = await validateNodeProject(resolvedRootDir, {
+        autoCreate: true,
+      });
 
       await prisma.projectSnapshot.update({
         where: { id: snapshot.id },
@@ -580,7 +609,11 @@ function copyDirRecursive(
 
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const entry of entries) {
-    if (ignoreDirs.includes(entry.name) || entry.name === '.covai-collaboration') continue;
+    if (
+      ignoreDirs.includes(entry.name) ||
+      entry.name === ".covai-collaboration"
+    )
+      continue;
 
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
@@ -602,7 +635,6 @@ function copyDirRecursive(
   return { fileCount, sizeBytes };
 }
 
-
 const COVAI_ADDITIONAL_IGNORED = new Set([
   ".covai-checkpoint.json",
   "playwright-report",
@@ -619,7 +651,7 @@ export async function computeSnapshotContentHash(root) {
   for (const [relPath, info] of files.entries()) {
     const normalized = relPath.replace(/\\/g, "/");
     const isIgnored = [...COVAI_ADDITIONAL_IGNORED].some(
-      (ign) => normalized === ign || normalized.startsWith(`${ign}/`)
+      (ign) => normalized === ign || normalized.startsWith(`${ign}/`),
     );
     if (!isIgnored) {
       entries.push({ path: normalized, sha256: info.sha256 });
@@ -655,9 +687,18 @@ export const resolveWorkingSnapshot = async (projectId) => {
   });
 };
 
-export const activateProjectSnapshot = async ({ projectId, snapshotId, userId }) => {
-  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'integrations.write' });
-  if (!project) throw new ServiceError("Project not found or unauthorized", 404);
+export const activateProjectSnapshot = async ({
+  projectId,
+  snapshotId,
+  userId,
+}) => {
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "integrations.write",
+  });
+  if (!project)
+    throw new ServiceError("Project not found or unauthorized", 404);
 
   const snapshot = await prisma.projectSnapshot.findFirst({
     where: { id: snapshotId, projectId },
@@ -675,15 +716,18 @@ export const activateProjectSnapshot = async ({ projectId, snapshotId, userId })
   });
 
   try {
-    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
     clearPortfolioCache(project.ownerId);
   } catch (_) {}
   try {
-    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
+    const { clearUnifiedDashboardCache } =
+      await import("./unifiedQualityDashboard.service.js");
     clearUnifiedDashboardCache(snapshotId);
   } catch (_) {}
   try {
-    const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
+    const { emitPortfolioProjectUpdated } =
+      await import("../realtime/portfolioSocket.emitter.js");
     emitPortfolioProjectUpdated({
       projectId,
       userId: project.ownerId,
@@ -691,8 +735,12 @@ export const activateProjectSnapshot = async ({ projectId, snapshotId, userId })
     });
   } catch (_) {}
   try {
-    const { emitDashboardMetricsUpdated } = await import("./dashboardEvents.service.js");
-    emitDashboardMetricsUpdated(projectId, { snapshotId, reason: "snapshot-activated" }).catch(() => {});
+    const { emitDashboardMetricsUpdated } =
+      await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, {
+      snapshotId,
+      reason: "snapshot-activated",
+    }).catch(() => {});
   } catch (_) {}
 
   return {
@@ -709,7 +757,11 @@ export const activateProjectSnapshot = async ({ projectId, snapshotId, userId })
 };
 
 export const listProjectSnapshots = async ({ projectId, userId }) => {
-  const { project } = await resolveProjectAccess({projectId,userId,capability:"project.read"});
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "project.read",
+  });
   if (!project) throw new ServiceError("Project not found", 404);
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
@@ -720,7 +772,10 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
   return snapshots.map((snapshot, idx) => {
     let meta = null;
     if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
-      const metaPath = path.join(snapshotWorkspaceRoot(snapshot), ".covai-checkpoint.json");
+      const metaPath = path.join(
+        snapshotWorkspaceRoot(snapshot),
+        ".covai-checkpoint.json",
+      );
       if (fs.existsSync(metaPath)) {
         try {
           meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
@@ -751,7 +806,9 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
         structureAnalysis: snapshot.ProjectStructureAnalysis ?? null,
       }),
       versionNumber: snapshot.versionNumber,
-      contentHash: snapshot.contentHash ? snapshot.contentHash.slice(0, 12) : null,
+      contentHash: snapshot.contentHash
+        ? snapshot.contentHash.slice(0, 12)
+        : null,
       isActive,
       label: snapshot.label || meta?.label || defaultLabel,
       message: meta?.message || defaultMessage,
@@ -765,8 +822,15 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
 const rebaseSnapshotConfigPath = (value, originalRoot, targetRoot) => {
   if (!value || !path.isAbsolute(value)) return value;
   const relative = path.relative(originalRoot, value);
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new ServiceError('Snapshot configuration must stay inside its project workspace', 422);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new ServiceError(
+      "Snapshot configuration must stay inside its project workspace",
+      422,
+    );
   }
   return path.join(targetRoot, relative);
 };
@@ -777,7 +841,11 @@ export const createProjectCheckpoint = async ({
   label,
   message,
 }) => {
-  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'integrations.write' });
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "integrations.write",
+  });
   if (!project)
     throw new ServiceError("Project not found or unauthorized", 404);
 
@@ -808,10 +876,12 @@ export const createProjectCheckpoint = async ({
     const activeRoot = projectEditableWorkspaceRoot(activeSnapshot);
     activeSnapshot.contentHash = await computeSnapshotContentHash(activeRoot);
     if (activeSnapshot.contentHash) {
-      await prisma.projectSnapshot.update({
-        where: { id: activeSnapshot.id },
-        data: { contentHash: activeSnapshot.contentHash },
-      }).catch(() => {});
+      await prisma.projectSnapshot
+        .update({
+          where: { id: activeSnapshot.id },
+          data: { contentHash: activeSnapshot.contentHash },
+        })
+        .catch(() => {});
     }
   }
 
@@ -819,27 +889,37 @@ export const createProjectCheckpoint = async ({
     const latestRoot = projectEditableWorkspaceRoot(latestSnapshot);
     latestSnapshot.contentHash = await computeSnapshotContentHash(latestRoot);
     if (latestSnapshot.contentHash) {
-      await prisma.projectSnapshot.update({
-        where: { id: latestSnapshot.id },
-        data: { contentHash: latestSnapshot.contentHash },
-      }).catch(() => {});
+      await prisma.projectSnapshot
+        .update({
+          where: { id: latestSnapshot.id },
+          data: { contentHash: latestSnapshot.contentHash },
+        })
+        .catch(() => {});
     }
   }
 
   // Check against both activeSnapshot AND latestSnapshot
-  if (currentHash && activeSnapshot && currentHash === activeSnapshot.contentHash) {
+  if (
+    currentHash &&
+    activeSnapshot &&
+    currentHash === activeSnapshot.contentHash
+  ) {
     throw new ServiceError(
       `The code hasn't changed compared to Snapshot #${activeSnapshot.versionNumber || 1}`,
       409,
-      "SNAPSHOT_UNCHANGED"
+      "SNAPSHOT_UNCHANGED",
     );
   }
 
-  if (currentHash && latestSnapshot && currentHash === latestSnapshot.contentHash) {
+  if (
+    currentHash &&
+    latestSnapshot &&
+    currentHash === latestSnapshot.contentHash
+  ) {
     throw new ServiceError(
       `The code hasn't changed compared to Snapshot #${latestSnapshot.versionNumber || 1}`,
       409,
-      "SNAPSHOT_UNCHANGED"
+      "SNAPSHOT_UNCHANGED",
     );
   }
 
@@ -889,7 +969,11 @@ export const createProjectCheckpoint = async ({
 
   let detection = {
     hasJest: activeSnapshot.hasJest,
-    configPath: rebaseSnapshotConfigPath(activeSnapshot.jestConfigPath, workspaceRoot, baseStorage),
+    configPath: rebaseSnapshotConfigPath(
+      activeSnapshot.jestConfigPath,
+      workspaceRoot,
+      baseStorage,
+    ),
     jestCommand: activeSnapshot.jestCommand,
   };
   try {
@@ -899,69 +983,109 @@ export const createProjectCheckpoint = async ({
   // Save contentHash in contentHash column and versioned unique string in checksum
   const checksum = `${currentHash || "snap"}_v${newVersionNumber}`;
 
-  const committed = await withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx, access) => {
-    await assertEditorSnapshotChangeAllowed(tx, projectId);
-    if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing checkpoint; try again', 409, 'SNAPSHOT_CHANGED');
-    const newSnapshot = await tx.projectSnapshot.create({
-      data: {
+  const committed = await withProjectGuard(
+    { projectId, userId, capability: "integrations.write" },
+    async (tx, access) => {
+      await assertEditorSnapshotChangeAllowed(tx, projectId);
+      if (access.project.workspaceRevision !== project.workspaceRevision)
+        throw new ServiceError(
+          "Workspace changed while preparing checkpoint; try again",
+          409,
+          "SNAPSHOT_CHANGED",
+        );
+      const newSnapshot = await tx.projectSnapshot.create({
+        data: {
+          projectId,
+          source: activeSnapshot.source,
+          checksum,
+          contentHash: currentHash,
+          versionNumber: newVersionNumber,
+          label: snapshotLabel,
+          commitSha: null,
+          storagePath: baseStorage,
+          rootDir: checkpointAnalysisRoot,
+          hasJest: detection.hasJest,
+          jestConfigPath: detection.configPath,
+          jestCommand: detection.jestCommand,
+          hasVitest: activeSnapshot.hasVitest,
+          vitestCommand: activeSnapshot.vitestCommand,
+          vitestConfigPath: rebaseSnapshotConfigPath(
+            activeSnapshot.vitestConfigPath,
+            workspaceRoot,
+            baseStorage,
+          ),
+          hasPlaywright: activeSnapshot.hasPlaywright,
+          playwrightBrowsers: activeSnapshot.playwrightBrowsers,
+          playwrightCommand: activeSnapshot.playwrightCommand,
+          playwrightConfigPath: rebaseSnapshotConfigPath(
+            activeSnapshot.playwrightConfigPath,
+            workspaceRoot,
+            baseStorage,
+          ),
+          playwrightTestDir: rebaseSnapshotConfigPath(
+            activeSnapshot.playwrightTestDir,
+            workspaceRoot,
+            baseStorage,
+          ),
+          hasCypress: activeSnapshot.hasCypress,
+          cypressCommand: activeSnapshot.cypressCommand,
+          cypressConfigPath: rebaseSnapshotConfigPath(
+            activeSnapshot.cypressConfigPath,
+            workspaceRoot,
+            baseStorage,
+          ),
+          cypressTestDir: rebaseSnapshotConfigPath(
+            activeSnapshot.cypressTestDir,
+            workspaceRoot,
+            baseStorage,
+          ),
+          cypressVersion: activeSnapshot.cypressVersion,
+          testingFrameworksJson: activeSnapshot.testingFrameworksJson,
+          frameworkRecommendationJson:
+            activeSnapshot.frameworkRecommendationJson,
+          selectedTestingFramework: activeSnapshot.selectedTestingFramework,
+        },
+      });
+      const updated = await tx.project.update({
+        where: { id: projectId },
+        data: {
+          workspaceRevision: { increment: 1 },
+          activeSnapshotId: newSnapshot.id,
+        },
+      });
+      const event = await publishProjectEvent({
+        tx,
         projectId,
-        source: activeSnapshot.source,
-        checksum,
-        contentHash: currentHash,
-        versionNumber: newVersionNumber,
-        label: snapshotLabel,
-        commitSha: null,
-        storagePath: baseStorage,
-        rootDir: checkpointAnalysisRoot,
-        hasJest: detection.hasJest,
-        jestConfigPath: detection.configPath,
-        jestCommand: detection.jestCommand,
-        hasVitest: activeSnapshot.hasVitest,
-        vitestCommand: activeSnapshot.vitestCommand,
-        vitestConfigPath: rebaseSnapshotConfigPath(activeSnapshot.vitestConfigPath, workspaceRoot, baseStorage),
-        hasPlaywright: activeSnapshot.hasPlaywright,
-        playwrightBrowsers: activeSnapshot.playwrightBrowsers,
-        playwrightCommand: activeSnapshot.playwrightCommand,
-        playwrightConfigPath: rebaseSnapshotConfigPath(activeSnapshot.playwrightConfigPath, workspaceRoot, baseStorage),
-        playwrightTestDir: rebaseSnapshotConfigPath(activeSnapshot.playwrightTestDir, workspaceRoot, baseStorage),
-        hasCypress: activeSnapshot.hasCypress,
-        cypressCommand: activeSnapshot.cypressCommand,
-        cypressConfigPath: rebaseSnapshotConfigPath(activeSnapshot.cypressConfigPath, workspaceRoot, baseStorage),
-        cypressTestDir: rebaseSnapshotConfigPath(activeSnapshot.cypressTestDir, workspaceRoot, baseStorage),
-        cypressVersion: activeSnapshot.cypressVersion,
-        testingFrameworksJson: activeSnapshot.testingFrameworksJson,
-        frameworkRecommendationJson: activeSnapshot.frameworkRecommendationJson,
-        selectedTestingFramework: activeSnapshot.selectedTestingFramework,
-      },
-    });
-    const updated = await tx.project.update({
-      where: { id: projectId },
-      data: {
-        workspaceRevision: { increment: 1 },
-        activeSnapshotId: newSnapshot.id,
-      },
-    });
-    const event = await publishProjectEvent({ tx, projectId, actorId: userId, type: 'workspace.changed', resourceId: newSnapshot.id, revision: updated.workspaceRevision });
-    return { newSnapshot, event };
-  });
+        actorId: userId,
+        type: "workspace.changed",
+        resourceId: newSnapshot.id,
+        revision: updated.workspaceRevision,
+      });
+      return { newSnapshot, event };
+    },
+  );
   const { newSnapshot } = committed;
   await deliverProjectEvent(committed.event).catch(() => {});
 
   try {
-    const { autoTransitionProjectToDoingIfNeeded } = await import("./job.service.js");
+    const { autoTransitionProjectToDoingIfNeeded } =
+      await import("./job.service.js");
     void autoTransitionProjectToDoingIfNeeded(projectId);
   } catch (_) {}
 
   try {
-    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
     clearPortfolioCache(project.ownerId);
   } catch (_) {}
   try {
-    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
+    const { clearUnifiedDashboardCache } =
+      await import("./unifiedQualityDashboard.service.js");
     clearUnifiedDashboardCache(newSnapshot.id);
   } catch (_) {}
   try {
-    const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
+    const { emitPortfolioProjectUpdated } =
+      await import("../realtime/portfolioSocket.emitter.js");
     emitPortfolioProjectUpdated({
       projectId,
       userId: project.ownerId,
@@ -969,8 +1093,12 @@ export const createProjectCheckpoint = async ({
     });
   } catch (_) {}
   try {
-    const { emitDashboardMetricsUpdated } = await import("./dashboardEvents.service.js");
-    emitDashboardMetricsUpdated(projectId, { snapshotId: newSnapshot.id, reason: "snapshot-created" }).catch(() => {});
+    const { emitDashboardMetricsUpdated } =
+      await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, {
+      snapshotId: newSnapshot.id,
+      reason: "snapshot-created",
+    }).catch(() => {});
   } catch (_) {}
 
   return {
@@ -987,7 +1115,11 @@ export const restoreProjectCheckpoint = async ({
   snapshotId,
   userId,
 }) => {
-  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'snapshot.restore' });
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "snapshot.restore",
+  });
   if (!project)
     throw new ServiceError("Project not found or unauthorized", 404);
 
@@ -1014,14 +1146,26 @@ export const restoreProjectCheckpoint = async ({
   }
 
   const targetWorkspace = projectEditableWorkspaceRoot(targetSnapshot);
-  const targetAnalysisRelative = path.relative(targetWorkspace, targetSnapshot.rootDir);
+  const targetAnalysisRelative = path.relative(
+    targetWorkspace,
+    targetSnapshot.rootDir,
+  );
 
   // Stage the target before changing the working tree, including when restoring
   // the active snapshot itself.
   const restoreCheckpointId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
-  const restoreStorage = path.resolve("storage/projects", projectId, "snapshots", restoreCheckpointId);
+  const restoreStorage = path.resolve(
+    "storage/projects",
+    projectId,
+    "snapshots",
+    restoreCheckpointId,
+  );
   fs.mkdirSync(restoreStorage, { recursive: true });
-  const { fileCount, sizeBytes } = copyDirRecursive(targetWorkspace, restoreStorage, ["node_modules"]);
+  const { fileCount, sizeBytes } = copyDirRecursive(
+    targetWorkspace,
+    restoreStorage,
+    ["node_modules"],
+  );
   const restoreGit = path.join(restoreStorage, ".git");
   if (!fs.existsSync(restoreGit)) {
     try {
@@ -1050,10 +1194,7 @@ export const restoreProjectCheckpoint = async ({
   // another member or worker may still be reading from the historical snapshot.
 
   let targetLabel = targetSnapshot.id.slice(0, 8);
-  const targetMetaPath = path.join(
-    restoreStorage,
-    ".covai-checkpoint.json",
-  );
+  const targetMetaPath = path.join(restoreStorage, ".covai-checkpoint.json");
   if (fs.existsSync(targetMetaPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(targetMetaPath, "utf8"));
@@ -1080,42 +1221,85 @@ export const restoreProjectCheckpoint = async ({
 
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-  const committed = await withProjectGuard({ projectId, userId, capability: 'snapshot.restore' }, async (tx, access) => {
-    await assertEditorSnapshotChangeAllowed(tx, projectId);
-    if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing restore; try again', 409, 'SNAPSHOT_CHANGED');
-    const newSnapshot = await tx.projectSnapshot.create({
-    data: {
-      projectId,
-      source: targetSnapshot.source,
-      checksum,
-      commitSha: null,
-      storagePath: restoreStorage,
-      rootDir: path.join(restoreStorage, targetAnalysisRelative),
-      hasJest: targetSnapshot.hasJest,
-      jestConfigPath: rebaseSnapshotConfigPath(targetSnapshot.jestConfigPath, targetWorkspace, restoreStorage),
-      jestCommand: targetSnapshot.jestCommand,
-      hasVitest: targetSnapshot.hasVitest,
-      vitestCommand: targetSnapshot.vitestCommand,
-      vitestConfigPath: rebaseSnapshotConfigPath(targetSnapshot.vitestConfigPath, targetWorkspace, restoreStorage),
-      hasPlaywright: targetSnapshot.hasPlaywright,
-      playwrightBrowsers: targetSnapshot.playwrightBrowsers,
-      playwrightCommand: targetSnapshot.playwrightCommand,
-      playwrightConfigPath: rebaseSnapshotConfigPath(targetSnapshot.playwrightConfigPath, targetWorkspace, restoreStorage),
-      playwrightTestDir: rebaseSnapshotConfigPath(targetSnapshot.playwrightTestDir, targetWorkspace, restoreStorage),
-      hasCypress: targetSnapshot.hasCypress,
-      cypressCommand: targetSnapshot.cypressCommand,
-      cypressConfigPath: rebaseSnapshotConfigPath(targetSnapshot.cypressConfigPath, targetWorkspace, restoreStorage),
-      cypressTestDir: rebaseSnapshotConfigPath(targetSnapshot.cypressTestDir, targetWorkspace, restoreStorage),
-      cypressVersion: targetSnapshot.cypressVersion,
-      testingFrameworksJson: targetSnapshot.testingFrameworksJson,
-      frameworkRecommendationJson: targetSnapshot.frameworkRecommendationJson,
-      selectedTestingFramework: targetSnapshot.selectedTestingFramework,
+  const committed = await withProjectGuard(
+    { projectId, userId, capability: "snapshot.restore" },
+    async (tx, access) => {
+      await assertEditorSnapshotChangeAllowed(tx, projectId);
+      if (access.project.workspaceRevision !== project.workspaceRevision)
+        throw new ServiceError(
+          "Workspace changed while preparing restore; try again",
+          409,
+          "SNAPSHOT_CHANGED",
+        );
+      const newSnapshot = await tx.projectSnapshot.create({
+        data: {
+          projectId,
+          source: targetSnapshot.source,
+          checksum,
+          commitSha: null,
+          storagePath: restoreStorage,
+          rootDir: path.join(restoreStorage, targetAnalysisRelative),
+          hasJest: targetSnapshot.hasJest,
+          jestConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.jestConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          jestCommand: targetSnapshot.jestCommand,
+          hasVitest: targetSnapshot.hasVitest,
+          vitestCommand: targetSnapshot.vitestCommand,
+          vitestConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.vitestConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          hasPlaywright: targetSnapshot.hasPlaywright,
+          playwrightBrowsers: targetSnapshot.playwrightBrowsers,
+          playwrightCommand: targetSnapshot.playwrightCommand,
+          playwrightConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.playwrightConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          playwrightTestDir: rebaseSnapshotConfigPath(
+            targetSnapshot.playwrightTestDir,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          hasCypress: targetSnapshot.hasCypress,
+          cypressCommand: targetSnapshot.cypressCommand,
+          cypressConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.cypressConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          cypressTestDir: rebaseSnapshotConfigPath(
+            targetSnapshot.cypressTestDir,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          cypressVersion: targetSnapshot.cypressVersion,
+          testingFrameworksJson: targetSnapshot.testingFrameworksJson,
+          frameworkRecommendationJson:
+            targetSnapshot.frameworkRecommendationJson,
+          selectedTestingFramework: targetSnapshot.selectedTestingFramework,
+        },
+      });
+      const updated = await tx.project.update({
+        where: { id: projectId },
+        data: { workspaceRevision: { increment: 1 } },
+      });
+      const event = await publishProjectEvent({
+        tx,
+        projectId,
+        actorId: userId,
+        type: "workspace.changed",
+        resourceId: newSnapshot.id,
+        revision: updated.workspaceRevision,
+      });
+      return { newSnapshot, event };
     },
-    });
-    const updated = await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
-    const event = await publishProjectEvent({ tx, projectId, actorId: userId, type: 'workspace.changed', resourceId: newSnapshot.id, revision: updated.workspaceRevision });
-    return { newSnapshot, event };
-  });
+  );
   const { newSnapshot } = committed;
   await deliverProjectEvent(committed.event).catch(() => {});
 
@@ -1197,11 +1381,22 @@ export const getProjectStructureAnalysis = async ({
     where: { snapshotId: snapshot.id },
   });
   if (!analysis) throw new ServiceError("Architecture analysis not found", 404);
+  let parsed;
   try {
-    return analysisResultResponse(analysis);
+    parsed = analysisResultResponse(analysis);
   } catch {
     throw new ServiceError("Stored architecture analysis is invalid", 500);
   }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !parsed.summary ||
+    !parsed.graph ||
+    !Array.isArray(parsed.graph.nodes)
+  ) {
+    throw new ServiceError("Architecture analysis not found", 404);
+  }
+  return parsed;
 };
 
 export const createCoverageAnalysisJob = async ({
@@ -1224,9 +1419,11 @@ export const createCoverageAnalysisJob = async ({
     throw new ServiceError("userId is required", 400);
   }
 
-  await resolveProjectAccess({projectId,userId,capability:'tests.run'});
-  const snapshot = await prisma.projectSnapshot.findFirst({where:{id:snapshotId,projectId}});
-  if (!snapshot) throw new ServiceError('Snapshot not found',404);
+  await resolveProjectAccess({ projectId, userId, capability: "tests.run" });
+  const snapshot = await prisma.projectSnapshot.findFirst({
+    where: { id: snapshotId, projectId },
+  });
+  if (!snapshot) throw new ServiceError("Snapshot not found", 404);
 
   const runTestsJob = await createRunTestsJob({
     projectId,
@@ -1243,10 +1440,9 @@ export const createCoverageAnalysisJob = async ({
   return runTestsJob;
 };
 
-
-
 export const deleteProject = async (projectId, userId) => {
-  if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(projectId)) throw new ServiceError('Invalid project ID', 400);
+  if (typeof projectId !== "string" || !/^[A-Za-z0-9_-]+$/.test(projectId))
+    throw new ServiceError("Invalid project ID", 400);
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) {
     throw new ServiceError("Project not found", 404);
@@ -1260,7 +1456,10 @@ export const deleteProject = async (projectId, userId) => {
     select: { id: true },
   });
   if (activeJob) {
-    throw new ServiceError("This project is still processing. Wait for its jobs to finish before deleting it.", 409);
+    throw new ServiceError(
+      "This project is still processing. Wait for its jobs to finish before deleting it.",
+      409,
+    );
   }
 
   // Keep ownership and snapshot IDs available until all storage is removed.
@@ -1274,22 +1473,33 @@ export const deleteProject = async (projectId, userId) => {
   // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.
   // Takes only 1 single SQL query (~10-50ms) instead of 14 separate slow queries.
   try {
-    await withProjectGuard({ projectId, userId, capability: 'project.delete' }, tx => tx.project.delete({ where: { id: projectId } }));
+    await withProjectGuard(
+      { projectId, userId, capability: "project.delete" },
+      (tx) => tx.project.delete({ where: { id: projectId } }),
+    );
   } catch (error) {
-    if (error.code !== 'P2003') throw error;
+    if (error.code !== "P2003") throw error;
     console.warn(
       `[DeleteProject] Direct cascade delete failed for project ${projectId}, falling back to manual cascade transaction:`,
       error?.message,
     );
-    await withProjectGuard({ projectId, userId, capability: 'project.delete' }, async tx => {
-        await tx.coverageSummary.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.coverageFile.deleteMany({ where: { snapshot: { projectId } } });
+    await withProjectGuard(
+      { projectId, userId, capability: "project.delete" },
+      async (tx) => {
+        await tx.coverageSummary.deleteMany({
+          where: { snapshot: { projectId } },
+        });
+        await tx.coverageFile.deleteMany({
+          where: { snapshot: { projectId } },
+        });
         await tx.coverageFunction.deleteMany({
           where: { snapshot: { projectId } },
         });
         await tx.cyclomatic.deleteMany({ where: { snapshot: { projectId } } });
         await tx.cfg.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.aiContextCache.deleteMany({ where: { snapshot: { projectId } } });
+        await tx.aiContextCache.deleteMany({
+          where: { snapshot: { projectId } },
+        });
         await tx.aiSuggestion.deleteMany({ where: { projectId } });
         await tx.aiTest.deleteMany({ where: { projectId } });
         await tx.jobLog.deleteMany({ where: { job: { projectId } } });
@@ -1298,7 +1508,8 @@ export const deleteProject = async (projectId, userId) => {
         await tx.notification.deleteMany({ where: { projectId } });
         await tx.projectSnapshot.deleteMany({ where: { projectId } });
         await tx.project.delete({ where: { id: projectId } });
-    });
+      },
+    );
   }
 };
 
@@ -1323,9 +1534,8 @@ export const clearProjectTreeCache = (snapshotId = null) => {
 export const getProjectTree = async (projectId, userId, options = {}) => {
   const metaCacheKey = `${projectId}:${options.snapshotId || "latest"}`;
   const cachedMetaEntry = projectTreeMetaCache.get(metaCacheKey);
-  const { readMutationMarkers, recoverProjectMutationMarkers } = await import(
-    "./projectMutationRecovery.service.js"
-  );
+  const { readMutationMarkers, recoverProjectMutationMarkers } =
+    await import("./projectMutationRecovery.service.js");
 
   let meta = null;
   if (
@@ -1333,7 +1543,9 @@ export const getProjectTree = async (projectId, userId, options = {}) => {
     Date.now() - cachedMetaEntry.cachedAt < TREE_META_CACHE_TTL_MS &&
     cachedMetaEntry.allowedUsers?.has(userId)
   ) {
-    const markers = await readMutationMarkers(cachedMetaEntry.meta.workspaceRoot);
+    const markers = await readMutationMarkers(
+      cachedMetaEntry.meta.workspaceRoot,
+    );
     if (markers.length === 0) {
       meta = cachedMetaEntry.meta;
     }
@@ -1350,13 +1562,20 @@ export const getProjectTree = async (projectId, userId, options = {}) => {
         orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
       }),
     ]);
-    if (!snapshot?.rootDir) throw new ServiceError("Project snapshot not ready", 202);
+    if (!snapshot?.rootDir)
+      throw new ServiceError("Project snapshot not ready", 202);
     const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
     const markers = await readMutationMarkers(workspaceRoot);
 
     if (markers.length > 0) {
       meta = await withProjectGuard(
-        { projectId, userId, capability: "project.read", maxWait: 30000, timeout: 60000 },
+        {
+          projectId,
+          userId,
+          capability: "project.read",
+          maxWait: 30000,
+          timeout: 60000,
+        },
         async (tx, guardedAccess) => {
           const guardedSnapshot = await tx.projectSnapshot.findFirst({
             where: {
@@ -1379,7 +1598,7 @@ export const getProjectTree = async (projectId, userId, options = {}) => {
             workspaceRevision: guardedAccess.project.workspaceRevision,
             workspaceRoot: guardedRoot,
           };
-        }
+        },
       );
     } else {
       meta = {
@@ -1407,98 +1626,76 @@ export const getProjectTree = async (projectId, userId, options = {}) => {
   }
 
   return options.withMetadata
-    ? { tree, snapshotId: meta.snapshotId, workspaceRevision: meta.workspaceRevision }
+    ? {
+        tree,
+        snapshotId: meta.snapshotId,
+        workspaceRevision: meta.workspaceRevision,
+      }
     : tree;
 };
 
 export const getFileContent = (projectId, userId, filePath, options = {}) =>
-  readVersionedProjectFile({projectId,userId,path:filePath,snapshotId:typeof options === "string" ? options : options?.snapshotId});
-
-export const updateFileContent = async (projectId, userId, filePath, content, options = {}) => {
-  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'WRITE_FILE',...options});
-  projectTreeMetaCache.clear();
-  return res;
-};
-
-export const createProjectFile = async (projectId, userId, filePath, content = '', options = {}) => {
-  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'CREATE_FILE',...options});
-  projectTreeMetaCache.clear();
-  return res;
-};
-
-export const createProjectFolder = async (projectId, userId, filePath, options = {}) => {
-  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,kind:'CREATE_FOLDER',...options});
-  projectTreeMetaCache.clear();
-  return res;
-};
-
-export const renameProjectEntry = async (projectId, userId, filePath, _content, newPath, options = {}) => {
-  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,newPath,kind:'RENAME_ENTRY',...options});
-  projectTreeMetaCache.clear();
-  return res;
-};
-
-export const deleteProjectEntry = async (projectId, userId, filePath, options = {}) => {
-  const res = await mutateProjectWorkspace({projectId,userId,path:filePath,kind:'DELETE_ENTRY',...options});
-  projectTreeMetaCache.clear();
-  return res;
-};
-
-export const updateProjectLifecycleStatus = async ({
-  projectId,
-  userId,
-  lifecycleStatus,
-  isPinned,
-}) => {
-  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
-
-  const dataToUpdate = {};
-  if (lifecycleStatus !== undefined) {
-    dataToUpdate.lifecycleStatus = lifecycleStatus;
-    dataToUpdate.lifecycleUpdatedAt = new Date();
-  }
-  if (isPinned !== undefined) {
-    dataToUpdate.isPinned = Boolean(isPinned);
-  }
-
-  const updatedProject = await prisma.project.update({
-    where: { id: projectId },
-    data: dataToUpdate,
-    select: {
-      id: true,
-      name: true,
-      lifecycleStatus: true,
-      lifecycleUpdatedAt: true,
-      isPinned: true,
-      updatedAt: true,
-    },
+  readVersionedProjectFile({
+    projectId,
+    userId,
+    path: filePath,
+    snapshotId: typeof options === "string" ? options : options?.snapshotId,
   });
 
-  try {
-    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
-    clearPortfolioCache(userId);
-  } catch (_) {}
-  try {
-    const { clearUnifiedDashboardCache } = await import("./unifiedQualityDashboard.service.js");
-    clearUnifiedDashboardCache();
-  } catch (_) {}
-  try {
-    const { emitPortfolioProjectUpdated } = await import("../realtime/portfolioSocket.emitter.js");
-    emitPortfolioProjectUpdated({
-      projectId,
-      userId,
-      lifecycleStatus: updatedProject.lifecycleStatus,
-      isPinned: updatedProject.isPinned,
-      action: "STATUS_UPDATED",
-    });
-  } catch (_err) {
-    // Non-fatal if socket emitter not yet initialized
-  }
-  try {
-    const { emitDashboardMetricsUpdated } = await import("./dashboardEvents.service.js");
-    emitDashboardMetricsUpdated(projectId, { reason: "project-status-updated", lifecycleStatus: updatedProject.lifecycleStatus }).catch(() => {});
-  } catch (_) {}
-
-  return updatedProject;
+export const updateFileContent = async (
+  projectId,
+  userId,
+  filePath,
+  content,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    content,
+    kind: "WRITE_FILE",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
 };
 
+export const createProjectFile = async (
+  projectId,
+  userId,
+  filePath,
+  content = "",
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    content,
+    kind: "CREATE_FILE",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
+
+export const createProjectFolder = async (
+  projectId,
+  userId,
+  filePath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    kind: "CREATE_FOLDER",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
+
+export const renameProjectEntry = async (
+  projec
