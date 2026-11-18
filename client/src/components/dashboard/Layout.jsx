@@ -1549,6 +1549,7 @@ function LayoutInner() {
           {(activeActivity === "architecture" || visitedPanels.has("architecture")) && (
             <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
               <ProjectArchitecturePanel
+                key={project?.id || "none"}
                 projectId={project?.id}
                 initialFile={archInitialContext?.initialFile}
               />

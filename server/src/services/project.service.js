@@ -1698,4 +1698,103 @@ export const createProjectFolder = async (
 };
 
 export const renameProjectEntry = async (
-  projec
+  projectId,
+  userId,
+  filePath,
+  _content,
+  newPath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    newPath,
+    kind: "RENAME_ENTRY",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
+
+export const deleteProjectEntry = async (
+  projectId,
+  userId,
+  filePath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    kind: "DELETE_ENTRY",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
+
+export const updateProjectLifecycleStatus = async ({
+  projectId,
+  userId,
+  lifecycleStatus,
+  isPinned,
+}) => {
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
+
+  const dataToUpdate = {};
+  if (lifecycleStatus !== undefined) {
+    dataToUpdate.lifecycleStatus = lifecycleStatus;
+    dataToUpdate.lifecycleUpdatedAt = new Date();
+  }
+  if (isPinned !== undefined) {
+    dataToUpdate.isPinned = Boolean(isPinned);
+  }
+
+  const updatedProject = await prisma.project.update({
+    where: { id: projectId },
+    data: dataToUpdate,
+    select: {
+      id: true,
+      name: true,
+      lifecycleStatus: true,
+      lifecycleUpdatedAt: true,
+      isPinned: true,
+      updatedAt: true,
+    },
+  });
+
+  try {
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(userId);
+  } catch (_) {}
+  try {
+    const { clearUnifiedDashboardCache } =
+      await import("./unifiedQualityDashboard.service.js");
+    clearUnifiedDashboardCache();
+  } catch (_) {}
+  try {
+    const { emitPortfolioProjectUpdated } =
+      await import("../realtime/portfolioSocket.emitter.js");
+    emitPortfolioProjectUpdated({
+      projectId,
+      userId,
+      lifecycleStatus: updatedProject.lifecycleStatus,
+      isPinned: updatedProject.isPinned,
+      action: "STATUS_UPDATED",
+    });
+  } catch (_err) {
+    // Non-fatal if socket emitter not yet initialized
+  }
+  try {
+    const { emitDashboardMetricsUpdated } =
+      await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, {
+      reason: "project-status-updated",
+      lifecycleStatus: updatedProject.lifecycleStatus,
+    }).catch(() => {});
+  } catch (_) {}
+
+  return updatedProject;
+};
