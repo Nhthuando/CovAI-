@@ -2742,12 +2742,13 @@ export const applyUnitTestSuggestion = async input => {
     }
 
     const expectedWorkspaceRevision = currentWorkspaceRevision;
+    const isDryRun = Boolean(input?.dryRun);
 
     return withPreparedProjectWorkspace({projectId:actualProjectId,snapshotId:input.snapshotId,userId:input.userId,
-        expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION'},()=>applyPreparedUnitTestSuggestion(input));
+        expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION',publish:!isDryRun},()=>applyPreparedUnitTestSuggestion(input));
 };
 
-const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null }) => {
+const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null, dryRun = false }) => {
     if (!snapshotId) {
         throw new ServiceError("snapshotId is required", 400);
     }
@@ -2769,14 +2770,15 @@ const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, 
             suggestion,
             suggestions,
             runCoverageFn,
-            acquiredLocks
+            acquiredLocks,
+            dryRun: Boolean(dryRun)
         });
     } finally {
         releaseAtomicMultiLocks(acquiredLocks);
     }
 };
 
-const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null, acquiredLocks = null }) => {
+const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null, acquiredLocks = null, dryRun = false }) => {
 
     const itemsToApply = Array.isArray(suggestions) && suggestions.length > 0
         ? suggestions
@@ -3388,6 +3390,27 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     // If test failed or exited with non-zero
     if (finalRealFailure) {
         cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+        purgeCovaiHarnessFiles(rootDir);
+        if (durableTx) {
+            try {
+                if (dryRun) {
+                    rollbackDurableTransaction({ rootDir, tx: durableTx });
+                } else {
+                    cleanupDurableTransaction({ rootDir, tx: durableTx });
+                }
+            } catch (_) { }
+        }
+        if (dryRun) {
+            for (const [fp, origContent] of fileBackups.entries()) {
+                try {
+                    if (origContent === null) {
+                        if (fs.existsSync(fp)) fs.unlinkSync(fp);
+                    } else {
+                        fs.writeFileSync(fp, origContent, "utf8");
+                    }
+                } catch (_) { }
+            }
+        }
         const failureDetail = getTestRunnerFailure(testResults, rawOutput, runnerExitCode, testExecutionError);
         const modResError = parseModuleResolutionError(collectTestResultErrors(testResults) + "\n" + rawOutput, origWorkspaceRoot || rootDir);
         const missingDepPayload = modResError?.missingDependency || null;
@@ -3401,9 +3424,10 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
 
         return {
             success: false,
-            fileUpdated: true,
+            fileUpdated: !dryRun,
+            dryRun: Boolean(dryRun),
             status: "FAILED",
-            message: testExecutionError || "Test execution failed after applying suggestion",
+            message: testExecutionError || (dryRun ? "Dry-run test execution failed" : "Test execution failed after applying suggestion"),
             errorDetail: modResError ? modResError.actualError : failureDetail,
             moduleResolutionError: modResError,
             missingDependency: missingDepPayload,
@@ -3750,21 +3774,6 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
 
     // 4. Transactional Persistence of CoverageFile & CoverageSummary (Strictly atomic under Prisma $transaction)
     if (isCoverageAuthoritative && mergedSum) {
-        try {
-            fs.writeFileSync(summaryFile, JSON.stringify(mergedSum, null, 2), "utf8");
-        } catch (_) { }
-
-        try {
-            if (mergedFinal && Object.keys(mergedFinal).length > 0) {
-                fs.writeFileSync(finalFile, JSON.stringify(mergedFinal, null, 2), "utf8");
-            }
-        } catch (_) { }
-
-        // Sync merged coverage artifacts back to canonical origin workspace root
-        if (origWorkspaceRoot && path.resolve(origWorkspaceRoot) !== path.resolve(rootDir)) {
-            syncCoverageArtifactsToOrigin(rootDir, origWorkspaceRoot);
-        }
-
         const total = mergedSum.total;
         let summaryMetrics = null;
         if (total) {
@@ -3782,147 +3791,190 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             };
         }
 
-        const runTotalTests = testResults?.numTotalTests ?? testResults?.totalTests ?? (anyPassed ? 1 : 0);
-        const runPassedTests = testResults?.numPassedTests ?? testResults?.passedTests ?? (anyPassed ? 1 : 0);
-        const runFailedTests = testResults?.numFailedTests ?? testResults?.failedTests ?? (anyPassed ? 0 : 1);
-        const runStatusUpper = (runFailedTests === 0 && anyPassed) ? "PASSED" : "FAILED";
+        if (!dryRun) {
+            try {
+                fs.writeFileSync(summaryFile, JSON.stringify(mergedSum, null, 2), "utf8");
+            } catch (_) { }
 
-        // Execute BOTH CoverageFile and CoverageSummary updates within a single atomic Prisma transaction
-        try {
-            const executeDbUpdates = async (tx) => {
-                if (durableTx && durableTx.txId && typeof tx.projectSnapshot?.update === "function") {
-                    const snap = await tx.projectSnapshot.findUnique({
-                        where: { id: snapshotId },
-                        select: { id: true, label: true, versionNumber: true, commitSha: true }
-                    });
-                    const updateData = {};
-                    if (!snap?.label) {
-                        const vNum = snap?.versionNumber != null ? `#${snap.versionNumber}` : `#1`;
-                        updateData.label = `${vNum} (AI Applied)`;
-                    }
-                    if (Object.keys(updateData).length > 0) {
-                        await tx.projectSnapshot.update({
+            try {
+                if (mergedFinal && Object.keys(mergedFinal).length > 0) {
+                    fs.writeFileSync(finalFile, JSON.stringify(mergedFinal, null, 2), "utf8");
+                }
+            } catch (_) { }
+
+            // Sync merged coverage artifacts back to canonical origin workspace root
+            if (origWorkspaceRoot && path.resolve(origWorkspaceRoot) !== path.resolve(rootDir)) {
+                syncCoverageArtifactsToOrigin(rootDir, origWorkspaceRoot);
+            }
+
+            const runTotalTests = testResults?.numTotalTests ?? testResults?.totalTests ?? (anyPassed ? 1 : 0);
+            const runPassedTests = testResults?.numPassedTests ?? testResults?.passedTests ?? (anyPassed ? 1 : 0);
+            const runFailedTests = testResults?.numFailedTests ?? testResults?.failedTests ?? (anyPassed ? 0 : 1);
+            const runStatusUpper = (runFailedTests === 0 && anyPassed) ? "PASSED" : "FAILED";
+
+            // Execute BOTH CoverageFile and CoverageSummary updates within a single atomic Prisma transaction
+            try {
+                const executeDbUpdates = async (tx) => {
+                    if (durableTx && durableTx.txId && typeof tx.projectSnapshot?.update === "function") {
+                        const snap = await tx.projectSnapshot.findUnique({
                             where: { id: snapshotId },
-                            data: updateData
+                            select: { id: true, label: true, versionNumber: true, commitSha: true }
                         });
-                    }
-                }
-                for (const item of coverageFilesToPersist) {
-                    await tx.coverageFile.upsert({
-                        where: {
-                            snapshotId_filePath: {
-                                snapshotId,
-                                filePath: item.cleanSfKey
-                            }
-                        },
-                        update: item.metrics,
-                        create: {
-                            snapshotId,
-                            filePath: item.cleanSfKey,
-                            ...item.metrics
+                        const updateData = {};
+                        if (!snap?.label) {
+                            const vNum = snap?.versionNumber != null ? `#${snap.versionNumber}` : `#1`;
+                            updateData.label = `${vNum} (AI Applied)`;
                         }
-                    });
-                }
-                if (summaryMetrics) {
-                    await tx.coverageSummary.upsert({
-                        where: { snapshotId },
-                        update: summaryMetrics,
-                        create: {
-                            snapshotId,
-                            ...summaryMetrics
-                        }
-                    });
-                    if (typeof tx.testRun?.findFirst === "function") {
-                        const resolvedDurationMs = extractExecutionDurationMs(testResults, runnerElapsedMs);
-                        const existingUnitRun = await tx.testRun.findFirst({
-                            where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
-                            orderBy: { createdAt: "desc" },
-                        });
-                        if (existingUnitRun?.id) {
-                            await tx.testRun.update({
-                                where: { id: existingUnitRun.id },
-                                data: {
-                                    totalTests: Math.max(Number(existingUnitRun.totalTests || 0), runTotalTests),
-                                    passedTests: Math.max(Number(existingUnitRun.passedTests || 0), runPassedTests),
-                                    failedTests: runFailedTests,
-                                    durationMs: resolvedDurationMs > 0 ? resolvedDurationMs : Number(existingUnitRun.durationMs || 0),
-                                    status: runStatusUpper,
-                                    coverageLinesPct: summaryMetrics.linesPct,
-                                    coverageBranchesPct: summaryMetrics.branchesPct,
-                                    coverageFunctionsPct: summaryMetrics.funcsPct,
-                                    coverageStatementsPct: summaryMetrics.stmtsPct,
-                                    finishedAt: new Date(),
-                                },
+                        if (Object.keys(updateData).length > 0) {
+                            await tx.projectSnapshot.update({
+                                where: { id: snapshotId },
+                                data: updateData
                             });
-                        } else if (typeof tx.testRun?.create === "function") {
-                            await tx.testRun.create({
-                                data: {
+                        }
+                    }
+                    for (const item of coverageFilesToPersist) {
+                        await tx.coverageFile.upsert({
+                            where: {
+                                snapshotId_filePath: {
                                     snapshotId,
-                                    type: "JEST",
-                                    totalTests: Math.max(1, runTotalTests),
-                                    passedTests: Math.max(anyPassed ? 1 : 0, runPassedTests),
-                                    failedTests: runFailedTests,
-                                    skippedTests: 0,
-                                    durationMs: resolvedDurationMs,
-                                    status: runStatusUpper,
-                                    coverageLinesPct: summaryMetrics.linesPct,
-                                    coverageBranchesPct: summaryMetrics.branchesPct,
-                                    coverageFunctionsPct: summaryMetrics.funcsPct,
-                                    coverageStatementsPct: summaryMetrics.stmtsPct,
-                                    startedAt: new Date(),
-                                    finishedAt: new Date(),
-                                },
+                                    filePath: item.cleanSfKey
+                                }
+                            },
+                            update: item.metrics,
+                            create: {
+                                snapshotId,
+                                filePath: item.cleanSfKey,
+                                ...item.metrics
+                            }
+                        });
+                    }
+                    if (summaryMetrics) {
+                        await tx.coverageSummary.upsert({
+                            where: { snapshotId },
+                            update: summaryMetrics,
+                            create: {
+                                snapshotId,
+                                ...summaryMetrics
+                            }
+                        });
+                        if (typeof tx.testRun?.findFirst === "function") {
+                            const resolvedDurationMs = extractExecutionDurationMs(testResults, runnerElapsedMs);
+                            const existingUnitRun = await tx.testRun.findFirst({
+                                where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+                                orderBy: { createdAt: "desc" },
                             });
+                            if (existingUnitRun?.id) {
+                                await tx.testRun.update({
+                                    where: { id: existingUnitRun.id },
+                                    data: {
+                                        totalTests: Math.max(Number(existingUnitRun.totalTests || 0), runTotalTests),
+                                        passedTests: Math.max(Number(existingUnitRun.passedTests || 0), runPassedTests),
+                                        failedTests: runFailedTests,
+                                        durationMs: resolvedDurationMs > 0 ? resolvedDurationMs : Number(existingUnitRun.durationMs || 0),
+                                        status: runStatusUpper,
+                                        coverageLinesPct: summaryMetrics.linesPct,
+                                        coverageBranchesPct: summaryMetrics.branchesPct,
+                                        coverageFunctionsPct: summaryMetrics.funcsPct,
+                                        coverageStatementsPct: summaryMetrics.stmtsPct,
+                                        finishedAt: new Date(),
+                                    },
+                                });
+                            } else if (typeof tx.testRun?.create === "function") {
+                                await tx.testRun.create({
+                                    data: {
+                                        snapshotId,
+                                        type: "JEST",
+                                        totalTests: Math.max(1, runTotalTests),
+                                        passedTests: Math.max(anyPassed ? 1 : 0, runPassedTests),
+                                        failedTests: runFailedTests,
+                                        skippedTests: 0,
+                                        durationMs: resolvedDurationMs,
+                                        status: runStatusUpper,
+                                        coverageLinesPct: summaryMetrics.linesPct,
+                                        coverageBranchesPct: summaryMetrics.branchesPct,
+                                        coverageFunctionsPct: summaryMetrics.funcsPct,
+                                        coverageStatementsPct: summaryMetrics.stmtsPct,
+                                        startedAt: new Date(),
+                                        finishedAt: new Date(),
+                                    },
+                                });
+                            }
                         }
                     }
-                }
-            };
+                };
 
-            if (typeof prisma.$transaction === "function") {
-                await prisma.$transaction(executeDbUpdates);
-            } else {
-                await executeDbUpdates(prisma);
-            }
-        } catch (dbErr) {
-            console.error("[applyUnitTestSuggestion] Coverage transaction error:", dbErr.message);
-            // Reconcile filesystem: roll back applied test files so filesystem matches database state!
-            if (durableTx) {
-                try {
-                    rollbackDurableTransaction({ rootDir, tx: durableTx });
-                } catch (rbErr) {
-                    console.error("[applyUnitTestSuggestion] Filesystem rollback after DB failure failed:", rbErr.message);
+                if (typeof prisma.$transaction === "function") {
+                    await prisma.$transaction(executeDbUpdates);
+                } else {
+                    await executeDbUpdates(prisma);
                 }
+            } catch (dbErr) {
+                console.error("[applyUnitTestSuggestion] Coverage transaction error:", dbErr.message);
+                // Reconcile filesystem: roll back applied test files so filesystem matches database state!
+                if (durableTx) {
+                    try {
+                        rollbackDurableTransaction({ rootDir, tx: durableTx });
+                    } catch (rbErr) {
+                        console.error("[applyUnitTestSuggestion] Filesystem rollback after DB failure failed:", rbErr.message);
+                    }
+                }
+                throw new ServiceError(`Database persistence error for coverage transaction: ${dbErr.message}`, 500);
             }
-            throw new ServiceError(`Database persistence error for coverage transaction: ${dbErr.message}`, 500);
+
+            // Parse final coverage files/functions in parallel after transaction has succeeded
+            if (baselineFinal && Object.keys(baselineFinal).length > 0) {
+                await Promise.allSettled([
+                    parseFinalCoverageFiles(null, snapshotId, actualProjectId, userId, coverageDir),
+                    parseFinalCoverageFunctions(null, snapshotId, actualProjectId, userId, coverageDir)
+                ]);
+            }
+
+            // Cache invalidation & lifecycle auto-transition strictly occur ONLY after transaction commit succeeds
+            try {
+                const { autoTransitionProjectToDoingIfNeeded, invalidateAllDashboardCaches } = await import("./job.service.js");
+                if (actualProjectId) await autoTransitionProjectToDoingIfNeeded(actualProjectId);
+                await invalidateAllDashboardCaches(snapshotId, userId);
+                const { emitPortfolioRunCompleted } = await import("../realtime/portfolioSocket.emitter.js");
+                const resolvedDurationMs = extractExecutionDurationMs(testResults, runnerElapsedMs);
+                emitPortfolioRunCompleted({
+                    projectId: actualProjectId,
+                    snapshotId,
+                    jobType: "RUN_TESTS",
+                    status: runStatusUpper === "PASSED" ? "SUCCESS" : "FAILED",
+                    durationMs: resolvedDurationMs,
+                    userId,
+                });
+            } catch (_) { }
         }
 
-        // Parse final coverage files/functions in parallel after transaction has succeeded
-        await Promise.allSettled([
-            parseFinalCoverageFiles(null, snapshotId, projectId, userId, coverageDir),
-            parseFinalCoverageFunctions(null, snapshotId, projectId, userId, coverageDir)
-        ]);
-
-        // Cache invalidation & lifecycle auto-transition strictly occur ONLY after transaction commit succeeds
-        try {
-            const { autoTransitionProjectToDoingIfNeeded, invalidateAllDashboardCaches } = await import("./job.service.js");
-            if (projectId) await autoTransitionProjectToDoingIfNeeded(projectId);
-            await invalidateAllDashboardCaches(snapshotId, userId);
-            const { emitPortfolioRunCompleted } = await import("../realtime/portfolioSocket.emitter.js");
-            const resolvedDurationMs = extractExecutionDurationMs(testResults, runnerElapsedMs);
-            emitPortfolioRunCompleted({
-                projectId,
-                snapshotId,
-                jobType: "RUN_TESTS",
-                status: runStatusUpper === "PASSED" ? "SUCCESS" : "FAILED",
-                durationMs: resolvedDurationMs,
-                userId,
-            });
-        } catch (_) { }
-
         // Clean up durable journal once committed and DB persistence succeeded
-        if (durableTx && durableTx.status === "COMMITTED") {
+        if (durableTx) {
             try {
+                if (dryRun) {
+                    rollbackDurableTransaction({ rootDir, tx: durableTx });
+                } else if (durableTx.status === "COMMITTED") {
+                    cleanupDurableTransaction({ rootDir, tx: durableTx });
+                }
+            } catch (_) { }
+        }
+    } else if (durableTx) {
+        try {
+            if (dryRun) {
+                rollbackDurableTransaction({ rootDir, tx: durableTx });
+            } else {
                 cleanupDurableTransaction({ rootDir, tx: durableTx });
+            }
+        } catch (_) { }
+    }
+
+    if (dryRun) {
+        for (const [fp, origContent] of fileBackups.entries()) {
+            try {
+                if (origContent === null) {
+                    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+                } else {
+                    fs.writeFileSync(fp, origContent, "utf8");
+                }
             } catch (_) { }
         }
     }
@@ -3978,7 +4030,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
 
     return {
         success: isOverallSuccess,
-        fileUpdated: true,
+        fileUpdated: !dryRun,
+        dryRun: Boolean(dryRun),
         status: (isCoverageAuthoritative && anyPassed) ? "PASSED" : "FAILED",
         runId,
         runProvenance: {
@@ -3987,8 +4040,12 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             manifest: runManifest
         },
         message: anyPassed
-            ? "Applied test suggestion successfully and verified new coverage."
-            : "Test execution failed after applying suggestion.",
+            ? (dryRun
+                ? "Verified test suggestion in isolated dry-run and measured coverage preview."
+                : "Applied test suggestion successfully and verified new coverage.")
+            : (dryRun
+                ? "Dry-run test execution failed."
+                : "Test execution failed after applying suggestion."),
         appliedSuggestions: appliedList,
         previousCoverage: finalPreviousCoverage,
         newCoverage: finalNewCoverage,

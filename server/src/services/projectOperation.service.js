@@ -45,7 +45,17 @@ export const admitProjectOperation = async ({projectId,snapshotId,userId,type,in
         }
         // Other configurations targeting the same summary serialize rather than
         // racing to replace one snapshot's current result.
-        const incompatible = await tx.projectOperation.findFirst({where:{projectId,snapshotId,type,status:{in:ACTIVE_PROJECT_OPERATIONS}}});
+        let incompatible = await tx.projectOperation.findFirst({where:{projectId,snapshotId,type,status:{in:ACTIVE_PROJECT_OPERATIONS}}});
+        if (incompatible && incompatible.primaryJobId && typeof tx.job?.findUnique === 'function') {
+            const incJob = await tx.job.findUnique({where:{id:incompatible.primaryJobId}});
+            if (incJob && !['QUEUED','RUNNING'].includes(incJob.status)) {
+                await tx.projectOperation.update({
+                    where:{id:incompatible.id},
+                    data:{status:incJob.status === 'SUCCESS' ? 'SUCCESS' : incJob.status === 'CANCELED' ? 'CANCELED' : 'FAILED'}
+                });
+                incompatible = await tx.projectOperation.findFirst({where:{projectId,snapshotId,type,status:{in:ACTIVE_PROJECT_OPERATIONS}}});
+            }
+        }
         if (incompatible) throw projectFileError('OPERATION_BUSY','Another configuration is already running for this snapshot');
         const legacy = await tx.job.findFirst({where:{projectId,snapshotId,type,status:{in:['QUEUED','RUNNING']}},select:{id:true}});
         if (legacy) throw projectFileError('OPERATION_BUSY','A previous job is still running for this snapshot');

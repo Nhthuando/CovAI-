@@ -9,6 +9,7 @@ import { ZoneErrorBoundary } from "./primitives/ZoneErrorBoundary.jsx";
 import { UnifiedDashboardSkeleton } from "./skeletons/UnifiedDashboardSkeleton.jsx";
 import { GlobalCommandHeader } from "./zones/GlobalCommandHeader.jsx";
 import { ExecutiveKpiRow } from "./zones/ExecutiveKpiRow.jsx";
+import { QualityChartsRow } from "./zones/QualityChartsRow.jsx";
 import { PyramidAndPillarsZone } from "./zones/PyramidAndPillarsZone.jsx";
 import { AnalysisTabsZone } from "./zones/AnalysisTabsZone.jsx";
 import { SlideOverInspectorDrawer } from "./inspector/SlideOverInspectorDrawer.jsx";
@@ -228,6 +229,7 @@ export function UnifiedDashboard({
             onSelectSnapshot={handleSelectSnapshot}
             runAllState={runAllState}
             onNavigateWorkspace={handleNavigate}
+            onAskAi={onAskAi}
             isSyncing={isFetching}
             onForceRefresh={forceRefresh}
             liveRuns={liveRuns}
@@ -238,6 +240,14 @@ export function UnifiedDashboard({
         {/* ZONE 2: Executive KPI Cards (4 x 3 cols) */}
         <ZoneErrorBoundary zoneTitle="Executive KPIs" onRetry={refetch}>
           <ExecutiveKpiRow vm={vm} loading={isLoading} />
+        </ZoneErrorBoundary>
+
+        {/* ZONE 2.5: Multi-Tier Bar Chart & Coverage Trend Chart */}
+        <ZoneErrorBoundary zoneTitle="Quality Charts" onRetry={refetch}>
+          <QualityChartsRow
+            vm={vm}
+            onNavigateWorkspace={handleNavigate}
+          />
         </ZoneErrorBoundary>
 
         {/* ZONE 3: Test Pyramid & 3 Pillar Cards (4 cols + 8 cols) */}

@@ -5,13 +5,28 @@ import { fmtPct } from "../../../../services/unifiedDashboard/format.js";
 
 export function CoverageTrendChart({
   trendData,
+  vm = null,
   className = "",
 }) {
   const [viewMode, setViewMode] = useState("trend"); // 'trend' | 'before_after'
   const [activeMetric, setActiveMetric] = useState("coverage"); // 'coverage' | 'pass_rate'
   const [hoveredPoint, setHoveredPoint] = useState(null);
 
-  const series = trendData?.series || [];
+  const rawSeries = trendData?.series || [];
+  const series =
+    rawSeries.length > 0
+      ? rawSeries
+      : vm
+      ? [
+          {
+            runLabel: "Current",
+            unitCoverage: Number(vm.coverage?.codePct ?? 0),
+            integrationCoverage: Number(vm.coverage?.apiPct ?? 0),
+            systemCoverage: Number(vm.coverage?.flowPct ?? 0),
+            passRate: Number(vm.execution?.passRate ?? 0),
+          },
+        ]
+      : [];
   const beforeAfter = trendData?.beforeAfter || {
     before: { unit: 0, integration: 0, system: 0, unitPassRate: 0, integrationPassRate: 0, systemPassRate: 0 },
     after: { unit: 0, integration: 0, system: 0, unitPassRate: 0, integrationPassRate: 0, systemPassRate: 0 },
@@ -55,6 +70,17 @@ export function CoverageTrendChart({
   const intPath = makePath((d) => d.integrationCoverage);
   const sysPath = makePath((d) => d.systemCoverage);
   const passPath = makePath((d) => d.passRate);
+
+  const makeAreaPath = (accessor) => {
+    if (series.length < 2) return "";
+    const line = makePath(accessor);
+    const firstX = getX(0, series.length);
+    const lastX = getX(series.length - 1, series.length);
+    const baseY = padTop + chartH;
+    return `${line} L ${lastX} ${baseY} L ${firstX} ${baseY} Z`;
+  };
+  const unitAreaPath = makeAreaPath((d) => d.unitCoverage);
+  const passAreaPath = makeAreaPath((d) => d.passRate);
 
   return (
     <ZonePanel
@@ -158,6 +184,14 @@ export function CoverageTrendChart({
               {/* Data Lines */}
               {activeMetric === "coverage" ? (
                 <>
+                  {/* Unit Area Tint (flat translucent) */}
+                  {unitAreaPath && (
+                    <path
+                      d={unitAreaPath}
+                      fill="var(--ud-unit)"
+                      fillOpacity="0.08"
+                    />
+                  )}
                   {/* System (Teal) */}
                   <path
                     d={sysPath}
@@ -246,6 +280,14 @@ export function CoverageTrendChart({
                 </>
               ) : (
                 <>
+                  {/* Pass Rate Area Tint */}
+                  {passAreaPath && (
+                    <path
+                      d={passAreaPath}
+                      fill="var(--ud-pass)"
+                      fillOpacity="0.08"
+                    />
+                  )}
                   {/* Overall Pass Rate Line (Green) */}
                   <path
                     d={passPath}

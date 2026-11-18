@@ -127,6 +127,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         localStorage.setItem("userName", data.userName);
         localStorage.setItem("userEmail", data.userEmail);
       }
+      window.dispatchEvent(new Event("covai:auth-change"));
       setStatus("success");
       setTimeout(() => {
         window.location.href = consumeAuthReturn();

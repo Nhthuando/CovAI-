@@ -32,6 +32,9 @@ import {
   Target,
   Play,
   FileCheck,
+  SlidersHorizontal,
+  FileDiff,
+  FlaskConical,
 } from "lucide-react";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
@@ -79,7 +82,6 @@ import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
 import JobQueue from "./JobQueue.jsx";
 import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
 import { useRunningProcess } from "../../contexts/RunningProcessContext.jsx";
-import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
 import UnitTestPackageInstaller from "./UnitTestPackageInstaller.jsx";
 import UnitTestTraceabilityMatrix, {
   extractMissingPackageFromError,
@@ -1382,17 +1384,22 @@ export default function CoverageTypeDashboard({
           (async () => {
             try {
               await waitForJob(bgJobId, (prog) => {
-                updateAnalysisProgress({
-                  progress: prog,
-                  message: "Refreshing full project coverage analysis...",
-                });
+                updateAnalysisProgress(
+                  prog,
+                  "Refreshing full project coverage analysis...",
+                );
               });
               completeAnalysis(
                 "✓ Full project unit test analysis completed! All metrics updated.",
               );
               invalidateCoverageQueries(snapshotId);
               await refetchCoverage();
-            } catch (_) {}
+            } catch (bgErr) {
+              completeAnalysis(
+                false,
+                bgErr?.message || "Background coverage refresh failed.",
+              );
+            }
           })();
         }
 
@@ -1434,7 +1441,7 @@ export default function CoverageTypeDashboard({
 
   // Apply all suggestions inline safely without overwriting
   const handleApplyAllInline = useCallback(
-    async (filePath, suggestions, reviewFile = null) => {
+    async (filePath, suggestions, reviewFile = null, customCode = null) => {
       if (!snapshotId || !suggestions?.length) return;
       const sugIds = suggestions.map((s) => s.suggestionId || s.id);
       setApplyingSuggestionIds((prev) => {
@@ -1481,8 +1488,15 @@ export default function CoverageTypeDashboard({
           }
         }
         const res = await applyUnitTestSuggestion(snapshotId, {
-          suggestions: suggestions.map((s) => ({
+          suggestions: suggestions.map((s, idx) => ({
             ...s,
+            ...(customCode && idx === 0
+              ? {
+                  generatedCode: customCode,
+                  suggestedTestCode: customCode,
+                  fullUpdatedContent: customCode,
+                }
+              : {}),
             proposalBase: s.proposalBase || {
               snapshotId,
               workspaceRevision: getExpectedWorkspaceRevision(),
@@ -1492,12 +1506,21 @@ export default function CoverageTypeDashboard({
         });
 
         const resultData = res?.data || res;
+        const testStatus = resultData?.testStatus || resultData?.status;
+        const isPassed =
+          testStatus !== "FAILED" &&
+          resultData?.isPassed !== false &&
+          (testStatus === "PASSED" ||
+            resultData?.isPassed === true ||
+            resultData?.success === true);
+
         const fileWritten = Boolean(
-          resultData?.fileUpdated ||
-          resultData?.changedPaths?.some(
-            (path) =>
-              cleanDisplayPath(path) === cleanDisplayPath(reviewFile || ""),
-          ),
+          isPassed &&
+          (resultData?.fileUpdated ||
+            resultData?.changedPaths?.some(
+              (path) =>
+                cleanDisplayPath(path) === cleanDisplayPath(reviewFile || ""),
+            )),
         );
         if (reviewFile && fileWritten) {
           try {
@@ -1521,13 +1544,6 @@ export default function CoverageTypeDashboard({
             console.warn("Unable to capture applied file for undo:", error);
           }
         }
-        const testStatus = resultData?.testStatus || resultData?.status;
-        const isPassed =
-          testStatus !== "FAILED" &&
-          resultData?.isPassed !== false &&
-          (testStatus === "PASSED" ||
-            resultData?.isPassed === true ||
-            resultData?.success === true);
 
         const appliedMap = new Map();
         if (Array.isArray(resultData?.appliedSuggestions)) {
@@ -1546,7 +1562,7 @@ export default function CoverageTypeDashboard({
                 const itemPassed = matchedItem.status === "PASSED";
                 return {
                   ...s,
-                  applied: fileWritten || s.applied,
+                  applied: (fileWritten && itemPassed) || s.applied,
                   status:
                     matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
                   testRunError:
@@ -1567,7 +1583,7 @@ export default function CoverageTypeDashboard({
               if (sugIds.includes(s.suggestionId || s.id)) {
                 return {
                   ...s,
-                  applied: fileWritten || s.applied,
+                  applied: (fileWritten && isPassed) || s.applied,
                   status: isPassed ? "PASSED" : "FAILED",
                   testRunError: isPassed
                     ? null
@@ -1587,7 +1603,10 @@ export default function CoverageTypeDashboard({
           };
         });
 
-        const fileResult = resultData?.perFileResults?.[filePath];
+        const cleanTarget = cleanDisplayPath(filePath);
+        const fileResult =
+          resultData?.perFileResults?.[filePath] ||
+          resultData?.perFileResults?.[cleanTarget];
 
         const oldCov =
           fileResult?.oldCoverage ??
@@ -1605,6 +1624,7 @@ export default function CoverageTypeDashboard({
               oldCoverage: oldCov,
               newCoverage: newCov,
               isPassed,
+              isDryRun: false,
             },
           }));
         }
@@ -1633,17 +1653,22 @@ export default function CoverageTypeDashboard({
           (async () => {
             try {
               await waitForJob(bgJobId, (prog) => {
-                updateAnalysisProgress({
-                  progress: prog,
-                  message: "Refreshing full project coverage analysis...",
-                });
+                updateAnalysisProgress(
+                  prog,
+                  "Refreshing full project coverage analysis...",
+                );
               });
               completeAnalysis(
                 "✓ Full project unit test analysis completed! All metrics updated.",
               );
               invalidateCoverageQueries(snapshotId);
               await refetchCoverage();
-            } catch (_) {}
+            } catch (bgErr) {
+              completeAnalysis(
+                false,
+                bgErr?.message || "Background coverage refresh failed.",
+              );
+            }
           })();
         }
 
@@ -1680,6 +1705,144 @@ export default function CoverageTypeDashboard({
       }
     },
     [snapshotId, projectId, refetchCoverage, ensureFileCoverage],
+  );
+
+  // Dry-run candidate unit test suggestions in isolated sandbox BEFORE applying to disk
+  const handleDryRunInline = useCallback(
+    async (filePath, suggestions, customCode = null) => {
+      if (!snapshotId || !suggestions?.length) return null;
+      const sugIds = suggestions.map((s) => s.suggestionId || s.id);
+      setApplyingSuggestionIds((prev) => {
+        const next = new Set(prev);
+        sugIds.forEach((id) => next.add(id));
+        return next;
+      });
+      setApplyProgressSteps((prev) => ({
+        ...prev,
+        [filePath]: "Testing candidate test cases in isolated sandbox...",
+      }));
+
+      try {
+        const res = await applyUnitTestSuggestion(snapshotId, {
+          suggestions: suggestions.map((s, idx) => ({
+            ...s,
+            ...(customCode && idx === 0
+              ? {
+                  generatedCode: customCode,
+                  suggestedTestCode: customCode,
+                  fullUpdatedContent: customCode,
+                }
+              : {}),
+            proposalBase: s.proposalBase || {
+              snapshotId,
+              workspaceRevision: getExpectedWorkspaceRevision(),
+            },
+          })),
+          projectId,
+          skipBackgroundJob: true,
+          dryRun: true,
+        });
+
+        const resultData = res?.data || res;
+        const testStatus = resultData?.testStatus || resultData?.status;
+        const isPassed =
+          testStatus !== "FAILED" &&
+          resultData?.isPassed !== false &&
+          (testStatus === "PASSED" ||
+            resultData?.isPassed === true ||
+            resultData?.success === true);
+
+        const cleanTarget = cleanDisplayPath(filePath);
+        const fileResult =
+          resultData?.perFileResults?.[filePath] ||
+          resultData?.perFileResults?.[cleanTarget];
+
+        const oldCov =
+          fileResult?.oldCoverage ??
+          resultData?.oldCoverage ??
+          resultData?.previousCoverage ??
+          null;
+        const newCov =
+          fileResult?.newCoverage ?? resultData?.newCoverage ?? null;
+
+        setApplyResultsByFile((prev) => ({
+          ...prev,
+          [filePath]: {
+            ...resultData,
+            oldCoverage: oldCov,
+            newCoverage: newCov,
+            isPassed,
+            isDryRun: true,
+          },
+        }));
+
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              sugIds.includes(s.suggestionId || s.id)
+                ? {
+                    ...s,
+                    dryRunStatus: isPassed ? "VERIFIED" : "FAILED",
+                    testRunError: isPassed
+                      ? null
+                      : resultData?.testRunError ||
+                        resultData?.errorDetail ||
+                        resultData?.message ||
+                        null,
+                    missingDependency: isPassed
+                      ? null
+                      : resultData?.missingDependency ||
+                        resultData?.moduleResolutionError?.missingDependency ||
+                        null,
+                  }
+                : s,
+            ),
+          };
+        });
+
+        return resultData;
+      } catch (err) {
+        console.error("Dry-run test suggestions failed:", err);
+        setApplyResultsByFile((prev) => ({
+          ...prev,
+          [filePath]: {
+            isPassed: false,
+            isDryRun: true,
+            errorDetail: err.message || "Dry-run failed",
+          },
+        }));
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              sugIds.includes(s.suggestionId || s.id)
+                ? {
+                    ...s,
+                    dryRunStatus: "FAILED",
+                    testRunError: err.message || "Dry-run failed",
+                  }
+                : s,
+            ),
+          };
+        });
+        return null;
+      } finally {
+        setApplyingSuggestionIds((prev) => {
+          const next = new Set(prev);
+          sugIds.forEach((id) => next.delete(id));
+          return next;
+        });
+        setApplyProgressSteps((prev) => {
+          const next = { ...prev };
+          delete next[filePath];
+          return next;
+        });
+      }
+    },
+    [snapshotId, projectId],
   );
 
   // Reject a suggestion and remove it from inline suggestions list
@@ -2356,6 +2519,57 @@ export default function CoverageTypeDashboard({
     updateBulkApplyStep,
     completeBulkApply,
     saveSuggestions,
+  ]);
+
+  const [isDryRunningGlobal, setIsDryRunningGlobal] = useState(false);
+
+  const handleDryRunAllGlobal = useCallback(async () => {
+    if (
+      !snapshotId ||
+      allPendingSuggestions.length === 0 ||
+      isDryRunningGlobal ||
+      isBulkApplying
+    )
+      return;
+    setIsDryRunningGlobal(true);
+    const totalFiles = filesWithPendingSuggestions.length;
+    setBulkSuggestMessage(
+      `Testing ${allPendingSuggestions.length} candidate suggestions across ${totalFiles} file(s) in isolated sandbox...`,
+    );
+    try {
+      let passedFiles = 0;
+      for (const fPath of filesWithPendingSuggestions) {
+        const cleanTarget = cleanDisplayPath(fPath);
+        const fileSugs = allPendingSuggestions.filter((s) => {
+          const sPath = s.sourceFile || s.filePath;
+          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
+        });
+        if (!fileSugs.length) continue;
+        const res = await handleDryRunInline(fPath, fileSugs);
+        const status = res?.testStatus || res?.status;
+        if (
+          status === "PASSED" ||
+          res?.isPassed === true ||
+          res?.success === true
+        ) {
+          passedFiles++;
+        }
+      }
+      setBulkSuggestMessage(
+        passedFiles === totalFiles
+          ? `Dry-Run Passed: ${passedFiles}/${totalFiles} candidate file(s) verified in sandbox and ready to apply.`
+          : `Dry-Run Completed: ${passedFiles}/${totalFiles} file(s) passed. Open Review & Test to inspect individual test cases.`,
+      );
+    } finally {
+      setIsDryRunningGlobal(false);
+    }
+  }, [
+    snapshotId,
+    allPendingSuggestions,
+    filesWithPendingSuggestions,
+    isDryRunningGlobal,
+    isBulkApplying,
+    handleDryRunInline,
   ]);
 
   // Test suites & functions search and filter state
@@ -3483,24 +3697,110 @@ export default function CoverageTypeDashboard({
               </button>
             </>
           ) : type === "unit" ? (
-            <button
-              type="button"
-              onClick={load}
-              disabled={
-                isCoverageQueryFetching ||
-                (running && Boolean(activeJobIdRef.current))
-              }
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-wait"
-              title="Refresh Coverage Analysis"
-            >
-              <RefreshCw
-                size={13}
-                className={isCoverageQueryFetching ? "animate-spin" : ""}
-              />
-              <span>
-                {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
-              </span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {projectId && (
+                <button
+                  type="button"
+                  onClick={() => setShowJobQueueModal(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 cursor-pointer"
+                  title="Open Job Queue and real-time execution logs"
+                >
+                  <ListOrdered
+                    size={13}
+                    className="text-[var(--color-text-muted)]"
+                  />
+                  <span>Job Queue</span>
+                  {(running ||
+                    isBulkSuggesting ||
+                    isBulkApplying ||
+                    isDryRunningGlobal) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] animate-pulse" />
+                  )}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => handleOpenSuggestModal(null, null, true)}
+                disabled={!snapshotId || isBulkSuggesting || isBulkApplying}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                title="Configure unit test framework (Jest / Vitest) and generate AI unit test cases"
+              >
+                {isBulkSuggesting ? (
+                  <Loader2
+                    size={13}
+                    className="animate-spin text-[var(--color-primary)]"
+                  />
+                ) : (
+                  <SlidersHorizontal
+                    size={13}
+                    className="text-[var(--color-text-muted)]"
+                  />
+                )}
+                <span>
+                  {isBulkSuggesting ? "Generating Tests..." : "Test Setup"}
+                </span>
+              </button>
+
+              {reviewFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => openReviewForFile(null)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer"
+                  title="Review generated diffs, select individual test cases, dry-run in sandbox, or apply"
+                >
+                  <FileDiff size={13} className="text-[var(--color-primary)]" />
+                  <span>Review &amp; Test</span>
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono tabular-nums bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                    {allPendingSuggestions.length > 0
+                      ? `${allPendingSuggestions.length} pending`
+                      : `${reviewFiles.length} file${reviewFiles.length > 1 ? "s" : ""}`}
+                  </span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => run({ restart: true })}
+                disabled={
+                  !snapshotId ||
+                  (running && Boolean(activeJobIdRef.current)) ||
+                  isBulkApplying
+                }
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                title="Execute Jest & Vitest unit test suites and measure 4-metric coverage"
+              >
+                {running ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Play size={12} fill="currentColor" />
+                )}
+                <span>
+                  {running
+                    ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...`
+                    : "Run Coverage"}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={load}
+                disabled={
+                  isCoverageQueryFetching ||
+                  (running && Boolean(activeJobIdRef.current))
+                }
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-wait"
+                title="Refresh Coverage Analysis"
+              >
+                <RefreshCw
+                  size={13}
+                  className={isCoverageQueryFetching ? "animate-spin" : ""}
+                />
+                <span>
+                  {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
+                </span>
+              </button>
+            </div>
           ) : (
             <>
               {onGenerate && (
@@ -3603,54 +3903,138 @@ export default function CoverageTypeDashboard({
         </div>
       </div>
 
-      {/* ── Guided Sequential Workflow Stepper (Unit Test Mode) ── */}
+      {/* ── Unit Test Candidate & Live Progress Bar (Integration-Style Control Strip) ── */}
       {type === "unit" && (
         <>
-          <UnitTestGuidedWorkflow
-            snapshotId={snapshotId}
-            running={running}
-            runProgress={runProgress}
-            runningStatus={runningStatus}
-            runStep={runStep}
-            activeJobId={activeJobIdRef.current}
-            onRun={run}
-            onBulkSuggest={handleBulkSuggestTest}
-            onOpenSuggestModal={(opts) =>
-              handleOpenSuggestModal(
-                opts?.filePath,
-                opts?.functionName,
-                opts?.isBulk ?? true,
-              )
-            }
-            isBulkSuggesting={isBulkSuggesting}
-            pendingSuggestionsCount={allPendingSuggestions.length}
-            pendingFilesCount={filesWithPendingSuggestions.length}
-            onApplyAll={handleApplyAllGlobal}
-            isBulkApplying={isBulkApplying}
-            bulkApplyStep={bulkApplyStep}
-            summary={summary}
-            rawTotals={rawTotals}
-            executions={executions}
-            testTotals={totals}
-            hasExecuted={
-              relevantRuns.some((r) =>
-                ["COMPLETED", "PASSED", "SUCCESS", "FAILED"].includes(
-                  r?.status,
-                ),
-              ) ||
-              (totals.total > 0 && !running)
-            }
-            isLatestRunFailed={isLatestRunFailed}
-            hasPartialFailures={hasPartialFailures}
-            onRefresh={load}
-            isRefreshing={isCoverageQueryFetching}
-            onOpenJobQueue={() => setShowJobQueueModal(true)}
-            onOpenReviewModal={() => openReviewForFile(null)}
-            hasReviewableDiffs={reviewFiles.length > 0}
-            activeTab={activeMetricView}
-            onChangeTab={(tabId) => setActiveMetricView(tabId)}
-            isLight={isLight}
-          />
+          {(running ||
+            isBulkSuggesting ||
+            isBulkApplying ||
+            isDryRunningGlobal ||
+            bulkSuggestMessage ||
+            reviewFiles.length > 0) && (
+            <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              {(running ||
+                isBulkSuggesting ||
+                isBulkApplying ||
+                isDryRunningGlobal) && (
+                <div className="h-0.5 w-full bg-[var(--color-surface-secondary)] overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--color-primary)] transition-all duration-300"
+                    style={{
+                      width: running
+                        ? `${Math.max(8, Math.min(100, Math.round(runProgress)))}%`
+                        : "100%",
+                    }}
+                  />
+                </div>
+              )}
+              <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {running ||
+                  isBulkSuggesting ||
+                  isBulkApplying ||
+                  isDryRunningGlobal ? (
+                    <Loader2
+                      size={14}
+                      className="animate-spin text-[var(--color-primary)] shrink-0"
+                    />
+                  ) : allPendingSuggestions.length > 0 ? (
+                    <FlaskConical
+                      size={14}
+                      className="text-[var(--color-primary)] shrink-0"
+                    />
+                  ) : (
+                    <CheckCircle2
+                      size={14}
+                      className="text-emerald-400 shrink-0"
+                    />
+                  )}
+                  <span className="text-[var(--color-text)] font-medium truncate">
+                    {running
+                      ? runningStatus ||
+                        runStep ||
+                        `Running unit test coverage (${Math.round(runProgress)}%)...`
+                      : isBulkApplying
+                        ? bulkApplyStep || "Applying unit test suggestions..."
+                        : isDryRunningGlobal
+                          ? bulkSuggestMessage ||
+                            "Testing candidate suggestions in sandbox..."
+                          : bulkSuggestMessage
+                            ? bulkSuggestMessage
+                            : allPendingSuggestions.length > 0
+                              ? `${allPendingSuggestions.length} candidate suggestion(s) across ${filesWithPendingSuggestions.length} file(s) ready — test in sandbox before applying.`
+                              : `${reviewFiles.length} test file(s) applied — review diffs or re-run full coverage.`}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                  {reviewFiles.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => openReviewForFile(null)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 cursor-pointer"
+                      title="Open Diff & Test Cases selector to run 1 or more test cases before applying"
+                    >
+                      <FileDiff
+                        size={12}
+                        className="text-[var(--color-primary)]"
+                      />
+                      <span>Select &amp; Test Cases</span>
+                    </button>
+                  )}
+
+                  {allPendingSuggestions.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleDryRunAllGlobal}
+                        disabled={
+                          isDryRunningGlobal || isBulkApplying || running
+                        }
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors duration-150 cursor-pointer disabled:opacity-50"
+                        title="Run all pending candidate tests in isolated sandbox before applying to disk"
+                      >
+                        {isDryRunningGlobal ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <FlaskConical
+                            size={12}
+                            className="text-[var(--color-primary)]"
+                          />
+                        )}
+                        <span>
+                          {isDryRunningGlobal
+                            ? "Testing..."
+                            : `Test All Before Apply (${filesWithPendingSuggestions.length})`}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleApplyAllGlobal}
+                        disabled={
+                          isBulkApplying || isDryRunningGlobal || running
+                        }
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 cursor-pointer disabled:opacity-50"
+                        title="Write candidate tests into project test files and update coverage"
+                      >
+                        {isBulkApplying ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <Check size={12} />
+                        )}
+                        <span>
+                          {isBulkApplying
+                            ? "Applying..."
+                            : `Apply All (${filesWithPendingSuggestions.length})`}
+                        </span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <FrameworkRecommendationPanel
             key={snapshotId}
@@ -4380,6 +4764,7 @@ export default function CoverageTypeDashboard({
                 applyResultsByFile={applyResultsByFile}
                 onApplySuggestion={handleApplySuggestionInline}
                 onApplyAllFileSuggestions={handleApplyAllInline}
+                onDryRunFileSuggestions={handleDryRunInline}
                 onReviewDiff={openReviewForFile}
                 onInstallDependency={handleInstallDependency}
                 installingDependencyName={installingDependencyName}
@@ -7114,7 +7499,32 @@ export default function CoverageTypeDashboard({
           files={reviewFiles}
           error={error}
           initialFileIndex={reviewInitialFileIndex}
-          onApplyFile={async (file, currentSuggestion) => {
+          applyResultsByFile={applyResultsByFile}
+          isDryRunning={isDryRunningGlobal}
+          onDryRunFile={async (file, currentSuggestion, customCode) => {
+            const cleanTarget = cleanDisplayPath(file.filePath);
+            let fileSugs = allPendingSuggestions.filter((s) => {
+              const sPath = s.sourceFile || s.filePath;
+              return (
+                sPath === file.filePath ||
+                cleanDisplayPath(sPath) === cleanTarget
+              );
+            });
+            if (
+              fileSugs.length === 0 &&
+              Array.isArray(file.suggestions) &&
+              file.suggestions.length > 0
+            ) {
+              fileSugs = file.suggestions;
+            } else if (fileSugs.length === 0 && currentSuggestion) {
+              fileSugs = [currentSuggestion];
+            }
+            if (fileSugs.length > 0) {
+              await handleDryRunInline(file.filePath, fileSugs, customCode);
+            }
+          }}
+          onDryRunAll={handleDryRunAllGlobal}
+          onApplyFile={async (file, currentSuggestion, customCode) => {
             const cleanTarget = cleanDisplayPath(file.filePath);
             let fileSugs = allPendingSuggestions.filter((s) => {
               const sPath = s.sourceFile || s.filePath;
@@ -7137,6 +7547,7 @@ export default function CoverageTypeDashboard({
                 file.filePath,
                 fileSugs,
                 file.testFilePath,
+                customCode,
               );
             }
           }}
@@ -7254,7 +7665,7 @@ export default function CoverageTypeDashboard({
           targetFunctionsList={functionsForTargetFile}
           allBusinessFiles={selectedFiles}
           allFunctions={functionsList}
-          defaultFramework={activeFramework || "vitest"}
+          defaultFramework={activeFramework || frameworks?.supported?.unit?.[0] || "jest"}
           onConfirmAi={handleConfirmAiSuggest}
           onApplyManualTest={handleConfirmManualApply}
           isApplying={isBulkApplying}

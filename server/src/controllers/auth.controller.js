@@ -2,11 +2,33 @@ import { authValid, loginValid } from "../validators/auth.validation.js";
 import {
   register as registerService,
   login as loginService,
+  issueSessionTokensForUser,
 } from "../services/auth.service.js";
 import prisma from "../config/prisma.js";
-import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { encrypt, decrypt } from "../utils/crypto.js";
+
+const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const getRefreshCookieOptions = (req) => {
+  const isSecure = Boolean(
+    req?.secure ||
+      req?.headers?.["x-forwarded-proto"] === "https" ||
+      (/^https:/i.test(process.env.CLIENT_URL || "") &&
+        process.env.NODE_ENV === "production"),
+  );
+  return {
+    httpOnly: true,
+    secure: isSecure,
+    sameSite: "lax",
+    path: "/",
+    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+  };
+};
+
+export const setRefreshTokenCookie = (req, res, refreshToken) => {
+  res.cookie("refreshToken", refreshToken, getRefreshCookieOptions(req));
+};
 
 export const register = async (req, res) => {
   try {
@@ -18,12 +40,7 @@ export const register = async (req, res) => {
 
     const { name, email, password } = result.data;
     const response = await registerService(name, email, password);
-    res.cookie("refreshToken", response.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setRefreshTokenCookie(req, res, response.refreshToken);
     return res.status(201).json({
       message: response.message,
       accessToken: response.accessToken,
@@ -49,12 +66,7 @@ export const login = async (req, res) => {
 
     const { email, password } = result.data;
     const response = await loginService(email, password);
-    res.cookie("refreshToken", response.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setRefreshTokenCookie(req, res, response.refreshToken);
     return res.status(200).json({
       message: response.message,
       accessToken: response.accessToken,
@@ -414,14 +426,13 @@ export const oAuthGithub = async (req, res) => {
         },
       });
     }
-    const token = jwt.sign(
-      { userId: user.id, userEmail: user.email, userName: user.name },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || "7d" },
-    );
+    const { accessToken: sessionAccessToken, refreshToken } =
+      await issueSessionTokensForUser(user);
+    setRefreshTokenCookie(req, res, refreshToken);
     return res.status(200).json({
       message: "GitHub login successful!",
-      token,
+      token: sessionAccessToken,
+      accessToken: sessionAccessToken,
       userId: user.id,
       name: user.name,
       email: user.email,

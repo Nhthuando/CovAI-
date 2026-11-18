@@ -1,3 +1,5 @@
+import { authAwareFetch } from '../lib/authSession.js';
+
 export async function prepareEditorRequest(url, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   if (method !== 'POST' || !/(?:run|analysis|generate|suggest|optimize|improvements|mutations|assessments|calculate|refresh|cfg\/build)/i.test(url) || /chat|ai-context/.test(url)) return options;
@@ -6,5 +8,6 @@ export async function prepareEditorRequest(url, options = {}) {
   return options;
 }
 export async function editorAwareFetch(url, options) {
-  return fetch(url, await prepareEditorRequest(String(url), options));
+  const prepared = await prepareEditorRequest(String(url), options);
+  return authAwareFetch(fetch, url, prepared);
 }

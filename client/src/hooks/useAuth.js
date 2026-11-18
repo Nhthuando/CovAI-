@@ -42,6 +42,17 @@ export const useAuth = () => {
   }, []);
 
   const logout = useCallback(() => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+      fetch(`${baseUrl}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch((err) => {
+        console.warn("[useAuth] Logout request warning:", err);
+      });
+    }
     queryClient.cancelQueries();
     queryClient.clear();
     localStorage.removeItem("token");

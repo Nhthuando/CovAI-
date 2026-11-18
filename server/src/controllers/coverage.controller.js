@@ -322,6 +322,17 @@ export const runCoverageByType = async (req, res) => {
               data: { status: "CANCELED", finishedAt: new Date() },
             })
             .catch(() => {});
+          if (typeof prisma.projectOperation?.updateMany === "function") {
+            await prisma.projectOperation
+              .updateMany({
+                where: {
+                  primaryJobId: activeUnitJob.id,
+                  status: { in: ["ADMITTED", "QUEUED", "RUNNING", "PUBLISHING"] },
+                },
+                data: { status: "CANCELED" },
+              })
+              .catch(() => {});
+          }
           job = await createRunTestsJob({
             projectId: snapshot.projectId,
             snapshotId: snapshot.id,
@@ -5387,7 +5398,9 @@ export const applySuggestion = async (req, res) => {
       suggestions,
       skipBackgroundJob,
       triggerFullAnalysis,
+      dryRun,
     } = req.body || {};
+    const isDryRun = Boolean(dryRun);
 
     if (!suggestion && (!suggestions || suggestions.length === 0)) {
       return res.status(400).json({
@@ -5412,6 +5425,7 @@ export const applySuggestion = async (req, res) => {
       userId,
       suggestion,
       suggestions,
+      dryRun: isDryRun,
     });
 
     // Only trigger a full project RUN_TESTS background job if explicitly requested or if incremental coverage was not already persisted
@@ -5420,6 +5434,7 @@ export const applySuggestion = async (req, res) => {
       result && result.success && result.newCoverage && result.perFileResults,
     );
     if (
+      !isDryRun &&
       !skipBackgroundJob &&
       (triggerFullAnalysis === true || !hasAuthoritativeCoverage) &&
       result &&
