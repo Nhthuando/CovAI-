@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Terminal, ArrowLeft, GitBranch, Cpu, ShieldCheck } from "lucide-react";
 import AuthForm from "./AuthForm";
 import ForgotPasswordForm from "./ForgotPasswordForm";
@@ -26,10 +26,24 @@ const ARCHITECTURE_PILLARS = [
 ];
 
 export default function AuthLayout({ initialMode = "login", children, invitationNotice }) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode] = useState(initialMode);
 
-  const toggleMode = () =>
-    setMode((m) => (m === "login" ? "register" : "login"));
+  useEffect(() => {
+    if (location.pathname === "/register") {
+      setMode("register");
+    } else if (location.pathname === "/login") {
+      setMode("login");
+    }
+  }, [location.pathname]);
+
+  const toggleMode = (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    const nextMode = mode === "login" ? "register" : "login";
+    setMode(nextMode);
+    navigate(nextMode === "login" ? "/login" : "/register");
+  };
 
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150">
@@ -123,7 +137,7 @@ export default function AuthLayout({ initialMode = "login", children, invitation
           ) : mode === "reset_password" ? (
             <ResetPasswordForm />
           ) : (
-            <AuthForm mode={mode} onToggleMode={toggleMode} setMode={setMode} />
+            <AuthForm key={mode} mode={mode} onToggleMode={toggleMode} setMode={setMode} />
           ))}
         </div>
 

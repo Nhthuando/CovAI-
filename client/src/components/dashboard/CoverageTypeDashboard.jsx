@@ -1,5 +1,6 @@
 import { buildUnitTestReviewFiles } from '../../services/unitTestReview.js';
 import { resolveTargetTestFile } from '../../services/unitTestResolution.js';
+import { attachSocketAuthRecovery, socketAuth } from "../../lib/authSession.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChatTestContext } from '../../hooks/useChatTestContext';
 import SystemTestEvidence from './SystemTestEvidence.jsx';
@@ -66,7 +67,7 @@ import {
 } from "../../hooks/useCoverageQuery.js";
 import { getJobDetailApi, cancelJobApi, getProjectJobsApi } from "../../services/job.service.js";
 import { queryClient } from "../../lib/queryClient.js";
-import { getProjectCfgApi, generateSystemTestApi } from "../../services/project.service.js";
+import { deleteProjectEntryApi, getFileContentApi, getProjectCfgApi, generateSystemTestApi, updateFileContentApi } from "../../services/project.service.js";
 import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
@@ -148,13 +149,7 @@ const CONFIG = {
 
 const pct = (value) => `${Number(value || 0).toFixed(1)}%`;
 const coverageColor = (value) =>
-  value >= 80 ? "#22c55e" : value >= 60 ? "#fbbf24" : "#f87171";
-const getCoverageColor = (value, isLight = false) => {
-  if (isLight) {
-    return value >= 80 ? "#16a34a" : value >= 60 ? "#d97706" : "#dc2626";
-  }
-  return coverageColor(value);
-};
+  value >= 80 ? "var(--color-coverage-good)" : value >= 60 ? "var(--color-coverage-warning)" : "var(--color-coverage-low)";
 const apiFile = (file) =>
   /(^|\/)(api|routes?|controllers?|services?|endpoints?)(\/|\.|$)/i.test(
     file.filePath,
@@ -692,11 +687,12 @@ export default function CoverageTypeDashboard({
 
     const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
     const socket = io(SOCKET_URL, {
-      auth: { token: socketToken },
+      auth: socketAuth,
       withCredentials: true,
       autoConnect: true,
       reconnectionAttempts: 5,
     });
+    attachSocketAuthRecovery(socket);
 
     socket.on("connect", () => {
       if (userId) socket.emit("subscribe_notifications", userId);
@@ -890,6 +886,8 @@ export default function CoverageTypeDashboard({
   };
 
   const [showJobQueueModal, setShowJobQueueModal] = useState(false);
+  const [dependencyInstallError, setDependencyInstallError] = useState("");
+  const [dependencyInstallLogs, setDependencyInstallLogs] = useState([]);
 
   // Mode view for Unit test: "traceability" (default for unit) | "testcases" | "versions" | "all" | "statements" | "branches" | "functions"
   const [activeMetricView, setActiveMetricView] = useState(
@@ -1084,6 +1082,7 @@ export default function CoverageTypeDashboard({
         const telemetry = data?.telemetry || finalSugs[0]?.telemetry || null;
         const mappedSugs = finalSugs.map((s, idx) => ({
           ...s,
+          originalGeneratedCode: s.originalGeneratedCode ?? s.suggestedTestCode ?? s.generatedCode ?? "",
           suggestionId: s.suggestionId || `${filePath}-sug-${idx + 1}`,
           status: s.status || "GENERATED",
           telemetry: s.telemetry || telemetry,
@@ -1185,7 +1184,7 @@ export default function CoverageTypeDashboard({
 
         const resultData = res?.data || res;
         const testStatus = resultData?.testStatus || resultData?.status;
-        const isPassed = testStatus === "PASSED" || resultData?.success === true;
+        const isPassed = testStatus !== "FAILED" && resultData?.isPassed !== false && (testStatus === "PASSED" || resultData?.isPassed === true || resultData?.success === true);
 
         const appliedMap = new Map();
         if (Array.isArray(resultData?.appliedSuggestions)) {
@@ -1206,7 +1205,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
                   qualityGate: resultData?.qualityGate || s.qualityGate,
-                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)),
                   missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
                   missingDependencies: resultData?.missingDependencies,
                 };
@@ -1227,18 +1226,11 @@ export default function CoverageTypeDashboard({
         });
 
         const fileResult = resultData?.perFileResults?.[filePath];
-        const currentFile = selectedFiles.find((f) => f.filePath === filePath);
-        const currentFileCov = currentFile ? {
-          statements: currentFile.stmtsPct || 0,
-          branches: currentFile.branchesPct || 0,
-          functions: currentFile.funcsPct || 0,
-          lines: currentFile.linesPct || 0,
-        } : null;
 
-        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
-        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+        const oldCov = fileResult?.oldCoverage ?? resultData?.oldCoverage ?? resultData?.previousCoverage ?? null;
+        const newCov = fileResult?.newCoverage ?? resultData?.newCoverage ?? null;
 
-        if (oldCov && newCov) {
+        if (oldCov || newCov || !isPassed) {
           setApplyResultsByFile((prev) => ({
             ...prev,
             [filePath]: {
@@ -1326,9 +1318,12 @@ export default function CoverageTypeDashboard({
     [snapshotId, projectId, refetchCoverage, ensureFileCoverage],
   );
 
+  const [reviewUndo, setReviewUndo] = useState({});
+  useEffect(() => { setReviewUndo({}); }, [snapshotId]);
+
   // Apply all suggestions inline safely without overwriting
   const handleApplyAllInline = useCallback(
-    async (filePath, suggestions) => {
+    async (filePath, suggestions, reviewFile = null) => {
       if (!snapshotId || !suggestions?.length) return;
       const cleanFile = cleanDisplayPath(filePath);
       const totalSugs = suggestions.length;
@@ -1383,6 +1378,15 @@ export default function CoverageTypeDashboard({
           currentFile: filePath,
         });
 
+        let previousFile;
+        if (reviewFile) {
+          try {
+            previousFile = (await getFileContentApi(projectId, reviewFile, { snapshotId, forceFresh: true })).data;
+          } catch (error) {
+            if (error.status !== 404) throw error;
+            previousFile = null;
+          }
+        }
         const res = await applyWithEnvironment({
           suggestions: suggestions.map((s) => ({
             ...s,
@@ -1395,8 +1399,22 @@ export default function CoverageTypeDashboard({
         });
 
         const resultData = res?.data || res;
+        const fileWritten = Boolean(resultData?.fileUpdated || resultData?.changedPaths?.some(path => cleanDisplayPath(path) === cleanDisplayPath(reviewFile || "")));
+        if (reviewFile && fileWritten) {
+          try {
+            const current = (await getFileContentApi(projectId, reviewFile, { snapshotId, forceFresh: true })).data;
+            if (current.content !== previousFile?.content) {
+              setReviewUndo(previous => ({
+                ...previous,
+                [cleanDisplayPath(reviewFile)]: { previous: previousFile, appliedContent: current.content, version: current.version },
+              }));
+            }
+          } catch (error) {
+            console.warn("Unable to capture applied file for undo:", error);
+          }
+        }
         const testStatus = resultData?.testStatus || resultData?.status;
-        const isPassed = testStatus === "PASSED" || resultData?.success === true;
+        const isPassed = testStatus !== "FAILED" && resultData?.isPassed !== false && (testStatus === "PASSED" || resultData?.isPassed === true || resultData?.success === true);
 
         const appliedMap = new Map();
         if (Array.isArray(resultData?.appliedSuggestions)) {
@@ -1415,9 +1433,10 @@ export default function CoverageTypeDashboard({
                 const itemPassed = matchedItem.status === "PASSED";
                 return {
                   ...s,
+                  applied: fileWritten || s.applied,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
                   qualityGate: resultData?.qualityGate || s.qualityGate,
-                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)),
                   missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
                   missingDependencies: resultData?.missingDependencies,
                 };
@@ -1425,6 +1444,7 @@ export default function CoverageTypeDashboard({
               if (sugIds.includes(s.suggestionId || s.id)) {
                 return {
                   ...s,
+                  applied: fileWritten || s.applied,
                   status: isPassed ? "PASSED" : "FAILED",
                   qualityGate: resultData?.qualityGate || s.qualityGate,
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
@@ -1438,18 +1458,11 @@ export default function CoverageTypeDashboard({
         });
 
         const fileResult = resultData?.perFileResults?.[filePath];
-        const currentFile = selectedFiles.find((f) => f.filePath === filePath);
-        const currentFileCov = currentFile ? {
-          statements: currentFile.stmtsPct || 0,
-          branches: currentFile.branchesPct || 0,
-          functions: currentFile.funcsPct || 0,
-          lines: currentFile.linesPct || 0,
-        } : null;
 
-        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
-        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+        const oldCov = fileResult?.oldCoverage ?? resultData?.oldCoverage ?? resultData?.previousCoverage ?? null;
+        const newCov = fileResult?.newCoverage ?? resultData?.newCoverage ?? null;
 
-        if (oldCov && newCov) {
+        if (oldCov || newCov || !isPassed) {
           setApplyResultsByFile((prev) => ({
             ...prev,
             [filePath]: {
@@ -1597,7 +1610,8 @@ export default function CoverageTypeDashboard({
         ...prev,
         [filePath]: fileSugs.map((s) =>
           (s.suggestionId === sugId || s.id === sugId)
-            ? { ...s, generatedCode: newCode, suggestedTestCode: newCode, fullUpdatedContent:newCode,testCode:newCode,changeSet:undefined,
+            ? { ...s, originalGeneratedCode: s.originalGeneratedCode ?? s.suggestedTestCode ?? s.generatedCode,
+                generatedCode: newCode, suggestedTestCode: newCode, fullUpdatedContent:newCode,testCode:newCode,changeSet:undefined,
                 validation:{status:'UNVERIFIED',message:'The edited candidate must be verified again before publication.'},status: "EDITED" }
             : s,
         ),
@@ -1612,6 +1626,7 @@ export default function CoverageTypeDashboard({
     Object.entries(inlineSuggestions).forEach(([fPath, sugs]) => {
       (sugs || []).forEach((s) => {
         if (
+          !reviewUndo[cleanDisplayPath(s.testFile || s.targetTestFile || "")] &&
           s.status !== "REJECTED" &&
           s.status !== "PASSED" &&
           s.status !== "APPLIED" &&
@@ -1624,7 +1639,7 @@ export default function CoverageTypeDashboard({
       });
     });
     return list;
-  }, [inlineSuggestions, type]);
+  }, [inlineSuggestions, reviewUndo, type]);
 
   const filesWithPendingSuggestions = useMemo(() => {
     const set = new Set();
@@ -1957,6 +1972,7 @@ export default function CoverageTypeDashboard({
   const handleInstallDependency = async (packageName, isDev = false, importedFrom = null, onAfterInstall = null) => {
     if (!snapshotId || !packageName || installingDependencyName) return;
     setInstallingDependencyName(packageName);
+    setDependencyInstallError("");
     setError("");
     try {
       const shouldRerunFull = !onAfterInstall;
@@ -1968,6 +1984,7 @@ export default function CoverageTypeDashboard({
         importedFrom
       );
       if (res?.success) {
+        setDependencyInstallLogs(previous => [...previous, `[SUCCESS] ${res.message || `Installed ${packageName}`}`]);
         invalidateCoverageQueries(snapshotId);
         await refetchCoverage();
         if (typeof onAfterInstall === "function") {
@@ -1979,7 +1996,10 @@ export default function CoverageTypeDashboard({
       return res;
     } catch (err) {
       console.error("[handleInstallDependency] Error:", err);
-      setError(err.message || `Error installing ${packageName}`);
+      const message = err.message || `Error installing ${packageName}`;
+      setError(message);
+      setDependencyInstallError(message);
+      setDependencyInstallLogs(previous => [...previous, `[ERROR] ${message}`]);
       throw err;
     } finally {
       setInstallingDependencyName(null);
@@ -2379,12 +2399,22 @@ export default function CoverageTypeDashboard({
             },
           },
         });
-        if (res?.success) {
+        const result = res?.data || res;
+        if (result?.fileUpdated) {
           invalidateCoverageQueries(snapshotId);
           await load();
         }
+        const status = result?.testStatus || result?.status;
+        const passed = status !== "FAILED" && result?.isPassed !== false && (status === "PASSED" || status === "SUCCESS" || result?.isPassed === true);
+        const coverage = result?.newCoverage ?? result?.coverage;
+        const coverageMessage = coverage == null ? "" : ` Coverage: ${typeof coverage === "object" ? Object.entries(coverage).map(([metric, value]) => `${metric}: ${value?.pct ?? value}%`).join(", ") : `${coverage}%`}.`;
+        return {
+          error: !passed,
+          message: passed ? `Test run: ${status || "PASSED"}.${coverageMessage}` : result?.errorDetail || result?.testRunError || result?.message || res?.message || "The test run failed.",
+        };
       } catch (err) {
         console.error("Failed to apply manual unit test:", err);
+        return { error: true, message: err.response?.data?.message || err.message || "Unable to save and run the test." };
       } finally {
         setIsBulkApplying(false);
         setBulkApplyStep("");
@@ -2451,6 +2481,7 @@ export default function CoverageTypeDashboard({
     : (summary?.lastSuccessfulCoverage?.statements > 0 ? summary.lastSuccessfulCoverage : null);
   const latestRunErr = summary?.latestRunError || coverageData?.latestRunError;
   const failedSuiteName = cleanDisplayPath(summary?.failedSuite || coverageData?.failedSuite);
+  const failedSuiteNames = (summary?.failedSuites?.length ? summary.failedSuites : coverageData?.failedSuites?.length ? coverageData.failedSuites : [failedSuiteName]).filter(Boolean).map(name => cleanDisplayPath(name));
 
   const lastSuccessfulValues = useMemo(() => {
     if (!lastSuccessfulCov) return [0, 0, 0, 0];
@@ -2464,7 +2495,7 @@ export default function CoverageTypeDashboard({
 
   const values =
     type === "unit"
-      ? [statPct, branchPct, funcPct, linePct]
+      ? (isLatestRunFailed && lastSuccessfulCov ? lastSuccessfulValues : [statPct, branchPct, funcPct, linePct])
       : type === "integration"
         ? [
           selectedFiles.length,
@@ -2833,6 +2864,13 @@ export default function CoverageTypeDashboard({
             switchingVersionFile={switchingVersionFile}
           />
 
+          <FrameworkRecommendationPanel
+            key={snapshotId}
+            projectId={projectId}
+            snapshotId={snapshotId}
+            onSelect={setActiveFramework}
+          />
+
           <UnitTestPackageInstaller
             key={snapshotId}
             missingDependencies={activeMissingDependencies}
@@ -2967,11 +3005,11 @@ export default function CoverageTypeDashboard({
             </div>
           </div>
 
-          {failedSuiteName && (
+          {failedSuiteNames.length > 0 && (
             <div style={{ fontSize: 12, color: isLight ? "#334155" : "#e2e8f0" }}>
               <span style={{ color: isLight ? "#64748b" : "#94a3b8" }}>Failed Suite: </span>
               <code style={{ background: isLight ? "#fff1f2" : "rgba(0,0,0,0.4)", border: isLight ? "1px solid #fecdd3" : "none", padding: "2px 6px", borderRadius: 4, color: isLight ? "#be123c" : "#f87171" }}>
-                {cleanDisplayPath(failedSuiteName)}
+                {failedSuiteNames.join(", ")}
               </code>
             </div>
           )}
@@ -3014,16 +3052,16 @@ export default function CoverageTypeDashboard({
                 ℹ️ Displaying results from previous successful run (cached):
               </span>
               <span>
-                Statements: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.statements || lastSuccessfulCov.lines || 0}%</b>
+                Statements: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulValues[0]}%</b>
               </span>
               <span>
-                Branches: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.branches || 0}%</b>
+                Branches: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulValues[1]}%</b>
               </span>
               <span>
-                Functions: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.functions || 0}%</b>
+                Functions: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulValues[2]}%</b>
               </span>
               <span>
-                Lines: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.lines || 0}%</b>
+                Lines: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulValues[3]}%</b>
               </span>
             </div>
           )}
@@ -3055,11 +3093,11 @@ export default function CoverageTypeDashboard({
               </div>
             </div>
           </div>
-          {failedSuiteName && (
+          {failedSuiteNames.length > 0 && (
             <div style={{ fontSize: 12, color: isLight ? "#334155" : "#cbd5e1" }}>
               <span style={{ color: isLight ? "#64748b" : "#94a3b8" }}>Suites with failed tests: </span>
               <code style={{ background: isLight ? "#fefce8" : "rgba(0,0,0,0.4)", border: isLight ? "1px solid #fef08a" : "none", padding: "2px 6px", borderRadius: 4, color: isLight ? "#a16207" : "#fcd34d" }}>
-                {cleanDisplayPath(failedSuiteName)}
+                {failedSuiteNames.join(", ")}
               </code>
             </div>
           )}
@@ -3085,7 +3123,7 @@ export default function CoverageTypeDashboard({
               if (!unitCard && i === 1 && (Number(rawInfo?.covered || 0) === 0) && (Number(values[0] || 0) === 0 || Number(values[3] || 0) === 0)) {
                 metricVal = 0;
               }
-              const color = getCoverageColor(metricVal, isLight);
+              const color = coverageColor(metricVal);
               const MetricIcon = i === 0 ? FileCode : i === 1 ? GitBranch : i === 2 ? Cpu : Layers;
 
               if (type === "unit") {
@@ -3135,7 +3173,7 @@ export default function CoverageTypeDashboard({
                                 ? (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)")
                                 : (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)"),
                             color: metricVal >= 80
-                              ? (isLight ? "#059669" : "#34d399")
+                              ? "var(--color-coverage-good)"
                               : metricVal >= 60
                                 ? (isLight ? "#d97706" : "#fbbf24")
                                 : (isLight ? "#dc2626" : "#f87171"),
@@ -5338,7 +5376,7 @@ export default function CoverageTypeDashboard({
                                 <span
                                   key={i}
                                   style={{
-                                    color: getCoverageColor(val, isLight),
+                                    color: coverageColor(val),
                                     textAlign: "right",
                                     fontSize: 12,
                                     fontFamily: "var(--font-mono)",
@@ -5787,6 +5825,7 @@ export default function CoverageTypeDashboard({
           isOpen={reviewModalOpen}
           onClose={() => setReviewModalOpen(false)}
           files={reviewFiles}
+          error={error}
           initialFileIndex={reviewInitialFileIndex}
           onUndoFile={async (file) => {
             const fPath = file?.filePath || file?.sourceFile || file?.testFile;
@@ -5796,10 +5835,48 @@ export default function CoverageTypeDashboard({
             if (file.reviewError) return;
             const fileSugs = file.suggestions?.length ? file.suggestions : currentSuggestion ? [currentSuggestion] : [];
             if (fileSugs.length > 0) {
-              await handleApplyAllInline(file.filePath, fileSugs);
+              await handleApplyAllInline(file.filePath, fileSugs, file.testFilePath);
             }
           }}
-          onApplyAll={handleApplyAllGlobal}
+          onUndoFile={async (file) => {
+            const path = cleanDisplayPath(file.testFilePath);
+            const undo = reviewUndo[path];
+            if (!undo) {
+              setError("Undo is not available for this file yet.");
+              return;
+            }
+            setError(null);
+            try {
+              const current = (await getFileContentApi(projectId, path, { snapshotId, forceFresh: true })).data;
+              if (current.content !== undo.appliedContent || current.version?.revision !== undo.version?.revision) {
+                throw new Error("The file changed after applying these suggestions. Review it before undoing.");
+              }
+              const options = { snapshotId, expectedVersion: current.version, expectedWorkspaceRevision: current.workspaceRevision };
+              if (undo.previous) await updateFileContentApi(projectId, path, undo.previous.content, options);
+              else await deleteProjectEntryApi(projectId, path, options);
+              setReviewUndo(previous => {
+                const next = { ...previous };
+                delete next[path];
+                return next;
+              });
+              setInlineSuggestions(previous => ({
+                ...previous,
+                [file.filePath]: (previous[file.filePath] || []).map(suggestion =>
+                  file.suggestions.some(item => (item.id || item.suggestionId) === (suggestion.id || suggestion.suggestionId))
+                    ? { ...suggestion, status: "GENERATED", applied: false, testRunError: null, proposalBase: undefined }
+                    : suggestion),
+              }));
+              invalidateCoverageQueries(snapshotId);
+            } catch (error) {
+              console.error("Undo test suggestions failed:", error);
+              setError(error.message || "Unable to undo the changes.");
+            }
+          }}
+          onApplyAll={async () => {
+            for (const file of reviewFiles.filter(item => !item.applied)) {
+              await handleApplyAllInline(file.filePath, file.suggestions, file.testFilePath);
+            }
+          }}
           onRunAnalysis={run}
           isApplying={isBulkApplying}
           applyingStep={bulkApplyStep}

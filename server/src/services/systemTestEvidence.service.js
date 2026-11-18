@@ -51,6 +51,7 @@ export const prepareSystemPlaywright = ({rootDir,execution,executionMode,backend
 const test=base.extend({
   _covaiLiveStream: [async ({page}, use) => {
     let cdp = null, frameTimer = null, capturing = false, closed = false;
+    let screencasting = false, screencastTimer = null, latestFrame = null, lastFrameAt = 0;
     const frameFile = path.join(${JSON.stringify(directory)}, 'live-frame.b64');
     try {
       await page.addInitScript(() => {
@@ -108,10 +109,48 @@ const test=base.extend({
       }
     };
 
-    const onLoad = () => { void captureFrame(); };
+    const writeLatestFrame = () => {
+      screencastTimer = null;
+      try {
+        if (closed || page.isClosed() || !/^https?:\\/\\//i.test(page.url() || '')) {
+          latestFrame = null;
+          return;
+        }
+        if (latestFrame) {
+          fs.writeFileSync(frameFile, latestFrame, 'utf8');
+          lastFrameAt = Date.now();
+          latestFrame = null;
+        }
+      } catch {}
+    };
+    try {
+      cdp = await page.context().newCDPSession(page);
+      cdp.on('Page.screencastFrame', ({ data, sessionId }) => {
+        try {
+          if (!closed && !page.isClosed() && /^https?:\\/\\//i.test(page.url() || '')) {
+            latestFrame = data;
+            if (!screencastTimer) {
+              const delay = Math.max(0, 120 - (Date.now() - lastFrameAt));
+              if (!delay) writeLatestFrame();
+              else {
+                screencastTimer = setTimeout(writeLatestFrame, delay);
+                if (screencastTimer.unref) screencastTimer.unref();
+              }
+            }
+          } else latestFrame = null;
+        } catch {} finally {
+          cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+        }
+      });
+      await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 60, maxWidth: 1280, maxHeight: 800, everyNthFrame: 1 });
+      screencasting = true;
+    } catch {
+      frameTimer = setInterval(() => { void captureFrame(); }, 240);
+      if (frameTimer.unref) frameTimer.unref();
+    }
+
+    const onLoad = () => { if (!screencasting) void captureFrame(); };
     page.on('load', onLoad);
-    frameTimer = setInterval(() => { void captureFrame(); }, 240);
-    if (frameTimer.unref) frameTimer.unref();
 
     try {
       await use();
@@ -120,7 +159,9 @@ const test=base.extend({
       closed = true;
       page.off('load', onLoad);
       if (frameTimer) clearInterval(frameTimer);
+      if (screencastTimer) clearTimeout(screencastTimer);
       if (cdp) {
+        await cdp.send('Page.stopScreencast').catch(() => {});
         try { await cdp.detach(); } catch {}
       }
     }

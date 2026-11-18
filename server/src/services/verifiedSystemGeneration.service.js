@@ -1,3 +1,4 @@
+import { testDesignPromptSection } from './systemTestPrompt.service.js';
 import {
   buildSystemGenerationInput,
   parseSystemGenerationResponse,
@@ -192,6 +193,7 @@ ${PLAYWRIGHT_EXECUTION_STEP_RULES}
 ${SYSTEM_TEST_QUALITY_RULES}
 Observed running application:
 ${JSON.stringify(runtime)}
+${testDesignPromptSection(context)}
 Snapshot context (complete files, no arbitrary first-200-line truncation). Omitted files: ${JSON.stringify(context.omittedFiles)}. Generate only scenarios supported by available context; this is not a claim of complete business coverage.
 ${context.sourceCode.map((file) => `FILE ${file.path}\n${file.content}\nEND FILE`).join("\n")}`, 'system-test');
 
@@ -337,7 +339,7 @@ export const generateVerifiedSystemTests = async ({
           responseMimeType: "application/json",
           responseSchema,
           temperature: 0.2,
-          maxOutputTokens: patchMode ? 4000 : 10000,
+          maxOutputTokens: patchMode ? 4000 : 16000,
           requestTimeoutMs: 120000,
           totalTimeoutMs: 300000,
           maxAttempts: 3,
@@ -626,6 +628,7 @@ Discovered Routes: ${JSON.stringify(routesToTest)}
 Discovered UI Actions (buttons, inputs): ${JSON.stringify(uiActions.slice(0, 15))}
 Client API Calls: ${JSON.stringify(clientApiCalls.slice(0, 15))}
 Backend Endpoints: ${JSON.stringify(backendEndpoints.slice(0, 15))}
+${testDesignPromptSection(context)}
 
 INSTRUCTIONS:
 1. Return a JSON object with format: {"content": "complete Cypress JavaScript test code"}.
@@ -650,6 +653,7 @@ Discovered Routes: ${JSON.stringify(routesToTest)}
 Discovered UI Actions (buttons, inputs): ${JSON.stringify(uiActions.slice(0, 15))}
 Client API Calls: ${JSON.stringify(clientApiCalls.slice(0, 15))}
 Backend Endpoints: ${JSON.stringify(backendEndpoints.slice(0, 15))}
+${testDesignPromptSection(context)}
 
 INSTRUCTIONS:
 1. Return JSON {"content":"complete Playwright JavaScript code","scenarios":[{"id":"stable draft ID","title":"exact test title","criterionIds":[],"preconditions":[],"inputs":[],"actions":["main action"],"expected":["observable outcome"],"sourceReferences":["exact supplied file path"]}]}. Describe each test exactly once; criterionIds may reference confirmed criteria only.
@@ -659,6 +663,7 @@ INSTRUCTIONS:
 4. Tests MUST be independent and not share state across scenarios.
 5. Generate the following scenario categories:
    - READ: Open a source-supported page and assert its specific heading, content or controls. Body visibility alone is insufficient.
+   - VALIDATION: For each form, invalid and boundary inputs from the test design checklist, asserting the rejection.
    - NAVIGATION: For concrete source-supported routes, assert the destination URL and its specific rendered content. Do not invent routes or parameter values.
    - User Interaction Tests: Locate input fields and buttons from discovered UI components, perform fill/click actions, and assert responsive UI.
 6. Do NOT import child_process or use eval/process.exit.
@@ -776,6 +781,16 @@ ${actionTest}
  * @param {Object} [options.dependencies]
  * @returns {Promise<Object>} Metadata and details of created test file
  */
+export const measureTestDesignCoverage = ({ code = '', checklist = [] } = {}) => {
+  const markers = new Set([...code.matchAll(/\/\/[ \t]*covers[ \t]*:[ \t]*([^\s]+)/g)].map((match) => match[1]));
+  const ids = checklist.map((item) => item.id);
+  return {
+    total: ids.length,
+    covered: ids.filter((id) => markers.has(id)),
+    missing: ids.filter((id) => !markers.has(id)),
+  };
+};
+
 export const generateColdStartSystemTests = async ({
   rootDir,
   framework = "playwright",
@@ -867,6 +882,39 @@ export const generateColdStartSystemTests = async ({
     },
     required: ["content"],
   };
+  const validateCandidate = (candidateCode, response, { allowCodeOnlyMetadata = false } = {}) => {
+    const { ast } = validateGeneratedTestCode(candidateCode);
+    let candidateQuality;
+    let candidateMetadata = { scenarios: [], metadataStatus: "CODE_ONLY" };
+    if (normFramework === "playwright") {
+      if (executionMode === "full") validateFullSystemTest(candidateCode);
+      candidateQuality = validateSystemTestQuality(ast);
+      const metadataOptions = {
+        titles: analyzeSystemTestFile({
+          content: candidateCode,
+          filePath: "draft.spec.js",
+        }).scenarioSites.map((row) => row.title),
+        requirements,
+        sourcePaths: focusTestContext(
+          context,
+          JSON.stringify({
+            routes: targetRoutes.length
+              ? targetRoutes
+              : context.routes || ["/"],
+          }),
+          60000,
+        ).sourceCode.map((row) => row.path),
+      };
+      try {
+        candidateMetadata = parseSystemGenerationResponse(response, metadataOptions);
+      } catch (error) {
+        if (!allowCodeOnlyMetadata) throw error;
+        console.warn('[verifiedSystemGeneration] Coverage follow-up metadata rejected; keeping code-only metadata:', error.message);
+        candidateMetadata = { scenarios: [], metadataStatus: "CODE_ONLY" };
+      }
+    }
+    return { code: candidateCode, quality: candidateQuality, generationMetadata: candidateMetadata };
+  };
   for (let attempt = 0; attempt < 2; attempt++) {
     generationAttempts = attempt + 1;
     const correction =
@@ -912,27 +960,7 @@ Previous candidate (untrusted code): ${code}`;
       "Validating generated test syntax, safety and scenario structure",
     );
     try {
-      const { ast } = validateGeneratedTestCode(code);
-      if (normFramework === "playwright") {
-        if (executionMode === "full") validateFullSystemTest(code);
-        quality = validateSystemTestQuality(ast);
-        generationMetadata = parseSystemGenerationResponse(response, {
-          titles: analyzeSystemTestFile({
-            content: code,
-            filePath: "draft.spec.js",
-          }).scenarioSites.map((row) => row.title),
-          requirements,
-          sourcePaths: focusTestContext(
-            context,
-            JSON.stringify({
-              routes: targetRoutes.length
-                ? targetRoutes
-                : context.routes || ["/"],
-            }),
-            60000,
-          ).sourceCode.map((row) => row.path),
-        });
-      }
+      ({ quality, generationMetadata } = validateCandidate(code, response));
       validationError = null;
       break;
     } catch (error) {
@@ -942,6 +970,42 @@ Previous candidate (untrusted code): ${code}`;
     }
   }
   if (validationError) throw validationError;
+
+  const checklist = context.testDesign || [];
+  let coverage = measureTestDesignCoverage({ code, checklist });
+  if (checklist.length > 0 && coverage.covered.length < coverage.total / 2) {
+    const missing = checklist
+      .filter((item) => coverage.missing.includes(item.id))
+      .map((item) => `${item.id}: ${JSON.stringify({ field: item.field, technique: item.technique, input: item.input, expect: item.expect, message: item.message })}`)
+      .join("\n");
+    const instruction = `The suite passed validation but does not cover these test design checklist items: ${missing}. Return the complete file: keep every existing test unchanged and add tests for these items where the field is reachable in the UI. Respond in the same JSON format as before. "content" must be the complete test file. If you include "scenarios" metadata, include exactly one entry for every test in the file (existing and new), with titles identical to the test titles.`;
+    try {
+      // The provider enforces the active AI budget before sending this optional request.
+      generationAttempts++;
+      const followUp = await generate(`${prompt}\n${instruction}\nPrevious candidate (untrusted code): ${code}`, null, {
+        responseMimeType: "application/json",
+        responseSchema,
+        temperature: 0.2,
+        maxOutputTokens: 32000,
+        maxAttempts: 1,
+        totalTimeoutMs: 150000,
+        returnTelemetry: true,
+        taskType: "e2e",
+      });
+      const response = followUp?.text !== undefined ? followUp.text : followUp;
+      const candidate = validateCandidate(extractSystemTestCode(response), response, { allowCodeOnlyMetadata: true });
+      const candidateCoverage = measureTestDesignCoverage({ code: candidate.code, checklist });
+      if (candidateCoverage.covered.length > coverage.covered.length) {
+        ({ code, quality, generationMetadata } = candidate);
+        lastTelemetry = followUp?.telemetry || lastTelemetry;
+        coverage = candidateCoverage;
+      } else {
+        console.warn('[verifiedSystemGeneration] Coverage follow-up did not increase checklist coverage; keeping validated candidate');
+      }
+    } catch (error) {
+      console.warn('[verifiedSystemGeneration] Test design coverage follow-up failed; keeping validated candidate:', error);
+    }
+  }
 
   await onProgress(85, "Saving generated test files");
   const relFilePath =
@@ -964,6 +1028,12 @@ Previous candidate (untrusted code): ${code}`;
   return {
     generationMetadata,
     generationAttempts,
+    testDesign: {
+      facts: (context.validationFacts || []).length,
+      checklist: checklist.length,
+      covered: coverage.covered,
+      missing: coverage.missing,
+    },
     contextHash: crypto.createHash("sha256").update(prompt).digest("hex"),
     promptVersion: SYSTEM_PROMPT_VERSION,
     framework: normFramework.toUpperCase(),

@@ -182,7 +182,7 @@ export function RiskQuadrantScatterPlot({
     <div className={`relative space-y-2 font-sans ${className}`}>
       {/* Minimal Header with Contextual Quadrant Guide */}
       <div className="flex items-center justify-between text-xs px-1">
-        <span className="text-[11px] font-mono text-[#8b949e]">
+        <span className="text-[11px] font-mono text-[var(--ud-text-muted)]">
           Correlation: Unified Coverage vs. Test Pass Rate
         </span>
         <ContextualMetricTooltip
@@ -195,7 +195,7 @@ export function RiskQuadrantScatterPlot({
         >
           <button
             type="button"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#21262d] border border-[#30363d] text-[10px] text-[#8b949e] hover:text-[#58a6ff] hover:border-[#58a6ff]/40 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[10px] text-[var(--ud-text-muted)] hover:text-[var(--ud-unit)] hover:border-[var(--ud-unit)]/40 transition-colors cursor-pointer"
           >
             <span>ⓘ Quadrant Guide</span>
           </button>

@@ -4,7 +4,7 @@ import { getFrameworkRecommendationApi, selectTestingFrameworkApi } from "../../
 
 const labelFor = (framework) => framework === "vitest" ? "Vitest" : "Jest";
 
-export default function FrameworkRecommendationPanel({ projectId, snapshotId }) {
+export default function FrameworkRecommendationPanel({ projectId, snapshotId, onSelect }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,23 +20,27 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
     try {
       const response = await getFrameworkRecommendationApi(projectId, snapshotId);
       setData(response.data);
+      onSelect?.(response.data.selectedTestingFramework);
     } catch (loadError) {
+      console.error("Unable to analyze test framework:", loadError);
       setError(loadError.message || "Unable to analyze test framework.");
     } finally {
       setLoading(false);
     }
-  }, [projectId, snapshotId]);
+  }, [projectId, snapshotId, onSelect]);
 
   useEffect(() => { load(); }, [load]);
 
   const selectFramework = async (framework) => {
-    if (!projectId || !snapshotId || saving) return;
+    if (!projectId || !snapshotId || saving || data?.selectedTestingFramework === framework) return;
     setSaving(framework);
     setError("");
     try {
       const response = await selectTestingFrameworkApi(projectId, snapshotId, framework);
       setData(response.data);
+      onSelect?.(response.data.selectedTestingFramework);
     } catch (saveError) {
+      console.error("Unable to save selected framework:", saveError);
       setError(saveError.message || "Unable to save selected framework.");
     } finally {
       setSaving("");
@@ -47,13 +51,12 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
 
   return (
     <section
-      className="rounded-xl"
-      style={{ background: "rgba(124,58,237,0.06)", border: "1px solid rgba(124,58,237,0.18)", padding: 12 }}
+      className="my-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Sparkles size={14} style={{ color: "#a78bfa" }} />
-          <span style={{ color: "#e6edf3", fontSize: 12, fontWeight: 600 }}>Test framework</span>
+          <span style={{ color: "var(--color-text)", fontSize: 12, fontWeight: 600 }}>Test framework</span>
         </div>
         <button onClick={load} disabled={loading || Boolean(saving)} title="Re-analyze" style={{ color: "#8b949e" }}>
           {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -66,7 +69,7 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
       {data && (
         <>
           <p style={{ color: "#8b949e", fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
-            Recommended: <strong style={{ color: "#c4b5fd" }}>{labelFor(data.recommendedFramework)}</strong> · {data.projectType}
+            Recommended: <strong style={{ color: "var(--color-primary)" }}>{labelFor(data.recommendedFramework)}</strong> · {data.projectType}
           </p>
           <div className="flex gap-2" style={{ marginTop: 10 }}>
             {(data.candidates || []).map((candidate) => {

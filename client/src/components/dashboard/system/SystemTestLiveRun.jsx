@@ -1,3 +1,4 @@
+import { attachSocketAuthRecovery, socketAuth } from "../../../lib/authSession.js";
 import { deriveLiveRunState, contiguousCursor } from './systemLiveRunModel.js';
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
@@ -47,6 +48,10 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
   const [error, setError] = useState('');
   const [stopping, setStopping] = useState(false);
   const [checkpoint, setCheckpoint] = useState(null);
+  // Job log lines shown while the app is installed, started and tests prepared,
+  // which can take minutes before Playwright emits its first event.
+  const [preparationLogs, setPreparationLogs] = useState([]);
+  const jobTerminal = useRef(false);
   const cursor = useRef(0);
   const terminalBottomRef = useRef(null);
   const followsLatest = useRef(true);
@@ -55,12 +60,29 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
   useEffect(() => {
     if (!activeJobId) return;
     let current = true;
+    let timer;
     const poll = () => getJobDetailApi(activeJobId).then(response => {
-      if (current) setJobStatus((response.job || response.data)?.status || 'RUNNING');
-      if (current) setJobActor({ jobId: activeJobId, userId: (response.job || response.data)?.userId || null });
-    }).catch(() => { if (current) setJobActor(null); });
+      if (!current) return;
+      const job = response.job || response.data;
+      const status = job?.status || 'RUNNING';
+      setJobStatus(status);
+      setJobActor({ jobId: activeJobId, userId: job?.userId || null });
+      setPreparationLogs((job?.logs || [])
+        .filter(log => log.message && !/heartbeat|^Progress \d+%|Execution in progress \(elapsed/i.test(log.message))
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+        .slice(-40)
+        .map(log => ({ id: log.id || `${log.createdAt}:${log.message}`, level: log.level, time: log.createdAt, message: log.message.replace(/^Assessment stage: /, '') })));
+      if (['SUCCESS', 'COMPLETED', 'FAILED', 'CANCELED', 'CANCELLED'].includes(status)) {
+        jobTerminal.current = true;
+        clearInterval(timer);
+      }
+    }).catch(err => {
+      console.error('[SystemTestLiveRun] Job status poll failed:', err);
+      if (current) setJobActor(null);
+    });
+    jobTerminal.current = false;
     poll();
-    const timer = setInterval(poll, 2500);
+    timer = setInterval(poll, 2500);
     return () => { current = false; clearInterval(timer); };
   }, [activeJobId]);
 
@@ -76,6 +98,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
         setCheckpoint(null);
         setStopping(false);
         setAccessRevoked(false);
+        setPreparationLogs([]);
         setAssessmentId(initialAssessmentId || null);
       }
     });
@@ -86,10 +109,8 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
       try {
         const record = await systemEvidenceRequest(snapshotId, 'assessments');
         if (!active) return;
-        if (record?.liveFrame) {
-          setLiveFrame(toFrameDataUri(record.liveFrame));
-        }
         if ((record?.jobId === activeJobId || (!activeJobId && record?.id === initialAssessmentId)) && record?.id) {
+          if (record.liveFrame) setLiveFrame(toFrameDataUri(record.liveFrame));
           setAssessmentId(record.id);
         } else if (activeJobId) {
           timer = setTimeout(resolveRecord, 1200);
@@ -123,7 +144,14 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
       });
     };
 
+    let replaying = false;
+    let finalReplayDone = false;
+    let socket = null;
     const replay = async () => {
+      if (replaying || finalReplayDone) return;
+      replaying = true;
+      // One last replay after the job ends collects the closing events.
+      const finishing = jobTerminal.current;
       try {
         let after = cursor.current;
         for (let page = 0; page < 10; page++) {
@@ -136,19 +164,27 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
           if (batch.length < 100) break;
           after = batch.at(-1).sequence;
         }
-        const record = await systemEvidenceRequest(snapshotId, `assessments/${assessmentId}`).catch(() => null);
-        if (active && record?.liveFrame) {
-          setLiveFrame(toFrameDataUri(record.liveFrame));
+        // Frames arrive over the socket; read the stored frame only as a fallback.
+        if (!socket?.connected) {
+          const record = await systemEvidenceRequest(snapshotId, `assessments/${assessmentId}`).catch(err => {
+            console.error('[SystemTestLiveRun] Assessment frame refresh failed:', err);
+            return null;
+          });
+          if (active && record?.liveFrame) setLiveFrame(toFrameDataUri(record.liveFrame));
         }
+        if (finishing) finalReplayDone = true;
       } catch (err) {
         if (active) setError(err.response?.data?.message || err.message);
+      } finally {
+        replaying = false;
       }
     };
 
     replay();
     const intervalTimer = setInterval(replay, 1800);
     const token = getToken();
-    const socket = io(socketUrl, { auth: { token } });
+    socket = io(socketUrl, { auth: socketAuth });
+    attachSocketAuthRecovery(socket);
 
     socket.on('connect', () => {
       if (projectId) socket.timeout(12000).emit('project:subscribe', { projectId }, (timeout, result) => {
@@ -213,11 +249,13 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
   const isScenarioActive = latestScenarioStart && (!latestScenarioEnd || latestScenarioEnd.sequence < latestScenarioStart.sequence);
   const isAllFinished = liveState.isTerminal;
 
+  const isPreparing = !isAllFinished && !latestScenarioStart;
+  const latestPreparationStep = [...preparationLogs].reverse().find(log => !/^\[(DockerRunner|AUT Healthcheck)\]/.test(log.message));
   const activeScenarioTitle = isAllFinished
     ? `Assessment ${jobStatus.toLowerCase()}`
     : !isScenarioActive && latestScenarioEnd
     ? `${latestScenarioEnd.payloadJson?.title || 'Scenario'} — Completed`
-    : (latestScenarioStart?.payloadJson?.title || 'Initializing Scenario Runner...');
+    : (latestScenarioStart?.payloadJson?.title || latestPreparationStep?.message || 'Starting the test environment...');
   const currentScenario = latestScenarioStart;
   const latestArtifact = [...events].reverse().find(event => event.payloadJson?.artifactId);
   const artifactId = latestArtifact?.payloadJson?.artifactId;
@@ -265,7 +303,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
       aria-label="Live Playwright Execution View"
     >
       {/* Top Header Bar */}
-      <div className="px-5 py-3.5 bg-gradient-to-r from-blue-500/10 via-[var(--color-surface)] to-[var(--color-surface)] border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
+      <div className="px-5 py-3.5 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="relative flex h-3.5 w-3.5 shrink-0">
             {isScenarioActive && !isAllFinished && (
@@ -295,7 +333,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
             </div>
             <div className="flex items-center gap-2 mt-1 min-w-0">
               <span className="text-xs uppercase tracking-wider font-semibold text-blue-700 dark:text-blue-400 shrink-0">
-                Running Scenario:
+                {isPreparing ? 'Preparing:' : 'Running Scenario:'}
               </span>
               <span className="text-xs font-bold text-[var(--color-text)] bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 px-3 py-0.5 rounded-md truncate max-w-xl shadow-xs font-mono">
                 {activeScenarioTitle}
@@ -344,7 +382,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
                 <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block shadow-xs" />
               </div>
               <div className="flex-1 max-w-md mx-auto px-3 py-1 rounded-md bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 text-xs font-mono text-slate-700 dark:text-zinc-300 truncate text-center shadow-xs">
-                http://localhost:5173/ (Chromium)
+                Isolated test browser (Chromium)
               </div>
             </div>
 
@@ -388,7 +426,9 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
                       {activeScenarioTitle}
                     </p>
                     <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">
-                      Streaming real-time browser actions, mouse cursor, and live assertions.
+                      {isPreparing
+                        ? 'Installing dependencies and starting the application. The browser view appears when the first scenario starts.'
+                        : 'Streaming real-time browser actions, mouse cursor, and live assertions.'}
                     </p>
                   </div>
                 </div>
@@ -417,9 +457,21 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
 
           <div onScroll={(event) => { const node = event.currentTarget; followsLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48; }} className="flex-1 overflow-y-auto space-y-2 pr-1 font-mono text-xs select-text min-h-[360px] max-h-[580px]">
             {events.length === 0 ? (
-              <div className="py-16 text-center text-slate-500 dark:text-zinc-400 space-y-2">
-                <Loader2 size={18} className="animate-spin mx-auto text-blue-600 dark:text-blue-400" />
-                <p>Waiting for first test event…</p>
+              <div className="space-y-2">
+                <p className="flex items-center gap-2 text-slate-500 dark:text-zinc-400">
+                  {isAllFinished ? <AlertCircle size={14} className="shrink-0" /> : <Loader2 size={14} className="animate-spin shrink-0 text-blue-600 dark:text-blue-400" />}
+                  {isAllFinished ? 'No test events were recorded for this run.' : 'Waiting for first test event…'}
+                </p>
+                {preparationLogs.length > 0 && (
+                  <ol aria-label="Preparation log" className="space-y-1.5 border-l border-[var(--color-border)] pl-3">
+                    {preparationLogs.map(log => (
+                      <li key={log.id} className={`break-words leading-relaxed ${log.level === 'ERROR' ? 'text-rose-500 dark:text-rose-400' : 'text-[var(--color-text-secondary)]'}`}>
+                        <span className="mr-2 tabular-nums text-[var(--color-text-muted)]">{new Date(log.time).toLocaleTimeString()}</span>
+                        {log.message}
+                      </li>
+                    ))}
+                  </ol>
+                )}
               </div>
             ) : (
               events.map((event) => {

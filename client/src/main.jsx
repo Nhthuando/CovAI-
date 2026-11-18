@@ -6,6 +6,12 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/queryClient.js'
 import './index.css'
 import App from './App.jsx'
+import axios from 'axios'
+import { installAxiosAuthRefresh, startSessionKeepAlive } from './lib/authSession.js'
+
+// Renew 15-minute access tokens for every axios call and before they expire.
+installAxiosAuthRefresh(axios)
+startSessionKeepAlive()
 
 // Intercept and suppress external browser extension noise (QuickPro, PageWorldBridgeError, etc.)
 if (typeof window !== 'undefined') {

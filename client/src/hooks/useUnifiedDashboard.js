@@ -57,7 +57,7 @@ export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = f
       }),
 
       // 2. Integration Workspace
-      getIntegrationWorkspace(snapshotId)
+      getIntegrationWorkspace(snapshotId, { skipAutoScan: true })
         .then((res) => res?.data || null)
         .catch((err) => {
           errorsByLayer.integration = err.message || "Failed to load integration workspace";
@@ -125,9 +125,9 @@ export function useUnifiedDashboard({
     enabled: isEnabled,
     placeholderData: (previousData, previousQuery) =>
       previousQuery?.queryKey?.[1] === effectiveSnapshotId ? previousData : undefined,
-    staleTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    staleTime: 15_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     gcTime: 30 * 60 * 1000,
   });
 

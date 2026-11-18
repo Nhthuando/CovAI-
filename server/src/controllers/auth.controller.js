@@ -219,6 +219,111 @@ export const githubOAuthAccess = async (req, res) => {
   }
 };
 
+const GITHUB_USER_AGENT = "CovAI-App";
+
+function encryptGithubToken(accessToken) {
+  try {
+    return encrypt(accessToken);
+  } catch {
+    // Fallback if ENCRYPTION_KEY is not configured
+    return accessToken;
+  }
+}
+
+async function exchangeGithubCodeForToken(code) {
+  const tokenResponse = await fetch(
+    "https://github.com/login/oauth/access_token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": GITHUB_USER_AGENT,
+      },
+      body: JSON.stringify({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code,
+      }),
+    },
+  );
+  const tokenData = await tokenResponse.json();
+  if (!tokenData?.access_token) {
+    console.error("GitHub access token exchange failed:", tokenData);
+    return {
+      accessToken: null,
+      errorMessage:
+        tokenData?.error_description ||
+        tokenData?.error ||
+        "Unable to retrieve access token!",
+    };
+  }
+  return { accessToken: tokenData.access_token, errorMessage: null };
+}
+
+export const connectGithub = async (req, res) => {
+  try {
+    const code = req.body?.code || req.query?.code;
+    if (!code) {
+      return res
+        .status(400)
+        .json({ message: "Code parameter not found from GitHub!" });
+    }
+
+    const { accessToken, errorMessage } = await exchangeGithubCodeForToken(code);
+    if (!accessToken) {
+      return res.status(400).json({ message: errorMessage });
+    }
+
+    const userResponse = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": GITHUB_USER_AGENT,
+      },
+    });
+    const userData = await userResponse.json();
+
+    if (!userResponse.ok || !userData?.id) {
+      console.error("GitHub user profile fetch failed:", userData);
+      return res
+        .status(400)
+        .json({ message: "Unable to retrieve GitHub user profile!" });
+    }
+
+    const githubUserId = String(userData.id);
+    const existingOwner = await prisma.user.findUnique({
+      where: { githubUserId },
+      select: { id: true },
+    });
+
+    if (existingOwner && existingOwner.id !== req.user.id) {
+      return res.status(409).json({
+        message: "This GitHub account is already linked to another CovAI account.",
+      });
+    }
+
+    const encryptedToken = encryptGithubToken(accessToken);
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        githubUserId,
+        githubAccessTokenEnc: encryptedToken,
+      },
+      select: { id: true, githubUserId: true },
+    });
+
+    return res.status(200).json({
+      message: "GitHub account connected successfully!",
+      githubUserId: updatedUser.githubUserId,
+      githubLogin: userData.login || null,
+    });
+  } catch (error) {
+    console.error("[connectGithub]", error);
+    return res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
 export const oAuthGithub = async (req, res) => {
   try {
     const { code, error } = req.query;
@@ -234,46 +339,25 @@ export const oAuthGithub = async (req, res) => {
       return res
         .status(400)
         .json({ message: "Code parameter not found from GitHub!" });
-    const tokenResponse = await fetch(
-      "https://github.com/login/oauth/access_token",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "User-Agent": "CovAI-App",
-        },
-        body: JSON.stringify({
-          client_id: process.env.GITHUB_CLIENT_ID,
-          client_secret: process.env.GITHUB_CLIENT_SECRET,
-          code: code,
-        }),
-      },
-    );
-    const tokenData = await tokenResponse.json();
-    const accessToken = tokenData.access_token;
+
+    const { accessToken, errorMessage } = await exchangeGithubCodeForToken(code);
     if (!accessToken) {
-      console.error("GitHub access token exchange failed:", tokenData);
-      return res.status(400).json({
-        message:
-          tokenData.error_description ||
-          tokenData.error ||
-          "Unable to retrieve access token!",
-      });
+      return res.status(400).json({ message: errorMessage });
     }
+
     const [userDetail, emailResponse] = await Promise.all([
       fetch("https://api.github.com/user", {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
-          "User-Agent": "CovAI-App",
+          "User-Agent": GITHUB_USER_AGENT,
         },
       }),
       fetch("https://api.github.com/user/emails", {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
-          "User-Agent": "CovAI-App",
+          "User-Agent": GITHUB_USER_AGENT,
         },
       }),
     ]);
@@ -298,23 +382,24 @@ export const oAuthGithub = async (req, res) => {
         .status(400)
         .json({ message: "Unable to retrieve email from GitHub!" });
     }
+
+    const githubUserId = String(userData.id);
+    const encryptedToken = encryptGithubToken(accessToken);
+
     let user = await prisma.user.findUnique({
-      where: { email: primaryEmail },
+      where: { githubUserId },
     });
-    // Encrypt access token before storing
-    let encryptedToken;
-    try {
-      encryptedToken = encrypt(accessToken);
-    } catch {
-      // Fallback if ENCRYPTION_KEY is not configured
-      encryptedToken = accessToken;
+    if (!user) {
+      user = await prisma.user.findUnique({
+        where: { email: primaryEmail },
+      });
     }
 
     if (user) {
       user = await prisma.user.update({
-        where: { email: primaryEmail },
+        where: { id: user.id },
         data: {
-          githubUserId: String(userData.id),
+          githubUserId,
           name: user.name || userData.login,
           githubAccessTokenEnc: encryptedToken,
         },
@@ -322,7 +407,7 @@ export const oAuthGithub = async (req, res) => {
     } else {
       user = await prisma.user.create({
         data: {
-          githubUserId: String(userData.id),
+          githubUserId,
           name: userData.login,
           email: primaryEmail,
           githubAccessTokenEnc: encryptedToken,
@@ -337,11 +422,12 @@ export const oAuthGithub = async (req, res) => {
     return res.status(200).json({
       message: "GitHub login successful!",
       token,
+      userId: user.id,
       name: user.name,
       email: user.email,
     });
   } catch (error) {
-    console.log(error);
+    console.error("[oAuthGithub]", error);
     return res.status(500).json({ message: "Internal server error!" });
   }
 };

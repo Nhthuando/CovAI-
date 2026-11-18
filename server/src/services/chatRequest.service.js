@@ -5,7 +5,7 @@ import { resolveProjectAccess, withProjectGuard } from "./projectAccess.service.
 
 const conflict = (message, code = "CHAT_BUSY") => Object.assign(new ServiceError(message, 409), { code });
 export const chatRequestInputHash = input => createHash("sha256").update(JSON.stringify({
-    message: input.message, sessionId: input.sessionId || null, snapshotId: input.snapshotId || null,
+    message: input.message, regenerateMessageId: input.regenerateMessageId, sessionId: input.sessionId || null, snapshotId: input.snapshotId || null,
     model: input.model || null, useMemory: input.useMemory ?? true, attachments: input.attachments || [],
     screenContext: input.screenContext || null,
 })).digest("hex");

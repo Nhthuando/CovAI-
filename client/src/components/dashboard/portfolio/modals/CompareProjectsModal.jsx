@@ -84,20 +84,20 @@ export function CompareProjectsModal({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm font-sans animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 font-sans animate-in fade-in duration-150"
     >
-      <div className="w-full max-w-5xl max-h-[92vh] rounded-lg border border-[#30363d] bg-[#161b22] text-[#c9d1d9] shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-full max-w-5xl max-h-[92vh] rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] text-[var(--ud-text)] shadow-2xl flex flex-col overflow-hidden">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#30363d] bg-[#0d1117]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-md bg-[#388bfd]/15 text-[#58a6ff] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-md bg-[var(--ud-unit)]/15 text-[var(--ud-unit)] flex items-center justify-center">
               <ArrowLeftRight size={16} />
             </div>
             <div>
-              <h2 className="text-base font-bold text-[#f0f6fc]">
+              <h2 className="text-base font-bold text-[var(--ud-text)]">
                 Side-by-Side Project Quality Comparison
               </h2>
-              <p className="text-xs text-[#8b949e] mt-0.5">
+              <p className="text-xs text-[var(--ud-text-muted)] mt-0.5">
                 5-Axis Radar and comparative breakdown of release readiness, testing layers & Time ROI
               </p>
             </div>
@@ -112,7 +112,7 @@ export function CompareProjectsModal({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded text-[#8b949e] hover:text-[#f0f6fc] hover:bg-[#21262d] transition-colors cursor-pointer"
+              className="p-1.5 rounded text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer"
               aria-label="Close modal"
             >
               <X size={16} />
@@ -127,17 +127,17 @@ export function CompareProjectsModal({
             {comparedProjects.map((p, idx) => (
               <div
                 key={p.id}
-                className="p-3 rounded-md bg-[#0d1117] border border-[#30363d] space-y-2 relative"
+                className="p-3 rounded-md bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)] space-y-2 relative"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-mono font-bold text-[#8b949e] uppercase">
+                  <span className="text-[10px] font-mono font-bold text-[var(--ud-text-muted)] uppercase">
                     Slot {idx + 1}
                   </span>
                   {comparedProjects.length > 2 && (
                     <button
                       type="button"
                       onClick={() => handleRemoveSlot(idx)}
-                      className="text-[10px] font-mono text-[#f85149] hover:underline cursor-pointer"
+                      className="text-[10px] font-mono text-[var(--ud-fail)] hover:underline cursor-pointer"
                     >
                       Remove
                     </button>
@@ -147,7 +147,7 @@ export function CompareProjectsModal({
                 <select
                   value={p.id}
                   onChange={(e) => handleSelectSlot(idx, e.target.value)}
-                  className="w-full bg-[#161b22] border border-[#30363d] text-xs font-bold rounded px-2 py-1 outline-none text-[#f0f6fc] cursor-pointer"
+                  className="w-full bg-[var(--ud-surface)] border border-[var(--ud-border)] text-xs font-bold rounded px-2 py-1 outline-none text-[var(--ud-text)] cursor-pointer"
                 >
                   {projects.map((proj) => (
                     <option key={proj.id} value={proj.id}>
@@ -157,14 +157,14 @@ export function CompareProjectsModal({
                 </select>
 
                 <div className="flex items-center justify-between pt-1 text-[11px] font-mono">
-                  <span className="text-[#8b949e]">Gate Status:</span>
+                  <span className="text-[var(--ud-text-muted)]">Gate Status:</span>
                   <span
                     className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
                       p.gateStatus === "PASSED"
-                        ? "text-[#3fb950] bg-[#238636]/15"
+                        ? "text-[var(--ud-pass)] bg-[var(--ud-pass)]/15"
                         : p.gateStatus === "BLOCKED"
-                        ? "text-[#f85149] bg-[#da3633]/15"
-                        : "text-[#d29922] bg-[#bb8009]/15"
+                        ? "text-[var(--ud-fail)] bg-[var(--ud-fail)]/15"
+                        : "text-[var(--ud-warn)] bg-[var(--ud-warn)]/15"
                     }`}
                   >
                     {p.gateLabel}
@@ -175,8 +175,8 @@ export function CompareProjectsModal({
           </div>
 
           {/* ── 5-Axis Radar Chart Visualizer ───────────────────────────────── */}
-          <div className="p-4 rounded-md border border-[#30363d] bg-[#0d1117] flex flex-col items-center">
-            <div className="text-xs font-bold font-mono text-[#f0f6fc] mb-2">
+          <div className="p-4 rounded-md border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/50 flex flex-col items-center">
+            <div className="text-xs font-bold font-mono text-[var(--ud-text)] mb-2">
               5-Axis Radar: Quality, Coverage & Automation Efficiency
             </div>
             <ProjectComparisonRadarChart projects={comparedProjects} size={300} />
@@ -185,23 +185,23 @@ export function CompareProjectsModal({
           {/* Comparison Sections */}
           <div className="space-y-4">
             {/* 1. Health Score & Release Readiness */}
-            <div className="rounded-md border border-[#30363d] overflow-hidden">
-              <div className="bg-[#0d1117] px-4 py-2 text-xs font-bold font-mono text-[#f0f6fc] border-b border-[#30363d]">
+            <div className="rounded-md border border-[var(--ud-border)] overflow-hidden">
+              <div className="bg-[var(--ud-surface-2)]/70 px-4 py-2 text-xs font-bold font-mono text-[var(--ud-text)] border-b border-[var(--ud-border)]">
                 1. Executive Quality Health & Grade
               </div>
-              <div className={`grid divide-x divide-[#30363d] ${comparedProjects.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+              <div className={`grid divide-x divide-[var(--ud-border)] ${comparedProjects.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
                 {comparedProjects.map((p) => {
                   const isTopHealth = p.healthScore === highestHealth && highestHealth > 0;
                   return (
-                    <div key={p.id} className="p-4 text-center font-mono space-y-1 bg-[#161b22]">
+                    <div key={p.id} className="p-4 text-center font-mono space-y-1 bg-[var(--ud-surface)]">
                       <div className="text-2xl font-bold flex items-center justify-center gap-1.5">
-                        <span className={isTopHealth ? "text-[#3fb950]" : "text-[#f0f6fc]"}>
+                        <span className={isTopHealth ? "text-[var(--ud-pass)]" : "text-[var(--ud-text)]"}>
                           {p.healthScore}
                         </span>
-                        <span className="text-xs text-[#8b949e] font-normal">/100</span>
-                        {isTopHealth && <Trophy size={14} className="text-amber-400" />}
+                        <span className="text-xs text-[var(--ud-text-muted)] font-normal">/100</span>
+                        {isTopHealth && <Trophy size={14} className="text-amber-500" />}
                       </div>
-                      <div className="text-xs text-[#8b949e]">Grade {p.grade}</div>
+                      <div className="text-xs text-[var(--ud-text-muted)]">Grade {p.grade}</div>
                     </div>
                   );
                 })}
@@ -209,34 +209,34 @@ export function CompareProjectsModal({
             </div>
 
             {/* 2. Multi-Layer Coverage Breakdown */}
-            <div className="rounded-md border border-[#30363d] overflow-hidden">
-              <div className="bg-[#0d1117] px-4 py-2 text-xs font-bold font-mono text-[#f0f6fc] border-b border-[#30363d]">
+            <div className="rounded-md border border-[var(--ud-border)] overflow-hidden">
+              <div className="bg-[var(--ud-surface-2)]/70 px-4 py-2 text-xs font-bold font-mono text-[var(--ud-text)] border-b border-[var(--ud-border)]">
                 2. 3-Layer Testing Coverage
               </div>
-              <div className={`grid divide-x divide-[#30363d] ${comparedProjects.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+              <div className={`grid divide-x divide-[var(--ud-border)] ${comparedProjects.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
                 {comparedProjects.map((p) => (
-                  <div key={p.id} className="p-4 space-y-2 text-xs font-mono bg-[#161b22]">
+                  <div key={p.id} className="p-4 space-y-2 text-xs font-mono bg-[var(--ud-surface)]">
                     <div className="flex items-center justify-between">
-                      <span className="text-[#58a6ff]">Unit Lines:</span>
-                      <span className="font-bold text-[#f0f6fc]">
+                      <span className="text-[var(--ud-unit)]">Unit Lines:</span>
+                      <span className="font-bold text-[var(--ud-text)]">
                         {p.pillars?.unit?.coveragePct ?? 0}%
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[#bc8cff]">Integration APIs:</span>
-                      <span className="font-bold text-[#f0f6fc]">
+                      <span className="text-[var(--ud-integration)]">Integration APIs:</span>
+                      <span className="font-bold text-[var(--ud-text)]">
                         {p.pillars?.integration?.coveragePct ?? 0}%
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[#3fb950]">System Flows:</span>
-                      <span className="font-bold text-[#f0f6fc]">
+                      <span className="text-[var(--ud-system)]">System Flows:</span>
+                      <span className="font-bold text-[var(--ud-text)]">
                         {p.pillars?.system?.coveragePct ?? 0}%
                       </span>
                     </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-[#30363d]">
-                      <span className="text-[#8b949e] font-semibold">Unified Index:</span>
-                      <span className="font-bold text-[#58a6ff]">
+                    <div className="flex items-center justify-between pt-2 border-t border-[var(--ud-border)]">
+                      <span className="text-[var(--ud-text-muted)] font-semibold">Unified Index:</span>
+                      <span className="font-bold text-[var(--ud-unit)]">
                         {p.unifiedCoveragePct}%
                       </span>
                     </div>
@@ -246,37 +246,37 @@ export function CompareProjectsModal({
             </div>
 
             {/* 3. Time Saved & Execution ROI */}
-            <div className="rounded-md border border-[#30363d] overflow-hidden">
-              <div className="bg-[#0d1117] px-4 py-2 text-xs font-bold font-mono text-[#f0f6fc] border-b border-[#30363d] flex items-center justify-between">
+            <div className="rounded-md border border-[var(--ud-border)] overflow-hidden">
+              <div className="bg-[var(--ud-surface-2)]/70 px-4 py-2 text-xs font-bold font-mono text-[var(--ud-text)] border-b border-[var(--ud-border)] flex items-center justify-between">
                 <span>3. Automation Time ROI & Manual Savings</span>
-                <span className="text-[10px] text-[#8b949e] font-normal">Industry Benchmark: 120s/300s/480s</span>
+                <span className="text-[10px] text-[var(--ud-text-muted)] font-normal">Industry Benchmark: 120s/300s/480s</span>
               </div>
-              <div className={`grid divide-x divide-[#30363d] ${comparedProjects.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+              <div className={`grid divide-x divide-[var(--ud-border)] ${comparedProjects.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
                 {comparedProjects.map((p) => {
                   const timeRoi = p.timeRoi || {};
                   return (
-                    <div key={p.id} className="p-4 space-y-2 text-xs font-mono bg-[#161b22]">
+                    <div key={p.id} className="p-4 space-y-2 text-xs font-mono bg-[var(--ud-surface)]">
                       <div className="flex items-center justify-between">
-                        <span className="text-[#8b949e]">Auto Run Duration:</span>
-                        <span className="font-bold text-[#f0f6fc]">
+                        <span className="text-[var(--ud-text-muted)]">Auto Run Duration:</span>
+                        <span className="font-bold text-[var(--ud-text)]">
                           {timeRoi.actualAutoDurationFormatted || "0s"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-[#8b949e]">Manual Testing Est:</span>
-                        <span className="font-bold text-[#d29922]">
+                        <span className="text-[var(--ud-text-muted)]">Manual Testing Est:</span>
+                        <span className="font-bold text-[var(--ud-warn)]">
                           {timeRoi.estimatedManualDurationFormatted || "0s"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-[#8b949e]">Speedup Velocity:</span>
-                        <span className="font-bold text-[#58a6ff]">
+                        <span className="text-[var(--ud-text-muted)]">Speedup Velocity:</span>
+                        <span className="font-bold text-[var(--ud-unit)]">
                           {timeRoi.speedupMultiplier > 1 ? `⚡ ${timeRoi.speedupMultiplier}x Faster` : "1.0x"}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between pt-2 border-t border-[#30363d]">
-                        <span className="text-[#8b949e] font-semibold">Total QA Saved:</span>
-                        <span className="font-bold text-[#3fb950]">
+                      <div className="flex items-center justify-between pt-2 border-t border-[var(--ud-border)]">
+                        <span className="text-[var(--ud-text-muted)] font-semibold">Total QA Saved:</span>
+                        <span className="font-bold text-[var(--ud-pass)]">
                           +{timeRoi.totalHoursSaved || 0} hrs
                         </span>
                       </div>
@@ -289,8 +289,8 @@ export function CompareProjectsModal({
         </div>
 
         {/* Modal Footer with Direct Open CTAs */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-[#30363d] bg-[#0d1117]">
-          <div className="text-xs text-[#8b949e] font-mono">
+        <div className="flex items-center justify-between px-6 py-4 border-t border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60">
+          <div className="text-xs text-[var(--ud-text-muted)] font-mono">
             Comparing {comparedProjects.length} projects side-by-side
           </div>
           <div className="flex items-center gap-3">

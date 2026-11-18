@@ -16,6 +16,14 @@ import {
   Loader2,
 } from "lucide-react";
 import { DiffEditor } from "@monaco-editor/react";
+import { diffLines } from "diff";
+
+export function countDiffLines(original, updated) {
+  return diffLines(original, updated).reduce((counts, change) => ({
+    added: counts.added + (change.added ? change.count : 0),
+    removed: counts.removed + (change.removed ? change.count : 0),
+  }), { added: 0, removed: 0 });
+}
 
 /* ── Helper to resolve file icon ── */
 function getFileIcon(fileName = "") {
@@ -37,6 +45,7 @@ export default function DiffReviewModal({
   onRunAnalysis,
   isApplying = false,
   applyingStep = "",
+  error = null,
 }) {
   const [activeIdx, setActiveIdx] = useState(initialFileIndex);
   const [sideBySide, setSideBySide] = useState(true);
@@ -138,6 +147,7 @@ export default function DiffReviewModal({
   const modifiedCode = activeFile.fullUpdatedContent ?? originalCode;
 
   const isApplied = currentSuggestion?.applied ?? activeFile?.applied;
+  const runFailure = currentSuggestion?.testRunError || activeFile.suggestions?.find(s => s.testRunError)?.testRunError;
   const anyUnapplied = files.some((f) => !f.applied && f.hasChanges !== false);
   const anyApplied = files.some((f) => f.applied);
 
@@ -271,7 +281,7 @@ export default function DiffReviewModal({
               ) : (
                 <button
                   type="button"
-                  disabled={isAnyApplying}
+                  disabled={isAnyApplying || !onUndoFile || activeFile.canUndo === false}
                   onClick={() => onUndoFile?.(activeFile, currentSuggestion)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isAnyApplying ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-90"
                     }`}
@@ -426,6 +436,7 @@ export default function DiffReviewModal({
           {/* ── Monaco Diff Editor Body ── */}
           {activeFile.reviewError && <div role="alert" className="px-4 py-2 text-sm text-red-300">{activeFile.reviewError}</div>}
           {activeFile.reviewNotice && <div role="status" className="px-4 py-2 text-sm text-slate-300">{activeFile.reviewNotice}</div>}
+          {runFailure && <p role="alert" className="px-4 py-2 text-sm text-[var(--color-danger)]">{runFailure}</p>}
           <div className="flex-1 min-h-0 relative">
             <DiffEditor
               height="100%"

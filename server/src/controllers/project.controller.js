@@ -9,7 +9,8 @@ import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionP
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
-import { createAiSuggestJob } from "../services/job.service.js";
+import { createAiSuggestJob, createPlaywrightSystemCoverageJob } from "../services/job.service.js";
+import { detectAndSaveProject } from "../services/playwrightDetection.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import {
   generateText,
@@ -192,6 +193,9 @@ class ProjectController {
           rootDir: p.rootDir,
           jestConfigPath: p.jestConfigPath,
           storageBasePath: p.storageBasePath,
+          lifecycleStatus: p.lifecycleStatus || "NOT_STARTED",
+          lifecycleUpdatedAt: p.lifecycleUpdatedAt || p.updatedAt,
+          isPinned: Boolean(p.isPinned),
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
           snapshotCount: p._count.snapshots,
@@ -1875,7 +1879,7 @@ class ProjectController {
   async detectPlaywrightFramework(req, res, next) {
     try {
       const { id } = req.params;
-      const result = await detectAndSavePlaywright(id);
+      const result = await detectAndSaveProject(id);
       res.json({
         success: true,
         message: "Playwright detection completed",

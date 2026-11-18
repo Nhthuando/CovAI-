@@ -155,6 +155,29 @@ export function CrossLayerTraceMatrix({
   };
 
   // Filter rows
+  const filterCounts = useMemo(() => {
+    let failure = 0;
+    let gap = 0;
+    for (const r of rows) {
+      if (
+        r.unit.status === "fail" ||
+        r.integration.status === "fail" ||
+        r.system.status === "fail"
+      ) {
+        failure++;
+      }
+      if (
+        r.unit.status === "untested" ||
+        r.integration.status === "warn" ||
+        r.integration.status === "untested" ||
+        r.system.status === "untested"
+      ) {
+        gap++;
+      }
+    }
+    return { all: rows.length, failure, gap };
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
       // Cross-filter from Zone 3
@@ -281,27 +304,16 @@ export function CrossLayerTraceMatrix({
           <SegmentedFilter
             idPrefix="ud-matrix-filter"
             options={[
-              { label: "All", value: "all", count: rows.length },
+              { label: "All", value: "all", count: filterCounts.all },
               {
                 label: "Has Failure",
                 value: "failure",
-                count: rows.filter(
-                  (r) =>
-                    r.unit.status === "fail" ||
-                    r.integration.status === "fail" ||
-                    r.system.status === "fail"
-                ).length,
+                count: filterCounts.failure,
               },
               {
                 label: "Coverage Gap",
                 value: "low_coverage",
-                count: rows.filter(
-                  (r) =>
-                    r.unit.status === "untested" ||
-                    r.integration.status === "warn" ||
-                    r.integration.status === "untested" ||
-                    r.system.status === "untested"
-                ).length,
+                count: filterCounts.gap,
               },
             ]}
             value={filterState}

@@ -44,54 +44,54 @@ function TimeSavedRoiChart({
     <div className={`relative space-y-4 font-sans ${className}`}>
       {/* ── Summary KPI Strip ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
-        <div className="p-2 rounded bg-[#0d1117] border border-[#21262d]">
-          <div className="text-[10px] text-[#8b949e] uppercase font-bold flex items-center justify-between">
+        <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+          <div className="text-[10px] text-[var(--ud-text-muted)] uppercase font-bold flex items-center justify-between">
             <span>Auto Duration</span>
-            <Zap className="w-3 h-3 text-[#58a6ff]" />
+            <Zap className="w-3 h-3 text-[var(--ud-unit)]" />
           </div>
-          <div className="text-sm font-bold text-[#f0f6fc] mt-1 tabular-nums">
+          <div className="text-sm font-bold text-[var(--ud-text)] mt-1 tabular-nums">
             {totalAutoSeconds.toFixed(1)}s
           </div>
-          <div className="text-[10px] text-[#8b949e]">Across active suites</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">Across active suites</div>
         </div>
 
-        <div className="p-2 rounded bg-[#0d1117] border border-[#21262d]">
-          <div className="text-[10px] text-[#8b949e] uppercase font-bold flex items-center justify-between">
+        <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+          <div className="text-[10px] text-[var(--ud-text-muted)] uppercase font-bold flex items-center justify-between">
             <span>Manual Benchmark</span>
-            <Clock className="w-3 h-3 text-[#d29922]" />
+            <Clock className="w-3 h-3 text-[var(--ud-warn)]" />
           </div>
-          <div className="text-sm font-bold text-[#f0f6fc] mt-1 tabular-nums">
+          <div className="text-sm font-bold text-[var(--ud-text)] mt-1 tabular-nums">
             {totalManualHours.toFixed(1)} hrs
           </div>
-          <div className="text-[10px] text-[#8b949e]">Standard QA effort</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">Standard QA effort</div>
         </div>
 
-        <div className="p-2 rounded bg-[#0d1117] border border-[#21262d]">
-          <div className="text-[10px] text-[#8b949e] uppercase font-bold flex items-center justify-between">
+        <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+          <div className="text-[10px] text-[var(--ud-text-muted)] uppercase font-bold flex items-center justify-between">
             <span>Net QA Saved</span>
-            <TrendingUp className="w-3 h-3 text-[#3fb950]" />
+            <TrendingUp className="w-3 h-3 text-[var(--ud-pass)]" />
           </div>
-          <div className="text-sm font-bold text-[#3fb950] mt-1 tabular-nums">
+          <div className="text-sm font-bold text-[var(--ud-pass)] mt-1 tabular-nums">
             +{totalHoursSaved.toFixed(1)} hrs
           </div>
-          <div className="text-[10px] text-[#8b949e]">Dev & QA hours</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">Dev & QA hours</div>
         </div>
 
-        <div className="p-2 rounded bg-[#0d1117] border border-[#21262d]">
-          <div className="text-[10px] text-[#8b949e] uppercase font-bold flex items-center justify-between">
+        <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
+          <div className="text-[10px] text-[var(--ud-text-muted)] uppercase font-bold flex items-center justify-between">
             <span>Avg Speedup</span>
-            <span className="text-[10px] text-[#58a6ff] font-bold">⚡ ROI</span>
+            <span className="text-[10px] text-[var(--ud-unit)] font-bold">⚡ ROI</span>
           </div>
-          <div className="text-sm font-bold text-[#58a6ff] mt-1 tabular-nums">
+          <div className="text-sm font-bold text-[var(--ud-unit)] mt-1 tabular-nums">
             {avgSpeedup > 0 ? `${avgSpeedup}x` : "—"}
           </div>
-          <div className="text-[10px] text-[#8b949e]">Execution velocity</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">Execution velocity</div>
         </div>
       </div>
 
       {/* ── Header with Guidance Tooltip ───────────────────────────────────── */}
       <div className="flex items-center justify-between text-xs px-1">
-        <span className="text-[11px] font-mono text-[#8b949e]">
+        <span className="text-[11px] font-mono text-[var(--ud-text-muted)]">
           Project Execution Efficiency (Machine vs. Manual QA Effort)
         </span>
         <ContextualMetricTooltip
@@ -104,7 +104,7 @@ function TimeSavedRoiChart({
         >
           <button
             type="button"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#21262d] border border-[#30363d] text-[10px] text-[#8b949e] hover:text-[#58a6ff] hover:border-[#58a6ff]/40 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[10px] text-[var(--ud-text-muted)] hover:text-[var(--ud-unit)] hover:border-[var(--ud-unit)]/40 transition-colors cursor-pointer"
           >
             <Info className="w-3 h-3" />
             <span>Benchmark Formula</span>
@@ -113,9 +113,9 @@ function TimeSavedRoiChart({
       </div>
 
       {/* ── Project Horizontal Bars ────────────────────────────────────────── */}
-      <div className="space-y-2.5 rounded-md border border-[#30363d] bg-[#161b22] p-3 max-h-[380px] overflow-y-auto">
+      <div className="space-y-2.5 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-3 max-h-[380px] overflow-y-auto">
         {activeProjects.length === 0 ? (
-          <div className="py-8 text-center text-xs text-[#8b949e] font-mono">
+          <div className="py-8 text-center text-xs text-[var(--ud-text-muted)] font-mono">
             No active DOING projects with execution data available.
           </div>
         ) : (
@@ -137,25 +137,25 @@ function TimeSavedRoiChart({
                 onClick={() => onHighlightProject?.(p.id)}
                 className={`p-2 rounded border transition-all cursor-pointer ${
                   isHovered
-                    ? "bg-[#21262d] border-[#58a6ff]/40 shadow-sm"
-                    : "bg-[#0d1117] border-[#21262d] hover:border-[#30363d]"
+                    ? "bg-[var(--ud-surface-2)] border-[var(--ud-unit)]/40 shadow-xs"
+                    : "bg-[var(--ud-surface-2)]/50 border-[var(--ud-border)] hover:border-[var(--ud-border-strong)]"
                 }`}
               >
                 {/* Row Header */}
                 <div className="flex items-center justify-between text-xs mb-1.5 font-mono">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-semibold text-[#f0f6fc] truncate">{p.name}</span>
-                    <span className="text-[10px] text-[#8b949e]">
+                    <span className="font-semibold text-[var(--ud-text)] truncate">{p.name}</span>
+                    <span className="text-[10px] text-[var(--ud-text-muted)]">
                       {timeRoi.actualAutoDurationFormatted || `${(autoMs / 1000).toFixed(1)}s`} auto
                     </span>
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] text-[#8b949e]">
+                    <span className="text-[10px] text-[var(--ud-text-muted)]">
                       Est Manual: {timeRoi.estimatedManualDurationFormatted || "0s"}
                     </span>
                     {speedup > 1 && (
-                      <span className="px-1.5 py-0.5 rounded bg-[#388bfd]/10 border border-[#1f6feb]/30 text-[10px] text-[#58a6ff] font-bold">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--ud-unit)]/10 border border-[var(--ud-unit)]/30 text-[10px] text-[var(--ud-unit)] font-bold">
                         ⚡ {speedup}x ({hours}h saved)
                       </span>
                     )}
@@ -163,16 +163,16 @@ function TimeSavedRoiChart({
                 </div>
 
                 {/* Comparative Bar */}
-                <div className="w-full bg-[#21262d] rounded-full h-2 overflow-hidden flex">
+                <div className="w-full bg-[var(--ud-surface)] rounded-full h-2 overflow-hidden flex border border-[var(--ud-border)]/50">
                   {/* Auto duration (green portion) */}
                   <div
-                    className="bg-[#3fb950] h-full transition-all duration-500 rounded-l-full"
+                    className="bg-[var(--ud-pass)] h-full transition-all duration-500 rounded-l-full"
                     style={{ width: `${Math.max(2, (autoMs / (manualMs || 1)) * barWidthPct)}%` }}
                     title={`Auto: ${(autoMs / 1000).toFixed(1)}s`}
                   />
                   {/* Saved duration (blue portion) */}
                   <div
-                    className="bg-[#58a6ff] h-full transition-all duration-500 rounded-r-full"
+                    className="bg-[var(--ud-unit)] h-full transition-all duration-500 rounded-r-full"
                     style={{
                       width: `${Math.max(0, barWidthPct - (autoMs / (manualMs || 1)) * barWidthPct)}%`,
                     }}

@@ -1,6 +1,7 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
 import { DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS } from '../../../shared/unitTestRuntime.js';
+import { handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -22,12 +23,7 @@ async function handleResponse(res) {
 
     if (!res.ok) {
         if (res.status === 401) {
-            localStorage.removeItem("token");
-            localStorage.removeItem("user");
-            localStorage.removeItem("userName");
-            localStorage.removeItem("userEmail");
-
-            window.location.href = "/login";
+            await handleUnauthorizedResponse();
         }
 
         const msg = data.message || `API error (${res.status})`;
@@ -129,6 +125,9 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
         ...(isRestart ? { restart: true } : {}),
         ...(useHermeticMock ? { useHermeticMock: true } : {}),
         ...(options?.targetEndpoint ? { targetEndpoint: options.targetEndpoint } : {}),
+        ...(Array.isArray(options?.targetEndpoints) && options.targetEndpoints.length > 0
+            ? { targetEndpoints: options.targetEndpoints }
+            : {}),
         ...(Array.isArray(options?.targetTestNames) && options.targetTestNames.length > 0
             ? { targetTestNames: options.targetTestNames }
             : {}),
@@ -272,8 +271,12 @@ export async function getCoverageTestSuites(snapshotId, type = "unit") {
     return handleResponse(res);
 }
 
-export async function getIntegrationWorkspace(snapshotId) {
-    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace`, {
+export async function getIntegrationWorkspace(snapshotId, options = {}) {
+    const params = new URLSearchParams();
+    if (options.skipAutoScan) params.set("skipAutoScan", "true");
+    if (options.scan) params.set("scan", "true");
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace${qs}`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);

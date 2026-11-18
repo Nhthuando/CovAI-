@@ -172,21 +172,21 @@ export function PortfolioActivityAndInfraZone({
 
           <div className="space-y-3 mt-3">
             {/* 1. Sandbox Worker Queue */}
-            <div className="p-3 rounded-md bg-[#0d1117] border border-[#30363d] space-y-1.5 font-mono text-xs">
+            <div className="p-3 rounded-[var(--radius-md)] bg-[var(--ud-surface-2)] border border-[var(--ud-border)] space-y-1.5 font-mono text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-[#8b949e]">Runner Status:</span>
-                <span className="inline-flex items-center gap-1 text-[#3fb950] font-bold">
+                <span className="text-[var(--ud-text-muted)]">Runner Status:</span>
+                <span className="inline-flex items-center gap-1 text-[var(--ud-pass)] font-bold">
                   <CheckCircle2 size={12} />
                   {isRedisConnected ? "Engine & Redis Online" : "Local Host Mode"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[#8b949e]">Sandbox Concurrency:</span>
-                <span className="text-[#f0f6fc] font-bold">{activeWorkers} Parallel Workers</span>
+                <span className="text-[var(--ud-text-muted)]">Sandbox Concurrency:</span>
+                <span className="text-[var(--ud-text)] font-bold">{activeWorkers} Parallel Workers</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[#8b949e]">Active / Queued:</span>
-                <span className="text-[#58a6ff] font-bold">
+                <span className="text-[var(--ud-text-muted)]">Active / Queued:</span>
+                <span className="text-[var(--ud-unit)] font-bold">
                   {runningJobs} Running • {queuedJobs} Queued
                 </span>
               </div>

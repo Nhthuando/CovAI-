@@ -77,6 +77,21 @@ export const sendContextChat = async (projectId, userId, input, dependencies = {
             throw new ServiceError('Project source changed while preparing this question. Send it again with the current context.', 409, 'CHAT_CONTEXT_CHANGED');
         if (input.screenContext?.workspaceRevision != null && input.screenContext.workspaceRevision !== (context.project.workspaceRevision ?? 0))
             throw new ServiceError('Project source changed. Refresh the file and send a new question with the current context.', 409, 'CHAT_CONTEXT_CHANGED');
+        let retryUserMessage = null;
+        if (input.regenerateMessageId) {
+            const latest = context.messages.at(-1);
+            if (latest?.id !== input.regenerateMessageId || latest.role !== "assistant" || !latest.replyToMessageId) {
+                throw new ServiceError("Only the latest saved reply can be regenerated.", 409);
+            }
+            retryUserMessage = await prisma.chatMessage.findFirst({
+                where: { id: latest.replyToMessageId, sessionId: session.id, role: "user", senderUserId: userId },
+                select: { id: true, content: true, attachments: true },
+            });
+            if (!retryUserMessage || retryUserMessage.content !== input.message) {
+                throw new ServiceError("Only the sender can regenerate this reply.", 403);
+            }
+            context.recent = context.recent.filter(row => row.id !== latest.id && row.id !== retryUserMessage.id);
+        }
         const currentInput = { ...input, attachments: [...input.attachments] };
         if (input.attachments.some(att => att.type === "project_file")) {
             const snapshot = context.snapshot && await prisma.projectSnapshot.findFirst({ where: { id: context.snapshot.id, projectId } });
@@ -121,14 +136,19 @@ export const sendContextChat = async (projectId, userId, input, dependencies = {
             } });
             if (!stillOwned.count) throw new ServiceError("Conversation changed or was deleted. The reply was not saved.", 409);
             const now = Date.now();
-            const userMessage = await tx.chatMessage.create({ data: { sessionId: session.id, senderUserId: userId, requestId: request.id, role: "user", content: redactChatSecrets(input.message), model: input.model || null, attachments: durableAttachments(currentInput.attachments).map(att => ({ ...att, ...(att.content ? { content: redactChatSecrets(att.content) } : {}) })), createdAt: new Date(now) } });
-            const assistant = await tx.chatMessage.create({ data: { sessionId: session.id, requestId: request.id, replyToMessageId: userMessage.id, role: "assistant", content: reply, model: input.model || null, createdAt: new Date(now + 1) } });
+            const userMessage = retryUserMessage || await tx.chatMessage.create({ data: { sessionId: session.id, senderUserId: userId, requestId: request.id, role: "user", content: redactChatSecrets(input.message), model: input.model || null, attachments: durableAttachments(currentInput.attachments).map(att => ({ ...att, ...(att.content ? { content: redactChatSecrets(att.content) } : {}) })), createdAt: new Date(now) } });
+            const assistant = retryUserMessage
+                ? await tx.chatMessage.update({
+                    where: { id: input.regenerateMessageId, sessionId: session.id },
+                    data: { content: reply, model: input.model || null },
+                })
+                : await tx.chatMessage.create({ data: { sessionId: session.id, requestId: request.id, replyToMessageId: userMessage.id, role: "assistant", content: reply, model: input.model || null, createdAt: new Date(now + 1) } });
             const committed = await tx.chatRequest.updateMany({ where: { id: request.id, status: "PROCESSING" }, data: {
                 status: "SUCCEEDED", userMessageId: userMessage.id, assistantMessageId: assistant.id,
             } });
             if (!committed.count) throw new ServiceError("Chat request changed. The reply was not saved.", 409);
             const event = await publishProjectEvent({ tx, projectId, type: "chat.message", actorId: userId, resourceId: session.id, payload: { requestId: request.id, sessionId: session.id } });
-            return { ...userMessage, event };
+            return { ...userMessage, assistantMessageId: assistant.id, event };
         });
         void deliverProjectEvent(pair.event).catch(() => {}); // Persisted replay remains authoritative; delivery cannot delay the reply.
         const data = { sessionId: session.id, projectId, userId, userMessageId: pair.id, memoryGeneration: context.settings.memoryGeneration,
@@ -149,7 +169,7 @@ export const sendContextChat = async (projectId, userId, input, dependencies = {
         let maintenanceTimer;
         const maintenanceStatus = await Promise.race([maintenance, new Promise(resolve => { maintenanceTimer = setTimeout(() => resolve('PENDING'), 1000); })]);
         clearTimeout(maintenanceTimer);
-        return { reply, proposalBase, requestId: request.id, userMessageId: pair.id, sessionId: session.id, sessionTitle: session.title === "New Chat" ? input.message.slice(0, 40) : session.title,
+        return { reply, proposalBase, requestId: request.id, userMessageId: pair.id, assistantMessageId: pair.assistantMessageId, sessionId: session.id, sessionTitle: session.title === "New Chat" ? input.message.slice(0, 40) : session.title,
             context: { ...contextPreview(context), sessionId: session.id, maintenanceStatus } };
     } catch (error) {
         await prisma.chatRequest.updateMany({ where: { id: request.id, status: "PROCESSING" }, data: { status: "FAILED" } }).catch(() => {});

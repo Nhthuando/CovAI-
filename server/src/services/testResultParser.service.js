@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import { canonicalizeFilePath, cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
 
 /**
@@ -106,7 +106,8 @@ export const parseJestResults = (coverageDir, options = {}) => {
         const scenarios = [];
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
-                const cleanedSuiteFile = cleanStoragePath(suite.name);
+                const suiteFile = suite.testFilePath || suite.name;
+                const cleanedSuiteFile = canonicalizeFilePath(suiteFile, options.rootDir) || cleanStoragePath(suiteFile);
                 if (suite.assertionResults && suite.assertionResults.length > 0) {
                     suite.assertionResults.forEach(assertion => {
                         scenarios.push({
@@ -118,9 +119,9 @@ export const parseJestResults = (coverageDir, options = {}) => {
                             testFile: cleanedSuiteFile
                         });
                     });
-                } else if (suite.status === "failed" || suite.message) {
+                } else if (suite.status === "failed" || suite.message || suite.failureMessage || suite.testExecError) {
                     // Test suite failed at module load or syntax phase
-                    const suiteFailMsg = suite.message ? cleanStorageText(suite.message) : "Test suite failed to run";
+                    const suiteFailMsg = cleanStorageText(suite.failureMessage || suite.message || suite.testExecError?.stack || suite.testExecError?.message || "Test suite failed to run");
                     
                     // Recover registered scenarios for this test file
                     let registeredScenarios = [];
@@ -217,11 +218,11 @@ export const parseJestResults = (coverageDir, options = {}) => {
 
         const results = {
             totalTests,
-            passedTests: raw.numPassedTests || 0,
+            passedTests: Math.max(raw.numPassedTests || 0, scenarios.filter(s => s.status === 'passed').length),
             failedTests,
-            skippedTests: raw.numPendingTests || 0,
+            skippedTests: Math.max(raw.numPendingTests || 0, scenarios.filter(s => ['pending', 'skipped', 'todo'].includes(s.status)).length),
             durationMs: duration,
-            status: raw.success ? "PASSED" : "FAILED",
+            status: failedTests > 0 || raw.numRuntimeErrorTestSuites > 0 || raw.success === false ? "FAILED" : "PASSED",
             scenarios
         };
 
@@ -252,6 +253,25 @@ export const parseJestResults = (coverageDir, options = {}) => {
             }]
         };
     }
+};
+
+/** Derive dashboard notices without reading coverage artifacts or querying the database. */
+export const deriveRunStatusNotices = (testRun, latestJob = null) => {
+    const scenarios = testRun?.scenarios || [];
+    const failedScenarios = scenarios.filter(s => String(s.status).toLowerCase() === "failed");
+    const failedSuites = [...new Set(failedScenarios.map(s => cleanStoragePath(s.testFile)).filter(Boolean))];
+    const isFatalFailure = latestJob?.status === "FAILED" || scenarios.some(s => s.isSuiteLevelFailure) ||
+        [latestJob?.errorMessage, ...scenarios.flatMap(s => s.failureMessages || [])]
+            .some(m => /Cannot find (?:module|package)|Test suite failed to run/i.test(m || ""));
+    const hasTestFailures = (testRun?.failedTests || 0) > 0 || failedScenarios.length > 0;
+    return {
+        isFatalFailure,
+        hasTestFailures,
+        failedSuites,
+        failedSuite: failedSuites[0] || null,
+        latestRunStatus: isFatalFailure ? "failed" : hasTestFailures ? "passed_with_failures" :
+            testRun?.status === "PASSED" ? "passed" : !testRun && !latestJob ? "not_run" : "success",
+    };
 };
 
 /**
@@ -333,8 +353,8 @@ export const parseVitestResults = (coverageDir, options = {}) => {
         const scenarios = [];
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
-                const cleanedSuiteFile = cleanStoragePath(suite.name);
-                if (suite.assertionResults && suite.assertionResults.length > 0) {
+                const cleanedSuiteFile = canonicalizeFilePath(suite.name, options.rootDir);
+                if (suite.assertionResults?.length) {
                     suite.assertionResults.forEach(assertion => {
                         scenarios.push({
                             title: assertion.title,

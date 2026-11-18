@@ -1,6 +1,7 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { normalizeChatScreenContext, chatErrorMessage } from './chatScreenContext';
 import { getAIModelHeaders } from './aiModel.service.js';
+import { handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -16,11 +17,7 @@ async function handleResponse(res) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("userName");
-      localStorage.removeItem("userEmail");
-      window.location.href = "/login";
+      await handleUnauthorizedResponse();
     }
     const err = new Error(data.message || "Failed API call");
     err.status = res.status;
@@ -445,7 +442,7 @@ export async function sendAiChatMessageApi(
     method: "POST",
     signal: AbortSignal.timeout(75000),
     headers: getAuthHeaders(),
-    body: JSON.stringify({ message, model, attachments, sessionId, clientRequestId: crypto.randomUUID(), ...context, screenContext: normalizeChatScreenContext(context.screenContext) }),
+    body: JSON.stringify({ message, model, attachments, sessionId, ...context, clientRequestId: context.clientRequestId || crypto.randomUUID(), screenContext: normalizeChatScreenContext(context.screenContext) }),
   }); } catch (error) {
     const code = ['TimeoutError', 'AbortError'].includes(error.name) ? 'AI_REQUEST_TIMEOUT' : 'CHAT_CONNECTION_ERROR';
     throw Object.assign(new Error(chatErrorMessage({ code })), { code });

@@ -80,6 +80,7 @@ export function UnifiedDashboard({
     const summaryPayload = {
       projectId: vm.context?.projectId,
       projectName: vm.context?.projectName,
+      lifecycleStatus: vm.context?.lifecycleStatus || null,
       snapshotId: vm.context?.snapshotId,
       healthScore: vm.health?.score ?? null,
       healthGrade: vm.health?.grade ?? "--",
@@ -136,10 +137,12 @@ export function UnifiedDashboard({
     }
   }, [vm, onSummaryChange, effectiveProjectId, effectiveSnapshotId, isError]);
 
-  // 2. Multi-Suite Sequential Run
+  // 2. Multi-Suite Sequential Run (reuses activeSuiteRun from unified-dashboard payload — 0 extra HTTP requests on mount)
   const runAllState = useRunAllSuites({
     snapshotId: effectiveSnapshotId,
     projectId,
+    initialActiveSuiteRun: vm?.context?.activeSuiteRun,
+    skipInitialFetch: true,
     onCompleted: () => refetch(),
   });
 

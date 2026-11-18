@@ -1,7 +1,7 @@
 /**
  * Calculates Cyclomatic Complexity from function AST node.
  * Supports Babel (@babel/parser) AST nodes with full ES2024+ compatibility.
- * CC = 1 + Decision Points (If, Loops, Catch, Switch cases, Logical &&, ||, ??).
+ * CC = 1 + Decision Points (If, Loops, Catch, Switch cases, Logical &&, ||, ??); nested functions are excluded.
  * @param {object} astNode - Function AST node
  * @returns {{value: number, decisionPoints: number}}
  */
@@ -15,6 +15,8 @@ export function calculateComplexityFromAst(astNode) {
         const countDecisions = (node) => {
             if (!node || typeof node !== 'object') return;
             const type = node.type;
+            if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression',
+                'ObjectMethod', 'ClassMethod', 'ClassPrivateMethod'].includes(type)) return;
 
             if (
                 type === 'IfStatement' ||

@@ -113,18 +113,27 @@ export const extractTestRequests = (sourceCode, filePath) => {
     };
 
     const isRequestCall = (callee) => {
-        // match: request(app).get or (0, _supertest.default)(app).get
+        // match: request(app).get, (0, _supertest.default)(app).get, or Playwright request.get / apiContext.post / page.request.get
         if (callee.type === "MemberExpression") {
             const obj = callee.object;
             const prop = callee.property;
-            
-            if (obj.type === "CallExpression" && prop.type === "Identifier") {
-                const c = obj.callee;
-                const isDirectRequest = c.name === "request";
-                const isBabelSupertest = (c.type === "SequenceExpression" && c.expressions?.some(e => (e.property?.name === "default" || e.name?.includes("supertest")))) ||
-                                         (c.type === "MemberExpression" && c.property?.name === "default" && c.object?.name?.includes("supertest"));
-                if (isDirectRequest || isBabelSupertest) {
-                    return prop.name.toLowerCase();
+
+            if (prop.type === "Identifier") {
+                const verb = prop.name.toLowerCase();
+                if (obj.type === "CallExpression") {
+                    const c = obj.callee;
+                    const isDirectRequest = c.name === "request";
+                    const isBabelSupertest = (c.type === "SequenceExpression" && c.expressions?.some(e => (e.property?.name === "default" || e.name?.includes("supertest")))) ||
+                                             (c.type === "MemberExpression" && c.property?.name === "default" && c.object?.name?.includes("supertest"));
+                    if (isDirectRequest || isBabelSupertest) {
+                        return verb;
+                    }
+                }
+                if (obj.type === "Identifier" && ["request", "apicontext", "apirequest", "reqcontext"].includes(obj.name.toLowerCase())) {
+                    return verb;
+                }
+                if (obj.type === "MemberExpression" && obj.property?.name === "request") {
+                    return verb;
                 }
             }
         }
@@ -137,7 +146,12 @@ export const extractTestRequests = (sourceCode, filePath) => {
         const isDescribe = (callee) => {
             if (!callee) return false;
             if (callee.type === "Identifier" && callee.name === "describe") return true;
-            if (callee.type === "MemberExpression" && callee.object?.name === "describe") return true;
+            if (callee.type === "MemberExpression") {
+                if (callee.object?.name === "describe") return true;
+                // Playwright: test.describe(...) or test.describe.serial(...)
+                if (callee.object?.name === "test" && callee.property?.name === "describe") return true;
+                if (callee.object?.type === "MemberExpression" && callee.object.object?.name === "test" && callee.object.property?.name === "describe") return true;
+            }
             return false;
         };
 
@@ -204,9 +218,11 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                 const argVal = bNode.arguments[0];
                                 const targetObj = bNode.callee?.object;
                                 const targetArg = targetObj?.arguments?.[0];
-                                if (targetArg?.property?.name === "status" || targetArg?.property?.name === "statusCode") {
+                                const isStatusProp = targetArg?.property?.name === "status" || targetArg?.property?.name === "statusCode";
+                                const isStatusCall = targetArg?.type === "CallExpression" && targetArg?.callee?.property?.name === "status";
+                                if (isStatusProp || isStatusCall) {
                                     if (argVal.type === "Literal") {
-                                        const objName = targetArg?.object?.name || "";
+                                        const objName = (isStatusCall ? targetArg?.callee?.object?.name : targetArg?.object?.name) || "";
                                         const isSetupOrTeardown = /^(created|create|seed|setup|init|verify|teardown|cleanup|after)/i.test(objName);
                                         if ((!testExpectedStatus && !isSetupOrTeardown) || (!isSetupOrTeardown && (objName === "res" || objName === "response" || /res$/i.test(objName)))) {
                                             testExpectedStatus = argVal.value;

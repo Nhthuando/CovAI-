@@ -406,6 +406,7 @@ export default function JobQueue({ projectId, onSync }) {
 
   /* ── Initial Fetch & Polling ─────────────────────────────── */
   useEffect(() => {
+    if (!projectId) return;
     fetchEvents();
     fetchJobs();
 
@@ -415,7 +416,7 @@ export default function JobQueue({ projectId, onSync }) {
     }, POLL_FAST);
 
     return () => clearInterval(intervalRef.current);
-  }, [fetchEvents, fetchJobs]);
+  }, [projectId, fetchEvents, fetchJobs]);
 
   // Adjust polling speed according to active jobs
   useEffect(() => {

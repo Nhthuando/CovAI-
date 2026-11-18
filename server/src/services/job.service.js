@@ -122,7 +122,7 @@ export const cleanupStaleJobsForProject = async (projectId, client = prisma) => 
       projectId,
       status: { in: ["QUEUED", "RUNNING"] },
     },
-    select: { id: true, type: true, status: true, startedAt: true, createdAt: true, updatedAt: true },
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
   });
 
   const now = Date.now();
@@ -190,7 +190,7 @@ export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
   };
   const activeJobs = await client.job.findMany({
     where,
-    select: { id: true, type: true, status: true, startedAt: true, createdAt: true, updatedAt: true },
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
   });
 
   const now = Date.now();

@@ -217,12 +217,86 @@ const endpointCache = new Map();
 const firebaseCache = new Map();
 const runtimeEvidenceCache = new Map();
 const inFlightIntegrationBuilds = new Map();
+const integrationWorkspacePayloadCache = new Map();
+const projectIntegrationTestsCache = new Map();
 const aiTestParseCache = new Map(); // Structure: Map<snapshotId, Map<aiTestId, { updatedAt: number, requests: Array }>>
 const apiTraceCache = new Map();
 
+const INTEGRATION_FAST_TTL_MS = 15_000; // 15s zero-RTT fast path (explicitly invalidated on mutations)
+const INTEGRATION_MAX_TTL_MS = 5 * 60 * 1000; // 5m fingerprint-verified cache
+
+export function computeIntegrationFingerprintFromData({
+  latestRun,
+  latestJob,
+  aiTestsCount,
+  snapshotMeta,
+}) {
+  if (!snapshotMeta) return null;
+  let filesMtime = 0;
+  const resolvedRoot = snapshotMeta.rootDir
+    ? resolveProjectRoot(snapshotMeta.rootDir) || snapshotMeta.rootDir
+    : null;
+  if (resolvedRoot && fs.existsSync(resolvedRoot)) {
+    try {
+      const candidateFiles = [
+        path.join(resolvedRoot, "coverage", "integration-scenarios.json"),
+        path.join(resolvedRoot, ".covai", "integration-scenarios.json"),
+        path.join(resolvedRoot, "coverage", "runtime-evidence.json"),
+        path.join(resolvedRoot, ".covai", "runtime-evidence.json"),
+        path.join(resolvedRoot, "coverage", "coverage-final.json"),
+      ];
+      for (const cf of candidateFiles) {
+        if (fs.existsSync(cf)) {
+          filesMtime += fs.statSync(cf).mtimeMs;
+        }
+      }
+    } catch (_) {}
+  }
+  const snapCreatedMs =
+    snapshotMeta.createdAt instanceof Date
+      ? snapshotMeta.createdAt.getTime()
+      : snapshotMeta.createdAt
+        ? new Date(snapshotMeta.createdAt).getTime()
+        : 0;
+  return `${latestRun?.id || "none"}_${latestRun?.status || ""}_${latestJob?.id || "none"}_${latestJob?.status || ""}_${aiTestsCount ?? 0}_${snapCreatedMs}_${Math.round(filesMtime)}`;
+}
+
+export async function getIntegrationWorkspaceFingerprint(snapshotId) {
+  try {
+    const [latestRun, latestJob, aiTestsCount, snapshotMeta] = await Promise.all([
+      prisma.testRun.findFirst({
+        where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, createdAt: true },
+      }),
+      prisma.job.findFirst({
+        where: { snapshotId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, createdAt: true },
+      }),
+      prisma.aiTest.count({ where: { snapshotId } }),
+      prisma.projectSnapshot.findUnique({
+        where: { id: snapshotId },
+        select: { id: true, rootDir: true, createdAt: true },
+      }),
+    ]);
+    if (!snapshotMeta) return null;
+    return computeIntegrationFingerprintFromData({
+      latestRun,
+      latestJob,
+      aiTestsCount,
+      snapshotMeta,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export const invalidateEndpointCache = (snapshotId, rootDir = null) => {
   endpointCache.delete(snapshotId);
+  integrationWorkspacePayloadCache.delete(snapshotId);
   clearSourceCodeCache(snapshotId);
+  projectIntegrationTestsCache.clear();
   for (const key of Array.from(firebaseCache.keys())) {
     if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
       firebaseCache.delete(key);
@@ -759,6 +833,11 @@ export const discoverProjectIntegrationTests = async (rootDir) => {
   const resolvedRoot = resolveProjectRoot(rootDir) || rootDir;
   if (!fs.existsSync(resolvedRoot)) return [];
 
+  const cached = projectIntegrationTestsCache.get(resolvedRoot);
+  if (cached && Date.now() - cached.cachedAt < 30_000) {
+    return cached.results;
+  }
+
   const candidateDirs = [
     resolvedRoot,
     path.join(resolvedRoot, "server"),
@@ -860,62 +939,255 @@ export const discoverProjectIntegrationTests = async (rootDir) => {
     }
   }
 
+  projectIntegrationTestsCache.set(resolvedRoot, { results, cachedAt: Date.now() });
   return results;
 };
 
-export const buildIntegrationWorkspace = async (snapshotId) => {
+export const buildIntegrationWorkspace = async (snapshotId, options = {}) => {
   if (!snapshotId) return null;
-  if (inFlightIntegrationBuilds.has(snapshotId)) {
+
+  if (options.scanNow) {
+    endpointCache.delete(snapshotId);
+    integrationWorkspacePayloadCache.delete(snapshotId);
+  }
+
+  if (!options.bypassCache && !options.scanNow) {
+    const cached = integrationWorkspacePayloadCache.get(snapshotId);
+    if (
+      cached &&
+      (options.skipAutoScan ||
+        cached.data?.generation?.hasScannedEndpoints !== false)
+    ) {
+      const now = Date.now();
+      // Fast-path within 15s (since any mutation explicitly calls invalidateEndpointCache)
+      if (now - cached.lastVerifiedAt < INTEGRATION_FAST_TTL_MS) {
+        return cached.data;
+      }
+      if (now - cached.cachedAt < INTEGRATION_MAX_TTL_MS) {
+        const currentFp = await getIntegrationWorkspaceFingerprint(snapshotId);
+        if (currentFp && cached.fingerprint === currentFp) {
+          cached.lastVerifiedAt = Date.now();
+          return cached.data;
+        }
+      }
+    }
+  }
+
+  if (!options.bypassCache && !options.scanNow && inFlightIntegrationBuilds.has(snapshotId)) {
     return inFlightIntegrationBuilds.get(snapshotId);
   }
   const buildPromise = (async () => {
     try {
-      return await executeBuildIntegrationWorkspace(snapshotId);
+      const built = await executeBuildIntegrationWorkspace(
+        snapshotId,
+        options.preloadedData || null,
+        options,
+      );
+      if (built?.payload) {
+        const now = Date.now();
+        integrationWorkspacePayloadCache.set(snapshotId, {
+          data: built.payload,
+          cachedAt: now,
+          lastVerifiedAt: now,
+          fingerprint: built.fingerprint,
+        });
+        return built.payload;
+      }
+      return null;
     } finally {
       inFlightIntegrationBuilds.delete(snapshotId);
     }
   })();
-  inFlightIntegrationBuilds.set(snapshotId, buildPromise);
+  if (!options.bypassCache && !options.scanNow) {
+    inFlightIntegrationBuilds.set(snapshotId, buildPromise);
+  }
   return buildPromise;
 };
 
-const executeBuildIntegrationWorkspace = async (snapshotId) => {
+const loadIntegrationScanFromDb = (structureAnalysisRow) => {
+  if (!structureAnalysisRow?.resultJson) return null;
+  try {
+    const parsed =
+      typeof structureAnalysisRow.resultJson === "string"
+        ? JSON.parse(structureAnalysisRow.resultJson)
+        : structureAnalysisRow.resultJson;
+    if (
+      parsed?.integrationScan?.explicitlyScanned &&
+      Array.isArray(parsed.integrationScan.discoveredEndpoints)
+    ) {
+      return parsed.integrationScan;
+    }
+  } catch (err) {
+    console.warn("[IntegrationWorkspace] Failed to parse DB integrationScan:", err.message);
+  }
+  return null;
+};
+
+const saveIntegrationScanToDb = async (
+  snapshotId,
+  { discoveredEndpoints, sourceFilesCount },
+) => {
+  if (
+    !snapshotId ||
+    typeof prisma?.projectStructureAnalysis?.findUnique !== "function" ||
+    typeof prisma?.projectStructureAnalysis?.upsert !== "function"
+  ) {
+    return;
+  }
+  try {
+    const existing = await prisma.projectStructureAnalysis.findUnique({
+      where: { snapshotId },
+      select: { schemaVersion: true, resultJson: true },
+    });
+    let baseObj = {};
+    if (existing?.resultJson) {
+      try {
+        baseObj =
+          typeof existing.resultJson === "string"
+            ? JSON.parse(existing.resultJson)
+            : existing.resultJson || {};
+      } catch (_) {
+        baseObj = {};
+      }
+    }
+    const nextJson = JSON.stringify({
+      ...baseObj,
+      integrationScan: {
+        explicitlyScanned: true,
+        scannedAt: new Date().toISOString(),
+        sourceFilesCount,
+        discoveredEndpoints,
+      },
+    });
+    await prisma.projectStructureAnalysis.upsert({
+      where: { snapshotId },
+      create: {
+        snapshotId,
+        schemaVersion: existing?.schemaVersion || 1,
+        resultJson: nextJson,
+      },
+      update: {
+        resultJson: nextJson,
+      },
+    });
+  } catch (err) {
+    console.warn(
+      "[IntegrationWorkspace] Could not persist integrationScan to DB:",
+      err.message,
+    );
+  }
+};
+
+const buildEndpointDescription = (ep) => {
+  const method = (ep.method || "GET").toUpperCase();
+  const routePath = ep.fullPath || ep.path || "/";
+  const handler =
+    ep.controllerMethod ||
+    ep.requestProcessingChain?.controller?.name ||
+    ep.handler ||
+    "";
+  const readableHandler =
+    handler && handler !== "anonymousHandler" && handler !== "inlineHandler"
+      ? handler
+          .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+          .replace(/[_-]+/g, " ")
+          .toLowerCase()
+      : "";
+  const actionVerb =
+    method === "GET"
+      ? "Fetches"
+      : method === "POST"
+        ? "Creates or processes"
+        : method === "PUT" || method === "PATCH"
+          ? "Updates"
+          : method === "DELETE"
+            ? "Deletes"
+            : "Handles";
+  const authNote =
+    ep.authRequired ||
+    (ep.middlewares || []).some((m) => /auth|jwt|token|protect/i.test(String(m)))
+      ? " (protected)"
+      : "";
+  if (readableHandler) {
+    return `${actionVerb} ${routePath} via ${readableHandler}${authNote}.`;
+  }
+  return `${actionVerb} requests at ${routePath}${authNote}.`;
+};
+
+const executeBuildIntegrationWorkspace = async (
+  snapshotId,
+  preloadedData = null,
+  options = {},
+) => {
   const start = Date.now();
 
   const startDb = Date.now();
-  // 1. Run all DB queries concurrently
-  const [testRuns, coverageSummary, coverageFiles, aiTests, snapshot, jobs] =
-    await Promise.all([
-      prisma.testRun.findMany({
-        where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } },
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        include: { scenarios: true },
-      }),
-      prisma.coverageSummary.findUnique({ where: { snapshotId } }),
-      prisma.coverageFile.findMany({ where: { snapshotId } }),
-      prisma.aiTest.findMany({ where: { snapshotId } }),
-      prisma.projectSnapshot.findUnique({
-        where: { id: snapshotId },
-        select: { storagePath: true, rootDir: true },
-      }),
-      prisma.job.findMany({
-        where: { snapshotId },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          type: true,
-          status: true,
-          createdAt: true,
-          startedAt: true,
-          finishedAt: true,
-          errorMessage: true,
-          resultJson: true,
-        },
-      }),
+  const [
+    testRuns,
+    coverageSummary,
+    coverageFiles,
+    aiTests,
+    snapshot,
+    jobs,
+    structureAnalysis,
+  ] = await Promise.all([
+      preloadedData?.testRuns !== undefined
+        ? Promise.resolve(preloadedData.testRuns)
+        : prisma.testRun.findMany({
+            where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            include: { scenarios: { omit: { executionDetails: true } } },
+          }),
+      preloadedData?.coverageSummary !== undefined
+        ? Promise.resolve(preloadedData.coverageSummary)
+        : prisma.coverageSummary.findUnique({ where: { snapshotId } }),
+      preloadedData?.coverageFiles !== undefined
+        ? Promise.resolve(preloadedData.coverageFiles)
+        : prisma.coverageFile.findMany({ where: { snapshotId } }),
+      preloadedData?.aiTests !== undefined
+        ? Promise.resolve(preloadedData.aiTests)
+        : prisma.aiTest.findMany({ where: { snapshotId } }),
+      preloadedData?.snapshot !== undefined
+        ? Promise.resolve(preloadedData.snapshot)
+        : prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { id: true, storagePath: true, rootDir: true, createdAt: true },
+          }),
+      preloadedData?.jobs !== undefined
+        ? Promise.resolve(preloadedData.jobs)
+        : prisma.job.findMany({
+            where: { snapshotId },
+            orderBy: { createdAt: "desc" },
+            take: 15,
+            select: {
+              id: true,
+              type: true,
+              status: true,
+              payloadJson: true,
+              resultJson: true,
+              createdAt: true,
+              startedAt: true,
+              finishedAt: true,
+              errorMessage: true,
+            },
+          }),
+      preloadedData?.structureAnalysis !== undefined
+        ? Promise.resolve(preloadedData.structureAnalysis)
+        : typeof prisma?.projectStructureAnalysis?.findUnique === "function"
+          ? prisma.projectStructureAnalysis
+              .findUnique({
+                where: { snapshotId },
+                select: { schemaVersion: true, resultJson: true },
+              })
+              .catch(() => null)
+          : Promise.resolve(null),
     ]);
   const dbTime = Date.now() - startDb;
   const latestRun = (testRuns && testRuns[0]) || null;
+  const resolvedSnapshotRoot = snapshot?.rootDir
+    ? resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir
+    : null;
   const analyzeJob = (jobs || []).find((j) => j.type === "ANALYSIS");
   const generateJob = (jobs || []).find((j) => j.type === "AI_TESTS");
   const executeJob = (jobs || []).find(
@@ -928,20 +1200,90 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       j.type === "CYPRESS_SYSTEM_TEST",
   );
 
-  // 2. Load API Endpoints (Cached by snapshotId in memory and fs)
+  // Extract which endpoints were actually targeted/analyzed in the latest Supertest execution
+  let isFullSupertestAnalysis = false;
+  const analyzedEndpointSet = new Set();
+  const latestSuccessSupertestJob = (jobs || []).find(
+    (j) =>
+      (j.type === "SUPERTEST_COVERAGE" || j.type === "PLAYWRIGHT_API") &&
+      j.status === "SUCCESS",
+  );
+  if (latestSuccessSupertestJob) {
+    let jResult = {};
+    let jPayload = {};
+    try {
+      jResult =
+        typeof latestSuccessSupertestJob.resultJson === "string"
+          ? JSON.parse(latestSuccessSupertestJob.resultJson)
+          : latestSuccessSupertestJob.resultJson || {};
+    } catch (_) {}
+    try {
+      jPayload =
+        typeof latestSuccessSupertestJob.payloadJson === "string"
+          ? JSON.parse(latestSuccessSupertestJob.payloadJson)
+          : latestSuccessSupertestJob.payloadJson || {};
+    } catch (_) {}
+
+    const list = Array.isArray(jResult?.analyzedEndpoints)
+      ? jResult.analyzedEndpoints
+      : Array.isArray(jPayload?.targetEndpoints) && jPayload.targetEndpoints.length > 0
+        ? jPayload.targetEndpoints
+        : null;
+
+    if (!list) {
+      isFullSupertestAnalysis = true;
+    } else if (list.includes("*")) {
+      isFullSupertestAnalysis = true;
+    } else {
+      for (const item of list) {
+        const norm = String(item || "").trim().toUpperCase();
+        if (norm) analyzedEndpointSet.add(norm);
+      }
+    }
+  }
+
+  // 2. Load API Endpoints (Cached by DB, memory, and fs)
   const startAst = Date.now();
-  let discoveredEndpointsCache = endpointCache.get(snapshotId);
+  const dbIntegrationScan = loadIntegrationScanFromDb(structureAnalysis);
+  const hasPriorHistory = Boolean(
+    (latestRun && latestRun.status !== "CANCELED") ||
+      (jobs || []).some(
+        (j) =>
+          (j.type === "SUPERTEST_COVERAGE" || j.type === "PLAYWRIGHT_API") &&
+          j.status === "SUCCESS",
+      ),
+  );
+
+  let discoveredEndpointsCache = options.scanNow
+    ? null
+    : endpointCache.get(snapshotId);
   let discoveredEndpoints = [];
   let sourceFilesCount = 0;
   let sourceTime = 0;
   let loadedSourceCode = null;
+  let hasScannedEndpoints = Boolean(
+    options.scanNow ||
+      dbIntegrationScan?.explicitlyScanned ||
+      hasPriorHistory ||
+      discoveredEndpointsCache?.explicitlyScanned,
+  );
 
   if (!discoveredEndpointsCache) {
-    // Try file cache
-    const fs = (await import("fs")).default;
-    const path = (await import("path")).default;
-    const resolvedRootDir =
-      resolveProjectRoot(snapshot?.rootDir) || snapshot?.rootDir;
+    // 2a. Check persisted DB scan first (unless explicitly rescanning)
+    if (!options.scanNow && dbIntegrationScan) {
+      discoveredEndpoints = dbIntegrationScan.discoveredEndpoints || [];
+      sourceFilesCount = dbIntegrationScan.sourceFilesCount || 0;
+      hasScannedEndpoints = true;
+      endpointCache.set(snapshotId, {
+        discoveredEndpoints,
+        sourceFilesCount,
+        explicitlyScanned: true,
+      });
+      discoveredEndpointsCache = endpointCache.get(snapshotId);
+    }
+
+    // 2b. Fallback to file cache
+    const resolvedRootDir = resolvedSnapshotRoot;
     const cacheFile = resolvedRootDir
       ? path.join(
           resolvedRootDir,
@@ -950,39 +1292,69 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
         )
       : null;
 
-    try {
-      if (cacheFile && fs.existsSync(cacheFile)) {
-        const fileData = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-        discoveredEndpoints = fileData.discoveredEndpoints;
-        sourceFilesCount = fileData.sourceFilesCount;
-        endpointCache.set(snapshotId, {
-          discoveredEndpoints,
-          sourceFilesCount,
-        });
-        discoveredEndpointsCache = endpointCache.get(snapshotId);
+    if (!discoveredEndpointsCache && !options.scanNow) {
+      try {
+        if (cacheFile && fs.existsSync(cacheFile)) {
+          const fileData = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+          const isExplicitlyScanned = Boolean(fileData.explicitlyScanned);
+          const canUseCachedFile =
+            isExplicitlyScanned || hasPriorHistory || !options.skipAutoScan;
+          if (canUseCachedFile) {
+            discoveredEndpoints = fileData.discoveredEndpoints || [];
+            sourceFilesCount = fileData.sourceFilesCount || 0;
+            hasScannedEndpoints = isExplicitlyScanned || hasPriorHistory;
+            endpointCache.set(snapshotId, {
+              discoveredEndpoints,
+              sourceFilesCount,
+              explicitlyScanned: isExplicitlyScanned,
+            });
+            discoveredEndpointsCache = endpointCache.get(snapshotId);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to read endpoint cache file", e);
       }
-    } catch (e) {
-      console.error("Failed to read endpoint cache file", e);
     }
 
-    // Fallback to computing
-    if (!discoveredEndpointsCache) {
+    const shouldRunAstScan =
+      !discoveredEndpointsCache &&
+      (Boolean(options.scanNow) || hasPriorHistory || !options.skipAutoScan);
+
+    // 2c. Run AST Scan when explicitly triggered or allowed
+    if (shouldRunAstScan) {
       const startSource = Date.now();
-      const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
+      const sourceCode = await loadSourceCode(snapshotId, snapshot?.rootDir).catch(() => []);
       loadedSourceCode = sourceCode;
       sourceTime = Date.now() - startSource;
       sourceFilesCount = sourceCode.length;
       discoveredEndpoints = extractValidEndpoints(sourceCode);
-      endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+      const isExplicitlyScanned = Boolean(options.scanNow);
+      hasScannedEndpoints = isExplicitlyScanned || hasPriorHistory || !options.skipAutoScan;
+      endpointCache.set(snapshotId, {
+        discoveredEndpoints,
+        sourceFilesCount,
+        explicitlyScanned: isExplicitlyScanned,
+      });
 
-      if (cacheFile) {
+      if (isExplicitlyScanned) {
+        await saveIntegrationScanToDb(snapshotId, {
+          discoveredEndpoints,
+          sourceFilesCount,
+        });
+      }
+
+      if (cacheFile && resolvedRootDir && fs.existsSync(resolvedRootDir)) {
         try {
           if (!fs.existsSync(path.dirname(cacheFile))) {
             fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
           }
           fs.writeFileSync(
             cacheFile,
-            JSON.stringify({ discoveredEndpoints, sourceFilesCount }),
+            JSON.stringify({
+              discoveredEndpoints,
+              sourceFilesCount,
+              explicitlyScanned: isExplicitlyScanned,
+            }),
             "utf8",
           );
         } catch (e) {
@@ -991,8 +1363,19 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       }
     }
   } else {
-    sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
-    discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+    const canUseMemoryCache =
+      Boolean(discoveredEndpointsCache.explicitlyScanned) ||
+      hasPriorHistory ||
+      !options.skipAutoScan;
+    if (canUseMemoryCache) {
+      sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
+      discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+      hasScannedEndpoints = true;
+    } else {
+      sourceFilesCount = 0;
+      discoveredEndpoints = [];
+      hasScannedEndpoints = false;
+    }
   }
   const astTime = Date.now() - startAst;
 
@@ -1073,13 +1456,14 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
     }));
     firebaseCache.set(firebaseCacheKey, testScenarios);
   } else {
-    // FAST PATH 2: Check local disk (0ms network)
+    // FAST PATH 2: Check local disk (0ms network) using resolved host rootDir
     let loadedFromDisk = false;
-    if (snapshot?.rootDir) {
+    if (resolvedSnapshotRoot) {
       const candidatePaths = [
-        path.join(snapshot.rootDir, "coverage", "integration-scenarios.json"),
+        path.join(resolvedSnapshotRoot, "coverage", "integration-scenarios.json"),
+        path.join(resolvedSnapshotRoot, ".covai", "integration-scenarios.json"),
         path.join(
-          snapshot.rootDir,
+          resolvedSnapshotRoot,
           ".covai-temp",
           "integration-scenarios.json",
         ),
@@ -1097,13 +1481,13 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       }
     }
 
-    // SLOW FALLBACK: Only if DB and local disk do not have scenarios, query Firebase Cloud Storage
-    if (!loadedFromDisk && artifactPrefix) {
+    // SLOW FALLBACK: Only if no TestRun exists in PostgreSQL DB and local disk does not have scenarios, query Firebase Cloud Storage for legacy jobs
+    if (!loadedFromDisk && artifactPrefix && !latestRun && Boolean(outputJob)) {
       try {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error("Firebase scenario check timed out")),
-            1200,
+            400,
           ),
         );
         const downloadPromise = (async () => {
@@ -1141,10 +1525,11 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
   if (runtimeEvidenceCache.has(firebaseCacheKey)) {
     runtimeEvidences = runtimeEvidenceCache.get(firebaseCacheKey);
   } else {
-    if (snapshot?.rootDir) {
+    if (resolvedSnapshotRoot) {
       const candidateEvPaths = [
-        path.join(snapshot.rootDir, "coverage", "runtime-evidence.json"),
-        path.join(snapshot.rootDir, ".covai-temp", "runtime-evidence.json"),
+        path.join(resolvedSnapshotRoot, "coverage", "runtime-evidence.json"),
+        path.join(resolvedSnapshotRoot, ".covai", "runtime-evidence.json"),
+        path.join(resolvedSnapshotRoot, ".covai-temp", "runtime-evidence.json"),
       ];
       for (const cand of candidateEvPaths) {
         try {
@@ -1159,13 +1544,19 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       }
     }
 
-    if (runtimeEvidences.length === 0 && artifactPrefix) {
+    if (
+      runtimeEvidences.length === 0 &&
+      artifactPrefix &&
+      testScenarios.length > 0 &&
+      (!latestRun || (latestRun.status !== "CANCELED" && (latestRun.totalTests || 0) > 0)) &&
+      Boolean(latestRun || outputJob)
+    ) {
       try {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(
             () =>
               reject(new Error("Firebase runtime-evidence check timed out")),
-            1200,
+            400,
           ),
         );
         const downloadPromise = (async () => {
@@ -1214,11 +1605,15 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
     }
   });
 
-  // Discover existing integration test files from the project codebase
-  if (snapshot?.rootDir) {
+  const hasAnalyzedCoverage = Boolean(
+    hasPriorHistory || integrationTests.length > 0 || options.includeProjectTests,
+  );
+
+  // Discover existing integration test files from the project codebase ONLY after Run Coverage or when AI tests exist
+  if (resolvedSnapshotRoot && hasScannedEndpoints && hasAnalyzedCoverage) {
     try {
       const projectExistingTests = await discoverProjectIntegrationTests(
-        snapshot.rootDir,
+        resolvedSnapshotRoot,
       );
       const existingFilePaths = new Set(
         integrationTests.map((t) =>
@@ -1241,66 +1636,68 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
   }
 
   // 5.5 Load Unified Coverage and Trace API Coverage (Cached by snapshotId + latestRun)
-  let fileCoverageMap = {};
-  if (snapshot?.rootDir) {
-    const candidateCovPaths = [
-      path.join(snapshot.rootDir, "coverage", "coverage-final.json"),
-      path.join(snapshot.rootDir, ".covai-temp", "coverage-final.json"),
-    ];
-    for (const cp of candidateCovPaths) {
-      try {
-        if (fs.existsSync(cp)) {
-          const parsed = parseUnifiedCoverage(cp, snapshot.rootDir);
-          if (parsed && parsed.files) {
-            fileCoverageMap = parsed.files;
-            break;
-          }
-        }
-      } catch (_) {}
-    }
-  }
+  let fileCoverageMap = null;
+  let sourceCodeList = null;
 
-  let sourceCodeList = [];
-  try {
-    sourceCodeList = await loadSourceCode(snapshotId);
-  } catch (_) {}
-
-  const apiTraceCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
-  let apiTraceResult = apiTraceCache.get(apiTraceCacheKey);
-  if (!apiTraceResult) {
-    let fileCoverageMap = {};
-    if (snapshot?.rootDir) {
+  const getOrLoadFileCoverage = () => {
+    if (fileCoverageMap !== null) return fileCoverageMap;
+    fileCoverageMap = {};
+    if (resolvedSnapshotRoot) {
       const candidateCovPaths = [
-        path.join(snapshot.rootDir, "coverage", "coverage-final.json"),
-        path.join(snapshot.rootDir, ".covai-temp", "coverage-final.json"),
+        path.join(resolvedSnapshotRoot, "coverage", "coverage-final.json"),
+        path.join(resolvedSnapshotRoot, ".covai-temp", "coverage-final.json"),
       ];
       for (const cp of candidateCovPaths) {
         try {
           if (fs.existsSync(cp)) {
-            const parsed = parseUnifiedCoverage(cp, snapshot.rootDir);
+            const parsed = parseUnifiedCoverage(cp, resolvedSnapshotRoot);
             if (parsed && parsed.files) {
               fileCoverageMap = parsed.files;
               break;
             }
           }
-        } catch (_) {}
+        } catch (err) {
+          console.warn(
+            "[buildIntegrationWorkspace] Failed to parse unified coverage:",
+            err.message,
+          );
+        }
       }
     }
+    return fileCoverageMap;
+  };
 
-    let sourceCodeList = loadedSourceCode;
-    if (!sourceCodeList) {
-      try {
-        sourceCodeList = await loadSourceCode(snapshotId);
-        loadedSourceCode = sourceCodeList;
-      } catch (_) {
-        sourceCodeList = [];
-      }
+  const getOrLoadSourceCode = async () => {
+    if (sourceCodeList !== null) return sourceCodeList;
+    if (loadedSourceCode) {
+      sourceCodeList = loadedSourceCode;
+      return sourceCodeList;
     }
+    try {
+      sourceCodeList = await loadSourceCode(snapshotId, snapshot?.rootDir);
+      loadedSourceCode = sourceCodeList;
+    } catch (err) {
+      console.warn(
+        "[buildIntegrationWorkspace] Failed to load source code:",
+        err.message,
+      );
+      sourceCodeList = [];
+    }
+    return sourceCodeList;
+  };
+
+  const apiTraceCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
+  let apiTraceResult = hasScannedEndpoints
+    ? apiTraceCache.get(apiTraceCacheKey)
+    : { endpointsTraceability: [], summary: {} };
+  if (!apiTraceResult && hasScannedEndpoints) {
+    const fMap = getOrLoadFileCoverage();
+    const sCode = await getOrLoadSourceCode();
 
     apiTraceResult = traceApiEndpointCoverage({
       endpoints: discoveredEndpoints,
-      fileCoverageMap,
-      sourceCode: sourceCodeList,
+      fileCoverageMap: fMap,
+      sourceCode: sCode,
     });
     apiTraceCache.set(apiTraceCacheKey, apiTraceResult);
   }
@@ -1587,8 +1984,8 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
                   expectedStatus: expectedStatus,
                 },
                 failureMessages: rest.failureMessages || [],
-                fileCoverageMap,
-                sourceCode: sourceCodeList,
+                fileCoverageMap: getOrLoadFileCoverage(),
+                sourceCode: sourceCodeList || loadedSourceCode || [],
               })
             : null;
         const classification = classifyScenarioFailure(rest, req);
@@ -2017,14 +2414,45 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       return acc + pt.approvedReqs.filter((r) => isMatch(r, ep)).length;
     }, 0);
 
+    const epSignatureUpper = `${String(ep.method || "GET").toUpperCase()} ${String(ep.fullPath || ep.path || "/").trim()}`.toUpperCase();
+    const hasActualRun = passedCount + failedCount > 0;
+    const aiGeneratedCount = parsedTests.reduce((acc, pt) => {
+      if (String(pt.test?.id || pt.id || "").startsWith("existing_test_")) return acc;
+      return acc + pt.requests.filter((r) => isMatch(r, ep)).length;
+    }, 0);
+    const wasAnalyzed =
+      isFullSupertestAnalysis ||
+      analyzedEndpointSet.has(epSignatureUpper) ||
+      hasActualRun;
+
+    const visibleScenarios = wasAnalyzed
+      ? cleanScenarios.filter((s) => {
+          const isRepo =
+            !s.aiTestId ||
+            String(s.aiTestId).startsWith("existing_test_") ||
+            s.origin === "PROJECT_EXISTING";
+          if (!isRepo) return true;
+          return s.status === "passed" || s.status === "failed";
+        })
+      : cleanScenarios.filter(
+          (s) => s.aiTestId && !String(s.aiTestId).startsWith("existing_test_"),
+        );
+
+    const finalExecutedCount = hasActualRun ? executedCount : 0;
+    if (!hasActualRun && aiGeneratedCount === 0) {
+      status = wasAnalyzed ? "UNCOVERED" : "DISCOVERED";
+    }
+
     return {
       id: ep.id || `${ep.method}:${ep.fullPath}`,
       method: ep.method,
       path: ep.fullPath,
       route: ep.fullPath,
+      description: ep.description || buildEndpointDescription(ep),
       status,
-      testCount: executedCount, // Legacy for UI if needed
-      executedCount,
+      wasAnalyzed,
+      testCount: finalExecutedCount, // Legacy for UI if needed
+      executedCount: finalExecutedCount,
       passedCount,
       failedCount,
       skippedCount: mappedScenarios.filter((s) => s.status === "pending")
@@ -2156,7 +2584,7 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       provenance: ep.provenance,
       generatedCount,
       approvedCount,
-      scenarios: cleanScenarios,
+      scenarios: visibleScenarios,
     };
   });
 
@@ -2325,12 +2753,19 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       ? Math.round(totalScenarioDuration / allExecutedScenarios.length)
       : 0;
 
+  const computedFingerprint = computeIntegrationFingerprintFromData({
+    latestRun,
+    latestJob: (jobs && jobs[0]) || null,
+    aiTestsCount: Array.isArray(aiTests) ? aiTests.length : 0,
+    snapshotMeta: snapshot,
+  });
+
   const totalTime = Date.now() - start;
   console.log(
     `[PERF: Integration Workspace] snapshotId=${snapshotId} Total=${totalTime}ms | FS_Read=${sourceTime}ms | AST_Extract=${astTime}ms | DB=${dbTime}ms | Firebase=${fbTime}ms | Test_Parse=${testParseTime}ms`,
   );
 
-  return {
+  const payload = {
     snapshot: {
       id: snapshotId,
       rootDir: snapshot?.rootDir || "",
@@ -2561,6 +2996,9 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
     generation: {
       hasAnalysis:
         analyzeJob?.status === "SUCCESS" || discoveredEndpoints.length > 0,
+      hasScannedEndpoints,
+      hasAnalyzedCoverage,
+      hasPriorHistory,
       hasGeneratedTests: integrationTests.length > 0,
       targetedApis,
       generatedFiles: integrationTests.length,
@@ -2581,8 +3019,9 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
           })()
         : null,
     },
-    endpoints,
-    aiTests: integrationTests.map((t) => {
+    endpoints: hasScannedEndpoints ? endpoints : [],
+    aiTests: hasScannedEndpoints
+      ? integrationTests.map((t) => {
       const meta =
         (typeof t.metaJson === "string"
           ? JSON.parse(t.metaJson)
@@ -2629,7 +3068,8 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
           };
         }),
       };
-    }),
+    })
+      : [],
     execution: latestRun
       ? {
           id: latestRun.id,
@@ -2648,6 +3088,8 @@ const executeBuildIntegrationWorkspace = async (snapshotId) => {
       : null,
     semanticState,
   };
+
+  return { payload, fingerprint: computedFingerprint };
 };
 
 /**

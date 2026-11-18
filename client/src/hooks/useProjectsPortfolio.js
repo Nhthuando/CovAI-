@@ -31,9 +31,9 @@ export function useProjectsPortfolio({ favorites = [] } = {}) {
       }
     },
     placeholderData: keepPreviousData,
-    staleTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    staleTime: 15_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     gcTime: 15 * 60 * 1000,
   });
 
@@ -66,6 +66,7 @@ export function useProjectsPortfolio({ favorites = [] } = {}) {
   return {
     vm,
     isLoading: query.isLoading,
+    isInitialLoading: query.isLoading && !query.data,
     isFetching: query.isFetching,
     isError: query.isError,
     error: query.error,

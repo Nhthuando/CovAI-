@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   FileCode,
+  Clock,
   FileCode2,
   GitBranch,
   Cpu,
@@ -35,7 +36,6 @@ import {
   Maximize2,
   RotateCcw,
   Play,
-  Clock,
 } from "lucide-react";
 import { cleanDisplayPath, isTestFile } from "./CoverageTypeDashboard.jsx";
 import { getFileCoverage } from "../../services/coverage.service.js";
@@ -167,7 +167,6 @@ export const isCallbackOrAnonymousName = (name) => {
  *    along with exact mathematical calculation formulas and Istanbul execution counts.
  * 2. Bi-directional Traceability: Maps Business Logic functions to specific test cases and testing techniques.
  */
-
 function MatrixPaginationControl({
   currentPage,
   totalItems,

@@ -151,7 +151,7 @@ describe("Vitest multi-version compatibility and self-healing", () => {
         const resultsFile = path.join(coverageDir, "vitest-results.json");
         const writes = [];
         run.mockImplementation(async ({ command }) => {
-            const relativeOutput = command.match(/--outputFile=([^\s]+)/)[1];
+            const relativeOutput = command.match(/--outputFile="?([^\s"]+)"?/)[1];
             const outputPath = path.resolve(backend ? path.join(rootDir, "backend") : rootDir, relativeOutput);
             writes.push(outputPath);
             if (writes.length === 1) {

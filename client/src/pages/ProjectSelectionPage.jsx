@@ -1,6 +1,7 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { queryClient } from "../lib/queryClient";
+import { useToast } from "../components/dashboard/ToastContext";
 import {
   Terminal,
   Plus,
@@ -29,9 +30,28 @@ export default function ProjectSelectionPage() {
   const userId = user?.id;
   const navigate = useNavigate();
   const location = useLocation();
+  const { showToast } = useToast();
   const { isMobile } = useBreakpoints();
 
-  const [showImport, setShowImport] = useState(false);
+  const [showImport, setShowImport] = useState(() =>
+    Boolean(location.state?.openImport),
+  );
+
+  useEffect(() => {
+    if (location.state?.openImport || location.state?.githubConnected) {
+      if (location.state?.githubConnected) {
+        showToast({
+          type: "success",
+          title: "GitHub Connected",
+          message: "Your GitHub account is now linked for repository imports.",
+        });
+      }
+      navigate(location.pathname + location.search, {
+        replace: true,
+        state: {},
+      });
+    }
+  }, [location.state, location.pathname, location.search, navigate, showToast]);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -114,7 +134,7 @@ export default function ProjectSelectionPage() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [aiPanelWidth]
+    [aiPanelWidth],
   );
 
   const userInitials = useMemo(() => {
@@ -130,7 +150,7 @@ export default function ProjectSelectionPage() {
 
   const screenContext = useMemo(
     () => ({ activity: "projects-portfolio", testType: "portfolio" }),
-    []
+    [],
   );
 
   return (
@@ -145,7 +165,9 @@ export default function ProjectSelectionPage() {
             <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
               CovAI
             </span>
-            <span className="text-[10px] text-[var(--color-text-muted)]">/</span>
+            <span className="text-[10px] text-[var(--color-text-muted)]">
+              /
+            </span>
             <span className="text-xs font-semibold text-[var(--color-primary)]">
               Projects
             </span>
@@ -180,10 +202,16 @@ export default function ProjectSelectionPage() {
                 ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/40"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)]"
             }`}
-            title={aiPanelOpen ? "Collapse AI Assistant" : "Expand AI Assistant"}
+            title={
+              aiPanelOpen ? "Collapse AI Assistant" : "Expand AI Assistant"
+            }
             aria-label="Toggle AI Assistant"
           >
-            {aiPanelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+            {aiPanelOpen ? (
+              <PanelRightClose size={14} />
+            ) : (
+              <PanelRightOpen size={14} />
+            )}
           </button>
 
           <div className="h-4 w-px bg-[var(--color-border)] mx-0.5" />
@@ -219,24 +247,31 @@ export default function ProjectSelectionPage() {
                 role="alert"
                 className="rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-4 text-sm text-[var(--color-text)]"
               >
-                Your access to this project has been removed. Your unsaved editor drafts are kept in this browser.
+                Your access to this project has been removed. Your unsaved
+                editor drafts are kept in this browser.
               </div>
             </div>
           )}
           <ProjectsPortfolioDashboard
             favorites={favorites}
             onTogglePin={toggleFavorite}
-            onOpenProjectOverview={(projectId) =>
-              navigate(`/main-editor?projectId=${projectId}&tab=overview`)
-            }
+            onOpenProjectOverview={(projectId, project) => {
+              const snapId = project?.snapshotId || project?.activeSnapshotId;
+              const snapQuery = snapId ? `&snapshotId=${snapId}` : "";
+              navigate(
+                `/main-editor?projectId=${projectId}${snapQuery}&tab=overview`,
+              );
+            }}
             onNavigateWorkspace={(projectId, pillar, focus = {}) => {
               const params = new URLSearchParams();
               params.set("projectId", projectId);
               params.set("tab", "coverage");
               params.set("coverageType", pillar);
               if (focus?.focusFile) params.set("focusFile", focus.focusFile);
-              if (focus?.focusEndpoint) params.set("focusEndpoint", focus.focusEndpoint);
-              if (focus?.focusScenario) params.set("focusScenario", focus.focusScenario);
+              if (focus?.focusEndpoint)
+                params.set("focusEndpoint", focus.focusEndpoint);
+              if (focus?.focusScenario)
+                params.set("focusScenario", focus.focusScenario);
               navigate(`/main-editor?${params.toString()}`);
             }}
             onDeleteProject={(proj) => setProjectToDelete(proj)}
@@ -298,7 +333,9 @@ export default function ProjectSelectionPage() {
                   pendingAiSuggestion={pendingAiSuggestion}
                   onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
                   onOpenFile={(filePath) =>
-                    navigate(`/main-editor?focusFile=${encodeURIComponent(filePath)}`)
+                    navigate(
+                      `/main-editor?focusFile=${encodeURIComponent(filePath)}`,
+                    )
                   }
                   onRunAnalysis={() => {}}
                 />

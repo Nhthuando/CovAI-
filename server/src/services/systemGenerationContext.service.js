@@ -1,3 +1,4 @@
+import { extractValidationFacts, buildTestDesignChecklist } from './systemValidationFacts.service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {startFullSystem} from './fullSystemLifecycle.service.js';
@@ -291,6 +292,16 @@ export const collectSystemGenerationContext = (
 
   // Harvest frontend UI context & backend endpoints
   const frontendHarvest = harvestFrontendContext(sourceCode);
+  let validationFacts = [];
+  let testDesign = [];
+  try {
+    validationFacts = extractValidationFacts({ files: sourceCode });
+    testDesign = buildTestDesignChecklist({ facts: validationFacts });
+  } catch (error) {
+    console.warn('[systemGenerationContext] Validation fact extraction failed:', error);
+    validationFacts = [];
+    testDesign = [];
+  }
   let backendEndpoints = [];
   try {
     backendEndpoints = extractValidEndpoints(sourceCode);
@@ -307,6 +318,8 @@ export const collectSystemGenerationContext = (
     uiActions: frontendHarvest.uiActions,
     clientApiCalls: frontendHarvest.clientApiCalls,
     backendEndpoints,
+    validationFacts,
+    testDesign,
   };
 };
 

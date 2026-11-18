@@ -39,7 +39,7 @@ import {
     ensureWorkspaceNodeModulesLinked,
     cleanupWorkspaceNodeModulesLinks
 } from "./dependencyResolution.service.js";
-import { currentProjectOperation } from "./projectOperationWorkspace.service.js";
+import { currentProjectOperation, deferPreparedCommit, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 import { resolveUnitTestDependency } from './unitTestPreflight.service.js';
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -3938,6 +3938,8 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
     const coverageDir = path.join(rootDir, "coverage");
     const unitCoverageDir = path.join(rootDir, "coverage", "unit");
+    const reportedScenarios = [];
+    let hasPersistedTestRun = false;
     if (!fs.existsSync(unitCoverageDir)) {
         try { fs.mkdirSync(unitCoverageDir, { recursive: true }); } catch { }
     }
@@ -4176,14 +4178,17 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 })()
             ]);
 
-            if (vOutcome.status === "rejected") {
-                await addJobLog(jobId, "WARN", `[VITEST] Vitest execution warning: ${vOutcome.reason?.message}`).catch(() => { });
-            }
-            if (jOutcome.status === "fulfilled") {
-                runnerResult = jOutcome.value || { exitCode: 0 };
-            } else {
-                await addJobLog(jobId, "WARN", `[JEST] Jest execution warning: ${jOutcome.reason?.message}`).catch(() => { });
-            }
+            const runnerOutputs = [vOutcome, jOutcome].map(outcome =>
+                outcome.status === "fulfilled"
+                    ? outcome.value
+                    : { exitCode: null, stderr: outcome.reason?.message || "Runner did not complete" });
+            const unsuccessfulRunner = runnerOutputs.find(output => output?.exitCode === null)
+                || runnerOutputs.find(output => output?.exitCode !== 0);
+            runnerResult = {
+                exitCode: unsuccessfulRunner ? unsuccessfulRunner.exitCode : 0,
+                stdout: runnerOutputs.map(output => output?.stdout).filter(Boolean).join("\n"),
+                stderr: runnerOutputs.map(output => output?.stderr).filter(Boolean).join("\n"),
+            };
 
             // Step 2c: Merge coverage & test results
             syncCoverageDirectories(coverageDir, unitCoverageDir);
@@ -4266,9 +4271,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
             // Save TestRun for JEST
             try {
-                const jestRunData = parseJestResults(unitCoverageDir) || parseJestResults(coverageDir);
+                const jestRunData = parseJestResults(unitCoverageDir, { rootDir }) || parseJestResults(coverageDir, { rootDir });
                 if (jestRunData) {
                     const { scenarios, ...runProps } = jestRunData;
+                    reportedScenarios.push(...scenarios);
                     const formattedScenarios = formatScenariosForPrisma(scenarios);
                     const dataPayload = {
                         snapshotId,
@@ -4279,6 +4285,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                     await prisma.testRun.create({ data: dataPayload });
+                    hasPersistedTestRun = true;
                     await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${jestRunData.totalTests} tests (${jestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
@@ -4287,9 +4294,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
             // Save TestRun for VITEST
             try {
-                const vitestRunData = parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir);
+                const vitestRunData = parseVitestResults(unitCoverageDir, { rootDir }) || parseVitestResults(coverageDir, { rootDir });
                 if (vitestRunData) {
                     const { scenarios, ...runProps } = vitestRunData;
+                    reportedScenarios.push(...scenarios);
                     const formattedScenarios = formatScenariosForPrisma(scenarios);
                     const dataPayload = {
                         snapshotId,
@@ -4300,6 +4308,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                     await prisma.testRun.create({ data: dataPayload });
+                    hasPersistedTestRun = true;
                     await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${vitestRunData.totalTests} tests (${vitestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
@@ -4314,9 +4323,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             syncCoverageDirectories(coverageDir, unitCoverageDir);
             await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
 
-            const testResults = parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir) || parseJestResults(unitCoverageDir) || parseJestResults(coverageDir);
+            const testResults = parseVitestResults(unitCoverageDir, { rootDir }) || parseVitestResults(coverageDir, { rootDir });
             if (testResults) {
                 const { scenarios, ...testRunData } = testResults;
+                reportedScenarios.push(...scenarios);
                 const formattedScenarios = formatScenariosForPrisma(scenarios);
                 const dataPayload = {
                     snapshotId,
@@ -4327,6 +4337,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                 await prisma.testRun.create({ data: dataPayload });
+                hasPersistedTestRun = true;
                 await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else if (hasJest) {
@@ -4336,9 +4347,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             syncCoverageDirectories(coverageDir, unitCoverageDir);
             await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
 
-            const testResults = parseJestResults(unitCoverageDir) || parseJestResults(coverageDir) || parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir);
+            const testResults = parseJestResults(unitCoverageDir, { rootDir }) || parseJestResults(coverageDir, { rootDir });
             if (testResults) {
                 const { scenarios, ...testRunData } = testResults;
+                reportedScenarios.push(...scenarios);
                 const formattedScenarios = formatScenariosForPrisma(scenarios);
                 const dataPayload = {
                     snapshotId,
@@ -4349,6 +4361,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                 await prisma.testRun.create({ data: dataPayload });
+                hasPersistedTestRun = true;
                 await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else {
@@ -4434,11 +4447,11 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             await markJobFailed(jobId, new Error("Published unit tests did not pass regression. Previously verified coverage was retained.")).catch(() => {});
             return;
         }
-        if (runnerResult && runnerResult.exitCode !== 0 && runnerResult.exitCode !== null) {
+        if (runnerResult && (runnerResult.exitCode !== 0 || reportedScenarios.some(scenario => scenario.isSuiteLevelFailure)) && runnerResult.exitCode !== null) {
             const jobOutputModule = await import("./jobOutput.service.js").catch(() => ({}));
             const jobFetcher = jobOutputModule.getJobOutput || jobOutputModule.getOutputByJob;
             const jobOutput = typeof jobFetcher === "function" ? await jobFetcher(jobId).catch(() => null) : null;
-            const fullOutput = (jobOutput?.stderr || "") + "\n" + (jobOutput?.stdout || "");
+            const fullOutput = [runnerResult.stderr, runnerResult.stdout, jobOutput?.stderr, jobOutput?.stdout].filter(Boolean).join("\n");
             const modResError = parseModuleResolutionError(fullOutput, rootDir);
             const missingDep = modResError?.missingDependency || extractMissingDependency(fullOutput);
 
@@ -4591,11 +4604,15 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                     }
                 }
             }
+            const brokenSuite = reportedScenarios.find((scenario) => scenario.isSuiteLevelFailure);
 
             // Case 1: Fatal crash / Runner failed before generating valid coverage
-            // When hasValidCoverage is true, assertion failures (exit code 1) must NEVER fail the job!
-            if (!hasValidCoverage) {
-                const existingSummary = await prisma.coverageSummary.findUnique({ where: { snapshotId } });
+            // Suite-load errors invalidate coverage. Assertion failures can still produce usable coverage.
+            if (!hasValidCoverage || runnerResult.exitCode === null || modResError || brokenSuite) {
+                const existingSummary = await prisma.coverageSummary.findUnique({
+                    where: { snapshotId },
+                    select: { stmtsPct: true, branchesPct: true, funcsPct: true, linesPct: true },
+                });
                 const previousCoverage = existingSummary ? {
                     statements: existingSummary.stmtsPct,
                     branches: existingSummary.branchesPct,
@@ -4605,13 +4622,12 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
                 let failMessage = modResError
                     ? `Test suite failed to run: Cannot find module '${modResError.missingModule}' from '${cleanStoragePath(modResError.testFile)}'`
-                    : `Test execution failed with exit code ${runnerResult.exitCode}`;
+                    : brokenSuite?.failureMessages?.[0] || (runnerResult.exitCode === null
+                        ? "Test runner stopped before finishing"
+                        : `Test execution failed with exit code ${runnerResult.exitCode}`);
 
-                const isCollectionFailure = !modResError &&
-                    /(?:Failed Suites|failed to load url|failed to parse a file|Failed to resolve import|collectTests|Cannot find module)/i.test(fullOutput) &&
-                    /(?:no tests|Tests\s+no tests|Tests\s+0\b|Duration:[^\n\r]*collect\s+\d+ms[^\n\r]*tests\s+0ms)/i.test(fullOutput);
-
-                if (!modResError) {
+                if (!modResError && !brokenSuite) {
+                    const mockExpMatch = fullOutput.match(/No ["']([^"']+)["'] export is defined on the ["']([^"']+)["'] mock/i);
                     if (mockExpMatch) {
                         failMessage = `Test Runner Error: [vitest] No "${mockExpMatch[1]}" export is defined on the "${mockExpMatch[2]}" mock. Did you forget to return it from "vi.mock"?`;
                     } else {
@@ -4639,7 +4655,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
                 // Persist failed test run in DB for accurate history
                 try {
-                    await prisma.testRun.create({
+                    if (!hasPersistedTestRun) await prisma.testRun.create({
                         data: {
                             snapshotId,
                             type: hasVitest && !hasJest ? "VITEST" : "JEST",
@@ -4666,12 +4682,14 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                                                 `[MISSING_DEPENDENCY]:${JSON.stringify({ packageName, rawSpecifier, importedFrom: targetPackage })}`),
                                         cleanStorageText(fullOutput.slice(0, 2000))
                                     ].filter(Boolean),
-                                    testFile: cleanStoragePath(modResError?.testFile) || null
+                                    testFile: cleanStoragePath(modResError?.testFile || brokenSuite?.testFile) || null
                                 }]
                             }
                         }
                     });
-                } catch { }
+                } catch (persistErr) {
+                    console.warn("[processRunTestsJob] Error saving fatal TestRun:", persistErr.message);
+                }
 
                 const failErr = new Error(failMessage);
                 failErr.moduleResolutionError = modResError;
@@ -4688,8 +4706,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             ).catch(() => { });
 
             try {
-                const existingTestRun = await prisma.testRun.findFirst({ where: { snapshotId }, orderBy: { createdAt: "desc" } });
-                if (!existingTestRun) {
+                if (!hasPersistedTestRun) {
                     await prisma.testRun.create({
                         data: {
                             snapshotId,
@@ -4715,7 +4732,9 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                         }
                     });
                 }
-            } catch (_) { }
+            } catch (persistErr) {
+                console.warn("[processRunTestsJob] Error saving assertion failure TestRun:", persistErr.message);
+            }
         }
 
         break; // Test execution complete or handled
@@ -4879,7 +4898,9 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         syncCoverageDirectories(coverageDir, unitCoverageDir);
 
         if (rawOrigRootDir || origRootDir) {
-            syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
+            const publishArtifacts = () => syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
+            if (opContext?.preparedPublications) deferPreparedCommit(publishArtifacts);
+            else publishArtifacts();
         }
 
         // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)

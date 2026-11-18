@@ -83,7 +83,7 @@ export default function Features() {
               <Card
                 key={feature.id}
                 id={`feature-${feature.id}`}
-                className="p-6 flex flex-col justify-between hover:border-[var(--color-text-muted)] transition-colors"
+                className="p-6 flex flex-col justify-between hover:border-[var(--color-text-muted)] transition-colors scroll-mt-24"
               >
                 <div>
                   <div className="flex items-center justify-between mb-4">

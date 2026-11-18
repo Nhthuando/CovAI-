@@ -995,6 +995,7 @@ export const generateAiUnitTestSuite = async ({
     coverageDetails,
     isTest,
     filePath,
+    targetTestFile,
     selectedAiModel = null,
     validateCollection = false
 }) => {
@@ -1002,7 +1003,19 @@ export const generateAiUnitTestSuite = async ({
     const ext = path.extname(cleanSource) || ".js";
     const baseName = path.basename(cleanSource, ext).replace(/\.(test|spec)$/i, "");
 
-    const testFileInfo = isTest
+    const testFileInfo = targetTestFile
+        ? {
+            found: fs.existsSync(path.join(snapshot.rootDir, targetTestFile)),
+            relativePath: targetTestFile,
+            suggestedFilePath: targetTestFile,
+            absolutePath: path.join(snapshot.rootDir, targetTestFile),
+            fileName: path.basename(targetTestFile),
+            content: fs.existsSync(path.join(snapshot.rootDir, targetTestFile))
+                ? fs.readFileSync(path.join(snapshot.rootDir, targetTestFile), "utf8")
+                : "",
+            framework,
+        }
+        : isTest
         ? {
             found: true,
             relativePath: filePath,

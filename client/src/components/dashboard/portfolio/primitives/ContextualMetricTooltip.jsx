@@ -57,7 +57,7 @@ export default function ContextualMetricTooltip({
             e.stopPropagation();
             setIsOpen((prev) => !prev);
           }}
-          className="text-[#8b949e] hover:text-[#58a6ff] transition-colors p-0.5 rounded focus:outline-none focus:ring-1 focus:ring-[#58a6ff]"
+          className="text-[var(--ud-text-muted)] hover:text-[var(--ud-unit)] transition-colors p-0.5 rounded focus:outline-none focus:ring-1 focus:ring-[var(--ud-unit)]"
           aria-label={title || "Metric Details"}
         >
           <Info className="w-3.5 h-3.5" />
@@ -67,12 +67,11 @@ export default function ContextualMetricTooltip({
       {isOpen && (
         <div
           role="tooltip"
-          className={`absolute z-50 w-72 p-3 bg-[#161b22] border border-[#30363d] rounded-md shadow-2xl text-left pointer-events-none transition-opacity duration-150 ${placementClasses}`}
-          style={{ backdropFilter: "blur(8px)" }}
+          className={`absolute z-50 w-72 p-3 bg-[var(--ud-surface)] border border-[var(--ud-border)] rounded-md shadow-xl text-left pointer-events-none transition-opacity duration-150 ${placementClasses}`}
         >
           {title && (
-            <div className="font-semibold text-xs text-[#f0f6fc] border-b border-[#30363d] pb-1.5 mb-2 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#58a6ff]" />
+            <div className="font-semibold text-xs text-[var(--ud-text)] border-b border-[var(--ud-border)] pb-1.5 mb-2 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--ud-unit)]" />
               {title}
             </div>
           )}
@@ -80,32 +79,32 @@ export default function ContextualMetricTooltip({
           {/* 1. What it means */}
           {meaning && (
             <div className="mb-2">
-              <span className="text-[10px] uppercase font-bold text-[#8b949e] tracking-wider block">
+              <span className="text-[10px] uppercase font-bold text-[var(--ud-text-muted)] tracking-wider block">
                 What it means
               </span>
-              <p className="text-[11px] text-[#c9d1d9] leading-relaxed mt-0.5">{meaning}</p>
+              <p className="text-[11px] text-[var(--ud-text)] leading-relaxed mt-0.5">{meaning}</p>
             </div>
           )}
 
           {/* 2. Formula & Provenance */}
           {(formula || provenance) && (
-            <div className="mb-2 p-1.5 bg-[#0d1117] rounded border border-[#21262d]">
+            <div className="mb-2 p-1.5 bg-[var(--ud-surface-2)] rounded border border-[var(--ud-border)]">
               {formula && (
                 <div>
-                  <span className="text-[10px] uppercase font-bold text-[#8b949e] tracking-wider block">
+                  <span className="text-[10px] uppercase font-bold text-[var(--ud-text-muted)] tracking-wider block">
                     Formula
                   </span>
-                  <code className="text-[10px] text-[#79c0ff] font-mono break-all block mt-0.5">
+                  <code className="text-[10px] text-[var(--ud-unit)] font-mono break-all block mt-0.5">
                     {formula}
                   </code>
                 </div>
               )}
               {provenance && (
-                <div className={formula ? "mt-1.5 pt-1 border-t border-[#21262d]" : ""}>
-                  <span className="text-[10px] uppercase font-bold text-[#8b949e] tracking-wider block">
+                <div className={formula ? "mt-1.5 pt-1 border-t border-[var(--ud-border)]" : ""}>
+                  <span className="text-[10px] uppercase font-bold text-[var(--ud-text-muted)] tracking-wider block">
                     Provenance
                   </span>
-                  <span className="text-[10px] text-[#8b949e] font-mono block mt-0.5">
+                  <span className="text-[10px] text-[var(--ud-text-muted)] font-mono block mt-0.5">
                     {provenance}
                   </span>
                 </div>
@@ -115,9 +114,9 @@ export default function ContextualMetricTooltip({
 
           {/* 3. Actionable Tip */}
           {tip && (
-            <div className="pt-1 border-t border-[#21262d] flex items-start gap-1.5 text-[11px] text-[#3fb950]">
+            <div className="pt-1 border-t border-[var(--ud-border)] flex items-start gap-1.5 text-[11px] text-[var(--ud-pass)]">
               <span className="font-bold">Tip:</span>
-              <span className="text-[#8b949e] leading-snug">{tip}</span>
+              <span className="text-[var(--ud-text-muted)] leading-snug">{tip}</span>
             </div>
           )}
         </div>

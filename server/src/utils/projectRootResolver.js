@@ -128,8 +128,8 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
         }
     }
 
-    // Check if snapshotRoot contains 'storage' or 'uploads'
-    for (const marker of ['storage', 'uploads']) {
+    // Check if snapshotRoot contains 'storage', 'uploads', or '.covai-temp'
+    for (const marker of ['storage', 'uploads', '.covai-temp']) {
         const idx = strippedDrive.indexOf(marker);
         if (idx !== -1) {
             const sub = strippedDrive.slice(idx);

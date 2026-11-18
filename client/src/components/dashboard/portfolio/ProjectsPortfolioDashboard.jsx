@@ -21,7 +21,7 @@ export function ProjectsPortfolioDashboard({
   onAskAi,
   className = "",
 }) {
-  const { vm, isFetching, refetch, forceRefresh } =
+  const { vm, isFetching, isInitialLoading, refetch, forceRefresh } =
     useProjectsPortfolio({
       favorites,
     });
@@ -108,6 +108,28 @@ export function ProjectsPortfolioDashboard({
     },
     [onAskAi]
   );
+
+  if (isInitialLoading) {
+    return (
+      <div
+        className={`unified-dashboard portfolio-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
+      >
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6 animate-pulse">
+          <div className="h-14 rounded-lg bg-[var(--ud-surface)] border border-[var(--ud-border)]" />
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-24 rounded-lg bg-[var(--ud-surface)] border border-[var(--ud-border)]" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-64 rounded-lg bg-[var(--ud-surface)] border border-[var(--ud-border)]" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

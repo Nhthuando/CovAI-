@@ -29,13 +29,26 @@ export const failInterruptedProjectOperation = async ({jobId,db = prisma}) => {
 // rows; retry their original primary job identities instead of creating jobs.
 export const recoverQueuedProjectOperations = async ({limit = 50} = {}) => {
     const operations = await prisma.projectOperation.findMany({where:{status:'QUEUED',primaryJobId:{not:null}},orderBy:{createdAt:'asc'},take:limit,
-        include:{primaryJob:{select:{id:true,type:true,status:true}}}});
+        include:{primaryJob:{select:{id:true,type:true,status:true,snapshotId:true}}}});
     const { addJobToQueue } = await import('./queue.service.js');
     const results = [];
     for (const operation of operations) {
         if (!operation.primaryJob || operation.primaryJob.status !== 'QUEUED') {
             await prisma.projectOperation.updateMany({where:{id:operation.id,status:'QUEUED'},data:{status:operation.primaryJob?.status === 'CANCELED' ? 'CANCELED' : 'FAILED'}});
             continue;
+        }
+        if (operation.primaryJob.type === 'SUPERTEST_COVERAGE' && operation.primaryJob.snapshotId) {
+            const activeInstall = await prisma.job.findFirst({
+                where: {
+                    snapshotId: operation.primaryJob.snapshotId,
+                    type: 'INSTALL_DEPS',
+                    status: { in: ['QUEUED', 'RUNNING'] },
+                },
+                select: { id: true },
+            }).catch(() => null);
+            if (activeInstall) {
+                continue;
+            }
         }
         try {
             await addJobToQueue(operation.primaryJob.type,operation.primaryJob.id);

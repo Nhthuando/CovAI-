@@ -121,7 +121,12 @@ async function pollJobUntilDone(jobId, stepKey, { isCancelledCheck, onProgress }
  * Hook for multi-suite execution across Unit -> Integration -> System tests
  * with Pre-flight HITL Gate, Real-time % Progress, and Incremental Persistence.
  */
-export function useRunAllSuites({ snapshotId, onCompleted = null }) {
+export function useRunAllSuites({
+  snapshotId,
+  onCompleted = null,
+  initialActiveSuiteRun = undefined,
+  skipInitialFetch = false,
+}) {
   const { addToast } = useToast();
   const [isRunning, setIsRunning] = useState(false);
   const [activeStep, setActiveStep] = useState(null); // 'unit' | 'integration' | 'system' | null
@@ -470,51 +475,72 @@ export function useRunAllSuites({ snapshotId, onCompleted = null }) {
     if (!snapshotId) return;
 
     let isMounted = true;
+
+    const attachToActiveRun = (activeRun) => {
+      if (!isMounted || !activeRun) return;
+      if (activeRun.status !== "RUNNING" && activeRun.status !== "QUEUED") return;
+      if (activeJobIdRef.current === activeRun.jobId && isRunning) return;
+
+      setIsRunning(true);
+      const pillar = activeRun.pillar || "unit";
+      setActiveStep(pillar);
+      setStepStates((prev) => ({ ...prev, [pillar]: "running" }));
+      setStepProgress((prev) => ({
+        ...prev,
+        [pillar]: {
+          progress: activeRun.progress || 10,
+          stage: activeRun.stage || "Resuming execution...",
+          message: "Reconnected to active background run",
+        },
+      }));
+      activeJobIdRef.current = activeRun.jobId;
+
+      pollJobUntilDone(activeRun.jobId, pillar, {
+        isCancelledCheck: () => isCancelledRef.current,
+        onProgress: (p) => handleStepProgress(pillar, p),
+      })
+        .then(() => {
+          if (isMounted) {
+            setStepStates((prev) => ({ ...prev, [pillar]: "done" }));
+            setIsRunning(false);
+            setActiveStep(null);
+            invalidateCoverageQueries(snapshotId);
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setIsRunning(false);
+            setActiveStep(null);
+          }
+        });
+    };
+
+    if (initialActiveSuiteRun !== undefined) {
+      if (initialActiveSuiteRun) {
+        attachToActiveRun(initialActiveSuiteRun);
+      }
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (skipInitialFetch) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
     getSuitesReadiness(snapshotId)
       .then((res) => {
         if (!isMounted) return;
-        const activeRun = res?.data?.activeSuiteRun;
-        if (activeRun && (activeRun.status === "RUNNING" || activeRun.status === "QUEUED")) {
-          setIsRunning(true);
-          const pillar = activeRun.pillar || "unit";
-          setActiveStep(pillar);
-          setStepStates((prev) => ({ ...prev, [pillar]: "running" }));
-          setStepProgress((prev) => ({
-            ...prev,
-            [pillar]: {
-              progress: activeRun.progress || 10,
-              stage: activeRun.stage || "Resuming execution...",
-              message: "Reconnected to active background run",
-            },
-          }));
-          activeJobIdRef.current = activeRun.jobId;
-
-          pollJobUntilDone(activeRun.jobId, pillar, {
-            isCancelledCheck: () => isCancelledRef.current,
-            onProgress: (p) => handleStepProgress(pillar, p),
-          })
-            .then(() => {
-              if (isMounted) {
-                setStepStates((prev) => ({ ...prev, [pillar]: "done" }));
-                setIsRunning(false);
-                setActiveStep(null);
-                invalidateCoverageQueries(snapshotId);
-              }
-            })
-            .catch(() => {
-              if (isMounted) {
-                setIsRunning(false);
-                setActiveStep(null);
-              }
-            });
-        }
+        attachToActiveRun(res?.data?.activeSuiteRun);
       })
       .catch(() => {});
 
     return () => {
       isMounted = false;
     };
-  }, [snapshotId, handleStepProgress]);
+  }, [snapshotId, initialActiveSuiteRun, skipInitialFetch, handleStepProgress, isRunning]);
 
   return {
     runAll: initiateRunAll,

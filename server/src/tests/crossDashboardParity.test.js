@@ -1,6 +1,67 @@
 import { extractExecutionDurationMs } from "../services/testResultParser.service.js";
+import { healProjectLifecycleStatusIfNeeded } from "../services/project.service.js";
+import { getDashboardFingerprint } from "../services/unifiedQualityDashboard.service.js";
+import { getPortfolioFingerprint } from "../services/portfolioDashboard.service.js";
 
 describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
+    describe("Lỗi 2B: Read-Time Self-Healing & Serialization for lifecycleStatus", () => {
+        test("healProjectLifecycleStatusIfNeeded auto-heals NOT_STARTED to DOING when snapshot has testRuns or coverage", async () => {
+            const project = {
+                lifecycleStatus: "NOT_STARTED",
+                _count: { snapshots: 1, aiTests: 0, aiSuggestions: 0 },
+                snapshots: [
+                    {
+                        id: "snap_1",
+                        coverageSummaries: { id: "cov_1" },
+                        _count: { testRuns: 1, systemScenarios: 0 },
+                    },
+                ],
+            };
+
+            const resolved = await healProjectLifecycleStatusIfNeeded(project);
+            expect(resolved).toBe("DOING");
+            expect(project.lifecycleStatus).toBe("DOING");
+            expect(project.lifecycleUpdatedAt).toBeInstanceOf(Date);
+        });
+
+        test("healProjectLifecycleStatusIfNeeded keeps NOT_STARTED when project has zero activity", async () => {
+            const project = {
+                lifecycleStatus: "NOT_STARTED",
+                _count: { snapshots: 1, aiTests: 0, aiSuggestions: 0 },
+                snapshots: [
+                    {
+                        id: "snap_1",
+                        coverageSummaries: null,
+                        _count: { testRuns: 0, systemScenarios: 0 },
+                    },
+                ],
+            };
+
+            const resolved = await healProjectLifecycleStatusIfNeeded(project);
+            expect(resolved).toBe("NOT_STARTED");
+            expect(project.lifecycleStatus).toBe("NOT_STARTED");
+        });
+
+        test("healProjectLifecycleStatusIfNeeded never overwrites PAUSED, COMPLETED, or CANCELLED", async () => {
+            for (const manualState of ["PAUSED", "COMPLETED", "CANCELLED"]) {
+                const project = {
+                    lifecycleStatus: manualState,
+                    _count: { snapshots: 3, aiTests: 10, aiSuggestions: 5 },
+                    snapshots: [
+                        {
+                            id: "snap_1",
+                            coverageSummaries: { id: "cov_1" },
+                            _count: { testRuns: 4, systemScenarios: 2 },
+                        },
+                    ],
+                };
+                const resolved = await healProjectLifecycleStatusIfNeeded(project);
+                expect(resolved).toBe(manualState);
+                expect(project.lifecycleStatus).toBe(manualState);
+            }
+        });
+    });
+
     describe("Task 5: extractExecutionDurationMs (Runtime 0ms Fix)", () => {
         test("correctly extracts duration from suite perfStats.runtime (Jest format)", () => {
             const raw = {
@@ -114,6 +175,18 @@ describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
             const baseLabel = snapshot.label || `${vNum} (${shortRef})`;
 
             expect(baseLabel).toBe("#2 (9f8e7d6)");
+        });
+    });
+
+    describe("Performance Optimization: Fingerprint & Cache Verification", () => {
+        test("getDashboardFingerprint handles non-existent snapshot gracefully without crashing", async () => {
+            const fp = await getDashboardFingerprint("non_existent_snapshot_id");
+            expect(fp === null || typeof fp === "string").toBe(true);
+        });
+
+        test("getPortfolioFingerprint handles offline/mock environment gracefully without crashing", async () => {
+            const fp = await getPortfolioFingerprint("non_existent_user_id");
+            expect(fp === null || fp === "empty" || typeof fp === "string").toBe(true);
         });
     });
 });

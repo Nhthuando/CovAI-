@@ -52,7 +52,7 @@ function ProjectComparisonRadarChart({
               key={level}
               points={points}
               fill="none"
-              stroke="#30363d"
+              stroke="var(--ud-border)"
               strokeDasharray={level === 100 ? "none" : "2,2"}
               strokeWidth={level === 100 ? 1.2 : 0.8}
             />
@@ -71,7 +71,7 @@ function ProjectComparisonRadarChart({
                 y1={cy}
                 x2={x}
                 y2={y}
-                stroke="#30363d"
+                stroke="var(--ud-border)"
                 strokeWidth={1}
               />
               <text
@@ -79,7 +79,7 @@ function ProjectComparisonRadarChart({
                 y={labelCoord.y}
                 textAnchor="middle"
                 dominantBaseline="central"
-                className="fill-[#8b949e] text-[10px] font-semibold"
+                className="fill-[var(--ud-text-muted)] text-[10px] font-semibold"
               >
                 {axis.label}
               </text>
@@ -127,7 +127,7 @@ function ProjectComparisonRadarChart({
                     cy={y}
                     r={3.5}
                     fill={color.stroke}
-                    stroke="#161b22"
+                    stroke="var(--ud-surface)"
                     strokeWidth={1.5}
                   >
                     <title>{`${project.name} - ${AXES[i].fullLabel}: ${val}%`}</title>
@@ -149,7 +149,7 @@ function ProjectComparisonRadarChart({
                 className="w-2.5 h-2.5 rounded-full shrink-0"
                 style={{ backgroundColor: color.stroke }}
               />
-              <span className="text-[#f0f6fc] truncate max-w-[140px]">{project.name}</span>
+              <span className="text-[var(--ud-text)] truncate max-w-[140px]">{project.name}</span>
             </div>
           );
         })}

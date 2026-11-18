@@ -1,3 +1,4 @@
+import { attachSocketAuthRecovery, socketAuth } from "../../lib/authSession.js";
 import SystemTestSetupDialog from './system/SystemTestSetupDialog.jsx';
 import { systemTestEntryState } from './system/systemTestEntryModel.js';
 import SystemTestVersionHistory from './system/SystemTestVersionHistory.jsx';
@@ -9,7 +10,6 @@ import {
   Play,
   RotateCcw,
   Printer,
-  AlertCircle,
   Loader2,
   Layers,
   ShieldCheck,
@@ -18,11 +18,15 @@ import {
 
   Monitor,
   Sparkles,
+  History,
+  Settings2,
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { getJobDetailApi } from "../../services/job.service.js";
 import Button from "../common/Button.jsx";
+import CoverageJobQueueButton from "./CoverageJobQueueButton.jsx";
 import SystemTestAssessmentPanel from "./system/SystemTestAssessmentPanel.jsx";
+import SystemTestErrorNotice from "./system/SystemTestErrorNotice.jsx";
 import SystemTestMetricsCards from "./system/SystemTestMetricsCards.jsx";
 import SystemTestScenarioList from "./system/SystemTestScenarioList.jsx";
 import SystemTestExecutionView from "./system/SystemTestExecutionView.jsx";
@@ -47,7 +51,7 @@ export default function SystemTestDashboard(props) {
   return <SystemTestDashboardWorkspace key={`${props.projectId}:${props.snapshotId}`} {...props} />;
 }
 
-function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = null, onOpenFile, onChatContextChange }) {
+function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = null, onOpenFile, onChatContextChange, onOpenJobQueue }) {
   const projectAccess = useProjectAccess(projectId);
   // Current view: "dashboard" | "report"
   const [currentView, setCurrentView] = useState("dashboard");
@@ -82,6 +86,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   const [error, setError] = useState(null);
   const [headedMode, setHeadedMode] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [snapshotPreparing, setSnapshotPreparing] = useState(false);
   const workspace = useSystemTestWorkspace({snapshotId,runner:activeFramework,executionMode,refreshKey});
   const [workflowReady, setWorkflowReady] = useState({ ready: false, blockers: [], scenarioIds: [], testFiles: [], selectedCount: 0 });
 
@@ -155,8 +160,10 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   // Framework discovery is independent of the selected result mode.
   useEffect(() => {
     let ignore = false;
+    let retryTimer;
     if (projectId && snapshotId) getSystemTestFrameworks(projectId, snapshotId).then(response => {
       if (ignore) return;
+      setSnapshotPreparing(false);
       setFrameworksData(response?.data || null);
       setDiscoveryError(null);
       const list = response?.data?.frameworks || [];
@@ -165,8 +172,20 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
         frameworkDiscoveryRef.current = discoveryKey;
         if (list.some(f => f.name?.toLowerCase().includes('cypress')) && !list.some(f => f.name?.toLowerCase().includes('playwright'))) setActiveFramework('cypress');
       }
-    }).catch(err => { if (!ignore) setDiscoveryError(err.response?.data?.message || err.message || 'Could not check system test files.'); });
-    return () => { ignore = true; };
+    }).catch(err => {
+      if (ignore) return;
+      const message = err.response?.data?.message || err.message || 'Could not check system test files.';
+      // A freshly uploaded or imported snapshot is still being extracted and
+      // indexed. Wait for it instead of showing an error with a manual Retry.
+      if (err.response?.status === 409 && /not ready/i.test(message)) {
+        setSnapshotPreparing(true);
+        retryTimer = setTimeout(() => setRefreshKey(value => value + 1), 3000);
+        return;
+      }
+      setSnapshotPreparing(false);
+      setDiscoveryError(message);
+    });
+    return () => { ignore = true; clearTimeout(retryTimer); };
   }, [projectId, snapshotId, refreshKey]);
 
   // Pin scenarios to the same run as the summary, even if another job finishes mid-fetch.
@@ -268,7 +287,8 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       // ignore token parse error
     }
 
-    const socket = io(SOCKET_URL, { auth: { token } });
+    const socket = io(SOCKET_URL, { auth: socketAuth });
+    attachSocketAuthRecovery(socket);
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -367,6 +387,12 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             });
             return { data };
           })()
+        : systemTestEntryState({discovery:frameworksData,error:discoveryError,activeJob:false}) === 'empty'
+        ? (() => {
+            // The legacy analysis job only runs existing spec files; it cannot
+            // generate tests, so do not queue a job that is certain to fail.
+            throw new Error("Automatic test generation is turned off on this server. Generate tests and apply them first, or ask the administrator to enable SYSTEM_ASSESSMENT_ENABLED and SYSTEM_MEASURED_COVERAGE_ENABLED.");
+          })()
         : await runSystemTest(snapshotId, {
             framework: activeFramework,
             executionMode,
@@ -405,11 +431,13 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
     // When checking frameworks and initial discovery is in flight
   if (entryState === 'loading') {
     return (
-      <div className="w-full min-h-[400px] flex flex-col items-center justify-center p-12 text-center space-y-3 bg-[var(--color-bg)] text-[var(--color-text)]">
-        <Loader2 size={32} className="animate-spin text-indigo-500" />
-        <p className="text-sm font-semibold">Checking system test configuration...</p>
+      <div className="w-full min-h-[400px] flex flex-col items-center justify-center p-12 text-center space-y-3 bg-[var(--color-bg)] text-[var(--color-text)]" aria-busy="true">
+        <Loader2 size={32} className="animate-spin text-[var(--color-primary)]" />
+        <p className="text-sm font-semibold">{snapshotPreparing ? 'Preparing the imported project...' : 'Checking system test configuration...'}</p>
         <p className="text-xs text-[var(--color-text-secondary)]">
-          Looking for test files in this snapshot.
+          {snapshotPreparing
+            ? 'Files are still being extracted and indexed. This page continues automatically when the snapshot is ready.'
+            : 'Looking for test files in this snapshot.'}
         </p>
       </div>
     );
@@ -420,7 +448,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
     return (
       <div className="system-test-workspace flex w-full min-h-full flex-col items-center justify-center gap-4 bg-[var(--color-bg)] p-4 font-sans text-[var(--color-text)] sm:p-6">
         <style>{`@media (prefers-reduced-motion: reduce) { .system-test-workspace *, .system-test-workspace *::before { animation: none!important; transition: none!important; scroll-behavior: auto!important; } }`}</style>
-        {error && <p role="alert" className="text-center text-sm text-rose-600">{error}</p>}
+        <SystemTestErrorNotice className="max-w-2xl" message={error} onDismiss={() => setError(null)} onOpenLogs={onOpenJobQueue} onOpenSetup={() => setSetupOpen(true)} />
         {setupDialog}
         {/* Empty state stays compact until Apply creates real spec files. */}
         <SystemTestZeroStateBanner
@@ -469,6 +497,13 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   return (
     <div className="system-test-workspace w-full min-h-full bg-[var(--color-bg)] text-[var(--color-text)] font-sans p-4 sm:p-6 space-y-6">
       <style>{`@media (prefers-reduced-motion: reduce) { .system-test-workspace *, .system-test-workspace *::before { animation: none!important; transition: none!important; scroll-behavior: auto!important; } }`}</style>
+      {/* Header: what this page does, plus the primary run action */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold tracking-tight">System Test Coverage</h1>
+          <p className="text-sm text-[var(--color-text-secondary)]">Verify user journeys across the frontend, real API and database.</p>
+        </div>
+      </div>
       <label className="flex flex-wrap items-center gap-3 text-xs">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} ? {row.runner}</option>)}</select></label>
       {workspace.error && <p role="alert" className="text-sm text-rose-600">{workspace.error}</p>}
       {workspace.nextCursor && <button type="button" className="text-xs underline" onClick={workspace.loadMore}>Load older assessments</button>}
@@ -487,57 +522,8 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             {activeFramework === 'cypress' ? 'Cypress' : 'Playwright'} / {modeLabel}
           </span>
         </div>
-
-        {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
-          <Button variant="secondary" size="sm" disabled={runningTests || checkingSetup} onClick={() => setSetupOpen(true)}>Check setup</Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={Sparkles}
-            onClick={() => setIsGeneratorOpen(true)}
-            disabled={loading || runningTests}
-            className="text-xs h-9 font-medium"
-            title="Auto-generate system test scenarios with AI"
-          >
-            Generate tests
-          </Button>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={Printer}
-            onClick={() => setCurrentView("report")}
-            disabled={loading || !workspace.assessment}
-            className="text-xs h-9"
-          >
-            Export report
-          </Button>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={RotateCcw}
-            onClick={refreshData}
-            disabled={loading || !matchesSelection || runningTests}
-            className="text-xs h-9"
-            title="Refresh dashboard data"
-          />
-
-          <button
-            type="button"
-            onClick={() => setHeadedMode(!headedMode)}
-            className={`inline-flex items-center gap-1.5 px-3 h-9 rounded-[var(--radius-md)] text-xs font-semibold border transition-all cursor-pointer ${
-              headedMode
-                ? "bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm"
-                : "bg-slate-800/80 border-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-700/80"
-            }`}
-            title="When active, Playwright opens a visible Chrome browser window on your Windows desktop with slowed actions"
-          >
-            <Monitor size={14} className={headedMode ? "text-amber-400" : "text-slate-400"} />
-            <span>Desktop Window: <strong className={headedMode ? "text-amber-300" : "text-slate-400"}>{headedMode ? "ON" : "OFF"}</strong></span>
-          </button>
-
+        <div className="flex flex-wrap items-center gap-2">
+          {onOpenJobQueue && <CoverageJobQueueButton onClick={onOpenJobQueue} running={runningTests} />}
           <Button
             variant="primary"
             size="sm"
@@ -545,12 +531,88 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             loading={runningTests || checkingSetup}
             disabled={!projectAccess.can("tests.run") || !snapshotId || loading || runningTests || checkingSetup}
             onClick={() => handleRunTests()}
+            title="Run System Test Analysis (Playwright / Cypress)"
             className="text-xs h-9 font-semibold"
           >
-            {checkingSetup ? "Checking setup..." : runningTests ? "Running System Tests..." : "Run system tests"}
+            {checkingSetup ? "Checking setup..." : runningTests ? "Running (" + Math.max(5, Math.min(100, jobProgress?.progress ?? 5)) + "%)..." : "Run System Test"}
           </Button>
         </div>
       </div>
+
+      {historyOpen && <SystemTestVersionHistory projectId={projectId} snapshotId={snapshotId} executionMode={executionMode} onClose={() => setHistoryOpen(false)} onChanged={refreshData} onCheck={data => { activeJobRef.current=data.jobId; setActiveJobId(data.jobId); setActiveAssessmentId(data.assessmentId); setRunningTests(true); setActiveSubTab('live'); }} />}
+      {setupDialog}
+
+      {/* Toolbar: which result is shown, and secondary actions */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-primary)]/10 px-2.5 py-1.5 text-xs font-semibold text-[var(--color-primary)]">
+            <ShieldCheck size={14} aria-hidden="true" />
+            {activeFramework === 'cypress' ? 'Cypress' : 'Playwright'} / {modeLabel}
+          </span>
+          <span className="text-[11px] border border-[var(--color-border)] rounded-md px-2 py-0.5 text-[var(--color-text-secondary)]">Full system · Real API & database</span>
+          <label className="flex min-w-0 items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+            <span>Assessment</span>
+            <select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="h-8 max-w-[15rem] rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-2 text-xs text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus)]/40">
+              <option value="">Latest completed</option>
+              {workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} · {row.runner}</option>)}
+            </select>
+          </label>
+          {workspace.nextCursor && <button type="button" className="text-xs text-[var(--color-text-secondary)] underline hover:text-[var(--color-text)]" onClick={workspace.loadMore}>Load older</button>}
+          <Button variant="secondary" size="sm" icon={History} onClick={() => setHistoryOpen(true)} className="text-xs h-8">Version history</Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" icon={Settings2} disabled={runningTests || checkingSetup} onClick={() => setSetupOpen(true)} className="text-xs h-8">Check setup</Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={Sparkles}
+            onClick={() => setIsGeneratorOpen(true)}
+            disabled={loading || runningTests}
+            className="text-xs h-8"
+            title="Auto-generate system test scenarios with AI"
+          >
+            Generate tests
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={Printer}
+            onClick={() => setCurrentView("report")}
+            disabled={loading || !workspace.assessment}
+            className="text-xs h-8"
+          >
+            Export report
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={RotateCcw}
+            onClick={refreshData}
+            disabled={loading || !matchesSelection || runningTests}
+            className="text-xs h-8"
+            title="Refresh dashboard data"
+          >Refresh</Button>
+          <button
+            type="button"
+            aria-pressed={headedMode}
+            onClick={() => setHeadedMode(!headedMode)}
+            className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors duration-150 active:scale-[0.98] ${
+              headedMode
+                ? "border-amber-500/20 bg-amber-500/10 text-amber-400"
+                : "border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+            }`}
+            title="When on, Playwright opens a visible browser window on this machine and slows actions down"
+          >
+            <Monitor size={14} aria-hidden="true" />
+            <span>Desktop window: <strong>{headedMode ? "On" : "Off"}</strong></span>
+          </button>
+        </div>
+      </div>
+
+      {workspace.error && <SystemTestErrorNotice message={workspace.error} />}
+      {setupReport && !setupReport.ready && <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs">Startup setup needs attention.<button type="button" onClick={() => setSetupOpen(true)} className="font-medium underline">Review setup</button></p>}
+      <SystemTestMetricsCards coverageTiers={workspace.assessment?.coverage?.tiers || summary?.coverage?.tiers} summary={workspace.assessment?.presentation ? {...summary,hasRun:true,totalTests:workspace.assessment.presentation.execution.selected,passedTests:workspace.assessment.presentation.execution.passed,failedTests:workspace.assessment.presentation.execution.failed,flakyTests:workspace.assessment.presentation.execution.flaky,skippedTests:workspace.assessment.presentation.execution.skipped,durationMs:workspace.assessment.presentation.execution.elapsedMs,runner:workspace.assessment.runner} : summary} />
 
       {/* Real-time Progress Banner if running */}
       {runningTests && jobProgress && (
@@ -572,32 +634,25 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             />
           </div>
 
-          {jobProgress.message && (
-            <div className="text-[11px] text-[var(--color-text-secondary)] font-mono truncate">
-              {jobProgress.message}
+          {(jobProgress.message || onOpenJobQueue) && (
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              {jobProgress.message && (
+                <p className="min-w-0 flex-1 break-words text-[11px] font-mono text-[var(--color-text-secondary)]">
+                  {jobProgress.message}
+                </p>
+              )}
+              {onOpenJobQueue && (
+                <button type="button" onClick={onOpenJobQueue} className="shrink-0 text-[11px] font-medium text-[var(--color-primary)] underline-offset-2 hover:underline">
+                  View detailed logs
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
 
       {/* Global Error Banner */}
-      {error && (
-        <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30 text-rose-800 dark:text-rose-200 text-sm flex flex-wrap items-center justify-between gap-3 shadow-sm dark:shadow-lg backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-            <AlertCircle size={20} className="text-rose-500 dark:text-rose-400 shrink-0" />
-            <span className="font-medium leading-relaxed">{error}</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setError(null)}
-              className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800/80 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium cursor-pointer transition-colors"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      <SystemTestErrorNotice message={error} onDismiss={() => setError(null)} onOpenLogs={onOpenJobQueue} onOpenSetup={() => setSetupOpen(true)} />
 
       {/* Sub-Tab Navigation Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] pb-3">

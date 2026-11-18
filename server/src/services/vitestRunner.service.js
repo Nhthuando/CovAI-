@@ -139,7 +139,7 @@ export const runVitestWithSelfHealing = async ({ snapshotPath, command, timeoutM
  * Run Vitest test
  */
 export const runVitestTests = async (jobId, rootDir, vitestCommand) => {
-    const testCmd = vitestCommand ? vitestCommand : "npx --yes vitest run --passWithNoTests";
+    const testCmd = `${resolveVitestBin(rootDir, vitestCommand)} --passWithNoTests`;
 
     await addJobLog(jobId, "INFO", `Run command: ${testCmd}`).catch(() => { });
 
@@ -153,6 +153,18 @@ export const runVitestTests = async (jobId, rootDir, vitestCommand) => {
     return result;
 };
 
+/**
+ * Resolve the best vitest executable path
+ */
+export const buildVitestCommand = (binPath, customCommand = null, platform = process.platform) => {
+    const base = binPath ? `node "${binPath}"` : "npx --no-install vitest";
+    const command = customCommand?.trim();
+    if (!command) return `${base} run`;
+    if (platform !== "win32") return command;
+    // Replace POSIX npm shims with the package's JS entry point; retain runner arguments.
+    const runner = /^(?:"(?:\.\.?[\\/])*node_modules[\\/]\.bin[\\/]vitest(?:\.cmd)?"|(?:\.\.?[\\/])*node_modules[\\/]\.bin[\\/]vitest(?:\.cmd)?|(?:npx(?:\.cmd)?\s+(?:(?:--yes|--no-install)\s+)?)?vitest(?:\.cmd)?)(?=\s|$)/i;
+    return command.replace(runner, () => base);
+};
 const SHARED_ENV = {
     NODE_OPTIONS: "--experimental-vm-modules",
     NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",

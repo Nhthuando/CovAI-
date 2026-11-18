@@ -25,7 +25,7 @@ export const publicSession = row => {
 export const listContextSessions = async (projectId, userId) => {
     await requireContextOwner(projectId, userId);
     return (await prisma.chatSession.findMany({ where: { projectId }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: 100,
-        include: { _count: { select: { messages: true } }, messages: { take: 1, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { content: true, createdAt: true, role: true } } } })).map(publicSession);
+        include: { _count: { select: { messages: true } }, messages: { take: 1, where: { role: "user" }, orderBy: messageOrder, select: { content: true, createdAt: true, role: true } } } })).map(publicSession);
 };
 export const createContextSession = async (projectId, userId, input) => {
     return withProjectGuard({ projectId, userId, capability: "chat.write" }, async tx => {

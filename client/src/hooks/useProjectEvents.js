@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { queryClient } from "../lib/queryClient";
 import { collaborationRequest, projectPath } from "../services/collaborationHttp";
+import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 export function useProjectEvents(projectId, userId, onEvent) {
@@ -65,11 +66,12 @@ export function useProjectEvents(projectId, userId, onEvent) {
     };
 
     const socket = io(SOCKET_URL, {
-      auth: { token: localStorage.getItem("token") },
+      auth: socketAuth,
       transports: ["websocket", "polling"],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     });
+    attachSocketAuthRecovery(socket);
 
     socket.on("connect", async () => {
       socket.emit("project:subscribe", { projectId });

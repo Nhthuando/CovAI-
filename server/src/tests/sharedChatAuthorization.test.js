@@ -52,6 +52,25 @@ it("revocation while the provider runs cannot commit a shared message pair", asy
     await expect(sendContextChat("project-1", "editor", { clientRequestId: "late", sessionId: "session-1", message: "hello", attachments: [] }, { generate, quota, enqueue })).rejects.toMatchObject({ statusCode: 404 });
     expect(db.chatMessage.create).not.toHaveBeenCalled();
 });
+it("regenerates the latest reply in place and keeps the original user message", async () => {
+    const question = { id: "question-1", role: "user", senderUserId: "owner-1", content: "Help with tests", createdAt: new Date(1) };
+    const reply = { id: "reply-1", role: "assistant", replyToMessageId: question.id, content: "Old reply", createdAt: new Date(2) };
+    db.chatMessage.findMany.mockImplementation(async () => [reply, question]);
+    db.chatMessage.findFirst.mockResolvedValue(question);
+    db.chatMessage.update.mockResolvedValue({ ...reply, content: "AI reply" });
+
+    const result = await sendContextChat("project-1", "owner-1", {
+        clientRequestId: "regenerate-1", sessionId: "session-1", regenerateMessageId: reply.id, message: question.content, attachments: [],
+    }, { generate, quota, enqueue });
+
+    expect(db.chatMessage.create).not.toHaveBeenCalled();
+    expect(db.chatMessage.update).toHaveBeenCalledWith({
+        where: { id: reply.id, sessionId: "session-1" },
+        data: { content: "AI reply", model: null },
+    });
+    expect(generate.mock.calls[0][0]).not.toContain("Old reply");
+    expect(result).toMatchObject({ reply: "AI reply", userMessageId: question.id, assistantMessageId: reply.id });
+});
 it("an expired processing lease returns a terminal status so polling cannot hang forever", async () => {
     const { getChatRequest } = await import("../services/chatRequest.service.js");
     db.chatRequest.findFirst.mockResolvedValue({ id: "expired", sessionId: "session-1", status: "PROCESSING" });
