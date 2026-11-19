@@ -1,6 +1,9 @@
 /* eslint-disable no-unused-vars */
+import { useEffect } from "react";
 import { Routes, Route, Navigate, Link } from "react-router-dom";
+import Lenis from "lenis";
 import "./index.css";
+import "./components/landing/landing.css";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import IDEPreview from "./components/IDEPreview";
@@ -27,8 +30,26 @@ import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
+  useEffect(() => {
+    const lenis = new Lenis({
+      duration: 1.05,
+      smoothWheel: true,
+      wheelMultiplier: 0.95,
+    });
+    let rafId;
+    const raf = (time) => {
+      lenis.raf(time);
+      rafId = requestAnimationFrame(raf);
+    };
+    rafId = requestAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(rafId);
+      lenis.destroy();
+    };
+  }, []);
+
   return (
-    <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150 flex flex-col">
+    <div className="lp min-h-screen flex flex-col">
       <Navbar />
       <main className="flex-1">
         <Hero />
@@ -140,14 +161,19 @@ function AppContent() {
         <Route path="/privacy" element={<LegalPage section="privacy" />} />
         <Route path="/terms" element={<LegalPage section="terms" />} />
         <Route path="/telemetry" element={<LegalPage section="telemetry" />} />
-        <Route path="*" element={
-          <main className="min-h-screen grid place-items-center bg-[var(--color-bg)] p-6 text-[var(--color-text)]">
-            <div className="space-y-4 text-center">
-              <h1 className="text-2xl font-semibold">404 - Page not found</h1>
-              <Link to="/" className="text-[var(--color-primary)] underline">Back to home</Link>
-            </div>
-          </main>
-        } />
+        <Route
+          path="*"
+          element={
+            <main className="min-h-screen grid place-items-center bg-[var(--color-bg)] p-6 text-[var(--color-text)]">
+              <div className="space-y-4 text-center">
+                <h1 className="text-2xl font-semibold">404 - Page not found</h1>
+                <Link to="/" className="text-[var(--color-primary)] underline">
+                  Back to home
+                </Link>
+              </div>
+            </main>
+          }
+        />
       </Routes>
       <GlobalProcessIndicator />
     </>
@@ -159,7 +185,10 @@ function App() {
   return (
     <ThemeProvider>
       <NotificationProvider>
-        <RunningProcessProvider key={userId || "anonymous"} sessionUserId={userId}>
+        <RunningProcessProvider
+          key={userId || "anonymous"}
+          sessionUserId={userId}
+        >
           <ToastProvider>
             <GlobalErrorBoundary>
               <AppContent />

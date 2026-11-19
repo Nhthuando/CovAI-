@@ -1,188 +1,293 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, Minus } from "lucide-react";
-import Badge from "./common/Badge";
-import Button from "./common/Button";
-import Card from "./common/Card";
 
 const PLANS = [
   {
     id: "community",
-    name: "Community",
-    price: "$0",
-    period: "forever",
-    desc: "Essential automated coverage analysis for open source developers and solo engineers.",
-    cta: "Start Free",
+    name: "Starter",
+    monthlyPrice: "$0",
+    annualPrice: "$0",
+    period: "free forever",
+    desc: "Static AST and Control Flow Graph coverage diagnostics for individual developers and open-source projects.",
+    cta: "Create free workspace",
     ctaTo: "/register",
-    ctaVariant: "outline",
     featured: false,
     features: [
       "Up to 3 active repositories",
-      "GitHub repo integration & zip upload",
-      "Control Flow Graph (CFG) visualizer",
-      "50 AI test suite generations / month",
-      "Statement & branch coverage diagnostics",
-      "Community forum support",
+      "GitHub repository sync and zip upload",
+      "Interactive 3D & 2D Control Flow Graph viewer",
+      "60 test suite generations per month",
+      "Statement and branch coverage reports",
     ],
     excluded: [
-      "Continuous CI/CD PR regression checks",
-      "Private on-premise execution sandbox",
-      "Custom LLM test model fine-tuning",
+      "API contract matrix & Playwright E2E synthesis",
+      "Mutation fault injection guard",
+      "Self-hosted container runner pool",
     ],
   },
   {
     id: "pro",
-    name: "Developer Pro",
-    price: "$24",
-    period: "/mo per seat",
-    desc: "Complete test automation and coverage verification for professional engineering teams.",
-    cta: "Start 14-Day Trial",
+    name: "Team",
+    monthlyPrice: "$29",
+    annualPrice: "$24",
+    period: "per seat / month",
+    desc: "Three-tier test generation, Docker container verification, and Yjs multiplayer editing for engineering teams.",
+    cta: "Start 14-day trial",
     ctaTo: "/register",
-    ctaVariant: "primary",
     featured: true,
     badge: "Recommended",
     features: [
-      "Unlimited repositories",
-      "Advanced CFG branch path solver",
-      "Unlimited Jest & Vitest generations",
-      "Deterministic sandbox test execution",
-      "GitHub Pull Request coverage gate",
-      "Mock & fixture automatic synthesis",
-      "Email & Slack engineering support",
+      "Unlimited repositories and monorepo workspaces",
+      "Unit CFG, Supertest API matrix, and Playwright E2E",
+      "Unlimited Gemini 2.5 Pro test synthesis",
+      "Isolated Docker container execution & auto-repair",
+      "Mutation fault verification and PR quality gates",
+      "Real-time Yjs multiplayer Monaco editor",
     ],
     excluded: [
-      "Private on-premise execution sandbox",
-      "Custom LLM test model fine-tuning",
+      "Self-hosted VPC runner cluster",
     ],
   },
   {
     id: "enterprise",
     name: "Enterprise",
-    price: "Custom",
-    period: "annual",
-    desc: "High-security coverage orchestration and sandbox runners for large engineering organizations.",
-    cta: "Contact Sales",
+    monthlyPrice: "Custom",
+    annualPrice: "Custom",
+    period: "annual agreement",
+    desc: "Private container runners, custom model routing, and role-based access control for large organizations.",
+    cta: "Contact engineering sales",
     ctaTo: "/login",
-    ctaVariant: "secondary",
     featured: false,
     features: [
-      "Everything in Developer Pro",
-      "Self-hosted / on-premise test runner",
-      "Monorepo & multi-package orchestration",
-      "Custom LLM fine-tuning on internal APIs",
-      "SSO / SAML 2.0 authentication",
-      "SOC2 compliance documentation & audit logs",
-      "Dedicated Technical Account Manager & SLA",
+      "Everything in Team",
+      "Self-hosted Kubernetes sandbox runner fleet",
+      "Custom model fine-tuning on internal libraries",
+      "Role permissions (Owner, Editor, Viewer, QA)",
+      "SAML 2.0 SSO and audit telemetry export",
+      "Dedicated solutions architect and SLA",
     ],
     excluded: [],
   },
 ];
 
 export default function Pricing() {
+  const [teamSize, setTeamSize] = useState(18);
+  const [kloc, setKloc] = useState(120);
+  const [annual, setAnnual] = useState(true);
+
+  const hoursSavedPerMonth = Math.round(teamSize * 14.5 + kloc * 0.45);
+  const synthesizedTests = Math.round(kloc * 11.4 + teamSize * 22).toLocaleString();
+  const projectedCoverage = Math.min(98.8, 92.4 + Math.log10(kloc) * 2.1).toFixed(1);
+
   return (
     <section
       id="pricing"
-      className="py-20 md:py-28 bg-[var(--color-bg)] border-b border-[var(--color-border)]"
+      className="relative py-24 md:py-32 border-b border-[#161a24]"
     >
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
-        {/* Section Header */}
-        <div className="text-center max-w-2xl mx-auto mb-14">
-          <Badge variant="primary" size="md" className="mb-3" pill>
-            TRANSPARENT PRICING
-          </Badge>
-          <h2 className="text-2xl sm:text-3xl font-bold text-[var(--color-text)] tracking-tight mb-3">
-            Predictable Plans for Engineering Teams
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
+        {/* Clean Editorial Heading */}
+        <div className="max-w-2xl mb-12 space-y-3">
+          <h2 className="lp-display text-3xl sm:text-4xl font-bold text-white tracking-tight">
+            Coverage impact estimator and pricing
           </h2>
-          <p className="text-sm sm:text-base text-[var(--color-text-secondary)]">
-            Free forever for open source developers. Scale as your test suite
-            and team velocity increase.
+          <p className="text-sm sm:text-base text-slate-400">
+            Adjust team size and repository scale to estimate monthly engineering
+            hours saved, then choose a workspace plan.
           </p>
         </div>
 
-        {/* Pricing Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-          {PLANS.map((plan) => (
-            <Card
-              key={plan.id}
-              id={`pricing-${plan.id}`}
-              className={`p-6 sm:p-7 flex flex-col justify-between relative ${
-                plan.featured
-                  ? "border-2 border-[var(--color-primary)] bg-[var(--color-surface)] shadow-sm"
-                  : "border border-[var(--color-border)] bg-[var(--color-surface)]"
-              }`}
-            >
+        {/* Interactive Estimator Panel */}
+        <div className="mb-14 p-6 sm:p-8 rounded-xl lp-machined">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+            <div className="lg:col-span-6 space-y-6">
               <div>
-                {/* Header info */}
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-bold text-[var(--color-text)]">
-                    {plan.name}
-                  </h3>
-                  {plan.badge && (
-                    <Badge variant="primary" size="sm">
-                      {plan.badge}
-                    </Badge>
-                  )}
-                </div>
-
-                {/* Price block */}
-                <div className="flex items-baseline gap-1.5 mb-3">
-                  <span className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[var(--color-text)] font-mono">
-                    {plan.price}
-                  </span>
-                  <span className="text-xs text-[var(--color-text-muted)] font-mono">
-                    {plan.period}
+                <div className="flex items-center justify-between text-xs sm:text-sm mb-2.5">
+                  <span className="text-slate-300">Engineering team size</span>
+                  <span className="lp-mono text-white font-semibold">
+                    {teamSize} engineers
                   </span>
                 </div>
-
-                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed mb-6 min-h-[36px]">
-                  {plan.desc}
-                </p>
-
-                {/* CTA Button */}
-                <Button
-                  as={Link}
-                  to={plan.ctaTo}
-                  id={`pricing-cta-${plan.id}`}
-                  variant={plan.ctaVariant}
-                  size="md"
-                  className="w-full mb-6 font-semibold"
-                >
-                  {plan.cta}
-                </Button>
-
-                {/* Features divider */}
-                <div className="border-t border-[var(--color-border)] pt-5 space-y-2.5">
-                  <div className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
-                    Included capabilities
-                  </div>
-                  {plan.features.map((feat) => (
-                    <div
-                      key={feat}
-                      className="flex items-start gap-2 text-xs text-[var(--color-text)]"
-                    >
-                      <Check className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0 mt-0.5" />
-                      <span>{feat}</span>
-                    </div>
-                  ))}
-                  {plan.excluded.map((feat) => (
-                    <div
-                      key={feat}
-                      className="flex items-start gap-2 text-xs text-[var(--color-text-muted)]"
-                    >
-                      <Minus className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
-                      <span>{feat}</span>
-                    </div>
-                  ))}
+                <input
+                  type="range"
+                  min={2}
+                  max={150}
+                  value={teamSize}
+                  onChange={(e) => setTeamSize(Number(e.target.value))}
+                  aria-label="Engineering team size"
+                  className="lp-slider"
+                />
+                <div className="flex justify-between text-[11px] lp-mono text-slate-500 mt-1.5">
+                  <span>2</span>
+                  <span>75</span>
+                  <span>150</span>
                 </div>
               </div>
-            </Card>
-          ))}
+
+              <div>
+                <div className="flex items-center justify-between text-xs sm:text-sm mb-2.5">
+                  <span className="text-slate-300">Repository size</span>
+                  <span className="lp-mono text-white font-semibold">
+                    {kloc}k lines of code
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={10}
+                  max={500}
+                  step={10}
+                  value={kloc}
+                  onChange={(e) => setKloc(Number(e.target.value))}
+                  aria-label="Repository size in thousands of lines of code"
+                  className="lp-slider"
+                />
+                <div className="flex justify-between text-[11px] lp-mono text-slate-500 mt-1.5">
+                  <span>10k LOC</span>
+                  <span>250k LOC</span>
+                  <span>500k LOC</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 rounded-lg bg-[#050608] border border-[#161a24]">
+                <div className="text-xs text-slate-500">Test writing saved</div>
+                <div className="text-2xl sm:text-3xl font-bold lp-mono text-white mt-1.5">
+                  {hoursSavedPerMonth}h
+                  <span className="text-xs text-slate-500 font-normal">
+                    /mo
+                  </span>
+                </div>
+                <div className="text-[11px] lp-mono text-slate-400 mt-1">
+                  Across {teamSize} engineers
+                </div>
+              </div>
+
+              <div className="p-4 rounded-lg bg-[#050608] border border-[#161a24]">
+                <div className="text-xs text-slate-500">Generated assertions</div>
+                <div className="text-2xl sm:text-3xl font-bold lp-mono text-white mt-1.5">
+                  {synthesizedTests}
+                </div>
+                <div className="text-[11px] lp-mono text-slate-400 mt-1">
+                  Unit, API &amp; E2E specs
+                </div>
+              </div>
+
+              <div className="p-4 rounded-lg bg-[#050608] border border-[#243044]">
+                <div className="text-xs text-slate-400">Projected coverage</div>
+                <div className="text-2xl sm:text-3xl font-bold lp-mono text-[#38bdf8] mt-1.5">
+                  {projectedCoverage}%
+                </div>
+                <div className="text-[11px] lp-mono text-slate-400 mt-1">
+                  Container-verified
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Footnote */}
-        <p className="text-center text-xs text-[var(--color-text-muted)] mt-10">
-          All paid plans include a 14-day free trial. No credit card required to
-          get started.
-        </p>
+        {/* Billing Toggle */}
+        <div className="flex items-center justify-between flex-wrap gap-4 mb-8">
+          <div className="inline-flex items-center p-1 rounded-lg bg-[#090b10] border border-[#181c26]">
+            <button
+              type="button"
+              onClick={() => setAnnual(false)}
+              className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                !annual ? "bg-[#161b26] text-white" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnual(true)}
+              className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                annual ? "bg-[#161b26] text-white" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Annual (20% off)
+            </button>
+          </div>
+
+          <span className="text-xs text-slate-500">
+            All paid tiers include a 14-day trial with full Docker runner access.
+          </span>
+        </div>
+
+        {/* 3-Column Pricing Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
+          {PLANS.map((plan) => {
+            const displayPrice = annual ? plan.annualPrice : plan.monthlyPrice;
+            return (
+              <div
+                key={plan.id}
+                id={`pricing-${plan.id}`}
+                className={`rounded-xl p-6 sm:p-7 flex flex-col justify-between relative ${
+                  plan.featured
+                    ? "lp-machined lp-beam-frame bg-[#0b0e15]"
+                    : "bg-[#080a0f] border border-[#161a24]"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-4">
+                    <h3 className="lp-display text-lg font-bold text-white">
+                      {plan.name}
+                    </h3>
+                    {plan.badge && (
+                      <span className="px-2.5 py-0.5 rounded bg-white/10 border border-white/20 text-white text-[11px] lp-mono">
+                        {plan.badge}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-baseline gap-2 mb-3">
+                    <span className="text-4xl font-bold lp-mono text-white tracking-tight">
+                      {displayPrice}
+                    </span>
+                    <span className="text-xs lp-mono text-slate-500">
+                      {plan.period}
+                    </span>
+                  </div>
+
+                  <p className="text-xs sm:text-sm text-slate-400 leading-relaxed mb-6 min-h-[42px]">
+                    {plan.desc}
+                  </p>
+
+                  <Link
+                    to={plan.ctaTo}
+                    id={`pricing-cta-${plan.id}`}
+                    className={`w-full py-2.5 px-4 rounded-lg text-xs sm:text-sm text-center block mb-7 ${
+                      plan.featured ? "lp-btn-primary" : "lp-btn-secondary"
+                    }`}
+                  >
+                    {plan.cta}
+                  </Link>
+
+                  <div className="border-t border-[#161a24] pt-5 space-y-2.5">
+                    {plan.features.map((feat) => (
+                      <div
+                        key={feat}
+                        className="flex items-start gap-2.5 text-xs text-slate-200"
+                      >
+                        <Check className="w-4 h-4 text-[#38bdf8] shrink-0 mt-0.5" />
+                        <span>{feat}</span>
+                      </div>
+                    ))}
+                    {plan.excluded.map((feat) => (
+                      <div
+                        key={feat}
+                        className="flex items-start gap-2.5 text-xs text-slate-600"
+                      >
+                        <Minus className="w-4 h-4 text-slate-700 shrink-0 mt-0.5" />
+                        <span>{feat}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </section>
   );
