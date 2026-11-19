@@ -78,7 +78,7 @@ describe("Adversarial Security & Integrity Audit (P0.1, P0.4, P0.5)", () => {
     });
 
     // =========================================================================
-    // PHẦN A — P0.1: SOURCE CODE INTEGRITY & FILESYSTEM SECURITY
+    // PART A — P0.1: SOURCE CODE INTEGRITY & FILESYSTEM SECURITY
     // =========================================================================
     describe("P0.1 Source Code Integrity & Filesystem Security", () => {
         test("A1. Path traversal attempts with sibling directories are strictly rejected with 400", () => {
@@ -487,7 +487,7 @@ describe("Adversarial Security & Integrity Audit (P0.1, P0.4, P0.5)", () => {
     });
 
     // =========================================================================
-    // PHẦN B — P0.4: ATOMIC APPLY, ROLLBACK & STALE DIFF
+    // PART B — P0.4: ATOMIC APPLY, ROLLBACK & STALE DIFF
     // =========================================================================
     describe("P0.4 Atomic Apply, Rollback & Stale Diff", () => {
         test("B1. Stale diff detection throws 409 Conflict when baseContent mismatches on-disk file", () => {
@@ -736,7 +736,7 @@ describe("Adversarial Security & Integrity Audit (P0.1, P0.4, P0.5)", () => {
     });
 
     // =========================================================================
-    // PHẦN C — P0.5: COVERAGE ARTIFACT, DATABASE & CACHE INTEGRITY
+    // PART C — P0.5: COVERAGE ARTIFACT, DATABASE & CACHE INTEGRITY
     // =========================================================================
     describe("P0.5 Coverage Artifact, Database & Cache Integrity", () => {
         test("C1. Runner failure (exitCode !== 0) strictly prevents updating CoverageSummary in database", async () => {

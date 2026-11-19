@@ -1,3 +1,5 @@
+import { withAgentContext } from '../agents/registry.js';
+
 /**
  * Cypress Prompt Builder Service
  * Builds AI prompts specifically for generating Cypress E2E test files,
@@ -211,5 +213,5 @@ export const buildCypressPrompt = (payload) => {
     prompt +=
         "Now analyze the source code above and generate the Cypress test files in the exact JSON format specified. Output ONLY the JSON object inside a markdown code block. Do NOT add any explanations before or after the JSON block.";
 
-    return prompt;
+    return withAgentContext(prompt, 'system-test');
 };

@@ -1,3 +1,6 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
 const txMock = {
@@ -32,7 +35,7 @@ jest.unstable_mockModule("../services/projectOperationWorkspace.service.js", () 
   stagePreparedPublication: jest.fn(),
 }));
 
-const { parseCoverageFilesForSnapshot } = await import("../services/coverageFileParser.service.js");
+const { parseCoverageFilesForSnapshot, extractFilePath } = await import("../services/coverageFileParser.service.js");
 
 describe("coverageFileParser.service", () => {
   beforeEach(() => {
@@ -43,6 +46,22 @@ describe("coverageFileParser.service", () => {
       rootDir: "/app/storage/projects/proj-1/repo",
       project: { ownerId: "user-1" },
     });
+  });
+
+  it("canonicalizes subproject coverage paths relative to rootDir via extractFilePath", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-covparser-test-"));
+    try {
+      const serverSource = path.join(tempDir, "server", "src", "controllers", "chatController.js");
+      fs.mkdirSync(path.dirname(serverSource), { recursive: true });
+      fs.writeFileSync(serverSource, "export const chat = {};");
+
+      const entry = { path: "src/controllers/chatController.js" };
+      const resolved = extractFilePath(entry, "src/controllers/chatController.js", tempDir);
+
+      expect(resolved).toBe("server/src/controllers/chatController.js");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("throws if required fields are missing", async () => {

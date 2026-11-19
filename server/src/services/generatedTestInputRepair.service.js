@@ -2,8 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import traverseModule from "@babel/traverse";
 import { parseJavaScriptCode } from "./babelParser.service.js";
-import { generateText } from "./gemini.service.js";
-import { withGeminiChannel } from "./geminiTokenTracker.service.js";
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('unit-test', () => generateFeatureText(...args));
+import { withAgentContext } from '../agents/registry.js';
 
 const traverse = traverseModule.default || traverseModule;
 const primitive = value => value === null || typeof value === "string" || typeof value === "boolean" ||
@@ -36,7 +38,7 @@ function inside(root, file) {
     return rel !== "" && !rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel);
 }
 
-function localFile(root, file) {
+export function localFile(root, file) {
     if (typeof file !== "string" || !file) return null;
     const resolved = path.resolve(root, file);
     if (!inside(root, resolved) || !fs.existsSync(resolved)) return null;
@@ -44,7 +46,7 @@ function localFile(root, file) {
     return inside(fs.realpathSync(root), real) && fs.statSync(real).isFile() ? resolved : null;
 }
 
-function testBlocks(code) {
+export function testBlocks(code) {
     const parsed = parseJavaScriptCode(code);
     if (!parsed.success) return [];
     const blocks = [];
@@ -65,7 +67,7 @@ function testBlocks(code) {
     return blocks;
 }
 
-function importedSource(call, testFile, root) {
+export function importedSource(call, testFile, root) {
     if (call.node.callee.type !== "Identifier") return null;
     const binding = call.scope.getBinding(call.node.callee.name);
     if (!binding || !(binding.path.isImportSpecifier() || binding.path.isImportDefaultSpecifier())) return null;
@@ -84,7 +86,7 @@ function importedSource(call, testFile, root) {
  * The model cannot edit assertions, test names, imports, mocks or application source.
  * The caller MUST run the tests again; a proposed input is never proof of a passing test.
  */
-export async function repairGeneratedTestInputs({ rootDir, suggestions, testResults, rawOutput = "" }) {
+export async function repairGeneratedTestInputs({ rootDir, suggestions, testResults, rawOutput = "", existingTestsByFile }) {
     if (!hasAssertionFailure(testResults, rawOutput)) return [];
     const candidates = [];
     const files = new Map();
@@ -96,6 +98,8 @@ export async function repairGeneratedTestInputs({ rootDir, suggestions, testResu
         const generated = suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code;
         if (!generated) continue;
         const generatedBlocks = testBlocks(generated);
+        const originalRaw = existingTestsByFile?.get(testFile) || '';
+        const originalBlocks = originalRaw.trim() === generated.trim() ? [] : testBlocks(originalRaw);
         const suite = testResults?.testResults?.find(s => {
             const name = (s.name || "").replace(/\\/g, "/");
             const rel = path.relative(rootDir, testFile).replace(/\\/g, "/");
@@ -107,6 +111,7 @@ export async function repairGeneratedTestInputs({ rootDir, suggestions, testResu
         for (const failure of suite.assertionResults || []) {
             if (failure.status !== "failed" || !hasAssertionFailure({ testResults: [{ assertionResults: [failure] }] })) continue;
             const fullName = failure.fullName || [...(failure.ancestorTitles || []), failure.title].join(" ");
+            if (originalBlocks.some(block => block.fullName === fullName)) continue;
             const matches = blocks.filter(b => b.fullName === fullName && generatedBlocks.some(g =>
                 g.fullName === b.fullName && astSignature(g.callback.node) === astSignature(b.callback.node)));
             if (matches.length !== 1) continue;
@@ -151,7 +156,7 @@ RUNNER DIFF:\n${rawOutput.slice(0, 12000)}`;
     let timeout;
     try {
         const response = await Promise.race([
-            withGeminiChannel("UNIT_TEST", () => generateText(prompt)),
+            generateText(withAgentContext(prompt, 'unit-test', { phase: 'repair' })),
             new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Input repair timed out")), 30000); })
         ]);
         const parsed = JSON.parse(String(response).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));

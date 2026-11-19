@@ -9,6 +9,7 @@ if (import.meta.hot) import.meta.hot.data.runningProcessContext = RunningProcess
 
 const STORAGE_KEY = "covai_running_processes";
 const SUGGESTIONS_STORAGE_PREFIX = "covai_snapshot_suggestions_";
+const VERSIONS_STORAGE_PREFIX = "covai_unit_test_versions_";
 
 const initialProcesses = {
   analysis: {
@@ -24,6 +25,7 @@ const initialProcesses = {
   },
   suggestion: {
     isGenerating: false,
+    jobId: null,
     snapshotId: null,
     projectId: null,
     type: "unit",
@@ -36,14 +38,18 @@ const initialProcesses = {
   },
   bulkApply: {
     isApplying: false,
+    jobId: null,
     snapshotId: null,
     projectId: null,
     type: "unit",
     totalCount: 0,
+    totalFiles: 0,
+    totalSugs: 0,
     completedCount: 0,
     currentFile: "",
     stats: "Applying...",
     progressPct: null,
+    phase: "",
     step: "",
     completedAt: null,
     result: null,
@@ -60,13 +66,12 @@ function loadStoredProcesses(sessionUserId) {
       loadedAnalysis.isRunning = false;
     }
     const loadedSuggestion = { ...initialProcesses.suggestion, ...(parsed.suggestion || {}) };
-    // In-memory async generation loops cannot survive browser reloads
-    if (loadedSuggestion.isGenerating) {
+    // Only reset if there is no server-backed jobId
+    if (loadedSuggestion.isGenerating && !loadedSuggestion.jobId) {
       loadedSuggestion.isGenerating = false;
     }
     const loadedBulkApply = { ...initialProcesses.bulkApply, ...(parsed.bulkApply || {}) };
-    // In-memory bulk apply loop cannot survive browser reloads
-    if (loadedBulkApply.isApplying) {
+    if (loadedBulkApply.isApplying && !loadedBulkApply.jobId) {
       loadedBulkApply.isApplying = false;
     }
 
@@ -97,6 +102,7 @@ function loadStoredProcesses(sessionUserId) {
 export function RunningProcessProvider({ children, sessionUserId }) {
   const [processes, setProcesses] = useState(() => loadStoredProcesses(sessionUserId));
   const suggestionsCacheRef = useRef({});
+  const versionsCacheRef = useRef({});
   const pollingRef = useRef(null);
   const autoDismissTimersRef = useRef({});
 
@@ -198,13 +204,13 @@ export function RunningProcessProvider({ children, sessionUserId }) {
     const poll = async () => {
       if (isDisposed) return;
       try {
-        const response = await getJobDetailApi(jobId);
+        const response = await getJobDetailApi(jobId, { summary: true });
         if (isDisposed) return;
         const job = response?.job;
         consecutiveErrors = 0;
 
         if (!job) {
-          pollingRef.current = setTimeout(poll, 2000);
+          pollingRef.current = setTimeout(poll, 5000);
           return;
         }
 
@@ -262,14 +268,14 @@ export function RunningProcessProvider({ children, sessionUserId }) {
           }));
         }
 
-        pollingRef.current = setTimeout(poll, 2000);
+        pollingRef.current = setTimeout(poll, 5000);
       } catch (err) {
         if (isDisposed) return;
         consecutiveErrors++;
         if (consecutiveErrors <= 2) {
           console.warn("[RunningProcess] Polling retry:", err.message || err);
         }
-        const delay = consecutiveErrors > 5 ? 5000 : 2500;
+        const delay = consecutiveErrors > 5 ? 10000 : 5000;
         pollingRef.current = setTimeout(poll, delay);
       }
     };
@@ -285,8 +291,157 @@ export function RunningProcessProvider({ children, sessionUserId }) {
     };
   }, [processes.analysis.isRunning, processes.analysis.jobId, processes.analysis.snapshotId, scheduleAutoDismiss]);
 
+  // Background poller for queued UNIT_TEST_SUGGEST job (survives project switches)
+  useEffect(() => {
+    const { isGenerating, jobId, snapshotId } = processes.suggestion;
+    if (!isGenerating || !jobId) return;
+
+    let isDisposed = false;
+    let timer = null;
+
+    const poll = async () => {
+      if (isDisposed) return;
+      try {
+        const response = await getJobDetailApi(jobId, { summary: true });
+        if (isDisposed) return;
+        const job = response?.job;
+        if (!job) {
+          timer = setTimeout(poll, 5000);
+          return;
+        }
+        if (job.status === "SUCCESS") {
+          let parsed = null;
+          try {
+            const fullDetail = await getJobDetailApi(jobId);
+            const fullJob = fullDetail?.job;
+            parsed = fullJob?.result ?? (fullJob?.resultJson ? JSON.parse(fullJob.resultJson) : null);
+          } catch (_) {}
+          if (snapshotId && Array.isArray(parsed?.suggestions) && parsed.suggestions.length > 0) {
+            const grouped = {};
+            for (const sug of parsed.suggestions) {
+              const key = sug.sourceFile || sug.filePath || (Array.isArray(sug.sourceFiles) ? sug.sourceFiles[0] : null);
+              if (!key) continue;
+              if (!grouped[key]) grouped[key] = [];
+              grouped[key].push({
+                ...sug,
+                suggestionId: sug.suggestionId || sug.id || `${key}-sug-${grouped[key].length + 1}`,
+              });
+            }
+            if (Object.keys(grouped).length > 0) {
+              const existing = getSuggestions(snapshotId) || {};
+              saveSuggestions(snapshotId, { ...existing, ...grouped });
+            }
+          }
+          setProcesses((prev) => ({
+            ...prev,
+            suggestion: {
+              ...prev.suggestion,
+              isGenerating: false,
+              completedAt: Date.now(),
+              completedMessage: "✓ Generated inline test suggestions!",
+            },
+          }));
+          scheduleAutoDismiss("suggestion", 3500);
+          return;
+        }
+        if (["FAILED", "CANCELED"].includes(job.status)) {
+          setProcesses((prev) => ({
+            ...prev,
+            suggestion: {
+              ...prev.suggestion,
+              isGenerating: false,
+              completedAt: Date.now(),
+              completedMessage: job.errorMessage || `${job.status}: suggestion job failed.`,
+            },
+          }));
+          scheduleAutoDismiss("suggestion", 4500);
+          return;
+        }
+        timer = setTimeout(poll, 5000);
+      } catch (_) {
+        if (!isDisposed) timer = setTimeout(poll, 7000);
+      }
+    };
+
+    poll();
+    return () => {
+      isDisposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [processes.suggestion.isGenerating, processes.suggestion.jobId, processes.suggestion.snapshotId, scheduleAutoDismiss]);
+
+  // Background poller for queued UNIT_TEST_APPLY job (survives project switches)
+  useEffect(() => {
+    const { isApplying, jobId, snapshotId } = processes.bulkApply;
+    if (!isApplying || !jobId) return;
+
+    let isDisposed = false;
+    let timer = null;
+
+    const poll = async () => {
+      if (isDisposed) return;
+      try {
+        const response = await getJobDetailApi(jobId, { summary: true });
+        if (isDisposed) return;
+        const job = response?.job;
+        if (!job) {
+          timer = setTimeout(poll, 5000);
+          return;
+        }
+        if (job.status === "SUCCESS") {
+          let parsed = null;
+          try {
+            const fullDetail = await getJobDetailApi(jobId);
+            const fullJob = fullDetail?.job;
+            parsed = fullJob?.result ?? (fullJob?.resultJson ? JSON.parse(fullJob.resultJson) : null);
+          } catch (_) {}
+          setProcesses((prev) => ({
+            ...prev,
+            bulkApply: {
+              ...prev.bulkApply,
+              isApplying: false,
+              completedAt: Date.now(),
+              result: parsed,
+              progressPct: 100,
+              stats: "Done",
+              phase: "done",
+              step: "✓ Successfully applied test suggestions!",
+            },
+          }));
+          scheduleAutoDismiss("bulkApply", 3500);
+          if (snapshotId) invalidateCoverageQueries(snapshotId);
+          return;
+        }
+        if (["FAILED", "CANCELED"].includes(job.status)) {
+          setProcesses((prev) => ({
+            ...prev,
+            bulkApply: {
+              ...prev.bulkApply,
+              isApplying: false,
+              completedAt: Date.now(),
+              progressPct: 100,
+              phase: "error",
+              step: job.errorMessage || `${job.status}: apply job failed.`,
+            },
+          }));
+          scheduleAutoDismiss("bulkApply", 4500);
+          return;
+        }
+        timer = setTimeout(poll, 5000);
+      } catch (_) {
+        if (!isDisposed) timer = setTimeout(poll, 7000);
+      }
+    };
+
+    poll();
+    return () => {
+      isDisposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [processes.bulkApply.isApplying, processes.bulkApply.jobId, processes.bulkApply.snapshotId, scheduleAutoDismiss]);
+
   // Methods for Analysis Process
-  const startAnalysis = useCallback(({ snapshotId, projectId, type = "unit", jobId = null }) => {
+  const startAnalysis = useCallback(({ snapshotId, projectId, type = "unit", jobId = null, progress = null }) => {
     if (autoDismissTimersRef.current.analysis) {
       clearTimeout(autoDismissTimersRef.current.analysis);
       delete autoDismissTimersRef.current.analysis;
@@ -299,7 +454,11 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         snapshotId,
         projectId,
         type,
-        progress: 8,
+        // Keep the queue's latest progress when attaching the global indicator
+        // to a job that was already running before the response arrived.
+        progress: typeof progress === "number"
+          ? Math.max(prev.analysis.jobId === jobId ? prev.analysis.progress : 0, progress)
+          : (prev.analysis.jobId === jobId ? prev.analysis.progress : 8),
         step: "Initializing test analysis environment...",
         error: null,
         completedAt: null,
@@ -352,7 +511,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
   }, [scheduleAutoDismiss]);
 
   // Methods for Inline Suggestion Process
-  const startSuggestion = useCallback(({ snapshotId, projectId, type = "unit", totalFiles = 0, initialMessage = "" }) => {
+  const startSuggestion = useCallback(({ snapshotId, projectId, type = "unit", totalFiles = 0, initialMessage = "", jobId = null }) => {
     if (autoDismissTimersRef.current.suggestion) {
       clearTimeout(autoDismissTimersRef.current.suggestion);
       delete autoDismissTimersRef.current.suggestion;
@@ -361,6 +520,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
       ...prev,
       suggestion: {
         isGenerating: true,
+        jobId: jobId || prev.suggestion.jobId || null,
         snapshotId,
         projectId,
         type,
@@ -405,24 +565,41 @@ export function RunningProcessProvider({ children, sessionUserId }) {
   }, [scheduleAutoDismiss]);
 
   // Methods for Bulk Apply Process
-  const startBulkApply = useCallback(({ snapshotId, projectId, totalCount = 0, step = "", type = "unit" }) => {
+  const startBulkApply = useCallback(({
+    snapshotId,
+    projectId,
+    jobId = null,
+    totalCount = 0,
+    totalFiles = 0,
+    totalSugs = 0,
+    step = "",
+    type = "unit",
+    stats = null,
+    progressPct = 0,
+    phase = "merge",
+  }) => {
     if (autoDismissTimersRef.current.bulkApply) {
       clearTimeout(autoDismissTimersRef.current.bulkApply);
       delete autoDismissTimersRef.current.bulkApply;
     }
+    const resolvedTotalCount = totalCount || totalSugs || totalFiles || 0;
     setProcesses((prev) => ({
       ...prev,
       bulkApply: {
         isApplying: true,
+        jobId: jobId || prev.bulkApply.jobId || null,
         snapshotId,
         projectId,
         type,
-        totalCount,
+        totalCount: resolvedTotalCount,
+        totalFiles: totalFiles || (totalCount > 0 ? totalCount : 0),
+        totalSugs: totalSugs || resolvedTotalCount,
         completedCount: 0,
         currentFile: "",
-        stats: totalCount > 0 ? `0/${totalCount}` : "Applying...",
-        progressPct: 0,
-        step: step || `Applying ${totalCount} test suggestions across files...`,
+        stats: stats || (resolvedTotalCount > 0 ? `0/${resolvedTotalCount}` : "Applying..."),
+        progressPct: progressPct !== undefined ? progressPct : 0,
+        phase: phase || "merge",
+        step: step || `Applying ${resolvedTotalCount} test suggestions across files...`,
         completedAt: null,
         result: null,
       },
@@ -434,20 +611,32 @@ export function RunningProcessProvider({ children, sessionUserId }) {
       const update = typeof stepOrUpdate === "string" ? { step: stepOrUpdate } : (stepOrUpdate || {});
       const completedCount = update.completedCount !== undefined ? update.completedCount : prev.bulkApply.completedCount;
       const totalCount = update.totalCount !== undefined ? update.totalCount : prev.bulkApply.totalCount;
-      const stats = update.stats || (totalCount > 0 ? `${completedCount}/${totalCount}` : prev.bulkApply.stats);
+
+      // Extract [X/N] from step string if present to guarantee synchronization
+      const stepMatch = typeof update.step === "string" ? update.step.match(/\[(\d+)\/(\d+)\]/) : null;
+      const stepCurrent = stepMatch ? parseInt(stepMatch[1], 10) : null;
+      const stepTotal = stepMatch ? parseInt(stepMatch[2], 10) : null;
+
+      const effectiveCompleted = stepCurrent !== null ? stepCurrent : completedCount;
+      const effectiveTotal = stepTotal !== null ? stepTotal : totalCount;
+
+      const stats = update.stats !== undefined
+        ? update.stats
+        : (effectiveTotal > 0 ? `${effectiveCompleted}/${effectiveTotal}` : prev.bulkApply.stats);
       const progressPct = update.progressPct !== undefined
         ? update.progressPct
-        : (totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : prev.bulkApply.progressPct);
+        : (effectiveTotal > 0 ? Math.min(100, Math.max(4, Math.round((effectiveCompleted / effectiveTotal) * 100))) : prev.bulkApply.progressPct);
 
       return {
         ...prev,
         bulkApply: {
           ...prev.bulkApply,
           ...update,
-          completedCount,
-          totalCount,
+          completedCount: effectiveCompleted,
+          totalCount: effectiveTotal,
           stats,
           progressPct,
+          phase: update.phase || prev.bulkApply.phase,
           step: update.step || prev.bulkApply.step,
         },
       };
@@ -464,6 +653,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         result,
         progressPct: 100,
         stats: "Done",
+        phase: "done",
         step: result?.error ? `Applied with errors: ${result.error}` : (result?.message || "✓ Successfully applied test suggestions!"),
       },
     }));
@@ -527,6 +717,49 @@ const sanitizeCachedSuggestions = (sugsMap) => {
     try {
       sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
     } catch (_) { }
+  }, [sessionUserId]);
+
+  const getUnitTestVersionsCache = useCallback((snapshotId) => {
+    if (!snapshotId) return {};
+    if (versionsCacheRef.current[snapshotId]) return versionsCacheRef.current[snapshotId];
+    try {
+      const raw = sessionStorage.getItem(`${VERSIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        versionsCacheRef.current[snapshotId] = parsed;
+        return parsed;
+      }
+    } catch (_) {}
+    return {};
+  }, [sessionUserId]);
+
+  const saveUnitTestVersionsCache = useCallback((snapshotId, versionsMap) => {
+    if (!snapshotId) return;
+    versionsCacheRef.current[snapshotId] = versionsMap;
+    try {
+      sessionStorage.setItem(`${VERSIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(versionsMap));
+    } catch (_) {}
+  }, [sessionUserId]);
+
+  const updateFileActiveVersionCache = useCallback((snapshotId, filePath, newActiveVersion) => {
+    if (!snapshotId || !filePath) return;
+    const current = versionsCacheRef.current[snapshotId] || {};
+    const normKey = filePath.replace(/\\/g, "/");
+    const updated = { ...current };
+    if (updated[normKey]) {
+      updated[normKey] = {
+        ...updated[normKey],
+        currentVersion: Number(newActiveVersion),
+        versions: (updated[normKey].versions || []).map(v => ({
+          ...v,
+          isActive: v.version === Number(newActiveVersion)
+        }))
+      };
+      versionsCacheRef.current[snapshotId] = updated;
+      try {
+        sessionStorage.setItem(`${VERSIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
+      } catch (_) {}
+    }
   }, [sessionUserId]);
 
   const updateSingleSuggestionCode = useCallback((snapshotId, filePath, sugId, newCode) => {

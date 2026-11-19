@@ -9,7 +9,7 @@ import { buildFinalPrompt, buildPlaywrightPrompt } from "./aiPromptBuilder.servi
 import { buildCypressPrompt } from "./cypressPromptBuilder.service.js";
 import { buildSupertestPrompt } from "./supertestPromptBuilder.service.js";
 import { generateText } from "./gemini.service.js";
-import { withGeminiChannel } from "./geminiTokenTracker.service.js";
+import { withGeminiFeature } from './geminiRouting.service.js';
 import { processAiSuggestions } from "./aiSuggestionParser.service.js";
 import { processSkeletonTests } from "./skeletonPostProcessor.service.js";
 import { processFullTests } from "./fullTestsPostProcessor.service.js";
@@ -124,8 +124,8 @@ const processAiTestsJobInWorkspace = async (jobId) => {
         const hasVitest = project ? project.hasVitest : false;
 
         const payloadJsonObj = JSON.parse(job.payloadJson || "{}");
-        const selectedAiModel=payloadJsonObj.model || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-        await addJobLog(jobId,'INFO',`Using Gemini model: ${selectedAiModel}`);
+        const selectedAiModel=payloadJsonObj.model || null;
+        await addJobLog(jobId,'INFO',`Using Gemini model: ${selectedAiModel || 'feature default'}`);
         const mode = payloadJsonObj.mode || "SKELETON";
         const executionMode = payloadJsonObj.executionMode || "frontend";
 
@@ -174,9 +174,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 userId: job.userId,
             });
 
-            const aiResponseText = await withGeminiChannel("E2E_TEST", () =>
-                generateText(playwrightPrompt, selectedAiModel)
-            );
+            const aiResponseText = await withGeminiFeature('system-test', () => generateText(playwrightPrompt, selectedAiModel));
             if (!aiResponseText || !aiResponseText.trim()) {
                 throw new ServiceError("Gemini returned an empty response for Playwright test generation.", 500);
             }
@@ -826,7 +824,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                     
                     try {
                         // The model name is hardcoded here but gemini.service resolves fallbacks internally
-                        const supertestResponseText = await generateText(
+                        const supertestResponseText = await withGeminiFeature('integration-test', () => generateText(
                             supertestPrompt,
                             selectedAiModel || "gemini-3.5-flash-lite",
                             {
@@ -834,7 +832,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                 temperature: 0.2,
                                 maxOutputTokens: 3500,
                             }
-                        );
+                        ));
                         
                         if (supertestResponseText) {
                             try {
@@ -1159,9 +1157,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
             await updateGenerationJobStatus({ jobId, progress: 40 });
 
             await addJobLog(jobId, "INFO", "Calling Gemini AI model for Cypress test generation...");
-            const cypressResponseText = await withGeminiChannel("E2E_TEST", () =>
-                generateText(cypressPrompt, selectedAiModel)
-            );
+            const cypressResponseText = await withGeminiFeature('system-test', () => generateText(cypressPrompt, selectedAiModel));
 
             if (!cypressResponseText) {
                 throw new Error("Gemini returned an empty response for Cypress generation.");
@@ -1199,9 +1195,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
 
         // SCRUM-394: Call Gemini API
         await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
-        const responseText = await withGeminiChannel("UNIT_TEST", () =>
-            generateText(finalPrompt, selectedAiModel)
-        );
+        const responseText = await withGeminiFeature('unit-test', () => generateText(finalPrompt, selectedAiModel));
 
         // SCRUM-396: Validate AI response
         if (!responseText) {

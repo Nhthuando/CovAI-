@@ -95,7 +95,7 @@ const {
 
 const { parseJavaScriptCode } = await import("../services/babelParser.service.js");
 
-describe("Phase 4: Vòng Lặp Tinh Chỉnh & Kiểm Chứng Độ Bao Phủ (Refinement Loop & Verification)", () => {
+describe("Phase 4: Refinement Loop & Verification", () => {
     let tempDir;
 
     beforeEach(() => {
@@ -109,8 +109,8 @@ describe("Phase 4: Vòng Lặp Tinh Chỉnh & Kiểm Chứng Độ Bao Phủ (Re
         } catch { }
     });
 
-    describe("4.1 Toàn Bộ Luồng Tích Hợp: Từ suggestUnitTestcases Đến applyUnitTestSuggestion", () => {
-        test("thực thi toàn bộ luồng: sinh test suggestion -> apply vào file -> kích hoạt runner -> cập nhật DB và đạt coverage >= 90%", async () => {
+    describe("4.1 Full Integration Flow: From suggestUnitTestcases to applyUnitTestSuggestion", () => {
+        test("executes complete flow: generate test suggestion -> apply to file -> trigger runner -> update DB and achieve >= 90% coverage", async () => {
             const srcDir = path.join(tempDir, "src", "services");
             const testsDir = path.join(tempDir, "tests");
             fs.mkdirSync(srcDir, { recursive: true });
@@ -187,7 +187,7 @@ export function processOrder(order) {
                 }
             ]);
 
-            // Bước 1: Gọi suggestUnitTestcases
+            // Step 1: Call suggestUnitTestcases
             const suggestionResult = await suggestUnitTestcases({
                 projectId: "proj-1",
                 snapshotId: "snap-1",
@@ -202,10 +202,10 @@ export function processOrder(order) {
             expect(suggestionResult.suggestedTestCode.length).toBeGreaterThan(0);
             expect(suggestionResult.framework).toBe("jest");
 
-            // Kiểm tra AST Analysis và Decision Points được trích xuất
+            // Verify AST Analysis and Decision Points are extracted
             expect(suggestionResult.decisionPoints).toBeDefined();
 
-            // Bước 2: Gọi applyUnitTestSuggestion với mock runner cung cấp độ bao phủ tăng dần
+            // Step 2: Call applyUnitTestSuggestion with mock runner providing incremental coverage
             let runnerCalls = 0;
             const applyResult = await applyUnitTestSuggestion({
                 snapshotId: "snap-1",
@@ -214,7 +214,7 @@ export function processOrder(order) {
                 suggestion: suggestionResult,
                 runCoverageFn: async ({ coverageDir, pass }) => {
                     runnerCalls++;
-                    // Giả lập runner ghi kết quả kiểm thử và độ bao phủ đạt >= 90%
+                    // Mock runner records test results and coverage >= 90%
                     const sumData = {
                         "src/services/order.service.js": {
                             statements: { total: 100, covered: 95, skipped: 0, pct: 95 },
@@ -247,7 +247,7 @@ export function processOrder(order) {
                 }
             });
 
-            // Bước 3: Kiểm chứng kết quả Apply thành công và đạt mục tiêu >= 90%
+            // Step 3: Verify Apply succeeds and achieves target >= 90%
             expect(applyResult.success).toBe(true);
             expect(applyResult.status).toBe("PASSED");
             expect(applyResult.newCoverage.statements).toBeGreaterThanOrEqual(90);
@@ -255,14 +255,14 @@ export function processOrder(order) {
             expect(applyResult.newCoverage.functions).toBeGreaterThanOrEqual(90);
             expect(applyResult.newCoverage.lines).toBeGreaterThanOrEqual(90);
 
-            // Kiểm tra database được cập nhật
+            // Verify database updated
             expect(mockPrisma.coverageSummary.upsert).toHaveBeenCalled();
             expect(mockPrisma.coverageFile.upsert).toHaveBeenCalled();
         }, 30000);
     });
 
-    describe("4.2 Vòng Lặp Tinh Chỉnh Thích Ứng (Adaptive Refinement Loop - 2-3 Passes)", () => {
-        test("tự động lặp qua các vòng (pass 1 -> pass 2 -> pass 3) cho đến khi đạt >= 90% cả 4 tiêu chí", async () => {
+    describe("4.2 Adaptive Refinement Loop (2-3 Passes)", () => {
+        test("automatically iterates passes (pass 1 -> pass 2 -> pass 3) until all 4 metrics reach >= 90%", async () => {
             const srcDir = path.join(tempDir, "src");
             const testsDir = path.join(tempDir, "tests");
             const covDir = path.join(tempDir, "coverage");
@@ -293,7 +293,7 @@ describe('Pricing Tests', () => {
 
             const modifiedFiles = new Set(["tests/pricing.test.js"]);
 
-            // Bắt đầu với độ bao phủ thấp: 60% Statements, 33% Branches
+            // Start with initial low coverage: 60% Statements, 33% Branches
             let currentCoverage = {
                 "src/pricing.js": {
                     statements: { pct: 60 },
@@ -325,7 +325,7 @@ describe('Pricing Tests', () => {
                 runCoverageFn: async ({ pass }) => {
                     passCount++;
                     if (pass === 1) {
-                        // Vòng 1: Đạt 78% branches (vẫn dưới 90%)
+                        // Round 1: Achieves 78% branches (still below 90%)
                         currentCoverage = {
                             "src/pricing.js": {
                                 statements: { pct: 85 },
@@ -335,7 +335,7 @@ describe('Pricing Tests', () => {
                             }
                         };
                     } else {
-                        // Vòng 2: Bổ sung delta tests và vượt ngưỡng 90%
+                        // Round 2: Injects delta tests and exceeds 90% threshold
                         currentCoverage = {
                             "src/pricing.js": {
                                 statements: { pct: 95 },
@@ -349,22 +349,22 @@ describe('Pricing Tests', () => {
                 }
             });
 
-            // Vòng lặp phải thực hiện ít nhất 2 pass và đánh dấu đã refined
+            // Loop must execute at least 2 passes and mark as refined
             expect(passCount).toBeGreaterThanOrEqual(2);
             expect(refinedResult.passesRun).toBeGreaterThanOrEqual(2);
             expect(refinedResult.refined).toBe(true);
 
-            // Kiểm tra nội dung file test đã được bổ sung thêm delta tests
+            // Verify test file content is augmented with delta tests
             const updatedTestCode = fs.readFileSync(testFile, "utf8");
             expect(updatedTestCode).toContain("Gap Closing Delta Tests");
             expect(updatedTestCode).toContain("Targeted gap-closing delta tests for uncovered branch lines");
 
-            // Đảm bảo cú pháp AST hoàn toàn sạch sau nhiều vòng bổ sung
+            // Ensure AST syntax is completely clean after multiple rounds
             const parseAst = parseJavaScriptCode(updatedTestCode);
             expect(parseAst.success).toBe(true);
         });
 
-        test("dừng ngay lập tức (early exit) khi tất cả các tiêu chí đã đạt >= 90% từ đầu", async () => {
+        test("early exits immediately when all metrics meet >= 90% initially", async () => {
             const highCoverage = {
                 "src/service.js": {
                     statements: { pct: 96 },
@@ -395,8 +395,8 @@ describe('Pricing Tests', () => {
         });
     });
 
-    describe("4.3 Tự Động Chẩn Đoán & Khắc Phục Lỗi Assertion (Auto-Heal Engine)", () => {
-        test("chẩn đoán lỗi lệch giá trị (Expected vs Received) và tự động sửa assertion về kết quả đúng", () => {
+    describe("4.3 Assertion Auto-Healing & Diagnostics Engine", () => {
+        test("diagnoses Expected vs Received mismatches and auto-repairs assertion to match actual value", () => {
             const testsDir = path.join(tempDir, "tests");
             fs.mkdirSync(testsDir, { recursive: true });
 
@@ -434,7 +434,7 @@ describe('Status Service', () => {
             expect(ast.success).toBe(true);
         });
 
-        test("tự động mở khóa (unskip) các bài test bị AI đánh dấu .skip, xit, xtest để khôi phục độ phủ", () => {
+        test("automatically unskips tests marked with .skip, xit, xtest to recover full coverage", () => {
             const testsDir = path.join(tempDir, "tests");
             fs.mkdirSync(testsDir, { recursive: true });
 
@@ -469,8 +469,8 @@ describe.skip('Skipped Suite', () => {
         });
     });
 
-    describe("4.4 Xử Lý Các Edge Cases Đặc Thù Trong Business Logic", () => {
-        test("Test Case 1 (Helper Nội Bộ Unexported): sinh delta test gọi hàm export với các tổ hợp tham số kích hoạt nhánh nội bộ", () => {
+    describe("4.4 Specialized Business Logic Edge Cases", () => {
+        test("Test Case 1 (Unexported Internal Helper): generates delta tests invoking exported functions to trigger internal branches", () => {
             const sourceCode = `
 export function handleCalculation(type, val) {
     if (type === 'cube') return _calcCube(val);
@@ -508,7 +508,7 @@ function _calcSquare(n) {
             expect(ast.success).toBe(true);
         });
 
-        test("Test Case 2 (Database & Prisma Transaction): sinh mock contract bảo vệ truy vấn DB và $transaction", () => {
+        test("Test Case 2 (Database & Prisma Transaction): generates mock contract guarding DB queries and $transaction", () => {
             const sourceCode = `
 import prisma from '../config/prisma.js';
 export async function transferFunds(fromId, toId, amount) {
@@ -534,7 +534,7 @@ export async function transferFunds(fromId, toId, amount) {
             expect(ast.success).toBe(true);
         });
 
-        test("Test Case 3 (Error Handling & try/catch): sinh test case giả lập lỗi bao phủ toàn bộ khối catch", () => {
+        test("Test Case 3 (Error Handling & try/catch): generates error test cases covering entire catch block", () => {
             const sourceCode = `
 export async function fetchData(client) {
     try {
@@ -558,8 +558,8 @@ export async function fetchData(client) {
         });
     });
 
-    describe("4.5 An Toàn Hệ Thống & Kiểm Chứng Nghiêm Ngặt Thư Mục Storage", () => {
-        test("Strict Storage Guard: từ chối chạy autoRefineCoverageGaps và không sửa đổi nếu rootDir ở storage/", async () => {
+    describe("4.5 System Safety & Storage Directory Integrity Guard", () => {
+        test("Strict Storage Guard: rejects autoRefineCoverageGaps and preserves files if rootDir is in storage/", async () => {
             const storagePath = path.join(tempDir, "storage", "projects", "p1");
             fs.mkdirSync(storagePath, { recursive: true });
 
@@ -580,7 +580,7 @@ export async function fetchData(client) {
             expect(result.passesRun).toBe(0);
         });
 
-        test("Bảo tồn 100% test cũ của người dùng khi merge nhiều lần trong refinement loop", () => {
+        test("preserves 100% of user existing tests across multiple merges in refinement loop", () => {
             const testsDir = path.join(tempDir, "tests");
             fs.mkdirSync(testsDir, { recursive: true });
 
@@ -617,11 +617,11 @@ describe('User Existing Suite', () => {
 
             const finalContent = fs.readFileSync(testPath, "utf8");
 
-            // Kiểm tra test cũ vẫn giữ nguyên 100%
+            // Verify existing tests 100% intact
             expect(finalContent).toContain("// Original User Test Suite");
             expect(finalContent).toContain("user test 1");
 
-            // Kiểm tra cả 2 suggestion được gắn thêm hợp lệ
+            // Verify both suggestions appended validly
             expect(finalContent).toContain("Additional Pass 1");
             expect(finalContent).toContain("Additional Pass 2");
 

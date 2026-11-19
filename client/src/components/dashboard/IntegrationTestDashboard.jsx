@@ -33,6 +33,7 @@ export default function IntegrationTestDashboard(props) {
   return (
     <>
       <IntegrationWorkspace
+        key={`${props.projectId}:${props.snapshotId}`}
         {...props}
         onGenerate={(targets, force = false) => handleGenerate(force, targets)}
         generating={generating}

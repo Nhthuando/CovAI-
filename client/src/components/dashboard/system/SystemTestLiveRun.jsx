@@ -61,7 +61,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
     if (!activeJobId) return;
     let current = true;
     let timer;
-    const poll = () => getJobDetailApi(activeJobId).then(response => {
+    const poll = () => getJobDetailApi(activeJobId, { summary: true, includeLogs: true }).then(response => {
       if (!current) return;
       const job = response.job || response.data;
       const status = job?.status || 'RUNNING';
@@ -82,7 +82,7 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
     });
     jobTerminal.current = false;
     poll();
-    timer = setInterval(poll, 2500);
+    timer = setInterval(poll, 4000);
     return () => { current = false; clearInterval(timer); };
   }, [activeJobId]);
 

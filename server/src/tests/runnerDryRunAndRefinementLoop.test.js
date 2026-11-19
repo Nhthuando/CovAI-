@@ -56,7 +56,7 @@ describe("Phase 5: Runner Dry-Run & Iterative Refinement Loop", () => {
         });
     });
 
-    describe("5.2 Chẩn đoán & Tự động Vá lỗi (Auto-Heal Engine)", () => {
+    describe("5.2 Diagnostics & Auto-Heal Engine", () => {
         test("heals Assertion Mismatch: Expected X vs Received Y by adjusting to actual business return", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
@@ -230,7 +230,7 @@ describe('Suite', () => {
         });
     });
 
-    describe("5.3 Vòng lặp Bổ sung Độ bao phủ (Coverage Refinement Loop)", () => {
+    describe("5.3 Coverage Refinement Loop", () => {
         test("early exits cleanly when all inspected files already meet >=90% on all 4 criteria", async () => {
             const fakeSum = {
                 "src/services/billing.service.js": {

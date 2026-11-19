@@ -1,6 +1,6 @@
 /**
  * Test Suite: Section 1 - Problem Statement & Empirical Verification
- * TỔNG QUAN VẤN ĐỀ & BỐI CẢNH THỰC TẾ (PROBLEM STATEMENT)
+ * PROBLEM STATEMENT & BACKGROUND
  *
  * Implements objective verification of Section 1 of:
  * docs/function-coverage-cfg-code-navigation-plan.md
@@ -85,7 +85,7 @@ const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) => {
   return fileCfgs[0].functionName;
 };
 
-describe("## 1. TỔNG QUAN VẤN ĐỀ & BỐI CẢNH THỰC TẾ (PROBLEM STATEMENT)", () => {
+describe("## 1. PROBLEM STATEMENT & BACKGROUND", () => {
   // Realistic dataset matching Section 1 & the user screenshot
   const projectCandidates = [
     "backend/src/services/auth.service.js",
@@ -209,7 +209,7 @@ describe("## 1. TỔNG QUAN VẤN ĐỀ & BỐI CẢNH THỰC TẾ (PROBLEM STAT
     },
   ];
 
-  describe("1.1 Bối Cảnh Phân Tích Function Coverage Trong CovAI-", () => {
+  describe("1.1 Context of Function Coverage Analysis in CovAI-", () => {
     it("1.1.1 Computes invocation metrics & called/uncalled ratios matching user dashboard", () => {
       const totalFunctions = 103;
       const calledFunctions = 77;
@@ -275,7 +275,7 @@ describe("## 1. TỔNG QUAN VẤN ĐỀ & BỐI CẢNH THỰC TẾ (PROBLEM STAT
     });
   });
 
-  describe("1.2 Khiếm Khuyết Trải Nghiệm Hiện Hữu & Minh Chứng Khắc Phục", () => {
+  describe("1.2 Existing UX Gaps & Resolution Verification", () => {
     it("1.2.1 Gap 1: View Container Closure Bug - Verifies parameters are preserved, not dropped", () => {
       // Historical buggy behavior: closure swallowed arguments
       let buggyContext = null;
@@ -368,7 +368,7 @@ describe("## 1. TỔNG QUAN VẤN ĐỀ & BỐI CẢNH THỰC TẾ (PROBLEM STAT
     });
   });
 
-  describe("1.3 Mục Tiêu Giải Pháp (Target UX Outcome Verification)", () => {
+  describe("1.3 Target UX Outcome Verification", () => {
     it("1.3.1 Target Flow: Clicking 'View CFG' renders exact function graph and enables editor jump", () => {
       const card = sentenceFunctions.find((f) => f.functionName === "toSingleSentence");
 

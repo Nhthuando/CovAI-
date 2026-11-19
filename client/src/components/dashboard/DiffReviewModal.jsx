@@ -245,7 +245,7 @@ export default function DiffReviewModal({
               model.modified.dispose();
             }
           }
-        } catch (_) {}
+        } catch (_) { }
       }
     };
   }, []);
@@ -401,7 +401,7 @@ export default function DiffReviewModal({
   };
 
   const handleApplyCurrentFile = async () => {
-    if (isAnyBusy) return;
+    if (isAnyBusy || activeFile?.reviewError || activeFile?.hasChanges === false) return;
     if (extractedTestCases.length > 0 && selectedIdsForActiveFile.size === 0)
       return;
     setIsApplyingCurrent(true);
@@ -417,6 +417,12 @@ export default function DiffReviewModal({
 
   const handleApplyAllClick = async () => {
     if (isAnyBusy) return;
+    const conflictingFiles = files.filter(file => file.reviewError);
+    if (conflictingFiles.length > 0) {
+      const names = conflictingFiles.map(f => f.filePath || f.targetTestFile || 'Unknown file').slice(0, 3).join(', ');
+      alert(`Cannot Apply All: ${conflictingFiles.length} file(s) have unresolved review conflicts (${names}${conflictingFiles.length > 3 ? '...' : ''}). Please review individual files.`);
+      return;
+    }
     setIsApplyingAllInternal(true);
     try {
       await onApplyAll?.();
@@ -430,8 +436,11 @@ export default function DiffReviewModal({
   if (!isOpen || !activeFile) return null;
 
   const originalCode =
-    currentSuggestion?.originalContent || activeFile?.originalContent || "";
-  const isApplied = Boolean(currentSuggestion?.applied || activeFile?.applied);
+    activeFile?.originalContent ??
+    currentSuggestion?.originalContent ??
+    currentSuggestion?.originalCode ??
+    "";
+  const isApplied = Boolean(currentSuggestion?.applied ?? activeFile?.applied);
   const addedLines = countDiffLines(originalCode, effectiveModifiedCode).added;
 
   const fileExecResult =
@@ -445,7 +454,7 @@ export default function DiffReviewModal({
     (!fileExecResult?.isPassed && fileExecResult?.errorDetail) ||
     null;
 
-  const anyUnapplied = files.some((f) => !f.applied);
+  const anyUnapplied = files.some((f) => !f.applied && f.hasChanges !== false);
 
   // Extract per-assertion pass/fail status from last dry-run or apply execution
   const assertionStatusByTitle = new Map();
@@ -993,7 +1002,10 @@ export default function DiffReviewModal({
             </div>
           )}
 
-          {/* Monaco Diff Editor */}
+          {/* ── Monaco Diff Editor Body ── */}
+          {activeFile.reviewError && <div role="alert" className="px-4 py-2 text-sm text-red-300">{activeFile.reviewError}</div>}
+          {activeFile.reviewNotice && <div role="status" className="px-4 py-2 text-sm text-slate-300">{activeFile.reviewNotice}</div>}
+          {runFailure && <p role="alert" className="px-4 py-2 text-sm text-[var(--color-danger)]">{runFailure}</p>}
           <div className="flex-1 min-h-0 relative">
             <DiffEditor
               height="100%"

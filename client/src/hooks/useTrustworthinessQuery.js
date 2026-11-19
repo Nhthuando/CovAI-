@@ -10,7 +10,7 @@ export function useTrustworthinessQuery(projectId, suffix = '', { enabled = true
     staleTime: 0, refetchOnMount: true, refetchOnReconnect: true, refetchOnWindowFocus: false,
     refetchInterval: poll ? query => {
       const data = query.state.data;
-      return isEvaluationActive(data?.executionStatus || data?.status) || data?.runs?.some(r => isEvaluationActive(r.executionStatus)) || data?.sources?.some(s => s.status === 'PROCESSING') ? 2000 : false;
+      return isEvaluationActive(data?.executionStatus || data?.status) || data?.runs?.some(r => isEvaluationActive(r.executionStatus || r.status)) || data?.sources?.some(s => s.status === 'PROCESSING') ? 2000 : false;
     } : false,
     retry: (count, error) => error.status >= 500 && error.code !== 'FEATURE_DISABLED' && count < 1,
   });

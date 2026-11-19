@@ -1,6 +1,7 @@
 import { SYSTEM_PROMPT_VERSION } from './systemTestPrompt.service.js';
 const requestRequirements = instruction => {try{return JSON.parse(instruction)?.requirements || null;}catch{return null;}};
 import path from 'node:path';
+import { buildAgentInstruction, getAgentManifest } from '../agents/registry.js';
 
 // Complete files are retained. Missing context is declared, never silently
 // represented as a complete project description.
@@ -45,7 +46,8 @@ export const focusTestContext = (context, instruction, maxCharacters = 60000) =>
 
 export const buildBudgetedTestPrompt = ({filePath,existingCode,instruction,scenarioData,context,mode}) => {
     const focused=focusTestContext(context,instruction);
-    const payload={filePath,mode,existingCode,instruction:focused.instruction,failure:scenarioData,configuration:context.configuration,requirements:context.requirements||requestRequirements(instruction),promptVersion:SYSTEM_PROMPT_VERSION,sourceCode:focused.sourceCode,omittedFiles:focused.omittedFiles};
+    const agent={...getAgentManifest('system-test'),instruction:buildAgentInstruction('system-test',{phase:mode === 'FIX_BREAKPOINT' ? 'repair' : 'generation'})};
+    const payload={agent,filePath,mode,existingCode,instruction:focused.instruction,failure:scenarioData,configuration:context.configuration,requirements:context.requirements||requestRequirements(instruction),promptVersion:SYSTEM_PROMPT_VERSION,sourceCode:focused.sourceCode,omittedFiles:focused.omittedFiles};
     const prompt=JSON.stringify(payload);
     if(prompt.length>120000) throw new Error('The test and required context exceed the AI prompt budget. Select a smaller test file.');
     return {prompt,...focused,promptCharacters:prompt.length};

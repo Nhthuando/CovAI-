@@ -411,6 +411,139 @@ export const autoRepairTestSyntaxWithAst = (code, options = {}) => {
       modified = true;
     }
 
+    // F. Heal stray top-level return statements (e.g. 'return' outside of function)
+    const hasReturnOutsideFunction = lastErrors.some(
+      (e) => e.message?.includes("'return' outside of function") || e.message?.includes("return outside of function")
+    );
+    if (hasReturnOutsideFunction || /^[ \t]*(?:if\s*\([^)]+\)\s*)?return\b/m.test(currentCode)) {
+      // 1. Strip orphaned getter / proxy branches at top level (e.g. if (prop === Symbol.iterator) return ...)
+      const orphanedGetterBranchRegex = /^[ \t]*if\s*\(\s*(?:prop|p)\s*===\s*(?:Symbol\.[a-zA-Z0-9_$]+|['"][^'"]+['"]|typeof\s+(?:prop|p)\s*===\s*['"]symbol['"])[^)]*\)\s*return\b[^\n\r]*;?[ \t]*\r?\n?/gm;
+      if (orphanedGetterBranchRegex.test(currentCode)) {
+        currentCode = currentCode.replace(orphanedGetterBranchRegex, "");
+        modified = true;
+      }
+      // 2. Strip stray top-level return before expressions outside function scope
+      const healedTopLevelReturn = currentCode.replace(/^[ \t]*return\s+([a-zA-Z0-9_$({[\'"`][^\n\r]*;?)/gm, (match, expr, offset) => {
+        const prefix = currentCode.slice(0, offset);
+        const openBraces = (prefix.match(/\{/g) || []).length;
+        const closeBraces = (prefix.match(/\}/g) || []).length;
+        if (openBraces <= closeBraces) {
+          return `${expr}`;
+        }
+        return match;
+      });
+      if (healedTopLevelReturn !== currentCode) {
+        currentCode = healedTopLevelReturn;
+        modified = true;
+      }
+    }
+
+    // G. Collapse repetitively injected Symbol.iterator proxy getters
+    const repeatedSymbolRegex = /(?:[ \t]*if\s*\(\s*(?:prop|p)\s*===\s*Symbol\.iterator\s*\)\s*return\s+function\*\s*\(\s*\)\s*\{\s*yield\*\s*\[\];\s*\};?[ \t]*\r?\n[ \t]*if\s*\(\s*(?:prop|p)\s*===\s*Symbol\.asyncIterator\s*\)\s*return\s+async\s+function\*\s*\(\s*\)\s*\{\s*yield\*\s*\[\];\s*\};?[ \t]*\r?\n[ \t]*if\s*\(\s*(?:prop|p)\s*===\s*Symbol\.toPrimitive\s*\)\s*return\s+\(hint\)\s*=>\s*\(hint\s*===\s*['"]number['"]\s*\?\s*0\s*:\s*['"]['"]\);?[ \t]*\r?\n?)+/g;
+    if (repeatedSymbolRegex.test(currentCode)) {
+      currentCode = currentCode.replace(
+        repeatedSymbolRegex,
+        "      if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n"
+      );
+      modified = true;
+    }
+
+    // H. Auto-heal duplicate variable declarations (Identifier 'X' has already been declared)
+    const duplicateDeclError = lastErrors.find((e) => e.message?.includes("has already been declared"));
+    if (duplicateDeclError) {
+      const varMatch = duplicateDeclError.message.match(/Identifier '([^']+)' has already been declared/);
+      if (varMatch && varMatch[1] && !["_collectCallableMembers", "_collectControllerActions", "_getMock"].includes(varMatch[1])) {
+        const varName = varMatch[1];
+        let count = 0;
+        const redeclRegex = new RegExp(`(^[ \\t]*)(?:const|let|var)\\s+(${varName}\\b[ \\t]*=)`, "gm");
+        currentCode = currentCode.replace(redeclRegex, (m, indent, rest) => {
+          count++;
+          if (count === 1) return `${indent}let ${rest}`;
+          return `${indent}${rest}`;
+        });
+        modified = true;
+      }
+    }
+
+    // I. Auto-heal unclosed braces/parentheses at file end
+    const hasUnclosedError = lastErrors.some(
+      (e) => e.message?.includes("Unexpected token") || e.message?.includes("Unterminated") || e.message?.includes("missing")
+    );
+    if (hasUnclosedError) {
+      const stack = [];
+      let inStrChar = null;
+      let inLineComment = false;
+      let inBlockComment = false;
+      for (let i = 0; i < currentCode.length; i++) {
+        const c = currentCode[i];
+        const next = currentCode[i + 1];
+        if (inLineComment) {
+          if (c === '\n') inLineComment = false;
+          continue;
+        }
+        if (inBlockComment) {
+          if (c === '*' && next === '/') {
+            inBlockComment = false;
+            i++;
+          }
+          continue;
+        }
+        if (inStrChar) {
+          if (c === inStrChar && currentCode[i - 1] !== '\\') {
+            inStrChar = null;
+          }
+          continue;
+        }
+        if (c === '/' && next === '/') {
+          inLineComment = true;
+          i++;
+          continue;
+        }
+        if (c === '/' && next === '*') {
+          inBlockComment = true;
+          i++;
+          continue;
+        }
+        if (c === '"' || c === "'" || c === '`') {
+          inStrChar = c;
+          continue;
+        }
+        if (c === '(') {
+          stack.push('(');
+        } else if (c === '{') {
+          stack.push('{');
+        } else if (c === '[') {
+          stack.push('[');
+        } else if (c === ')') {
+          if (stack.length > 0 && stack[stack.length - 1] === '(') stack.pop();
+        } else if (c === '}') {
+          if (stack.length > 0 && stack[stack.length - 1] === '{') stack.pop();
+        } else if (c === ']') {
+          if (stack.length > 0 && stack[stack.length - 1] === '[') stack.pop();
+        }
+      }
+      if (stack.length > 0) {
+        let suffix = "";
+        while (stack.length > 0) {
+          const delim = stack.pop();
+          if (delim === '{') {
+            if (stack.length > 0 && stack[stack.length - 1] === '(') {
+              stack.pop();
+              suffix += "\n});";
+            } else {
+              suffix += "\n};";
+            }
+          } else if (delim === '(') {
+            suffix += ");";
+          } else if (delim === '[') {
+            suffix += "];";
+          }
+        }
+        currentCode = currentCode.trimEnd() + suffix + "\n";
+        modified = true;
+      }
+    }
+
     // If no modifications could be made, stop early
     if (!modified && attempts > 1) {
       break;

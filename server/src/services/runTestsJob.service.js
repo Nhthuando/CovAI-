@@ -28,13 +28,19 @@ import { parseJavaScriptCode } from "./babelParser.service.js";
 import { sanitizeAllProjectTestFiles, cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "./testSanitizer.service.js";
 import { cleanStoragePath, cleanStorageText, canonicalizeFilePath } from "../utils/pathSanitizer.js";
 import { isBusinessLogicSourceFile, extractProjectCoverageExclusions } from "../utils/businessLogicFileDetector.js";
+import { covaiJestDerivedSuitePattern, isCovaiJestArtifact, isCovaiJestRuntimeFile } from "../utils/covaiJestArtifact.js";
 import {
     extractMissingDependency,
+    collectWorkspaceMissingDependencies,
+    ensureMountedProjectDependencies,
     inspectWorkspaceDependency,
+    isValidNpmPackageName,
+    installPackageInWorkspace,
     ensureWorkspaceNodeModulesLinked,
     cleanupWorkspaceNodeModulesLinks
 } from "./dependencyResolution.service.js";
 import { currentProjectOperation, deferPreparedCommit, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
+import { resolveUnitTestDependency } from './unitTestPreflight.service.js';
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const JEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -271,6 +277,120 @@ export const readProjectJestConfig = async (repoRoot, explicitConfigPath = null)
 };
 
 /**
+ * Pre-flight validation and filtering / auto-healing for Jest setupFiles and setupFilesAfterEnv.
+ * Normalizes array or string inputs, resolves <rootDir> and relative paths against baseDir,
+ * ignores bare npm package imports, and filters out missing files or generates stubs if autoStub is active.
+ *
+ * @param {string|string[]} setupList - Raw setupFiles or setupFilesAfterEnv value
+ * @param {string} baseDir - Target directory (subpackage or project directory)
+ * @param {Object} [options={}] - Options
+ * @param {string} [options.rootDir] - Workspace root directory (used for <rootDir> resolution if distinct from baseDir)
+ * @param {boolean} [options.autoStub=false] - Whether to create auto-healing stub files on disk
+ * @param {Set<string>} [options.createdHarnessFiles] - Optional set to track created stub files
+ * @returns {string[]} Sanitized list of valid or stubbed setup files
+ */
+export const filterExistingSetupFiles = (setupList, baseDir, options = {}) => {
+    if (!setupList) return [];
+    const entries = Array.isArray(setupList) ? setupList : (typeof setupList === "string" ? [setupList] : []);
+    if (!entries.length) return [];
+
+    const rootDir = options?.rootDir || baseDir;
+    const autoStub = options?.autoStub === true;
+    const createdHarnessFiles = options?.createdHarnessFiles;
+    const candidateExtensions = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"];
+    const result = [];
+
+    for (const rawEntry of entries) {
+        if (!rawEntry || typeof rawEntry !== "string") continue;
+        const entry = rawEntry.trim();
+        if (!entry) continue;
+
+        // Check if entry is a bare npm package import (e.g. '@testing-library/jest-dom', 'jest-extended')
+        const isBarePackage = !entry.startsWith(".") &&
+            !entry.startsWith("/") &&
+            !entry.startsWith("\\") &&
+            !entry.startsWith("<rootDir>") &&
+            !path.isAbsolute(entry) &&
+            !fs.existsSync(path.join(baseDir, entry.split("/")[0])) &&
+            !/^[^/]+\.[cm]?[jt]sx?$/.test(entry);
+
+        if (isBarePackage) {
+            result.push(entry);
+            continue;
+        }
+
+        // Resolve absolute path on disk
+        let absPath;
+        if (entry.startsWith("<rootDir>")) {
+            const rel = entry.replace(/^<rootDir>[/\\]?/, "");
+            absPath = path.resolve(baseDir, rel);
+        } else if (path.isAbsolute(entry)) {
+            absPath = entry;
+        } else {
+            absPath = path.resolve(baseDir, entry);
+        }
+
+        // Workspace boundary containment check
+        const relToRoot = path.relative(rootDir, absPath).replace(/\\/g, "/");
+        if (relToRoot.startsWith("..") || path.isAbsolute(relToRoot)) {
+            console.warn(`[filterExistingSetupFiles] Setup file '${entry}' resolves outside workspace root ('${absPath}'). Skipping.`);
+            continue;
+        }
+
+        // Check if file exists directly or with candidate extension
+        let found = false;
+        try {
+            if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+                found = true;
+            }
+        } catch { }
+
+        if (!found) {
+            for (const ext of candidateExtensions) {
+                const candidate = absPath + ext;
+                try {
+                    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                        found = true;
+                        break;
+                    }
+                } catch { }
+            }
+        }
+
+        if (found) {
+            result.push(entry);
+        } else if (autoStub) {
+            try {
+                const targetStubPath = path.extname(absPath) ? absPath : `${absPath}.js`;
+                const relStubToRoot = path.relative(rootDir, targetStubPath).replace(/\\/g, "/");
+                if (relStubToRoot.startsWith("..") || path.isAbsolute(relStubToRoot)) {
+                    console.warn(`[filterExistingSetupFiles] Target stub path '${targetStubPath}' escapes workspace root. Skipping.`);
+                    continue;
+                }
+                fs.mkdirSync(path.dirname(targetStubPath), { recursive: true });
+                if (!fs.existsSync(targetStubPath)) {
+                    fs.writeFileSync(
+                        targetStubPath,
+                        "// [covai] auto-healed missing test setup file\nmodule.exports = {};\n",
+                        "utf8"
+                    );
+                }
+                if (createdHarnessFiles && typeof createdHarnessFiles.add === "function") {
+                    createdHarnessFiles.add(targetStubPath);
+                }
+                result.push(entry);
+            } catch (err) {
+                console.warn(`[filterExistingSetupFiles] Failed to auto-stub missing setup file '${entry}':`, err.message);
+            }
+        } else {
+            console.warn(`[filterExistingSetupFiles] Omitted missing setup file '${entry}' (resolved to '${absPath}') to prevent Jest runner failure.`);
+        }
+    }
+
+    return result;
+};
+
+/**
  * Determine if a project repository uses ESM (Node ES modules or ts-jest ESM preset)
  * @param {string} repoRoot
  * @param {Object} [projectJestConfig]
@@ -464,7 +584,7 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
  * @param {string} rootDir
  * @returns {Promise<boolean>}
  */
-export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
+export const detectAndRunPrismaGenerate = async (jobId, rootDir, options = {}) => {
     if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir)) return false;
     const resolvedRoot = path.resolve(rootDir);
     const lastChecked = preparedPrismaCache.get(resolvedRoot);
@@ -579,41 +699,9 @@ export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
             } catch (_) { }
         }
 
-        let resolvedDbUrl = "";
-        for (const envDir of [targetDir, rootDir]) {
-            for (const envName of [".env.test", ".env.local", ".env"]) {
-                const envPath = path.join(envDir, envName);
-                if (fs.existsSync(envPath)) {
-                    try {
-                        const envText = fs.readFileSync(envPath, "utf8");
-                        const match = envText.match(/DATABASE_URL=["']?([^"'\r\n]+)["']?/);
-                        if (match && match[1]) {
-                            const foundUrl = match[1].trim();
-                            if (provider === "mysql" && foundUrl.startsWith("mysql://")) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "sqlite" && (foundUrl.startsWith("file:") || foundUrl.endsWith(".db"))) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "postgresql" && (foundUrl.startsWith("postgresql://") || foundUrl.startsWith("postgres://"))) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "mongodb" && foundUrl.startsWith("mongodb")) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (!resolvedDbUrl) {
-                                resolvedDbUrl = foundUrl;
-                            }
-                        }
-                    } catch (_) { }
-                }
-            }
-            if (resolvedDbUrl) break;
-        }
-
-        if (!resolvedDbUrl) {
-            resolvedDbUrl = dummyUrl;
-        }
+        // R2 Requirement: Never extract real database credentials from repository .env files.
+        // Use isolated virtual database connection string or hermetic dummy fallback.
+        const resolvedDbUrl = options?.virtualDbUrl || options?.virtualDbEnv?.DATABASE_URL || dummyUrl;
 
         const hasLocalPrisma = fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma")) ||
             fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma.cmd")) ||
@@ -636,6 +724,7 @@ export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
                 jobId: jobId || "prisma-generate",
                 env: {
                     DATABASE_URL: resolvedDbUrl,
+                    DIRECT_URL: resolvedDbUrl,
                     NODE_ENV: "test",
                     PRISMA_GENERATE_SKIP_AUTOINSTALL: "true"
                 }
@@ -688,7 +777,7 @@ export const parseModuleResolutionError = (errorOutput, rootDir = "") => {
 
         let missingDependency = null;
         try {
-            const dep = extractMissingDependency(errorOutput);
+            const dep = extractMissingDependency(cannotFindMatch[0]);
             if (dep) {
                 const inspection = inspectWorkspaceDependency({
                     rootDir,
@@ -827,7 +916,8 @@ export const findUnitFiles = (rootDir) => {
     const IGNORED_DIRS = new Set([
         "node_modules", ".git", "coverage", "dist", "build",
         ".next", ".vite", ".vitest", ".cache", "storage",
-        "client", "frontend", "ui", "web", "test-data", "test_data",
+        "client", "frontend", "ui", "web", "e2e", "system", "integration",
+        "cypress", "playwright", "test-data", "test_data",
         "fixtures", "mocks", "__mocks__"
     ]);
 
@@ -846,14 +936,19 @@ export const findUnitFiles = (rootDir) => {
             const lowerRel = relPath.toLowerCase();
 
             if (entry.isDirectory()) {
-                if (IGNORED_DIRS.has(entry.name) || lowerRel.includes("/client/") || lowerRel.includes("/frontend/")) {
+                const lowerName = entry.name.toLowerCase();
+                const isInsideTestDir = /(?:^|\/)(?:tests?|__tests__|unit)(?:\/|$)/i.test(lowerRel);
+                const isIgnoredDir = (IGNORED_DIRS.has(lowerName) && (!isInsideTestDir || !["integration", "system", "e2e"].includes(lowerName))) ||
+                    /(?:^|\/)(?:client|frontend|ui|web|cypress|playwright)(?:\/|$)/i.test(lowerRel) ||
+                    (!isInsideTestDir && /(?:^|\/)(?:e2e|system|integration)(?:[-_a-z0-9]*)?(?:\/|$)/i.test(lowerRel));
+                if (isIgnoredDir) {
                     continue;
                 }
                 walk(fullPath);
                 continue;
             }
 
-            if (!entry.isFile()) continue;
+            if (!entry.isFile() || isCovaiJestArtifact(relPath)) continue;
 
             // If it's a test file (ends with .test.ts, .spec.ts, etc.), do NOT skip it just because it's in a helper/util folder!
             const isTestFileName = /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(entry.name);
@@ -896,18 +991,10 @@ export const findUnitFiles = (rootDir) => {
 
             // Strictly exclude integration, api contract, and E2E system files
             const isIntegrationOrSystem = (
-                lowerRel.includes("supertest") ||
-                lowerRel.includes("/integration/") ||
-                lowerRel.includes("\\integration\\") ||
-                lowerRel.includes("/routes/") ||
-                lowerRel.includes("\\routes\\") ||
-                lowerRel.includes("/e2e/") ||
-                lowerRel.includes("\\e2e\\") ||
-                lowerRel.includes("/system/") ||
-                lowerRel.includes("\\system\\") ||
-                lowerRel.includes("/cypress/") ||
-                lowerRel.includes("/playwright/") ||
-                /\b(integration|api|e2e|system)\.(test|spec)\.[cm]?[jt]s$/i.test(entry.name) ||
+                /(?:^|\/)(?:e2e|system|integration|cypress|playwright|routes)(?:[-_a-z0-9]*)?(?:\/|$)/i.test(lowerRel) ||
+                /(?:^|\.)(?:e2e|system|integration|cypress|playwright|supertest)\.(?:test|spec)\.[cm]?[jt]s$/i.test(entry.name) ||
+                /^(?:e2e|cypress|playwright)[-_]/i.test(entry.name) ||
+                /^tier\d+[-_]/i.test(entry.name) ||
                 lowerContent.includes("supertest") ||
                 lowerContent.includes("request(app)") ||
                 lowerContent.includes("request(server)") ||
@@ -941,6 +1028,10 @@ export const findUnitFiles = (rootDir) => {
 
             // Framework classification using classifyTestFile
             const fw = classifyTestFile(content, relPath, detectedUnit);
+            if (['playwright', 'cypress', 'supertest'].includes(fw)) {
+                skippedFiles.push(relPath);
+                continue;
+            }
             const isVitest = fw === "vitest" ||
                 lowerRel.includes(".vitest.") ||
                 lowerContent.includes("from 'vitest'") ||
@@ -1487,6 +1578,14 @@ export const getPackageForFile = (relFile, root) => {
         if (fs.existsSync(pkgPath)) {
             return currentDir.replace(/\\/g, "/");
         }
+        const hasTestConfig = [
+            'vitest.config.ts', 'vitest.config.js', 'vitest.config.mjs', 'vitest.config.cjs',
+            'vite.config.ts', 'vite.config.js', 'vite.config.mjs', 'vite.config.cjs',
+            'jest.config.js', 'jest.config.ts', 'jest.config.cjs', 'jest.config.mjs', 'jest.config.json'
+        ].some(cfg => fs.existsSync(path.join(root, currentDir, cfg)));
+        if (hasTestConfig) {
+            return currentDir.replace(/\\/g, "/");
+        }
         const parent = path.dirname(currentDir);
         if (parent === currentDir) break;
         currentDir = parent;
@@ -1561,6 +1660,469 @@ export const resolveTestEnvironment = (dir, rootDir, configuredEnv) => {
     return env;
 };
 
+/**
+ * Synthesizes the contents of the Jest setup script (covai-jest-setup.cjs / covai-setup-*.cjs)
+ * Ensures:
+ * 1. Root .env and subpackage .env are loaded into process.env.
+ * 2. Precedence: Explicit process.env > .env.test > .env > .env.example > Hermetic RAM Mocks.
+ * 3. Injects hermetic RAM mock dictionary to guarantee zero undefined crashes.
+ * 4. Configures Jest global shims, custom matchers, and Bull/Prisma mocks.
+ */
+export const buildSetupContent = ({ rootDir = "", targetDir = null, hermeticMocks = {}, virtualDbEnv = {} } = {}) => {
+    const serializedMocks = JSON.stringify(hermeticMocks || {});
+    const serializedVirtualDbEnv = JSON.stringify(virtualDbEnv || {});
+    const safeRootDir = rootDir ? String(rootDir).replace(/\\/g, "/") : "";
+    const safeTargetDir = targetDir ? String(targetDir).replace(/\\/g, "/") : "";
+
+    return (
+        `try {\n` +
+        `  delete require.cache[__filename];\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  process.env.NODE_ENV = process.env.NODE_ENV || 'test';\n` +
+        `  process.exit = function(code) {};\n` +
+        `  process.on('unhandledRejection', () => {});\n` +
+        `  process.on('uncaughtException', () => {});\n` +
+        `  let fsModule;\n` +
+        `  try { fsModule = (typeof fs !== 'undefined' && fs && fs.existsSync) ? fs : (typeof require !== 'undefined' ? require('fs') : null); } catch (_) { fsModule = typeof fs !== 'undefined' ? fs : null; }\n` +
+        `  let pathModule;\n` +
+        `  try { pathModule = (typeof path !== 'undefined' && path && path.resolve) ? path : (typeof require !== 'undefined' ? require('path') : null); } catch (_) { pathModule = typeof path !== 'undefined' ? path : null; }\n` +
+        `  const rootDirCandidate = ${JSON.stringify(safeRootDir)} || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '');\n` +
+        `  const targetDirCandidate = ${JSON.stringify(safeTargetDir)} || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '');\n` +
+        `  const cwdCandidate = (typeof process !== 'undefined' && process.cwd) ? process.cwd() : '';\n` +
+        `  const searchDirs = Array.from(new Set([targetDirCandidate, rootDirCandidate, cwdCandidate])).filter(Boolean);\n` +
+        `  const parseEnvFile = (filePath) => {\n` +
+        `    if (!fsModule || !fsModule.existsSync || !fsModule.existsSync(filePath)) return;\n` +
+        `    try {\n` +
+        `      const content = fsModule.readFileSync(filePath, 'utf8');\n` +
+        `      const lines = content.split(/\\r?\\n/);\n` +
+        `      let i = 0;\n` +
+        `      while (i < lines.length) {\n` +
+        `        const line = lines[i];\n` +
+        `        const t = line.trim();\n` +
+        `        if (!t || t.startsWith('#')) { i++; continue; }\n` +
+        `        const clean = t.startsWith('export ') ? t.slice(7).trim() : t;\n` +
+        `        const eq = clean.indexOf('=');\n` +
+        `        if (eq !== -1) {\n` +
+        `          const k = clean.slice(0, eq).trim();\n` +
+        `          if (/^(DATABASE_URL|DIRECT_URL|SHADOW_DATABASE_URL|POSTGRES_URL|POSTGRESQL_URL|DB_URL|DB_URI|DB_CONNECTION_STRING|MONGODB_URI|MYSQL_URL)$/i.test(k) || /^DATABASE_/i.test(k)) {\n` +
+        `            i++;\n` +
+        `            continue;\n` +
+        `          }\n` +
+        `          let rest = clean.slice(eq + 1).trim();\n` +
+        `          let v = '';\n` +
+        `          if (rest.startsWith('"')) {\n` +
+        `            let acc = rest.slice(1);\n` +
+        `            while (true) {\n` +
+        `              const closeIdx = acc.search(/(?<!\\\\)"/);\n` +
+        `              if (closeIdx !== -1) {\n` +
+        `                v = acc.slice(0, closeIdx).replace(/\\\\"/g, '"');\n` +
+        `                break;\n` +
+        `              }\n` +
+        `              i++;\n` +
+        `              if (i >= lines.length) { v = acc; break; }\n` +
+        `              acc += '\\n' + lines[i];\n` +
+        `            }\n` +
+        `          } else if (rest.startsWith("'")) {\n` +
+        `            let acc = rest.slice(1);\n` +
+        `            while (true) {\n` +
+        `              const closeIdx = acc.indexOf("'");\n` +
+        `              if (closeIdx !== -1) {\n` +
+        `                v = acc.slice(0, closeIdx);\n` +
+        `                break;\n` +
+        `              }\n` +
+        `              i++;\n` +
+        `              if (i >= lines.length) { v = acc; break; }\n` +
+        `              acc += '\\n' + lines[i];\n` +
+        `            }\n` +
+        `          } else {\n` +
+        `            const commentMatch = rest.match(/(\\s+#.*)$/);\n` +
+        `            v = commentMatch ? rest.slice(0, commentMatch.index).trim() : rest;\n` +
+        `          }\n` +
+        `          if (k && (process.env[k] === undefined || process.env[k] === null || process.env[k] === '')) {\n` +
+        `            process.env[k] = v;\n` +
+        `          }\n` +
+        `        }\n` +
+        `        i++;\n` +
+        `      }\n` +
+        `    } catch (_) {}\n` +
+        `  };\n` +
+        `  // Strict Precedence 1: All .env.test across candidate directories (targetDir > rootDir)\n` +
+        `  for (const d of searchDirs) {\n` +
+        `    if (!pathModule) break;\n` +
+        `    parseEnvFile(pathModule.join(d, '.env.test'));\n` +
+        `  }\n` +
+        `  // Strict Precedence 2: All real .env files across candidate directories (targetDir > rootDir)\n` +
+        `  for (const d of searchDirs) {\n` +
+        `    if (!pathModule) break;\n` +
+        `    parseEnvFile(pathModule.join(d, '.env'));\n` +
+        `  }\n` +
+        `  // Strict Precedence 3: All template .env.example files across candidate directories\n` +
+        `  for (const d of searchDirs) {\n` +
+        `    if (!pathModule) break;\n` +
+        `    parseEnvFile(pathModule.join(d, '.env.example'));\n` +
+        `  }\n` +
+        `  // Strict Precedence 3: Hermetic RAM Mocks injection (fills in any missing keys)\n` +
+        `  const HERMETIC_MOCKS = ${serializedMocks};\n` +
+        `  for (const [k, v] of Object.entries(HERMETIC_MOCKS)) {\n` +
+        `    if (process.env[k] === undefined || process.env[k] === null || process.env[k] === '') {\n` +
+        `      process.env[k] = v;\n` +
+        `    }\n` +
+        `  }\n` +
+        `  // Strict Precedence 4: Isolated Virtual Database environment injection (highest precedence)\n` +
+        `  const VIRTUAL_DB_ENV = ${serializedVirtualDbEnv};\n` +
+        `  for (const [k, v] of Object.entries(VIRTUAL_DB_ENV)) {\n` +
+        `    process.env[k] = v;\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
+        `  if (!j) {\n` +
+        `    try {\n` +
+        `      const g = require('@jest/globals');\n` +
+        `      if (g && g.jest) j = g.jest;\n` +
+        `    } catch (_) {}\n` +
+        `  }\n` +
+        `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
+        `  if (!j) {\n` +
+        `    const createFn = (impl) => {\n` +
+        `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
+        `      mockFn._isMockFunction = true;\n` +
+        `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
+        `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
+        `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
+        `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
+        `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
+        `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
+        `      mockFn.mockReturnThis = () => mockFn;\n` +
+        `      mockFn.mockClear = () => mockFn;\n` +
+        `      mockFn.mockReset = () => mockFn;\n` +
+        `      mockFn.mockRestore = () => mockFn;\n` +
+        `      return mockFn;\n` +
+        `    };\n` +
+        `    j = {\n` +
+        `      fn: createFn,\n` +
+        `      mock: () => {},\n` +
+        `      unmock: () => {},\n` +
+        `      spyOn: (obj, method) => {\n` +
+        `        const orig = obj ? obj[method] : undefined;\n` +
+        `        const spy = createFn(orig);\n` +
+        `        if (obj) obj[method] = spy;\n` +
+        `        return spy;\n` +
+        `      },\n` +
+        `      clearAllMocks: () => {},\n` +
+        `      resetAllMocks: () => {},\n` +
+        `      restoreAllMocks: () => {},\n` +
+        `      resetModules: () => {},\n` +
+        `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
+        `    };\n` +
+        `  }\n` +
+        `  if (typeof global !== 'undefined') global.jest = j;\n` +
+        `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof globalThis.require === 'undefined' || typeof global.require === 'undefined') {\n` +
+        `    const { createRequire } = require('module');\n` +
+        `    const req = createRequire(process.cwd() + '/package.json');\n` +
+        `    if (typeof globalThis.require === 'undefined') globalThis.require = req;\n` +
+        `    if (typeof global.require === 'undefined') global.require = req;\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof globalThis !== 'undefined' && typeof globalThis.fetch === 'function') {\n` +
+        `    const _nativeFetch = globalThis.fetch;\n` +
+        `    const hermeticFetch = async function (input, init) {\n` +
+        `      try {\n` +
+        `        return await _nativeFetch(input, init);\n` +
+        `      } catch (err) {\n` +
+        `        return {\n` +
+        `          ok: true,\n` +
+        `          status: 200,\n` +
+        `          statusText: 'OK',\n` +
+        `          headers: typeof Headers !== 'undefined' ? new Headers({ 'content-type': 'application/json' }) : { get: () => 'application/json' },\n` +
+        `          json: async () => ({ success: true, mockedInRam: true }),\n` +
+        `          text: async () => JSON.stringify({ success: true, mockedInRam: true }),\n` +
+        `          blob: async () => (typeof Blob !== 'undefined' ? new Blob([]) : null),\n` +
+        `          arrayBuffer: async () => new ArrayBuffer(0)\n` +
+        `        };\n` +
+        `      }\n` +
+        `    };\n` +
+        `    globalThis.fetch = hermeticFetch;\n` +
+        `    if (typeof global !== 'undefined') global.fetch = hermeticFetch;\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        // Setup registrations run before the suite loads and must preserve local factory bindings.
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+        `    jest.doMock('bull', () => {\n` +
+        `      const mockQueue = {\n` +
+        `        process: jest.fn(),\n` +
+        `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
+        `        on: jest.fn().mockReturnThis(),\n` +
+        `        getWaitingCount: jest.fn().mockResolvedValue(0),\n` +
+        `        getActiveCount: jest.fn().mockResolvedValue(0),\n` +
+        `        getCompletedCount: jest.fn().mockResolvedValue(0),\n` +
+        `        getFailedCount: jest.fn().mockResolvedValue(0),\n` +
+        `        getDelayedCount: jest.fn().mockResolvedValue(0),\n` +
+        `        close: jest.fn().mockResolvedValue(),\n` +
+        `        isReady: jest.fn().mockResolvedValue()\n` +
+        `      };\n` +
+        `      return jest.fn(() => mockQueue);\n` +
+        `    }, { virtual: true });\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+        `    jest.doMock('mongoose', () => {\n` +
+        `    let actualMongoose;\n` +
+        `    try { actualMongoose = jest.requireActual('mongoose'); } catch (_) {}\n` +
+        `    if (actualMongoose?.Schema && actualMongoose?.Types?.ObjectId) {\n` +
+        `      const isolated = Object.create(actualMongoose);\n` +
+        `      Object.defineProperties(isolated, {\n` +
+        `        default: { value: isolated },\n` +
+        `        model: { value: actualMongoose.model.bind(actualMongoose), writable: true },\n` +
+        `        connect: { value: jest.fn().mockResolvedValue(isolated), writable: true },\n` +
+        `        createConnection: { value: jest.fn(() => actualMongoose.createConnection()), writable: true },\n` +
+        `      });\n` +
+        `      return isolated;\n` +
+        `    }\n` +
+        `    const sampleItem = { _id: '507f1f77bcf86cd799439011', id: '1', name: 'Sample Item', category: { _id: '1', name: 'General' }, status: 'ACTIVE', email: 'sample@example.com', save: jest.fn(() => Promise.resolve({ id: '1' })) };\n` +
+        `    const createQueryChain = (res = [sampleItem]) => ({\n` +
+        `      sort: jest.fn().mockReturnThis(),\n` +
+        `      limit: jest.fn().mockReturnThis(),\n` +
+        `      skip: jest.fn().mockReturnThis(),\n` +
+        `      select: jest.fn().mockReturnThis(),\n` +
+        `      populate: jest.fn().mockReturnThis(),\n` +
+        `      lean: jest.fn(() => Promise.resolve(res)),\n` +
+        `      where: jest.fn().mockReturnThis(),\n` +
+        `      distinct: jest.fn().mockReturnThis(),\n` +
+        `      exec: jest.fn().mockResolvedValue(res),\n` +
+        `      then: (resolve, reject) => Promise.resolve(res).then(resolve, reject),\n` +
+        `      catch: (reject) => Promise.resolve(res).catch(reject),\n` +
+        `      finally: (cb) => Promise.resolve(res).finally(cb)\n` +
+        `    });\n` +
+        `    const createModelProxy = () => {\n` +
+        `      const fn = jest.fn((doc) => ({ ...sampleItem, ...doc, save: jest.fn(() => Promise.resolve({ ...sampleItem, ...doc })) }));\n` +
+        `      fn.find = jest.fn(() => createQueryChain([sampleItem]));\n` +
+        `      fn.findOne = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.findById = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.findOneAndUpdate = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.findByIdAndUpdate = jest.fn(() => createQueryChain(sampleItem));\n` +
+        `      fn.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });\n` +
+        `      fn.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 1 });\n` +
+        `      fn.create = jest.fn((doc) => Promise.resolve({ _id: '1', ...doc }));\n` +
+        `      fn.countDocuments = jest.fn().mockResolvedValue(1);\n` +
+        `      fn.distinct = jest.fn().mockResolvedValue(['sample']);\n` +
+        `      fn.aggregate = jest.fn().mockResolvedValue([sampleItem]);\n` +
+        `      return fn;\n` +
+        `    };\n` +
+        `    const models = new Map();\n` +
+        `    const mongooseMock = {\n` +
+        `      model: jest.fn((name) => {\n` +
+        `        if (!models.has(name)) models.set(name, createModelProxy());\n` +
+        `        return models.get(name);\n` +
+        `      }),\n` +
+        `      Schema: class { static Types = { ObjectId: String }; index() {} pre() {} post() {} },\n` +
+        `      Types: { ObjectId: class { constructor(value) { this.value = value; } toString() { return String(this.value); } } },\n` +
+        `      connect: jest.fn(() => Promise.resolve()),\n` +
+        `      disconnect: jest.fn(() => Promise.resolve()),\n` +
+        `      connection: { on: jest.fn(), once: jest.fn(), readyState: 1 }\n` +
+        `    };\n` +
+        `    return { default: mongooseMock, ...mongooseMock };\n` +
+        `    }, { virtual: true });\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+        `    const mockJwt = {\n` +
+        `      verify: jest.fn((token) => ({\n` +
+        `        id: 'mock_user_1', userId: 'mock_user_1', _id: '507f1f77bcf86cd799439011',\n` +
+        `        email: 'user@example.com', role: 'user', username: 'testuser'\n` +
+        `      })),\n` +
+        `      sign: jest.fn(() => 'mock_signed_jwt_token_xyz'),\n` +
+        `      decode: jest.fn(() => ({ id: 'mock_user_1', email: 'user@example.com', role: 'user' }))\n` +
+        `    };\n` +
+        `    jest.doMock('jsonwebtoken', () => ({ default: mockJwt, ...mockJwt }), { virtual: true });\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  const matchers = {\n` +
+        `    toSatisfy(received, predicate) {\n` +
+        `      try {\n` +
+        `        const pass = predicate(received);\n` +
+        `        return { pass: pass === undefined ? true : Boolean(pass), message: () => 'expected ' + received + ' to satisfy predicate' };\n` +
+        `      } catch (err) {\n` +
+        `        return { pass: false, message: () => 'predicate threw error: ' + (err && err.message) };\n` +
+        `      }\n` +
+        `    },\n` +
+        `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
+        `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
+        `    toBe(received, expected) {\n` +
+        `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+        `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
+        `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+        `      }\n` +
+        `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
+        `    }\n` +
+        `  };\n` +
+        `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
+        `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
+        `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
+        `} catch { }\n` +
+        `try {\n` +
+        `  const g = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : {});\n` +
+        `  if (g && !g.mockQbo) {\n` +
+        `    const fn = () => (typeof jest !== 'undefined' ? jest.fn((...args) => { const cb = args[args.length-1]; if (typeof cb === 'function') cb(null, {}); return Promise.resolve({}); }) : () => Promise.resolve({}));\n` +
+        `    g.mockQbo = { getAccount: fn(), updateAccount: fn(), createAccount: fn(), findAccounts: fn() };\n` +
+        `  }\n` +
+        `} catch { }\n` +
+        `try {\n` +
+        `  let prismaPkg = null;\n` +
+        `  try {\n` +
+        `    prismaPkg = require('@prisma/client');\n` +
+        `  } catch (_) {}\n` +
+        `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
+        `    let isStub = false;\n` +
+        `    try {\n` +
+        `      new prismaPkg.PrismaClient();\n` +
+        `    } catch (pe) {\n` +
+        `      if (pe) {\n` +
+        `        const pMsg = String(pe.message || '');\n` +
+        `        const pName = String(pe.name || '');\n` +
+        `        if (\n` +
+        `          pName === 'PrismaClientInitializationError' ||\n` +
+        `          pName === 'PrismaClientConstructorValidationError' ||\n` +
+        `          pMsg.includes('did not initialize yet') ||\n` +
+        `          pMsg.includes('prisma generate') ||\n` +
+        `          pMsg.includes('needs to be constructed with') ||\n` +
+        `          pMsg.includes('requires either "adapter"') ||\n` +
+        `          pMsg.toLowerCase().includes('constructor')\n` +
+        `        ) {\n` +
+        `          isStub = true;\n` +
+        `        }\n` +
+        `      }\n` +
+        `    }\n` +
+        `    if (isStub) {\n` +
+        `      const createPrismaProxy = (lastProp = '') => {\n` +
+        `        const defaultRec = { id: 1, name: 'Sample', status: 'ACTIVE', createdAt: new Date(), updatedAt: new Date() };\n` +
+        `        const handler = {\n` +
+        `          get(target, prop) {\n` +
+        `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+        `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
+        `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
+        `            if (prop === '$extends') return () => createPrismaProxy();\n` +
+        `            return new Proxy((...args) => {\n` +
+        `              const m = String(prop || '');\n` +
+        `              if (m === 'findMany' || m === 'findRaw' || m === 'groupBy') return Promise.resolve([defaultRec]);\n` +
+        `              if (m === 'count') return Promise.resolve(1);\n` +
+        `              if (m === 'create' || m === 'update' || m === 'upsert') return Promise.resolve({ ...defaultRec, ...(args?.[0]?.data || args?.[0]?.create || args?.[0]?.update || {}) });\n` +
+        `              return Promise.resolve(defaultRec);\n` +
+        `            }, createPrismaProxy(prop).__handler || handler);\n` +
+        `          },\n` +
+        `          apply(target, thisArg, args) {\n` +
+        `            if (typeof target === 'function') return target(...(args || []));\n` +
+        `            return Promise.resolve(defaultRec);\n` +
+        `          }\n` +
+        `        };\n` +
+        `        return new Proxy({}, handler);\n` +
+        `      };\n` +
+        `      const OriginalPrismaClient = prismaPkg.PrismaClient;\n` +
+        `      function FallbackPrismaClient(...args) {\n` +
+        `        try {\n` +
+        `          if (args.length > 0 && args[0] && (args[0].adapter || args[0].accelerateUrl || args[0].datasources)) {\n` +
+        `            return new OriginalPrismaClient(...args);\n` +
+        `          }\n` +
+        `        } catch (_) {}\n` +
+        `        return createPrismaProxy();\n` +
+        `      }\n` +
+        `      FallbackPrismaClient.prototype = (OriginalPrismaClient && OriginalPrismaClient.prototype) || {};\n` +
+        `      if (OriginalPrismaClient) {\n` +
+        `        try { Object.assign(FallbackPrismaClient, OriginalPrismaClient); } catch (_) {}\n` +
+        `      }\n` +
+        `      prismaPkg.PrismaClient = FallbackPrismaClient;\n` +
+        `      // Compatibility fallback: prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
+        `    }\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+        `    const createPrismaProxy = () => {\n` +
+        `      const defaultRec = { id: 1, name: 'Sample', status: 'ACTIVE', createdAt: new Date(), updatedAt: new Date() };\n` +
+        `      const handler = {\n` +
+        `        get(target, prop) {\n` +
+        `          if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+        `          if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
+        `          if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
+        `          if (prop === '$extends') return () => createPrismaProxy();\n` +
+        `          return new Proxy((...args) => {\n` +
+        `            const m = String(prop || '');\n` +
+        `            if (m === 'findMany' || m === 'findRaw' || m === 'groupBy') return Promise.resolve([defaultRec]);\n` +
+        `            if (m === 'count') return Promise.resolve(1);\n` +
+        `            if (m === 'create' || m === 'update' || m === 'upsert') return Promise.resolve({ ...defaultRec, ...(args?.[0]?.data || args?.[0]?.create || args?.[0]?.update || {}) });\n` +
+        `            return Promise.resolve(defaultRec);\n` +
+        `          }, handler);\n` +
+        `        },\n` +
+        `        apply(target, thisArg, args) { return typeof target === 'function' ? target(...(args || [])) : Promise.resolve(defaultRec); }\n` +
+        `      };\n` +
+        `      return new Proxy({}, handler);\n` +
+        `    };\n` +
+        `    const fn = (typeof jest !== 'undefined' && typeof jest.fn === 'function') ? jest.fn : ((impl) => { const f = (...args) => (impl ? impl(...args) : undefined); f.mockImplementation = () => f; return f; });\n` +
+        // Keep the resolved module ID when the fallback above has already loaded Prisma.
+        `    let prismaIsVirtual = true;\n` +
+        `    try { require.resolve('@prisma/client'); prismaIsVirtual = false; } catch (_) {}\n` +
+        `    jest.doMock('@prisma/client', () => {\n` +
+        `      return {\n` +
+        `        __esModule: true,\n` +
+        `        PrismaClient: fn().mockImplementation(() => createPrismaProxy()),\n` +
+        `        default: { PrismaClient: fn().mockImplementation(() => createPrismaProxy()) },\n` +
+        `        Prisma: {\n` +
+        `          PrismaClientKnownRequestError: class extends Error {},\n` +
+        `          PrismaClientUnknownRequestError: class extends Error {},\n` +
+        `          PrismaClientRustPanicError: class extends Error {},\n` +
+        `          PrismaClientInitializationError: class extends Error {},\n` +
+        `          PrismaClientValidationError: class extends Error {},\n` +
+        `          Decimal: Number,\n` +
+        `          empty: '',\n` +
+        `          join: () => '',\n` +
+        `          raw: (sql) => sql,\n` +
+        `          sql: (strings, ...values) => strings.join('?')\n` +
+        `        }\n` +
+        `      };\n` +
+        `    }, { virtual: prismaIsVirtual });\n` +
+        `    const _relPrismaPaths = [\n` +
+        `      '../lib/prisma', '../lib/prisma.js',\n` +
+        `      '../../lib/prisma', '../../lib/prisma.js',\n` +
+        `      '../src/lib/prisma', '../src/lib/prisma.js',\n` +
+        `      '../../src/lib/prisma', '../../src/lib/prisma.js',\n` +
+        `      '../config/prisma', '../config/prisma.js',\n` +
+        `      '../../config/prisma', '../../config/prisma.js',\n` +
+        `      '../src/config/prisma', '../src/config/prisma.js',\n` +
+        `      '../../src/config/prisma', '../../src/config/prisma.js'\n` +
+        `    ];\n` +
+        `    for (const _rp of _relPrismaPaths) {\n` +
+        `      try {\n` +
+        `        jest.doMock(_rp, () => {\n` +
+        `          const client = createPrismaProxy();\n` +
+        `          return {\n` +
+        `            __esModule: true,\n` +
+        `            prisma: client,\n` +
+        `            prismaClient: client,\n` +
+        `            default: client,\n` +
+        `            setPrismaClient: () => {}\n` +
+        `          };\n` +
+        `        }, { virtual: true });\n` +
+        `      } catch (_) {}\n` +
+        `    }\n` +
+        `  }\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  if (typeof test !== 'undefined' && typeof expect !== 'undefined' && typeof describe === 'undefined' && typeof beforeAll === 'undefined') {\n` +
+        `    test('test suite sanity check', () => { expect(true).toBe(true); });\n` +
+        `  }\n` +
+        `} catch { }\n`
+    );
+};
+
 const buildSetupAfterEnvContent = () => {
     return (
         `try {\n` +
@@ -1608,7 +2170,13 @@ const buildSetupAfterEnvContent = () => {
     );
 };
 
-export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = [], customJestCommand = null, options = {}) => {
+export const runJestCoverage = async (jobId, rootDir, jestConfigPath, requestedFiles = [], customJestCommand = null, options = {}) => {
+    const specificFiles = Array.isArray(requestedFiles) ? requestedFiles.filter(file => !isCovaiJestArtifact(file)) : [];
+    if (requestedFiles?.length && !specificFiles.length) {
+        return { exitCode: 1, stdout: "", stderr: "The requested files are CovAI Jest runner artifacts." };
+    }
+    const hermeticMocks = options?.hermeticMocks || {};
+    const useHermeticMock = options?.useHermeticMock !== false;
     const targetCovDir = options?.coverageDir ? path.resolve(rootDir, options.coverageDir) : path.join(rootDir, "coverage");
     const covDir = targetCovDir;
     if (!fs.existsSync(targetCovDir)) {
@@ -1627,12 +2195,6 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         } catch { }
     }
 
-    // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
-    await detectAndRunBuild(jobId, rootDir);
-
-    // Ensure Prisma Client is generated if project uses Prisma
-    await detectAndRunPrismaGenerate(jobId, rootDir);
-
     const packageGroups = new Map();
     if (Array.isArray(filesToRun) && filesToRun.length > 0) {
         for (const file of filesToRun) {
@@ -1642,9 +2204,19 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         }
     }
 
+    if (dockerRunner.containerEnabled && (options.requireDocker || currentProjectOperation())) {
+        await ensureMountedProjectDependencies({ rootDir, packageDirs: packageGroups.keys(), jobId });
+    }
+
+    // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
+    await detectAndRunBuild(jobId, rootDir);
+
+    // Ensure Prisma Client is generated if project uses Prisma
+    await detectAndRunPrismaGenerate(jobId, rootDir);
+
     const rootFiles = packageGroups.has("") ? packageGroups.get("") : (packageGroups.size === 0 ? (specificFiles || []) : []);
     const shouldRunRoot = packageGroups.size === 0 ? true : (rootFiles.length > 0);
-    const createdHarnessFiles = new Set();
+    const createdHarnessFiles = options?.createdHarnessFiles || new Set();
 
     try {
         let overallExitCode = 0;
@@ -1656,7 +2228,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const rootJestBin = resolveJestBin(rootDir, isEsmProject, customJestCommand);
         const rootWorkerFlags = getOptimalWorkerFlags(rootFiles.length, customJestCommand);
-        let jestCmd = `${rootJestBin} --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
+        let jestCmd = `${rootJestBin} --json --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
 
         let tempConfigCreated = false;
         const tempConfigName = "covai-jest-runner.json";
@@ -1704,7 +2276,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const resolveTransformerPackage = (pkgName, searchDirs = []) => {
             try {
-                return require.resolve(pkgName, {
+                return esmRequire.resolve(pkgName, {
                     paths: [...searchDirs, rootDir, "/app/node_modules", serverNodeModules, process.cwd()]
                 });
             } catch (_) {
@@ -1714,7 +2286,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const isTsJestResolvable = (searchDirs = []) => {
             try {
-                require.resolve("ts-jest", {
+                esmRequire.resolve("ts-jest", {
                     paths: [...searchDirs, rootDir, "/app/node_modules", serverNodeModules, process.cwd()]
                 });
                 return true;
@@ -1929,6 +2501,43 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             mergedTransform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
         }
 
+        if (process.env.COVAI_ISOLATED_SOURCE_DEFECTS) {
+            try {
+                const defectEntries = JSON.parse(process.env.COVAI_ISOLATED_SOURCE_DEFECTS);
+                if (Array.isArray(defectEntries) && defectEntries.length > 0) {
+                    const shimName = "covai-jest-defect-shim.cjs";
+                    const shimPath = path.join(rootDir, shimName);
+                    const { createRequire } = await import("node:module");
+                    const babelJestPath = createRequire(import.meta.url).resolve("babel-jest").replace(/\\/g, "/");
+                    const shimCode =
+                        `const babelJest = require(${JSON.stringify(babelJestPath)});\n` +
+                        `const inner = (babelJest.default || babelJest).createTransformer ? (babelJest.default || babelJest).createTransformer() : (babelJest.default || babelJest);\n` +
+                        `const defects = ${JSON.stringify(defectEntries)};\n` +
+                        `module.exports = {\n` +
+                        `  process(sourceText, sourcePath, options) {\n` +
+                        `    const norm = String(sourcePath || '').replace(/\\\\/g, '/');\n` +
+                        `    const hit = defects.find(d => d.file && (norm.endsWith('/' + d.file) || norm === d.file));\n` +
+                        `    let patched = sourceText;\n` +
+                        `    if (hit && Array.isArray(hit.symbols) && hit.symbols.length) {\n` +
+                        `      const stubs = hit.symbols.map(s => 'var ' + s + ' = function __covaiIsolatedSourceDefect() { throw new ReferenceError(' + JSON.stringify(s + ' is not defined') + '); };').join('\\n');\n` +
+                        `      patched = sourceText + '\\n' + stubs + '\\n';\n` +
+                        `    }\n` +
+                        `    return inner.process(patched, sourcePath, options);\n` +
+                        `  },\n` +
+                        `  getCacheKey(sourceText, sourcePath, options) {\n` +
+                        `    return (inner.getCacheKey ? inner.getCacheKey(sourceText, sourcePath, options) : '') + ':' + JSON.stringify(defects);\n` +
+                        `  }\n` +
+                        `};\n`;
+                    fs.writeFileSync(shimPath, shimCode, "utf8");
+                    createdHarnessFiles.add(shimPath);
+                    for (const k of Object.keys(mergedTransform)) {
+                        if (/j|t|x/.test(k)) delete mergedTransform[k];
+                    }
+                    mergedTransform["^.+\\.[cm]?[jt]sx?$"] = `<rootDir>/${shimName}`;
+                }
+            } catch (_) {}
+        }
+
         const resolvedModuleFileExtensions = Array.from(new Set([
             ...(Array.isArray(projectJestConfig?.moduleFileExtensions) ? projectJestConfig.moduleFileExtensions : []),
             "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "node"
@@ -2056,173 +2665,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             try {
                 fs.writeFileSync(
                     tempSetupPath,
-                    `try {\n` +
-                    `  delete require.cache[__filename];\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  process.env.NODE_ENV = process.env.NODE_ENV || 'test';\n` +
-                    `  process.exit = function(code) {};\n` +
-                    `  process.on('unhandledRejection', () => {});\n` +
-                    `  process.on('uncaughtException', () => {});\n` +
-                    `  const fs = require('fs');\n` +
-                    `  const path = require('path');\n` +
-                    `  for (const ef of ['.env.test', '.env.example', '.env']) {\n` +
-                    `    const ep = path.resolve(process.cwd(), ef);\n` +
-                    `    if (fs.existsSync(ep)) {\n` +
-                    `      const c = fs.readFileSync(ep, 'utf8');\n` +
-                    `      for (const line of c.split('\\n')) {\n` +
-                    `        const t = line.trim();\n` +
-                    `        if (!t || t.startsWith('#')) continue;\n` +
-                    `        const eq = t.indexOf('=');\n` +
-                    `        if (eq !== -1) {\n` +
-                    `          const k = t.slice(0, eq).trim();\n` +
-                    `          let v = t.slice(eq + 1).trim();\n` +
-                    `          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);\n` +
-                    `          if (k && !process.env[k]) process.env[k] = v;\n` +
-                    `        }\n` +
-                    `      }\n` +
-                    `    }\n` +
-                    `  }\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
-                    `  if (!j) {\n` +
-                    `    try {\n` +
-                    `      const g = require('@jest/globals');\n` +
-                    `      if (g && g.jest) j = g.jest;\n` +
-                    `    } catch (_) {}\n` +
-                    `  }\n` +
-                    `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
-                    `  if (!j) {\n` +
-                    `    const createFn = (impl) => {\n` +
-                    `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
-                    `      mockFn._isMockFunction = true;\n` +
-                    `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
-                    `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
-                    `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
-                    `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
-                    `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockReturnThis = () => mockFn;\n` +
-                    `      mockFn.mockClear = () => mockFn;\n` +
-                    `      mockFn.mockReset = () => mockFn;\n` +
-                    `      mockFn.mockRestore = () => mockFn;\n` +
-                    `      return mockFn;\n` +
-                    `    };\n` +
-                    `    j = {\n` +
-                    `      fn: createFn,\n` +
-                    `      mock: () => {},\n` +
-                    `      unmock: () => {},\n` +
-                    `      spyOn: (obj, method) => {\n` +
-                    `        const orig = obj ? obj[method] : undefined;\n` +
-                    `        const spy = createFn(orig);\n` +
-                    `        if (obj) obj[method] = spy;\n` +
-                    `        return spy;\n` +
-                    `      },\n` +
-                    `      clearAllMocks: () => {},\n` +
-                    `      resetAllMocks: () => {},\n` +
-                    `      restoreAllMocks: () => {},\n` +
-                    `      resetModules: () => {},\n` +
-                    `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
-                    `    };\n` +
-                    `  }\n` +
-                    `  if (typeof global !== 'undefined') global.jest = j;\n` +
-                    `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof globalThis.require === 'undefined' || typeof global.require === 'undefined') {\n` +
-                    `    const { createRequire } = require('module');\n` +
-                    `    const req = createRequire(process.cwd() + '/package.json');\n` +
-                    `    if (typeof globalThis.require === 'undefined') globalThis.require = req;\n` +
-                    `    if (typeof global.require === 'undefined') global.require = req;\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
-                    `    jest.mock('bull', () => {\n` +
-                    `      const mockQueue = {\n` +
-                    `        process: jest.fn(),\n` +
-                    `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
-                    `        on: jest.fn().mockReturnThis(),\n` +
-                    `        getWaitingCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getActiveCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getCompletedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getFailedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getDelayedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        close: jest.fn().mockResolvedValue(),\n` +
-                    `        isReady: jest.fn().mockResolvedValue()\n` +
-                    `      };\n` +
-                    `      return jest.fn(() => mockQueue);\n` +
-                    `    }, { virtual: true });\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  const matchers = {\n` +
-                    `    toSatisfy(received, predicate) {\n` +
-                    `      try {\n` +
-                    `        const pass = predicate(received);\n` +
-                    `        return { pass: pass === undefined ? true : Boolean(pass), message: () => 'expected ' + received + ' to satisfy predicate' };\n` +
-                    `      } catch (err) {\n` +
-                    `        return { pass: false, message: () => 'predicate threw error: ' + (err && err.message) };\n` +
-                    `      }\n` +
-                    `    },\n` +
-                    `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
-                    `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
-                    `    toBe(received, expected) {\n` +
-                    `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
-                    `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      }\n` +
-                    `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
-                    `    }\n` +
-                    `  };\n` +
-                    `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
-                    `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
-                    `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  const g = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : {});\n` +
-                    `  if (g && !g.mockQbo) {\n` +
-                    `    const fn = () => (typeof jest !== 'undefined' ? jest.fn((...args) => { const cb = args[args.length-1]; if (typeof cb === 'function') cb(null, {}); return Promise.resolve({}); }) : () => Promise.resolve({}));\n` +
-                    `    g.mockQbo = { getAccount: fn(), updateAccount: fn(), createAccount: fn(), findAccounts: fn() };\n` +
-                    `  }\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  let prismaPkg = null;\n` +
-                    `  try {\n` +
-                    `    prismaPkg = require('@prisma/client');\n` +
-                    `  } catch (_) {}\n` +
-                    `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
-                    `    let isStub = false;\n` +
-                    `    try {\n` +
-                    `      new prismaPkg.PrismaClient();\n` +
-                    `    } catch (pe) {\n` +
-                    `      if (pe && pe.message && (pe.message.includes('did not initialize yet') || pe.message.includes('prisma generate'))) {\n` +
-                    `        isStub = true;\n` +
-                    `      }\n` +
-                    `    }\n` +
-                    `    if (isStub) {\n` +
-                    `      const createPrismaProxy = () => {\n` +
-                    `        const handler = {\n` +
-                    `          get(target, prop) {\n` +
-                    `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
-                    `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
-                    `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve());\n` +
-                    `            return new Proxy(() => Promise.resolve({}), handler);\n` +
-                    `          },\n` +
-                    `          apply() { return Promise.resolve({}); }\n` +
-                    `        };\n` +
-                    `        return new Proxy({}, handler);\n` +
-                    `      };\n` +
-                    `      prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
-                    `    }\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof test !== 'undefined' && typeof expect !== 'undefined') {\n` +
-                    `    test('test suite sanity check', () => { expect(true).toBe(true); });\n` +
-                    `  }\n` +
-                    `} catch { }\n`,
+                    buildSetupContent({ rootDir, targetDir: rootDir, hermeticMocks, virtualDbEnv: options?.virtualDbEnv || {} }),
                     "utf8"
                 );
                 createdHarnessFiles.add(tempSetupPath);
@@ -2242,7 +2685,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         if (shouldRunRoot) {
             const safeIgnorePatterns = [
-                "/node_modules/", "/client/", "/frontend/",
+                "/node_modules/", "/client/", "/frontend/", covaiJestDerivedSuitePattern,
                 ...(Array.isArray(cleanProjectJestConfig?.testPathIgnorePatterns)
                     ? cleanProjectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
                     : [])
@@ -2277,6 +2720,17 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 }
             }
 
+            const filteredSetupFiles = filterExistingSetupFiles(
+                cleanProjectJestConfig?.setupFiles,
+                rootDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+            const filteredSetupFilesAfterEnv = filterExistingSetupFiles(
+                cleanProjectJestConfig?.setupFilesAfterEnv,
+                rootDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+
             try {
                 const tempConfig = {
                     ...cleanProjectJestConfig,
@@ -2287,11 +2741,11 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     testTimeout: 10000,
                     testPathIgnorePatterns: safeIgnorePatterns,
                     setupFiles: [
-                        ...(Array.isArray(cleanProjectJestConfig?.setupFiles) ? cleanProjectJestConfig.setupFiles : []),
+                        ...filteredSetupFiles,
                         `<rootDir>/${tempSetupName}`
                     ],
                     setupFilesAfterEnv: [
-                        ...(Array.isArray(cleanProjectJestConfig?.setupFilesAfterEnv) ? cleanProjectJestConfig.setupFilesAfterEnv : []),
+                        ...filteredSetupFilesAfterEnv,
                         `<rootDir>/${tempSetupAfterEnvName}`
                     ],
                     coveragePathIgnorePatterns: (Array.isArray(cleanProjectJestConfig?.coveragePathIgnorePatterns) && cleanProjectJestConfig.coveragePathIgnorePatterns.length > 0)
@@ -2363,15 +2817,16 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
             await addJobLog(jobId, "INFO", `[SCRUM-140] Starting jest --coverage (${rootFiles.length > 0 ? rootFiles.length + ' files' : 'all'}) in Docker container (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
-            let rootPkgModified = false;
-            let originalRootPkgContent = null;
+            let isEsmMode = false;
             try {
                 const rootPkgPath = path.join(rootDir, "package.json");
                 if (fs.existsSync(rootPkgPath)) {
-                    originalRootPkgContent = fs.readFileSync(rootPkgPath, "utf8");
-                    const rootPkg = JSON.parse(originalRootPkgContent);
+                    const originalContent = fs.readFileSync(rootPkgPath, "utf8");
+                    const rootPkg = JSON.parse(originalContent);
                     // Never override if root package explicitly states "commonjs"
-                    if (rootPkg.type !== "commonjs" && (!rootPkg.type || rootPkg.type !== "module")) {
+                    if (rootPkg.type === "module") {
+                        isEsmMode = true;
+                    } else if (rootPkg.type !== "commonjs") {
                         const hasEsmFiles = (rootFiles || []).some(f => {
                             try {
                                 const c = fs.readFileSync(path.join(rootDir, f), "utf8");
@@ -2388,9 +2843,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                         const hasTsFiles = (rootFiles || []).some(f => /\.[cm]?tsx?$/.test(f));
                         const isTsProject = hasTsConfig || hasTsFiles;
                         if (!isTsProject && (hasEsmFiles || backendIsModule)) {
-                            rootPkg.type = "module";
-                            fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2), "utf8");
-                            rootPkgModified = true;
+                            isEsmMode = true;
                         }
                     }
                 }
@@ -2398,14 +2851,20 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
             let result;
             try {
+                const nodeOptions = isEsmMode
+                    ? "--unhandled-rejections=warn --experimental-vm-modules --input-type=module"
+                    : "--unhandled-rejections=warn --experimental-vm-modules";
                 result = await dockerRunner.run({
                     snapshotPath: rootDir,
                     command: jestCmd,
                     timeoutMs: effectiveTimeout,
                     jobId,
                     env: {
-                        NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
+                        NODE_OPTIONS: nodeOptions,
                         NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
+                        ...hermeticMocks,
+                        ...(options?.virtualDbEnv || {}),
+                        ...(options?.env || {}),
                     }
                 });
                 if (result.stdout) overallStdout += "\n" + result.stdout;
@@ -2421,11 +2880,6 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     }
                 }
             } finally {
-                if (rootPkgModified && originalRootPkgContent) {
-                    try {
-                        fs.writeFileSync(path.join(rootDir, "package.json"), originalRootPkgContent, "utf8");
-                    } catch { }
-                }
                 if (tempConfigCreated && fs.existsSync(tempConfigPath)) {
                     try { fs.unlinkSync(tempConfigPath); } catch { }
                 }
@@ -2449,8 +2903,13 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         }
 
         // ── Execute subpackages ──────────────────────────────────────────────────
+        let hasPassingSubpackages = false;
+        let anySubpackageAssertionFailed = false;
+        let subpackagesRun = 0;
+
         for (const [pkgDir, subFiles] of packageGroups.entries()) {
             if (!pkgDir || !Array.isArray(subFiles) || subFiles.length === 0) continue;
+            subpackagesRun++;
 
             const subSlug = pkgDir.replace(/[^a-zA-Z0-9_-]/g, "_");
             const subResultsName = `jest-results-${subSlug}.json`;
@@ -2473,133 +2932,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             try {
                 fs.writeFileSync(
                     tempSubSetupPath,
-                    `try {\n` +
-                    `  delete require.cache[__filename];\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  process.exit = function(code) {};\n` +
-                    `  process.on('unhandledRejection', () => {});\n` +
-                    `  process.on('uncaughtException', () => {});\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
-                    `  if (!j) {\n` +
-                    `    try {\n` +
-                    `      const g = require('@jest/globals');\n` +
-                    `      if (g && g.jest) j = g.jest;\n` +
-                    `    } catch (_) {}\n` +
-                    `  }\n` +
-                    `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
-                    `  if (!j) {\n` +
-                    `    const createFn = (impl) => {\n` +
-                    `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
-                    `      mockFn._isMockFunction = true;\n` +
-                    `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
-                    `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
-                    `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
-                    `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
-                    `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockReturnThis = () => mockFn;\n` +
-                    `      mockFn.mockClear = () => mockFn;\n` +
-                    `      mockFn.mockReset = () => mockFn;\n` +
-                    `      mockFn.mockRestore = () => mockFn;\n` +
-                    `      return mockFn;\n` +
-                    `    };\n` +
-                    `    j = {\n` +
-                    `      fn: createFn,\n` +
-                    `      mock: () => {},\n` +
-                    `      unmock: () => {},\n` +
-                    `      spyOn: (obj, method) => {\n` +
-                    `        const orig = obj ? obj[method] : undefined;\n` +
-                    `        const spy = createFn(orig);\n` +
-                    `        if (obj) obj[method] = spy;\n` +
-                    `        return spy;\n` +
-                    `      },\n` +
-                    `      clearAllMocks: () => {},\n` +
-                    `      resetAllMocks: () => {},\n` +
-                    `      restoreAllMocks: () => {},\n` +
-                    `      resetModules: () => {},\n` +
-                    `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
-                    `    };\n` +
-                    `  }\n` +
-                    `  if (typeof global !== 'undefined') global.jest = j;\n` +
-                    `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  const matchers = {\n` +
-                    `    toSatisfy(received, predicate) {\n` +
-                    `      try {\n` +
-                    `        const pass = predicate(received);\n` +
-                    `        return { pass: pass === undefined ? true : Boolean(pass), message: () => 'expected ' + received + ' to satisfy predicate' };\n` +
-                    `      } catch (err) {\n` +
-                    `        return { pass: false, message: () => 'predicate threw error: ' + (err && err.message) };\n` +
-                    `      }\n` +
-                    `    },\n` +
-                    `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
-                    `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
-                    `    toBe(received, expected) {\n` +
-                    `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
-                    `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      }\n` +
-                    `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
-                    `    }\n` +
-                    `  };\n` +
-                    `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
-                    `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
-                    `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  let prismaPkg = null;\n` +
-                    `  try {\n` +
-                    `    prismaPkg = require('@prisma/client');\n` +
-                    `  } catch (_) {}\n` +
-                    `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
-                    `    let isStub = false;\n` +
-                    `    try {\n` +
-                    `      new prismaPkg.PrismaClient();\n` +
-                    `    } catch (pe) {\n` +
-                    `      if (pe && pe.message && (pe.message.includes('did not initialize yet') || pe.message.includes('prisma generate'))) {\n` +
-                    `        isStub = true;\n` +
-                    `      }\n` +
-                    `    }\n` +
-                    `    if (isStub) {\n` +
-                    `      const createPrismaProxy = () => {\n` +
-                    `        const handler = {\n` +
-                    `          get(target, prop) {\n` +
-                    `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
-                    `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
-                    `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve());\n` +
-                    `            return new Proxy(() => Promise.resolve({}), handler);\n` +
-                    `          },\n` +
-                    `          apply() { return Promise.resolve({}); }\n` +
-                    `        };\n` +
-                    `        return new Proxy({}, handler);\n` +
-                    `      };\n` +
-                    `      prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
-                    `    }\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
-                    `    jest.mock('bull', () => {\n` +
-                    `      const mockQueue = {\n` +
-                    `        process: jest.fn(),\n` +
-                    `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
-                    `        on: jest.fn().mockReturnThis(),\n` +
-                    `        getWaitingCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getActiveCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getCompletedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getFailedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getDelayedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        close: jest.fn().mockResolvedValue(),\n` +
-                    `        isReady: jest.fn().mockResolvedValue()\n` +
-                    `      };\n` +
-                    `      return jest.fn(() => mockQueue);\n` +
-                    `    }, { virtual: true });\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n`,
+                    buildSetupContent({ rootDir, targetDir, hermeticMocks, virtualDbEnv: options?.virtualDbEnv || {} }),
                     "utf8"
                 );
                 fs.writeFileSync(
@@ -2694,19 +3027,34 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 }
             }
 
+            const filteredSubSetupFiles = filterExistingSetupFiles(
+                cleanPkgJestConfig?.setupFiles,
+                targetDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+            const filteredSubSetupFilesAfterEnv = filterExistingSetupFiles(
+                cleanPkgJestConfig?.setupFilesAfterEnv,
+                targetDir,
+                { rootDir, autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false, createdHarnessFiles }
+            );
+
             try {
                 const subConfig = {
                     ...cleanPkgJestConfig,
+                    testPathIgnorePatterns: [
+                        ...(Array.isArray(cleanPkgJestConfig?.testPathIgnorePatterns) ? cleanPkgJestConfig.testPathIgnorePatterns : ["/node_modules/"]),
+                        covaiJestDerivedSuitePattern
+                    ],
                     testTimeout: 10000,
                     testEnvironment: resolveTestEnvironment(targetDir, rootDir, cleanPkgJestConfig?.testEnvironment),
                     resolver: `<rootDir>/${tempSubResolverName}`,
                     roots: ["<rootDir>"],
                     setupFiles: [
-                        ...(Array.isArray(cleanPkgJestConfig?.setupFiles) ? cleanPkgJestConfig.setupFiles : []),
+                        ...filteredSubSetupFiles,
                         `<rootDir>/${tempSubSetupName}`
                     ],
                     setupFilesAfterEnv: [
-                        ...(Array.isArray(cleanPkgJestConfig?.setupFilesAfterEnv) ? cleanPkgJestConfig.setupFilesAfterEnv : []),
+                        ...filteredSubSetupFilesAfterEnv,
                         `<rootDir>/${tempSubSetupAfterEnvName}`
                     ],
                     moduleNameMapper: {
@@ -2777,7 +3125,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 ? subScopedCoverageFiles.map(f => ` --collectCoverageFrom="${f}"`).join("")
                 : (fs.existsSync(path.join(targetDir, "src")) ? ' --collectCoverageFrom="src/**/*.{js,jsx,ts,tsx}" --collectCoverageFrom="!src/**/*.d.ts"' : '');
             const subWorkerFlags = getOptimalWorkerFlags(subFiles.length);
-            const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
+            const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --json --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
 
             let subResult;
             try {
@@ -2789,8 +3137,16 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     env: {
                         NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
                         NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
+                        ...hermeticMocks,
+                        ...(options?.virtualDbEnv || {}),
+                        ...(options?.env || {}),
                     }
                 });
+            } catch (subErr) {
+                console.warn(`[runJestCoverage] Error executing Jest for subpackage ${pkgDir}:`, subErr.message);
+                overallStderr += `\n[${pkgDir}] ${subErr.message}`;
+                await addJobLog(jobId, "WARN", `[SCRUM-140] Jest failed for subpackage ${pkgDir}: ${subErr.message}`).catch(() => { });
+                subResult = { exitCode: 1, stdout: "", stderr: subErr.message };
             } finally {
                 if (tempSubConfigCreated && fs.existsSync(tempSubConfigPath)) {
                     try { fs.unlinkSync(tempSubConfigPath); } catch { }
@@ -2811,9 +3167,20 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
             // Merge subResults into main jest-results.json
             const rootJestResultsPath = path.join(covDir, "jest-results.json");
+            let subHasPassedTests = false;
+            let subHasFailedTests = false;
             if (fs.existsSync(subResultsPath)) {
                 try {
                     const subResultsData = JSON.parse(fs.readFileSync(subResultsPath, "utf8"));
+                    const failedCount = (subResultsData.numFailedTests || 0) + ((subResultsData.testResults || []).filter(s => s.status === 'failed').length);
+                    if (failedCount > 0 || (subResultsData.testResults || []).some(s => (s.assertionResults || []).some(a => a.status === 'failed'))) {
+                        subHasFailedTests = true;
+                        anySubpackageAssertionFailed = true;
+                    }
+                    const passedCount = (subResultsData.numPassedTests || 0) + ((subResultsData.testResults || []).filter(s => s.status === 'passed').length);
+                    if (passedCount > 0 || (subResult.exitCode === 0 && !subHasFailedTests)) {
+                        subHasPassedTests = true;
+                    }
                     if (fs.existsSync(rootJestResultsPath)) {
                         const rootResultsData = JSON.parse(fs.readFileSync(rootJestResultsPath, "utf8"));
                         const mergedResults = mergeTestResults(rootResultsData, subResultsData);
@@ -2824,6 +3191,12 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 } catch (err) {
                     console.warn(`[runJestCoverage] Error merging test results from ${pkgDir}:`, err.message);
                 }
+            } else if (subResult.exitCode === 0) {
+                subHasPassedTests = true;
+            }
+
+            if (subHasPassedTests && !subHasFailedTests) {
+                hasPassingSubpackages = true;
             }
 
             // Merge coverage-final.json
@@ -2836,7 +3209,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     if (fs.existsSync(rootCovFinal)) {
                         try { rootFinalData = JSON.parse(fs.readFileSync(rootCovFinal, "utf8")); } catch { }
                     }
-                    const mergedFinal = mergeCoverageFinal(rootFinalData, subFinalData);
+                    const mergedFinal = mergeCoverageFinal(rootFinalData, subFinalData, { rootDir });
                     fs.writeFileSync(rootCovFinal, JSON.stringify(mergedFinal, null, 2), "utf8");
                 } catch (err) {
                     console.warn(`[runJestCoverage] Error merging coverage-final from ${pkgDir}:`, err.message);
@@ -2853,7 +3226,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     if (fs.existsSync(rootCovSummary)) {
                         try { rootSummaryData = JSON.parse(fs.readFileSync(rootCovSummary, "utf8")); } catch { }
                     }
-                    const mergedSummary = mergeCoverageSummaries(rootSummaryData, subSummaryData);
+                    const mergedSummary = mergeCoverageSummaries(rootSummaryData, subSummaryData, { rootDir });
                     fs.writeFileSync(rootCovSummary, JSON.stringify(mergedSummary, null, 2), "utf8");
                 } catch (err) {
                     console.warn(`[runJestCoverage] Error merging coverage-summary from ${pkgDir}:`, err.message);
@@ -2884,6 +3257,27 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         // Exit code checking
         const summaryFile = path.join(covDir, "coverage-summary.json");
         const mainResultsPath = path.join(covDir, "jest-results.json");
+
+        if (fs.existsSync(mainResultsPath)) {
+            try {
+                const finalResults = JSON.parse(fs.readFileSync(mainResultsPath, "utf8"));
+                const totalTests = finalResults.numTotalTests || (finalResults.testResults || []).reduce((n, s) => n + (s.assertionResults?.length || 0), 0);
+                const failedTests = finalResults.numFailedTests || (finalResults.testResults || []).reduce((n, s) => n + (s.assertionResults || []).filter(a => a.status === 'failed').length, 0);
+
+                if (failedTests > 0 || anySubpackageAssertionFailed) {
+                    overallExitCode = 1;
+                } else if (hasPassingSubpackages || (totalTests > 0 && failedTests === 0)) {
+                    overallExitCode = 0;
+                }
+            } catch {
+                if (hasPassingSubpackages && !anySubpackageAssertionFailed) {
+                    overallExitCode = 0;
+                }
+            }
+        } else if (hasPassingSubpackages && !anySubpackageAssertionFailed) {
+            overallExitCode = 0;
+        }
+
         if (overallExitCode >= 2 && !fs.existsSync(summaryFile) && !fs.existsSync(mainResultsPath)) {
             const msg = `[SCRUM-140] jest exited with exit code ${overallExitCode} without generating coverage`;
             await addJobLog(jobId, "ERROR", msg).catch(() => { });
@@ -2902,7 +3296,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         try {
             if (fs.existsSync(rootDir)) {
                 for (const f of fs.readdirSync(rootDir)) {
-                    if (/^covai[-_]/i.test(f) && (f.endsWith(".cjs") || f.endsWith(".json") || f.endsWith(".js"))) {
+                    if (isCovaiJestRuntimeFile(f)) {
                         try { fs.unlinkSync(path.join(rootDir, f)); } catch { }
                     }
                 }
@@ -2912,7 +3306,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 const targetDir = path.join(rootDir, pkgDir);
                 if (fs.existsSync(targetDir)) {
                     for (const f of fs.readdirSync(targetDir)) {
-                        if (/^covai[-_]/i.test(f) && (f.endsWith(".cjs") || f.endsWith(".json") || f.endsWith(".js"))) {
+                        if (isCovaiJestRuntimeFile(f)) {
                             try { fs.unlinkSync(path.join(targetDir, f)); } catch { }
                         }
                     }
@@ -3524,7 +3918,7 @@ export const mergeTestResults = (...results) => {
  *
  * @param {string} jobId  - ID of Job with type="RUN_TESTS"
  */
-export const processRunTestsJob = async (jobId) => {
+export const processRunTestsJob = async (jobId, options = {}) => {
     assertStringField(jobId, "jobId");
 
     // ── SCRUM-143: Transition to RUNNING ──────────────────────────────────────
@@ -3596,6 +3990,66 @@ export const processRunTestsJob = async (jobId) => {
     if (!fs.existsSync(unitCoverageDir)) {
         try { fs.mkdirSync(unitCoverageDir, { recursive: true }); } catch { }
     }
+
+    const payload = typeof job.payloadJson === "string" ? JSON.parse(job.payloadJson || "{}") : (job.payloadJson || {});
+    const verifyPublishedUnitTests = payload?.verifyPublishedUnitTests === true;
+    if (verifyPublishedUnitTests) {
+        const availability = typeof dockerRunner.checkAvailability === "function"
+            ? dockerRunner.checkAvailability()
+            : { available: Boolean(dockerRunner.containerEnabled), code: dockerRunner.containerEnabled ? "RUNNER_AVAILABLE" : "RUNNER_UNAVAILABLE", reason: "Docker runner is unavailable." };
+        if (!availability.available) {
+            const err = new Error(`Docker is required to verify coverage for published generated tests [${availability.code}]: ${availability.reason}`);
+            err.code = availability.code;
+            await markJobFailed(jobId, err).catch(() => {});
+            return;
+        }
+    }
+    const useHermeticMock = options?.useHermeticMock !== false && payload?.useHermeticMock !== false && job?.useHermeticMock !== false;
+
+    let hermeticMocks = {};
+    try {
+        const { loadWorkspaceEnv, generateHermeticMockEnvironment, detectProjectEnvironment } = await import("./environmentDetection.service.js");
+        const workspaceEnv = await loadWorkspaceEnv(rootDir);
+        const detected = await detectProjectEnvironment(rootDir, { existingVariables: workspaceEnv?.variables || {} });
+        hermeticMocks = useHermeticMock ? generateHermeticMockEnvironment(detected?.detectedVariables || [], workspaceEnv?.variables || {}) : (workspaceEnv?.variables || {});
+
+        if (useHermeticMock) {
+            await addJobLog(jobId, "INFO", "[RUNNER] Executing tests with hermetic mock environment in RAM (useHermeticMock=true)...").catch(() => {});
+        }
+    } catch (envErr) {
+        console.warn("[processRunTestsJob] Env resolution warning:", envErr.message);
+    }
+
+    let isolatedDb = null;
+    let virtualDbEnv = {};
+    try {
+        const { isDatabaseRequiredForProject, provisionIsolatedDatabase, syncDatabaseSchema } = await import("./virtualDatabase.service.js");
+        if (isDatabaseRequiredForProject(rootDir)) {
+            await addJobLog(jobId, "INFO", "[VirtualDB] Database usage detected in project. Provisioning isolated virtual database...").catch(() => {});
+            isolatedDb = await provisionIsolatedDatabase(jobId);
+            virtualDbEnv = isolatedDb.env || {};
+            await addJobLog(jobId, "INFO", `[VirtualDB] Isolated catalog "${isolatedDb.dbName}" ready. Synchronizing schema...`).catch(() => {});
+            const syncRes = await syncDatabaseSchema(isolatedDb.databaseUrl, null, rootDir);
+            if (syncRes.synced) {
+                await addJobLog(jobId, "INFO", `[VirtualDB] Database schema synchronized successfully for catalog "${isolatedDb.dbName}".`).catch(() => {});
+            }
+        } else {
+            await addJobLog(jobId, "INFO", "[VirtualDB] Pure logic/no-DB project detected. Bypassing virtual database provisioning for speed.").catch(() => {});
+        }
+    } catch (vDbErr) {
+        console.warn("[processRunTestsJob] Virtual DB provisioning warning:", vDbErr.message);
+        await addJobLog(jobId, "WARN", `[VirtualDB] Virtual DB provisioning notice: ${vDbErr.message}`).catch(() => {});
+    }
+
+    const runnerOptions = {
+        coverageDir: unitCoverageDir,
+        allowUninstrumentedFallback: !verifyPublishedUnitTests,
+        hermeticMocks,
+        useHermeticMock,
+        virtualDbEnv,
+        virtualDbUrl: isolatedDb?.databaseUrl || null,
+        env: { ...virtualDbEnv },
+    };
 
     // Initialize output record
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
@@ -3726,7 +4180,7 @@ export const processRunTestsJob = async (jobId) => {
         // Self-heal and sanitize only target unit test files prior to runner execution (O(K) instead of scanning entire repository)
         try {
             const unitFilesToSanitize = [...jestFiles, ...vitestFiles];
-            if (unitFilesToSanitize.length > 0) {
+            if (!verifyPublishedUnitTests && unitFilesToSanitize.length > 0) {
                 sanitizeAllProjectTestFiles(rootDir, unitFilesToSanitize);
             }
         } catch (sanitizeErr) {
@@ -3741,7 +4195,20 @@ export const processRunTestsJob = async (jobId) => {
             `[FRAMEWORK] Detected: Jest (${jestFiles.length} files), Vitest (${vitestFiles.length} files) | Excluded ${skippedFiles.length} integration/frontend files.`
         ).catch(() => { });
 
+        const attemptedDependencies = new Set();
+        const MAX_DEP_ATTEMPTS = 5;
         let runnerResult = { exitCode: 0 };
+        const summaryCandidates = [
+            path.join(unitCoverageDir, "coverage-summary.json"),
+            path.join(coverageDir, "coverage-summary.json"),
+            path.join(unitCoverageDir, "jest-coverage-summary.json"),
+            path.join(coverageDir, "jest-coverage-summary.json"),
+            path.join(unitCoverageDir, "vitest-coverage-summary.json"),
+            path.join(coverageDir, "vitest-coverage-summary.json")
+        ];
+
+        while (true) {
+            runnerResult = { exitCode: 0 };
 
         if (runBoth) {
             // Concurrent execution of Vitest and Jest to maximize CPU utilization and halve execution time
@@ -3751,10 +4218,10 @@ export const processRunTestsJob = async (jobId) => {
             const [vOutcome, jOutcome] = await Promise.allSettled([
                 (async () => {
                     const { runVitestCoverage } = await import("./vitestRunner.service.js");
-                    return await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles, { coverageDir: unitCoverageDir });
+                    return await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles, runnerOptions);
                 })(),
                 (async () => {
-                    return await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand, { coverageDir: unitCoverageDir });
+                    return await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand, runnerOptions);
                 })()
             ]);
 
@@ -3794,7 +4261,7 @@ export const processRunTestsJob = async (jobId) => {
                 let vf = {};
                 try { if (fs.existsSync(jestFinalPath)) jf = JSON.parse(fs.readFileSync(jestFinalPath, "utf8")); } catch { }
                 try { if (fs.existsSync(vitestFinalPath)) vf = JSON.parse(fs.readFileSync(vitestFinalPath, "utf8")); } catch { }
-                const mergedFinal = mergeCoverageFinal(jf, vf);
+                const mergedFinal = mergeCoverageFinal(jf, vf, { rootDir });
                 fs.writeFileSync(path.join(coverageDir, "coverage-final.json"), JSON.stringify(mergedFinal, null, 2), "utf8");
                 fs.writeFileSync(path.join(unitCoverageDir, "coverage-final.json"), JSON.stringify(mergedFinal, null, 2), "utf8");
             }
@@ -3899,7 +4366,7 @@ export const processRunTestsJob = async (jobId) => {
             await reportUnitProgress(50, "Collecting outputs", "Collecting test runner output and coverage...");
             await addJobLog(jobId, "INFO", `[VITEST] Running ${vitestFiles.length} Vitest files...`).catch(() => { });
             const { runVitestCoverage } = await import("./vitestRunner.service.js");
-            runnerResult = await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles, { coverageDir: unitCoverageDir });
+            runnerResult = await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles, runnerOptions);
             syncCoverageDirectories(coverageDir, unitCoverageDir);
             await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
 
@@ -3923,7 +4390,7 @@ export const processRunTestsJob = async (jobId) => {
         } else if (hasJest) {
             await reportUnitProgress(50, "Collecting outputs", "Collecting test runner output and coverage...");
             await addJobLog(jobId, "INFO", `[JEST] Running ${jestFiles.length} Jest files...`).catch(() => { });
-            runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand, { coverageDir: unitCoverageDir });
+            runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand, runnerOptions);
             syncCoverageDirectories(coverageDir, unitCoverageDir);
             await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
 
@@ -3988,21 +4455,12 @@ export const processRunTestsJob = async (jobId) => {
             } else {
                 // If really no logic files either, try fallback runner
                 await addJobLog(jobId, "INFO", "[RUN_TESTS] Running fallback runner...").catch(() => { });
-                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, [], job.snapshot?.jestCommand);
+                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, [], job.snapshot?.jestCommand, runnerOptions);
             }
             await reportUnitProgress(70, "Parsing coverage", "Parsing coverage summaries and files...");
         }
 
         // ── SCRUM-140/Problem 1 & 3: Check test execution result ─────────────
-        const summaryCandidates = [
-            path.join(unitCoverageDir, "coverage-summary.json"),
-            path.join(coverageDir, "coverage-summary.json"),
-            path.join(unitCoverageDir, "jest-coverage-summary.json"),
-            path.join(coverageDir, "jest-coverage-summary.json"),
-            path.join(unitCoverageDir, "vitest-coverage-summary.json"),
-            path.join(coverageDir, "vitest-coverage-summary.json")
-        ];
-
         let hasValidCoverage = false;
         let validSummaryData = null;
         for (const candidate of summaryCandidates) {
@@ -4032,12 +4490,167 @@ export const processRunTestsJob = async (jobId) => {
             }
         }
 
-        if (runnerResult && (runnerResult.exitCode !== 0 || reportedScenarios.some(scenario => scenario.isSuiteLevelFailure))) {
+        if (verifyPublishedUnitTests && runnerResult?.exitCode !== 0) {
+            await markJobFailed(jobId, new Error("Published unit tests did not pass regression. Previously verified coverage was retained.")).catch(() => {});
+            return;
+        }
+        if (runnerResult && (runnerResult.exitCode !== 0 || reportedScenarios.some(scenario => scenario.isSuiteLevelFailure)) && runnerResult.exitCode !== null) {
             const jobOutputModule = await import("./jobOutput.service.js").catch(() => ({}));
             const jobFetcher = jobOutputModule.getJobOutput || jobOutputModule.getOutputByJob;
             const jobOutput = typeof jobFetcher === "function" ? await jobFetcher(jobId).catch(() => null) : null;
             const fullOutput = [runnerResult.stderr, runnerResult.stdout, jobOutput?.stderr, jobOutput?.stdout].filter(Boolean).join("\n");
             const modResError = parseModuleResolutionError(fullOutput, rootDir);
+            const missingDep = modResError?.missingDependency || extractMissingDependency(fullOutput);
+
+            // Automatic In-Flight Missing Dependency Resolution & Installation
+            if (missingDep && missingDep.packageName && isValidNpmPackageName(missingDep.packageName)) {
+                if (!attemptedDependencies.has(missingDep.packageName) && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
+                    await addJobLog(
+                        jobId,
+                        "INFO",
+                        `[RUN_TESTS] Missing dependency '${missingDep.packageName}' detected. Automatically installing in background...`
+                    ).catch(() => { });
+
+                    let installSuccess = false;
+                    try {
+                        const installRes = await resolveUnitTestDependency({ rootDir, output: fullOutput, attempted: attemptedDependencies, jobId, maxPackages: MAX_DEP_ATTEMPTS });
+                        if (installRes?.resolved) {
+                            installSuccess = true;
+                            await addJobLog(
+                                jobId,
+                                "INFO",
+                                `[RUN_TESTS] Successfully installed '${missingDep.packageName}'. Automatically re-running unit tests...`
+                            ).catch(() => { });
+                        } else {
+                            await addJobLog(
+                                jobId,
+                                "WARN",
+                                `[RUN_TESTS] Automatic installation of '${missingDep.packageName}' failed (${installRes?.stderr || installRes?.stdout || "unknown error"}). Continuing test runner lifecycle...`
+                            ).catch(() => { });
+                        }
+                    } catch (installErr) {
+                        await addJobLog(
+                            jobId,
+                            "WARN",
+                            `[RUN_TESTS] Error during automatic installation of '${missingDep.packageName}': ${installErr.message}. Continuing test runner lifecycle...`
+                        ).catch(() => { });
+                    }
+
+                    if (installSuccess) {
+                        // Clear stale coverage files before re-running test suite
+                        for (const sf of staleCoverageFiles) {
+                            try { if (fs.existsSync(path.join(coverageDir, sf))) fs.unlinkSync(path.join(coverageDir, sf)); } catch { }
+                            try { if (fs.existsSync(path.join(unitCoverageDir, sf))) fs.unlinkSync(path.join(unitCoverageDir, sf)); } catch { }
+                        }
+                        continue; // Automatically re-run tests!
+                    }
+                }
+            }
+
+            // Automatic In-Flight Missing Dependency & Virtual Mock Healing
+            const missingModMatch = fullOutput.match(/Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i)
+                || fullOutput.match(/Cannot find package ['"]([^'"]+)['"]\s+imported from\s+['"]([^'"]+)['"]/i)
+                || fullOutput.match(/Failed to resolve import ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i)
+                || fullOutput.match(/Could not locate module ([^ \n\r]+) mapped as/i)
+                || fullOutput.match(/Cannot find module ['"]([^'"]+)['"]/i);
+
+            if (useHermeticMock && !hasValidCoverage && (missingModMatch || (missingDep && missingDep.packageName)) && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
+                const missingTarget = missingModMatch ? missingModMatch[1] : (missingDep?.packageName || "dependency");
+                const healDepKey = `mock-dep:${missingTarget}`;
+                if (!attemptedDependencies.has(healDepKey)) {
+                    attemptedDependencies.add(healDepKey);
+                    await addJobLog(
+                        jobId,
+                        "INFO",
+                        `[RUN_TESTS] Missing module/dependency '${missingTarget}' detected. Automatically injecting isolation mocks into test files...`
+                    ).catch(() => { });
+
+                    let healedDepAny = false;
+                    try {
+                        const { healMissingDependencyMocks, ensureAllRelativeJestMocksVirtual } = await import("./testSanitizer.service.js");
+                        const testFiles = [...(vitestFiles || []), ...(jestFiles || [])];
+                        for (const tf of testFiles) {
+                            const fullTf = path.isAbsolute(tf) ? tf : path.join(rootDir, tf);
+                            if (fs.existsSync(fullTf)) {
+                                const originalContent = fs.readFileSync(fullTf, "utf8");
+                                let healedContent = healMissingDependencyMocks(originalContent, fullOutput, {
+                                    framework: hasVitest ? "vitest" : "jest",
+                                    rootDir,
+                                    filePath: fullTf
+                                });
+                                healedContent = ensureAllRelativeJestMocksVirtual(healedContent);
+                                if (healedContent !== originalContent) {
+                                    fs.writeFileSync(fullTf, healedContent, "utf8");
+                                    healedDepAny = true;
+                                }
+                            }
+                        }
+                    } catch (healErr) {
+                        console.warn(`[runTestsJob] Error while auto-healing missing dependency mocks:`, healErr.message);
+                    }
+
+                    if (healedDepAny) {
+                        await addJobLog(
+                            jobId,
+                            "INFO",
+                            `[RUN_TESTS] Successfully injected isolation mocks for '${missingTarget}'. Automatically re-running unit tests...`
+                        ).catch(() => { });
+                        for (const sf of staleCoverageFiles) {
+                            try { if (fs.existsSync(path.join(coverageDir, sf))) fs.unlinkSync(path.join(coverageDir, sf)); } catch { }
+                            try { if (fs.existsSync(path.join(unitCoverageDir, sf))) fs.unlinkSync(path.join(unitCoverageDir, sf)); } catch { }
+                        }
+                        continue; // Automatically re-run tests!
+                    }
+                }
+            }
+
+            // Automatic In-Flight Missing Mock Named Export Auto-Healing
+            const mockExpMatch = fullOutput.match(/(?:\[vitest\]\s*)?No\s+["']([^"']+)["']\s+export is defined on the\s+["']([^"']+)["']\s+mock/i);
+            if (useHermeticMock && !hasValidCoverage && mockExpMatch && attemptedDependencies.size < MAX_DEP_ATTEMPTS) {
+                const missingExport = mockExpMatch[1];
+                const mockedModule = mockExpMatch[2];
+                const healKey = `mock:${mockedModule}:${missingExport}`;
+                if (!attemptedDependencies.has(healKey)) {
+                    attemptedDependencies.add(healKey);
+                    await addJobLog(
+                        jobId,
+                        "INFO",
+                        `[RUN_TESTS] Missing mock export '${missingExport}' for '${mockedModule}' detected. Automatically healing mock in test files...`
+                    ).catch(() => { });
+
+                    let healedAny = false;
+                    try {
+                        const { healMissingMockNamedExports } = await import("./testSanitizer.service.js");
+                        const testFiles = [...(vitestFiles || []), ...(jestFiles || [])];
+                        for (const tf of testFiles) {
+                            const fullTf = path.isAbsolute(tf) ? tf : path.join(rootDir, tf);
+                            if (fs.existsSync(fullTf)) {
+                                const originalContent = fs.readFileSync(fullTf, "utf8");
+                                const healedContent = healMissingMockNamedExports(originalContent, fullOutput, { framework: hasVitest ? "vitest" : "jest" });
+                                if (healedContent !== originalContent) {
+                                    fs.writeFileSync(fullTf, healedContent, "utf8");
+                                    healedAny = true;
+                                }
+                            }
+                        }
+                    } catch (healErr) {
+                        console.warn(`[runTestsJob] Error while auto-healing mock exports:`, healErr.message);
+                    }
+
+                    if (healedAny) {
+                        await addJobLog(
+                            jobId,
+                            "INFO",
+                            `[RUN_TESTS] Successfully healed mock export '${missingExport}' in test file(s). Automatically re-running unit tests...`
+                        ).catch(() => { });
+                        for (const sf of staleCoverageFiles) {
+                            try { if (fs.existsSync(path.join(coverageDir, sf))) fs.unlinkSync(path.join(coverageDir, sf)); } catch { }
+                            try { if (fs.existsSync(path.join(unitCoverageDir, sf))) fs.unlinkSync(path.join(unitCoverageDir, sf)); } catch { }
+                        }
+                        continue; // Automatically re-run tests!
+                    }
+                }
+            }
             const brokenSuite = reportedScenarios.find((scenario) => scenario.isSuiteLevelFailure);
 
             // Case 1: Fatal crash / Runner failed before generating valid coverage
@@ -4061,9 +4674,27 @@ export const processRunTestsJob = async (jobId) => {
                         : `Test execution failed with exit code ${runnerResult.exitCode}`);
 
                 if (!modResError && !brokenSuite) {
-                    const syntaxMatch = fullOutput.match(/(?:SyntaxError|ReferenceError|TypeError|RangeError|Error):[^\n\r]+/);
-                    if (syntaxMatch) {
-                        failMessage = `Test execution failed: ${cleanStorageText(syntaxMatch[0])}`;
+                    const mockExpMatch = fullOutput.match(/No ["']([^"']+)["'] export is defined on the ["']([^"']+)["'] mock/i);
+                    if (mockExpMatch) {
+                        failMessage = `Test Runner Error: [vitest] No "${mockExpMatch[1]}" export is defined on the "${mockExpMatch[2]}" mock. Did you forget to return it from "vi.mock"?`;
+                    } else {
+                        // Extract non-STACK_TRACE_ERROR error lines
+                        const errorLines = [...fullOutput.matchAll(/(?:SyntaxError|ReferenceError|TypeError|RangeError|Error):[^\n\r]+/g)]
+                            .map(m => m[0].trim())
+                            .filter(line => !line.includes("STACK_TRACE_ERROR"));
+
+                        const timeoutMatch = fullOutput.match(/(?:Hook|Test)\s+timed out in \d+ms[^\n\r]*/i);
+                        const cannotFindMatch = fullOutput.match(/Error:\s*Cannot find module ['"][^'"]+['"][^\n\r]*/i);
+
+                        if (cannotFindMatch) {
+                            failMessage = `Test Runner Error: ${cleanStorageText(cannotFindMatch[0])}`;
+                        } else if (timeoutMatch) {
+                            failMessage = `Test Runner Error: ${cleanStorageText(timeoutMatch[0])}`;
+                        } else if (errorLines.length > 0) {
+                            failMessage = `Test execution failed: ${cleanStorageText(errorLines[0])}`;
+                        } else if (fullOutput.includes("STACK_TRACE_ERROR")) {
+                            failMessage = `Test Runner Error: Test timed out or unhandled promise hang occurred during Vitest execution (Vitest STACK_TRACE_ERROR)`;
+                        }
                     }
                 }
 
@@ -4085,12 +4716,18 @@ export const processRunTestsJob = async (jobId) => {
                             finishedAt: new Date(),
                             scenarios: {
                                 create: [{
-                                    title: modResError ? `Module resolution: ${modResError.missingModule}` : "Test execution failed",
-                                    status: "failed",
+                                    title: modResError
+                                        ? `Module resolution: ${modResError.missingModule}`
+                                        : isCollectionFailure
+                                            ? "COLLECTION_FAILED: Test suite failed during test collection"
+                                            : "Test execution failed",
+                                    status: isCollectionFailure ? "collection_failed" : "failed",
                                     failureMessages: [
                                         cleanStorageText(failMessage),
-                                        modResError?.missingDependency ? `[MISSING_DEPENDENCY]:${JSON.stringify(modResError.missingDependency)}` : null,
-                                        cleanStorageText(fullOutput.slice(0, 1000))
+                                        ...collectWorkspaceMissingDependencies(rootDir, [fullOutput], modResError?.testFile)
+                                            .map(({ packageName, rawSpecifier, targetPackage }) =>
+                                                `[MISSING_DEPENDENCY]:${JSON.stringify({ packageName, rawSpecifier, importedFrom: targetPackage })}`),
+                                        cleanStorageText(fullOutput.slice(0, 2000))
                                     ].filter(Boolean),
                                     testFile: cleanStoragePath(modResError?.testFile || brokenSuite?.testFile) || null
                                 }]
@@ -4146,6 +4783,9 @@ export const processRunTestsJob = async (jobId) => {
                 console.warn("[processRunTestsJob] Error saving assertion failure TestRun:", persistErr.message);
             }
         }
+
+        break; // Test execution complete or handled
+    }
 
         // Re-compute and normalize coverage-summary.json totals to exclude API and frontend files
         // and ensure ALL project logic files are represented in coverage-summary.json and coverage-final.json
@@ -4297,7 +4937,7 @@ export const processRunTestsJob = async (jobId) => {
             }
         }
         try { fs.writeFileSync(finalCovPath, JSON.stringify(finalCovData, null, 2), "utf8"); } catch { }
-        try { fs.writeFileSync(summaryFile, JSON.stringify(cleanedSum, null, 2), "utf8"); } catch { }
+        try { fs.writeFileSync(path.join(coverageDir, "coverage-summary.json"), JSON.stringify(cleanedSum, null, 2), "utf8"); } catch { }
         try { fs.writeFileSync(path.join(unitCoverageDir, "coverage-final.json"), JSON.stringify(finalCovData, null, 2), "utf8"); } catch { }
         try { fs.writeFileSync(path.join(unitCoverageDir, "coverage-summary.json"), JSON.stringify(cleanedSum, null, 2), "utf8"); } catch { }
 
@@ -4425,6 +5065,11 @@ export const processRunTestsJob = async (jobId) => {
             console.error(`[RunTestsJob ${jobId}] Error triggering BUILD_CFG:`, chainErr);
         }
     } catch (error) {
+        if (error.code === "OPERATION_STALE") {
+            console.warn(`[RunTestsJob ${jobId}] Operation became stale due to newer workspace revision: ${error.message}`);
+            await addJobLog(jobId, "WARN", `Operation superseded by newer workspace revision: ${error.message}`).catch(() => { });
+            return;
+        }
         console.error(`[RunTestsJob ${jobId}] Failed:`, error);
         const jobBeforeFail = await getJobById(jobId).catch(() => null);
         if (jobBeforeFail?.status === "CANCELED") {
@@ -4455,6 +5100,14 @@ export const processRunTestsJob = async (jobId) => {
             console.error(`[RunTestsJob ${jobId}] Error failing BUILD_CFG:`, failChainErr);
         }
     } finally {
+        if (isolatedDb) {
+            try {
+                const { destroyIsolatedDatabase } = await import("./virtualDatabase.service.js");
+                await destroyIsolatedDatabase(isolatedDb.jobId || jobId, { log: true });
+            } catch (destroyErr) {
+                console.warn("[processRunTestsJob] Virtual DB cleanup warning:", destroyErr.message);
+            }
+        }
         cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
     }
 };

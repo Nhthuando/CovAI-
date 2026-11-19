@@ -12,6 +12,80 @@ if (process.env.DATABASE_URL) {
         process.env.COVAI_TEST_DATABASE_REJECTED = 'true';
     }
 }
+
+export const createSafeDatabaseFallbackProxy = () => {
+    const modelCache = new Map();
+    const handler = {
+        get(target, prop) {
+            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') {
+                return undefined;
+            }
+            if (prop === '$connect' || prop === '$disconnect') {
+                return typeof jest !== 'undefined' && jest.fn ? jest.fn().mockResolvedValue(undefined) : async () => {};
+            }
+            if (prop === '$transaction') {
+                const txHandler = async (callbackOrArray) => {
+                    if (typeof callbackOrArray === 'function') {
+                        return callbackOrArray(createSafeDatabaseFallbackProxy());
+                    }
+                    if (Array.isArray(callbackOrArray)) {
+                        return Promise.all(callbackOrArray);
+                    }
+                    return [];
+                };
+                return typeof jest !== 'undefined' && jest.fn ? jest.fn(txHandler) : txHandler;
+            }
+            if (prop === '$queryRaw' || prop === '$executeRaw' || prop === '$queryRawUnsafe' || prop === '$executeRawUnsafe') {
+                return typeof jest !== 'undefined' && jest.fn ? jest.fn().mockResolvedValue([]) : async () => [];
+            }
+            if (prop === '$extends') {
+                return () => createSafeDatabaseFallbackProxy();
+            }
+            if (typeof prop === 'string') {
+                if (modelCache.has(prop)) return modelCache.get(prop);
+                const methodCache = new Map();
+                const modelProxy = new Proxy({}, {
+                    get(mTarget, method) {
+                        if (method === 'then' || method === 'catch' || method === 'finally' || typeof method === 'symbol') {
+                            return undefined;
+                        }
+                        if (methodCache.has(method)) return methodCache.get(method);
+                        let fnImpl;
+                        if (method === 'findMany' || method === 'findRaw') {
+                            fnImpl = async () => [];
+                        } else if (method === 'count') {
+                            fnImpl = async () => 0;
+                        } else {
+                            fnImpl = async (args) => ({
+                                id: args?.where?.id ?? 1,
+                                status: 'ACTIVE',
+                                createdAt: new Date(),
+                                updatedAt: new Date(),
+                                ...(args?.data || {})
+                            });
+                        }
+                        const fn = typeof jest !== 'undefined' && jest.fn ? jest.fn(fnImpl) : fnImpl;
+                        methodCache.set(method, fn);
+                        return fn;
+                    }
+                });
+                modelCache.set(prop, modelProxy);
+                return modelProxy;
+            }
+            return target[prop];
+        }
+    };
+    return new Proxy({}, handler);
+};
+
+if (!process.env.DATABASE_URL || process.env.COVAI_TEST_DATABASE_REJECTED === 'true') {
+    try {
+        const { setPrismaClient } = await import('../../config/prisma.js');
+        if (typeof setPrismaClient === 'function') {
+            setPrismaClient(createSafeDatabaseFallbackProxy());
+        }
+    } catch (_) {}
+}
 if (process.env.COVAI_OFFLINE_TESTS === 'true') {
     const local = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
     const assertLocal = input => {

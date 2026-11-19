@@ -97,7 +97,6 @@ export default function GithubCallbackPage() {
           });
           return;
         }
-
         const userPayload = {
           id: data.userId || data.id,
           name: data.name,

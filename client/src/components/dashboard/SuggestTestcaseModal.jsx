@@ -32,6 +32,12 @@ import {
   Scale,
 } from "lucide-react";
 import Editor from "@monaco-editor/react";
+import {
+  resolveTargetTestFile,
+  cleanDisplayPath,
+  computeRelativeImport,
+  checkSyntaxSanity,
+} from "../../services/unitTestResolution.js";
 
 /**
  * 4-Category Decision Table Matrix definitions with educational explanations (English)
@@ -115,30 +121,6 @@ const TRIPLE_A_GUIDE = [
   },
 ];
 
-/**
- * Helper to normalize and strip storage/container prefixes
- */
-function cleanPath(p = "") {
-  if (!p) return "";
-  return p
-    .replace(/\\/g, "/")
-    .replace(/^\.?\//, "")
-    .replace(/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*?\/(?:repo\/)?)/i, "")
-    .replace(/(?:^|\/)uploads\/snapshots\/[^/]+\/[^/]+\//i, "")
-    .trim();
-}
-
-/**
- * Computes a sensible relative import path from tests/ to the source file
- */
-function computeRelativeImport(filePath = "") {
-  if (!filePath) return "../src/services/sample";
-  const clean = cleanPath(filePath).replace(/\.[cm]?[jt]sx?$/, "");
-  if (clean.startsWith("src/")) {
-    return `../${clean}`;
-  }
-  return `../../${clean}`;
-}
 
 /**
  * Generates annotated boilerplate unit test code from real business logic function & file
@@ -147,18 +129,19 @@ function generateAnnotatedTestTemplate({
   framework = "vitest",
   functionName = "",
   filePath = "",
+  targetTestFile = "",
   category = "HAPPY_PATH",
 }) {
   if (!functionName.trim()) {
     return "// Enter a function name from the source file to preview its tests.";
   }
   const isVitest = framework === "vitest";
-  const cleanModName = filePath ? cleanPath(filePath).split("/").pop().replace(/\.[^.]+$/, "") : "sample";
+  const cleanModName = filePath ? cleanDisplayPath(filePath).split("/").pop().replace(/\.[^.]+$/, "") : "sample";
   const fallbackFn = cleanModName && cleanModName !== "sample"
     ? `run${cleanModName.charAt(0).toUpperCase() + cleanModName.slice(1)}`
     : "processAction";
   const cleanFn = (functionName || fallbackFn).replace(/[^a-zA-Z0-9_$]/g, "") || "processAction";
-  const relativeImport = computeRelativeImport(filePath);
+  const relativeImport = computeRelativeImport(filePath, targetTestFile);
 
   if (isVitest) {
     let scenarioSnippet = "";
@@ -223,7 +206,7 @@ function generateAnnotatedTestTemplate({
 
     return `import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// 1. Import target function from source code (${cleanPath(filePath) || 'business logic'})
+// 1. Import target function from source code (${cleanDisplayPath(filePath) || 'business logic'})
 import { ${cleanFn} } from '${relativeImport}';
 
 describe('${cleanFn} - Unit Test Suite', () => {
@@ -296,7 +279,7 @@ ${scenarioSnippet}
   });`;
   }
 
-  return `// 1. Import target function from source code (${cleanPath(filePath) || 'business logic'})
+  return `// 1. Import target function from source code (${cleanDisplayPath(filePath) || 'business logic'})
 const { ${cleanFn} } = require('${relativeImport}');
 
 describe('${cleanFn} - Unit Test Suite', () => {
@@ -310,49 +293,6 @@ ${jestScenarioSnippet}
 `;
 }
 
-/**
- * Lightweight JavaScript bracket balance & syntax sanity checker
- */
-function checkSyntaxSanity(code) {
-  if (!code || typeof code !== "string") return { valid: true, error: null };
-  const stack = [];
-  const lines = code.split("\n");
-
-  for (let l = 0; l < lines.length; l++) {
-    const line = lines[l];
-    for (let c = 0; c < line.length; c++) {
-      const char = line[c];
-      if (char === "{" || char === "(" || char === "[") {
-        stack.push({ char, line: l + 1, col: c + 1 });
-      } else if (char === "}" || char === ")" || char === "]") {
-        if (stack.length === 0) {
-          return {
-            valid: false,
-            error: `Unexpected closing '${char}' at line ${l + 1}, column ${c + 1}.`,
-          };
-        }
-        const top = stack.pop();
-        const expected = top.char === "{" ? "}" : top.char === "(" ? ")" : "]";
-        if (char !== expected) {
-          return {
-            valid: false,
-            error: `Mismatched bracket: Opened '${top.char}' at line ${top.line} but found '${char}' at line ${l + 1}.`,
-          };
-        }
-      }
-    }
-  }
-
-  if (stack.length > 0) {
-    const top = stack[stack.length - 1];
-    return {
-      valid: false,
-      error: `Unclosed bracket '${top.char}' opened at line ${top.line}, column ${top.col}. Please add corresponding closing bracket.`,
-    };
-  }
-
-  return { valid: true, error: null };
-}
 
 export default function SuggestTestcaseModal({
   isOpen,
@@ -362,6 +302,7 @@ export default function SuggestTestcaseModal({
   targetFunctionsList = [],
   allBusinessFiles = [],
   allFunctions = [],
+  testSuites = [],
   defaultFramework = "vitest",
   onConfirmAi,
   onApplyManualTest,
@@ -373,8 +314,25 @@ export default function SuggestTestcaseModal({
   const { showToast } = useToast();
 
   // Selection choices
-  const [chosenMode, setChosenMode] = useState("AI"); // "AI" | "MANUAL"
-  const [chosenFramework, setChosenFramework] = useState(defaultFramework || "vitest");
+  const detectedProjectFramework = useMemo(() => {
+    const suites = Array.isArray(testSuites) ? testSuites : [];
+    let vitestHits = 0;
+    let jestHits = 0;
+    for (const s of suites) {
+      const fw = String(s?.framework || "").toLowerCase();
+      if (fw === "vitest") vitestHits += 2;
+      else if (fw === "jest") jestHits += 2;
+      const body = String(s?.content || s?.code || "");
+      if (/\bfrom\s+['"]vitest['"]|\bvi\s*\.\s*(?:fn|mock|spyOn|hoisted)\b/.test(body)) vitestHits += 1;
+      if (/\bfrom\s+['"]@jest\/globals['"]|\bjest\s*\.\s*(?:fn|mock|spyOn)\b/.test(body)) jestHits += 1;
+    }
+    if (vitestHits > jestHits) return "vitest";
+    if (jestHits > vitestHits) return "jest";
+    return defaultFramework || "vitest";
+  }, [testSuites, defaultFramework]);
+
+  const [chosenMode, setChosenMode] = useState("AI");
+  const [chosenFramework, setChosenFramework] = useState(detectedProjectFramework);
 
   // Deduplicated & sanitized business logic files list
   const cleanBusinessFiles = useMemo(() => {
@@ -384,7 +342,7 @@ export default function SuggestTestcaseModal({
     for (const f of allBusinessFiles) {
       const rawPath = f.filePath || f.path || (typeof f === "string" ? f : "");
       if (!rawPath) continue;
-      const cp = cleanPath(rawPath);
+      const cp = cleanDisplayPath(rawPath);
       if (cp && !seen.has(cp)) {
         seen.add(cp);
         const fileName = cp.split("/").pop();
@@ -406,18 +364,26 @@ export default function SuggestTestcaseModal({
     targetFilePath || cleanBusinessFiles[0]?.rawPath || ""
   );
 
+  // Dynamic associated test suite resolution
+  const associatedTestSuite = useMemo(() => {
+    if (!selectedFile) return null;
+    return resolveTargetTestFile(selectedFile, testSuites, {
+      framework: chosenFramework,
+    });
+  }, [selectedFile, testSuites, chosenFramework]);
+
   // Dynamic function list for the currently selected file
   const availableFunctionsForFile = useMemo(() => {
-    if (!selectedFile) return [];
-    const cleanTarget = cleanPath(selectedFile);
+    if (!selectedFile) return targetFunctionsList || [];
+    const cleanTarget = cleanDisplayPath(selectedFile);
     if (allFunctions && allFunctions.length > 0) {
       const matches = allFunctions.filter((fn) => {
         const fPath = fn.filePath || "";
-        return fPath === selectedFile || cleanPath(fPath) === cleanTarget;
+        return fPath === selectedFile || cleanDisplayPath(fPath) === cleanTarget;
       });
       if (matches.length > 0) return matches;
     }
-    return cleanTarget === cleanPath(targetFilePath || "") ? targetFunctionsList || [] : [];
+    return cleanTarget === cleanDisplayPath(targetFilePath || "") ? targetFunctionsList || [] : [];
   }, [selectedFile, allFunctions, targetFilePath, targetFunctionsList]);
 
   // Manual Studio state: active function & category
@@ -432,26 +398,28 @@ export default function SuggestTestcaseModal({
   // Code editor content & syntax sanity
   const [codeContent, setCodeContent] = useState("");
   const [syntaxStatus, setSyntaxStatus] = useState({ valid: true, error: null });
+  const [applyFeedback, setApplyFeedback] = useState(null);
 
   // Sync state on modal open
   useEffect(() => {
     if (isOpen) {
       setStep("SELECTION");
-      setChosenFramework(defaultFramework || "vitest");
+      setChosenMode("AI");
+      setChosenFramework(detectedProjectFramework);
       const initialFile = targetFilePath || cleanBusinessFiles[0]?.rawPath || "";
       setSelectedFile(initialFile);
 
       const fns = (allFunctions || []).filter((fn) => {
         const fPath = fn.filePath || "";
-        return fPath === initialFile || cleanPath(fPath) === cleanPath(initialFile);
+        return fPath === initialFile || cleanDisplayPath(fPath) === cleanDisplayPath(initialFile);
       });
-      const isTargetFile = cleanPath(initialFile) === cleanPath(targetFilePath || "");
+      const isTargetFile = cleanDisplayPath(initialFile) === cleanDisplayPath(targetFilePath || "");
       const resolvedFns = fns.length > 0 ? fns : isTargetFile ? targetFunctionsList || [] : [];
       const initialFn = (isTargetFile ? targetFunction : "") || resolvedFns[0]?.functionName || resolvedFns[0]?.name || "";
       setSelectedFunc(initialFn);
       setApplyFeedback(null);
     }
-  }, [isOpen, defaultFramework, targetFilePath, targetFunction, cleanBusinessFiles, allFunctions, targetFunctionsList]);
+  }, [isOpen, detectedProjectFramework, targetFilePath, targetFunction, cleanBusinessFiles, allFunctions, targetFunctionsList]);
 
   // When selectedFile changes, initialize the function without overriding manual input.
   useEffect(() => {
@@ -477,12 +445,13 @@ export default function SuggestTestcaseModal({
         framework: chosenFramework,
         functionName: selectedFunc,
         filePath: selectedFile,
+        targetTestFile: associatedTestSuite,
         category: activeCategory,
       });
       setCodeContent(template);
       setSyntaxStatus(checkSyntaxSanity(template));
     }
-  }, [step, chosenFramework, selectedFunc, selectedFile, activeCategory]);
+  }, [step, chosenFramework, selectedFunc, selectedFile, associatedTestSuite, activeCategory]);
 
   // Live syntax check on editor changes
   const handleEditorChange = (value) => {
@@ -498,6 +467,7 @@ export default function SuggestTestcaseModal({
       framework: chosenFramework,
       functionName: selectedFunc,
       filePath: selectedFile,
+      targetTestFile: associatedTestSuite,
       category: catId,
     });
     setCodeContent(template);
@@ -508,10 +478,10 @@ export default function SuggestTestcaseModal({
   const handleFileChange = (newFile) => {
     setApplyFeedback(null);
     setSelectedFile(newFile);
-    const cleanTarget = cleanPath(newFile);
+    const cleanTarget = cleanDisplayPath(newFile);
     const matchingFns = (allFunctions || []).filter((fn) => {
       const fPath = fn.filePath || "";
-      return fPath === newFile || cleanPath(fPath) === cleanTarget;
+      return fPath === newFile || cleanDisplayPath(fPath) === cleanTarget;
     });
     const nextFn = matchingFns[0]?.functionName || matchingFns[0]?.displayName || matchingFns[0]?.name || "";
     setSelectedFunc(nextFn);
@@ -523,6 +493,7 @@ export default function SuggestTestcaseModal({
       onConfirmAi?.({
         framework: chosenFramework,
         filePath: selectedFile || targetFilePath,
+        targetTestFile: associatedTestSuite || undefined,
       });
       onClose();
     } else {
@@ -531,7 +502,6 @@ export default function SuggestTestcaseModal({
   };
 
   // Submit action for manual test apply
-  const [applyFeedback, setApplyFeedback] = useState(null);
   const handleApplyManual = async () => {
     if (!selectedFunc.trim()) {
       setApplyFeedback({ error: true, message: "Enter a function name to test." });
@@ -541,32 +511,22 @@ export default function SuggestTestcaseModal({
       alert("Please resolve syntax errors before saving and executing tests.");
       return;
     }
-    setApplyFeedback(null);
-    try {
-      const result = await onApplyManualTest?.({
-        framework: chosenFramework,
-        filePath: selectedFile || targetFilePath,
-        functionName: selectedFunc.trim(),
-        generatedCode: codeContent,
-      });
-      if (result) {
-        setApplyFeedback(result);
-        if (!result.error) {
-          showToast({ type: "success", title: "Tests applied", message: result.message });
-          onClose();
-        }
-      }
-    } catch (error) {
-      setApplyFeedback({ error: true, message: error.response?.data?.message || error.message || "Unable to save and run the test." });
-    }
+    await onApplyManualTest?.({
+      framework: chosenFramework,
+      filePath: selectedFile || targetFilePath,
+      targetTestFile: associatedTestSuite || undefined,
+      functionName: selectedFunc,
+      generatedCode: codeContent,
+    });
+    onClose();
   };
 
   if (!isOpen) return null;
 
   const displayFileName = selectedFile
-    ? cleanPath(selectedFile).split("/").pop()
+    ? cleanDisplayPath(selectedFile).split("/").pop()
     : targetFilePath
-      ? cleanPath(targetFilePath).split("/").pop()
+      ? cleanDisplayPath(targetFilePath).split("/").pop()
       : "Entire Project";
 
   return (
@@ -700,139 +660,8 @@ export default function SuggestTestcaseModal({
                     <span className="text-indigo-500 font-bold">*</span>
                   </label>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    {/* Card A: Manual Guided Mode */}
-                    <div
-                      onClick={() => setChosenMode("MANUAL")}
-                      role="button"
-                      tabIndex={0}
-                      className="rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between relative overflow-hidden"
-                      style={{
-                        background:
-                          chosenMode === "MANUAL"
-                            ? isLight
-                              ? "#f0fdf4"
-                              : "rgba(16, 185, 129, 0.08)"
-                            : isLight
-                              ? "#ffffff"
-                              : "rgba(255, 255, 255, 0.02)",
-                        border:
-                          chosenMode === "MANUAL"
-                            ? isLight
-                              ? "2px solid #059669"
-                              : "2px solid #10b981"
-                            : isLight
-                              ? "1px solid #cbd5e1"
-                              : "1px solid rgba(255, 255, 255, 0.08)",
-                        boxShadow:
-                          chosenMode === "MANUAL"
-                            ? isLight
-                              ? "0 4px 20px rgba(16, 185, 129, 0.16)"
-                              : "0 0 20px rgba(16, 185, 129, 0.25)"
-                            : "none",
-                      }}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <div
-                              className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm ${
-                                isLight
-                                  ? "bg-emerald-100 text-emerald-700 border border-emerald-300"
-                                  : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
-                              }`}
-                            >
-                              <PenTool size={20} />
-                            </div>
-                            <div>
-                              <h3
-                                className={`font-bold text-base ${
-                                  isLight ? "text-emerald-800" : "text-emerald-400"
-                                }`}
-                              >
-                                Manual Guided Test Authoring
-                              </h3>
-                              <span
-                                className={`inline-block text-[10.5px] font-bold px-2 py-0.5 rounded-full mt-0.5 ${
-                                  isLight
-                                    ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                                    : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                                }`}
-                              >
-                                Beginner Friendly (A-Z)
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Selected Radio Indicator */}
-                          <div
-                            className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                              chosenMode === "MANUAL"
-                                ? isLight
-                                  ? "bg-emerald-600 text-white shadow-sm"
-                                  : "bg-emerald-500 text-slate-950 font-bold"
-                                : isLight
-                                  ? "border-2 border-slate-300"
-                                  : "border-2 border-slate-600"
-                            }`}
-                          >
-                            {chosenMode === "MANUAL" && <Check size={14} strokeWidth={3} />}
-                          </div>
-                        </div>
-
-                        <p
-                          className={`text-xs leading-relaxed mb-4 ${
-                            isLight ? "text-slate-700" : "text-slate-300"
-                          }`}
-                        >
-                          CovAI guides you through the standard{" "}
-                          <strong className={isLight ? "text-slate-900" : "text-white"}>
-                            3A pattern (Arrange - Act - Assert)
-                          </strong>
-                          , explains code mechanics, and provides ready-to-use templates for 4 scenario categories.
-                        </p>
-
-                        <div
-                          className={`flex flex-col gap-2 text-xs ${
-                            isLight ? "text-slate-700 font-medium" : "text-slate-300"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Check
-                              size={15}
-                              className={isLight ? "text-emerald-600 font-bold" : "text-emerald-400"}
-                            />
-                            <span>Standard 4-category templates (Happy Path, Boundary, Branching, Error)</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Check
-                              size={15}
-                              className={isLight ? "text-emerald-600 font-bold" : "text-emerald-400"}
-                            />
-                            <span>Comprehensive code annotations explaining each step</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Check
-                              size={15}
-                              className={isLight ? "text-emerald-600 font-bold" : "text-emerald-400"}
-                            />
-                            <span>Real-time syntax validation preventing missing bracket errors</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div
-                        className={`mt-5 pt-3.5 flex items-center justify-between text-xs font-semibold ${
-                          isLight
-                            ? "text-emerald-700 border-t border-emerald-200"
-                            : "text-emerald-400 border-t border-slate-800"
-                        }`}
-                      >
-                        <span>Click to open Guided Studio</span>
-                        <ArrowRight size={15} />
-                      </div>
-                    </div>
-
+                  <div className="grid grid-cols-1 gap-5">
+                    {/* Card: AI-Generated Mode */}
                     {/* Card B: AI-Generated Mode */}
                     <div
                       onClick={() => setChosenMode("AI")}

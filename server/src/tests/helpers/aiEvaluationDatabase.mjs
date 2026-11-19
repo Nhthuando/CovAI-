@@ -21,6 +21,8 @@ export async function evaluationDatabase() {
     const engine = await PGlite.create();
     await engine.exec(sql);
     await engine.exec(await fs.readFile(path.join(serverDir, 'prisma/migrations/20261030120000_ai_evaluation/migration.sql'), 'utf8'));
+    await engine.exec(await fs.readFile(path.join(serverDir, 'prisma/migrations/20261031120000_imported_chatbot_evaluation/migration.sql'), 'utf8'));
+    await engine.exec(await fs.readFile(path.join(serverDir, 'prisma/migrations/20261031190000_chatbot_project_settings/migration.sql'), 'utf8'));
     const socket = new PGLiteSocketServer({ db: engine, host: '127.0.0.1', port: 0 });
     await socket.start();
     const connection = socket.getServerConn();

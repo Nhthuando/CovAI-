@@ -83,7 +83,7 @@ await jest.unstable_mockModule("../services/job.service.js", () => lifecycle);
 await jest.unstable_mockModule("../services/jobUpdate.service.js", () => jobUpdate);
 await jest.unstable_mockModule("../services/aiContextBuilder.service.js", () => aiContextBuilder);
 await jest.unstable_mockModule("../services/gemini.service.js", () => geminiService);
-await jest.unstable_mockModule("../services/dockerRunner.service.js", () => ({ dockerRunner: dockerRunnerMock }));
+await jest.unstable_mockModule("../services/dockerRunner.service.js", () => ({ dockerRunner: dockerRunnerMock, isPsAvailable: jest.fn(() => false) }));
 await jest.unstable_mockModule("../services/notification.service.js", () => ({ notificationService: notificationMock }));
 
 const { processAiTestsJob } = await import("../services/aiTestsJob.service.js");

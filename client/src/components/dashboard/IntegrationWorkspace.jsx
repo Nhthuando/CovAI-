@@ -1,8 +1,6 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
-import {
-  getIntegrationScenarioApi,
-  mutateIntegrationScenarioApi,
-} from "../../services/integrationScenario.service";
+import { useChatTestContext } from '../../hooks/useChatTestContext';
+import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
 import React, {
   useCallback,
   useEffect,
@@ -322,6 +320,7 @@ function IntegrationCockpitSkeleton() {
 }
 
 export default function IntegrationWorkspace({
+  onChatContextChange,
   projectId,
   snapshotId,
   onGenerate,
@@ -807,7 +806,7 @@ export default function IntegrationWorkspace({
         framework: targetFramework,
         force: true,
       });
-      const jId = res?.data?.jobId || res?.jobId;
+      const jId = res?.data?.job?.id || res?.data?.jobId || res?.job?.id || res?.jobId;
       if (jId) {
         setActiveJobId(jId);
         setActiveJobType("GENERATE");
@@ -2118,6 +2117,21 @@ export default function IntegrationWorkspace({
     };
   }, [endpoints, execution, generation, workspace]);
 
+  useChatTestContext(activeTab === "report" ? undefined : onChatContextChange, {
+    projectId, snapshotId, testType: "integration", testRunId: execution?.testRunId,
+    displayedMetrics: {
+      kind: "integration", tab: activeTab,
+      state: loading && !workspace ? "loading" : error && !workspace ? "unavailable" : overallStats.hasExecuted ? "ready" : "not-run",
+      counts: workspace ? {
+        endpoints: overallStats.totalApis, testedEndpoints: overallStats.testedApis,
+        passedEndpoints: overallStats.passedApis, failedEndpoints: overallStats.failedApis,
+        scenarios: overallStats.totalScenariosCount, passedScenarios: overallStats.passedScenariosCount,
+        failedScenarios: overallStats.failedScenariosCount,
+        apiCoveragePct: overallStats.apiCoverageRate, scenarioPassRate: overallStats.scenarioPassRate,
+      } : undefined,
+    },
+  });
+
   const normalizeCoveragePath = (p) =>
     String(p || "")
       .replace(/\\/g, "/")
@@ -2764,9 +2778,10 @@ export default function IntegrationWorkspace({
             <IntegrationReportEmbed
               projectId={projectId}
               snapshotId={snapshotId}
-              report={reportData}
+              report={reportData?.overview?.snapshotId === snapshotId ? reportData : null}
               workspace={workspace}
               endpoints={endpoints}
+              onChatContextChange={onChatContextChange}
               hasScanned={hasScanned}
               hasExecutedCoverage={
                 Boolean(reportData?.apiCoverage?.hasExecutedCoverage) ||

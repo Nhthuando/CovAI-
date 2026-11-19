@@ -1,0 +1,2 @@
+FROM node:24-slim
+COPY egressProxy.mjs request.mjs /covai/

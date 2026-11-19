@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
+import { useChatTestContext } from "../../../hooks/useChatTestContext";
 import {
   FileText,
   Download,
@@ -58,6 +59,8 @@ export default function IntegrationReportEmbed({
   onNavigateTab,
   onGenerateEndpoint,
   loading = false,
+  onRefreshReport = () => {},
+  onChatContextChange,
 }) {
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
@@ -256,6 +259,21 @@ export default function IntegrationReportEmbed({
       ? Math.round((totalPassed / totalExecuted) * 100)
       : 0;
 
+  useChatTestContext(onChatContextChange, {
+    projectId, snapshotId, testType: "integration", testRunId: latestExecution?.testRunId,
+    displayedMetrics: {
+      kind: "integration", tab: "report",
+      state: loading && !workspace && !report ? "loading" : totalExecuted > 0 ? "ready" : "not-run",
+      counts: {
+        endpoints: totalDiscovered, testedEndpoints: totalTested,
+        passedEndpoints: coveredRoutes.length, failedEndpoints: failedRoutes.length,
+        scenarios: totalScenarios, passedScenarios: totalPassed, failedScenarios: totalFailed,
+        apiCoveragePct: coverageRate, scenarioPassRate: passRate,
+      },
+    },
+  });
+
+  // Quality Health Score (0-100)
   const qualityScore = effectiveHasExecuted
     ? Math.min(
         100,

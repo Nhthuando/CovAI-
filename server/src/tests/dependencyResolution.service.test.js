@@ -1,5 +1,8 @@
 import {
   extractMissingDependency,
+  extractMissingDependencies,
+  collectWorkspaceMissingDependencies,
+  ensureMountedProjectDependencies,
   isValidNpmPackageName,
   findTargetPackageDir,
   inspectWorkspaceDependency,
@@ -10,6 +13,7 @@ import {
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { fileURLToPath } from "node:url";
 
 describe("dependencyResolution.service", () => {
   describe("isValidNpmPackageName", () => {
@@ -38,6 +42,7 @@ describe("dependencyResolution.service", () => {
       expect(isValidNpmPackageName(null)).toBe(false);
       expect(isValidNpmPackageName(undefined)).toBe(false);
       expect(isValidNpmPackageName("   ")).toBe(false);
+      expect(isValidNpmPackageName("--force")).toBe(false);
     });
   });
 
@@ -126,6 +131,58 @@ Cannot find module 'path' from 'src/index.js'
       const output = "PASS tests/controllers/calculation.controller.test.ts\nAll tests passed!";
       expect(extractMissingDependency(output)).toBeNull();
     });
+
+    test("collects external packages across Jest, Vitest and Node errors", () => {
+      const output = [
+        "Cannot find module '../models/Product' from 'tests/product.test.js'",
+        "Cannot find module 'fs/promises' from 'tests/db.test.js'",
+        "Cannot find module 'node:sqlite' from 'tests/db.test.js'",
+        "Cannot find module '/workspace/node_modules/vitest/vitest.mjs'",
+        "Cannot find module '@google/genai' from 'tests/chatbot.test.js'",
+        'Failed to resolve import "bcrypt" from "server/tests/admin.test.js"',
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'razorpay/dist/utils/razorpay-utils' imported from '/workspace/tests/order.test.js'",
+        "Cannot find module 'mongoose'",
+      ].join("\n");
+      expect(extractMissingDependencies(output)).toEqual([
+        { packageName: "@google/genai", rawSpecifier: "@google/genai", importedFrom: "tests/chatbot.test.js" },
+        { packageName: "bcrypt", rawSpecifier: "bcrypt", importedFrom: "server/tests/admin.test.js" },
+        { packageName: "razorpay", rawSpecifier: "razorpay/dist/utils/razorpay-utils", importedFrom: "/workspace/tests/order.test.js" },
+        { packageName: "mongoose", rawSpecifier: "mongoose", importedFrom: null },
+      ]);
+    });
+  });
+
+  test("restores a borrowed package in the Docker workspace and reuses the local install", async () => {
+    const tempParent = new URL("../../.covai-temp/", import.meta.url);
+    fs.mkdirSync(tempParent, { recursive: true });
+    const sandbox = fs.mkdtempSync(path.join(fileURLToPath(tempParent), "docker-jest-deps-"));
+    const rootDir = path.join(sandbox, "workspace");
+    const targetDir = path.join(rootDir, "server");
+    const sourceModules = path.join(sandbox, "original", "node_modules");
+    const localModules = path.join(targetDir, "node_modules");
+    try {
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.writeFileSync(path.join(targetDir, "package.json"), '{"dependencies":{"@google/genai":"3.3.0"}}');
+      fs.mkdirSync(path.join(sourceModules, "@google/genai"), { recursive: true });
+      fs.writeFileSync(path.join(sourceModules, "@google/genai/package.json"), '{"name":"@google/genai","version":"3.3.0"}');
+      fs.symlinkSync(sourceModules, localModules, process.platform === "win32" ? "junction" : "dir");
+      let calls = 0;
+      const restore = () => ensureMountedProjectDependencies({
+        rootDir, packageDirs: ["server"], install: async ({ packageName, importedFrom }) => {
+          calls++;
+          expect([packageName, importedFrom]).toEqual(["@google/genai", "server/package.json"]);
+          fs.unlinkSync(localModules);
+          fs.cpSync(sourceModules, localModules, { recursive: true });
+          return { success: true };
+        },
+      });
+      await restore();
+      await restore();
+      expect(calls).toBe(1);
+      expect(fs.existsSync(path.join(sourceModules, "@google/genai/package.json"))).toBe(true);
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   describe("inspectWorkspaceDependency & monorepo subpackages", () => {
@@ -148,6 +205,25 @@ Cannot find module 'path' from 'src/index.js'
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       } catch { }
+    });
+
+    test("deduplicates by target manifest while preserving monorepo installs and saved runner markers", () => {
+      for (const dir of ["server", "client"]) {
+        fs.mkdirSync(path.join(tmpDir, dir));
+        fs.writeFileSync(path.join(tmpDir, dir, "package.json"), "{}");
+      }
+      const messages = [
+        "Cannot find module 'razorpay' from '/workspace/server/tests/order.test.js'",
+        "Cannot find module 'razorpay/dist/utils/razorpay-utils' from 'server/tests/checkout.test.js'",
+        "Cannot find module 'razorpay' from 'client/tests/checkout.test.js'",
+        '[MISSING_DEPENDENCY]:{"packageName":"mongoose","importedFrom":"server/package.json"}',
+      ];
+      expect(collectWorkspaceMissingDependencies(tmpDir, messages).map(({ packageName, targetPackage }) =>
+        [packageName, targetPackage])).toEqual([
+        ["razorpay", "server/package.json"],
+        ["razorpay", "client/package.json"],
+        ["mongoose", "server/package.json"],
+      ]);
     });
 
     test("detects when dependency is not in package.json and not in node_modules", () => {

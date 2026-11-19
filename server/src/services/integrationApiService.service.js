@@ -78,7 +78,9 @@ import {
   buildFaultyTestFixPrompt,
   harvestApiDeepContext,
 } from "./integrationAiTestGenerator.service.js";
-import { generateText } from "./gemini.service.js";
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('integration-test', () => generateFeatureText(...args));
 import { extractTestRequests } from "./testSourceParser.service.js";
 import {
   invalidateEndpointCache,
@@ -92,6 +94,7 @@ import {
   resolveAndValidateAiTestPath,
   resolveAppImportPath,
 } from "./aiTestStorage.service.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { addJobToQueue } from "./queue.service.js";
 import { getJobById, addJobLog } from "./job.service.js";
 import { updateJobStatus } from "./jobUpdate.service.js";
@@ -192,6 +195,14 @@ export const detectIntegrationFrameworksService = async ({
     throw new ServiceError("Either snapshotId or projectId is required", 400);
   }
 
+  if (
+    rootDir &&
+    /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+    !fs.existsSync(rootDir)
+  ) {
+    rootDir = resolveProjectRoot(rootDir) || rootDir;
+  }
+
   if (!rootDir || !fs.existsSync(rootDir)) {
     throw new ServiceError("Project directory does not exist on disk", 404);
   }
@@ -223,6 +234,14 @@ const installIntegrationDependenciesInWorkspace = async ({
     rootDir = resolveExistingRootDir(latest, project);
   } else {
     throw new ServiceError("Either snapshotId or projectId is required", 400);
+  }
+
+  if (
+    rootDir &&
+    /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+    !fs.existsSync(rootDir)
+  ) {
+    rootDir = resolveProjectRoot(rootDir) || rootDir;
   }
 
   if (!rootDir || !fs.existsSync(rootDir)) {
@@ -355,7 +374,7 @@ export const runIntegrationGenerationPipeline = async ({
   await addJobLog(
     jobId,
     "INFO",
-    `[Integration AI] Khởi động sinh test cho framework: ${normFramework}`,
+    `[Integration AI] Starting test generation for framework: ${normFramework}`,
   ).catch(() => {});
 
   // 1. Load source code & extract valid endpoints
@@ -363,7 +382,7 @@ export const runIntegrationGenerationPipeline = async ({
   await addJobLog(
     jobId,
     "INFO",
-    "[Integration AI] Đang quét mã nguồn Router và Controller...",
+    "[Integration AI] Scanning Router and Controller source code...",
   ).catch(() => {});
   const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
   const allEndpoints = extractValidEndpoints(sourceCode);
@@ -801,7 +820,14 @@ const applyIntegrationTestsInWorkspace = async ({
     snapshotId,
     userId,
   );
-  const rootDir = resolveExistingRootDir(snapshot, project);
+  let rootDir = resolveExistingRootDir(snapshot, project);
+  if (
+    rootDir &&
+    /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+    !fs.existsSync(rootDir)
+  ) {
+    rootDir = resolveProjectRoot(rootDir) || rootDir;
+  }
 
   if (!rootDir || !fs.existsSync(rootDir)) {
     throw new ServiceError(
@@ -1065,7 +1091,7 @@ const applyIntegrationTestsInWorkspace = async ({
 
   return {
     success: true,
-    message: `Đã áp dụng thành công ${appliedFiles.length} file test vào mã nguồn dự án.`,
+    message: `Successfully applied ${appliedFiles.length} test file(s) into project source code.`,
     appliedFiles,
     totalScenarios,
     suggestRerun: true, // Prompts user to rerun coverage analysis to confirm 100% coverage

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import prisma from '../config/prisma.js';
 import {operationSnapshot,stagePreparedPublication} from './projectOperationWorkspace.service.js';
 import { extractFunctions } from './cyclomaticFunctionExtractor.service.js';
@@ -24,8 +25,7 @@ export async function buildCfgForSnapshot(snapshotId) {
 
     const files = getAllFiles(rootDir);
     let functionCount = 0;
-    await stagePreparedPublication(tx=>tx.cyclomatic.deleteMany({ where: { snapshotId } }));
-    await stagePreparedPublication(tx=>tx.cfg.deleteMany({ where: { snapshotId } }));
+    const artifacts = new Map();
 
     for (const file of files) {
         if (!/\.(js|ts|jsx|tsx)$/.test(file)) continue;
@@ -50,40 +50,39 @@ export async function buildCfgForSnapshot(snapshotId) {
             }
             seenInFile.add(uniqueName);
 
-            await stagePreparedPublication(async tx=>{
-            const cfg = await storeCfg({
+            artifacts.set(JSON.stringify([relativePath, uniqueName]), { cfg: {
+                id: randomUUID(),
                 snapshotId,
                 filePath: relativePath,
                 functionName: uniqueName,
                 startLine: func.startLine,
                 endLine: func.endLine,
                 graphJson: JSON.stringify(graphJson),
-                skipSnapshotCheck: true
-            },tx);
-
-            await tx.cyclomatic.upsert({
-                where: {
-                    snapshotId_filePath_functionName: {
-                        snapshotId,
-                        filePath: relativePath,
-                        functionName: uniqueName
-                    }
-                },
-                update: {
-                    value: complexity,
-                    cfgId: cfg.id
-                },
-                create: {
-                    snapshotId,
-                    filePath: relativePath,
-                    functionName: uniqueName,
-                    value: complexity,
-                    cfgId: cfg.id
-                }
-            });
-            });
+            }, complexity });
         }
     }
+
+    // Graph construction and JSON serialization finish before opening the
+    // publication transaction. Insert linked artifacts in bounded batches.
+    await stagePreparedPublication(async tx => {
+        await tx.cyclomatic.deleteMany({ where: { snapshotId } });
+        await tx.cfg.deleteMany({ where: { snapshotId } });
+        const rows = [...artifacts.values()];
+        for (let offset = 0; offset < rows.length; offset += 500) {
+            const batch = rows.slice(offset, offset + 500);
+            if (typeof tx.cfg.createMany === 'function' && typeof tx.cyclomatic.createMany === 'function') {
+                await tx.cfg.createMany({ data: batch.map(row => row.cfg) });
+                await tx.cyclomatic.createMany({ data: batch.map(({ cfg, complexity }) => ({ snapshotId,
+                    filePath: cfg.filePath, functionName: cfg.functionName, value: complexity, cfgId: cfg.id })) });
+            } else {
+                for (const { cfg: data, complexity } of batch) {
+                    const cfg = await storeCfg({ ...data, skipSnapshotCheck: true }, tx);
+                    const value = { snapshotId, filePath: data.filePath, functionName: data.functionName, value: complexity, cfgId: cfg.id };
+                    await tx.cyclomatic.upsert({ where: { snapshotId_filePath_functionName: { snapshotId, filePath: data.filePath, functionName: data.functionName } }, create: value, update: { value: complexity, cfgId: cfg.id } });
+                }
+            }
+        }
+    });
 
     console.log(`[BuildCFG] Completed for snapshot ${snapshotId}: ${functionCount} functions processed`);
     return { functionCount };

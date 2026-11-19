@@ -8,6 +8,7 @@ import {
   scanSystemTestFiles,
   parseTestFileDetails,
 } from "../utils/testFileParser.js";
+import { resolveSnapshotRootDir } from "../utils/snapshotWorkspace.js";
 
 /**
  * Detects System Test frameworks (Playwright, Cypress) in a project
@@ -31,6 +32,13 @@ export async function detectSystemTestFrameworks(rawRootDir) {
       allTestFiles: [],
       error: "Invalid root directory",
     };
+  }
+
+  if (
+    /^\/?app\/(?:storage|uploads)\//i.test(rootDir.replace(/\\/g, "/")) &&
+    !fs.existsSync(rootDir)
+  ) {
+    rootDir = resolveSnapshotRootDir(rootDir) || rootDir;
   }
 
   if (!fs.existsSync(rootDir)) {

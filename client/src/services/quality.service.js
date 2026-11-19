@@ -1,6 +1,6 @@
 import { authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
   const token = getAccessToken();

@@ -56,7 +56,7 @@ export const renderAnalysisPdf = (report) => new Promise((resolve, reject) => {
             if (description) paragraph(description, { size: 9 });
         };
         const table = (headers, rows, widths, { limit = 60, total = rows.length } = {}) => {
-            if (!rows.length) { paragraph("Chưa có dữ liệu / No saved results."); return; }
+            if (!rows.length) { paragraph("No saved results."); return; }
             const header = () => {
                 doc.rect(left, y, width, 27).fill(colors.ink);
                 let x = left;

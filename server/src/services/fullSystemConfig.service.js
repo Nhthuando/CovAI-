@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ServiceError } from '../utils/serviceError.js';
 import {isWorkspaceMember} from '../utils/projectWorkspace.js';
+import { normalizeDiskPath } from '../utils/snapshotWorkspace.js';
 
 export const containedPath = (root, relative) => {
   const resolved = path.resolve(root, relative || '.');
@@ -56,10 +57,14 @@ export const readFullSystemConfig = (rootDir, {allowMissing = false} = {}) => {
 export const resolveSystemRepositoryRoot = rootDir => {
   if (!rootDir || typeof rootDir !== 'string') return rootDir;
   let root = rootDir;
+  if (/^\/?app\/(?:storage|uploads)\//i.test(root.replace(/\\/g, '/')) && !fs.existsSync(root)) {
+    const normalized = normalizeDiskPath(root);
+    if (normalized && fs.existsSync(normalized)) root = normalized;
+  }
   try {
-    root = fs.realpathSync(rootDir);
+    root = fs.realpathSync(root);
   } catch (_) {
-    root = rootDir;
+    // keep root
   }
   if (fs.existsSync(path.join(root, '.covai/system-test.json'))) return root;
   // An ingestion/analysis step may select a deeply nested workspace package.

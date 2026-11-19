@@ -73,6 +73,26 @@ test('owner scoping, cross-project IDs, draft revision conflict and encrypted cr
     const publicData = await request(app).get(base); assert.ok(!JSON.stringify(publicData.body).includes(stored.ciphertext)); assert.ok(!JSON.stringify(publicData.body).includes('credential-do-not-leak'));
 });
 
+test('chatbot judge uses its own benchmark and queued runs cannot silently change agent contracts', async () => {
+    const profile = await benchmark([qaCase({ criteria: [{ key: 'semantic-correctness', method: 'semantic', rubric: '100 for a supported equivalent answer, 0 for contradiction.', groundTruth: 'Returns within 7 days.', threshold: 80 }] })], { judge: { enabled: true, model: 'gemini-fixture', judgingConsent: true } });
+    const run = await runFor(profile);
+    assert.equal(run.manifest.agent.id, 'chatbot-trustworthiness');
+    await processEvaluation(run.jobId, { db, transport: async () => ({ answer: 'You have one week to return it.' }), provider: async prompt => {
+        assert.equal(prompt.agent.benchmarkHash, run.manifest.agent.benchmarkHash);
+        assert.match(prompt.instruction, /Agent ID: chatbot-trustworthiness/);
+        assert.match(prompt.instruction, /REFERENCE EXAMPLES/);
+        return { text: JSON.stringify({ score: 100, reason: 'Equivalent to supplied ground truth.', evidenceRefs: [prompt.data.evidence[0].id] }), actualModel: 'gemini-fixture' };
+    } });
+    const report = await getRunReport(db, project.id, run.id);
+    assert.equal(report.verdict, 'PASSED');
+    assert.equal(report.cases[0].criteria[0].evaluator.agent.benchmarkHash, run.manifest.agent.benchmarkHash);
+    const queuedRun = await runFor(profile);
+    await db.aiEvaluationRun.update({ where: { id: queuedRun.id }, data: { manifest: { ...queuedRun.manifest, agent: { ...queuedRun.manifest.agent, benchmarkHash: '0'.repeat(64) } } } });
+    await processEvaluation(queuedRun.jobId, { db, transport: async () => assert.fail('Changed benchmark must be rejected before dispatch'), provider: async () => assert.fail('Must not judge with a changed benchmark') });
+    assert.equal((await getRunReport(db, project.id, queuedRun.id)).errorCode, 'AGENT_BENCHMARK_CHANGED');
+    assert.equal((await compareRuns(db, project.id, [run.id, queuedRun.id])).compatible, false);
+});
+
 test('missing metadata and failed target remain incomplete; failed case does not erase prior evidence', async () => {
     const profile = await benchmark([qaCase(), qaCase({ caseKey: 'missing', criteria: [rule('cost', 'cost', undefined, { rule: { type: 'cost', max: 1, currency: 'USD' } })] })]);
     const run = await runFor(profile); await processEvaluation(run.jobId, { db, transport: async () => ({ answer: '7 days' }) });
@@ -124,6 +144,37 @@ test('queue failures are persisted, worker redelivery never repeats dispatched c
     assert.equal(dispatches, 0); assert.equal((await db.aiEvaluationRun.findUnique({ where: { id: run.id } })).executionStatus, 'INDETERMINATE');
     const canceled = await runFor(profile); await cancelRun(db, canceled.id); await processEvaluation(canceled.jobId, { db, transport: async () => { dispatches++; return { answer: '7 days' }; } }); assert.equal(dispatches, 0);
     await reconcileEvaluations(db);
+});
+
+test('cancel preserves an already observed blocking violation and freezes the report', async () => {
+    const profile = await benchmark([actionCase()], { tools: [mockTool] });
+    const target = await management.saveTarget(db, project.id, { name: 'Cancel fixture', config: { endpoint: 'https://chatbot.example.com/chat', mockGateway: true, testEnvironmentConfirmed: true } });
+    const run = await runFor(profile, target.versionId);
+    let frozen;
+    await processEvaluation(run.jobId, { db, transport: async ({ body }) => {
+        const session = body.evaluationContext.gateway;
+        await gatewayRequest(session.sessionId, session.token, 'tool', { callId: 'blocked-before-cancel', toolName: 'renameTask', arguments: actionArgs }, db);
+        await cancelRun(db, run.id);
+        frozen = await getRunReport(db, project.id, run.id);
+        assert.equal(frozen.verdict, 'FAILED');
+        return { answer: 'Late answer must not change the report' };
+    } });
+    const report = await getRunReport(db, project.id, run.id);
+    assert.equal(report.executionStatus, 'CANCELED');
+    assert.deepEqual(report, frozen);
+});
+
+test('large evidence is hydrated and run deletion removes its artifact', async () => {
+    const profile = await benchmark([qaCase()]);
+    const run = await runFor(profile);
+    await processEvaluation(run.jobId, { db, transport: async () => ({ answer: '7 days ' + 'x'.repeat(70000) }) });
+    const stored = await db.aiEvaluationEvidence.findFirst({ where: { runId: run.id } });
+    assert.equal(stored.payload._artifact.backend, 'LOCAL');
+    assert.ok((await getRunReport(db, project.id, run.id)).evidence[0].payload.responses[0].answer.length > 70000);
+    const { readEvidencePayload } = await import('../services/aiEvaluation/artifactStore.service.js');
+    const response = await request(app).delete(`/api/projects/${project.id}/ai-evaluations/runs/${run.id}`);
+    assert.equal(response.status, 200);
+    await assert.rejects(readEvidencePayload(project.id, run.id, stored.payload));
 });
 
 test('knowledge upload is prepared asynchronously and project cleanup cascades only its evaluation records', async () => {

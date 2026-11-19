@@ -101,10 +101,15 @@ export async function getUserJobsApi() {
  * GET /api/job/:jobId
  * Returns { message, job }
  */
-export async function getJobDetailApi(jobId) {
+export async function getJobDetailApi(jobId, options = {}) {
   try {
     const headers = await getAuthHeaders();
-    return await fetchWithRetry(`${BASE_URL}/job/${jobId}`, { headers });
+    const params = new URLSearchParams();
+    if (options?.summary) params.set("summary", "1");
+    if (options?.includeLogs) params.set("includeLogs", "1");
+    const qs = params.toString();
+    const url = qs ? `${BASE_URL}/job/${jobId}?${qs}` : `${BASE_URL}/job/${jobId}`;
+    return await fetchWithRetry(url, { headers });
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(

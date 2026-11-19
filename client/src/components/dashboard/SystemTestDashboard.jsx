@@ -4,6 +4,7 @@ import { systemTestEntryState } from './system/systemTestEntryModel.js';
 import SystemTestVersionHistory from './system/SystemTestVersionHistory.jsx';
 import useSystemTestWorkspace from '../../hooks/useSystemTestWorkspace.js';
 import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useChatTestContext } from '../../hooks/useChatTestContext';
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Play,
@@ -50,7 +51,7 @@ export default function SystemTestDashboard(props) {
   return <SystemTestDashboardWorkspace key={`${props.projectId}:${props.snapshotId}`} {...props} />;
 }
 
-function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = null, onOpenFile, onOpenJobQueue }) {
+function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = null, onOpenFile, onChatContextChange, onOpenJobQueue }) {
   const projectAccess = useProjectAccess(projectId);
   // Current view: "dashboard" | "report"
   const [currentView, setCurrentView] = useState("dashboard");
@@ -103,6 +104,35 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   const runRequestRef = useRef(false);
   const pendingRunRef = useRef(null);
   const [inspectedScenario, setInspectedScenario] = useState(null);
+  const assessmentExecution = workspace.assessment?.presentation?.execution;
+  const metricsSummary = assessmentExecution ? {
+    ...summary,
+    hasRun: true,
+    totalTests: assessmentExecution.selected,
+    passedTests: assessmentExecution.passed,
+    failedTests: assessmentExecution.failed,
+    flakyTests: assessmentExecution.flaky,
+    skippedTests: assessmentExecution.skipped,
+    durationMs: assessmentExecution.elapsedMs,
+    runner: workspace.assessment.runner,
+  } : summary;
+  const testRunId = assessmentExecution ? workspace.assessment.testRunId : summary?.testRunId;
+  useChatTestContext(onChatContextChange, {
+    projectId, snapshotId, testType: "system", testRunId,
+    scenarioId: testRunId && inspectedScenario?.testRunId === testRunId ? inspectedScenario.id : undefined,
+    displayedMetrics: {
+      kind: "system", tab: currentView === "report" ? "report" : activeSubTab,
+      framework: metricsSummary?.runner || activeFramework, executionMode,
+      assessmentId: assessmentExecution ? workspace.assessment.id : undefined,
+      state: metricsSummary?.hasRun ? "ready" : loading ? "loading" : error || workspace.error ? "unavailable" : "not-run",
+      counts: metricsSummary?.hasRun ? {
+        scenarios: metricsSummary.totalTests || 0, passed: metricsSummary.passedTests || 0,
+        failed: metricsSummary.failedTests || 0, flaky: metricsSummary.flakyTests || 0,
+        skipped: metricsSummary.skippedTests || 0, durationMs: metricsSummary.durationMs || 0,
+        passRate: metricsSummary.totalTests > 0 ? Math.round((metricsSummary.passedTests || 0) / metricsSummary.totalTests * 100) : null,
+      } : undefined,
+    },
+  });
   const [editorTarget, setEditorTarget] = useState(null); // { filePath, scenarioId, initialMode }
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
 
@@ -472,6 +502,25 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
         <div className="min-w-0">
           <h1 className="text-base font-semibold tracking-tight text-[var(--color-text)]">System Test Coverage</h1>
           <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Verify user journeys across the frontend, real API and database.</p>
+        </div>
+      </div>
+      <label className="flex flex-wrap items-center gap-3 text-xs">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} ? {row.runner}</option>)}</select></label>
+      {workspace.error && <p role="alert" className="text-sm text-rose-600">{workspace.error}</p>}
+      {workspace.nextCursor && <button type="button" className="text-xs underline" onClick={workspace.loadMore}>Load older assessments</button>}
+      <SystemTestMetricsCards summary={metricsSummary} />
+
+      {historyOpen && <SystemTestVersionHistory projectId={projectId} snapshotId={snapshotId} executionMode={executionMode} onClose={() => setHistoryOpen(false)} onChanged={refreshData} onCheck={data => { activeJobRef.current=data.jobId; setActiveJobId(data.jobId); setActiveAssessmentId(data.assessmentId); setRunningTests(true); setActiveSubTab('live'); }} />}
+      <button type="button" className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs" onClick={() => setHistoryOpen(true)}>Version history</button>
+      {setupDialog}
+      {setupReport && !setupReport.ready && <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">Startup setup needs attention.<button type="button" onClick={() => setSetupOpen(true)} className="font-medium underline">Review setup</button></p>}
+      {/* Top Action Bar */}
+      <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        {/* Engine Badge */}
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border border-indigo-500/20 text-xs font-semibold">
+            <ShieldCheck size={14} />
+            {activeFramework === 'cypress' ? 'Cypress' : 'Playwright'} / {modeLabel}
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {onOpenJobQueue && <CoverageJobQueueButton onClick={onOpenJobQueue} running={runningTests} />}

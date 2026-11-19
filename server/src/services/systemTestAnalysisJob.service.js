@@ -22,6 +22,7 @@ import { calculateSystemCoverage } from "./systemCoverageEngine.service.js";
 import { collectSystemGenerationContext } from "./systemGenerationContext.service.js";
 import crypto from "node:crypto";
 import {prepareFullSystemExecution,resolveSystemTestFile} from './fullSystemExecutionPreparation.service.js';
+import { resolveSnapshotRootDir } from "../utils/snapshotWorkspace.js";
 
 const readPayload = (payloadJson) => {
   if (!payloadJson) return {};
@@ -165,6 +166,16 @@ export const processSystemTestAnalysisJob = async (jobId) => {
   try {
     await markJobRunning(jobId);
     const job = await getJobById(jobId);
+    if (
+      job?.snapshot?.rootDir &&
+      /^\/?app\/(?:storage|uploads)\//i.test(
+        String(job.snapshot.rootDir).replace(/\\/g, "/"),
+      ) &&
+      !fs.existsSync(job.snapshot.rootDir)
+    ) {
+      job.snapshot.rootDir =
+        resolveSnapshotRootDir(job.snapshot.rootDir) || job.snapshot.rootDir;
+    }
     if (!job.snapshotId || !job.snapshot?.rootDir || !job.userId) {
       throw new ServiceError(
         "System test job requires a ready snapshot and owner.",

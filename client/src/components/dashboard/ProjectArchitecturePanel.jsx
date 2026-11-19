@@ -281,7 +281,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
         /* ignore polling errors */
       }
     };
-    const timer = setInterval(poll, 2500);
+    const timer = setInterval(poll, 5000);
     return () => clearInterval(timer);
   }, [activeJob, loadAnalysis, projectId]);
 

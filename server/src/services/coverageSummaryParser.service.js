@@ -3,6 +3,8 @@ import path from "path";
 import prisma from "../config/prisma.js";
 import { stagePreparedValue,stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { upsertCoverageFileRows } from './coverageFilePersistence.service.js';
+import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
 
 /**
  * SCRUM-85: Coverage Summary Parser
@@ -66,13 +68,13 @@ const parseNum = (val) => {
     return 0;
 };
 
-const parseMetricEntry = (metric) => {
+const parseMetricEntry = (metric, defaultZeroTotalPct = 0) => {
     const total = parseNum(metric?.total);
     const covered = parseNum(metric?.covered);
     const skipped = parseNum(metric?.skipped);
     let pct = parsePct(metric?.pct);
     if (total === 0 && covered === 0) {
-        pct = 0;
+        pct = defaultZeroTotalPct;
     }
     return { total, covered, skipped, pct };
 };
@@ -80,22 +82,22 @@ const parseMetricEntry = (metric) => {
 /**
  * SCRUM-118: Parse line coverage from a Jest entry
  */
-const parseLineCoverage = (entry) => parseMetricEntry(entry?.lines);
+export const parseLineCoverage = (entry) => parseMetricEntry(entry?.lines, 0);
 
 /**
- * SCRUM-119: Parse branch coverage from a Jest entry
+ * SCRUM-119: Parse branch coverage from a Jest entry (default to 100 when total === 0 per Rule 7)
  */
-const parseBranchCoverage = (entry) => parseMetricEntry(entry?.branches);
+export const parseBranchCoverage = (entry) => parseMetricEntry(entry?.branches, 100);
 
 /**
- * SCRUM-120: Parse function coverage from a Jest entry
+ * SCRUM-120: Parse function coverage from a Jest entry (default to 100 when total === 0 per Rule 7)
  */
-const parseFunctionCoverage = (entry) => parseMetricEntry(entry?.functions);
+export const parseFunctionCoverage = (entry) => parseMetricEntry(entry?.functions, 100);
 
 /**
  * SCRUM-121: Parse statement coverage from a Jest entry
  */
-const parseStatementCoverage = (entry) => parseMetricEntry(entry?.statements);
+export const parseStatementCoverage = (entry) => parseMetricEntry(entry?.statements, 0);
 
 /**
  * SCRUM-122: Create or update CoverageSummary record in DB.
@@ -134,39 +136,40 @@ const upsertCoverageSummary = async (snapshotId, lines, branches, functions, sta
 /**
  * Upsert CoverageFile records for each project file.
  */
-const upsertCoverageFiles = async (snapshotId, fileEntries) => {
+const upsertCoverageFiles = async (snapshotId, fileEntries, rootDir = "") => {
     try {
         if (!prisma?.coverageFile) return;
     } catch (_) {
         return;
     }
-    return stagePreparedPublication(async tx=>{
-        if (typeof tx?.coverageFile?.upsert !== "function") return;
-    for (const [filePath, data] of fileEntries) {
+    const dedupedRows = new Map();
+    for (const [rawFilePath, data] of fileEntries) {
+        const filePath = (rootDir ? canonicalizeFilePath(rawFilePath, rootDir) : canonicalizeFilePath(rawFilePath)) || rawFilePath;
         const lines = parseLineCoverage(data);
         const branches = parseBranchCoverage(data);
         const functions = parseFunctionCoverage(data);
         const statements = parseStatementCoverage(data);
 
-        await tx.coverageFile.upsert({
-            where: { snapshotId_filePath: { snapshotId, filePath } },
-            create: {
-                snapshotId,
-                filePath,
-                linesPct: parsePct(lines?.pct),
-                branchesPct: parsePct(branches?.pct),
-                funcsPct: parsePct(functions?.pct),
-                stmtsPct: parsePct(statements?.pct),
-            },
-            update: {
-                linesPct: parsePct(lines?.pct),
-                branchesPct: parsePct(branches?.pct),
-                funcsPct: parsePct(functions?.pct),
-                stmtsPct: parsePct(statements?.pct),
-            },
-        });
+        const row = {
+            snapshotId,
+            filePath,
+            linesPct: parsePct(lines?.pct),
+            branchesPct: parsePct(branches?.pct),
+            funcsPct: parsePct(functions?.pct),
+            stmtsPct: parsePct(statements?.pct),
+        };
+        if (!dedupedRows.has(filePath)) {
+            dedupedRows.set(filePath, row);
+        } else {
+            const ex = dedupedRows.get(filePath);
+            ex.linesPct = Math.max(ex.linesPct || 0, row.linesPct || 0);
+            ex.branchesPct = Math.max(ex.branchesPct || 0, row.branchesPct || 0);
+            ex.funcsPct = Math.max(ex.funcsPct || 0, row.funcsPct || 0);
+            ex.stmtsPct = Math.max(ex.stmtsPct || 0, row.stmtsPct || 0);
+        }
     }
-    });
+    const rows = Array.from(dedupedRows.values());
+    return stagePreparedPublication(tx => upsertCoverageFileRows(tx, rows));
 };
 
 /**
@@ -184,6 +187,17 @@ export const parseCoverageSummary = async (coverageDir, snapshotId, options = {}
         throw new ServiceError("coverageDir and snapshotId are required", 400);
     }
 
+    let rootDir = options?.rootDir || options?.snapshot?.rootDir || "";
+    if (!rootDir && snapshotId) {
+        try {
+            const snap = await prisma?.projectSnapshot?.findUnique?.({
+                where: { id: snapshotId },
+                select: { rootDir: true }
+            });
+            if (snap?.rootDir) rootDir = snap.rootDir;
+        } catch { }
+    }
+
     // Read file
     const raw = readCoverageSummaryFile(coverageDir);
 
@@ -194,7 +208,7 @@ export const parseCoverageSummary = async (coverageDir, snapshotId, options = {}
     const functions = parseFunctionCoverage(total); // SCRUM-120
     const statements = parseStatementCoverage(total); // SCRUM-121
 
-    // SCRUM-122: Ghi CoverageSummary only if not explicitly skipped (e.g. Integration test runs)
+    // Persist CoverageSummary unless explicitly skipped (e.g. integration runs).
     let summary = null;
     if (!options?.skipSummaryUpsert) {
         summary = await upsertCoverageSummary(snapshotId, lines, branches, functions, statements);
@@ -203,7 +217,7 @@ export const parseCoverageSummary = async (coverageDir, snapshotId, options = {}
     // Write CoverageFile per file (excluding "total" key) unless caller handles canonical file persistence separately
     const fileEntries = Object.entries(raw).filter(([key]) => key !== "total");
     if (!options?.skipFileUpsert) {
-        await upsertCoverageFiles(snapshotId, fileEntries);
+        await upsertCoverageFiles(snapshotId, fileEntries, rootDir);
     }
 
     return {

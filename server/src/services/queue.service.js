@@ -22,6 +22,7 @@ import { processSecurityAnalysisJob } from './securityScanJob.service.js';
 import { processRunVitestJob } from "./runVitestJob.service.js";
 import { processSystemTestAnalysisJob } from "./systemTestAnalysisJob.service.js";
 import { processVitestCoverageJob } from './vitestCoverageJob.service.js';
+import { processUnitTestSuggestJob, processUnitTestApplyJob } from './unitTestQueueJob.service.js';
 import {
   getJobById,
   markJobRunning,
@@ -132,7 +133,7 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
         await processChatContextMaintenance(customData);
         break;
       case 'RUN_TESTS':
-        await processRunTestsJob(jobId);
+        await processRunTestsJob(jobId, customData);
         break;
       case 'SUPERTEST_COVERAGE':
         await processSupertestCoverageJob(jobId);
@@ -200,6 +201,12 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
         break;
       case 'AI_SUGGEST':
         await processAiSuggestJob(jobId);
+        break;
+      case 'UNIT_TEST_SUGGEST':
+        await processUnitTestSuggestJob(jobId);
+        break;
+      case 'UNIT_TEST_APPLY':
+        await processUnitTestApplyJob(jobId);
         break;
       case 'BUILD_CFG': {
         const dbJob = await getJobById(jobId);
@@ -319,7 +326,11 @@ const worker = workerConfig.enabled ? new Worker(
       await executeJobDirectly(type, jobId, customData);
       console.log(`[Queue] Completed Job ${jobId} (Type: ${type})`);
     } catch (error) {
-      console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
+      if (error.code === 'OPERATION_STALE') {
+        console.warn(`[Queue] Job ${jobId} (Type: ${type}) was superseded by a newer workspace revision (${error.code}: ${error.message}).`);
+      } else {
+        console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
+      }
       // Fallback to mark job failed if the handler didn't do it itself
       try {
         const dbJob = await getJobById(jobId);

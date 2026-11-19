@@ -121,13 +121,13 @@ export const generatePrismaSeeds = (schemaModels = {}) => {
                     if (isClassModel && /malop|code|id/i.test(lower)) {
                         row[fName] = ["CNTT01", "CNTT02", "KTPM01", "KHMT01"][i];
                     } else if (isClassModel && /tenlop|name|title/i.test(lower)) {
-                        row[fName] = ["Công nghệ thông tin 01", "Công nghệ thông tin 02", "Kỹ thuật phần mềm 01", "Khoa học máy tính 01"][i];
+                        row[fName] = ["Computer Science 01", "Computer Science 02", "Software Engineering 01", "Data Science 01"][i];
                     } else if (isStudentModel && /hoten|fullname|name/i.test(lower)) {
-                        row[fName] = ["Nguyễn Văn An", "Trần Thị Bình", "Lê Hoàng Cường", "Phạm Minh Đức"][i];
+                        row[fName] = ["Alice Smith", "Bob Jones", "Charlie Brown", "Diana Prince"][i];
                     } else if (isStudentModel && /malop|class/i.test(lower)) {
                         row[fName] = ["CNTT01", "CNTT01", "CNTT02", "KTPM01"][i];
                     } else if (/hoten|fullname|author/.test(lower)) {
-                        row[fName] = ["Nguyễn Văn An", "Trần Thị Bình", "Lê Hoàng Cường", "Phạm Minh Đức"][i];
+                        row[fName] = ["Alice Smith", "Bob Jones", "Charlie Brown", "Diana Prince"][i];
                     } else if (/ma|code|sku/.test(lower)) {
                         row[fName] = "CODE0" + (i + 1);
                     } else if (/ten|name|title/.test(lower)) {
@@ -137,7 +137,7 @@ export const generatePrismaSeeds = (schemaModels = {}) => {
                     } else if (/phone|tel/.test(lower)) {
                         row[fName] = "090123456" + i;
                     } else if (/gioitinh|gender/.test(lower)) {
-                        row[fName] = i % 2 === 0 ? "Nam" : "Nữ";
+                        row[fName] = i % 2 === 0 ? "Male" : "Female";
                     } else {
                         row[fName] = fName + "_" + (i + 1);
                     }
@@ -427,7 +427,7 @@ try {
         })
       }
     }));
-  });
+  }, { virtual: true });
 } catch (_) {}
 
 // 3. Schema-Aware In-Memory Prisma Client Mock
@@ -858,6 +858,7 @@ try {
     const models = new Map();
     const handler = {
       get(target, prop) {
+        if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;
         if (prop === '$connect') return jest.fn().mockResolvedValue(true);
         if (prop === '$disconnect') return jest.fn().mockResolvedValue(true);
         if (prop === '$transaction') return jest.fn(async (arg) => {
@@ -884,6 +885,25 @@ try {
       PrismaClient: jest.fn().mockImplementation(() => createPrismaClientMock())
     };
   }, { virtual: true });
+
+  const _relPrismaPaths = [
+    '../lib/prisma', '../lib/prisma.js',
+    '../../lib/prisma', '../../lib/prisma.js',
+    '../src/lib/prisma', '../src/lib/prisma.js',
+    '../../src/lib/prisma', '../../src/lib/prisma.js',
+    '../config/prisma', '../config/prisma.js',
+    '../../config/prisma', '../../config/prisma.js',
+    '../src/config/prisma', '../src/config/prisma.js',
+    '../../src/config/prisma', '../../src/config/prisma.js'
+  ];
+  for (const _rp of _relPrismaPaths) {
+    try {
+      jest.mock(_rp, () => {
+        const client = createPrismaClientMock();
+        return { __esModule: true, prisma: client, default: client };
+      }, { virtual: true });
+    } catch (_) {}
+  }
 } catch (e) {
   // Prisma mock registration warning (non-fatal)
 }
@@ -903,6 +923,7 @@ try {
       exec: jest.fn().mockResolvedValue(result),
       then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
       catch: (reject) => Promise.resolve(result).catch(reject),
+      finally: (cb) => Promise.resolve(result).finally(cb),
     };
     return query;
   };

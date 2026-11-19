@@ -265,15 +265,13 @@ function CFGNode({
       }}
       whileHover={{ scale: isSelected ? 1.1 : 1.05 }}
       whileTap={{ scale: 0.96 }}
-      className={`flex items-center justify-center font-mono select-none text-center shadow-sm cursor-pointer transition-all ${
-        isDiamond ? "rounded-[var(--radius-md)]" : "rounded-full"
-      } ${
-        isSelected
+      className={`flex items-center justify-center font-mono select-none text-center shadow-sm cursor-pointer transition-all ${isDiamond ? "rounded-[var(--radius-md)]" : "rounded-full"
+        } ${isSelected
           ? "border-2 border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-bold ring-2 ring-[var(--color-primary)]/50 ring-offset-2 ring-offset-[var(--color-bg)] z-30 shadow-md"
           : active
             ? "border-2 border-[var(--color-primary)] bg-[var(--color-surface)] text-[var(--color-primary)] font-semibold z-10 hover:border-[var(--color-primary)]"
             : "border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/70 text-[var(--color-text)] z-10"
-      }`}
+        }`}
       style={{
         position: "absolute",
         left: x,
@@ -301,11 +299,10 @@ function CFGNode({
       <span>{label}</span>
       {line ? (
         <span
-          className={`text-[11px] ml-1.5 font-mono ${
-            isSelected
+          className={`text-[11px] ml-1.5 font-mono ${isSelected
               ? "text-[var(--color-primary)] font-bold opacity-100"
               : "opacity-60"
-          }`}
+            }`}
         >
           (L{line})
         </span>
@@ -315,7 +312,7 @@ function CFGNode({
 }
 
 /**
- * Chuẩn hóa đường dẫn POSIX để so sánh an toàn
+ * Normalizes POSIX paths for safe, cross-platform comparison
  */
 export const normalizePathForCompare = (p) => {
   if (!p) return "";
@@ -328,7 +325,7 @@ export const normalizePathForCompare = (p) => {
 };
 
 /**
- * Kiểm tra xem danh sách file ứng viên có chứa file mục tiêu không
+ * Checks whether candidate files contain a target file match
  */
 export const hasCfgFileMatch = (candidateFiles, targetPath) => {
   if (!targetPath || !Array.isArray(candidateFiles) || candidateFiles.length === 0) return false;
@@ -352,7 +349,7 @@ export const hasCfgFileMatch = (candidateFiles, targetPath) => {
 };
 
 /**
- * Khớp file mục tiêu trong danh sách file CFG
+ * Matches target file within candidate CFG files
  */
 export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   if (!targetPath || !Array.isArray(candidateFiles) || candidateFiles.length === 0) {
@@ -360,11 +357,11 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   }
   const targetNorm = normalizePathForCompare(targetPath);
 
-  // 1. Khớp chính xác hoàn toàn
+  // 1. Exact full path match
   const exact = candidateFiles.find((f) => normalizePathForCompare(f) === targetNorm);
   if (exact) return exact;
 
-  // 2. Khớp đuôi (endsWith)
+  // 2. Suffix match (endsWith)
   const endsWithMatch = candidateFiles.find(
     (f) =>
       targetNorm.endsWith("/" + normalizePathForCompare(f)) ||
@@ -372,7 +369,7 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   );
   if (endsWithMatch) return endsWithMatch;
 
-  // 3. Khớp sau khi loại bỏ prefix thư mục gốc monorepo (backend/, server/, client/, api/, app/)
+  // 3. Match after stripping common monorepo root prefixes (backend/, server/, client/, api/, app/)
   const strippedTarget = targetNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
   const strippedMatch = candidateFiles.find((f) => {
     const strippedCandidate = normalizePathForCompare(f).replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
@@ -384,14 +381,14 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   });
   if (strippedMatch) return strippedMatch;
 
-  // 4. Khớp basename
+  // 4. Basename match
   const baseTarget = targetNorm.split("/").pop();
   const baseMatch = candidateFiles.find(
     (f) => normalizePathForCompare(f).split("/").pop() === baseTarget
   );
   if (baseMatch) return baseMatch;
 
-  // 5. Khớp tiền tố (hỗ trợ đường dẫn bị cắt ngắn dấu ... trên UI)
+  // 5. Prefix match (handles truncated paths with ... in UI)
   const cleanPrefix = targetNorm.replace(/\.{2,}$/, "");
   if (cleanPrefix.length > 5) {
     const prefixMatch = candidateFiles.find((f) =>
@@ -404,18 +401,18 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
 };
 
 /**
- * Khớp hàm mục tiêu trong danh sách CFGs của file với chiến lược phân giải 5 tầng:
- * 1. Khớp chính xác tên hàm (hoặc tiền tố cắt ngắn)
- * 2. Khớp chính xác startLine
- * 3. Khớp phạm vi lồng nhau hẹp nhất (Innermost Span)
- * 4. Khớp tên synthetic func_L{N}
- * 5. Fallback về hàm đầu tiên
+ * Matches target function in file CFG list using a 5-tier resolution strategy:
+ * 1. Exact function name match (or truncated prefix)
+ * 2. Exact startLine match
+ * 3. Innermost Span match
+ * 4. Synthetic func_L{N} match
+ * 5. Fallback to first function
  */
 export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) => {
   if (!Array.isArray(fileCfgs) || fileCfgs.length === 0) return null;
   const lineNum = targetLine && Number(targetLine) > 0 ? Number(targetLine) : null;
 
-  // 1. Khớp tên hàm (nếu không phải anonymous hoặc synthetic func_L...)
+  // 1. Function name match (if not anonymous or synthetic func_L...)
   if (targetFuncName && typeof targetFuncName === "string") {
     const cleanTarget = targetFuncName.replace(/\(\)$/, "").trim();
     const isSyntheticOrAnon =
@@ -424,37 +421,37 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
       /^\(anonymous/i.test(cleanTarget);
 
     if (!isSyntheticOrAnon && cleanTarget.length > 0) {
-      // 1a. Khớp chính xác tên
+      // 1a. Exact name match
       const exactMatch = fileCfgs.find((c) => c.functionName === cleanTarget);
       if (exactMatch) return exactMatch.functionName;
 
-      // 1b. Khớp không phân biệt hoa thường
+      // 1b. Case-insensitive match
       const caseMatch = fileCfgs.find(
         (c) => c.functionName?.toLowerCase() === cleanTarget.toLowerCase()
       );
       if (caseMatch) return caseMatch.functionName;
 
-      // 1c. Khớp tiền tố (hỗ trợ tên bị cắt ngắn fallbackRewriteFr...)
+      // 1c. Prefix match (handles truncated names like fallbackRewriteFr...)
       const prefix = cleanTarget.replace(/\.{2,}$/, "").trim();
       if (prefix.length >= 6) {
         const prefixMatch = fileCfgs.find(
           (c) =>
             c.functionName &&
             (c.functionName.startsWith(prefix) ||
-             c.functionName.toLowerCase().startsWith(prefix.toLowerCase()))
+              c.functionName.toLowerCase().startsWith(prefix.toLowerCase()))
         );
         if (prefixMatch) return prefixMatch.functionName;
       }
     }
   }
 
-  // 2. Khớp chính xác startLine (tránh bị hàm bao ngoài nuốt khi là callback)
+  // 2. Exact startLine match (avoids enclosing outer functions when target is callback)
   if (lineNum !== null) {
     const exactStartMatch = fileCfgs.find((c) => c.startLine === lineNum);
     if (exactStartMatch) return exactStartMatch.functionName;
   }
 
-  // 3. Khớp theo khoảng bao hẹp nhất (Innermost Span)
+  // 3. Innermost Span match
   if (lineNum !== null) {
     const containingFunctions = fileCfgs.filter(
       (c) => c.startLine <= lineNum && c.endLine && c.endLine >= lineNum
@@ -467,7 +464,7 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
     }
   }
 
-  // 4. Khớp synthetic func_L{N}
+  // 4. Synthetic func_L{N} match
   if (targetFuncName && typeof targetFuncName === "string") {
     const match = targetFuncName.trim().match(/^func_l(\d+)$/i);
     if (match) {
@@ -477,7 +474,7 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
     }
   }
 
-  // 5. Fallback: trả về hàm đầu tiên
+  // 5. Fallback: return first function
   return fileCfgs[0].functionName;
 };
 
@@ -506,6 +503,17 @@ export default function CFGCalculator({
   initialLine,
   onOpenFile,
 }) {
+  const cleanPropSnapshotId = typeof selectedSnapshotId === "object"
+    ? selectedSnapshotId?.id || selectedSnapshotId?.snapshotId || ""
+    : (String(selectedSnapshotId || "").trim() === "[object Object]" || selectedSnapshotId === "undefined" || selectedSnapshotId === "null" ? "" : selectedSnapshotId || "");
+
+  const targetSnapshotId = (
+    cleanPropSnapshotId ||
+    project?.snapshotId ||
+    project?.snapshots?.[0]?.id ||
+    project?.latestSnapshotId ||
+    ""
+  );
   const { isMobile } = useBreakpoints();
   const projectId = project?.id;
   const snapshotId = selectedSnapshotId || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id;
@@ -607,8 +615,8 @@ export default function CFGCalculator({
         let currentCcs = ccRes?.data || [];
         let files = [...new Set(currentCfgs.map((c) => c.filePath))];
 
-        // Nếu người dùng yêu cầu file cụ thể (initialFile), nhưng file chưa có CFG
-        // và chưa thử auto-rebuild lần nào -> Tự động trigger buildCfgApi một lần để lấy CFG mới
+        // If user requested a specific file (initialFile) without existing CFG,
+        // and auto-rebuild has not been attempted yet -> Trigger buildCfgApi once to fetch fresh CFG
         if (
           initialFile &&
           !hasCfgFileMatch(files, initialFile) &&
@@ -680,9 +688,12 @@ export default function CFGCalculator({
 
   useEffect(() => {
     setSourceCode("");
-    if (!selectedFile || !projectId) return;
+    if (!selectedFile || !project?.id) return;
     const controller = new AbortController();
-    getFileContentApi(projectId, selectedFile, { snapshotId, signal: controller.signal })
+    getFileContentApi(project.id, selectedFile, {
+      snapshotId: targetSnapshotId || project.snapshots?.[0]?.id || project.latestSnapshotId,
+      signal: controller.signal,
+    })
       .then((res) => {
         if (!controller.signal.aborted) setSourceCode(res.data.content);
       })
@@ -692,7 +703,7 @@ export default function CFGCalculator({
         setSourceCode("// Failed to load source code");
       });
     return () => controller.abort();
-  }, [selectedFile, projectId, snapshotId]);
+  }, [selectedFile, project, targetSnapshotId]);
 
   const uniqueFiles = useMemo(() => {
     return [...new Set(cfgs.map((c) => c.filePath))];
@@ -1132,22 +1143,20 @@ export default function CFGCalculator({
                         }
                         setHighlightedLine(line.num);
                       }}
-                      className={`flex items-start px-4 py-0.5 transition-all cursor-pointer ${
-                        isTargetLine
+                      className={`flex items-start px-4 py-0.5 transition-all cursor-pointer ${isTargetLine
                           ? "bg-[var(--color-primary)]/20 border-l-[4px] border-l-[var(--color-primary)] shadow-sm font-semibold"
                           : isActiveScope
                             ? "bg-[var(--color-primary)]/5 border-l-[3px] border-l-[var(--color-primary)]/50 hover:bg-[var(--color-surface-secondary)]/50"
                             : "border-l-[3px] border-l-transparent hover:bg-[var(--color-surface-secondary)]/40"
-                      } ${isDimmed ? "opacity-35" : "opacity-100"}`}
+                        } ${isDimmed ? "opacity-35" : "opacity-100"}`}
                     >
                       <span
-                        className={`w-11 flex-shrink-0 text-right pr-2 select-none font-mono text-[11px] flex items-center justify-end gap-1 ${
-                          isTargetLine
+                        className={`w-11 flex-shrink-0 text-right pr-2 select-none font-mono text-[11px] flex items-center justify-end gap-1 ${isTargetLine
                             ? "text-[var(--color-primary)] font-bold"
                             : isActiveScope
                               ? "text-[var(--color-primary)] font-semibold"
                               : "text-[var(--color-text-muted)]"
-                        }`}
+                          }`}
                       >
                         {isTargetLine && (
                           <span className="text-[var(--color-primary)] text-[10px] animate-pulse">
@@ -1157,11 +1166,10 @@ export default function CFGCalculator({
                         <span>{line.num}</span>
                       </span>
                       <span
-                        className={`whitespace-pre-wrap break-all flex-1 font-mono text-xs ${
-                          isTargetLine
+                        className={`whitespace-pre-wrap break-all flex-1 font-mono text-xs ${isTargetLine
                             ? "text-[var(--color-text)] font-semibold"
                             : "text-[var(--color-text)]"
-                        }`}
+                          }`}
                       >
                         {syntaxHighlight(line.text)}
                       </span>
@@ -1440,13 +1448,12 @@ export default function CFGCalculator({
                           Max McCabe CC
                         </div>
                         <div
-                          className={`text-2xl font-mono font-bold ${
-                            maxCc >= 10
+                          className={`text-2xl font-mono font-bold ${maxCc >= 10
                               ? "text-[var(--color-danger)]"
                               : maxCc >= 5
                                 ? "text-[var(--color-warning)]"
                                 : "text-[var(--color-success)]"
-                          }`}
+                            }`}
                         >
                           {maxCc}
                         </div>
@@ -1589,16 +1596,15 @@ export default function CFGCalculator({
                           </div>
 
                           <span
-                            className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full border ${
-                              selectedNode.type === "condition"
+                            className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full border ${selectedNode.type === "condition"
                                 ? "bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/30"
                                 : selectedNode.type === "start"
                                   ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/30"
                                   : selectedNode.type === "return" ||
-                                      selectedNode.type === "exit"
+                                    selectedNode.type === "exit"
                                     ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/30"
                                     : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
-                            }`}
+                              }`}
                           >
                             {selectedNode.type === "condition"
                               ? "Decision (Branch)"
@@ -1650,11 +1656,10 @@ export default function CFGCalculator({
                               Complexity
                             </div>
                             <div
-                              className={`text-sm font-mono font-bold mt-0.5 ${
-                                selectedNode.type === "condition"
+                              className={`text-sm font-mono font-bold mt-0.5 ${selectedNode.type === "condition"
                                   ? "text-[var(--color-warning)]"
                                   : "text-[var(--color-text-secondary)]"
-                              }`}
+                                }`}
                             >
                               {selectedNode.type === "condition"
                                 ? "+1 CC"
@@ -1812,32 +1817,28 @@ export default function CFGCalculator({
                               <div className="w-full px-2 mt-1">
                                 <div className="flex gap-1.5 h-1.5 w-full rounded-full overflow-hidden bg-[var(--color-border)]/50 p-0.5">
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 1
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 1
                                         ? "bg-[var(--color-success)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 2
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 2
                                         ? "bg-[var(--color-warning)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 3
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 3
                                         ? "bg-[var(--color-danger)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${
-                                      meta.tier === 4
+                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 4
                                         ? "bg-[var(--color-danger)] shadow-xs"
                                         : "bg-[var(--color-border)] opacity-30"
-                                    }`}
+                                      }`}
                                   />
                                 </div>
                                 <div className="flex justify-between text-[10px] font-mono text-[var(--color-text-muted)] mt-1.5 px-0.5">

@@ -86,6 +86,10 @@ await jest.unstable_mockModule('../services/projectOperationWorkspace.service.js
 }));
 const { addJobToQueue, addSupertestCoveragePipeline } = await import('../services/queue.service.js');
 
+test.each(['AI_EVALUATION', 'AI_EVALUATION_PREPARE'])('%s refuses disconnected Redis instead of executing directly', async type => {
+    await expect(addJobToQueue(type, 'evaluation-offline')).rejects.toMatchObject({ statusCode: 503 });
+});
+
 describe('queue.service supertest pipeline', () => {
     beforeEach(() => {
         jest.clearAllMocks();

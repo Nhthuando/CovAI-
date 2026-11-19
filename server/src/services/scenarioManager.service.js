@@ -1386,7 +1386,10 @@ const addScenarioServiceUnsafe = async (
   return updatedTest;
 };
 
-import { generateText } from "./gemini.service.js";
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('integration-test', () => generateFeatureText(...args));
+import { withAgentContext } from '../agents/registry.js';
 
 export const regenerateScenarioService = async (
   aiTestId,

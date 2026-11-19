@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { ServiceError } from '../../utils/serviceError.js';
 
-export const VERSIONS = Object.freeze({ adapter: 'http-json-v1', rules: 'rules-v1', mock: 'mock-v1', judge: 'judge-v1' });
+export const VERSIONS = Object.freeze({ adapter: 'http-json-v1', rules: 'rules-v1', mock: 'mock-v1', judge: 'judge-v2' });
 export const TASKS = ['KNOWLEDGE_QA', 'USAGE_GUIDANCE', 'ACTION_TOOL'];
 export const TERMINAL = ['COMPLETED', 'ERROR', 'CANCELED', 'INDETERMINATE'];
 export const fail = (code, message, status = 422) => { throw new ServiceError(message, status, code); };
@@ -18,7 +18,7 @@ export function safeJson(value, depth = 0) {
     }
     return value;
 }
-export const canonical = value => value === undefined ? 'null' : value && typeof value === 'object'
+export const canonical = value => value === undefined ? 'undefined' : value && typeof value === 'object'
     ? Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`
     : JSON.stringify(value);
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : canonical(value)).digest('hex');
@@ -59,7 +59,13 @@ export function redact(value, secrets = []) {
 export async function serial(db, operation) {
     for (let attempt = 0; ; attempt++) {
         try { return await db.$transaction(operation, { isolationLevel: 'Serializable', timeout: 20000 }); }
-        catch (error) { if (error.code !== 'P2034' || attempt >= 3) throw error; }
+        catch (error) {
+            const databaseCode = error.meta?.code || error.meta?.driverAdapterError?.cause?.originalCode;
+            const retryable = error.code === 'P2034' || (error.code === 'P2010' && ['40001', '40P01'].includes(databaseCode));
+            if (!retryable || attempt >= 3) throw error;
+            // Only the rolled-back database callback is retried, never a target/provider request.
+            await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1) + Math.floor(Math.random() * 25)));
+        }
     }
 }
 export const safeError = error => ({ code: error?.statusCode ? error.code || 'EVALUATION_ERROR' : 'INTERNAL_ERROR', message: error?.statusCode ? error.message : 'Evaluation could not complete. Check server configuration and retry.' });

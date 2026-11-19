@@ -473,7 +473,6 @@ export const processSupertestCoverageJob = async (jobId) => {
     const origRootDir =
       resolveProjectRoot(canonicalOrigBase) || canonicalOrigBase;
     const userId = job.userId;
-
     const reportIntProgress = async (progress, stage, message) => {
       await updateJobProgress(jobId, progress).catch((err) => {
         console.warn(
@@ -1031,7 +1030,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         rootDir,
         jestConfigPath ?? supertestInfo.configPath,
         supertestFiles,
-        testNamePattern ? { testNamePattern } : {},
+        ...(testNamePattern ? [{ testNamePattern }] : []),
       );
     } finally {
       for (const [fPath, orig] of stagedSkipBackups.entries()) {
