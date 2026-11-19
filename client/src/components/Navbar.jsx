@@ -4,6 +4,7 @@ import { Menu, X } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { NotificationCenter } from "./NotificationCenter";
 import CovaiLogo from "./common/CovaiLogo";
+import { ThemeSelector } from "./common/ThemeSelector";
 
 const NAV_LINKS = [
   { label: "Sandbox", href: "#ide-preview" },
@@ -29,10 +30,8 @@ export default function Navbar() {
     <header className="fixed top-0 left-0 right-0 z-50 px-3 sm:px-6 pt-3.5 pointer-events-none">
       <nav
         aria-label="Primary navigation"
-        className={`pointer-events-auto max-w-[1260px] mx-auto rounded-xl transition-all duration-200 px-4 sm:px-5 h-14 flex items-center justify-between ${
-          scrolled
-            ? "lp-machined border-[#232938]"
-            : "bg-[#07090d]/75 backdrop-blur-md border border-[#161a24]"
+        className={`pointer-events-auto max-w-[1260px] mx-auto rounded-xl transition-all duration-200 px-4 sm:px-5 h-14 flex items-center justify-between lp-machined ${
+          scrolled ? "shadow-lg" : ""
         }`}
       >
         {/* Brand Monograph */}
@@ -40,18 +39,13 @@ export default function Navbar() {
           <a
             href="/"
             id="nav-logo"
-            className="flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-[#38bdf8] rounded-md"
+            className="flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-[var(--lp-signal)] rounded-md"
           >
             <CovaiLogo size={26} />
-            <span className="lp-display font-bold text-base tracking-tight text-white">
+            <span className="lp-display font-bold text-base tracking-tight text-[var(--lp-ink)]">
               CovAI
             </span>
           </a>
-
-          <span className="hidden lg:inline-flex items-center gap-1.5 pl-3 border-l border-[#1c212e] text-[11px] lp-mono text-slate-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8]" />
-            v3.2 engine
-          </span>
         </div>
 
         {/* Center Navigation */}
@@ -65,10 +59,10 @@ export default function Navbar() {
               href={link.href}
               id={`nav-${link.label.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
               onMouseEnter={() => setHoveredIdx(idx)}
-              className="relative px-3.5 py-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors rounded-lg"
+              className="relative px-3.5 py-1.5 text-xs font-medium text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors rounded-lg"
             >
               {hoveredIdx === idx && (
-                <span className="absolute inset-0 rounded-lg bg-white/[0.06] -z-10 transition-all duration-150" />
+                <span className="absolute inset-0 rounded-lg bg-[var(--lp-hover)] -z-10 transition-all duration-150" />
               )}
               {link.label}
             </a>
@@ -77,6 +71,7 @@ export default function Navbar() {
 
         {/* Right Actions */}
         <div className="hidden md:flex items-center gap-2.5">
+          <ThemeSelector compact className="!rounded-lg" />
           {user ? (
             <div className="flex items-center gap-2.5">
               <NotificationCenter userId={user.id} />
@@ -93,7 +88,7 @@ export default function Navbar() {
               <Link
                 to="/login"
                 id="nav-login"
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white transition-colors"
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors"
               >
                 Sign in
               </Link>
@@ -109,19 +104,16 @@ export default function Navbar() {
         </div>
 
         {/* Mobile Toggle */}
-        <div className="flex items-center md:hidden">
+        <div className="flex items-center gap-2 md:hidden">
+          <ThemeSelector compact className="!rounded-lg" />
           <button
             type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle navigation menu"
             aria-expanded={mobileOpen}
-            className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#222836] bg-[#0c0f16] text-slate-200 cursor-pointer"
+            className="w-8 h-8 rounded-lg flex items-center justify-center border border-[var(--lp-line-strong)] bg-[var(--lp-surface-elevated)] text-[var(--lp-ink)] cursor-pointer"
           >
-            {mobileOpen ? (
-              <X className="w-4 h-4" />
-            ) : (
-              <Menu className="w-4 h-4" />
-            )}
+            {mobileOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </button>
         </div>
       </nav>
@@ -134,14 +126,14 @@ export default function Navbar() {
                 key={link.label}
                 href={link.href}
                 onClick={() => setMobileOpen(false)}
-                className="px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                className="px-3 py-2 text-xs font-medium text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] hover:bg-[var(--lp-hover)] rounded-lg transition-colors"
               >
                 {link.label}
               </a>
             ))}
           </div>
 
-          <div className="pt-3 border-t border-[#1a1f2c] flex flex-col gap-2">
+          <div className="pt-3 border-t border-[var(--lp-line)] flex flex-col gap-2">
             {user ? (
               <Link
                 to="/projects"

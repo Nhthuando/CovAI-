@@ -75,28 +75,23 @@ export default function Pricing() {
   const [annual, setAnnual] = useState(true);
 
   const hoursSavedPerMonth = Math.round(teamSize * 14.5 + kloc * 0.45);
-  const synthesizedTests = Math.round(
-    kloc * 11.4 + teamSize * 22,
-  ).toLocaleString();
-  const projectedCoverage = Math.min(
-    98.8,
-    92.4 + Math.log10(kloc) * 2.1,
-  ).toFixed(1);
+  const synthesizedTests = Math.round(kloc * 11.4 + teamSize * 22).toLocaleString();
+  const projectedCoverage = Math.min(98.8, 92.4 + Math.log10(kloc) * 2.1).toFixed(1);
 
   return (
     <section
       id="pricing"
-      className="relative py-24 md:py-32 border-b border-[#161a24]"
+      className="relative py-24 md:py-32 border-b border-[var(--lp-line)]"
     >
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
-        {/* Clean Editorial Heading */}
+        {/* Heading */}
         <div className="max-w-2xl mb-12 space-y-3">
-          <h2 className="lp-display text-3xl sm:text-4xl font-bold text-white tracking-tight">
+          <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight">
             Coverage impact estimator and pricing
           </h2>
-          <p className="text-sm sm:text-base text-slate-400">
-            Adjust team size and repository scale to estimate monthly
-            engineering hours saved, then choose a workspace plan.
+          <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
+            Adjust team size and repository scale to estimate monthly engineering
+            hours saved, then choose a workspace plan.
           </p>
         </div>
 
@@ -106,8 +101,10 @@ export default function Pricing() {
             <div className="lg:col-span-6 space-y-6">
               <div>
                 <div className="flex items-center justify-between text-xs sm:text-sm mb-2.5">
-                  <span className="text-slate-300">Engineering team size</span>
-                  <span className="lp-mono text-white font-semibold">
+                  <span className="text-[var(--lp-ink-secondary)]">
+                    Engineering team size
+                  </span>
+                  <span className="lp-mono text-[var(--lp-ink)] font-semibold">
                     {teamSize} engineers
                   </span>
                 </div>
@@ -120,7 +117,7 @@ export default function Pricing() {
                   aria-label="Engineering team size"
                   className="lp-slider"
                 />
-                <div className="flex justify-between text-[11px] lp-mono text-slate-500 mt-1.5">
+                <div className="flex justify-between text-[11px] lp-mono text-[var(--lp-ink-muted)] mt-1.5">
                   <span>2</span>
                   <span>75</span>
                   <span>150</span>
@@ -129,8 +126,10 @@ export default function Pricing() {
 
               <div>
                 <div className="flex items-center justify-between text-xs sm:text-sm mb-2.5">
-                  <span className="text-slate-300">Repository size</span>
-                  <span className="lp-mono text-white font-semibold">
+                  <span className="text-[var(--lp-ink-secondary)]">
+                    Repository size
+                  </span>
+                  <span className="lp-mono text-[var(--lp-ink)] font-semibold">
                     {kloc}k lines of code
                   </span>
                 </div>
@@ -144,7 +143,7 @@ export default function Pricing() {
                   aria-label="Repository size in thousands of lines of code"
                   className="lp-slider"
                 />
-                <div className="flex justify-between text-[11px] lp-mono text-slate-500 mt-1.5">
+                <div className="flex justify-between text-[11px] lp-mono text-[var(--lp-ink-muted)] mt-1.5">
                   <span>10k LOC</span>
                   <span>250k LOC</span>
                   <span>500k LOC</span>
@@ -153,37 +152,41 @@ export default function Pricing() {
             </div>
 
             <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-4 rounded-lg bg-[#050608] border border-[#161a24]">
-                <div className="text-xs text-slate-500">Test writing saved</div>
-                <div className="text-2xl sm:text-3xl font-bold lp-mono text-white mt-1.5">
+              <div className="p-4 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)]">
+                <div className="text-xs text-[var(--lp-ink-muted)]">
+                  Test writing saved
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold lp-mono text-[var(--lp-ink)] mt-1.5">
                   {hoursSavedPerMonth}h
-                  <span className="text-xs text-slate-500 font-normal">
+                  <span className="text-xs text-[var(--lp-ink-muted)] font-normal">
                     /mo
                   </span>
                 </div>
-                <div className="text-[11px] lp-mono text-slate-400 mt-1">
+                <div className="text-[11px] lp-mono text-[var(--lp-ink-secondary)] mt-1">
                   Across {teamSize} engineers
                 </div>
               </div>
 
-              <div className="p-4 rounded-lg bg-[#050608] border border-[#161a24]">
-                <div className="text-xs text-slate-500">
+              <div className="p-4 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)]">
+                <div className="text-xs text-[var(--lp-ink-muted)]">
                   Generated assertions
                 </div>
-                <div className="text-2xl sm:text-3xl font-bold lp-mono text-white mt-1.5">
+                <div className="text-2xl sm:text-3xl font-bold lp-mono text-[var(--lp-ink)] mt-1.5">
                   {synthesizedTests}
                 </div>
-                <div className="text-[11px] lp-mono text-slate-400 mt-1">
+                <div className="text-[11px] lp-mono text-[var(--lp-ink-secondary)] mt-1">
                   Unit, API &amp; E2E specs
                 </div>
               </div>
 
-              <div className="p-4 rounded-lg bg-[#050608] border border-[#243044]">
-                <div className="text-xs text-slate-400">Projected coverage</div>
-                <div className="text-2xl sm:text-3xl font-bold lp-mono text-[#38bdf8] mt-1.5">
+              <div className="p-4 rounded-lg bg-[var(--lp-signal-bg)] border border-[var(--lp-signal-border)]">
+                <div className="text-xs text-[var(--lp-ink-secondary)]">
+                  Projected coverage
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold lp-mono text-[var(--lp-signal)] mt-1.5">
                   {projectedCoverage}%
                 </div>
-                <div className="text-[11px] lp-mono text-slate-400 mt-1">
+                <div className="text-[11px] lp-mono text-[var(--lp-ink-secondary)] mt-1">
                   Container-verified
                 </div>
               </div>
@@ -193,14 +196,14 @@ export default function Pricing() {
 
         {/* Billing Toggle */}
         <div className="flex items-center justify-between flex-wrap gap-4 mb-8">
-          <div className="inline-flex items-center p-1 rounded-lg bg-[#090b10] border border-[#181c26]">
+          <div className="inline-flex items-center p-1 rounded-lg bg-[var(--lp-pill-bg)] border border-[var(--lp-line)]">
             <button
               type="button"
               onClick={() => setAnnual(false)}
               className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 !annual
-                  ? "bg-[#161b26] text-white"
-                  : "text-slate-400 hover:text-white"
+                  ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] shadow-xs"
+                  : "text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)]"
               }`}
             >
               Monthly
@@ -210,17 +213,16 @@ export default function Pricing() {
               onClick={() => setAnnual(true)}
               className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 annual
-                  ? "bg-[#161b26] text-white"
-                  : "text-slate-400 hover:text-white"
+                  ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] shadow-xs"
+                  : "text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)]"
               }`}
             >
               Annual (20% off)
             </button>
           </div>
 
-          <span className="text-xs text-slate-500">
-            All paid tiers include a 14-day trial with full Docker runner
-            access.
+          <span className="text-xs text-[var(--lp-ink-muted)]">
+            All paid tiers include a 14-day trial with full Docker runner access.
           </span>
         </div>
 
@@ -234,32 +236,32 @@ export default function Pricing() {
                 id={`pricing-${plan.id}`}
                 className={`rounded-xl p-6 sm:p-7 flex flex-col justify-between relative ${
                   plan.featured
-                    ? "lp-machined lp-beam-frame bg-[#0b0e15]"
-                    : "bg-[#080a0f] border border-[#161a24]"
+                    ? "lp-machined lp-beam-frame"
+                    : "bg-[var(--lp-surface)] border border-[var(--lp-line)]"
                 }`}
               >
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-4">
-                    <h3 className="lp-display text-lg font-bold text-white">
+                    <h3 className="lp-display text-lg font-bold text-[var(--lp-ink)]">
                       {plan.name}
                     </h3>
                     {plan.badge && (
-                      <span className="px-2.5 py-0.5 rounded bg-white/10 border border-white/20 text-white text-[11px] lp-mono">
+                      <span className="px-2.5 py-0.5 rounded bg-[var(--lp-signal-bg)] border border-[var(--lp-signal-border)] text-[var(--lp-signal)] text-[11px] lp-mono font-medium">
                         {plan.badge}
                       </span>
                     )}
                   </div>
 
                   <div className="flex items-baseline gap-2 mb-3">
-                    <span className="text-4xl font-bold lp-mono text-white tracking-tight">
+                    <span className="text-4xl font-bold lp-mono text-[var(--lp-ink)] tracking-tight">
                       {displayPrice}
                     </span>
-                    <span className="text-xs lp-mono text-slate-500">
+                    <span className="text-xs lp-mono text-[var(--lp-ink-muted)]">
                       {plan.period}
                     </span>
                   </div>
 
-                  <p className="text-xs sm:text-sm text-slate-400 leading-relaxed mb-6 min-h-[42px]">
+                  <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] leading-relaxed mb-6 min-h-[42px]">
                     {plan.desc}
                   </p>
 
@@ -273,22 +275,22 @@ export default function Pricing() {
                     {plan.cta}
                   </Link>
 
-                  <div className="border-t border-[#161a24] pt-5 space-y-2.5">
+                  <div className="border-t border-[var(--lp-line)] pt-5 space-y-2.5">
                     {plan.features.map((feat) => (
                       <div
                         key={feat}
-                        className="flex items-start gap-2.5 text-xs text-slate-200"
+                        className="flex items-start gap-2.5 text-xs text-[var(--lp-ink)]"
                       >
-                        <Check className="w-4 h-4 text-[#38bdf8] shrink-0 mt-0.5" />
+                        <Check className="w-4 h-4 text-[var(--lp-signal)] shrink-0 mt-0.5" />
                         <span>{feat}</span>
                       </div>
                     ))}
                     {plan.excluded.map((feat) => (
                       <div
                         key={feat}
-                        className="flex items-start gap-2.5 text-xs text-slate-600"
+                        className="flex items-start gap-2.5 text-xs text-[var(--lp-ink-muted)]"
                       >
-                        <Minus className="w-4 h-4 text-slate-700 shrink-0 mt-0.5" />
+                        <Minus className="w-4 h-4 text-[var(--lp-ink-muted)] shrink-0 mt-0.5 opacity-60" />
                         <span>{feat}</span>
                       </div>
                     ))}

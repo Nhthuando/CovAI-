@@ -102,7 +102,7 @@ export default function Workflow() {
         {
           rootMargin: "-25% 0px -45% 0px",
           threshold: 0.25,
-        },
+        }
       );
       obs.observe(el);
       observers.push(obs);
@@ -116,23 +116,21 @@ export default function Workflow() {
   return (
     <section
       id="workflow"
-      className="relative py-24 md:py-32 border-b border-[#161a24]"
+      className="relative py-24 md:py-32 border-b border-[var(--lp-line)]"
     >
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
-        {/* Clean Editorial Heading */}
         <div className="max-w-2xl mb-14 space-y-3">
-          <h2 className="lp-display text-3xl sm:text-4xl font-bold text-white tracking-tight">
+          <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight">
             Four-stage verification pipeline
           </h2>
-          <p className="text-sm sm:text-base text-slate-400">
+          <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
             Scroll or select any stage to morph the 3D topology and inspect how
             source files move from AST parsing to a verified pull request.
           </p>
         </div>
 
-        {/* Split Scroll-Pinned Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* Left Column: 4 Sequential Stage Cards (5 cols) */}
+          {/* Left Column: 4 Sequential Stage Cards */}
           <div className="lg:col-span-5 space-y-5">
             {PIPELINE_STEPS.map((step, idx) => {
               const isActive = activeStep === idx;
@@ -144,25 +142,21 @@ export default function Workflow() {
                   onClick={() => setActiveStep(idx)}
                   className={`p-6 rounded-xl border transition-all duration-200 cursor-pointer ${
                     isActive
-                      ? "bg-[#0b0e14] border-[#2e374d]"
-                      : "bg-[#07090d] border-[#151922] opacity-60 hover:opacity-90"
+                      ? "bg-[var(--lp-surface)] border-[var(--lp-line-strong)] shadow-sm"
+                      : "bg-[var(--lp-inset)] border-[var(--lp-line)] opacity-65 hover:opacity-100"
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs lp-mono mb-2.5">
-                    <span
-                      className={isActive ? "text-[#38bdf8]" : "text-slate-500"}
-                    >
+                    <span className={isActive ? "text-[var(--lp-signal)] font-semibold" : "text-[var(--lp-ink-muted)]"}>
                       {step.num} / {step.phase}
                     </span>
-                    <span className="text-slate-500">
-                      {step.telemetry.badge}
-                    </span>
+                    <span className="text-[var(--lp-ink-muted)]">{step.telemetry.badge}</span>
                   </div>
 
-                  <h3 className="lp-display text-lg sm:text-xl font-bold text-white mb-2">
+                  <h3 className="lp-display text-lg sm:text-xl font-bold text-[var(--lp-ink)] mb-2">
                     {step.title}
                   </h3>
-                  <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                  <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] leading-relaxed">
                     {step.desc}
                   </p>
                 </div>
@@ -170,11 +164,10 @@ export default function Workflow() {
             })}
           </div>
 
-          {/* Right Column: Sticky 3D Morphing Stage + Live Telemetry (7 cols) */}
+          {/* Right Column: Sticky 3D Morphing Stage + Telemetry */}
           <div className="lg:col-span-7 lg:sticky lg:top-24">
             <div className="rounded-xl lp-machined overflow-hidden">
-              {/* Top Stage Bar */}
-              <div className="px-5 py-3.5 bg-[#07090d] border-b border-[#181c26] flex items-center justify-between gap-2 text-xs lp-mono">
+              <div className="px-5 py-3.5 bg-[var(--lp-surface)] border-b border-[var(--lp-line)] flex items-center justify-between gap-2 text-xs lp-mono">
                 <div className="flex items-center gap-1.5">
                   {PIPELINE_STEPS.map((s, i) => (
                     <button
@@ -183,8 +176,8 @@ export default function Workflow() {
                       onClick={() => setActiveStep(i)}
                       className={`px-3 py-1 rounded transition-colors cursor-pointer ${
                         activeStep === i
-                          ? "bg-[#161b26] text-white border border-[#2a3347]"
-                          : "text-slate-500 hover:text-slate-300"
+                          ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] border border-[var(--lp-line-strong)] shadow-xs"
+                          : "text-[var(--lp-ink-muted)] hover:text-[var(--lp-ink)]"
                       }`}
                     >
                       {s.num}
@@ -192,16 +185,15 @@ export default function Workflow() {
                   ))}
                 </div>
 
-                <span className="text-slate-400">
+                <span className="text-[var(--lp-ink-secondary)]">
                   {current.telemetry.geometryLabel}
                 </span>
               </div>
 
               <div className="p-6 space-y-5">
-                {/* Interactive 3D Morphing Geometry Canvas */}
                 <Suspense
                   fallback={
-                    <div className="h-[230px] rounded-xl bg-[#06080c] border border-[#181c26] flex items-center justify-center text-xs lp-mono text-slate-500">
+                    <div className="h-[230px] rounded-xl bg-[var(--lp-inset)] border border-[var(--lp-line)] flex items-center justify-center text-xs lp-mono text-[var(--lp-ink-muted)]">
                       Loading 3D pipeline topology...
                     </div>
                   }
@@ -209,33 +201,31 @@ export default function Workflow() {
                   <Pipeline3DStage activeStage={activeStep} />
                 </Suspense>
 
-                {/* Stage Readout */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#161a24]">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[var(--lp-line)]">
                   <div>
-                    <div className="text-xs lp-mono text-slate-500">
+                    <div className="text-xs lp-mono text-[var(--lp-ink-muted)]">
                       {current.telemetry.header}
                     </div>
-                    <h4 className="lp-display text-xl font-bold text-white mt-0.5">
+                    <h4 className="lp-display text-xl font-bold text-[var(--lp-ink)] mt-0.5">
                       {current.title}
                     </h4>
                   </div>
-                  <span className="px-2.5 py-1 rounded bg-[#10141e] border border-[#22293a] text-xs lp-mono text-[#38bdf8] self-start sm:self-auto">
+                  <span className="px-2.5 py-1 rounded bg-[var(--lp-signal-bg)] border border-[var(--lp-signal-border)] text-xs lp-mono text-[var(--lp-signal)] font-medium self-start sm:self-auto">
                     {current.telemetry.badge}
                   </span>
                 </div>
 
-                {/* Output Log */}
-                <div className="p-4 rounded-lg bg-[#050608] border border-[#161a24] lp-mono text-xs space-y-2">
+                <div className="p-4 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-xs space-y-2">
                   {current.telemetry.code.map((line, i) => (
                     <div
                       key={i}
                       className={`flex items-start gap-3 ${
                         line.includes("0 hits")
-                          ? "text-[#f43f5e]"
-                          : "text-slate-300"
+                          ? "text-[var(--lp-fault)]"
+                          : "text-[var(--lp-ink-secondary)]"
                       }`}
                     >
-                      <span className="text-slate-600 select-none">
+                      <span className="text-[var(--lp-ink-muted)] select-none">
                         0{i + 1}
                       </span>
                       <span>{line}</span>
@@ -243,13 +233,12 @@ export default function Workflow() {
                   ))}
                 </div>
 
-                {/* Bottom Action */}
                 <div className="pt-2 flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <div className="text-[11px] lp-mono text-slate-500">
+                    <div className="text-[11px] lp-mono text-[var(--lp-ink-muted)]">
                       {current.telemetry.metricLabel}
                     </div>
-                    <div className="text-base font-bold lp-mono text-white">
+                    <div className="text-base font-bold lp-mono text-[var(--lp-ink)]">
                       {current.telemetry.metricValue}
                     </div>
                   </div>

@@ -2,90 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 const CFG_NODES = [
-  {
-    id: "n0",
-    fn: "settleTransaction(tx, ledger)",
-    pos: [0, 2.5, 0],
-    state: "verified",
-    metric: "Entry",
-  },
-  {
-    id: "n1",
-    fn: "if (!tx.signature)",
-    pos: [-1.55, 1.45, 0.45],
-    state: "fault",
-    metric: "0 hits",
-  },
-  {
-    id: "n2",
-    fn: "verifyHmacDigest(tx)",
-    pos: [0.1, 1.5, -0.35],
-    state: "verified",
-    metric: "412 hits",
-  },
-  {
-    id: "n3",
-    fn: "resolveCurrencyPair(tx.ccy)",
-    pos: [1.65, 1.35, 0.3],
-    state: "verified",
-    metric: "412 hits",
-  },
-  {
-    id: "n4",
-    fn: "throw AuthSignatureError",
-    pos: [-2.4, 0.25, 0.7],
-    state: "fault",
-    metric: "0 hits",
-  },
-  {
-    id: "n5",
-    fn: "if (ledger.locked)",
-    pos: [-0.85, 0.2, 0.55],
-    state: "fault",
-    metric: "0 hits",
-  },
-  {
-    id: "n6",
-    fn: "computeNetSettlement(tx)",
-    pos: [0.85, 0.25, -0.25],
-    state: "verified",
-    metric: "398 hits",
-  },
-  {
-    id: "n7",
-    fn: "if (fxSpread > limit)",
-    pos: [2.3, 0.15, 0.45],
-    state: "fault",
-    metric: "0 hits",
-  },
-  {
-    id: "n8",
-    fn: "enqueueRetryJob(tx.id)",
-    pos: [-1.45, -1.05, 0.4],
-    state: "fault",
-    metric: "0 hits",
-  },
-  {
-    id: "n9",
-    fn: "prisma.$transaction(commit)",
-    pos: [0.2, -1.1, 0.15],
-    state: "verified",
-    metric: "398 hits",
-  },
-  {
-    id: "n10",
-    fn: "emitAuditSnapshot(receipt)",
-    pos: [1.75, -1.05, -0.3],
-    state: "verified",
-    metric: "398 hits",
-  },
-  {
-    id: "n11",
-    fn: "return receipt.hash",
-    pos: [0.15, -2.35, 0],
-    state: "verified",
-    metric: "Exit",
-  },
+  { id: "n0", fn: "settleTransaction(tx, ledger)", pos: [0, 2.5, 0], state: "verified", metric: "Entry" },
+  { id: "n1", fn: "if (!tx.signature)", pos: [-1.55, 1.45, 0.45], state: "fault", metric: "0 hits" },
+  { id: "n2", fn: "verifyHmacDigest(tx)", pos: [0.1, 1.5, -0.35], state: "verified", metric: "412 hits" },
+  { id: "n3", fn: "resolveCurrencyPair(tx.ccy)", pos: [1.65, 1.35, 0.3], state: "verified", metric: "412 hits" },
+  { id: "n4", fn: "throw AuthSignatureError", pos: [-2.4, 0.25, 0.7], state: "fault", metric: "0 hits" },
+  { id: "n5", fn: "if (ledger.locked)", pos: [-0.85, 0.2, 0.55], state: "fault", metric: "0 hits" },
+  { id: "n6", fn: "computeNetSettlement(tx)", pos: [0.85, 0.25, -0.25], state: "verified", metric: "398 hits" },
+  { id: "n7", fn: "if (fxSpread > limit)", pos: [2.3, 0.15, 0.45], state: "fault", metric: "0 hits" },
+  { id: "n8", fn: "enqueueRetryJob(tx.id)", pos: [-1.45, -1.05, 0.4], state: "fault", metric: "0 hits" },
+  { id: "n9", fn: "prisma.$transaction(commit)", pos: [0.2, -1.1, 0.15], state: "verified", metric: "398 hits" },
+  { id: "n10", fn: "emitAuditSnapshot(receipt)", pos: [1.75, -1.05, -0.3], state: "verified", metric: "398 hits" },
+  { id: "n11", fn: "return receipt.hash", pos: [0.15, -2.35, 0], state: "verified", metric: "Exit" },
 ];
 
 const CFG_EDGES = [
@@ -108,17 +36,28 @@ const CFG_EDGES = [
   ["n10", "n11"],
 ];
 
-const PALETTE = {
-  verified: new THREE.Color("#38bdf8"),
-  alabaster: new THREE.Color("#f1f5f9"),
-  fault: new THREE.Color("#f43f5e"),
-  steel: new THREE.Color("#334155"),
-};
+function getThemeColors() {
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  return isLight
+    ? {
+        verified: new THREE.Color("#0284c7"),
+        contrast: new THREE.Color("#0f172a"),
+        fault: new THREE.Color("#e11d48"),
+        steel: new THREE.Color("#94a3b8"),
+        grid: 0xcbd5e1,
+        cage: 0x94a3b8,
+      }
+    : {
+        verified: new THREE.Color("#38bdf8"),
+        contrast: new THREE.Color("#f1f5f9"),
+        fault: new THREE.Color("#f43f5e"),
+        steel: new THREE.Color("#334155"),
+        grid: 0x1e293b,
+        cage: 0x334155,
+      };
+}
 
-export default function CfgWebGLCore({
-  scanPulse = 0,
-  repoName = "acme/payment-kernel",
-}) {
+export default function CfgWebGLCore({ scanPulse = 0, repoName = "acme/payment-kernel" }) {
   const mountRef = useRef(null);
   const [activeNode, setActiveNode] = useState(CFG_NODES[5]);
   const [manualScan, setManualScan] = useState(false);
@@ -139,6 +78,8 @@ export default function CfgWebGLCore({
     const width = container.clientWidth || 580;
     const height = container.clientHeight || 540;
 
+    let themeCols = getThemeColors();
+
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 100);
     camera.position.set(0, 0.3, 7.6);
@@ -156,46 +97,35 @@ export default function CfgWebGLCore({
     const world = new THREE.Group();
     scene.add(world);
 
-    // Studio monochromatic + ice-cobalt lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
 
-    const topLight = new THREE.DirectionalLight(0xf1f5f9, 2.2);
+    const topLight = new THREE.DirectionalLight(0xf1f5f9, 2.0);
     topLight.position.set(3, 6, 5);
     scene.add(topLight);
 
-    const rimLight = new THREE.PointLight(0x38bdf8, 3.6, 18);
+    const rimLight = new THREE.PointLight(0x38bdf8, 3.2, 18);
     rimLight.position.set(-4, -2, 4);
     scene.add(rimLight);
 
-    // Architectural Polar Floor Grid
-    const polarGrid = new THREE.PolarGridHelper(
-      3.4,
-      12,
-      6,
-      64,
-      0x1e293b,
-      0x1e293b,
-    );
+    const polarGrid = new THREE.PolarGridHelper(3.4, 12, 6, 64, themeCols.grid, themeCols.grid);
     polarGrid.position.y = -2.65;
     polarGrid.material.transparent = true;
-    polarGrid.material.opacity = 0.45;
+    polarGrid.material.opacity = 0.55;
     world.add(polarGrid);
 
-    // Outer Wireframe Geodesic Cage
     const cageGeo = new THREE.IcosahedronGeometry(3.25, 1);
     const cageWire = new THREE.WireframeGeometry(cageGeo);
     const cageMat = new THREE.LineBasicMaterial({
-      color: 0x334155,
+      color: themeCols.cage,
       transparent: true,
-      opacity: 0.14,
+      opacity: 0.16,
     });
     const cageMesh = new THREE.LineSegments(cageWire, cageMat);
     world.add(cageMesh);
 
-    // Precision Horizontal Scan Plane
     const scanGeo = new THREE.RingGeometry(0.2, 3.3, 64);
     const scanMat = new THREE.MeshBasicMaterial({
-      color: 0x38bdf8,
+      color: themeCols.verified.clone(),
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0,
@@ -204,7 +134,6 @@ export default function CfgWebGLCore({
     scanDisc.rotation.x = Math.PI / 2;
     world.add(scanDisc);
 
-    // Create 3D Polyhedral AST Nodes (Inner solid core + outer wireframe shell)
     const coreGeo = new THREE.OctahedronGeometry(0.18, 1);
     const shellGeo = new THREE.OctahedronGeometry(0.28, 0);
     const nodeMap = {};
@@ -212,23 +141,23 @@ export default function CfgWebGLCore({
 
     CFG_NODES.forEach((n) => {
       const isFault = n.state === "fault";
-      const baseColor = isFault ? PALETTE.fault : PALETTE.verified;
+      const baseColor = isFault ? themeCols.fault : themeCols.verified;
 
       const coreMat = new THREE.MeshStandardMaterial({
         color: baseColor.clone(),
         emissive: baseColor.clone(),
-        emissiveIntensity: 0.55,
-        roughness: 0.2,
-        metalness: 0.8,
+        emissiveIntensity: 0.45,
+        roughness: 0.25,
+        metalness: 0.75,
       });
       const coreMesh = new THREE.Mesh(coreGeo, coreMat);
       coreMesh.position.set(...n.pos);
 
       const shellMat = new THREE.MeshBasicMaterial({
-        color: isFault ? PALETTE.fault.clone() : PALETTE.alabaster.clone(),
+        color: isFault ? themeCols.fault.clone() : themeCols.contrast.clone(),
         wireframe: true,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.42,
       });
       const shellMesh = new THREE.Mesh(shellGeo, shellMat);
       coreMesh.add(shellMesh);
@@ -244,7 +173,6 @@ export default function CfgWebGLCore({
       pickMeshes.push(coreMesh);
     });
 
-    // Directed Execution Splines & High-Speed Signal Pulses
     const edges = [];
     const pulseGeo = new THREE.BoxGeometry(0.07, 0.07, 0.07);
 
@@ -263,11 +191,10 @@ export default function CfgWebGLCore({
       const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
 
       const isFaultEdge =
-        fromMesh.userData.state === "fault" ||
-        toMesh.userData.state === "fault";
+        fromMesh.userData.state === "fault" || toMesh.userData.state === "fault";
 
       const lineMat = new THREE.LineBasicMaterial({
-        color: isFaultEdge ? PALETTE.fault.clone() : PALETTE.steel.clone(),
+        color: isFaultEdge ? themeCols.fault.clone() : themeCols.steel.clone(),
         transparent: true,
         opacity: isFaultEdge ? 0.65 : 0.45,
       });
@@ -275,7 +202,7 @@ export default function CfgWebGLCore({
       world.add(line);
 
       const pulseMat = new THREE.MeshBasicMaterial({
-        color: isFaultEdge ? PALETTE.fault.clone() : PALETTE.alabaster.clone(),
+        color: isFaultEdge ? themeCols.fault.clone() : themeCols.contrast.clone(),
       });
       const pulse = new THREE.Mesh(pulseGeo, pulseMat);
       world.add(pulse);
@@ -292,7 +219,16 @@ export default function CfgWebGLCore({
       });
     });
 
-    // Pointer Parallax & Raycasting
+    const themeObserver = new MutationObserver(() => {
+      themeCols = getThemeColors();
+      cageMat.color.setHex(themeCols.cage);
+      scanMat.color.copy(themeCols.verified);
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
     const pointer = new THREE.Vector2(99, 99);
     const targetRot = { x: 0.06, y: -0.18 };
     const raycaster = new THREE.Raycaster();
@@ -341,7 +277,6 @@ export default function CfgWebGLCore({
       cageMesh.rotation.x = t * 0.03;
       polarGrid.rotation.y = t * 0.08;
 
-      // Laser Sweep Plane
       if (scanWaveRef.current.active) {
         scanWaveRef.current.y -= 0.05;
         const wy = scanWaveRef.current.y;
@@ -360,7 +295,6 @@ export default function CfgWebGLCore({
         }
       }
 
-      // Raycast hover inspection
       if (pointer.x !== 99) {
         raycaster.setFromCamera(pointer, camera);
         const hits = raycaster.intersectObjects(pickMeshes, false);
@@ -377,38 +311,33 @@ export default function CfgWebGLCore({
                   fn: hit.userData.fn,
                   metric: hit.userData.metric,
                   state: hit.userData.currentState,
-                },
+                }
           );
         }
       }
 
-      // Update Node Polyhedra
       pickMeshes.forEach((mesh, i) => {
         const isFault = mesh.userData.currentState === "fault";
-        const col = isFault ? PALETTE.fault : PALETTE.verified;
+        const col = isFault ? themeCols.fault : themeCols.verified;
 
         mesh.material.color.lerp(col, 0.08);
         mesh.material.emissive.lerp(col, 0.08);
         mesh.userData.shellMesh.material.color.lerp(
-          isFault ? PALETTE.fault : PALETTE.alabaster,
-          0.08,
+          isFault ? themeCols.fault : themeCols.contrast,
+          0.08
         );
 
         mesh.rotation.y = t * 0.8 + i;
         mesh.userData.shellMesh.rotation.x = -t * 1.1;
       });
 
-      // Update Directed Splines & Traveling Pulses
       edges.forEach((e) => {
         const resolved =
           e.fromMesh.userData.currentState === "verified" &&
           e.toMesh.userData.currentState === "verified";
 
-        e.lineMat.color.lerp(resolved ? PALETTE.verified : PALETTE.fault, 0.08);
-        e.pulseMat.color.lerp(
-          resolved ? PALETTE.alabaster : PALETTE.fault,
-          0.12,
-        );
+        e.lineMat.color.lerp(resolved ? themeCols.verified : themeCols.fault, 0.08);
+        e.pulseMat.color.lerp(resolved ? themeCols.contrast : themeCols.fault, 0.12);
 
         const u = (t * e.speed + e.phase) % 1;
         e.pulse.position.copy(e.curve.getPointAt(u));
@@ -423,6 +352,7 @@ export default function CfgWebGLCore({
 
     return () => {
       cancelAnimationFrame(frameId);
+      themeObserver.disconnect();
       window.removeEventListener("resize", onResize);
       dom.removeEventListener("pointermove", onPointerMove);
       dom.removeEventListener("pointerleave", onPointerLeave);
@@ -439,21 +369,21 @@ export default function CfgWebGLCore({
   return (
     <div className="relative w-full h-[460px] sm:h-[540px] rounded-xl lp-machined overflow-hidden select-none">
       {/* Top Technical Telemetry Bar */}
-      <div className="absolute top-0 inset-x-0 z-10 px-4 py-3 border-b border-[#181c26] bg-[#07090d]/85 backdrop-blur-md flex items-center justify-between text-xs lp-mono">
-        <div className="flex items-center gap-2.5">
-          <span className="w-2 h-2 rounded-full bg-[#38bdf8]" />
-          <span className="text-slate-200 font-medium">{repoName}</span>
-          <span className="text-slate-600">/</span>
-          <span className="text-slate-400">AST Control Flow Graph</span>
+      <div className="absolute top-0 inset-x-0 z-10 px-4 py-3 border-b border-[var(--lp-line)] bg-[var(--lp-surface-glass)] backdrop-blur-md flex items-center justify-between text-xs lp-mono">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="w-2 h-2 rounded-full bg-[var(--lp-signal)] shrink-0" />
+          <span className="text-[var(--lp-ink)] font-medium truncate">{repoName}</span>
+          <span className="text-[var(--lp-ink-muted)]">/</span>
+          <span className="text-[var(--lp-ink-secondary)] hidden sm:inline">AST Control Flow Graph</span>
         </div>
 
-        <div className="hidden sm:flex items-center gap-4 text-[11px]">
-          <span className="flex items-center gap-1.5 text-slate-300">
-            <span className="w-2 h-2 rounded-full bg-[#38bdf8]" />
+        <div className="hidden sm:flex items-center gap-4 text-[11px] shrink-0">
+          <span className="flex items-center gap-1.5 text-[var(--lp-ink)]">
+            <span className="w-2 h-2 rounded-full bg-[var(--lp-signal)]" />
             Verified ({resolvedTotal}/12)
           </span>
-          <span className="flex items-center gap-1.5 text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-[#f43f5e]" />
+          <span className="flex items-center gap-1.5 text-[var(--lp-ink-secondary)]">
+            <span className="w-2 h-2 rounded-full bg-[var(--lp-fault)]" />
             Untested ({12 - resolvedTotal})
           </span>
         </div>
@@ -467,21 +397,19 @@ export default function CfgWebGLCore({
       />
 
       {/* Bottom Node Readout Bar */}
-      <div className="absolute bottom-3.5 inset-x-3.5 z-10 px-4 py-3 rounded-lg bg-[#080a0f]/92 border border-[#1c212e] backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="absolute bottom-3.5 inset-x-3.5 z-10 px-4 py-3 rounded-lg bg-[var(--lp-surface-glass)] border border-[var(--lp-line-strong)] backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] lp-mono text-slate-500">
+          <div className="text-[11px] lp-mono text-[var(--lp-ink-muted)]">
             Focused AST node ({activeNode?.id?.toUpperCase()})
           </div>
-          <div className="text-xs sm:text-sm lp-mono text-slate-100 truncate mt-0.5">
+          <div className="text-xs sm:text-sm lp-mono text-[var(--lp-ink)] truncate mt-0.5">
             {activeNode?.fn}
           </div>
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
-          <span className="text-xs lp-mono text-[#38bdf8]">
-            {resolvedTotal === 12
-              ? "98.4% branch coverage"
-              : "58.3% branch coverage"}
+          <span className="text-xs lp-mono text-[var(--lp-signal)] font-semibold">
+            {resolvedTotal === 12 ? "98.4% branch coverage" : "58.3% branch coverage"}
           </span>
           <button
             type="button"

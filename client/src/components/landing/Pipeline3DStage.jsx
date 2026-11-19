@@ -8,7 +8,6 @@ function computeStageTargets(stageIndex) {
 
   for (let i = 0; i < NODE_COUNT; i++) {
     if (stageIndex === 0) {
-      // Stage 1: 3x3x3 Cubic Repository Lattice
       const ix = (i % 3) - 1;
       const iy = (Math.floor(i / 3) % 3) - 1;
       const iz = Math.floor(i / 9) - 1;
@@ -17,7 +16,6 @@ function computeStageTargets(stageIndex) {
         fault: false,
       });
     } else if (stageIndex === 1) {
-      // Stage 2: Hierarchical AST Control Flow Tree (with 5 fault branches)
       const level = Math.floor(Math.log2(i + 1));
       const indexInLevel = i - (Math.pow(2, level) - 1);
       const maxInLevel = Math.pow(2, level);
@@ -33,7 +31,6 @@ function computeStageTargets(stageIndex) {
         fault: i === 5 || i === 9 || i === 14 || i === 19 || i === 23,
       });
     } else if (stageIndex === 2) {
-      // Stage 3: Helical AI Synthesis Double-Spiral
       const angle = i * 0.52;
       const radius = 1.35 + (i % 2) * 0.35;
       const x = Math.cos(angle) * radius;
@@ -44,7 +41,6 @@ function computeStageTargets(stageIndex) {
         fault: false,
       });
     } else {
-      // Stage 4: Locked Verified Geodesic Sphere
       const phi = Math.acos(1 - (2 * (i + 0.5)) / NODE_COUNT);
       const theta = Math.PI * (1 + Math.sqrt(5)) * i;
       const r = 1.65;
@@ -62,6 +58,23 @@ function computeStageTargets(stageIndex) {
   return targets;
 }
 
+function getPipelineColors() {
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  return isLight
+    ? {
+        signal: new THREE.Color("#0284c7"),
+        contrast: new THREE.Color("#0f172a"),
+        fault: new THREE.Color("#e11d48"),
+        lineHex: 0x94a3b8,
+      }
+    : {
+        signal: new THREE.Color("#38bdf8"),
+        contrast: new THREE.Color("#f1f5f9"),
+        fault: new THREE.Color("#f43f5e"),
+        lineHex: 0x334155,
+      };
+}
+
 export default function Pipeline3DStage({ activeStage = 0 }) {
   const mountRef = useRef(null);
   const stageRef = useRef(activeStage);
@@ -76,6 +89,8 @@ export default function Pipeline3DStage({ activeStage = 0 }) {
 
     const width = container.clientWidth || 460;
     const height = container.clientHeight || 240;
+
+    let cols = getPipelineColors();
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 50);
@@ -94,12 +109,12 @@ export default function Pipeline3DStage({ activeStage = 0 }) {
     const root = new THREE.Group();
     scene.add(root);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-    const keyLight = new THREE.DirectionalLight(0xf1f5f9, 2.2);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+    const keyLight = new THREE.DirectionalLight(0xf1f5f9, 2.0);
     keyLight.position.set(4, 5, 4);
     scene.add(keyLight);
 
-    const cobaltLight = new THREE.PointLight(0x38bdf8, 3.5, 14);
+    const cobaltLight = new THREE.PointLight(0x38bdf8, 3.0, 14);
     cobaltLight.position.set(-3, -2, 3);
     scene.add(cobaltLight);
 
@@ -107,17 +122,13 @@ export default function Pipeline3DStage({ activeStage = 0 }) {
     const nodes = [];
     const initialTargets = computeStageTargets(0);
 
-    const colCobalt = new THREE.Color("#38bdf8");
-    const colAlabaster = new THREE.Color("#f1f5f9");
-    const colFault = new THREE.Color("#f43f5e");
-
     for (let i = 0; i < NODE_COUNT; i++) {
       const mat = new THREE.MeshStandardMaterial({
-        color: colCobalt.clone(),
-        emissive: colCobalt.clone(),
-        emissiveIntensity: 0.45,
-        roughness: 0.2,
-        metalness: 0.8,
+        color: cols.signal.clone(),
+        emissive: cols.signal.clone(),
+        emissiveIntensity: 0.35,
+        roughness: 0.25,
+        metalness: 0.75,
       });
       const mesh = new THREE.Mesh(nodeGeo, mat);
       mesh.position.copy(initialTargets[i].pos);
@@ -125,17 +136,25 @@ export default function Pipeline3DStage({ activeStage = 0 }) {
       nodes.push(mesh);
     }
 
-    // Dynamic connecting lines buffer
     const linePositions = new Float32Array((NODE_COUNT - 1) * 6);
     const lineGeo = new THREE.BufferGeometry();
     lineGeo.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
     const lineMat = new THREE.LineBasicMaterial({
-      color: 0x334155,
+      color: cols.lineHex,
       transparent: true,
       opacity: 0.55,
     });
     const connectorLines = new THREE.LineSegments(lineGeo, lineMat);
     root.add(connectorLines);
+
+    const observer = new MutationObserver(() => {
+      cols = getPipelineColors();
+      lineMat.color.setHex(cols.lineHex);
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
 
     const onResize = () => {
       if (!container) return;
@@ -165,16 +184,15 @@ export default function Pipeline3DStage({ activeStage = 0 }) {
         mesh.rotation.y = t * 1.4 + i;
 
         const targetCol = target.fault
-          ? colFault
+          ? cols.fault
           : stageRef.current === 3
-            ? colAlabaster
-            : colCobalt;
+            ? cols.contrast
+            : cols.signal;
 
         mesh.material.color.lerp(targetCol, 0.08);
         mesh.material.emissive.lerp(targetCol, 0.08);
       });
 
-      // Update connecting segments
       const posAttr = lineGeo.attributes.position;
       for (let i = 0; i < NODE_COUNT - 1; i++) {
         const a = nodes[i].position;
@@ -191,6 +209,7 @@ export default function Pipeline3DStage({ activeStage = 0 }) {
 
     return () => {
       cancelAnimationFrame(rafId);
+      observer.disconnect();
       window.removeEventListener("resize", onResize);
       nodeGeo.dispose();
       lineGeo.dispose();
@@ -201,7 +220,7 @@ export default function Pipeline3DStage({ activeStage = 0 }) {
   return (
     <div
       ref={mountRef}
-      className="w-full h-[210px] sm:h-[240px] rounded-xl bg-[#06080c] border border-[#181c26]"
+      className="w-full h-[210px] sm:h-[240px] rounded-xl bg-[var(--lp-inset)] border border-[var(--lp-line)]"
       aria-label="3D Morphing Pipeline Geometry Canvas"
     />
   );

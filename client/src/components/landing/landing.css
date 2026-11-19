@@ -1,22 +1,33 @@
 /* ============================================================
-   COVAI LANDING — STUDIO MONOCHROME & COBALT TELEMETRY (.lp)
-   Strictly cohesive palette: Carbon, Graphite, Alabaster, Cobalt, Signal Vermilion
+   COVAI LANDING & AUTH — STUDIO MONOCHROME & COBALT TELEMETRY (.lp)
+   Supports both Dark (Carbon) and Light (Alabaster) via CSS variables.
    ============================================================ */
 
 .lp {
   --lp-bg: #050608;
-  --lp-panel: #0a0c10;
-  --lp-panel-raised: #0f1218;
+  --lp-surface: #0a0c10;
+  --lp-surface-glass: rgba(10, 12, 16, 0.86);
+  --lp-surface-elevated: #121620;
+  --lp-inset: #06080c;
+  --lp-pill-bg: #090b10;
+  --lp-pill-active: #161b26;
+  --lp-hover: rgba(255, 255, 255, 0.055);
+
   --lp-line: #181c26;
-  --lp-line-strong: #272d3d;
+  --lp-line-strong: #283042;
 
   --lp-ink: #f1f5f9;
   --lp-ink-secondary: #94a3b8;
-  --lp-ink-muted: #525b70;
+  --lp-ink-muted: #64748b;
 
-  /* Strictly two functional signal colors — never mixed into rainbow gradients */
-  --lp-signal: #38bdf8;       /* Verified execution path / active telemetry */
-  --lp-fault: #f43f5e;        /* Unreached branch predicate */
+  --lp-signal: #38bdf8;
+  --lp-signal-bg: rgba(56, 189, 248, 0.08);
+  --lp-signal-border: rgba(56, 189, 248, 0.35);
+
+  --lp-fault: #f43f5e;
+  --lp-fault-bg: rgba(244, 63, 94, 0.09);
+  --lp-fault-border: rgba(244, 63, 94, 0.4);
+  --lp-fault-ink: #fecdd3;
 
   --lp-font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --lp-font-sans: "Inter", system-ui, -apple-system, sans-serif;
@@ -27,11 +38,39 @@
   font-family: var(--lp-font-sans);
   position: relative;
   overflow-x: clip;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+[data-theme="light"] .lp {
+  --lp-bg: #f8fafc;
+  --lp-surface: #ffffff;
+  --lp-surface-glass: rgba(255, 255, 255, 0.92);
+  --lp-surface-elevated: #f1f5f9;
+  --lp-inset: #f1f5f9;
+  --lp-pill-bg: #e2e8f0;
+  --lp-pill-active: #ffffff;
+  --lp-hover: rgba(15, 23, 42, 0.05);
+
+  --lp-line: #e2e8f0;
+  --lp-line-strong: #cbd5e1;
+
+  --lp-ink: #0f172a;
+  --lp-ink-secondary: #475569;
+  --lp-ink-muted: #64748b;
+
+  --lp-signal: #0284c7;
+  --lp-signal-bg: rgba(2, 132, 199, 0.08);
+  --lp-signal-border: rgba(2, 132, 199, 0.35);
+
+  --lp-fault: #e11d48;
+  --lp-fault-bg: rgba(225, 29, 72, 0.08);
+  --lp-fault-border: rgba(225, 29, 72, 0.35);
+  --lp-fault-ink: #9f1239;
 }
 
 .lp ::selection {
   background: rgba(56, 189, 248, 0.22);
-  color: #ffffff;
+  color: var(--lp-ink);
 }
 
 .lp-display {
@@ -52,29 +91,41 @@
     linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
 }
 
+[data-theme="light"] .lp .lp-draft-grid {
+  background-image:
+    linear-gradient(to right, rgba(15, 23, 42, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.045) 1px, transparent 1px);
+}
+
 .lp-radial-fade {
   mask-image: radial-gradient(ellipse 85% 75% at 50% 40%, #000 40%, transparent 100%);
   -webkit-mask-image: radial-gradient(ellipse 85% 75% at 50% 40%, #000 40%, transparent 100%);
 }
 
-/* Machined dark glass panel — monochromatic, zero neon tint */
+/* Machined glass panel */
 .lp-machined {
-  background: rgba(10, 12, 16, 0.84);
+  background: var(--lp-surface-glass);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border: 1px solid var(--lp-line);
   box-shadow:
-    0 24px 60px -20px rgba(0, 0, 0, 0.85),
+    0 24px 60px -20px rgba(0, 0, 0, 0.78),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
 }
 
-/* Interactive spotlight card — crisp monochrome/cobalt specular highlight */
+[data-theme="light"] .lp .lp-machined {
+  box-shadow:
+    0 16px 40px -18px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+}
+
+/* Interactive spotlight card */
 .lp-card {
   position: relative;
-  background: #090b0f;
+  background: var(--lp-surface);
   border: 1px solid var(--lp-line);
   overflow: hidden;
-  transition: border-color 0.25s ease;
+  transition: border-color 0.25s ease, background-color 0.2s ease;
 }
 
 .lp-card::before {
@@ -114,12 +165,28 @@
   z-index: 2;
 }
 
+[data-theme="light"] .lp .lp-card::before {
+  background: radial-gradient(
+    520px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(2, 132, 199, 0.055),
+    transparent 45%
+  );
+}
+
+[data-theme="light"] .lp .lp-card::after {
+  background: radial-gradient(
+    340px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(2, 132, 199, 0.38),
+    transparent 45%
+  );
+}
+
 .lp-card:hover::before,
 .lp-card:hover::after {
   opacity: 1;
 }
 
-/* Primary action button: stark Alabaster on Carbon — zero rainbow gradient */
+/* Primary action button */
 .lp-btn-primary {
   background-color: #f1f5f9;
   color: #050608;
@@ -138,21 +205,31 @@
   transform: translateY(0);
 }
 
+[data-theme="light"] .lp .lp-btn-primary {
+  background-color: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.16);
+}
+
+[data-theme="light"] .lp .lp-btn-primary:hover {
+  background-color: #1e293b;
+}
+
 /* Secondary machined button */
 .lp-btn-secondary {
-  background-color: #0d1017;
-  color: #e2e8f0;
+  background-color: var(--lp-surface-elevated);
+  color: var(--lp-ink);
   border: 1px solid var(--lp-line-strong);
   transition: background-color 0.18s ease, border-color 0.18s ease;
 }
 
 .lp-btn-secondary:hover {
-  background-color: #141822;
-  border-color: #3b445c;
-  color: #ffffff;
+  background-color: var(--lp-pill-active);
+  border-color: var(--lp-ink-muted);
 }
 
-/* Subtle specular border beam (monochrome + ice cyan) */
+/* Subtle specular border beam */
 .lp-beam-frame {
   position: relative;
 }
@@ -167,7 +244,7 @@
     from var(--beam-angle, 0deg),
     transparent 0deg,
     transparent 270deg,
-    rgba(56, 189, 248, 0.55) 325deg,
+    rgba(56, 189, 248, 0.6) 325deg,
     rgba(241, 245, 249, 0.9) 360deg
   );
   -webkit-mask:
@@ -177,6 +254,16 @@
   mask-composite: exclude;
   animation: lpBeamSpin 6s linear infinite;
   pointer-events: none;
+}
+
+[data-theme="light"] .lp .lp-beam-frame::before {
+  background: conic-gradient(
+    from var(--beam-angle, 0deg),
+    transparent 0deg,
+    transparent 260deg,
+    rgba(2, 132, 199, 0.55) 325deg,
+    rgba(15, 23, 42, 0.7) 360deg
+  );
 }
 
 @property --beam-angle {
@@ -234,7 +321,7 @@
   width: 100%;
   height: 4px;
   border-radius: 999px;
-  background: #1a1f2c;
+  background: var(--lp-line-strong);
   outline: none;
 }
 
@@ -244,9 +331,9 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #f1f5f9;
-  border: 3px solid #050608;
-  box-shadow: 0 0 0 1px #38bdf8;
+  background: var(--lp-ink);
+  border: 3px solid var(--lp-bg);
+  box-shadow: 0 0 0 1px var(--lp-signal);
   cursor: grab;
   transition: transform 0.15s ease;
 }

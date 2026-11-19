@@ -225,7 +225,7 @@ export function PortfolioActivityAndInfraZone({
         </div>
 
         <div className="pt-2 border-t border-[var(--ud-border)] text-[11px] text-[var(--ud-text-muted)] font-mono flex items-center justify-between">
-          <span>Engine v2.4 (Chromium + Node)</span>
+          <span>Chromium + Node Sandbox</span>
           <span className="text-[var(--ud-pass)]">● 100% Uptime</span>
         </div>
       </div>

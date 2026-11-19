@@ -13,55 +13,19 @@ const SANDBOX_TIERS = {
     healedCov: 96.4,
     complexity: "Cyclomatic complexity: 6",
     sourceLines: [
-      {
-        num: 1,
-        code: "export async function settleInvoice(invoice, wallet) {",
-        state: "covered",
-      },
-      {
-        num: 2,
-        code: "  if (!invoice || invoice.amount <= 0) {",
-        state: "covered",
-      },
-      {
-        num: 3,
-        code: "    throw new RangeError('ERR_INVALID_INVOICE_AMOUNT');",
-        state: "fault",
-      },
+      { num: 1, code: "export async function settleInvoice(invoice, wallet) {", state: "covered" },
+      { num: 2, code: "  if (!invoice || invoice.amount <= 0) {", state: "covered" },
+      { num: 3, code: "    throw new RangeError('ERR_INVALID_INVOICE_AMOUNT');", state: "fault" },
       { num: 4, code: "  }", state: "covered" },
-      {
-        num: 5,
-        code: "  const fxRate = wallet.currency === 'USD' ? 1 : wallet.fx;",
-        state: "covered",
-      },
+      { num: 5, code: "  const fxRate = wallet.currency === 'USD' ? 1 : wallet.fx;", state: "covered" },
       { num: 6, code: "  if (!fxRate || fxRate <= 0) {", state: "fault" },
-      {
-        num: 7,
-        code: "    throw new Error('ERR_STALE_FX_ORACLE');",
-        state: "fault",
-      },
+      { num: 7, code: "    throw new Error('ERR_STALE_FX_ORACLE');", state: "fault" },
       { num: 8, code: "  }", state: "fault" },
-      {
-        num: 9,
-        code: "  const required = invoice.amount * fxRate;",
-        state: "covered",
-      },
-      {
-        num: 10,
-        code: "  if (wallet.availableBalance < required) {",
-        state: "covered",
-      },
-      {
-        num: 11,
-        code: "    return { status: 'DECLINED', deficit: required - wallet.availableBalance };",
-        state: "fault",
-      },
+      { num: 9, code: "  const required = invoice.amount * fxRate;", state: "covered" },
+      { num: 10, code: "  if (wallet.availableBalance < required) {", state: "covered" },
+      { num: 11, code: "    return { status: 'DECLINED', deficit: required - wallet.availableBalance };", state: "fault" },
       { num: 12, code: "  }", state: "covered" },
-      {
-        num: 13,
-        code: "  return { status: 'SETTLED', txHash: '0x9f8c...31a', net: required };",
-        state: "covered",
-      },
+      { num: 13, code: "  return { status: 'SETTLED', txHash: '0x9f8c...31a', net: required };", state: "covered" },
       { num: 14, code: "}", state: "covered" },
     ],
     synthesizedLines: [
@@ -86,26 +50,11 @@ const SANDBOX_TIERS = {
       "});",
     ],
     cfgNodes: [
-      {
-        id: "B1",
-        label: "Entry: settleInvoice",
-        before: "verified",
-        after: "verified",
-      },
+      { id: "B1", label: "Entry: settleInvoice", before: "verified", after: "verified" },
       { id: "B2", label: "amount <= 0", before: "fault", after: "verified" },
       { id: "B3", label: "fxRate <= 0", before: "fault", after: "verified" },
-      {
-        id: "B4",
-        label: "balance < required",
-        before: "fault",
-        after: "verified",
-      },
-      {
-        id: "B5",
-        label: "Exit: settled receipt",
-        before: "verified",
-        after: "verified",
-      },
+      { id: "B4", label: "balance < required", before: "fault", after: "verified" },
+      { id: "B5", label: "Exit: settled receipt", before: "verified", after: "verified" },
     ],
   },
   integration: {
@@ -118,55 +67,19 @@ const SANDBOX_TIERS = {
     healedCov: 97.8,
     complexity: "12 endpoints · 3 auth roles",
     sourceLines: [
-      {
-        num: 1,
-        code: "router.post('/v1/webhooks/stripe', verifyHmac, async (req, res) => {",
-        state: "covered",
-      },
-      {
-        num: 2,
-        code: "  const sig = req.headers['stripe-signature'];",
-        state: "covered",
-      },
-      {
-        num: 3,
-        code: "  if (!sig || !isValidTimestamp(sig)) {",
-        state: "covered",
-      },
-      {
-        num: 4,
-        code: "    return res.status(401).json({ code: 'REPLAY_ATTACK_BLOCKED' });",
-        state: "fault",
-      },
+      { num: 1, code: "router.post('/v1/webhooks/stripe', verifyHmac, async (req, res) => {", state: "covered" },
+      { num: 2, code: "  const sig = req.headers['stripe-signature'];", state: "covered" },
+      { num: 3, code: "  if (!sig || !isValidTimestamp(sig)) {", state: "covered" },
+      { num: 4, code: "    return res.status(401).json({ code: 'REPLAY_ATTACK_BLOCKED' });", state: "fault" },
       { num: 5, code: "  }", state: "covered" },
-      {
-        num: 6,
-        code: "  const duplicate = await prisma.webhookEvent.findUnique({",
-        state: "covered",
-      },
-      {
-        num: 7,
-        code: "    where: { eventId: req.body.id }, select: { id: true }",
-        state: "covered",
-      },
+      { num: 6, code: "  const duplicate = await prisma.webhookEvent.findUnique({", state: "covered" },
+      { num: 7, code: "    where: { eventId: req.body.id }, select: { id: true }", state: "covered" },
       { num: 8, code: "  });", state: "covered" },
       { num: 9, code: "  if (duplicate) {", state: "fault" },
-      {
-        num: 10,
-        code: "    return res.status(200).json({ idempotent: true, skipped: true });",
-        state: "fault",
-      },
+      { num: 10, code: "    return res.status(200).json({ idempotent: true, skipped: true });", state: "fault" },
       { num: 11, code: "  }", state: "fault" },
-      {
-        num: 12,
-        code: "  await queue.add('ledger:sync', { eventId: req.body.id });",
-        state: "covered",
-      },
-      {
-        num: 13,
-        code: "  return res.status(202).json({ queued: true });",
-        state: "covered",
-      },
+      { num: 12, code: "  await queue.add('ledger:sync', { eventId: req.body.id });", state: "covered" },
+      { num: 13, code: "  return res.status(202).json({ queued: true });", state: "covered" },
       { num: 14, code: "});", state: "covered" },
     ],
     synthesizedLines: [
@@ -192,36 +105,11 @@ const SANDBOX_TIERS = {
       "});",
     ],
     cfgNodes: [
-      {
-        id: "A1",
-        label: "POST /webhooks/stripe",
-        before: "verified",
-        after: "verified",
-      },
-      {
-        id: "A2",
-        label: "401 replay guard",
-        before: "fault",
-        after: "verified",
-      },
-      {
-        id: "A3",
-        label: "200 idempotency check",
-        before: "fault",
-        after: "verified",
-      },
-      {
-        id: "A4",
-        label: "202 BullMQ dispatch",
-        before: "verified",
-        after: "verified",
-      },
-      {
-        id: "A5",
-        label: "Response schema check",
-        before: "verified",
-        after: "verified",
-      },
+      { id: "A1", label: "POST /webhooks/stripe", before: "verified", after: "verified" },
+      { id: "A2", label: "401 replay guard", before: "fault", after: "verified" },
+      { id: "A3", label: "200 idempotency check", before: "fault", after: "verified" },
+      { id: "A4", label: "202 BullMQ dispatch", before: "verified", after: "verified" },
+      { id: "A5", label: "Response schema check", before: "verified", after: "verified" },
     ],
   },
   system: {
@@ -234,54 +122,18 @@ const SANDBOX_TIERS = {
     healedCov: 95.6,
     complexity: "5 user flows · DOM + network",
     sourceLines: [
-      {
-        num: 1,
-        code: "export async function executeCheckoutFlow(page, session) {",
-        state: "covered",
-      },
-      {
-        num: 2,
-        code: "  await page.goto('/checkout?plan=enterprise');",
-        state: "covered",
-      },
-      {
-        num: 3,
-        code: "  await page.fill('[data-testid=\"card-input\"]', session.card);",
-        state: "covered",
-      },
+      { num: 1, code: "export async function executeCheckoutFlow(page, session) {", state: "covered" },
+      { num: 2, code: "  await page.goto('/checkout?plan=enterprise');", state: "covered" },
+      { num: 3, code: "  await page.fill('[data-testid=\"card-input\"]', session.card);", state: "covered" },
       { num: 4, code: "  if (session.requires3DSecure) {", state: "fault" },
-      {
-        num: 5,
-        code: "    const frame = page.frameLocator('#three-ds-challenge');",
-        state: "fault",
-      },
-      {
-        num: 6,
-        code: "    await frame.locator('button:has-text(\"Approve\")').click();",
-        state: "fault",
-      },
+      { num: 5, code: "    const frame = page.frameLocator('#three-ds-challenge');", state: "fault" },
+      { num: 6, code: "    await frame.locator('button:has-text(\"Approve\")').click();", state: "fault" },
       { num: 7, code: "  }", state: "fault" },
-      {
-        num: 8,
-        code: "  if (session.simulateNetworkDrop) {",
-        state: "covered",
-      },
-      {
-        num: 9,
-        code: "    await page.getByRole('button', { name: 'Retry Payment' }).click();",
-        state: "fault",
-      },
+      { num: 8, code: "  if (session.simulateNetworkDrop) {", state: "covered" },
+      { num: 9, code: "    await page.getByRole('button', { name: 'Retry Payment' }).click();", state: "fault" },
       { num: 10, code: "  }", state: "covered" },
-      {
-        num: 11,
-        code: "  await page.waitForURL('**/workspace/onboarding');",
-        state: "covered",
-      },
-      {
-        num: 12,
-        code: "  return page.locator('[data-testid=\"receipt-badge\"]').textContent();",
-        state: "covered",
-      },
+      { num: 11, code: "  await page.waitForURL('**/workspace/onboarding');", state: "covered" },
+      { num: 12, code: "  return page.locator('[data-testid=\"receipt-badge\"]').textContent();", state: "covered" },
       { num: 13, code: "}", state: "covered" },
     ],
     synthesizedLines: [
@@ -299,36 +151,11 @@ const SANDBOX_TIERS = {
       "});",
     ],
     cfgNodes: [
-      {
-        id: "S1",
-        label: "Mount /checkout",
-        before: "verified",
-        after: "verified",
-      },
-      {
-        id: "S2",
-        label: "3DS iframe approval",
-        before: "fault",
-        after: "verified",
-      },
-      {
-        id: "S3",
-        label: "Offline retry action",
-        before: "fault",
-        after: "verified",
-      },
-      {
-        id: "S4",
-        label: "Onboarding redirect",
-        before: "verified",
-        after: "verified",
-      },
-      {
-        id: "S5",
-        label: "V8 coverage merge",
-        before: "verified",
-        after: "verified",
-      },
+      { id: "S1", label: "Mount /checkout", before: "verified", after: "verified" },
+      { id: "S2", label: "3DS iframe approval", before: "fault", after: "verified" },
+      { id: "S3", label: "Offline retry action", before: "fault", after: "verified" },
+      { id: "S4", label: "Onboarding redirect", before: "verified", after: "verified" },
+      { id: "S5", label: "V8 coverage merge", before: "verified", after: "verified" },
     ],
   },
 };
@@ -403,22 +230,20 @@ export default function IDEPreview() {
   return (
     <section
       id="ide-preview"
-      className="relative py-24 md:py-32 border-b border-[#161a24]"
+      className="relative py-24 md:py-32 border-b border-[var(--lp-line)]"
     >
       <div className="relative max-w-[1280px] mx-auto px-4 sm:px-6">
-        {/* Clean Editorial Heading — No ALL-CAPS pill, no colored single word */}
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-10">
           <div className="space-y-2">
-            <h2 className="lp-display text-3xl sm:text-4xl font-bold text-white tracking-tight">
+            <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight">
               Interactive branch synthesis sandbox
             </h2>
-            <p className="text-sm sm:text-base text-slate-400 max-w-2xl">
+            <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)] max-w-2xl">
               Select a testing layer below and run the synthesizer to watch
               untested branches resolve into passing specifications.
             </p>
           </div>
 
-          {/* Controls */}
           <div className="flex flex-wrap items-center gap-2.5">
             {isHealed && (
               <button
@@ -450,7 +275,7 @@ export default function IDEPreview() {
         <div
           role="tablist"
           aria-label="Testing layer tabs"
-          className="inline-flex flex-wrap items-center gap-1 p-1 rounded-lg bg-[#090b10] border border-[#181c26] mb-4"
+          className="inline-flex flex-wrap items-center gap-1 p-1 rounded-lg bg-[var(--lp-pill-bg)] border border-[var(--lp-line)] mb-4"
         >
           {Object.values(SANDBOX_TIERS).map((item) => {
             const active = activeTierKey === item.id;
@@ -463,8 +288,8 @@ export default function IDEPreview() {
                 onClick={() => handleSelectTier(item.id)}
                 className={`px-4 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   active
-                    ? "bg-[#161b26] text-white border border-[#283044]"
-                    : "text-slate-400 hover:text-slate-200 border border-transparent"
+                    ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] border border-[var(--lp-line-strong)] shadow-xs"
+                    : "text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] border border-transparent"
                 }`}
               >
                 {item.label}
@@ -475,29 +300,26 @@ export default function IDEPreview() {
 
         {/* Architectural IDE Frame */}
         <div className="rounded-xl lp-machined overflow-hidden">
-          {/* Technical Header Bar (No fake macOS traffic light dots) */}
-          <div className="px-4 py-3 bg-[#07090d] border-b border-[#181c26] flex flex-wrap items-center justify-between gap-3 text-xs lp-mono">
+          <div className="px-4 py-3 bg-[var(--lp-surface)] border-b border-[var(--lp-line)] flex flex-wrap items-center justify-between gap-3 text-xs lp-mono">
             <div className="flex items-center gap-3">
-              <span className="text-slate-200 font-medium">
-                {tier.fileName}
-              </span>
-              <span className="text-slate-600">/</span>
-              <span className="text-slate-500">{tier.complexity}</span>
+              <span className="text-[var(--lp-ink)] font-medium">{tier.fileName}</span>
+              <span className="text-[var(--lp-ink-muted)]">/</span>
+              <span className="text-[var(--lp-ink-muted)]">{tier.complexity}</span>
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="text-slate-400">Branch coverage</span>
+              <span className="text-[var(--lp-ink-secondary)]">Branch coverage</span>
               <span
                 className={`text-sm font-bold ${
-                  isHealed ? "text-[#38bdf8]" : "text-[#f43f5e]"
+                  isHealed ? "text-[var(--lp-signal)]" : "text-[var(--lp-fault)]"
                 }`}
               >
                 {displayCov.toFixed(1)}%
               </span>
-              <div className="hidden sm:block w-28 h-1.5 rounded-full bg-[#161a24] overflow-hidden">
+              <div className="hidden sm:block w-28 h-1.5 rounded-full bg-[var(--lp-line)] overflow-hidden">
                 <div
                   className={`h-full transition-all duration-150 ${
-                    isHealed ? "bg-[#38bdf8]" : "bg-[#f43f5e]"
+                    isHealed ? "bg-[var(--lp-signal)]" : "bg-[var(--lp-fault)]"
                   }`}
                   style={{ width: `${displayCov}%` }}
                 />
@@ -505,10 +327,9 @@ export default function IDEPreview() {
             </div>
           </div>
 
-          {/* Split Code & Test Output Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[430px]">
             {/* Left Pane: Source AST */}
-            <div className="lg:col-span-6 bg-[#050608] p-4 border-b lg:border-b-0 lg:border-r border-[#181c26] flex flex-col justify-between">
+            <div className="lg:col-span-6 bg-[var(--lp-inset)] p-4 border-b lg:border-b-0 lg:border-r border-[var(--lp-line)] flex flex-col justify-between">
               <div className="lp-mono text-xs leading-[1.75] overflow-x-auto">
                 {tier.sourceLines.map((line) => {
                   const isFault = !isHealed && line.state === "fault";
@@ -518,18 +339,18 @@ export default function IDEPreview() {
                       key={line.num}
                       className={`flex items-center px-2.5 py-0.5 transition-colors duration-200 ${
                         isFault
-                          ? "bg-[#f43f5e]/[0.09] border-l-2 border-[#f43f5e]"
+                          ? "bg-[var(--lp-fault-bg)] border-l-2 border-[var(--lp-fault)]"
                           : isHealed && line.state === "fault"
-                            ? "bg-[#38bdf8]/[0.08] border-l-2 border-[#38bdf8]"
+                            ? "bg-[var(--lp-signal-bg)] border-l-2 border-[var(--lp-signal)]"
                             : "border-l-2 border-transparent"
                       }`}
                     >
-                      <div className="w-7 text-right pr-3 text-slate-600 select-none text-[11px] shrink-0">
+                      <div className="w-7 text-right pr-3 text-[var(--lp-ink-muted)] select-none text-[11px] shrink-0">
                         {line.num}
                       </div>
                       <pre
                         className={`m-0 whitespace-pre font-mono ${
-                          isFault ? "text-rose-100" : "text-slate-200"
+                          isFault ? "text-[var(--lp-fault-ink)]" : "text-[var(--lp-ink)]"
                         }`}
                       >
                         {line.code}
@@ -540,10 +361,10 @@ export default function IDEPreview() {
               </div>
 
               {/* Control Flow Nodes Strip */}
-              <div className="mt-4 pt-3 border-t border-[#161a24]">
-                <div className="text-[11px] lp-mono text-slate-500 mb-2 flex items-center justify-between">
+              <div className="mt-4 pt-3 border-t border-[var(--lp-line)]">
+                <div className="text-[11px] lp-mono text-[var(--lp-ink-muted)] mb-2 flex items-center justify-between">
                   <span>Control flow predicates</span>
-                  <span className="text-slate-300">
+                  <span className="text-[var(--lp-ink-secondary)]">
                     {isHealed ? "5 of 5 verified" : "2 of 5 verified"}
                   </span>
                 </div>
@@ -555,11 +376,11 @@ export default function IDEPreview() {
                         key={node.id}
                         className={`px-2.5 py-1.5 rounded border text-[11px] lp-mono truncate transition-colors ${
                           resolved
-                            ? "bg-[#0b0e14] border-[#1e2636] text-slate-200"
-                            : "bg-[#f43f5e]/[0.07] border-[#f43f5e]/40 text-[#f43f5e]"
+                            ? "bg-[var(--lp-surface)] border-[var(--lp-line-strong)] text-[var(--lp-ink)]"
+                            : "bg-[var(--lp-fault-bg)] border-[var(--lp-fault-border)] text-[var(--lp-fault)]"
                         }`}
                       >
-                        <span className="text-slate-500 mr-1.5">{node.id}</span>
+                        <span className="text-[var(--lp-ink-muted)] mr-1.5">{node.id}</span>
                         <span>{node.label}</span>
                       </div>
                     );
@@ -569,26 +390,26 @@ export default function IDEPreview() {
             </div>
 
             {/* Right Pane: Synthesized Spec Stream */}
-            <div className="lg:col-span-6 bg-[#07090d] p-4 flex flex-col justify-between">
+            <div className="lg:col-span-6 bg-[var(--lp-surface)] p-4 flex flex-col justify-between">
               <div>
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-[#181c26] text-xs lp-mono">
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--lp-line)] text-xs lp-mono">
                   <div className="flex items-center gap-2.5">
                     <span
                       className={`w-2 h-2 rounded-full ${
-                        isHealed ? "bg-[#38bdf8]" : "bg-slate-500"
+                        isHealed ? "bg-[var(--lp-signal)]" : "bg-[var(--lp-ink-muted)]"
                       }`}
                     />
-                    <span className="text-slate-200">{tier.testFileName}</span>
+                    <span className="text-[var(--lp-ink)]">{tier.testFileName}</span>
                   </div>
 
                   <button
                     type="button"
                     onClick={handleCopy}
-                    className="px-2.5 py-1 rounded bg-[#0d1017] hover:bg-[#141923] border border-[#1e2433] text-xs lp-mono text-slate-300 flex items-center gap-1.5 cursor-pointer"
+                    className="px-2.5 py-1 rounded lp-btn-secondary text-xs lp-mono flex items-center gap-1.5 cursor-pointer"
                   >
                     {copied ? (
                       <>
-                        <Check className="w-3.5 h-3.5 text-[#38bdf8]" />
+                        <Check className="w-3.5 h-3.5 text-[var(--lp-signal)]" />
                         <span>Copied</span>
                       </>
                     ) : (
@@ -600,26 +421,24 @@ export default function IDEPreview() {
                   </button>
                 </div>
 
-                <div className="p-3.5 rounded-lg bg-[#050608] border border-[#161a24] lp-mono text-xs leading-[1.7] min-h-[270px] overflow-x-auto">
+                <div className="p-3.5 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-xs leading-[1.7] min-h-[270px] overflow-x-auto">
                   {tier.synthesizedLines
                     .slice(
                       0,
-                      isHealed
-                        ? tier.synthesizedLines.length
-                        : streamedLineCount,
+                      isHealed ? tier.synthesizedLines.length : streamedLineCount
                     )
                     .map((line, idx) => (
                       <div key={idx} className="flex items-center">
-                        <span className="w-6 text-right pr-3 text-slate-600 select-none text-[10px]">
+                        <span className="w-6 text-right pr-3 text-[var(--lp-ink-muted)] select-none text-[10px]">
                           {idx + 1}
                         </span>
                         <span
                           className={
                             line.includes("expect(")
-                              ? "text-[#38bdf8]"
+                              ? "text-[var(--lp-signal)] font-medium"
                               : line.includes("it(") || line.includes("test(")
-                                ? "text-white"
-                                : "text-slate-300"
+                                ? "text-[var(--lp-ink)] font-semibold"
+                                : "text-[var(--lp-ink-secondary)]"
                           }
                         >
                           {line || " "}
@@ -629,11 +448,11 @@ export default function IDEPreview() {
                 </div>
               </div>
 
-              <div className="mt-4 pt-3 border-t border-[#161a24] flex flex-wrap items-center justify-between gap-3 text-xs lp-mono text-slate-400">
+              <div className="mt-4 pt-3 border-t border-[var(--lp-line)] flex flex-wrap items-center justify-between gap-3 text-xs lp-mono text-[var(--lp-ink-secondary)]">
                 <span>Runner: {tier.runner}</span>
                 <Link
                   to="/register"
-                  className="text-slate-200 hover:text-white underline underline-offset-4"
+                  className="text-[var(--lp-ink)] hover:text-[var(--lp-signal)] underline underline-offset-4 transition-colors"
                 >
                   Open full editor workspace
                 </Link>

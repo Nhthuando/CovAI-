@@ -55,7 +55,7 @@ export default function Footer() {
   return (
     <footer
       id="footer"
-      className="relative bg-[#050608] pt-20 pb-12 overflow-hidden text-slate-400"
+      className="relative bg-[var(--lp-bg)] pt-20 pb-12 overflow-hidden text-[var(--lp-ink-secondary)]"
     >
       <div className="relative max-w-[1280px] mx-auto px-4 sm:px-6">
         {/* Architectural Finale CTA Box */}
@@ -63,16 +63,16 @@ export default function Footer() {
           <div
             className="pointer-events-none absolute -top-32 right-0 w-[520px] h-[320px] rounded-full blur-[120px] opacity-20"
             style={{
-              background: "radial-gradient(circle, #38bdf8 0%, transparent 70%)",
+              background: "radial-gradient(circle, var(--lp-signal) 0%, transparent 70%)",
             }}
           />
 
           <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
             <div className="max-w-xl space-y-3">
-              <h2 className="lp-display text-3xl sm:text-4xl font-bold text-white tracking-tight leading-[1.12]">
+              <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight leading-[1.12]">
                 Inspect your repository&apos;s Control Flow Graph today.
               </h2>
-              <p className="text-sm sm:text-base text-slate-400 leading-relaxed">
+              <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)] leading-relaxed">
                 Import a repository from GitHub or upload an archive to locate
                 untested branch predicates and run container-verified test
                 synthesis.
@@ -107,7 +107,7 @@ export default function Footer() {
         </div>
 
         {/* Footer Columns */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-10 pb-14 border-b border-[#161a24]">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-10 pb-14 border-b border-[var(--lp-line)]">
           <div className="md:col-span-2 space-y-4">
             <a
               href="/"
@@ -115,26 +115,26 @@ export default function Footer() {
               className="inline-flex items-center gap-2.5"
             >
               <CovaiLogo size={24} />
-              <span className="lp-display font-bold text-base text-white">
+              <span className="lp-display font-bold text-base text-[var(--lp-ink)]">
                 CovAI
               </span>
             </a>
 
-            <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-sm">
+            <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] leading-relaxed max-w-sm">
               Static Control Flow Graph analysis, multi-tier test generation,
               and isolated Docker runner verification for software engineering
               teams.
             </p>
 
-            <div className="inline-flex items-center gap-2 text-xs lp-mono text-slate-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8]" />
+            <div className="inline-flex items-center gap-2 text-xs lp-mono text-[var(--lp-ink-secondary)]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--lp-signal)]" />
               <span>AST workers &amp; Docker runners operational</span>
             </div>
           </div>
 
           {FOOTER_COLS.map((col) => (
             <div key={col.heading} className="space-y-3">
-              <h4 className="text-xs font-semibold text-white">
+              <h4 className="text-xs font-semibold text-[var(--lp-ink)]">
                 {col.heading}
               </h4>
               <ul className="space-y-2.5 list-none p-0 m-0 text-xs">
@@ -143,7 +143,7 @@ export default function Footer() {
                     {link.href.startsWith("/") ? (
                       <Link
                         to={link.href}
-                        className="text-slate-400 hover:text-white transition-colors"
+                        className="text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors"
                       >
                         {link.label}
                       </Link>
@@ -152,14 +152,14 @@ export default function Footer() {
                         href={link.href}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-slate-400 hover:text-white transition-colors"
+                        className="text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors"
                       >
                         {link.label}
                       </a>
                     ) : (
                       <a
                         href={link.href}
-                        className="text-slate-400 hover:text-white transition-colors"
+                        className="text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors"
                       >
                         {link.label}
                       </a>
@@ -171,16 +171,16 @@ export default function Footer() {
           ))}
         </div>
 
-        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--lp-ink-muted)]">
           <div>© {new Date().getFullYear()} CovAI. All rights reserved.</div>
           <div className="flex items-center gap-5">
-            <Link to="/privacy" className="hover:text-slate-300 transition-colors">
+            <Link to="/privacy" className="hover:text-[var(--lp-ink)] transition-colors">
               Privacy
             </Link>
-            <Link to="/terms" className="hover:text-slate-300 transition-colors">
+            <Link to="/terms" className="hover:text-[var(--lp-ink)] transition-colors">
               Terms
             </Link>
-            <Link to="/telemetry" className="hover:text-slate-300 transition-colors">
+            <Link to="/telemetry" className="hover:text-[var(--lp-ink)] transition-colors">
               Telemetry
             </Link>
           </div>
@@ -192,13 +192,7 @@ export default function Footer() {
           className="mt-8 select-none pointer-events-none text-center overflow-hidden"
         >
           <div
-            className="lp-display font-bold tracking-tighter leading-none text-[18vw] sm:text-[15vw]"
-            style={{
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.005) 90%, transparent 100%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}
+            className="lp-display font-bold tracking-tighter leading-none text-[18vw] sm:text-[15vw] text-[var(--lp-ink)] opacity-[0.04]"
           >
             COVAI
           </div>

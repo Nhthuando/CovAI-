@@ -1,6 +1,23 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
+function getPyramidTheme() {
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  return isLight
+    ? {
+        active: new THREE.Color("#0284c7"),
+        idle: new THREE.Color("#cbd5e1"),
+        wireActive: new THREE.Color("#0f172a"),
+        wireIdle: new THREE.Color("#64748b"),
+      }
+    : {
+        active: new THREE.Color("#38bdf8"),
+        idle: new THREE.Color("#1e293b"),
+        wireActive: new THREE.Color("#f1f5f9"),
+        wireIdle: new THREE.Color("#475569"),
+      };
+}
+
 export default function Pyramid3DCanvas({ activeTier = "unit" }) {
   const containerRef = useRef(null);
   const activeTierRef = useRef(activeTier);
@@ -15,6 +32,8 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
 
     const width = container.clientWidth || 380;
     const height = container.clientHeight || 260;
+
+    let cols = getPyramidTheme();
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 50);
@@ -34,16 +53,15 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
     const group = new THREE.Group();
     scene.add(group);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-    const dirLight = new THREE.DirectionalLight(0xf1f5f9, 2.4);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+    const dirLight = new THREE.DirectionalLight(0xf1f5f9, 2.2);
     dirLight.position.set(3, 5, 4);
     scene.add(dirLight);
 
-    const pointLight = new THREE.PointLight(0x38bdf8, 3.2, 12);
+    const pointLight = new THREE.PointLight(0x38bdf8, 3.0, 12);
     pointLight.position.set(-2, 1, 3);
     scene.add(pointLight);
 
-    // 3 Pyramid Tiers (4-sided frustums using CylinderGeometry with 4 radial segments)
     const tiersConfig = [
       { id: "system", rTop: 0.08, rBottom: 0.72, h: 0.58, baseY: 1.02 },
       { id: "integration", rTop: 0.82, rBottom: 1.38, h: 0.58, baseY: 0.18 },
@@ -51,21 +69,17 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
     ];
 
     const tierMeshes = [];
-    const colorActive = new THREE.Color("#38bdf8");
-    const colorIdle = new THREE.Color("#1e293b");
-    const wireActive = new THREE.Color("#f1f5f9");
-    const wireIdle = new THREE.Color("#475569");
 
     tiersConfig.forEach((cfg) => {
       const geo = new THREE.CylinderGeometry(cfg.rTop, cfg.rBottom, cfg.h, 4, 1);
       const mat = new THREE.MeshStandardMaterial({
-        color: colorIdle.clone(),
-        emissive: colorIdle.clone(),
-        emissiveIntensity: 0.35,
+        color: cols.idle.clone(),
+        emissive: cols.idle.clone(),
+        emissiveIntensity: 0.3,
         roughness: 0.25,
-        metalness: 0.75,
+        metalness: 0.65,
         transparent: true,
-        opacity: 0.82,
+        opacity: 0.86,
       });
 
       const mesh = new THREE.Mesh(geo, mat);
@@ -74,7 +88,7 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
 
       const edgesGeo = new THREE.EdgesGeometry(geo);
       const lineMat = new THREE.LineBasicMaterial({
-        color: wireIdle.clone(),
+        color: cols.wireIdle.clone(),
         transparent: true,
         opacity: 0.75,
       });
@@ -93,7 +107,6 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
       tierMeshes.push(mesh);
     });
 
-    // Vertical Core Axis Spine
     const spineGeo = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(0, -1.5, 0),
       new THREE.Vector3(0, 1.75, 0),
@@ -106,18 +119,25 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
     const spine = new THREE.Line(spineGeo, spineMat);
     group.add(spine);
 
-    // Base Orbit Ring
     const ringGeo = new THREE.RingGeometry(1.9, 1.93, 64);
     const ringMat = new THREE.MeshBasicMaterial({
-      color: 0x334155,
+      color: 0x64748b,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.45,
     });
     const ring = new THREE.Mesh(ringGeo, ringMat);
     ring.rotation.x = Math.PI / 2;
     ring.position.y = -1.15;
     group.add(ring);
+
+    const observer = new MutationObserver(() => {
+      cols = getPyramidTheme();
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
 
     const onResize = () => {
       if (!container) return;
@@ -140,14 +160,14 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
 
       tierMeshes.forEach((m) => {
         const isSelected = m.userData.id === activeTierRef.current;
-        const targetColor = isSelected ? colorActive : colorIdle;
-        const targetWire = isSelected ? wireActive : wireIdle;
+        const targetColor = isSelected ? cols.active : cols.idle;
+        const targetWire = isSelected ? cols.wireActive : cols.wireIdle;
         const targetScale = isSelected ? 1.07 : 0.96;
         const liftOffset = isSelected ? Math.sin(t * 3) * 0.04 + 0.08 : 0;
 
         m.material.color.lerp(targetColor, 0.08);
         m.material.emissive.lerp(targetColor, 0.08);
-        m.material.emissiveIntensity = isSelected ? 0.6 : 0.15;
+        m.material.emissiveIntensity = isSelected ? 0.45 : 0.12;
         m.userData.lineMat.color.lerp(targetWire, 0.1);
 
         m.scale.lerp(new THREE.Vector3(targetScale, 1, targetScale), 0.08);
@@ -161,6 +181,7 @@ export default function Pyramid3DCanvas({ activeTier = "unit" }) {
 
     return () => {
       cancelAnimationFrame(rafId);
+      observer.disconnect();
       window.removeEventListener("resize", onResize);
       tierMeshes.forEach((m) => {
         m.userData.geo.dispose();
