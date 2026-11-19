@@ -1,20 +1,14 @@
+import { authAwareFetch, getAccessToken } from "../lib/authSession.js";
+
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthToken() {
-  let token = localStorage.getItem("token");
-  if (!token) {
-    try {
-      token = JSON.parse(localStorage.getItem("user") || "null")?.token;
-    } catch {
-      // ignore
-    }
-  }
-  return token || "";
+  return getAccessToken() || "";
 }
 
 export async function getAiQuotasApi() {
   const token = getAuthToken();
-  const res = await fetch(`${BASE_URL}/settings/ai-quotas`, {
+  const res = await authAwareFetch(fetch, `${BASE_URL}/settings/ai-quotas`, {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
@@ -32,7 +26,7 @@ export async function getAiQuotasApi() {
 
 export async function resetAiQuotasApi(channelId = null) {
   const token = getAuthToken();
-  const res = await fetch(`${BASE_URL}/settings/ai-quotas/reset`, {
+  const res = await authAwareFetch(fetch, `${BASE_URL}/settings/ai-quotas/reset`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -52,7 +46,7 @@ export async function resetAiQuotasApi(channelId = null) {
 
 export async function updateAiQuotaLimitApi(channelId, quotaLimit) {
   const token = getAuthToken();
-  const res = await fetch(`${BASE_URL}/settings/ai-quotas/limit`, {
+  const res = await authAwareFetch(fetch, `${BASE_URL}/settings/ai-quotas/limit`, {
     method: "PATCH",
     headers: {
       Authorization: `Bearer ${token}`,

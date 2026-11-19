@@ -65,6 +65,7 @@ import path from "path";
 import crypto from "crypto";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 import { loadSourceCode } from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import {
@@ -166,6 +167,11 @@ export const verifyProjectOwnership = async (projectId, userId) => {
   };
 };
 
+const resolveExistingRootDir = (snapshot, project) => {
+  const raw = snapshot?.rootDir || snapshot?.storagePath || project?.rootDir;
+  return normalizeDiskPath(raw) || raw;
+};
+
 /**
  * Task 4.2: Detect integration test frameworks & dependencies
  */
@@ -180,11 +186,11 @@ export const detectIntegrationFrameworksService = async ({
       snapshotId,
       userId,
     );
-    rootDir = snapshot.rootDir || snapshot.storagePath || project.rootDir;
+    rootDir = resolveExistingRootDir(snapshot, project);
   } else if (projectId) {
     const project = await verifyProjectOwnership(projectId, userId);
     const latest = project.snapshots?.[0];
-    rootDir = latest?.rootDir || latest?.storagePath || project.rootDir;
+    rootDir = resolveExistingRootDir(latest, project);
   } else {
     throw new ServiceError("Either snapshotId or projectId is required", 400);
   }
@@ -221,11 +227,11 @@ const installIntegrationDependenciesInWorkspace = async ({
       snapshotId,
       userId,
     );
-    rootDir = snapshot.rootDir || snapshot.storagePath || project.rootDir;
+    rootDir = resolveExistingRootDir(snapshot, project);
   } else if (projectId) {
     const project = await verifyProjectOwnership(projectId, userId);
     const latest = project.snapshots?.[0];
-    rootDir = latest?.rootDir || latest?.storagePath || project.rootDir;
+    rootDir = resolveExistingRootDir(latest, project);
   } else {
     throw new ServiceError("Either snapshotId or projectId is required", 400);
   }
@@ -419,8 +425,11 @@ export const runIntegrationGenerationPipeline = async ({
       select: { rootDir: true },
     })
     .catch(() => null);
-  const existingSuites = snapshotRecord?.rootDir
-    ? await discoverProjectIntegrationTests(snapshotRecord.rootDir).catch(
+  const resolvedSnapshotRoot = snapshotRecord?.rootDir
+    ? normalizeDiskPath(snapshotRecord.rootDir) || snapshotRecord.rootDir
+    : null;
+  const existingSuites = resolvedSnapshotRoot
+    ? await discoverProjectIntegrationTests(resolvedSnapshotRoot).catch(
         () => [],
       )
     : [];
@@ -811,7 +820,7 @@ const applyIntegrationTestsInWorkspace = async ({
     snapshotId,
     userId,
   );
-  let rootDir = snapshot.rootDir || snapshot.storagePath || project.rootDir;
+  let rootDir = resolveExistingRootDir(snapshot, project);
   if (
     rootDir &&
     /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&

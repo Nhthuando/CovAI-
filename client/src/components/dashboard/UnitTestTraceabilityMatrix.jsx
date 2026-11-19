@@ -392,6 +392,7 @@ export default function UnitTestTraceabilityMatrix({
   applyResultsByFile = {},
   onApplySuggestion,
   onApplyAllFileSuggestions,
+  onDryRunFileSuggestions,
   onReviewDiff,
   onInstallDependency = null,
   installingDependencyName = null,
@@ -1486,6 +1487,15 @@ export default function UnitTestTraceabilityMatrix({
                               <span>{(fileSugs[0].telemetry.tokens?.total || 0).toLocaleString()} tok</span>
                             </span>
                           )}
+                          {fileSugs.some((s) => s.dryRunStatus === "VERIFIED") && (
+                            <span
+                              className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-500/[0.08] text-emerald-400 border border-emerald-500/25 inline-flex items-center gap-1"
+                              title="Verified in Dry-Run sandbox"
+                            >
+                              <CheckCircle2 size={10} />
+                              <span>Verified</span>
+                            </span>
+                          )}
                           {onReviewDiff && (
                             <button
                               onClick={(e) => {
@@ -1493,10 +1503,23 @@ export default function UnitTestTraceabilityMatrix({
                                 onReviewDiff(group.filePath);
                               }}
                               className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
-                              title="Review generated test code diff before applying"
+                              title="Select individual test cases, inspect diff, and test before applying"
                             >
                               <FileDiff size={12} className="text-[var(--color-text-muted)]" />
-                              <span>Review Diff</span>
+                              <span>Select &amp; Review</span>
+                            </button>
+                          )}
+                          {onDryRunFileSuggestions && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDryRunFileSuggestions(group.filePath, fileSugs);
+                              }}
+                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
+                              title="Run candidate tests for this file in sandbox before applying"
+                            >
+                              <Activity size={11} className="text-[var(--color-primary)]" />
+                              <span>Test First</span>
                             </button>
                           )}
                         </div>
@@ -2255,10 +2278,21 @@ export default function UnitTestTraceabilityMatrix({
                                             <button
                                               onClick={() => onReviewDiff(fn.filePath)}
                                               className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
-                                              title="Inspect side-by-side Monaco diff"
+                                              title="Select individual test cases, inspect diff, and test before applying"
                                             >
                                               <FileDiff size={12} className="text-[var(--color-text-muted)]" />
-                                              <span>Review Diff</span>
+                                              <span>Select &amp; Review</span>
+                                            </button>
+                                          )}
+                                          {onDryRunFileSuggestions && (
+                                            <button
+                                              onClick={() => onDryRunFileSuggestions(fn.filePath, fileSugs)}
+                                              disabled={isApplying}
+                                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150 disabled:opacity-50"
+                                              title="Run candidate tests in sandbox before applying"
+                                            >
+                                              <Activity size={11} className="text-[var(--color-primary)]" />
+                                              <span>Test First</span>
                                             </button>
                                           )}
                                         </div>

@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import { ActionAlertStrip } from "../actions/ActionAlertStrip.jsx";
 import { CrossLayerTraceMatrix } from "../matrix/CrossLayerTraceMatrix.jsx";
-import { CoverageTrendChart } from "../charts/CoverageTrendChart.jsx";
 import { UnifiedRecentRunsTable } from "../history/UnifiedRecentRunsTable.jsx";
 import { Layers, History } from "lucide-react";
 
@@ -57,7 +56,6 @@ export function AnalysisTabsZone({
 
   const matrix = vm?.matrix || {};
   const actions = vm?.actions || {};
-  const trend = vm?.trend || {};
   const history = vm?.history || {};
 
   const matrixRowCount = matrix?.rows?.length ?? 0;
@@ -78,7 +76,7 @@ export function AnalysisTabsZone({
                 count: matrixRowCount,
               },
               {
-                label: "Trends & Execution History",
+                label: "Execution History",
                 value: "history",
                 icon: History,
                 count: historyRunCount,
@@ -118,19 +116,14 @@ export function AnalysisTabsZone({
         </div>
       )}
 
-      {/* Tab 2: Trends & Execution History (Side-by-side 6 cols + 6 cols) */}
+      {/* Tab 2: Execution History (Full-width 12 cols) */}
       {activeTab === "history" && (
-        <div className="grid grid-cols-12 gap-4 animate-in fade-in duration-150">
-          <div className="col-span-12 xl:col-span-6">
-            <CoverageTrendChart trendData={trend} />
-          </div>
-          <div className="col-span-12 xl:col-span-6">
-            <UnifiedRecentRunsTable
-              historyData={history}
-              onNavigateWorkspace={onNavigateWorkspace}
-              onInspectItem={onInspectItem}
-            />
-          </div>
+        <div className="animate-in fade-in duration-150">
+          <UnifiedRecentRunsTable
+            historyData={history}
+            onNavigateWorkspace={onNavigateWorkspace}
+            onInspectItem={onInspectItem}
+          />
         </div>
       )}
     </section>

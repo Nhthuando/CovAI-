@@ -22,7 +22,7 @@ import { dockerRunner } from "./dockerRunner.service.js";
 import { parseJestResults, parseVitestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 import { detectTestingFrameworks, classifyTestFile } from "../utils/testingFrameworkDetector.js";
 import prisma from "../config/prisma.js";
-import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
+import { resolveProjectRoot, resolveSnapshotRootDir, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
 import { extractFunctions } from "./cyclomaticFunctionExtractor.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { sanitizeAllProjectTestFiles, cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "./testSanitizer.service.js";
@@ -3957,7 +3957,17 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     const opContext = currentProjectOperation();
     const rawOrigRootDir = job.snapshot?.originalRootDir || opContext?.originalRootDir || null;
     const origRootDir = rawOrigRootDir ? (resolveProjectRoot(rawOrigRootDir) || rawOrigRootDir) : null;
-    let rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
+    const snapshotRoot = resolveSnapshotRootDir(job.snapshot.rootDir) || job.snapshot.rootDir;
+    let rootDir = resolveProjectRoot(job.snapshot.rootDir) || snapshotRoot;
+    if (snapshotRoot && rootDir && path.resolve(snapshotRoot) !== path.resolve(rootDir) && fs.existsSync(snapshotRoot)) {
+        const subUnit = findUnitFiles(rootDir);
+        const snapUnit = findUnitFiles(snapshotRoot);
+        const subCount = (subUnit.jestFiles?.length || 0) + (subUnit.vitestFiles?.length || 0);
+        const snapCount = (snapUnit.jestFiles?.length || 0) + (snapUnit.vitestFiles?.length || 0);
+        if (snapCount > subCount) {
+            rootDir = snapshotRoot;
+        }
+    }
     ensureMinimalPackageJson(rootDir);
     const isTempOperationWorkspace = rootDir.replace(/\\/g, "/").includes("/.covai-temp/");
     if (!isTempOperationWorkspace && rootDir !== job.snapshot.rootDir && fs.existsSync(path.join(rootDir, "package.json"))) {

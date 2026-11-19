@@ -4,47 +4,46 @@ import {
   Play,
   Sparkles,
   Download,
+  FileText,
+  Code2,
   GitBranch,
   Clock,
   RefreshCw,
-  Plus,
   CheckCircle2,
   AlertTriangle,
-  XCircle,
   ExternalLink,
-  Loader2,
   X,
   ShieldCheck,
-  Check
 } from "lucide-react";
 import { useToast } from "../../ToastContext.jsx";
-import { QualityGateBadge } from "../primitives/QualityGateBadge.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
 import { ExportReportModal } from "../modals/ExportReportModal.jsx";
 import { Button } from "../../../common/Button.jsx";
 import ConfirmDialog from "../../../common/ConfirmDialog.jsx";
 import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
-import { activateProjectSnapshotApi, createProjectSnapshotApi } from "../../../../services/project.service.js";
+import {
+  buildDashboardAiAnalysisPrompt,
+  exportUnifiedDashboardPdf,
+  exportUnifiedDashboardReport,
+} from "../../../../services/unifiedDashboard/unifiedDashboard.export.js";
+import { activateProjectSnapshotApi } from "../../../../services/project.service.js";
 
 export function GlobalCommandHeader({
   vm,
-  projects = [],
-  onSelectProject,
   onSelectSnapshot,
   runAllState,
   onNavigateWorkspace,
+  onAskAi = null,
   isSyncing = false,
   onForceRefresh = null,
   liveRuns = {},
-  isSocketConnected = false,
   className = "",
 }) {
   const navigate = useNavigate();
   const { addToast } = useToast?.() || {};
   const [showConfirmRun, setShowConfirmRun] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
 
   const {
     runAll,
@@ -74,39 +73,6 @@ export function GlobalCommandHeader({
     onSelectSnapshot?.(newSnapshotId);
   };
 
-  const handleCreateSnapshot = async () => {
-    if (isCreatingSnapshot || !context.projectId) return;
-    setIsCreatingSnapshot(true);
-    try {
-      const result = await createProjectSnapshotApi(context.projectId);
-      const snap = result?.data || result?.snapshot || {};
-      addToast?.({
-        title: "Snapshot Created",
-        message: snap.label || `Created Snapshot #${snap.versionNumber || ""}`,
-        type: "success",
-      });
-      if (snap.id) {
-        onSelectSnapshot?.(snap.id);
-      }
-    } catch (err) {
-      if (err?.code === "SNAPSHOT_UNCHANGED" || err?.status === 409 || err?.message?.includes("hasn't changed")) {
-        addToast?.({
-          title: "Code Unchanged",
-          message: err.message || "The code hasn't changed compared to the active snapshot.",
-          type: "info",
-        });
-      } else {
-        addToast?.({
-          title: "Snapshot Creation Failed",
-          message: err.message || "Failed to create snapshot.",
-          type: "error",
-        });
-      }
-    } finally {
-      setIsCreatingSnapshot(false);
-    }
-  };
-
   const handleManualRefresh = async () => {
     if (onForceRefresh) {
       await onForceRefresh();
@@ -118,26 +84,55 @@ export function GlobalCommandHeader({
     }
   };
 
-  const handleAiOptimize = () => {
-    const actions = vm?.actions || [];
-    if (actions.length > 0) {
-      const highestPriorityAction = actions[0];
-      const targetPillar = highestPriorityAction.pillar || "unit";
-      if (onNavigateWorkspace) {
-        onNavigateWorkspace(targetPillar, {
-          actionId: highestPriorityAction.id,
-          target: highestPriorityAction.target,
-          type: highestPriorityAction.type,
-        });
-        return;
-      }
-      navigate(`/project/${context.projectId || ""}?tab=${targetPillar}&focusAction=${highestPriorityAction.id || ""}`);
-    } else {
-      if (onNavigateWorkspace) {
-        onNavigateWorkspace("unit");
-        return;
-      }
-      navigate(`/project/${context.projectId || ""}?tab=unit`);
+  const handleAiAnalyze = () => {
+    if (!vm) return;
+    const promptText = buildDashboardAiAnalysisPrompt(vm);
+    if (typeof onAskAi === "function") {
+      onAskAi(promptText);
+      return;
+    }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("covai:prefill-prompt", {
+          detail: { promptText },
+        })
+      );
+    }
+  };
+
+  const handleQuickExportPdf = () => {
+    if (!vm) return;
+    try {
+      exportUnifiedDashboardPdf(vm);
+      addToast?.({
+        title: "PDF Print Ready",
+        message: "Prepared formatted A4 quality report for printing or saving as PDF.",
+        type: "success",
+      });
+    } catch (err) {
+      addToast?.({
+        title: "PDF Export Failed",
+        message: err.message || "Could not prepare PDF report.",
+        type: "error",
+      });
+    }
+  };
+
+  const handleQuickExportJson = () => {
+    if (!vm) return;
+    try {
+      const filename = exportUnifiedDashboardReport(vm, "json");
+      addToast?.({
+        title: "JSON Exported",
+        message: `Downloaded ${filename}`,
+        type: "success",
+      });
+    } catch (err) {
+      addToast?.({
+        title: "JSON Export Failed",
+        message: err.message || "Could not export JSON report.",
+        type: "error",
+      });
     }
   };
 
@@ -146,13 +141,6 @@ export function GlobalCommandHeader({
     snapshotId: "",
     branch: "main",
     updatedAt: new Date().toISOString(),
-  };
-
-  const qualityGate = vm?.qualityGate || {
-    status: "NOT_RUN",
-    label: "Quality Gate Pending",
-    reasons: [],
-    checklist: [],
   };
 
   const isGateOpen = Boolean(readinessGate?.isOpen);
@@ -169,36 +157,9 @@ export function GlobalCommandHeader({
         {/* Left Column: Context Metadata & Project/Snapshot Switcher */}
         <div className="flex flex-col gap-2 min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ud-text-muted)]">
-            {/* Project Switcher */}
-            {projects.length > 1 ? (
-                            <select
-                aria-label="Switch Active Project or View Portfolio"
-                value={context.projectId || ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === "__portfolio__") {
-                    navigate("/projects");
-                  } else if (val) {
-                    onSelectProject?.(val);
-                  }
-                }}
-                className="font-semibold text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] hover:border-[var(--color-primary)] py-0.5 px-2 focus:outline-none cursor-pointer transition-colors"
-                title="Switch active project or return to Portfolio"
-              >
-                <option value="__portfolio__" className="bg-[var(--ud-surface)] text-[var(--ud-text-muted)] font-medium">
-                  ⇄ View All Projects (Portfolio)
-                </option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-[var(--ud-surface)] text-[var(--ud-text)]">
-                    ● {p.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="font-semibold text-[var(--ud-text)] text-sm">
-                {context.projectName}
-              </span>
-            )}
+            <span className="font-semibold text-[var(--ud-text)] text-sm">
+              {context.projectName}
+            </span>
 
             <span className="text-[var(--ud-border)]">•</span>
 
@@ -210,10 +171,10 @@ export function GlobalCommandHeader({
 
             <span className="text-[var(--ud-border)]">•</span>
 
-            {/* Snapshot Switcher & Version Badge */}
+            {/* Snapshot Switcher / Version Badge */}
             <div className="inline-flex items-center gap-1.5 font-mono">
               <span className="text-[var(--ud-text-muted)]">Snapshot:</span>
-              {Array.isArray(context.snapshots) && context.snapshots.length > 0 ? (
+              {Array.isArray(context.snapshots) && context.snapshots.length > 1 ? (
                 <select
                   aria-label="Select Snapshot"
                   value={context.snapshotId || ""}
@@ -230,20 +191,6 @@ export function GlobalCommandHeader({
                 <span className="font-semibold text-[var(--ud-text)]">
                   {context.snapshotLabel || context.snapshotId?.slice(0, 7) || "None"}
                 </span>
-              )}
-
-              {/* Create Snapshot Button */}
-              {context.projectId && (
-                <button
-                  type="button"
-                  onClick={handleCreateSnapshot}
-                  disabled={isCreatingSnapshot}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-sans font-medium rounded border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:border-[var(--color-primary)] transition-colors cursor-pointer disabled:opacity-50"
-                  title="Create new snapshot checkpoint from current workspace"
-                >
-                  <Plus size={11} className={isCreatingSnapshot ? "animate-spin" : ""} />
-                  <span className="hidden sm:inline">New</span>
-                </button>
               )}
             </div>
 
@@ -273,61 +220,61 @@ export function GlobalCommandHeader({
           </h1>
         </div>
 
-        {/* Right Column: Global Command Action Center */}
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* Quality Gate Status */}
-          <QualityGateBadge
-            id="ud-header-quality-gate"
-            status={qualityGate.status}
-            label={qualityGate.label}
-            reasons={qualityGate.reasons}
-            checklist={qualityGate.checklist}
-          />
-
-          <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
-
-          {/* Action 1: Run All Suites */}
+        {/* Right Column: Reporting & AI Analysis Actions */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {/* Action 1: AI Analyze (passes full dashboard context to AI Chatbot) */}
           <Button
-            id="ud-header-run-all"
+            id="ud-header-ai-analyze"
             variant="primary"
             size="sm"
-            icon={Play}
-            loading={isRunning || readinessGate?.isChecking}
-            disabled={!context.snapshotId || isRunning}
-            onClick={() => {
-              if (readinessGate?.isOpen) {
-                closeReadinessGate?.();
-              } else {
-                runAll?.();
-              }
-            }}
-            title={!context.snapshotId ? "Select a snapshot first" : "Execute Unit, Integration, and System tests"}
+            icon={Sparkles}
+            disabled={!vm}
+            onClick={handleAiAnalyze}
+            title="Send full dashboard metrics, coverage gaps, and failing modules to AI Assistant"
           >
-            {isRunning ? "Running Suites..." : readinessGate?.isChecking ? "Checking..." : "Run All Suites"}
+            AI Analyze
           </Button>
 
-          {/* Action 2: AI Optimize */}
+          {/* Action 2: Direct Export PDF */}
           <Button
-            id="ud-header-ai-optimize"
+            id="ud-header-export-pdf"
             variant="secondary"
             size="sm"
-            icon={Sparkles}
-            onClick={handleAiOptimize}
-            title="Jump to the highest priority test gap or failure"
+            icon={FileText}
+            disabled={!vm}
+            onClick={handleQuickExportPdf}
+            className="ud-no-print"
+            title="Export formatted A4 PDF report"
           >
-            AI Optimize
+            Export PDF
           </Button>
 
-          {/* Action 3: Export Report Modal Trigger */}
+          {/* Action 3: Direct Export JSON */}
           <Button
-            id="ud-header-export"
+            id="ud-header-export-json"
             variant="outline"
             size="sm"
+            icon={Code2}
+            disabled={!vm}
+            onClick={handleQuickExportJson}
+            className="ud-no-print"
+            title="Download structured JSON quality report"
+          >
+            Export JSON
+          </Button>
+
+          {/* Action 4: Customize Export Modal */}
+          <Button
+            id="ud-header-export"
+            variant="ghost"
+            size="sm"
             icon={Download}
+            disabled={!vm}
             onClick={() => setShowExportModal(true)}
             className="ud-no-print"
+            title="Customize sections or export Markdown"
           >
-            Export Report
+            Options
           </Button>
         </div>
       </div>

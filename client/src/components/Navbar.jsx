@@ -1,190 +1,176 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Terminal, Menu, X, ArrowRight, ShieldCheck } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { NotificationCenter } from "./NotificationCenter";
-import { ThemeSelector } from "./common/ThemeSelector";
-import Button from "./common/Button";
+import CovaiLogo from "./common/CovaiLogo";
+
+const NAV_LINKS = [
+  { label: "Sandbox", href: "#ide-preview" },
+  { label: "Architecture", href: "#features" },
+  { label: "3D Pyramid", href: "#bento-pyramid" },
+  { label: "Pipeline", href: "#workflow" },
+  { label: "Pricing", href: "#pricing" },
+];
 
 export default function Navbar() {
   const { user } = useAuth();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [hoveredIdx, setHoveredIdx] = useState(null);
 
   useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 12);
-    };
+    const handleScroll = () => setScrolled(window.scrollY > 16);
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const navLinks = [
-    { label: "Features", href: "#features" },
-    { label: "IDE & Coverage", href: "#ide-preview" },
-    { label: "Pipeline", href: "#workflow" },
-    { label: "Pricing", href: "#pricing" },
-  ];
-
   return (
-    <nav
-      className={`fixed top-0 left-0 right-0 z-50 transition-colors duration-200 border-b ${
-        scrolled
-          ? "bg-[var(--color-bg)]/95 border-[var(--color-border)] backdrop-blur-sm"
-          : "bg-[var(--color-bg)]/80 border-transparent"
-      }`}
-    >
-      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-        {/* Brand Logo */}
-        <a
-          href="/"
-          id="nav-logo"
-          className="flex items-center gap-2.5 text-decoration-none group focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)]"
-        >
-          <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-sm select-none shrink-0">
-            <Terminal className="w-4 h-4 stroke-[2.5]" />
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-base tracking-tight text-[var(--color-text)]">
+    <header className="fixed top-0 left-0 right-0 z-50 px-3 sm:px-6 pt-3.5 pointer-events-none">
+      <nav
+        aria-label="Primary navigation"
+        className={`pointer-events-auto max-w-[1260px] mx-auto rounded-xl transition-all duration-200 px-4 sm:px-5 h-14 flex items-center justify-between ${
+          scrolled
+            ? "lp-machined border-[#232938]"
+            : "bg-[#07090d]/75 backdrop-blur-md border border-[#161a24]"
+        }`}
+      >
+        {/* Brand Monograph */}
+        <div className="flex items-center gap-3.5">
+          <a
+            href="/"
+            id="nav-logo"
+            className="flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-[#38bdf8] rounded-md"
+          >
+            <CovaiLogo size={26} />
+            <span className="lp-display font-bold text-base tracking-tight text-white">
               CovAI
             </span>
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-              v2.4
-            </span>
-          </div>
-        </a>
+          </a>
 
-        {/* Desktop Nav Links */}
-        <div className="hidden md:flex items-center gap-6">
-          {navLinks.map((link) => (
+          <span className="hidden lg:inline-flex items-center gap-1.5 pl-3 border-l border-[#1c212e] text-[11px] lp-mono text-slate-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8]" />
+            v3.2 engine
+          </span>
+        </div>
+
+        {/* Center Navigation */}
+        <div
+          className="hidden md:flex items-center gap-1"
+          onMouseLeave={() => setHoveredIdx(null)}
+        >
+          {NAV_LINKS.map((link, idx) => (
             <a
               key={link.label}
               href={link.href}
               id={`nav-${link.label.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
-              className="text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)] py-1"
+              onMouseEnter={() => setHoveredIdx(idx)}
+              className="relative px-3.5 py-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors rounded-lg"
             >
+              {hoveredIdx === idx && (
+                <span className="absolute inset-0 rounded-lg bg-white/[0.06] -z-10 transition-all duration-150" />
+              )}
               {link.label}
             </a>
           ))}
         </div>
 
-        {/* Desktop Right Utilities (Theme Selector & Auth) */}
-        <div className="hidden md:flex items-center gap-3">
-          <ThemeSelector compact />
-
+        {/* Right Actions */}
+        <div className="hidden md:flex items-center gap-2.5">
           {user ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <NotificationCenter userId={user.id} />
-              <Button
-                as={Link}
+              <Link
                 to="/projects"
-                variant="secondary"
-                size="sm"
                 id="nav-dashboard"
+                className="lp-btn-primary px-3.5 py-1.5 rounded-lg text-xs"
               >
-                Projects
-              </Button>
+                Open workspace
+              </Link>
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <Button
-                as={Link}
+              <Link
                 to="/login"
-                variant="ghost"
-                size="sm"
                 id="nav-login"
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white transition-colors"
               >
-                Log in
-              </Button>
-              <Button
-                as={Link}
+                Sign in
+              </Link>
+              <Link
                 to="/register"
-                variant="primary"
-                size="sm"
                 id="nav-signup"
-                icon={ArrowRight}
-                iconPosition="right"
+                className="lp-btn-primary px-3.5 py-1.5 rounded-lg text-xs"
               >
-                Get Started
-              </Button>
+                Analyze repository
+              </Link>
             </div>
           )}
         </div>
 
-        {/* Mobile Menu Button */}
-        <div className="flex items-center gap-2 md:hidden">
-          <ThemeSelector compact />
+        {/* Mobile Toggle */}
+        <div className="flex items-center md:hidden">
           <button
             type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle navigation menu"
             aria-expanded={mobileOpen}
-            className="w-9 h-9 rounded-[var(--radius-md)] flex items-center justify-center border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] cursor-pointer"
+            className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#222836] bg-[#0c0f16] text-slate-200 cursor-pointer"
           >
             {mobileOpen ? (
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             ) : (
-              <Menu className="w-5 h-5" />
+              <Menu className="w-4 h-4" />
             )}
           </button>
         </div>
-      </div>
+      </nav>
 
-      {/* Mobile Drawer */}
       {mobileOpen && (
-        <div className="md:hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 space-y-3">
-          <div className="flex flex-col space-y-2">
-            {navLinks.map((link) => (
+        <div className="pointer-events-auto md:hidden mt-2 mx-auto max-w-[1260px] rounded-xl lp-machined p-4 space-y-3">
+          <div className="flex flex-col space-y-1">
+            {NAV_LINKS.map((link) => (
               <a
                 key={link.label}
                 href={link.href}
                 onClick={() => setMobileOpen(false)}
-                className="px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] transition-colors"
+                className="px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
               >
                 {link.label}
               </a>
             ))}
           </div>
 
-          <div className="pt-3 border-t border-[var(--color-border)] flex flex-col gap-2">
+          <div className="pt-3 border-t border-[#1a1f2c] flex flex-col gap-2">
             {user ? (
-              <Button
-                as={Link}
+              <Link
                 to="/projects"
-                variant="primary"
-                size="md"
-                className="w-full"
                 onClick={() => setMobileOpen(false)}
+                className="lp-btn-primary w-full py-2 rounded-lg text-xs text-center"
               >
-                Go to Projects
-              </Button>
+                Open workspace
+              </Link>
             ) : (
               <>
-                <Button
-                  as={Link}
+                <Link
                   to="/login"
-                  variant="secondary"
-                  size="md"
-                  className="w-full"
                   onClick={() => setMobileOpen(false)}
+                  className="lp-btn-secondary w-full py-2 rounded-lg text-xs text-center"
                 >
-                  Log in
-                </Button>
-                <Button
-                  as={Link}
+                  Sign in
+                </Link>
+                <Link
                   to="/register"
-                  variant="primary"
-                  size="md"
-                  className="w-full"
                   onClick={() => setMobileOpen(false)}
+                  className="lp-btn-primary w-full py-2 rounded-lg text-xs text-center"
                 >
-                  Get Started Free
-                </Button>
+                  Analyze repository
+                </Link>
               </>
             )}
           </div>
         </div>
       )}
-    </nav>
+    </header>
   );
 }

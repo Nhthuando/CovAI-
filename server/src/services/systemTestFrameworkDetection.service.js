@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 import { detectCypress } from "../utils/cypressDetector.js";
 import { detectPlaywright } from "../utils/playwrightDetector.js";
 import {
@@ -16,7 +17,8 @@ import { resolveSnapshotRootDir } from "../utils/snapshotWorkspace.js";
  * @param {string} rootDir - The root directory of the project
  * @returns {Promise<Object>} Detection result with frameworks array and test files
  */
-export async function detectSystemTestFrameworks(rootDir) {
+export async function detectSystemTestFrameworks(rawRootDir) {
+  const rootDir = normalizeDiskPath(rawRootDir) || rawRootDir;
   if (!rootDir || typeof rootDir !== "string") {
     return {
       category: "SYSTEM",
@@ -207,7 +209,10 @@ export async function detectSystemTestFrameworksForSnapshot(
     };
   }
 
-  const detection = await detectSystemTestFrameworks(snapshot.rootDir);
+  const effectiveRootDir =
+    normalizeDiskPath(snapshot.rootDir || snapshot.storagePath) ||
+    snapshot.rootDir;
+  const detection = await detectSystemTestFrameworks(effectiveRootDir);
 
   // Sync flags to ProjectSnapshot and Project in database
   if (snapshotId) {

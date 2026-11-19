@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getAccessToken, isAuthEndpoint, installAxiosAuthRefresh, redirectToLogin, refreshAccessToken } from "../lib/authSession.js";
+import { getAccessToken, isAuthEndpoint, installAxiosAuthRefresh, redirectToLogin, refreshAccessTokenWithStatus } from "../lib/authSession.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -15,7 +15,7 @@ async function fetchWithAuth(input, init = {}) {
   let response = await fetch(input, { ...init, headers, credentials: "include" });
 
   if (response.status === 401 && !init._retry && !isAuthEndpoint(input)) {
-    const accessToken = await refreshAccessToken();
+    const { token: accessToken, invalidSession } = await refreshAccessTokenWithStatus();
     if (accessToken) {
       response = await fetch(input, {
         ...init,
@@ -23,7 +23,7 @@ async function fetchWithAuth(input, init = {}) {
         credentials: "include",
         _retry: true,
       });
-    } else {
+    } else if (invalidSession) {
       redirectToLogin();
     }
   }

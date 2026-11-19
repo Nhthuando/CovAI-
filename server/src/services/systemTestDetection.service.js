@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { ServiceError } from "../utils/serviceError.js";
+import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 
 const PLAYWRIGHT_CONFIGS = [
   "playwright.config.js",
@@ -181,7 +182,8 @@ const detectCandidates = (rootDir) => {
   return candidates;
 };
 
-export const resolveSystemTestExecution = ({ rootDir, runner = null }) => {
+export const resolveSystemTestExecution = ({ rootDir: rawRootDir, runner = null }) => {
+  const rootDir = normalizeDiskPath(rawRootDir) || rawRootDir;
   if (!rootDir || typeof rootDir !== "string") {
     throw new ServiceError("Snapshot root directory is required", 422);
   }

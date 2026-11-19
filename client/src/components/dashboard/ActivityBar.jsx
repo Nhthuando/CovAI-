@@ -7,10 +7,10 @@ import {
   GitBranch,
   Layers,
   Network,
-  Terminal,
   ShieldCheck,
   History,
 } from "lucide-react";
+import CovaiLogo from "../common/CovaiLogo";
 import { useState } from "react";
 
 const TOP_ITEMS = [
@@ -108,11 +108,11 @@ export default function ActivityBar({ active, onSelect }) {
         <button
           type="button"
           onClick={() => onSelect?.("portfolio")}
-          className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:opacity-90 text-white flex items-center justify-center mb-2.5 shrink-0 cursor-pointer transition-opacity"
+          className="hover:opacity-90 flex items-center justify-center mb-2.5 shrink-0 cursor-pointer transition-opacity"
           title="Back to All Projects Portfolio (/projects)"
           aria-label="Back to All Projects Portfolio"
         >
-          <Terminal size={16} strokeWidth={2.5} />
+          <CovaiLogo size={30} />
         </button>
 
         {/* Divider */}

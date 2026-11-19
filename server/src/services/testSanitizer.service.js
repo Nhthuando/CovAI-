@@ -277,7 +277,12 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
                     path.resolve(rootDir, cleanPkgTarget),
                     path.resolve(rootDir, "src", withoutSrc),
                     path.resolve(rootDir, "src", cleanTarget),
-                    path.resolve(rootDir, cleanTarget)
+                    path.resolve(rootDir, cleanTarget),
+                    path.resolve(rootDir, "server", cleanPkgTarget),
+                    path.resolve(rootDir, "server", "src", withoutSrc),
+                    path.resolve(rootDir, "backend", cleanPkgTarget),
+                    path.resolve(rootDir, "backend", "src", withoutSrc),
+                    path.resolve(rootDir, "api", cleanPkgTarget)
                 ];
 
                 for (const candAbs of candidateAbsList) {

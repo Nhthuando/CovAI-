@@ -1,7 +1,7 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
 import { DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS } from '../../../shared/unitTestRuntime.js';
-import { handleUnauthorizedResponse } from "../lib/authSession.js";
+import { authAwareFetch, handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -157,7 +157,7 @@ export async function installMissingDependency(snapshotId, packageName, isDev = 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS);
     try {
-        const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
+        const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
             method: "POST",
             headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
             body: JSON.stringify({ packageName, isDev, rerunTests, ...(importedFrom ? { importedFrom } : {}) }),
@@ -282,11 +282,11 @@ export async function getIntegrationWorkspace(snapshotId, options = {}) {
     return handleResponse(res);
 }
 
-export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, requireCoverageGoal, requestId, async: asyncMode = false } = {}) {
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, requireCoverageGoal, requestId, dryRun, async: asyncMode = false } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-test-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), requireCoverageGoal, requestId, ...(asyncMode ? { async: true } : {}) }),
+        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), requireCoverageGoal, requestId, ...(dryRun ? { dryRun: true } : {}), ...(asyncMode ? { async: true } : {}) }),
     });
     return handleResponse(res);
 }
@@ -428,7 +428,8 @@ export async function getUnifiedQualityDashboard(snapshotId, options = {}) {
 }
 
 export async function getUnifiedTestRunInspection(snapshotId, runId) {
-    const res = await fetch(
+    const res = await authAwareFetch(
+        fetch,
         `${BASE_URL}/coverage/${snapshotId}/unified-dashboard/runs/${encodeURIComponent(runId)}`,
         {
             headers: getAuthHeaders(),
@@ -438,14 +439,14 @@ export async function getUnifiedTestRunInspection(snapshotId, runId) {
 }
 
 export async function getSuitesReadiness(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suites-readiness`, {
+    const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/suites-readiness`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
 }
 
 export async function approveIntegrationScenarios(snapshotId, { approvedTestIds = [], approveAll = false } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/approve`, {
+    const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/integration/approve`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ approvedTestIds, approveAll }),
@@ -454,7 +455,7 @@ export async function approveIntegrationScenarios(snapshotId, { approvedTestIds 
 }
 
 export async function confirmBatchSystemScenarios(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/confirm-batch`, {
+    const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/system/scenarios/confirm-batch`, {
         method: "POST",
         headers: getAuthHeaders(),
     });

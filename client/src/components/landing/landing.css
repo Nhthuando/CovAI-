@@ -1,0 +1,260 @@
+/* ============================================================
+   COVAI LANDING — STUDIO MONOCHROME & COBALT TELEMETRY (.lp)
+   Strictly cohesive palette: Carbon, Graphite, Alabaster, Cobalt, Signal Vermilion
+   ============================================================ */
+
+.lp {
+  --lp-bg: #050608;
+  --lp-panel: #0a0c10;
+  --lp-panel-raised: #0f1218;
+  --lp-line: #181c26;
+  --lp-line-strong: #272d3d;
+
+  --lp-ink: #f1f5f9;
+  --lp-ink-secondary: #94a3b8;
+  --lp-ink-muted: #525b70;
+
+  /* Strictly two functional signal colors — never mixed into rainbow gradients */
+  --lp-signal: #38bdf8;       /* Verified execution path / active telemetry */
+  --lp-fault: #f43f5e;        /* Unreached branch predicate */
+
+  --lp-font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --lp-font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --lp-font-mono: "JetBrains Mono", monospace;
+
+  background-color: var(--lp-bg);
+  color: var(--lp-ink);
+  font-family: var(--lp-font-sans);
+  position: relative;
+  overflow-x: clip;
+}
+
+.lp ::selection {
+  background: rgba(56, 189, 248, 0.22);
+  color: #ffffff;
+}
+
+.lp-display {
+  font-family: var(--lp-font-display);
+  letter-spacing: -0.035em;
+}
+
+.lp-mono {
+  font-family: var(--lp-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Precision architectural drafting grid */
+.lp-draft-grid {
+  background-size: 64px 64px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+}
+
+.lp-radial-fade {
+  mask-image: radial-gradient(ellipse 85% 75% at 50% 40%, #000 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 50% 40%, #000 40%, transparent 100%);
+}
+
+/* Machined dark glass panel — monochromatic, zero neon tint */
+.lp-machined {
+  background: rgba(10, 12, 16, 0.84);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--lp-line);
+  box-shadow:
+    0 24px 60px -20px rgba(0, 0, 0, 0.85),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Interactive spotlight card — crisp monochrome/cobalt specular highlight */
+.lp-card {
+  position: relative;
+  background: #090b0f;
+  border: 1px solid var(--lp-line);
+  overflow: hidden;
+  transition: border-color 0.25s ease;
+}
+
+.lp-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    520px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(241, 245, 249, 0.045),
+    transparent 45%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.lp-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: radial-gradient(
+    340px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(241, 245, 249, 0.32),
+    transparent 45%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.lp-card:hover::before,
+.lp-card:hover::after {
+  opacity: 1;
+}
+
+/* Primary action button: stark Alabaster on Carbon — zero rainbow gradient */
+.lp-btn-primary {
+  background-color: #f1f5f9;
+  color: #050608;
+  font-weight: 600;
+  border: 1px solid #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: background-color 0.18s ease, transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.lp-btn-primary:hover {
+  background-color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.lp-btn-primary:active {
+  transform: translateY(0);
+}
+
+/* Secondary machined button */
+.lp-btn-secondary {
+  background-color: #0d1017;
+  color: #e2e8f0;
+  border: 1px solid var(--lp-line-strong);
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.lp-btn-secondary:hover {
+  background-color: #141822;
+  border-color: #3b445c;
+  color: #ffffff;
+}
+
+/* Subtle specular border beam (monochrome + ice cyan) */
+.lp-beam-frame {
+  position: relative;
+}
+
+.lp-beam-frame::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--beam-angle, 0deg),
+    transparent 0deg,
+    transparent 270deg,
+    rgba(56, 189, 248, 0.55) 325deg,
+    rgba(241, 245, 249, 0.9) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: lpBeamSpin 6s linear infinite;
+  pointer-events: none;
+}
+
+@property --beam-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes lpBeamSpin {
+  to {
+    --beam-angle: 360deg;
+  }
+}
+
+/* Infinite Dual-Direction Marquee */
+@keyframes lpTickerLeft {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes lpTickerRight {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.lp-ticker-left {
+  display: flex;
+  width: max-content;
+  animation: lpTickerLeft 44s linear infinite;
+}
+
+.lp-ticker-right {
+  display: flex;
+  width: max-content;
+  animation: lpTickerRight 48s linear infinite;
+}
+
+.lp-ticker-wrap:hover .lp-ticker-left,
+.lp-ticker-wrap:hover .lp-ticker-right {
+  animation-play-state: paused;
+}
+
+/* Precision range slider */
+.lp-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: #1a1f2c;
+  outline: none;
+}
+
+.lp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  border: 3px solid #050608;
+  box-shadow: 0 0 0 1px #38bdf8;
+  cursor: grab;
+  transition: transform 0.15s ease;
+}
+
+.lp-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.lp-slider::-webkit-slider-thumb:active {
+  cursor: grabbing;
+}

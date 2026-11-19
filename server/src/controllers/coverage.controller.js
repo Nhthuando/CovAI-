@@ -396,34 +396,50 @@ export const runCoverageByType = async (req, res) => {
           activeUnitJob.status === "RUNNING" &&
           elapsedMs > (STALE_JOB_TIMEOUT_MS || 15 * 60 * 1000);
 
-                if (isRestart || isOrphanedQueued || isStaleRunning) {
-                    await prisma.job.update({ where: { id: activeUnitJob.id }, data: { status: "CANCELED", finishedAt: new Date() } }).catch(() => { });
-                    job = await createRunTestsJob({
-                        projectId: snapshot.projectId,
-                        snapshotId: snapshot.id,
-                        userId,
-                        mode: "FULL",
-                        useHermeticMock
-                    });
-                    await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
-                } else {
-                    job = activeUnitJob;
-                    if (job.status === "QUEUED") {
-                        // Ensure queued job is properly enqueued in BullMQ in case it was missed
-                        await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock }).catch(() => { });
-                    }
-                }
-            } else {
-                job = await createRunTestsJob({
-                    projectId: snapshot.projectId,
-                    snapshotId: snapshot.id,
-                    userId,
-                    mode: "FULL",
-                    useHermeticMock
-                });
-                await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
-            }
-            jobs = [job];
+        if (isRestart || isOrphanedQueued || isStaleRunning) {
+          await prisma.job
+            .update({
+              where: { id: activeUnitJob.id },
+              data: { status: "CANCELED", finishedAt: new Date() },
+            })
+            .catch(() => {});
+          if (typeof prisma.projectOperation?.updateMany === "function") {
+            await prisma.projectOperation
+              .updateMany({
+                where: {
+                  primaryJobId: activeUnitJob.id,
+                  status: { in: ["ADMITTED", "QUEUED", "RUNNING", "PUBLISHING"] },
+                },
+                data: { status: "CANCELED" },
+              })
+              .catch(() => {});
+          }
+          job = await createRunTestsJob({
+            projectId: snapshot.projectId,
+            snapshotId: snapshot.id,
+            userId,
+            mode: "FULL",
+            useHermeticMock,
+          });
+          await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
+        } else {
+          job = activeUnitJob;
+          if (job.status === "QUEUED") {
+            // Ensure queued job is properly enqueued in BullMQ in case it was missed
+            await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock }).catch(() => {});
+          }
+        }
+      } else {
+        job = await createRunTestsJob({
+          projectId: snapshot.projectId,
+          snapshotId: snapshot.id,
+          userId,
+          mode: "FULL",
+          useHermeticMock,
+        });
+        await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
+      }
+      jobs = [job];
     } else {
       framework = selectCoverageFramework(
         detection,
@@ -5138,7 +5154,8 @@ export const applySuggestion = async (req, res) => {
       return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, suggestion, suggestions, skipBackgroundJob, requireCoverageGoal, requestId } = req.body || {};
+        let { projectId, suggestion, suggestions, skipBackgroundJob, requireCoverageGoal, requestId, dryRun } = req.body || {};
+        const isDryRun = Boolean(dryRun);
         if (requestId !== undefined && (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(requestId))) return res.status(400).json({success:false,message:'Invalid request ID'});
 
         if (!suggestion && (!suggestions || suggestions.length === 0)) {
@@ -5154,7 +5171,7 @@ export const applySuggestion = async (req, res) => {
             return res.status(400).json({ success: false, message: "Valid projectId is required." });
         }
 
-        if (req.body?.async === true || req.query?.async === 'true') {
+        if (!isDryRun && (req.body?.async === true || req.query?.async === 'true')) {
             const queuedData = await enqueueUnitTestJob({
                 projectId: actualProjectId,
                 snapshotId: actualSnapshotId,
@@ -5181,13 +5198,14 @@ export const applySuggestion = async (req, res) => {
             suggestion,
             suggestions,
             requestId,
+            dryRun: isDryRun,
             requireCoverageGoal: requireCoverageGoal === true
         });
 
         // Refresh coverage after publication or after verifying an already covered baseline.
         let backgroundJob = null;
         let postApplyAnalysisError = null;
-        if (actualSnapshotId && actualProjectId) {
+        if (!isDryRun && actualSnapshotId && actualProjectId) {
             try {
                 backgroundJob = await scheduleUnitTestPostApplyAnalysis({result,projectId:actualProjectId,
                     snapshotId:actualSnapshotId,userId,requestId,skipBackgroundJob});

@@ -23,7 +23,7 @@ Tính năng cấp độ 1 này giúp bạn làm 4 việc chính:
 - Nếu dự án dùng công cụ phổ biến thứ nhất hoặc thứ hai (ví dụ hai bộ công cụ kiểm tra hàm lẻ thường gặp trên màn hình), hệ thống sẽ tự ghi nhận. Nếu dự án có thư viện chưa cài, hệ thống hiện thông báo gợi ý cài bổ sung.
 
 ### Bước 2: Chạy đo toàn bộ các hàm hiện có
-- Khi bạn bấm nút chạy kiểm tra (nút **`Run`** / chạy kiểm tra ở góc trên hoặc ở bước 1 trong khung hướng dẫn 4 bước):
+- Khi bạn bấm nút **`Run Coverage`** ở thanh công cụ góc trên bên phải (cấu trúc thanh công cụ gồm: **`Job Queue`**, **`Test Setup`**, **`Review & Test`**, **`Run Coverage`**, **`Refresh`** tương tự màn hình `Integration Test`, không còn khung 4 bước rườm rà):
   1. Máy chủ đưa yêu cầu vào **hàng đợi chạy ngầm** để tránh làm đơ trang web.
   2. Hệ thống kiểm tra xem thư viện của dự án đã cài đủ chưa; nếu thiếu sẽ cài giúp.
   3. Hệ thống chạy toàn bộ các file kiểm tra nhỏ trong một thư mục tạm tách riêng, thu lại nhật ký quá trình chạy và đếm xem mỗi dòng code, mỗi nhánh đúng/sai, mỗi hàm được đi qua bao nhiêu lần.
@@ -43,15 +43,16 @@ Sau khi chạy xong, màn hình hiển thị:
   - Thẻ 3 (`Test Suites & Specs`): Danh sách các file kiểm tra đang có, file nào đậu, file nào rớt.
   - Thẻ 4 (`Execution Terminal & Logs`): Xem lại nhật ký chữ thô quá trình chạy kiểm tra trên máy chủ.
 
-### Bước 4: Nhờ AI viết thêm bài kiểm tra & áp dụng vào file thật
+### Bước 4: Nhờ AI viết thêm bài kiểm tra, chọn lọc & chạy thử trước khi áp dụng vào file thật
 Khi thấy một file hoặc hàm chưa đạt 100%:
-1. Bạn bấm **`Suggest tests`** (hoặc bấm nút đề xuất ở khung hướng dẫn 4 bước).
+1. Bạn bấm **`Test Setup`** trên thanh công cụ góc trên (hoặc bấm **`Suggest tests`** ngay trên dòng của file đó).
 2. Máy chủ đọc nội dung file code đó, tìm các dòng/nhánh còn hổng rồi gửi cho AI viết thêm các tình huống kiểm tra mới. Kết quả vẫn chỉ là **bản nháp tạm**, chưa đụng vào code thật của bạn.
-3. Bạn có thể bấm **`Review Diff`** để đối chiếu hai bên xem file cũ và phần AI mới thêm khác nhau chỗ nào.
-4. Khi bấm **`Apply Tests`**:
-   - Hệ thống ghi đoạn kiểm tra mới vào file kiểm tra tạm, chạy thử lại ngay lập tức để kiểm tra xem bài mới có chạy qua không.
-   - Nếu chạy bị lỗi (ví dụ thiếu một gói thư viện ngoài), màn hình sẽ hiện nút **`Install ... & Retry`** để bạn bấm cài tự động và chạy lại.
-   - Nếu chạy thành công, số % trên 4 ô tổng quan sẽ tăng lên.
+3. **Chọn lọc và chạy thử trước khi áp dụng (tránh ghi đè code lỗi vào dự án):**
+   - Bạn có thể bấm **`Test First`** trên từng file hoặc **`Test All Before Apply`** trên thanh trạng thái để chạy thử bản nháp trong môi trường tạm và xem trước điểm số tăng thêm bao nhiêu %.
+   - Hoặc bấm **`Review & Test`** / **`Select & Review`** để mở hộp thoại đối chiếu code: tại cột bên trái, bạn có thể **tích chọn tất cả hoặc chỉ chọn 1 vài kịch bản kiểm tra lẻ** mà bạn muốn, sau đó bấm **`Test Before Apply`** để xem từng kịch bản đó chạy đậu hay rớt và độ phủ dự kiến tăng từ bao nhiêu lên bao nhiêu %.
+4. **Áp dụng vào file thật và chạy lại:**
+   - Khi đã kiểm tra thấy bài kiểm tra chạy ổn định, bạn bấm **`Apply to File`** / **`Apply Selected`** (hoặc **`Apply All`**) để ghi chính thức vào dự án.
+   - Sau khi áp dụng xong, bạn có thể bấm **`Run Coverage`** bất kỳ lúc nào để chạy đo lại toàn bộ dự án mà không bị kẹt trạng thái.
 
 ---
 

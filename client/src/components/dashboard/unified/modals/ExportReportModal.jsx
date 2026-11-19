@@ -8,6 +8,7 @@ import {
   generateMarkdownReport,
   buildFilteredJsonPayload,
   exportUnifiedDashboardReport,
+  exportUnifiedDashboardPdf,
 } from "../../../../services/unifiedDashboard/unifiedDashboard.export.js";
 import { useToast } from "../../ToastContext.jsx";
 
@@ -88,10 +89,21 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
   };
 
   const handlePrint = () => {
-    onClose();
-    setTimeout(() => {
-      window.print();
-    }, 120);
+    try {
+      exportUnifiedDashboardPdf(vm, sections);
+      addToast({
+        title: "PDF Print Ready",
+        message: `Prepared formatted A4 report (${selectedCount} sections).`,
+        type: "success",
+      });
+      onClose();
+    } catch (err) {
+      addToast({
+        title: "PDF Export Failed",
+        message: err.message || "Could not prepare PDF report.",
+        type: "error",
+      });
+    }
   };
 
   return createPortal(
