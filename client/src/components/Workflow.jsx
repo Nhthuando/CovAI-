@@ -102,7 +102,7 @@ export default function Workflow() {
         {
           rootMargin: "-25% 0px -45% 0px",
           threshold: 0.25,
-        }
+        },
       );
       obs.observe(el);
       observers.push(obs);
@@ -149,10 +149,14 @@ export default function Workflow() {
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs lp-mono mb-2.5">
-                    <span className={isActive ? "text-[#38bdf8]" : "text-slate-500"}>
+                    <span
+                      className={isActive ? "text-[#38bdf8]" : "text-slate-500"}
+                    >
                       {step.num} / {step.phase}
                     </span>
-                    <span className="text-slate-500">{step.telemetry.badge}</span>
+                    <span className="text-slate-500">
+                      {step.telemetry.badge}
+                    </span>
                   </div>
 
                   <h3 className="lp-display text-lg sm:text-xl font-bold text-white mb-2">

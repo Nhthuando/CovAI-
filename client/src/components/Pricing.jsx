@@ -45,9 +45,7 @@ const PLANS = [
       "Mutation fault verification and PR quality gates",
       "Real-time Yjs multiplayer Monaco editor",
     ],
-    excluded: [
-      "Self-hosted VPC runner cluster",
-    ],
+    excluded: ["Self-hosted VPC runner cluster"],
   },
   {
     id: "enterprise",
@@ -77,8 +75,13 @@ export default function Pricing() {
   const [annual, setAnnual] = useState(true);
 
   const hoursSavedPerMonth = Math.round(teamSize * 14.5 + kloc * 0.45);
-  const synthesizedTests = Math.round(kloc * 11.4 + teamSize * 22).toLocaleString();
-  const projectedCoverage = Math.min(98.8, 92.4 + Math.log10(kloc) * 2.1).toFixed(1);
+  const synthesizedTests = Math.round(
+    kloc * 11.4 + teamSize * 22,
+  ).toLocaleString();
+  const projectedCoverage = Math.min(
+    98.8,
+    92.4 + Math.log10(kloc) * 2.1,
+  ).toFixed(1);
 
   return (
     <section
@@ -92,8 +95,8 @@ export default function Pricing() {
             Coverage impact estimator and pricing
           </h2>
           <p className="text-sm sm:text-base text-slate-400">
-            Adjust team size and repository scale to estimate monthly engineering
-            hours saved, then choose a workspace plan.
+            Adjust team size and repository scale to estimate monthly
+            engineering hours saved, then choose a workspace plan.
           </p>
         </div>
 
@@ -164,7 +167,9 @@ export default function Pricing() {
               </div>
 
               <div className="p-4 rounded-lg bg-[#050608] border border-[#161a24]">
-                <div className="text-xs text-slate-500">Generated assertions</div>
+                <div className="text-xs text-slate-500">
+                  Generated assertions
+                </div>
                 <div className="text-2xl sm:text-3xl font-bold lp-mono text-white mt-1.5">
                   {synthesizedTests}
                 </div>
@@ -193,7 +198,9 @@ export default function Pricing() {
               type="button"
               onClick={() => setAnnual(false)}
               className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                !annual ? "bg-[#161b26] text-white" : "text-slate-400 hover:text-white"
+                !annual
+                  ? "bg-[#161b26] text-white"
+                  : "text-slate-400 hover:text-white"
               }`}
             >
               Monthly
@@ -202,7 +209,9 @@ export default function Pricing() {
               type="button"
               onClick={() => setAnnual(true)}
               className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                annual ? "bg-[#161b26] text-white" : "text-slate-400 hover:text-white"
+                annual
+                  ? "bg-[#161b26] text-white"
+                  : "text-slate-400 hover:text-white"
               }`}
             >
               Annual (20% off)
@@ -210,7 +219,8 @@ export default function Pricing() {
           </div>
 
           <span className="text-xs text-slate-500">
-            All paid tiers include a 14-day trial with full Docker runner access.
+            All paid tiers include a 14-day trial with full Docker runner
+            access.
           </span>
         </div>
 

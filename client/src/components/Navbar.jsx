@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { NotificationCenter } from "./NotificationCenter";
+import CovaiLogo from "./common/CovaiLogo";
 
 const NAV_LINKS = [
   { label: "Sandbox", href: "#ide-preview" },
@@ -41,33 +42,7 @@ export default function Navbar() {
             id="nav-logo"
             className="flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-[#38bdf8] rounded-md"
           >
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              aria-hidden="true"
-              className="shrink-0"
-            >
-              <rect
-                x="1.5"
-                y="1.5"
-                width="21"
-                height="21"
-                rx="5"
-                stroke="#F1F5F9"
-                strokeWidth="1.5"
-              />
-              <path
-                d="M7.5 12L10.5 9M7.5 12L10.5 15M7.5 12H16.5"
-                stroke="#38BDF8"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <circle cx="16.5" cy="8.5" r="1.5" fill="#F1F5F9" />
-              <circle cx="16.5" cy="15.5" r="1.5" fill="#F43F5E" />
-            </svg>
+            <CovaiLogo size={26} />
             <span className="lp-display font-bold text-base tracking-tight text-white">
               CovAI
             </span>
@@ -142,7 +117,11 @@ export default function Navbar() {
             aria-expanded={mobileOpen}
             className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#222836] bg-[#0c0f16] text-slate-200 cursor-pointer"
           >
-            {mobileOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            {mobileOpen ? (
+              <X className="w-4 h-4" />
+            ) : (
+              <Menu className="w-4 h-4" />
+            )}
           </button>
         </div>
       </nav>

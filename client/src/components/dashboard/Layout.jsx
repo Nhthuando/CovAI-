@@ -52,7 +52,6 @@ import {
   Menu,
   X,
   MoreHorizontal,
-  Terminal,
   LogOut,
   Download,
   FlaskConical,
@@ -60,6 +59,7 @@ import {
   Layers,
   FileText,
 } from "lucide-react";
+import CovaiLogo from "../common/CovaiLogo";
 
 import { useAuth } from "../../hooks/useAuth";
 import { NotificationCenter } from "../NotificationCenter";
@@ -1178,9 +1178,7 @@ function LayoutInner() {
             </button>
           ) : (
             <div className="flex items-center gap-2 flex-shrink-0">
-              <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs shrink-0">
-                <Terminal size={13} strokeWidth={2.5} />
-              </div>
+              <CovaiLogo size={24} />
               <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
                 CovAI
               </span>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Terminal, ArrowLeft, GitBranch, Cpu, ShieldCheck } from "lucide-react";
+import { ArrowLeft, GitBranch, Cpu, ShieldCheck } from "lucide-react";
+import CovaiLogo from "../common/CovaiLogo";
 import AuthForm from "./AuthForm";
 import ForgotPasswordForm from "./ForgotPasswordForm";
 import ResetPasswordForm from "./ResetPasswordForm";
@@ -58,9 +59,7 @@ export default function AuthLayout({ initialMode = "login", children, invitation
             id="auth-logo"
             className="inline-flex items-center gap-2.5 text-decoration-none focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)]"
           >
-            <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-sm shrink-0">
-              <Terminal className="w-4 h-4 stroke-[2.5]" />
-            </div>
+            <CovaiLogo size={32} />
             <div className="flex items-center gap-2">
               <span className="font-bold text-base tracking-tight text-[var(--color-text)]">
                 CovAI

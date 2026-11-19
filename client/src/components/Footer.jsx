@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import CovaiLogo from "./common/CovaiLogo";
 
 const FOOTER_COLS = [
   {
@@ -113,30 +114,7 @@ export default function Footer() {
               id="footer-logo"
               className="inline-flex items-center gap-2.5"
             >
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <rect
-                  x="1.5"
-                  y="1.5"
-                  width="21"
-                  height="21"
-                  rx="5"
-                  stroke="#F1F5F9"
-                  strokeWidth="1.5"
-                />
-                <path
-                  d="M7.5 12L10.5 9M7.5 12L10.5 15M7.5 12H16.5"
-                  stroke="#38BDF8"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <CovaiLogo size={24} />
               <span className="lp-display font-bold text-base text-white">
                 CovAI
               </span>

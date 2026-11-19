@@ -3,13 +3,13 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { queryClient } from "../lib/queryClient";
 import { useToast } from "../components/dashboard/ToastContext";
 import {
-  Terminal,
   Plus,
   LogOut,
   AlertTriangle,
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
+import CovaiLogo from "../components/common/CovaiLogo";
 import { deleteProjectApi } from "../services/project.service";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { useAuth } from "../hooks/useAuth";
@@ -158,9 +158,7 @@ export default function ProjectSelectionPage() {
       {/* ── Global Top Navigation Bar (with single +Project button) ────── */}
       <header className="h-11 sm:h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 flex items-center justify-between sticky top-0 z-40 select-none shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs shrink-0">
-            <Terminal size={13} strokeWidth={2.5} />
-          </div>
+          <CovaiLogo size={24} />
           <div className="flex items-center gap-1.5 font-mono">
             <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
               CovAI
