@@ -132,6 +132,7 @@ function matchesCrossFilter(row, cf) {
 
 export function CrossLayerTraceMatrix({
   matrixData,
+  loading = false,
   onNavigateWorkspace,
   onInspectItem,
   onAskAi,
@@ -789,12 +790,16 @@ export function CrossLayerTraceMatrix({
                 <td colSpan={5} className="py-10 px-4 text-center">
                   <div className="max-w-sm mx-auto space-y-2.5">
                     <p className="text-xs font-semibold text-[var(--ud-text)]">
-                      {rows.length === 0
+                      {loading && rows.length === 0
+                        ? "Loading cross-layer domain modules..."
+                        : rows.length === 0
                         ? "No Cross-Layer Domain Modules Discovered Yet"
                         : "No modules match the active filter criteria"}
                     </p>
                     <p className="text-[11px] text-[var(--ud-text-muted)] font-sans leading-relaxed">
-                      {rows.length === 0
+                      {loading && rows.length === 0
+                        ? "Mapping Unit, Integration, and System E2E telemetry for this snapshot."
+                        : rows.length === 0
                         ? "Execute Unit, Integration, or System test suites to populate 3-tier cross-layer traceability and automated root-cause diagnostics."
                         : "Try clearing the search query or removing the active cross-filter."}
                     </p>

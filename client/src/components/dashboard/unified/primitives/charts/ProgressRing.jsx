@@ -9,10 +9,11 @@ export function ProgressRing({
   size = 46,
   strokeWidth = 5,
   tone = "unit", // 'unit' | 'integration' | 'system' | 'pass' | 'warn' | 'fail'
+  loading = false,
   className = "",
   showLabel = true,
 }) {
-  const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
+  const safePct = loading ? 0 : Math.max(0, Math.min(100, Number(pct) || 0));
 
   const toneColors = {
     unit: "var(--ud-unit)",
@@ -78,7 +79,7 @@ export function ProgressRing({
         {/* Centered Percentage */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <span className="font-mono text-[11px] font-bold text-[var(--ud-text)] tabular-nums leading-none">
-            {Math.round(safePct)}%
+            {loading ? "--%" : `${Math.round(safePct)}%`}
           </span>
         </div>
       </div>
@@ -87,7 +88,7 @@ export function ProgressRing({
       {showLabel && label && (
         <span
           className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--ud-text-muted)] truncate max-w-[56px] text-center"
-          style={{ color: safePct > 0 ? strokeColor : undefined }}
+          style={{ color: !loading && safePct > 0 ? strokeColor : undefined }}
         >
           {label}
         </span>

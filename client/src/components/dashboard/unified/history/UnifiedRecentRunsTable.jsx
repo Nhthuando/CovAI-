@@ -16,6 +16,7 @@ import {
 
 export function UnifiedRecentRunsTable({
   historyData,
+  loading = false,
   onNavigateWorkspace,
   onInspectItem,
 }) {
@@ -218,12 +219,16 @@ export function UnifiedRecentRunsTable({
                 >
                   <div className="max-w-xs mx-auto space-y-2">
                     <p className="text-xs font-semibold text-[var(--ud-text)]">
-                      {runs.length === 0
+                      {loading && runs.length === 0
+                        ? "Loading execution history..."
+                        : runs.length === 0
                         ? "No Test Executions Recorded Yet"
                         : "No test executions match this filter"}
                     </p>
                     <p className="text-[11px] text-[var(--ud-text-muted)]">
-                      {runs.length === 0
+                      {loading && runs.length === 0
+                        ? "Retrieving recent Unit, Integration, and System E2E runs."
+                        : runs.length === 0
                         ? "Execute Unit, Integration, or System E2E suites to inspect execution logs, scenarios, and step timings."
                         : "Select 'All' to view runs across all testing suites."}
                     </p>

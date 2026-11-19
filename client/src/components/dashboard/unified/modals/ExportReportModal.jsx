@@ -111,7 +111,7 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="ud-export-modal-title"
-      className="unified-dashboard fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-[1px]"
+      className="portfolio-studio unified-dashboard fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-[1px]"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -256,6 +256,7 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
               type="button"
               variant="primary"
               size="sm"
+              className="ps-btn-contrast border-0"
               icon={FileText}
               disabled={selectedCount === 0}
               onClick={() => handleDownload("markdown")}

@@ -17,7 +17,7 @@ export function PillarCardShell({
 }) {
   return (
     <article
-      className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between h-full min-h-[290px] transition-colors duration-150 hover:border-[var(--color-primary)]/40 ${className}`}
+      className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between h-full min-h-[290px] transition-colors duration-150 hover:border-[var(--ud-border-strong)] ${className}`}
     >
       <div className="flex-1 flex flex-col">
         {/* Card Header — Zero truncation with shrink-0 and whitespace-nowrap */}

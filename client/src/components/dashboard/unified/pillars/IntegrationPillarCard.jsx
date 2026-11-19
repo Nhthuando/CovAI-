@@ -15,6 +15,7 @@ const FAILURE_LAYER_LABELS = {
 
 export function IntegrationPillarCard({
   pillarData,
+  loading = false,
   onNavigateWorkspace,
   activeCrossFilter = null,
   onSelectCrossFilter = null,
@@ -28,21 +29,25 @@ export function IntegrationPillarCard({
   const totalApis = Number(
     cov.totalApis ?? (passedTests + failedTests + uncoveredApis || p.totalTests || 0)
   );
-  const state = p.state || (passedTests + failedTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
+  const state = loading
+    ? "LOADING"
+    : p.state || (passedTests + failedTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
 
   // Status computation
   let status = "untested";
-  if (failedTests > 0) {
-    status = "fail";
-  } else if (passedTests === 0 && uncoveredApis > 0) {
-    status = "warn";
-  } else if (passedTests > 0 && uncoveredApis > 0 && (cov.apiEndpoint ?? 0) < 80) {
-    status = "warn";
-  } else if (passedTests > 0) {
-    status = "pass";
+  if (!loading) {
+    if (failedTests > 0) {
+      status = "fail";
+    } else if (passedTests === 0 && uncoveredApis > 0) {
+      status = "warn";
+    } else if (passedTests > 0 && uncoveredApis > 0 && (cov.apiEndpoint ?? 0) < 80) {
+      status = "warn";
+    } else if (passedTests > 0) {
+      status = "pass";
+    }
   }
 
-  const statusLabel = `${passedTests}/${totalApis} Covered`;
+  const statusLabel = loading ? "--" : `${passedTests}/${totalApis} Covered`;
 
   const dist = p.failureDistribution || {};
   const activeFailureLayers = Object.entries(dist)
@@ -56,9 +61,9 @@ export function IntegrationPillarCard({
     }));
 
   const endpointSegments = [
-    { key: "passed", value: passedTests, tone: "pass", label: "Covered" },
-    { key: "failed", value: failedTests, tone: "fail", label: "Failed" },
-    { key: "uncovered", value: uncoveredApis, tone: "warn", label: "Uncovered" },
+    { key: "passed", value: loading ? 0 : passedTests, displayValue: loading ? "--" : passedTests, tone: "pass", label: "Covered" },
+    { key: "failed", value: loading ? 0 : failedTests, displayValue: loading ? "--" : failedTests, tone: "fail", label: "Failed" },
+    { key: "uncovered", value: loading ? 0 : uncoveredApis, displayValue: loading ? "--" : uncoveredApis, tone: "warn", label: "Uncovered" },
   ];
 
   return (
@@ -78,7 +83,7 @@ export function IntegrationPillarCard({
         </span>
         <StackedBar
           segments={endpointSegments}
-          total={totalApis}
+          total={loading ? 0 : totalApis}
           height={6}
           showLegend={true}
         />
@@ -109,16 +114,22 @@ export function IntegrationPillarCard({
         </div>
       )}
 
-      {/* Backend Code Coverage (Kept for integration impact, duplicate API coverage bar removed) */}
+      {/* Backend Code Coverage */}
       {state !== "NOT_RUN" && (
         <div className="rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60 p-2.5 space-y-1">
           <div className="flex items-center justify-between text-xs">
             <span className="text-[var(--ud-text-muted)] text-[11px]">Backend Code Coverage</span>
             <span className="font-mono tabular-nums font-semibold text-[var(--ud-text)]">
-              {fmtPct(cov.lines)}
+              {loading ? "--%" : fmtPct(cov.lines)}
             </span>
           </div>
-          <MeterBar value={cov.lines || 0} tone="integration" height={4} />
+          <MeterBar value={loading ? 0 : cov.lines || 0} tone="integration" height={4} />
+        </div>
+      )}
+
+      {state === "LOADING" && (
+        <div className="mt-auto text-[11px] font-mono text-[var(--ud-text-muted)] p-2 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)]/50 text-center">
+          Loading API integration metrics...
         </div>
       )}
 

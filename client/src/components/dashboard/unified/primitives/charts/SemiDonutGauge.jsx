@@ -9,12 +9,13 @@ export function SemiDonutGauge({
   max = 100,
   grade = "--",
   hasBaseline = true,
+  loading = false,
   size = 110,
   strokeWidth = 10,
   title = "Quality Health Score",
   className = "",
 }) {
-  const isUnverified = !hasBaseline || score === null || score === undefined;
+  const isUnverified = loading || !hasBaseline || score === null || score === undefined;
   const safeScore = isUnverified ? 0 : Math.max(0, Math.min(max, Number(score) || 0));
   const ratio = max > 0 && !isUnverified ? safeScore / max : 0;
 
@@ -43,21 +44,14 @@ export function SemiDonutGauge({
       aria-valuenow={isUnverified ? undefined : safeScore}
       aria-valuemin={0}
       aria-valuemax={max}
-      aria-label={`${title}: ${isUnverified ? "Unverified" : `${safeScore}/${max} (Grade ${grade})`}`}
-      title={`${title}: ${isUnverified ? "Unverified (No Baseline)" : `${safeScore} / ${max} · Grade ${grade}`}`}
+      aria-label={`${title}: ${loading ? "Loading" : isUnverified ? "Unverified" : `${safeScore}/${max} (Grade ${grade})`}`}
+      title={`${title}: ${loading ? "Loading..." : isUnverified ? "Unverified (No Baseline)" : `${safeScore} / ${max} · Grade ${grade}`}`}
     >
       <svg
         viewBox="0 0 110 65"
         className="w-full h-full overflow-visible"
         aria-hidden="true"
       >
-        <defs>
-          <linearGradient id="ud-gauge-gradient" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.75" />
-            <stop offset="100%" stopColor={strokeColor} stopOpacity="1" />
-          </linearGradient>
-        </defs>
-
         {/* Background Arc (180deg) */}
         <path
           d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`}
@@ -67,12 +61,13 @@ export function SemiDonutGauge({
           strokeLinecap="round"
         />
 
-        {/* Active Arc (only rendered when there is a baseline and score > 0) */}
+        {/* Active Arc (flat color, only rendered when loaded with baseline and score > 0) */}
         {!isUnverified && safeScore > 0 && (
           <path
             d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`}
             fill="none"
-            stroke="url(#ud-gauge-gradient)"
+            stroke={strokeColor}
+            strokeOpacity="0.9"
             strokeWidth={strokeWidth}
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
@@ -85,7 +80,7 @@ export function SemiDonutGauge({
       {/* Centered Score & Grade Overlay */}
       <div className="absolute inset-x-0 bottom-0 flex flex-col items-center justify-end text-center pointer-events-none">
         <div className="flex items-baseline gap-1">
-          <span className="font-mono text-2xl font-black tracking-tight text-[var(--ud-text)] leading-none">
+          <span className="font-mono text-2xl font-bold tracking-tight text-[var(--ud-text)] leading-none tabular-nums">
             {isUnverified ? "--" : safeScore}
           </span>
           <span className="text-[10px] font-mono text-[var(--ud-text-muted)]">
@@ -93,14 +88,14 @@ export function SemiDonutGauge({
           </span>
         </div>
         <span
-          className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded mt-0.5"
+          className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] mt-1"
           style={{
-            backgroundColor: isUnverified ? "var(--ud-surface-2)" : `color-mix(in srgb, ${strokeColor} 15%, transparent)`,
+            backgroundColor: isUnverified ? "var(--ud-surface-2)" : `color-mix(in srgb, ${strokeColor} 12%, transparent)`,
             color: strokeColor,
-            border: isUnverified ? "1px solid var(--ud-border)" : "none",
+            border: isUnverified ? "1px solid var(--ud-border)" : `1px solid color-mix(in srgb, ${strokeColor} 28%, transparent)`,
           }}
         >
-          {isUnverified ? "UNVERIFIED" : `Grade ${grade}`}
+          {loading ? "--" : isUnverified ? "UNVERIFIED" : `Grade ${grade}`}
         </span>
       </div>
     </div>

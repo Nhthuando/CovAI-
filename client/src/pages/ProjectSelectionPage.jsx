@@ -192,10 +192,10 @@ export default function ProjectSelectionPage() {
           <button
             type="button"
             onClick={() => setAiPanelOpen((prev) => !prev)}
-            className={`p-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] transition-colors cursor-pointer ${
+            className={`p-1.5 rounded-[var(--radius-md)] border transition-colors cursor-pointer ${
               aiPanelOpen
-                ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/40"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)]"
+                ? "bg-[var(--ps-surface-2)] text-[var(--ps-ink)] border-[var(--ps-line-strong)]"
+                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)]/60 border-[var(--ps-line)]"
             }`}
             title={
               aiPanelOpen ? "Collapse AI Assistant" : "Expand AI Assistant"

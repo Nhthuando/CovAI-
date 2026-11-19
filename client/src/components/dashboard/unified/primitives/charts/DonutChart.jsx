@@ -10,10 +10,11 @@ export function DonutChart({
   centerLabel = null,
   centerSub = null,
   showLegend = false,
+  loading = false,
   className = "",
   ariaLabel = "Test execution distribution",
 }) {
-  const sum = segments.reduce((acc, s) => acc + (Number(s.value) || 0), 0);
+  const sum = loading ? 0 : segments.reduce((acc, s) => acc + (Number(s.value) || 0), 0);
 
   const toneColors = {
     pass: "var(--ud-pass)",
@@ -140,7 +141,7 @@ export function DonutChart({
                   </span>
                 </div>
                 <span className="font-mono text-xs font-semibold text-[var(--ud-text)] tabular-nums">
-                  {val}
+                  {loading ? "--" : val}
                 </span>
               </div>
             );

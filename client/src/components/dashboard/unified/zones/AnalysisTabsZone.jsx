@@ -14,6 +14,7 @@ import { Layers, History } from "lucide-react";
  */
 export function AnalysisTabsZone({
   vm,
+  loading = false,
   onNavigateWorkspace,
   onInspectItem,
   onAskAi,
@@ -73,13 +74,13 @@ export function AnalysisTabsZone({
                 label: "Cross-Layer Traceability",
                 value: "trace",
                 icon: Layers,
-                count: matrixRowCount,
+                count: loading ? "--" : matrixRowCount,
               },
               {
                 label: "Execution History",
                 value: "history",
                 icon: History,
-                count: historyRunCount,
+                count: loading ? "--" : historyRunCount,
               },
             ]}
             value={activeTab}
@@ -89,7 +90,9 @@ export function AnalysisTabsZone({
         </div>
 
         <div className="text-xs text-[var(--ud-text-muted)] font-mono hidden sm:block">
-          {activeTab === "trace"
+          {loading
+            ? "Loading traceability & history..."
+            : activeTab === "trace"
             ? `${matrixRowCount} domain modules mapped across 3 tiers`
             : `${historyRunCount} recent execution runs tracked`}
         </div>
@@ -107,6 +110,7 @@ export function AnalysisTabsZone({
 
           <CrossLayerTraceMatrix
             matrixData={matrix}
+            loading={loading}
             onNavigateWorkspace={onNavigateWorkspace}
             onInspectItem={onInspectItem}
             onAskAi={onAskAi}
@@ -121,6 +125,7 @@ export function AnalysisTabsZone({
         <div className="animate-in fade-in duration-150">
           <UnifiedRecentRunsTable
             historyData={history}
+            loading={loading}
             onNavigateWorkspace={onNavigateWorkspace}
             onInspectItem={onInspectItem}
           />

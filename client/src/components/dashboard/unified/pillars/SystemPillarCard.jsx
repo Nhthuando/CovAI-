@@ -12,6 +12,7 @@ const SYSTEM_FAILURE_LABELS = {
 
 export function SystemPillarCard({
   pillarData,
+  loading = false,
   onNavigateWorkspace,
   activeCrossFilter = null,
   onSelectCrossFilter = null,
@@ -21,10 +22,12 @@ export function SystemPillarCard({
   const passedTests = Number(p.passedTests || 0);
   const failedTests = Number(p.failedTests || 0);
   const flakyTests = Number(p.flakyTests || 0);
-  const state = p.state || (totalTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
+  const state = loading
+    ? "LOADING"
+    : p.state || (totalTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
 
-  const status = failedTests > 0 ? "fail" : totalTests > 0 ? "pass" : "untested";
-  const statusLabel = totalTests > 0 ? `${passedTests}/${totalTests} Journeys` : "Not Run";
+  const status = loading ? "untested" : failedTests > 0 ? "fail" : totalTests > 0 ? "pass" : "untested";
+  const statusLabel = loading ? "--" : totalTests > 0 ? `${passedTests}/${totalTests} Journeys` : "Not Run";
 
   const dist = p.failureDistribution || {};
   const activeFailureKinds = Object.entries(dist)
@@ -72,7 +75,7 @@ export function SystemPillarCard({
         </div>
       )}
 
-      {/* User Journey Execution Stats (when executed > 0) */}
+      {/* User Journey Execution Stats (when loading or executed > 0) */}
       {state !== "NOT_RUN" && (
         <div className="space-y-1.5">
           <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider block">
@@ -81,17 +84,29 @@ export function SystemPillarCard({
           <div className="grid grid-cols-3 gap-1.5 text-xs font-mono text-center">
             <div className="p-2 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60">
               <span className="block text-[10px] text-[var(--ud-text-muted)] font-sans">Passed</span>
-              <span className="text-sm font-bold text-[var(--ud-pass)]">{passedTests}</span>
+              <span className="text-sm font-bold text-[var(--ud-pass)]">
+                {loading ? "--" : passedTests}
+              </span>
             </div>
             <div className="p-2 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60">
               <span className="block text-[10px] text-[var(--ud-text-muted)] font-sans">Failed</span>
-              <span className="text-sm font-bold text-[var(--ud-fail)]">{failedTests}</span>
+              <span className="text-sm font-bold text-[var(--ud-fail)]">
+                {loading ? "--" : failedTests}
+              </span>
             </div>
             <div className="p-2 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60">
               <span className="block text-[10px] text-[var(--ud-text-muted)] font-sans">Flaky</span>
-              <span className="text-sm font-bold text-[var(--ud-warn)]">{flakyTests}</span>
+              <span className="text-sm font-bold text-[var(--ud-warn)]">
+                {loading ? "--" : flakyTests}
+              </span>
             </div>
           </div>
+        </div>
+      )}
+
+      {state === "LOADING" && (
+        <div className="mt-auto text-[11px] font-mono text-[var(--ud-text-muted)] p-2 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)]/50 text-center">
+          Loading system E2E metrics...
         </div>
       )}
 

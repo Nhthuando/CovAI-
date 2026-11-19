@@ -301,6 +301,7 @@ export function CompareProjectsModal({
               <Button
                 variant="primary"
                 size="sm"
+                className="ps-btn-contrast border-0"
                 onClick={() => {
                   onClose();
                   onOpenOverview?.(comparedProjects[0].id);

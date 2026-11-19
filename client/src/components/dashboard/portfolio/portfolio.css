@@ -4,7 +4,12 @@
    Zero neon green, harsh red, or bright orange/yellow pops.
    ============================================================ */
 
-.portfolio-studio {
+.portfolio-studio,
+.portfolio-studio.unified-dashboard,
+[data-theme="dark"] .portfolio-studio,
+[data-theme="dark"] .portfolio-studio.unified-dashboard,
+.dark .portfolio-studio,
+.dark .portfolio-studio.unified-dashboard {
   --ps-bg: #09090b;
   --ps-surface: #111114;
   --ps-surface-2: #18181c;
@@ -63,7 +68,8 @@
   font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
-[data-theme="light"] .portfolio-studio {
+[data-theme="light"] .portfolio-studio,
+[data-theme="light"] .portfolio-studio.unified-dashboard {
   --ps-bg: #fafafa;
   --ps-surface: #ffffff;
   --ps-surface-2: #f4f4f5;

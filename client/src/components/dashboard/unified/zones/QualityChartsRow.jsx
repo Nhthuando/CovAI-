@@ -9,7 +9,7 @@ import { fmtPct, fmtCount, fmtDuration } from "../../../../services/unifiedDashb
  * Crisp SVG grouped bar chart comparing Coverage % vs Pass Rate % across Unit, Integration, and System tiers
  * against the 80% quality target threshold.
  */
-function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
+function TierComparisonBarChart({ vm, loading = false, onNavigateWorkspace }) {
   const [hoveredTier, setHoveredTier] = useState(null);
   const [chartMode, setChartMode] = useState("both"); // "both" | "coverage" | "pass_rate"
 
@@ -48,7 +48,7 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
       failed: Number(intPillar.failedTests || 0),
       total: Number(intPillar.totalTests || 0),
       durationMs: Number(intPillar.durationMs || 0),
-      color: "var(--color-primary)",
+      color: "var(--ud-integration)",
     },
     {
       key: "system",
@@ -145,7 +145,7 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
               x2={svgWidth - padRight}
               y2={targetY}
               stroke="var(--ud-pass)"
-              strokeOpacity="0.6"
+              strokeOpacity="0.45"
               strokeDasharray="5 4"
               strokeWidth="1.2"
             />
@@ -153,7 +153,7 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
               x={svgWidth - padRight - 2}
               y={targetY - 5}
               textAnchor="end"
-              fill="var(--ud-pass)"
+              fill="var(--ud-text-muted)"
               fontSize="9.5"
               fontFamily="var(--font-mono)"
               fontWeight="600"
@@ -174,8 +174,8 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
               const covX = chartMode === "both" ? centerX - barW - gap / 2 : centerX - barW / 2;
               const passX = chartMode === "both" ? centerX + gap / 2 : centerX - barW / 2;
 
-              const covVal = Math.max(0, Math.min(100, tier.coveragePct));
-              const passVal = Math.max(0, Math.min(100, tier.passRatePct));
+              const covVal = loading ? 0 : Math.max(0, Math.min(100, tier.coveragePct));
+              const passVal = loading ? 0 : Math.max(0, Math.min(100, tier.passRatePct));
 
               const covY = getY(covVal);
               const covH = Math.max(covVal > 0 ? 3 : 2, padTop + chartH - covY);
@@ -186,10 +186,10 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
               return (
                 <g
                   key={tier.key}
-                  onMouseEnter={() => setHoveredTier(tier)}
+                  onMouseEnter={() => !loading && setHoveredTier(tier)}
                   onMouseLeave={() => setHoveredTier(null)}
-                  onClick={() => onNavigateWorkspace?.(tier.key)}
-                  className="cursor-pointer"
+                  onClick={() => !loading && onNavigateWorkspace?.(tier.key)}
+                  className={loading ? "" : "cursor-pointer"}
                 >
                   {/* Subtle hover column highlight */}
                   <rect
@@ -214,25 +214,27 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
                         fill="var(--ud-surface-2)"
                         fillOpacity="0.45"
                       />
-                      <rect
-                        x={covX}
-                        y={covVal > 0 ? covY : padTop + chartH - 2}
-                        width={barW}
-                        height={covVal > 0 ? covH : 2}
-                        rx="3"
-                        fill={tier.color}
-                        fillOpacity={covVal > 0 ? "0.85" : "0.35"}
-                      />
+                      {!loading && (
+                        <rect
+                          x={covX}
+                          y={covVal > 0 ? covY : padTop + chartH - 2}
+                          width={barW}
+                          height={covVal > 0 ? covH : 2}
+                          rx="3"
+                          fill={tier.color}
+                          fillOpacity={covVal > 0 ? "0.85" : "0.35"}
+                        />
+                      )}
                       <text
                         x={covX + barW / 2}
                         y={Math.max(padTop - 6, (covVal > 0 ? covY : padTop + chartH) - 6)}
                         textAnchor="middle"
-                        fill={covVal > 0 ? "var(--ud-text)" : "var(--ud-text-muted)"}
+                        fill={!loading && covVal > 0 ? "var(--ud-text)" : "var(--ud-text-muted)"}
                         fontSize="10"
                         fontFamily="var(--font-mono)"
                         fontWeight="600"
                       >
-                        {covVal.toFixed(0)}%
+                        {loading ? "--" : `${covVal.toFixed(0)}%`}
                       </text>
                     </g>
                   )}
@@ -249,33 +251,35 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
                         fill="var(--ud-surface-2)"
                         fillOpacity="0.45"
                       />
-                      <rect
-                        x={passX}
-                        y={passVal > 0 ? passY : padTop + chartH - 2}
-                        width={barW}
-                        height={passVal > 0 ? passH : 2}
-                        rx="3"
-                        fill={
-                          tier.total === 0
-                            ? "var(--ud-text-muted)"
-                            : passVal >= 80
-                            ? "var(--ud-pass)"
-                            : passVal >= 50
-                            ? "var(--ud-warn)"
-                            : "var(--ud-fail)"
-                        }
-                        fillOpacity={tier.total > 0 ? "0.82" : "0.25"}
-                      />
+                      {!loading && (
+                        <rect
+                          x={passX}
+                          y={passVal > 0 ? passY : padTop + chartH - 2}
+                          width={barW}
+                          height={passVal > 0 ? passH : 2}
+                          rx="3"
+                          fill={
+                            tier.total === 0
+                              ? "var(--ud-text-muted)"
+                              : passVal >= 80
+                              ? "var(--ud-pass)"
+                              : passVal >= 50
+                              ? "var(--ud-warn)"
+                              : "var(--ud-fail)"
+                          }
+                          fillOpacity={tier.total > 0 ? "0.82" : "0.25"}
+                        />
+                      )}
                       <text
                         x={passX + barW / 2}
                         y={Math.max(padTop - 6, (passVal > 0 ? passY : padTop + chartH) - 6)}
                         textAnchor="middle"
-                        fill={tier.total > 0 ? "var(--ud-text)" : "var(--ud-text-muted)"}
+                        fill={!loading && tier.total > 0 ? "var(--ud-text)" : "var(--ud-text-muted)"}
                         fontSize="10"
                         fontFamily="var(--font-mono)"
                         fontWeight="600"
                       >
-                        {tier.total > 0 ? `${passVal.toFixed(0)}%` : "--"}
+                        {!loading && tier.total > 0 ? `${passVal.toFixed(0)}%` : "--"}
                       </text>
                     </g>
                   )}
@@ -299,7 +303,11 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
                     fontSize="9.5"
                     fontFamily="var(--font-mono)"
                   >
-                    {tier.total > 0 ? `${tier.passed}/${tier.total} pass` : `${tier.subLabel} · Not Run`}
+                    {loading
+                      ? tier.subLabel
+                      : tier.total > 0
+                      ? `${tier.passed}/${tier.total} pass`
+                      : `${tier.subLabel} · Not Run`}
                   </text>
                 </g>
               );
@@ -341,7 +349,7 @@ function TierComparisonBarChart({ vm, onNavigateWorkspace }) {
   );
 }
 
-export function QualityChartsRow({ vm, onNavigateWorkspace, className = "" }) {
+export function QualityChartsRow({ vm, loading = false, onNavigateWorkspace, className = "" }) {
   const trend = vm?.trend || {};
 
   return (
@@ -349,11 +357,12 @@ export function QualityChartsRow({ vm, onNavigateWorkspace, className = "" }) {
       <div className="col-span-12 xl:col-span-6">
         <TierComparisonBarChart
           vm={vm}
+          loading={loading}
           onNavigateWorkspace={onNavigateWorkspace}
         />
       </div>
       <div className="col-span-12 xl:col-span-6">
-        <CoverageTrendChart trendData={trend} vm={vm} />
+        <CoverageTrendChart trendData={trend} vm={vm} loading={loading} />
       </div>
     </div>
   );

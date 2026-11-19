@@ -6,6 +6,7 @@ import { fmtPct } from "../../../../services/unifiedDashboard/format.js";
 export function CoverageTrendChart({
   trendData,
   vm = null,
+  loading = false,
   className = "",
 }) {
   const [viewMode, setViewMode] = useState("trend"); // 'trend' | 'before_after'
@@ -114,7 +115,59 @@ export function CoverageTrendChart({
         </div>
       }
     >
-      {series.length === 0 ? (
+      {loading && series.length === 0 ? (
+        <div className="space-y-3">
+          <div className="relative w-full overflow-hidden">
+            <svg
+              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+              className="w-full h-auto select-none"
+              role="img"
+              aria-label="Loading trend chart"
+            >
+              {[0, 25, 50, 75, 100].map((tick) => {
+                const y = getY(tick);
+                return (
+                  <g key={tick}>
+                    <line
+                      x1={padLeft}
+                      y1={y}
+                      x2={svgWidth - padRight}
+                      y2={y}
+                      stroke="var(--ud-border)"
+                      strokeDasharray="3 3"
+                      strokeWidth="1"
+                    />
+                    <text
+                      x={padLeft - 8}
+                      y={y + 3}
+                      textAnchor="end"
+                      fill="var(--ud-text-muted)"
+                      fontSize="10"
+                      fontFamily="var(--font-mono)"
+                    >
+                      {tick}%
+                    </text>
+                  </g>
+                );
+              })}
+              <text
+                x={padLeft + chartW / 2}
+                y={padTop + chartH / 2}
+                textAnchor="middle"
+                fill="var(--ud-text-muted)"
+                fontSize="11"
+                fontFamily="var(--font-mono)"
+              >
+                Loading trend metrics...
+              </text>
+            </svg>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-[var(--ud-border)] text-[11px] font-mono text-[var(--ud-text-muted)]">
+            <span>Unit · Integration · System E2E</span>
+            <span>--</span>
+          </div>
+        </div>
+      ) : series.length === 0 ? (
         <div className="h-[220px] flex flex-col items-center justify-center text-center p-4 gap-2.5">
           <p className="text-xs font-semibold text-[var(--ud-text)]">
             No Historical Trend Points Recorded Yet

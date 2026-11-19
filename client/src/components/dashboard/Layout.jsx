@@ -60,6 +60,7 @@ import {
   FileText,
 } from "lucide-react";
 import CovaiLogo from "../common/CovaiLogo";
+import "./portfolio/portfolio.css";
 
 import { useAuth } from "../../hooks/useAuth";
 import { NotificationCenter } from "../NotificationCenter";
@@ -1215,10 +1216,10 @@ function LayoutInner() {
 
   return (
     <div
-      className="ide-root"
-      style={{ background: "var(--ide-bg)", color: "var(--text-primary)" }}
+      className="portfolio-studio ide-root"
+      style={{ background: "var(--ps-bg)", color: "var(--ps-ink)" }}
     >
-      <div className="flex items-center justify-between flex-shrink-0 h-11 px-3 sm:px-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-text)] font-sans relative z-40 select-none">
+      <div className="flex items-center justify-between flex-shrink-0 h-11 px-3 sm:px-4 bg-[var(--ps-surface)] border-b border-[var(--ps-line)] text-[var(--ps-ink)] font-sans relative z-40 select-none">
         <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2 overflow-hidden">
           {isMobile ? (
             <button
@@ -1323,7 +1324,7 @@ function LayoutInner() {
           <nav
             role="tablist"
             aria-label="Coverage Test Levels"
-            className="inline-flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] shadow-xs"
+            className="inline-flex items-center p-0.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]"
           >
             {COVERAGE_TEST_TABS.map((tab) => {
               const Icon = tab.icon;
@@ -1348,24 +1349,24 @@ function LayoutInner() {
                       navigate(`${location.pathname}?${params.toString()}`);
                     }
                   }}
-                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${isActive
-                    ? "text-[var(--color-primary)] font-semibold"
-                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
+                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[5px] text-xs font-medium transition-colors duration-150 cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--ps-cobalt)] ${isActive
+                    ? "text-[var(--ps-ink)] font-semibold"
+                    : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
                     }`}
                   title={`${tab.label} Suite`}
                 >
                   {isActive && (
                     <motion.div
                       layoutId="active-test-tab-pill"
-                      className="absolute inset-0 rounded-[var(--radius-sm)] bg-[var(--color-bg)] border border-[var(--color-border)] shadow-xs"
+                      className="absolute inset-0 rounded-[5px] bg-[var(--ps-surface-2)] border border-[var(--ps-line-strong)]"
                       transition={{ type: "spring", stiffness: 450, damping: 32 }}
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-1.5">
                     <Icon
                       size={13}
-                      strokeWidth={isActive ? 2.2 : 1.8}
-                      className={isActive ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}
+                      strokeWidth={isActive ? 2 : 1.75}
+                      className={isActive ? "text-[var(--ps-cobalt)]" : "text-[var(--ps-ink-muted)]"}
                     />
                     <span className="hidden sm:inline">{tab.label}</span>
                     <span className="sm:hidden">{tab.shortLabel}</span>
@@ -1393,7 +1394,7 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => navigate("/projects")}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer"
               title="Return to Projects Workspace"
             >
               <FolderPlus size={12} />
@@ -1406,20 +1407,20 @@ function LayoutInner() {
               type="button"
               onClick={() => setShowExport(true)}
               aria-label="Export project and analysis"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-focus)]"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--ps-cobalt)]"
             >
               <Download size={13} />
               {!isMobile && <span>Export</span>}
             </button>
           )}
 
-          <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] p-0.5 gap-0.5">
+          <div className="flex items-center rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)] p-0.5 gap-0.5">
             <button
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${sidebarOpen
-                ? "text-[var(--color-primary)]"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              className={`p-1 rounded-[5px] transition-colors cursor-pointer ${sidebarOpen
+                ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
+                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
                 }`}
               title={
                 sidebarOpen
@@ -1441,9 +1442,9 @@ function LayoutInner() {
               aria-label="AI Chatbot"
               aria-expanded={isAiPanelVisible}
               aria-controls="covai-chatbot"
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer flex items-center gap-1 ${isAiPanelVisible
-                ? "text-[var(--color-primary)]"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              className={`px-1.5 py-1 rounded-[5px] transition-colors cursor-pointer flex items-center gap-1 ${isAiPanelVisible
+                ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
+                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
                 }`}
               title={
                 isAiPanelVisible
@@ -1823,33 +1824,33 @@ function LayoutInner() {
           </motion.div>
         </>
       </motion.div>
-      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--color-surface)] border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] font-mono whitespace-nowrap overflow-x-auto select-none">
+      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--ps-surface)] border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-muted)] ps-mono whitespace-nowrap overflow-x-auto select-none">
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-            <GitBranch size={11} className="text-[var(--color-primary)]" />
+          <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)]">
+            <GitBranch size={11} className="text-[var(--ps-ink-muted)]" />
             {!isMobile && <span>main</span>}
           </div>
           {!isMobile && (
             <>
-              <div className="w-px h-3 bg-[var(--color-border)]" />
-              <div className="flex items-center gap-1.5 text-[var(--color-success)]">
+              <div className="w-px h-3 bg-[var(--ps-line)]" />
+              <div className="flex items-center gap-1.5 text-[var(--ps-emerald)]">
                 <CheckCircle2 size={11} />
                 <span>Engine Ready</span>
               </div>
-              <div className="flex items-center gap-1.5 text-[var(--color-text-muted)] font-sans">
+              <div className="flex items-center gap-1.5 text-[var(--ps-ink-muted)] font-sans">
                 <span>{project?.name || "Workspace"}</span>
               </div>
             </>
           )}
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-            <BarChart3 size={11} className="text-[var(--color-primary)]" />
+          <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)]">
+            <BarChart3 size={11} className="text-[var(--ps-ink-muted)]" />
             <span>Target: 80%+</span>
           </div>
           {!isMobile && (
             <>
-              <div className="w-px h-3 bg-[var(--color-border)]" />
+              <div className="w-px h-3 bg-[var(--ps-line)]" />
               <span>UTF-8</span>
             </>
           )}

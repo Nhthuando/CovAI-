@@ -127,7 +127,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
             <div className="rounded-lg border border-[var(--color-border)] p-4">
               <h3 className="text-sm font-semibold">Start a new chat</h3>
               <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">AI still knows your project and current screen. Previous chats stay in your history.</p>
-              <Button size="sm" icon={Plus} className="mt-3" disabled={busy || !access.can("chat.write")} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory); onClose(); }}>New chat</Button>
+              <Button size="sm" icon={Plus} className="mt-3 ps-btn-contrast border-0" disabled={busy || !access.can("chat.write")} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory); onClose(); }}>New chat</Button>
             </div>
             <label className="block text-xs font-medium">Find a previous chat<input aria-label="Find a previous chat" value={search} onChange={event => setSearch(event.target.value)} className={`${inputClass} mt-2`} placeholder="Search chat titles or messages" /></label>
             {!sessions.length && <p className="text-sm text-[var(--color-text-muted)]">No previous chats yet. Send your first question to get started.</p>}

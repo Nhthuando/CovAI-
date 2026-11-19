@@ -136,7 +136,7 @@ export function SlideOverInspectorDrawer({
       role="dialog"
       aria-modal="true"
       aria-labelledby="ud-inspector-drawer-title"
-      className="unified-dashboard fixed inset-0 z-50 flex justify-end bg-black/65 backdrop-blur-[1px]"
+      className="portfolio-studio unified-dashboard fixed inset-0 z-50 flex justify-end bg-black/65 backdrop-blur-[1px]"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -348,6 +348,7 @@ export function SlideOverInspectorDrawer({
             type="button"
             variant="primary"
             size="sm"
+            className="ps-btn-contrast border-0"
             icon={Bot}
             onClick={handleTriggerAiDiagnosis}
           >

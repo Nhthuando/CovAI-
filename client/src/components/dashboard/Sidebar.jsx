@@ -39,25 +39,22 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".spec.jsx") ||
     lower.endsWith(".test.jsx")
   ) {
-    return <TestTube2 size={14} className="text-purple-400 shrink-0" />;
+    return <TestTube2 size={14} className="text-[var(--ps-indigo)] shrink-0" />;
   }
 
   // React & TypeScript
-  if (lower.endsWith(".tsx")) {
-    return <FileCode2 size={14} className="text-cyan-400 shrink-0" />;
-  }
-  if (lower.endsWith(".jsx")) {
-    return <FileCode2 size={14} className="text-cyan-400 shrink-0" />;
+  if (lower.endsWith(".tsx") || lower.endsWith(".jsx")) {
+    return <FileCode2 size={14} className="text-[var(--ps-teal)] shrink-0" />;
   }
   if (lower.endsWith(".ts")) {
-    return <Braces size={14} className="text-sky-400 shrink-0" />;
+    return <Braces size={14} className="text-[var(--ps-cobalt)] shrink-0" />;
   }
   if (
     lower.endsWith(".js") ||
     lower.endsWith(".mjs") ||
     lower.endsWith(".cjs")
   ) {
-    return <FileCode2 size={14} className="text-amber-400 shrink-0" />;
+    return <FileCode2 size={14} className="text-[var(--ps-amber)] shrink-0" />;
   }
 
   // Config files
@@ -69,17 +66,17 @@ function getFileIcon(fileName = "") {
     lower.startsWith("eslint") ||
     lower.startsWith("jest.config")
   ) {
-    return <Sliders size={14} className="text-yellow-400 shrink-0" />;
+    return <Sliders size={14} className="text-[var(--ps-amber)] shrink-0" />;
   }
 
   // Package & NPM
   if (lower === "package.json" || lower === "package-lock.json") {
-    return <Box size={14} className="text-orange-400 shrink-0" />;
+    return <Box size={14} className="text-[var(--ps-amber)] shrink-0" />;
   }
 
   // JSON
   if (lower.endsWith(".json") || lower.endsWith(".jsonc")) {
-    return <FileJson size={14} className="text-emerald-400 shrink-0" />;
+    return <FileJson size={14} className="text-[var(--ps-emerald)] shrink-0" />;
   }
 
   // Styles
@@ -89,12 +86,12 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".sass") ||
     lower.endsWith(".less")
   ) {
-    return <FileText size={14} className="text-pink-400 shrink-0" />;
+    return <FileText size={14} className="text-[var(--ps-rose)] shrink-0" />;
   }
 
   // HTML
   if (lower.endsWith(".html") || lower.endsWith(".htm")) {
-    return <FileCode2 size={14} className="text-orange-400 shrink-0" />;
+    return <FileCode2 size={14} className="text-[var(--ps-rose)] shrink-0" />;
   }
 
   // Markdown & Docs
@@ -103,7 +100,7 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".markdown") ||
     lower.endsWith(".txt")
   ) {
-    return <FileText size={14} className="text-slate-400 shrink-0" />;
+    return <FileText size={14} className="text-[var(--ps-ink-muted)] shrink-0" />;
   }
 
   // Git / Env / Lock
@@ -112,10 +109,10 @@ function getFileIcon(fileName = "") {
     lower.startsWith(".env") ||
     lower.endsWith(".lock")
   ) {
-    return <Lock size={13} className="text-emerald-300 shrink-0" />;
+    return <Lock size={13} className="text-[var(--ps-emerald)] shrink-0" />;
   }
 
-  return <File size={14} className="text-slate-400 shrink-0" />;
+  return <File size={14} className="text-[var(--ps-ink-muted)] shrink-0" />;
 }
 
 function getFolderIcon(folderName = "", isOpen = false) {
@@ -127,7 +124,7 @@ function getFolderIcon(folderName = "", isOpen = false) {
     lower === "tests" ||
     lower === "e2e"
   ) {
-    return <TestTube2 size={14} className="text-purple-400 shrink-0" />;
+    return <TestTube2 size={14} className="text-[var(--ps-indigo)] shrink-0" />;
   }
 
   if (
@@ -143,15 +140,15 @@ function getFolderIcon(folderName = "", isOpen = false) {
     return (
       <FolderGit2
         size={14}
-        className={`${isOpen ? "text-sky-400" : "text-sky-600"} shrink-0`}
+        className={`${isOpen ? "text-[var(--ps-cobalt)]" : "text-[var(--ps-cobalt)]/75"} shrink-0`}
       />
     );
   }
 
   if (isOpen) {
-    return <FolderOpen size={14} className="text-amber-500 shrink-0" />;
+    return <FolderOpen size={14} className="text-[var(--ps-amber)] shrink-0" />;
   }
-  return <Folder size={14} className="text-amber-500 shrink-0" />;
+  return <Folder size={14} className="text-[var(--ps-amber)]/85 shrink-0" />;
 }
 
 /* ── Inline Input Row (for New File / Folder) ─────────────── */
@@ -329,12 +326,12 @@ function TreeNode({
           else onSelect?.(node);
         }}
         onContextMenu={(e) => onContextMenu?.(e, node)}
-        className={`group flex items-center gap-2 cursor-pointer select-none relative transition-colors duration-75 w-full py-1 pr-3 ${
+        className={`group flex items-center gap-2 cursor-pointer select-none relative transition-colors duration-75 w-full py-1 pr-3 border-l-2 ${
           isActive
-            ? "bg-[var(--color-primary)]/15 text-[var(--color-text)] font-medium"
+            ? "bg-[var(--ps-surface-2)] border-l-[var(--ps-cobalt)] text-[var(--ps-ink)] font-medium"
             : isSelected
-            ? "bg-[var(--color-surface-raised)] text-[var(--color-text)] font-medium"
-            : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]/60"
+            ? "bg-[var(--ps-surface-2)]/70 border-l-transparent text-[var(--ps-ink)] font-medium"
+            : "border-l-transparent text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)]/40"
         }`}
         style={{
           paddingLeft: indent,
@@ -629,8 +626,8 @@ export default function Sidebar({
       }}
     >
       {/* ── Explorer Header ─────────────────────────────── */}
-      <div className="flex items-center justify-between shrink-0 h-11 px-4 border-b border-[var(--color-border)]">
-        <span className="text-[11px] font-bold tracking-wider uppercase text-[var(--color-text-secondary)] font-sans flex items-center gap-1.5">
+      <div className="flex items-center justify-between shrink-0 h-10 px-4 border-b border-[var(--ps-line)] bg-[var(--ps-surface)]">
+        <span className="text-xs font-medium text-[var(--ps-ink)] font-sans flex items-center gap-1.5">
           Explorer
         </span>
 
@@ -718,12 +715,12 @@ export default function Sidebar({
       {/* ── Current Project Header ───────────────────────── */}
       <div
         onClick={() => setSelectedNode(null)}
-        className="flex items-center gap-2 shrink-0 py-2 px-4 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] text-xs font-sans cursor-pointer hover:bg-[var(--color-surface-secondary)]/80 transition-colors"
+        className="flex items-center gap-2 shrink-0 py-2 px-4 bg-[var(--ps-inset)] border-b border-[var(--ps-line)] text-xs font-sans cursor-pointer hover:bg-[var(--ps-surface-2)]/50 transition-colors"
         title="Project Root (click to deselect)"
       >
-        <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] shrink-0" />
+        <div className="w-1.5 h-1.5 rounded-full bg-[var(--ps-emerald)] shrink-0" />
         <span
-          className="truncate font-mono text-[11px] text-[var(--color-text)] font-semibold"
+          className="truncate ps-mono text-[11px] text-[var(--ps-ink)] font-medium"
           title={project?.name || "No Project"}
         >
           {project?.name || "No Project"}
@@ -780,10 +777,10 @@ export default function Sidebar({
       </div>
 
       {/* ── Footer / Git Status ──────────────────────────── */}
-      <div className="flex items-center gap-2 shrink-0 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-secondary)] font-mono py-2 px-4 bg-[var(--color-surface)]">
-        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] inline-block shrink-0" />
-        <span className="text-[var(--color-text-secondary)]">main</span>
-        <span className="text-[var(--color-success)] ml-auto">
+      <div className="flex items-center gap-2 shrink-0 border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-secondary)] ps-mono py-2 px-4 bg-[var(--ps-surface)]">
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-emerald)] inline-block shrink-0" />
+        <span className="text-[var(--ps-ink-secondary)]">main</span>
+        <span className="text-[var(--ps-emerald)] ml-auto">
           ↑ 2 commits
         </span>
       </div>
@@ -800,7 +797,7 @@ export default function Sidebar({
         >
           <button
             type="button"
-            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-primary)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--ps-surface-2)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer border-0 bg-transparent"
             disabled={!access.can("files.write")}
             onClick={() => {
               const parentPath = contextMenu.node
@@ -821,7 +818,7 @@ export default function Sidebar({
 
           <button
             type="button"
-            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-primary)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--ps-surface-2)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer border-0 bg-transparent"
             disabled={!access.can("files.write")}
             onClick={() => {
               const parentPath = contextMenu.node
@@ -842,10 +839,10 @@ export default function Sidebar({
 
           {contextMenu.node && (
             <>
-              <div className="my-1 border-t border-[var(--color-border)]" />
+              <div className="my-1 border-t border-[var(--ps-line)]" />
               <button
                 type="button"
-                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-primary)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--ps-surface-2)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer border-0 bg-transparent"
                 disabled={!access.can("files.write")}
                 onClick={() => {
                   const node = contextMenu.node;
@@ -861,7 +858,7 @@ export default function Sidebar({
 
               <button
                 type="button"
-                className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white transition-colors cursor-pointer border-0 bg-transparent"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[var(--ps-rose)] hover:bg-[var(--ps-rose)]/12 transition-colors cursor-pointer border-0 bg-transparent"
                 disabled={!access.can("files.write")}
                 onClick={() => {
                   const node = contextMenu.node;
