@@ -1,3 +1,6 @@
+import dns from 'node:dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import projectEditorRoutes from './src/routes/projectEditor.route.js';
 let attachProjectEditorGateway;
 try {

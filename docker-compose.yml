@@ -20,6 +20,7 @@ services:
       - GIT_CONFIG_VALUE_0=*
       - VIRTUAL_DB_DOCKER_HOST=virtual_test_db
       - VIRTUAL_DB_PORT=5432
+      - NODE_OPTIONS=--dns-result-order=ipv4first
     env_file:
       - ./server/.env
     depends_on:
