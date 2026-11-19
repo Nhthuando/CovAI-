@@ -13,7 +13,6 @@ import CovaiLogo from "../components/common/CovaiLogo";
 import { deleteProjectApi } from "../services/project.service";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { useAuth } from "../hooks/useAuth";
-import Button from "../components/common/Button";
 import ThemeSelector from "../components/common/ThemeSelector";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { NotificationCenter } from "../components/NotificationCenter";
@@ -22,6 +21,7 @@ import PanelResizer from "../components/dashboard/PanelResizer";
 import AIPanel from "../components/dashboard/AIPanel";
 import ProjectsPortfolioDashboard from "../components/dashboard/portfolio/ProjectsPortfolioDashboard";
 import { motion, AnimatePresence } from "framer-motion";
+import "../components/dashboard/portfolio/portfolio.css";
 
 const DEFAULT_AI_PANEL_WIDTH = 340;
 
@@ -154,20 +154,18 @@ export default function ProjectSelectionPage() {
   );
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] font-sans transition-colors duration-150">
+    <div className="portfolio-studio h-screen w-screen flex flex-col overflow-hidden bg-[var(--ps-bg)] text-[var(--ps-ink)] font-sans transition-colors duration-150">
       {/* ── Global Top Navigation Bar (with single +Project button) ────── */}
-      <header className="h-11 sm:h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 flex items-center justify-between sticky top-0 z-40 select-none shrink-0">
+      <header className="h-12 border-b border-[var(--ps-line)] bg-[var(--ps-surface)] px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40 select-none shrink-0">
         <div className="flex items-center gap-2.5">
           <CovaiLogo size={24} />
-          <div className="flex items-center gap-1.5 font-mono">
-            <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
+          <div className="flex items-center gap-1.5 ps-mono">
+            <span className="font-bold text-xs tracking-tight text-[var(--ps-ink)]">
               CovAI
             </span>
-            <span className="text-[10px] text-[var(--color-text-muted)]">
-              /
-            </span>
-            <span className="text-xs font-semibold text-[var(--color-primary)]">
-              Projects
+            <span className="text-[11px] text-[var(--ps-ink-muted)]">/</span>
+            <span className="text-xs font-medium text-[var(--ps-ink-secondary)]">
+              Portfolio
             </span>
           </div>
         </div>
@@ -175,15 +173,14 @@ export default function ProjectSelectionPage() {
         {/* Header Right Actions */}
         <div className="flex items-center gap-2">
           {/* THE ONLY + Project Button on the page per UX rules */}
-          <Button
+          <button
             type="button"
-            variant="primary"
-            size="sm"
             onClick={() => setShowImport(true)}
-            icon={Plus}
+            className="ps-btn-contrast h-8 px-3 text-xs inline-flex items-center gap-1.5 cursor-pointer"
           >
-            Project
-          </Button>
+            <Plus size={13} strokeWidth={2.5} />
+            <span>Project</span>
+          </button>
 
           <div className="h-4 w-px bg-[var(--color-border)] mx-0.5 hidden sm:block" />
 

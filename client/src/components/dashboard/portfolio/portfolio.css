@@ -1,0 +1,138 @@
+/* ============================================================
+   COVAI PORTFOLIO STUDIO — QUIET ARCHITECTURAL PALETTE (.portfolio-studio)
+   Low-saturation Zinc / Alabaster surfaces + Harmonious Desaturated Steel/Sage tones
+   Zero neon green, harsh red, or bright orange/yellow pops.
+   ============================================================ */
+
+.portfolio-studio {
+  --ps-bg: #09090b;
+  --ps-surface: #111114;
+  --ps-surface-2: #18181c;
+  --ps-inset: #0c0c0f;
+  --ps-line: #232329;
+  --ps-line-strong: #32323b;
+
+  --ps-ink: #f4f4f5;
+  --ps-ink-secondary: #a1a1aa;
+  --ps-ink-muted: #71717a;
+
+  /* Desaturated, harmonious studio tones */
+  --ps-cobalt: #7ba3c9;       /* Muted Steel Blue (Unit / Primary accent) */
+  --ps-indigo: #8d93b8;       /* Muted Slate Indigo (API) */
+  --ps-teal: #739c99;         /* Muted Seafoam Slate (E2E) */
+  --ps-emerald: #6fa38b;      /* Soft Sage (Pass / Positive) */
+  --ps-amber: #b89b6a;        /* Muted Sand / Ochre (At Risk — never bright orange/yellow) */
+  --ps-rose: #ba7279;         /* Dusty Rose (Blocked / Fail — never neon red) */
+  --ps-neutral: #52525b;
+
+  /* Map --ud-* variables inside .portfolio-studio */
+  --ud-bg: var(--ps-bg);
+  --ud-surface: var(--ps-surface);
+  --ud-surface-2: var(--ps-surface-2);
+  --ud-border: var(--ps-line);
+  --ud-border-strong: var(--ps-line-strong);
+  --ud-text: var(--ps-ink);
+  --ud-text-muted: var(--ps-ink-secondary);
+  --ud-pass: var(--ps-emerald);
+  --ud-fail: var(--ps-rose);
+  --ud-warn: var(--ps-amber);
+  --ud-unit: var(--ps-cobalt);
+  --ud-integration: var(--ps-indigo);
+  --ud-system: var(--ps-teal);
+  --ud-neutral: var(--ps-neutral);
+
+  --color-bg: var(--ps-bg);
+  --color-surface: var(--ps-surface);
+  --color-surface-secondary: var(--ps-surface-2);
+  --color-border: var(--ps-line);
+  --color-text: var(--ps-ink);
+  --color-text-secondary: var(--ps-ink-secondary);
+  --color-text-muted: var(--ps-ink-muted);
+  --color-primary: var(--ps-cobalt);
+
+  background-color: var(--ps-bg);
+  color: var(--ps-ink);
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+[data-theme="light"] .portfolio-studio {
+  --ps-bg: #fafafa;
+  --ps-surface: #ffffff;
+  --ps-surface-2: #f4f4f5;
+  --ps-inset: #f4f4f5;
+  --ps-line: #e4e4e7;
+  --ps-line-strong: #d4d4d8;
+
+  --ps-ink: #18181b;
+  --ps-ink-secondary: #52525b;
+  --ps-ink-muted: #71717a;
+
+  /* Harmonious desaturated daylight tones */
+  --ps-cobalt: #4a769e;
+  --ps-indigo: #5e658f;
+  --ps-teal: #497874;
+  --ps-emerald: #447a63;
+  --ps-amber: #997b47;
+  --ps-rose: #a3525a;
+  --ps-neutral: #a1a1aa;
+}
+
+.portfolio-studio .ps-display {
+  font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.025em;
+}
+
+.portfolio-studio .ps-mono {
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.portfolio-studio .ps-panel {
+  background-color: var(--ps-surface);
+  border: 1px solid var(--ps-line);
+  border-radius: 10px;
+}
+
+[data-theme="light"] .portfolio-studio .ps-panel {
+  box-shadow: 0 1px 2px rgba(24, 24, 27, 0.04);
+}
+
+.portfolio-studio .ps-select {
+  height: 32px;
+  background-color: var(--ps-surface);
+  border: 1px solid var(--ps-line);
+  border-radius: 7px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ps-ink-secondary);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.portfolio-studio .ps-select:hover {
+  border-color: var(--ps-line-strong);
+  color: var(--ps-ink);
+}
+
+.portfolio-studio .ps-select:focus {
+  border-color: var(--ps-cobalt);
+  color: var(--ps-ink);
+}
+
+.portfolio-studio .ps-btn-contrast {
+  background-color: var(--ps-ink);
+  color: var(--ps-bg);
+  font-weight: 600;
+  border-radius: 7px;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.portfolio-studio .ps-btn-contrast:hover {
+  opacity: 0.88;
+}
+
+.portfolio-studio .ps-btn-contrast:active {
+  transform: scale(0.98);
+}
