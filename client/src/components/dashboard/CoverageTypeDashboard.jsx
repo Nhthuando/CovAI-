@@ -674,7 +674,7 @@ async function waitForJob(jobId, onProgress) {
     pollTimer = setInterval(async () => {
       if (isSettled) return;
       try {
-        const response = await getJobDetailApi(jobId);
+        const response = await getJobDetailApi(jobId, { summary: true });
         const job = response?.job;
         if (!job) return;
 
@@ -688,7 +688,7 @@ async function waitForJob(jobId, onProgress) {
       } catch {
         // Network hiccup; retry on next heartbeat
       }
-    }, 3000);
+    }, 10000);
   });
 }
 
@@ -1321,16 +1321,23 @@ export default function CoverageTypeDashboard({
             }
           } else if (latestSuggest.status === "SUCCESS") {
             setHasSuggestJobCompleted(true);
-            if (latestSuggest.resultJson) {
+            const cachedLocal = getSuggestions(snapshotId);
+            if (cachedLocal && Object.keys(cachedLocal).length > 0) {
+              setInlineSuggestions((prev) => ({ ...prev, ...cachedLocal }));
+            } else if (latestSuggest.resultJson) {
               try {
                 const parsed = JSON.parse(latestSuggest.resultJson);
                 hydrateSuggestionsFromResult(parsed);
               } catch (_) {}
             } else {
-              const cachedLocal = getSuggestions(snapshotId);
-              if (cachedLocal && Object.keys(cachedLocal).length > 0) {
-                setInlineSuggestions((prev) => ({ ...prev, ...cachedLocal }));
-              }
+              try {
+                const detail = await getJobDetailApi(latestSuggest.id);
+                const raw = detail?.job?.result ?? detail?.job?.resultJson;
+                const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+                if (!cancelled && parsed) {
+                  hydrateSuggestionsFromResult(parsed);
+                }
+              } catch (_) {}
             }
           }
         }

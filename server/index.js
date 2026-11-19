@@ -214,7 +214,7 @@ async function startServer() {
     await prisma.$connect();
     startInvitationDeliveryWorker();
     const recover = () => recoverQueuedProjectOperations().catch(() => console.error('[operations] Queue recovery unavailable; retrying'));
-    const recoveryTimer = setInterval(recover, 10000);
+    const recoveryTimer = setInterval(recover, 30000);
     recoveryTimer.unref();
     void recover();
     console.log("Database connected successfully.");

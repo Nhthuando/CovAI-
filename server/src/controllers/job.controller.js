@@ -59,9 +59,25 @@ export const listProjectJobs = async (req, res) => {
 
     void throttledCleanup(userId).catch(() => {});
 
+    const JOB_LIST_SELECT = {
+      id: true,
+      projectId: true,
+      snapshotId: true,
+      userId: true,
+      type: true,
+      status: true,
+      progress: true,
+      errorMessage: true,
+      startedAt: true,
+      finishedAt: true,
+      createdAt: true,
+      computeTimeMs: true,
+    };
+
     const jobs = await withDbRetry(() =>
       prisma.job.findMany({
         where: { projectId: projectId, ...(projectAccess.role !== 'OWNER' ? { type: { notIn: ['AI_EVALUATION', 'AI_EVALUATION_PREPARE'] } } : {}) },
+        select: JOB_LIST_SELECT,
         orderBy: { createdAt: "desc" },
         take: 50,
       })
@@ -89,10 +105,23 @@ export const listUserJobs = async (req, res) => {
     const jobs = await withDbRetry(() =>
       prisma.job.findMany({
         where: { userId },
-        orderBy: { createdAt: "desc" },
-        include: {
+        select: {
+          id: true,
+          projectId: true,
+          snapshotId: true,
+          userId: true,
+          type: true,
+          status: true,
+          progress: true,
+          errorMessage: true,
+          startedAt: true,
+          finishedAt: true,
+          createdAt: true,
+          computeTimeMs: true,
           project: { select: { name: true } },
         },
+        orderBy: { createdAt: "desc" },
+        take: 50,
       })
     );
     return res
@@ -110,25 +139,52 @@ export const getJobDetail = async (req, res) => {
     if (!userId)
       return res.status(401).json({ message: "Unable to retrieve user ID!" });
     const { jobId } = req.params;
+    const isSummaryOnly = req.query?.summary === "1" || req.query?.summary === "true";
+    const includeLogs = req.query?.includeLogs === "1" || req.query?.includeLogs === "true";
+
     const job = await withDbRetry(() =>
       prisma.job.findUnique({
         where: { id: jobId },
-        select: {
-          id: true,
-          type: true,
-          status: true,
-          progress: true,
-          payloadJson: true,
-          resultJson: true,
-          errorMessage: true,
-          startedAt: true,
-          finishedAt: true,
-          computeTimeMs: true,
-          userId: true,
-          projectId: true,
-          logs: true,
-          output: true,
-        },
+        select: isSummaryOnly
+          ? {
+              id: true,
+              type: true,
+              status: true,
+              progress: true,
+              errorMessage: true,
+              startedAt: true,
+              finishedAt: true,
+              computeTimeMs: true,
+              userId: true,
+              projectId: true,
+              snapshotId: true,
+              ...(includeLogs
+                ? {
+                    logs: {
+                      orderBy: { createdAt: "desc" },
+                      take: 50,
+                      select: { id: true, level: true, message: true, createdAt: true },
+                    },
+                  }
+                : {}),
+            }
+          : {
+              id: true,
+              type: true,
+              status: true,
+              progress: true,
+              payloadJson: true,
+              resultJson: true,
+              errorMessage: true,
+              startedAt: true,
+              finishedAt: true,
+              computeTimeMs: true,
+              userId: true,
+              projectId: true,
+              snapshotId: true,
+              logs: true,
+              output: true,
+            },
       })
     );
 
@@ -367,7 +423,7 @@ export const streamJobStatus = async (req, res) => {
     } catch (error) { close({type:'ACCESS_REVOKED',code:error.code || 'STREAM_FAILED'}); }
     finally { polling = false; }
   };
-  interval = setInterval(() => { void poll(); },1000);
+  interval = setInterval(() => { void poll(); },3000);
   req.on('close',() => close());
   void poll();
 };

@@ -204,13 +204,13 @@ export function RunningProcessProvider({ children, sessionUserId }) {
     const poll = async () => {
       if (isDisposed) return;
       try {
-        const response = await getJobDetailApi(jobId);
+        const response = await getJobDetailApi(jobId, { summary: true });
         if (isDisposed) return;
         const job = response?.job;
         consecutiveErrors = 0;
 
         if (!job) {
-          pollingRef.current = setTimeout(poll, 2000);
+          pollingRef.current = setTimeout(poll, 5000);
           return;
         }
 
@@ -268,14 +268,14 @@ export function RunningProcessProvider({ children, sessionUserId }) {
           }));
         }
 
-        pollingRef.current = setTimeout(poll, 2000);
+        pollingRef.current = setTimeout(poll, 5000);
       } catch (err) {
         if (isDisposed) return;
         consecutiveErrors++;
         if (consecutiveErrors <= 2) {
           console.warn("[RunningProcess] Polling retry:", err.message || err);
         }
-        const delay = consecutiveErrors > 5 ? 5000 : 2500;
+        const delay = consecutiveErrors > 5 ? 10000 : 5000;
         pollingRef.current = setTimeout(poll, delay);
       }
     };
@@ -302,17 +302,19 @@ export function RunningProcessProvider({ children, sessionUserId }) {
     const poll = async () => {
       if (isDisposed) return;
       try {
-        const response = await getJobDetailApi(jobId);
+        const response = await getJobDetailApi(jobId, { summary: true });
         if (isDisposed) return;
         const job = response?.job;
         if (!job) {
-          timer = setTimeout(poll, 2500);
+          timer = setTimeout(poll, 5000);
           return;
         }
         if (job.status === "SUCCESS") {
           let parsed = null;
           try {
-            parsed = job.result ?? (job.resultJson ? JSON.parse(job.resultJson) : null);
+            const fullDetail = await getJobDetailApi(jobId);
+            const fullJob = fullDetail?.job;
+            parsed = fullJob?.result ?? (fullJob?.resultJson ? JSON.parse(fullJob.resultJson) : null);
           } catch (_) {}
           if (snapshotId && Array.isArray(parsed?.suggestions) && parsed.suggestions.length > 0) {
             const grouped = {};
@@ -355,9 +357,9 @@ export function RunningProcessProvider({ children, sessionUserId }) {
           scheduleAutoDismiss("suggestion", 4500);
           return;
         }
-        timer = setTimeout(poll, 2500);
+        timer = setTimeout(poll, 5000);
       } catch (_) {
-        if (!isDisposed) timer = setTimeout(poll, 3500);
+        if (!isDisposed) timer = setTimeout(poll, 7000);
       }
     };
 
@@ -379,17 +381,19 @@ export function RunningProcessProvider({ children, sessionUserId }) {
     const poll = async () => {
       if (isDisposed) return;
       try {
-        const response = await getJobDetailApi(jobId);
+        const response = await getJobDetailApi(jobId, { summary: true });
         if (isDisposed) return;
         const job = response?.job;
         if (!job) {
-          timer = setTimeout(poll, 2500);
+          timer = setTimeout(poll, 5000);
           return;
         }
         if (job.status === "SUCCESS") {
           let parsed = null;
           try {
-            parsed = job.result ?? (job.resultJson ? JSON.parse(job.resultJson) : null);
+            const fullDetail = await getJobDetailApi(jobId);
+            const fullJob = fullDetail?.job;
+            parsed = fullJob?.result ?? (fullJob?.resultJson ? JSON.parse(fullJob.resultJson) : null);
           } catch (_) {}
           setProcesses((prev) => ({
             ...prev,
@@ -423,9 +427,9 @@ export function RunningProcessProvider({ children, sessionUserId }) {
           scheduleAutoDismiss("bulkApply", 4500);
           return;
         }
-        timer = setTimeout(poll, 2500);
+        timer = setTimeout(poll, 5000);
       } catch (_) {
-        if (!isDisposed) timer = setTimeout(poll, 3500);
+        if (!isDisposed) timer = setTimeout(poll, 7000);
       }
     };
 

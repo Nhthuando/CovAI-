@@ -24,8 +24,27 @@ services:
     env_file:
       - ./server/.env
     depends_on:
+      - postgres
       - redis
       - virtual_test_db
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: covai_postgres
+    environment:
+      - POSTGRES_USER=covai
+      - POSTGRES_PASSWORD=covai_password
+      - POSTGRES_DB=covai_db
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U covai -d covai_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   client:
@@ -73,3 +92,4 @@ services:
 
 volumes:
   redis_data:
+  postgres_data:
