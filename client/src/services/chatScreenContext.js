@@ -1,4 +1,4 @@
-export { chatErrorMessage } from '../../../shared/chatMessages.js';
+export { chatErrorMessage, detectChatLanguage } from '../../../shared/chatMessages.js';
 const TEST_TYPES = new Set(['unit', 'integration', 'system']);
 const LABELS = {
   explorer: 'your project code', overview: 'your project quality overview',

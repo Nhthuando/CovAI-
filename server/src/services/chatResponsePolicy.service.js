@@ -30,6 +30,16 @@ export const CHAT_USAGE_GUIDE = `For the Unit Test workspace: (1) Baseline Measu
 
 // Model-specific controls: Gemini 2.5 uses budgets; Gemini 3 uses levels.
 // https://firebase.google.com/docs/ai-logic/thinking
+export function chatLanguageDirective(message = '') {
+    const text = String(message || '').trim();
+    if (!text) return '';
+    if (/[àáảãạăằắẳẵặâầấẩẫậđèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]/i.test(text)
+        || /(?:^|\s)(?:xin chao|chao ban|cam on|tai sao|the nao|khong co|giup toi|giup minh|sua loi|giai thich|du an)(?=\s|[?!.,]|$)/i.test(text)) {
+        return 'RESPONSE LANGUAGE: The user wrote in Vietnamese. Reply naturally and entirely in Vietnamese (Tiếng Việt), keeping only code/UI identifiers in English.';
+    }
+    return 'RESPONSE LANGUAGE: Reply in the exact language of the latest USER MESSAGE, even if surrounding JSON/telemetry or earlier turns are in another language.';
+}
+
 export function chatThinkingConfig(model) {
     if (['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'].includes(model)) return { thinkingLevel: 'minimal' };
     if (model === 'gemini-3.8-flash') return { thinkingLevel: 'low' };

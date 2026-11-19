@@ -1,4 +1,4 @@
-import { chatGreeting, chatScreenLabel, normalizeChatScreenContext } from '../../services/chatScreenContext';
+import { chatGreeting, chatScreenLabel, normalizeChatScreenContext, detectChatLanguage } from '../../services/chatScreenContext';
 import { AI_MODELS } from "../../shared/aiModels.js";
 import { getSelectedAIModel } from "../../services/aiModel.service.js";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
@@ -7,7 +7,6 @@ import {
   Sparkles,
   ArrowUp,
   User,
-  Bot,
   Copy,
   Check,
   Loader2,
@@ -38,6 +37,8 @@ import {
   Search,
   AlertCircle,
 } from "lucide-react";
+import CovaiLogo from "../common/CovaiLogo";
+import "./portfolio/portfolio.css";
 
 import {
   sendAiChatMessageApi,
@@ -94,7 +95,10 @@ function getIdeFileIcon(fileName = "") {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".jsx") || lower.endsWith(".tsx")) {
     return (
-      <span className="text-cyan-400 font-bold text-xs select-none flex items-center justify-center w-4 h-4">
+      <span
+        className="font-bold text-xs select-none flex items-center justify-center w-4 h-4"
+        style={{ color: "var(--ps-cobalt)" }}
+      >
         ⚛
       </span>
     );
@@ -102,8 +106,11 @@ function getIdeFileIcon(fileName = "") {
   if (lower.endsWith(".ts")) {
     return (
       <span
-        className="text-[9px] font-bold px-1 py-0.2 rounded font-mono select-none"
-        style={{ background: "rgba(56, 189, 248, 0.2)", color: "#38bdf8" }}
+        className="text-[9px] font-bold px-1 py-0.2 rounded ps-mono select-none"
+        style={{
+          background: "color-mix(in srgb, var(--ps-cobalt) 14%, transparent)",
+          color: "var(--ps-cobalt)",
+        }}
       >
         TS
       </span>
@@ -112,14 +119,17 @@ function getIdeFileIcon(fileName = "") {
   if (lower.endsWith(".js") || lower.endsWith(".mjs")) {
     return (
       <span
-        className="text-[9px] font-bold px-1 py-0.2 rounded font-mono select-none"
-        style={{ background: "rgba(251, 191, 36, 0.2)", color: "#fbbf24" }}
+        className="text-[9px] font-bold px-1 py-0.2 rounded ps-mono select-none"
+        style={{
+          background: "color-mix(in srgb, var(--ps-amber) 14%, transparent)",
+          color: "var(--ps-amber)",
+        }}
       >
         JS
       </span>
     );
   }
-  return <TestTube2 size={13} className="text-purple-400 flex-shrink-0" />;
+  return <TestTube2 size={13} style={{ color: "var(--ps-ink-secondary)" }} className="flex-shrink-0" />;
 }
 
 /* ── Flatten File Tree Utility ──────────────────────────── */
@@ -463,24 +473,34 @@ function TestSuggestionCard({
           {current.testRunError && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-md px-3 py-2 text-xs bg-rose-500/10 text-rose-400 border border-rose-500/20"
+              className="flex items-start gap-2 rounded-md px-3 py-2 text-xs border"
+              style={{
+                background: "color-mix(in srgb, var(--ps-rose) 8%, transparent)",
+                color: "var(--ps-rose)",
+                borderColor: "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
+              }}
             >
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
-              <span className="font-mono tabular-nums break-words">{current.testRunError}</span>
+              <span className="ps-mono break-words">{current.testRunError}</span>
             </div>
           )}
           {Array.isArray(current.isolatedDefects) && current.isolatedDefects.length > 0 && (
             <div
               role="status"
-              className="rounded-md px-3 py-2 text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20 space-y-1 font-mono tabular-nums"
+              className="rounded-md px-3 py-2 text-xs border space-y-1 ps-mono"
+              style={{
+                background: "color-mix(in srgb, var(--ps-amber) 8%, transparent)",
+                color: "var(--ps-amber)",
+                borderColor: "color-mix(in srgb, var(--ps-amber) 25%, transparent)",
+              }}
             >
               <div className="font-semibold flex items-center gap-1.5">
                 <AlertCircle size={13} className="shrink-0" />
                 <span>Isolated target source defect(s):</span>
               </div>
               {current.isolatedDefects.map((defect, idx) => (
-                <div key={`${defect.symbol || "defect"}-${defect.file || ""}-${defect.line || idx}`} className="pl-5 text-[11px]">
-                  <span className="font-semibold text-amber-300">{defect.symbol || "Source defect"}</span>
+                <div key={`${defect.symbol || "defect"}-${defect.file || ""}-${defect.line || idx}`} className="pl-5 text-[11px] text-[var(--ps-ink-secondary)]">
+                  <span className="font-semibold text-[var(--ps-ink)]">{defect.symbol || "Source defect"}</span>
                   {defect.file && (
                     <span> ({defect.file}{defect.line ? `:${defect.line}` : ""})</span>
                   )}
@@ -504,15 +524,12 @@ function TestSuggestionCard({
         {!current.applied ? (
           <motion.button
             type="button"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
             disabled={current.isApplying}
             onClick={() => onApplySuggestion?.(msg.id, current)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ps-btn-contrast"
             style={{
-              background: "var(--color-primary)",
-              color: "#ffffff",
-              border: "none",
               cursor: current.isApplying ? "wait" : "pointer",
             }}
             title={`Write ${current.framework?.toUpperCase()} test cases to ${current.targetTestFile}`}
@@ -614,34 +631,32 @@ function IdeChangesWidget({
 
   return (
     <div
-      className="mt-3.5 rounded-xl overflow-hidden shadow-xl select-text"
+      className="mt-3.5 rounded-xl overflow-hidden select-text"
       style={{
-        background: "#161b22",
-        border: "1px solid rgba(255, 255, 255, 0.12)",
+        background: "var(--ps-surface)",
+        border: "1px solid var(--ps-line-strong)",
       }}
     >
-      {/* ── IDE Widget Top Header (matches media_1790509595152.png) ── */}
+      {/* ── IDE Widget Top Header ── */}
       <div
         className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none"
         style={{
-          background: "rgba(255, 255, 255, 0.03)",
-          borderBottom: expanded
-            ? "1px solid rgba(255, 255, 255, 0.08)"
-            : "none",
+          background: "var(--ps-inset)",
+          borderBottom: expanded ? "1px solid var(--ps-line)" : "none",
         }}
         onClick={() => setExpanded(!expanded)}
       >
         {/* Left: File count & additions/deletions stats */}
         <div className="flex items-center gap-2">
-          <span className="text-slate-400 text-xs flex items-center">
+          <span className="text-[var(--ps-ink-muted)] text-xs flex items-center">
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </span>
-          <span className="text-xs font-semibold text-white">
+          <span className="text-xs font-semibold text-[var(--ps-ink)]">
             {totalFiles} file{totalFiles > 1 ? "s" : ""} changed
           </span>
-          <div className="flex items-center gap-1 font-mono text-[11px] font-semibold">
-            <span style={{ color: "#4ade80" }}>+{totalAdded}</span>
-            <span style={{ color: "#f87171" }}>-{totalDeleted}</span>
+          <div className="flex items-center gap-1 ps-mono text-[11px] font-medium">
+            <span style={{ color: "var(--ps-emerald)" }}>+{totalAdded}</span>
+            <span style={{ color: "var(--ps-rose)" }}>-{totalDeleted}</span>
           </div>
         </div>
 
@@ -654,14 +669,10 @@ function IdeChangesWidget({
           <button
             type="button"
             onClick={onReviewAll}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-slate-200 hover:text-white transition-all cursor-pointer"
-            style={{
-              background: "rgba(255, 255, 255, 0.08)",
-              border: "1px solid rgba(255, 255, 255, 0.15)",
-            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface)] border border-[var(--ps-line)] hover:border-[var(--ps-line-strong)] transition-colors cursor-pointer"
             title="Open Review & Diff for comprehensive comparison"
           >
-            <FileDiff size={12} className="text-purple-400" />
+            <FileDiff size={12} style={{ color: "var(--ps-cobalt)" }} />
             <span>Review</span>
           </button>
 
@@ -671,10 +682,7 @@ function IdeChangesWidget({
               type="button"
               disabled={anyApplying}
               onClick={onApplyAll}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-white transition-all cursor-pointer"
-              style={{
-                background: "var(--color-primary, #6d5dfb)",
-              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs ps-btn-contrast cursor-pointer disabled:opacity-50"
               title="Apply all suggested test files"
             >
               {anyApplying ? (
@@ -686,11 +694,11 @@ function IdeChangesWidget({
             </button>
           ) : (
             <div
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border"
               style={{
-                background: "rgba(34, 197, 94, 0.15)",
-                color: "#4ade80",
-                border: "1px solid rgba(34, 197, 94, 0.3)",
+                background: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                color: "var(--ps-emerald)",
+                borderColor: "color-mix(in srgb, var(--ps-emerald) 28%, transparent)",
               }}
             >
               <Check size={12} />
@@ -702,7 +710,7 @@ function IdeChangesWidget({
 
       {/* ── File List (Collapsible) ── */}
       {expanded && (
-        <div className="divide-y divide-white/5">
+        <div className="divide-y divide-[var(--ps-line)]">
           {files.map((file, idx) => {
             const isApplied = file.applied;
             const isApplying = file.isApplying;
@@ -713,7 +721,7 @@ function IdeChangesWidget({
             return (
               <div
                 key={file.targetTestFile || idx}
-                className="flex items-center justify-between px-3.5 py-2 hover:bg-white/[0.02] transition-colors group text-xs"
+                className="flex items-center justify-between px-3.5 py-2 hover:bg-[var(--ps-surface-2)]/60 transition-colors group text-xs"
               >
                 {/* File info */}
                 <div
@@ -722,37 +730,30 @@ function IdeChangesWidget({
                   title={`Click to review diff of ${file.targetTestFile}`}
                 >
                   {getIdeFileIcon(fileName)}
-                  <span className="font-semibold text-[#e6edf3] truncate hover:text-purple-300 transition-colors">
+                  <span className="font-medium text-[var(--ps-ink)] truncate group-hover:text-[var(--ps-cobalt)] transition-colors">
                     {fileName}
                   </span>
                   {dirPath && (
-                    <span className="text-[11px] text-slate-500 font-mono truncate hidden sm:inline">
+                    <span className="text-[11px] text-[var(--ps-ink-muted)] ps-mono truncate hidden sm:inline">
                       {dirPath}
                     </span>
                   )}
                   <span
-                    className="text-[10px] font-mono px-1 py-0.2 rounded font-semibold ml-1 flex-shrink-0"
+                    className="text-[10px] ps-mono px-1 py-0.2 rounded font-medium ml-1 flex-shrink-0"
                     style={{
-                      background: "rgba(34, 197, 94, 0.12)",
-                      color: "#4ade80",
+                      background: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                      color: "var(--ps-emerald)",
                     }}
                   >
                     +{file.linesAdded || 0}
                   </span>
                   {file.framework && (
                     <span
-                      className="text-[9.5px] uppercase font-bold px-1.5 py-0.2 rounded flex-shrink-0"
+                      className="text-[9.5px] uppercase font-semibold ps-mono px-1.5 py-0.2 rounded flex-shrink-0 border"
                       style={{
-                        background:
-                          file.framework === "vitest"
-                            ? "rgba(245, 158, 11, 0.15)"
-                            : "rgba(124, 58, 237, 0.15)",
-                        color:
-                          file.framework === "vitest" ? "#fbbf24" : "#c084fc",
-                        border:
-                          file.framework === "vitest"
-                            ? "1px solid rgba(245, 158, 11, 0.3)"
-                            : "1px solid rgba(124, 58, 237, 0.3)",
+                        background: "var(--ps-inset)",
+                        color: file.framework === "vitest" ? "var(--ps-amber)" : "var(--ps-cobalt)",
+                        borderColor: "var(--ps-line)",
                       }}
                     >
                       {file.framework}
@@ -766,7 +767,7 @@ function IdeChangesWidget({
                   <button
                     type="button"
                     onClick={() => onReviewFile?.(file, idx)}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
                     title="View Diff details for this file"
                   >
                     <Eye size={12} />
@@ -779,11 +780,7 @@ function IdeChangesWidget({
                       type="button"
                       disabled={isApplying}
                       onClick={() => onApplyFile?.(file)}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold text-white transition-all cursor-pointer"
-                      style={{
-                        background:
-                          file.framework === "vitest" ? "#d97706" : "#7c3aed",
-                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] ps-btn-contrast cursor-pointer disabled:opacity-50"
                       title={`Apply testcases to ${file.targetTestFile}`}
                     >
                       {isApplying ? (
@@ -798,8 +795,8 @@ function IdeChangesWidget({
                       <span
                         className="flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-medium"
                         style={{
-                          background: "rgba(34, 197, 94, 0.15)",
-                          color: "#4ade80",
+                          background: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                          color: "var(--ps-emerald)",
                         }}
                       >
                         <Check size={11} />
@@ -809,7 +806,7 @@ function IdeChangesWidget({
                         type="button"
                         disabled={isUndoing}
                         onClick={() => onUndoFile?.(file)}
-                        className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
+                        className="p-1 rounded text-[var(--ps-ink-muted)] hover:text-[var(--ps-rose)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
                         title="Undo this file"
                       >
                         {isUndoing ? (
@@ -832,23 +829,20 @@ function IdeChangesWidget({
         <div
           className="flex items-center justify-between px-3.5 py-2.5 flex-wrap gap-2"
           style={{
-            background: "rgba(124, 58, 237, 0.08)",
-            borderTop: "1px solid rgba(124, 58, 237, 0.2)",
+            background: "var(--ps-inset)",
+            borderTop: "1px solid var(--ps-line)",
           }}
         >
-          <div className="text-[11px] text-purple-300 font-medium">
-            💡 Test files have been written to the project. Re-run analysis to verify coverage increase:
+          <div className="text-[11px] text-[var(--ps-ink-secondary)] font-medium">
+            Test files written. Re-run analysis to verify coverage gain:
           </div>
           <button
             type="button"
             onClick={onRunAnalysis}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ml-auto cursor-pointer"
-            style={{
-              background: "var(--color-primary, #6d5dfb)",
-            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ps-btn-contrast ml-auto cursor-pointer"
             title="Re-run Analysis Unit"
           >
-            <Play size={11} className="fill-white" />
+            <Play size={11} className="fill-current" />
             <span>Run Analysis Unit ↵</span>
           </button>
         </div>
@@ -1084,64 +1078,43 @@ function ChatMessage({
     >
       {/* Header Info */}
       <div
-        className="flex items-center gap-2 mb-1.5 px-1"
+        className="flex items-center gap-2 mb-1.5 px-0.5"
         style={{
           fontSize: 11,
           flexDirection: isUser ? "row-reverse" : "row",
         }}
       >
-        <div
-          className="flex items-center justify-center rounded-full flex-shrink-0"
-          style={{
-            width: 22,
-            height: 22,
-            background: isUser
-              ? "rgba(109, 93, 251, 0.15)"
-              : "var(--color-surface)",
-            border: isUser
-              ? "1px solid var(--color-primary)"
-              : "1px solid var(--color-border)",
-            boxShadow: "none",
-          }}
-        >
-          {isUser ? (
-            <User size={11} style={{ color: "var(--color-primary)" }} />
-          ) : (
-            <Bot size={11} style={{ color: "var(--color-primary)" }} />
-          )}
-        </div>
+        {isUser ? (
+          <div
+            className="flex items-center justify-center rounded-md flex-shrink-0 border"
+            style={{
+              width: 20,
+              height: 20,
+              background: "var(--ps-surface-2)",
+              borderColor: "var(--ps-line-strong)",
+            }}
+          >
+            <User size={11} style={{ color: "var(--ps-ink-secondary)" }} />
+          </div>
+        ) : (
+          <CovaiLogo size={18} />
+        )}
 
         <span
           style={{
             fontWeight: 600,
-            color: isUser ? "var(--color-primary)" : "var(--color-text)",
+            color: isUser ? "var(--ps-ink-secondary)" : "var(--ps-ink)",
             fontFamily: "var(--font-sans)",
-            fontSize: 12,
+            fontSize: 11.5,
           }}
         >
           {isUser ? "You" : "COV"}
         </span>
 
-        {!isUser && (
-          <span
-            style={{
-              fontSize: 9,
-              fontWeight: 700,
-              padding: "1px 5px",
-              borderRadius: 4,
-              background: "rgba(109, 93, 251, 0.15)",
-              color: "var(--color-primary)",
-              letterSpacing: "0.04em",
-            }}
-          >
-            AI
-          </span>
-        )}
-
         <span
+          className="ps-mono"
           style={{
-            color: "var(--color-text-muted)",
-            fontFamily: "var(--font-mono)",
+            color: "var(--ps-ink-muted)",
             fontSize: 10,
           }}
         >
@@ -1232,17 +1205,17 @@ function ChatMessage({
         </div>
       ) : (
         <div
-          className="relative group rounded-2xl min-w-0"
+          className="relative group min-w-0"
           style={{
-            maxWidth: isUser ? "85%" : "100%",
-            padding: isUser ? "10px 15px" : "14px 18px",
+            maxWidth: isUser ? "86%" : "100%",
+            padding: isUser ? "9px 13px" : "12px 15px",
             background: isUser
-              ? "rgba(109, 93, 251, 0.08)"
-              : "var(--color-surface)",
+              ? "var(--ps-surface-2)"
+              : "var(--ps-surface)",
             border: isUser
-              ? "1px solid var(--color-primary)"
-              : "1px solid var(--color-border)",
-            borderRadius: isUser ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
+              ? "1px solid var(--ps-line-strong)"
+              : "1px solid var(--ps-line)",
+            borderRadius: isUser ? "12px 4px 12px 12px" : "4px 12px 12px 12px",
             boxShadow: "none",
             wordBreak: "break-word",
             overflowWrap: "anywhere",
@@ -1260,7 +1233,7 @@ function ChatMessage({
                   return (
                     <div
                       key={att.id || att.name}
-                      className="relative rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-bg)]"
+                      className="relative rounded-lg overflow-hidden border border-[var(--ps-line)] bg-[var(--ps-inset)]"
                       style={{ maxHeight: 180 }}
                     >
                       <img
@@ -1275,11 +1248,11 @@ function ChatMessage({
                   return (
                     <div
                       key={att.id || att.path}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono"
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] ps-mono border"
                       style={{
-                        background: "rgba(109, 93, 251, 0.12)",
-                        border: "1px solid var(--color-primary)",
-                        color: "var(--color-primary)",
+                        background: "var(--ps-inset)",
+                        borderColor: "var(--ps-line-strong)",
+                        color: "var(--ps-cobalt)",
                       }}
                     >
                       <AtSign size={11} />
@@ -1447,42 +1420,32 @@ function TypingIndicator() {
       className="flex flex-col items-start"
     >
       <div
-        className="flex items-center gap-2 mb-1.5 px-1"
+        className="flex items-center gap-2 mb-1.5 px-0.5"
         style={{ fontSize: 11 }}
       >
-        <div
-          className="flex items-center justify-center rounded-full flex-shrink-0"
-          style={{
-            width: 22,
-            height: 22,
-            background: "var(--color-surface)",
-            border: "1px solid var(--color-border)",
-          }}
-        >
-          <Bot size={11} style={{ color: "var(--color-primary)" }} />
-        </div>
+        <CovaiLogo size={18} />
         <span
-          style={{ fontWeight: 600, color: "var(--color-text)", fontSize: 12 }}
+          style={{ fontWeight: 600, color: "var(--ps-ink)", fontSize: 11.5 }}
         >
           COV
         </span>
-        <span role="status" style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>
-          {elapsed >= 8 ? 'Still working on your response…' : 'Preparing your response…'} <span aria-hidden="true">{elapsed}s</span>
+        <span role="status" className="ps-mono" style={{ color: "var(--ps-ink-muted)", fontSize: 10.5 }}>
+          {elapsed >= 8 ? 'Analyzing…' : 'Thinking…'} <span aria-hidden="true">{elapsed}s</span>
         </span>
       </div>
 
       <div
-        className="flex items-center gap-1.5 px-4 py-3 rounded-2xl"
+        className="flex items-center gap-1.5 px-3.5 py-2.5"
         style={{
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "4px 16px 16px 16px",
+          background: "var(--ps-surface)",
+          border: "1px solid var(--ps-line)",
+          borderRadius: "4px 12px 12px 12px",
         }}
       >
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
-            animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }}
+            animate={{ scale: [1, 1.35, 1], opacity: [0.3, 0.9, 0.3] }}
             transition={{
               duration: 1.1,
               repeat: Infinity,
@@ -1490,10 +1453,10 @@ function TypingIndicator() {
               ease: "easeInOut",
             }}
             style={{
-              width: 5,
-              height: 5,
+              width: 4.5,
+              height: 4.5,
               borderRadius: "50%",
-              background: "var(--color-primary)",
+              background: "var(--ps-cobalt)",
             }}
           />
         ))}
@@ -1867,10 +1830,10 @@ if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
                       className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer w-full"
                       style={{
                         background: isSelected
-                          ? "rgba(109, 93, 251, 0.12)"
+                          ? "var(--ps-surface-2)"
                           : "transparent",
                         border: isSelected
-                          ? "1px solid var(--color-primary)"
+                          ? "1px solid var(--ps-line-strong)"
                           : "1px solid transparent",
                       }}
                     >
@@ -1878,24 +1841,24 @@ if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
                         size={14}
                         className={
                           isSelected
-                            ? "text-[var(--color-primary)] shrink-0"
-                            : "text-[var(--color-text-muted)] shrink-0"
+                            ? "text-[var(--ps-cobalt)] shrink-0"
+                            : "text-[var(--ps-ink-muted)] shrink-0"
                         }
                       />
                       <div className="flex-1 min-w-0">
                         <div
-                          className="text-xs font-mono font-medium truncate"
+                          className="text-xs ps-mono font-medium truncate"
                           style={{
                             color: isSelected
-                              ? "var(--color-primary)"
-                              : "var(--color-text)",
+                              ? "var(--ps-ink)"
+                              : "var(--ps-ink-secondary)",
                           }}
                         >
                           {file.name}
                         </div>
                         <div
-                          className="text-[10px] font-mono truncate"
-                          style={{ color: "var(--color-text-muted)" }}
+                          className="text-[10px] ps-mono truncate"
+                          style={{ color: "var(--ps-ink-muted)" }}
                         >
                           {file.path}
                         </div>
@@ -1911,40 +1874,33 @@ if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
 
       {/* ── Main Input Box ── */}
       <div
-        className="relative rounded-2xl transition-all duration-200"
+        className="relative rounded-xl transition-colors duration-150"
         style={{
-          background: "var(--color-surface)",
+          background: "var(--ps-surface)",
           border: focused
-            ? "1.5px solid var(--color-primary)"
-            : "1px solid var(--color-border)",
-          boxShadow: focused ? "0 0 0 2px rgba(124, 58, 237, 0.2)" : "none",
-          padding: "8px 12px 6px",
+            ? "1px solid var(--ps-cobalt)"
+            : "1px solid var(--ps-line-strong)",
+          padding: "10px 12px 8px",
         }}
       >
         {/* Attachments chip row */}
         {attachments.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-1.5 border-b border-[var(--color-border)]">
+          <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-2 border-b border-[var(--ps-line)]">
             {attachments.map((att) => (
               <div
                 key={att.id}
-                className="group/att flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-lg text-xs"
+                className="group/att flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-md text-xs border"
                 style={{
-                  background:
-                    att.type === "project_file"
-                      ? "rgba(109, 93, 251, 0.12)"
-                      : "var(--color-surface-secondary)",
-                  border:
-                    att.type === "project_file"
-                      ? "1px solid var(--color-primary)"
-                      : "1px solid var(--color-border)",
+                  background: "var(--ps-inset)",
+                  borderColor: "var(--ps-line-strong)",
                   color:
                     att.type === "project_file"
-                      ? "var(--color-primary)"
-                      : "var(--color-text)",
+                      ? "var(--ps-cobalt)"
+                      : "var(--ps-ink)",
                 }}
               >
                 {att.type === "image" ? (
-                  <div className="w-5 h-5 rounded overflow-hidden flex-shrink-0 border border-[var(--color-border)] bg-[var(--color-bg)]">
+                  <div className="w-5 h-5 rounded overflow-hidden flex-shrink-0 border border-[var(--ps-line)] bg-[var(--ps-bg)]">
                     <img
                       src={att.previewUrl || att.data}
                       alt="Thumbnail"
@@ -1956,18 +1912,19 @@ if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
                 ) : (
                   <FileText
                     size={12}
-                    className="flex-shrink-0 text-[var(--color-primary)]"
+                    className="flex-shrink-0"
+                    style={{ color: "var(--ps-cobalt)" }}
                   />
                 )}
 
-                <span className="font-mono text-[11px] truncate max-w-[140px]">
+                <span className="ps-mono text-[11px] truncate max-w-[140px]">
                   {att.type === "project_file" ? `@${att.path}` : att.name}
                 </span>
 
                 <button
                   type="button"
                   onClick={() => removeAttachment(att.id)}
-                  className="p-0.5 rounded hover:bg-[var(--color-danger)]/15 hover:text-[var(--color-danger)] text-[var(--color-text-muted)] cursor-pointer transition-colors"
+                  className="p-0.5 rounded hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-muted)] hover:text-[var(--ps-rose)] cursor-pointer transition-colors"
                   title="Remove"
                 >
                   <X size={12} />
@@ -1984,78 +1941,69 @@ if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder="Ask COV or type @ to reference..."
+          placeholder="Ask COV or type @ to reference a file..."
           rows={1}
           className="w-full resize-none outline-none bg-transparent custom-scrollbar"
           style={{
-            padding: "2px 4px 4px",
+            padding: "2px 2px 6px",
             fontFamily: "var(--font-sans)",
-            color: "var(--color-text)",
+            color: "var(--ps-ink)",
             fontSize: 13,
             lineHeight: "20px",
             height: "24px",
             maxHeight: 160,
-            caretColor: "var(--color-primary)",
+            caretColor: "var(--ps-cobalt)",
           }}
         />
 
-        {/* Clean Single Horizontal Row: [+] [Model Selector] on Left, [Send] on Right */}
-        <div className="flex items-center justify-between pt-1 gap-2">
-          {/* Left: [+] Add File button + Model Selector */}
+        {/* Compact Single Footer Row */}
+        <div className="flex items-center justify-between pt-1.5 gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
-            {/* '+' Add File Button */}
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+            <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center rounded-lg cursor-pointer transition-all shrink-0"
-              style={{
-                width: 26,
-                height: 26,
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text-secondary)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = "var(--color-primary)";
-                e.currentTarget.style.borderColor = "var(--color-primary)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = "var(--color-text-secondary)";
-                e.currentTarget.style.borderColor = "var(--color-border)";
-              }}
-              title="Attach file or image (+)"
+              className="h-7 px-2 rounded-md inline-flex items-center gap-1 text-[11px] font-medium border border-[var(--ps-line)] bg-[var(--ps-inset)] hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer shrink-0"
+              title="Attach file or image"
             >
-              <Plus size={15} strokeWidth={2.4} />
-            </motion.button>
+              <Plus size={13} />
+              <span>Attach</span>
+            </button>
 
-            <span className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-[var(--color-text-secondary)]"><Sparkles size={11} />COV Assistant</span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = input ? `${input}${input.endsWith(" ") ? "" : " "}@` : "@";
+                setInput(next);
+                setAtMentionQuery("");
+                setAtMentionOpen(true);
+                setAtMentionIndex(0);
+                textareaRef.current?.focus();
+              }}
+              className="h-7 px-2 rounded-md inline-flex items-center gap-1 text-[11px] ps-mono text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink-secondary)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer shrink-0"
+              title="Reference a repository file (@)"
+            >
+              <AtSign size={12} />
+              <span>File</span>
+            </button>
           </div>
 
-          {/* Right: Send Button */}
-          <motion.button
-            whileHover={canSend ? { scale: 1.08 } : {}}
-            whileTap={canSend ? { scale: 0.92 } : {}}
+          <button
+            type="button"
             onClick={handleSend}
             disabled={!canSend}
-            className="flex items-center justify-center rounded-xl cursor-pointer shrink-0"
-            style={{
-              width: 28,
-              height: 28,
-              background: canSend ? "var(--color-primary)" : "var(--color-bg)",
-              color: canSend ? "#fff" : "var(--color-text-secondary)",
-              border: canSend ? "none" : "1px solid var(--color-border)",
-              boxShadow: "none",
-              transition: "all 0.2s ease",
-            }}
+            aria-label="Send message"
+            className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-all ${
+              canSend
+                ? "ps-btn-contrast cursor-pointer"
+                : "bg-[var(--ps-inset)] text-[var(--ps-ink-muted)] border border-[var(--ps-line)] cursor-not-allowed opacity-60"
+            }`}
           >
             {isTyping ? (
-              <Loader2 size={13} className="animate-spin text-purple-300" />
+              <Loader2 size={13} className="animate-spin" style={{ color: "var(--ps-cobalt)" }} />
             ) : (
-              <ArrowUp size={14} strokeWidth={2.5} />
+              <ArrowUp size={14} strokeWidth={2.2} />
             )}
-          </motion.button>
+          </button>
         </div>
       </div>
     </div>
@@ -2107,7 +2055,6 @@ export default function AIPanel({
     const curId = typeof getSelectedAIModel === "function" ? getSelectedAIModel() : null;
     return AI_MODELS.find((m) => m.id === curId) || AI_MODELS[0];
   });
-  const [generateExpanded, setGenerateExpanded] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewFiles, setReviewFiles] = useState([]);
   const [reviewIndex, setReviewIndex] = useState(0);
@@ -2124,11 +2071,9 @@ export default function AIPanel({
 
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
-  const [activeSessionMeta, setActiveSessionMeta] = useState(null);
   const [useProjectMemory, setUseProjectMemory] = useState(true);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
-  const [contextInfo, setContextInfo] = useState(null);
   const [contextDialog, setContextDialog] = useState(null);
   const [integrationFixContext, setIntegrationFixContext] = useState(null);
   const contextRequestRef = useRef(0);
@@ -2175,8 +2120,8 @@ export default function AIPanel({
         attachments: (m.attachments || []).map((att, index) => ({ ...att, id: att.id || `${m.id}_${index}`, previewUrl: att.type === "image" ? att.data : undefined })),
         timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       }));
-      setActiveSessionId(sessionId); setActiveSessionMeta(session);
-      setUseProjectMemory(session.useMemory ?? true); setContextInfo(null);
+      setActiveSessionId(sessionId);
+      setUseProjectMemory(session.useMemory ?? true);
       setMessages(formatted.length ? formatted : INITIAL_MESSAGES); setIsHistoryOpen(false);
       if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: sessionId, useMemory: session.useMemory ?? true }));
       if (res.data.truncated) showToast({ type: "info", title: "Recent history loaded", message: "Only the latest 2,000 messages are shown. Older stored context may be summarized." });
@@ -2192,7 +2137,7 @@ export default function AIPanel({
     const requestState = contextRequestRef;
     Promise.resolve().then(async () => {
       if (cancelled) return;
-      setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null); setActiveSessionMeta(null); setContextInfo(null);
+      setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null);
       fetchSessions();
       if (projectId && projectId !== "undefined") {
         getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config?.automaticMemory ?? false); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
@@ -2214,7 +2159,6 @@ export default function AIPanel({
     if (isTyping || isRestoring || isLoadingSession || revisionRef.current) return;
     contextRequestRef.current++;
     setUseProjectMemory(typeof memory === "boolean" ? memory : useProjectMemory);
-    setActiveSessionMeta(null); setContextInfo(null);
     if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: null, useMemory: typeof memory === "boolean" ? memory : useProjectMemory }));
     setActiveSessionId(null);
     setMessages(INITIAL_MESSAGES);
@@ -2270,7 +2214,6 @@ export default function AIPanel({
         setSessions((prev) => prev.filter((s) => s.id !== sessionId));
         if (activeSessionId === sessionId) {
           setActiveSessionId(null);
-          setActiveSessionMeta(null); setContextInfo(null);
           if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: null, useMemory: useProjectMemory }));
           setMessages(INITIAL_MESSAGES);
         }
@@ -3381,7 +3324,6 @@ export default function AIPanel({
       if (res?.data?.sessionId) {
         setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, savedMessageId: res.data.userMessageId, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID(), sessionId: res.data.sessionId, screenContext: { ...userMsg.requestContext.screenContext, workspaceRevision: res.data.context?.workspaceRevision } } } : message));
         setActiveSessionId(res.data.sessionId);
-        setContextInfo(res.data.context || null);
         if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: res.data.sessionId, useMemory: useProjectMemory }));
         fetchSessions();
       }
@@ -3420,12 +3362,15 @@ export default function AIPanel({
       // A transport failure can hide a committed reply: reuse its ID to replay it.
       // A definite HTTP failure requires a new ID because failed requests are immutable.
       if (err.status) setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID() } } : message));
+      const isVi = detectChatLanguage(text) === "vi";
       setMessages(previous => [...previous, {
         id: getNextId(),
         role: "assistant",
         failed: true,
         timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
-        content: `I couldn’t respond just now.\n\n${err.message || "Please try again in a moment."}`,
+        content: isVi
+          ? `Không thể phản hồi lúc này.\n\n${err.message || "Vui lòng thử lại sau giây lát."}`
+          : `I couldn’t respond just now.\n\n${err.message || "Please try again in a moment."}`,
       }]);
       return false;
     } finally {
@@ -3477,170 +3422,127 @@ export default function AIPanel({
 
   return (
     <motion.div
-      className="flex flex-col h-full flex-shrink-0 relative overflow-hidden"
-      initial={{ opacity: 0, x: 20 }}
+      className="portfolio-studio flex flex-col h-full flex-shrink-0 relative overflow-hidden"
+      initial={{ opacity: 0, x: 16 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
+      transition={{ duration: 0.22, ease: "easeOut" }}
       style={{
-        background: "var(--color-surface)",
-        borderLeft: "1px solid var(--color-border)",
+        background: "var(--ps-bg)",
+        borderLeft: "1px solid var(--ps-line)",
         fontFamily: "var(--font-sans)",
       }}
     >
       {/* ── Top Header ──────────────────────────────────── */}
       <div
-        className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 flex-shrink-0"
+        className="flex items-center justify-between gap-2 flex-shrink-0 px-3.5"
         style={{
-          minHeight: 48,
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--color-border)",
-          background: "var(--color-surface)",
+          height: 48,
+          borderBottom: "1px solid var(--ps-line)",
+          background: "var(--ps-surface)",
         }}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <div
-            className="flex items-center justify-center rounded-lg flex-shrink-0"
-            style={{
-              width: 26,
-              height: 26,
-              background: "var(--color-primary)",
-              color: "#ffffff",
-            }}
-          >
-            <Bot size={14} style={{ color: "#ffffff" }} />
-          </div>
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: "var(--color-text)",
-                fontFamily: "var(--font-sans)",
-                letterSpacing: "-0.01em",
-              }}
-            >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <CovaiLogo size={20} />
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="ps-display text-[13px] font-semibold text-[var(--ps-ink)]">
               COV
             </span>
-            {activeSessionTitle ? (
+            {activeSessionTitle && (
               <span
                 title={activeSessionTitle}
-                className="truncate hidden sm:inline-block"
-                style={{
-                  fontSize: 10,
-                  color: "var(--color-text-secondary)",
-                  background: "var(--color-bg)",
-                  padding: "1px 6px",
-                  borderRadius: 4,
-                  border: "1px solid var(--color-border)",
-                  maxWidth: 130,
-                }}
+                className="truncate hidden sm:inline-block text-[11px] ps-mono text-[var(--ps-ink-muted)] bg-[var(--ps-inset)] px-1.5 py-0.5 rounded border border-[var(--ps-line)] max-w-[130px]"
               >
                 {activeSessionTitle}
-              </span>
-            ) : (
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  padding: "1px 5px",
-                  borderRadius: 4,
-                  background: "var(--color-surface)",
-                  color: "var(--color-primary)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
-                AI Agent
               </span>
             )}
           </div>
         </div>
 
         {/* Header Actions */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button type="button" aria-label="What AI knows" disabled={isTyping || isRestoring || isLoadingSession} onClick={() => setContextDialog("context")} className="px-2 py-1 rounded-md border border-[var(--color-border)] text-[11px] cursor-pointer disabled:opacity-50">What AI knows</button>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            type="button"
+            aria-label="What AI knows"
+            disabled={isTyping || isRestoring || isLoadingSession}
+            onClick={() => setContextDialog("context")}
+            className="h-7 px-2 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-[11px] font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer disabled:opacity-45"
+          >
+            Context
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               if (!isHistoryOpen) fetchSessions();
               setIsHistoryOpen((prev) => !prev);
             }}
             disabled={isTyping || isRestoring || isLoadingSession}
-            className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
-            style={{
-              color: isHistoryOpen
-                ? "var(--color-primary)"
-                : "var(--color-text-secondary)",
-              fontSize: 11,
-              fontWeight: 500,
-              background: isHistoryOpen
-                ? "var(--color-bg)"
-                : "var(--color-surface)",
-              border: `1px solid ${
-                isHistoryOpen ? "var(--color-primary)" : "var(--color-border)"
-              }`,
-            }}
+            className={`h-7 px-2 rounded-md border text-[11px] font-medium inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-45 ${
+              isHistoryOpen
+                ? "border-[var(--ps-line-strong)] bg-[var(--ps-surface-2)] text-[var(--ps-ink)]"
+                : "border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)]"
+            }`}
             title="View chat history"
           >
             <History size={12} />
             <span>History</span>
             {sessions.length > 0 && (
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  padding: "0 4px",
-                  borderRadius: 6,
-                  background: "var(--color-bg)",
-                  color: "var(--color-text-secondary)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
+              <span className="text-[10px] ps-mono px-1 rounded bg-[var(--ps-inset)] border border-[var(--ps-line)] text-[var(--ps-ink-muted)]">
                 {sessions.length}
               </span>
             )}
-          </motion.button>
+          </button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          <button
+            type="button"
             onClick={() => handleNewChat()}
             disabled={isTyping || isRestoring || isLoadingSession}
-            className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
-            style={{
-              color: "var(--color-text)",
-              fontSize: 11,
-              fontWeight: 500,
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-            }}
+            className="h-7 px-2 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-[11px] font-medium text-[var(--ps-ink)] inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-45"
             title="Start a new chat session"
           >
             <Plus size={12} />
             <span>New</span>
-          </motion.button>
-          {onClose && <button type="button" onClick={onClose} aria-label="Close AI Chatbot" title="Close AI Chatbot" className="p-1 rounded cursor-pointer hover:bg-[var(--color-bg)]"><X size={16} /></button>}
+          </button>
+
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close AI Chatbot"
+              title="Close AI Chatbot"
+              className="w-7 h-7 rounded-md inline-flex items-center justify-center text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
+            >
+              <X size={15} />
+            </button>
+          )}
         </div>
       </div>
 
       {/* ── Active Integration AI Fix Context Banner ── */}
       {integrationFixContext && (
-        <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] flex items-center justify-between gap-2 text-[11px]">
+        <div className="px-3.5 py-2 border-b border-[var(--ps-line)] bg-[var(--ps-inset)] flex items-center justify-between gap-2 text-[11px]">
           <div className="min-w-0 flex items-center gap-1.5">
-            <span className="px-1.5 py-0.5 rounded font-mono font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/25 shrink-0">
+            <span
+              className="px-1.5 py-0.5 rounded ps-mono font-medium shrink-0 border"
+              style={{
+                background: "color-mix(in srgb, var(--ps-amber) 10%, transparent)",
+                color: "var(--ps-amber)",
+                borderColor: "color-mix(in srgb, var(--ps-amber) 25%, transparent)",
+              }}
+            >
               AI Fix
             </span>
-            <span className="font-mono text-[var(--color-text)] truncate">
+            <span className="ps-mono text-[var(--ps-ink)] truncate">
               {integrationFixContext.endpointLabel}
             </span>
-            <span className="text-[var(--color-text-muted)] truncate">
+            <span className="text-[var(--ps-ink-muted)] truncate">
               · {integrationFixContext.testName}
             </span>
           </div>
           <button
             type="button"
             onClick={() => setIntegrationFixContext(null)}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer shrink-0"
+            className="text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] cursor-pointer shrink-0"
             title="Clear AI Fix context"
           >
             <X size={13} />
@@ -3648,19 +3550,6 @@ export default function AIPanel({
         </div>
       )}
 
-      {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
-        <span>{isRestoring || isLoadingSession ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
-        <span className="break-all">Current screen: {chatScreenLabel(screenContext)}</span>
-        <span className="w-full text-xs">{chatGreeting(screenContext)}</span>
-        {contextInfo && <details className="w-full"><summary className="cursor-pointer">Response context</summary>
-          {contextInfo.screenContext && <div>{chatScreenLabel(contextInfo.screenContext)}</div>}
-          {contextInfo.sources?.map(source => <div key={source.path} className="break-all">{source.path}{source.truncated ? ' · shortened' : ''}</div>)}
-          {contextInfo.warnings?.map(warning => <div key={warning}>{warning}</div>)}
-        </details>}
-        <label className="flex items-center gap-1" title={memoryAvailable ? 'Use saved preferences in this chat' : 'Optional: enable memory in What AI knows. AI follows your screen even when memory is off.'}><input type="checkbox" aria-label="Use memory in this chat" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Use memory</label>
-        <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>View context</button>
-      </div>
       <AnimatePresence>
         {isHistoryOpen && (
           <motion.div
@@ -3712,24 +3601,16 @@ export default function AIPanel({
               </div>
 
               <div className="flex items-center gap-1.5">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                <button
+                  type="button"
                   onClick={() => handleNewChat()}
-            disabled={isTyping || isRestoring || isLoadingSession}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 500,
-                    background: "var(--color-primary)",
-                    color: "#ffffff",
-                    border: "none",
-                  }}
+                  disabled={isTyping || isRestoring || isLoadingSession}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] ps-btn-contrast cursor-pointer disabled:opacity-45"
                   title="Start a new chat session"
                 >
                   <Plus size={12} />
                   <span>New Chat</span>
-                </motion.button>
+                </button>
                 <button
                   onClick={() => setIsHistoryOpen(false)}
                   className="p-1.5 rounded-md cursor-pointer hover:opacity-80 transition-colors"
@@ -4047,643 +3928,212 @@ export default function AIPanel({
           overflowX: "hidden",
         }}
       >
-        {/* Welcome Cards when single message */}
+        {/* Welcome View when conversation has not started */}
         {messages.length === 1 && (
-          <div className="mb-2">
-            <div
-              className="p-3.5 rounded-xl mb-3"
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <Sparkles size={14} style={{ color: "var(--color-primary)" }} />
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: "var(--color-text)",
-                  }}
-                >
-                  Quick Capabilities
-                </span>
+          <div className="my-auto py-3 space-y-5">
+            {/* Airy Typography-led Greeting (shown once) */}
+            <div className="px-1 space-y-1.5">
+              <div className="flex items-center gap-2 text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+                <CovaiLogo size={16} />
+                <span>{chatScreenLabel(screenContext)}</span>
               </div>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "var(--color-text-secondary)",
-                  margin: 0,
-                }}
-              >
-                Select an AI action below to analyze or generate tests for your
-                project.
+              <h3 className="ps-display text-[17px] font-semibold text-[var(--ps-ink)] tracking-tight leading-snug">
+                {chatGreeting(screenContext)}
+              </h3>
+              <p className="text-xs text-[var(--ps-ink-secondary)] leading-relaxed">
+                Pick a starting prompt or ask anything below. Type <span className="ps-mono text-[var(--ps-cobalt)]">@</span> to attach a source file.
               </p>
             </div>
 
-            <div className="flex flex-col gap-2">
-            {screenContext?.activity === "projects-portfolio" || screenContext?.testType === "portfolio" ? (
-              <div className="flex flex-col gap-2">
-                {/* Portfolio Prompt 1: Highest release risk */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() =>
-                    handleSend(
-                      "Which project in my portfolio has the highest release risk right now? Break down the critical blockers, failure layers, and missing test suites."
-                    )
-                  }
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(248, 81, 73, 0.15)",
-                      border: "1px solid rgba(248, 81, 73, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Shield size={13} style={{ color: "var(--ud-fail)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Highest release risk projects
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Identify release blockers and failing testing layers
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Portfolio Prompt 2: Summarize coverage gaps */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() =>
-                    handleSend(
-                      "Summarize coverage gaps across all my projects. Which projects have missing test layers (Unit, API, or System E2E)?"
-                    )
-                  }
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(210, 153, 34, 0.15)",
-                      border: "1px solid rgba(210, 153, 34, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Zap size={13} style={{ color: "var(--ud-warn)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Summarize portfolio coverage gaps
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Detect missing unit suites and uncovered API endpoints
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Portfolio Prompt 3: Recommend AI test generation */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() =>
-                    handleSend(
-                      "Recommend where to run AI test generation first across my account to maximize overall release quality."
-                    )
-                  }
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(163, 113, 247, 0.15)",
-                      border: "1px solid rgba(163, 113, 247, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Sparkles size={13} style={{ color: "var(--ud-integration)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Recommend AI test synthesis priority
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Prioritize AI generation by risk and layer deficit
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-              </div>
-            ) : screenContext?.activity === "overview" || screenContext?.testType === "overview" ? (
-              <div className="flex flex-col gap-2">
-                {/* Unified Overview Prompt 1: Diagnose release blockers */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => {
-                    const s = screenContext?.unifiedSummary;
-                    const contextDetails = s
-                      ? `\nCurrent Metrics:\n- Quality Gate: ${s.qualityGateStatus || "UNVERIFIED"}\n- Health Score: ${s.healthScore ?? "N/A"} (${s.healthGrade || "-"})\n- Executed Tests: ${s.totalExecutedTests || 0} (${s.passedTests || 0} passed, ${s.failedTests || 0} failed)\n- Coverage: Overall ${s.overallCoveragePct ?? 0}% (Unit Lines: ${s.unitLinesPct ?? 0}%, API Endpoints: ${s.apiCoveragePct ?? 0}%, E2E Flows: ${s.systemFlowPct ?? 0}%)\n- Uncovered APIs: ${s.uncoveredApis || 0}`
-                      : "";
-                    handleSend(
-                      `Analyze our Unified Quality Overview and diagnose all current release blockers and cross-layer failures across Unit, Integration API, and System E2E suites.${contextDetails}`
-                    );
-                  }}
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(248, 81, 73, 0.15)",
-                      border: "1px solid rgba(248, 81, 73, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Shield size={13} style={{ color: "var(--ud-fail)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Diagnose release blockers & failures
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Cross-layer root cause analysis across Unit, API, and E2E
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Unified Overview Prompt 2: Close API & Branch Coverage Gaps */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => {
-                    const s = screenContext?.unifiedSummary;
-                    handleSend(
-                      `We currently have ${s?.uncoveredApis ?? 0} uncovered API endpoint(s) (API coverage: ${s?.apiCoveragePct ?? 0}%) and Unit Line coverage at ${s?.unitLinesPct ?? 0}%. Recommend a prioritized test generation plan to pass our Quality Gate thresholds.`
-                    );
-                  }}
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(210, 153, 34, 0.15)",
-                      border: "1px solid rgba(210, 153, 34, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Zap size={13} style={{ color: "var(--ud-warn)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Close API & branch coverage gaps
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Target uncovered routes and low-branch-coverage files
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Unified Overview Prompt 3: Optimize Testing Pyramid */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => {
-                    const s = screenContext?.unifiedSummary;
-                    handleSend(
-                      `Evaluate our current Testing Pyramid distribution (${s?.pyramidShape || "current state"}) and suggest which Unit, Supertest API, or Playwright E2E suites we should add or refactor next.`
-                    );
-                  }}
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(163, 113, 247, 0.15)",
-                      border: "1px solid rgba(163, 113, 247, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Sparkles size={13} style={{ color: "var(--ud-integration)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Optimize Testing Pyramid balance
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Strengthen Unit foundation and API/E2E layer ratios
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-              </div>
-            ) : null}
-            <div className="order-first flex flex-col gap-2">
-              {/* 1. Find edge cases */}
-              <motion.button
-                whileHover={{ scale: 1.01, x: 2 }}
-                whileTap={{ scale: 0.99 }}
-                onClick={() =>
-                  handleSend(
-                    "Analyze the project source code and identify critical edge cases, boundary conditions, and potential runtime errors.",
-                  )
+            {/* Screen-Specific Prompt Starters */}
+            <div className="rounded-[10px] border border-[var(--ps-line)] bg-[var(--ps-surface)] divide-y divide-[var(--ps-line)] overflow-hidden">
+              {(() => {
+                const activity = screenContext?.activity;
+                const testType = screenContext?.testType;
+                if (activity === "projects-portfolio" || testType === "portfolio") {
+                  return [
+                    {
+                      icon: Shield,
+                      title: "Highest risk repositories",
+                      desc: "Surface failing suites and thin testing layers across your portfolio",
+                      prompt: "Which project in my portfolio needs attention first based on current failures and coverage gaps?",
+                    },
+                    {
+                      icon: Zap,
+                      title: "Summarize portfolio coverage gaps",
+                      desc: "Compare Unit, API, and System E2E deficits across repositories",
+                      prompt: "Summarize coverage gaps across my imported repositories across Unit, API, and System testing.",
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Prioritize next test runs",
+                      desc: "Recommend which repository and layer to strengthen next",
+                      prompt: "Recommend where to focus test generation first across my portfolio.",
+                    },
+                  ];
                 }
-                className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all"
-                style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--color-bg)";
-                  e.currentTarget.style.borderColor = "var(--color-primary)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--color-surface)";
-                  e.currentTarget.style.borderColor = "var(--color-border)";
-                }}
-              >
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 6,
-                    background: "rgba(56, 189, 248, 0.1)",
-                    border: "1px solid rgba(56, 189, 248, 0.2)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Shield size={13} style={{ color: "var(--color-primary)" }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                    }}
+                if (activity === "overview" || testType === "overview") {
+                  const s = screenContext?.unifiedSummary;
+                  return [
+                    {
+                      icon: Shield,
+                      title: "Diagnose cross-layer failures",
+                      desc: "Root-cause breakdown across Unit, API, and System E2E",
+                      prompt: s
+                        ? `Analyze our Unified Quality Overview and diagnose current failures.\n- Health Score: ${s.healthScore ?? "N/A"} (${s.healthGrade || "-"})\n- Tests: ${s.passedTests || 0}/${s.totalExecutedTests || 0} passed (${s.failedTests || 0} failed)\n- Coverage: ${s.overallCoveragePct ?? 0}% overall (Unit ${s.unitLinesPct ?? 0}%, API ${s.apiCoveragePct ?? 0}%, E2E ${s.systemFlowPct ?? 0}%)`
+                        : "Analyze our Unified Quality Overview and diagnose current failures across Unit, Integration API, and System E2E suites.",
+                    },
+                    {
+                      icon: Zap,
+                      title: "Close API & branch coverage gaps",
+                      desc: "Target uncovered routes and low-branch-coverage files",
+                      prompt: `We have ${s?.uncoveredApis ?? 0} uncovered API endpoint(s) (API coverage ${s?.apiCoveragePct ?? 0}%) and Unit Line coverage at ${s?.unitLinesPct ?? 0}%. Recommend a prioritized test plan.`,
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Balance the Testing Pyramid",
+                      desc: "Review Unit, API, and E2E ratios in the current snapshot",
+                      prompt: `Evaluate our current Testing Pyramid distribution (${s?.pyramidShape || "current state"}) and suggest what to improve next.`,
+                    },
+                  ];
+                }
+                if (testType === "system") {
+                  return [
+                    {
+                      icon: Shield,
+                      title: "Diagnose failed E2E scenarios",
+                      desc: "Inspect selector, timeout, and assertion failures on this run",
+                      prompt: "Analyze the latest System Test results and explain the root causes of any failed or flaky E2E scenarios.",
+                    },
+                    {
+                      icon: Workflow,
+                      title: "Suggest missing user journeys",
+                      desc: "Identify unverified end-to-end flows in this application",
+                      prompt: "Review this project and suggest critical end-to-end Playwright user journeys we are still missing in System Test.",
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Explain System Test summary",
+                      desc: "Break down scenario pass rate, execution mode, and stability",
+                      prompt: "Summarize what the displayed System Test numbers and current snapshot evidence tell us.",
+                    },
+                  ];
+                }
+                if (testType === "integration") {
+                  return [
+                    {
+                      icon: Layers,
+                      title: "Find uncovered API endpoints",
+                      desc: "Locate routes and HTTP handlers missing Supertest checks",
+                      prompt: "Identify uncovered API endpoints in this project and suggest integration scenarios to cover them.",
+                    },
+                    {
+                      icon: Shield,
+                      title: "Debug failed endpoint assertions",
+                      desc: "Trace route, middleware, controller, or database errors",
+                      prompt: "Diagnose any failed API integration scenarios and explain which layer is causing them.",
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Strengthen error & auth paths",
+                      desc: "Add negative status codes (400/401/403/404) for endpoints",
+                      prompt: "Suggest negative and boundary-case Supertest integration tests (auth, validation, 404/409) for our endpoints.",
+                    },
+                  ];
+                }
+                if (testType === "unit") {
+                  return [
+                    {
+                      icon: Wand2,
+                      title: "Generate tests for uncovered files",
+                      desc: "Propose unit test suites for files in this snapshot",
+                      onClick: () => {
+                        if (snapshotId && internalTree.length) {
+                          const uncoveredFiles = flattenFiles(internalTree)
+                            .map((file) => file.path)
+                            .filter((path) => /\.[cm]?[jt]sx?$/.test(path) && !isTestFile(path));
+                          handleSuggestBulk({ uncoveredFiles });
+                        } else {
+                          handleSend("Identify uncovered source files and generate unit tests for them.");
+                        }
+                      },
+                    },
+                    {
+                      icon: Zap,
+                      title: "Explain low branch coverage",
+                      desc: "Spot untested conditional paths and edge cases",
+                      prompt: "Explain the unit coverage gaps and identify which branches or functions need unit tests most.",
+                    },
+                    {
+                      icon: Shield,
+                      title: "Analyze failing unit tests",
+                      desc: "Inspect assertion errors from the latest unit run",
+                      prompt: "Analyze any failing unit tests in the latest run and explain how to fix them.",
+                    },
+                  ];
+                }
+                return [
+                  {
+                    icon: FileCode,
+                    title: screenContext?.filePath ? `Review ${getFileName(screenContext.filePath)}` : "Review active source code",
+                    desc: "Check edge cases, error handling, and boundary inputs",
+                    prompt: screenContext?.filePath
+                      ? `Review ${screenContext.filePath} for edge cases, boundary conditions, and potential bugs.`
+                      : "Analyze the project source code for critical edge cases and potential runtime bugs.",
+                  },
+                  {
+                    icon: TestTube2,
+                    title: screenContext?.filePath ? `Suggest unit tests for ${getFileName(screenContext.filePath)}` : "Suggest unit tests",
+                    desc: "Generate focused test assertions for core logic",
+                    prompt: screenContext?.filePath
+                      ? `Suggest unit tests covering normal paths and edge cases for ${screenContext.filePath}.`
+                      : "Suggest unit tests for the core functions and services in this project.",
+                  },
+                  {
+                    icon: Zap,
+                    title: "Explain workspace test status",
+                    desc: "Summarize current structure and recommended next step",
+                    prompt: "Summarize this project's structure and what tests we should run or improve next.",
+                  },
+                ];
+              })().map((item) => {
+                const IconComp = item.icon;
+                return (
+                  <button
+                    key={item.title}
+                    type="button"
+                    onClick={item.onClick || (() => handleSend(item.prompt))}
+                    className="group w-full flex items-center gap-3 px-3.5 py-2.5 text-left hover:bg-[var(--ps-surface-2)]/70 transition-colors cursor-pointer"
                   >
-                    Find edge cases
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--color-text-secondary)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    Identify boundary conditions & potential failure points
-                  </div>
-                </div>
-                <ChevronRight
-                  size={13}
-                  style={{ color: "var(--color-text-muted)" }}
-                />
-              </motion.button>
-
-              {/* 2. Generate tests (Expandable into Unit, Integration, System) */}
-              <div
-                style={{
-                  background: "var(--color-surface)",
-                  border: generateExpanded
-                    ? "1px solid var(--color-primary)"
-                    : "1px solid var(--color-border)",
-                  borderRadius: 12,
-                  overflow: "hidden",
-                  transition: "all 0.2s ease",
-                }}
-              >
-                <div
-                  onClick={() => setGenerateExpanded(!generateExpanded)}
-                  className="flex items-center gap-2.5 p-2.5 cursor-pointer select-none"
-                  style={{
-                    transition: "background 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!generateExpanded) {
-                      e.currentTarget.style.background = "var(--color-bg)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!generateExpanded) {
-                      e.currentTarget.style.background = "transparent";
-                    }
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(52, 211, 153, 0.1)",
-                      border: "1px solid rgba(52, 211, 153, 0.2)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Wand2
-                      size={13}
-                      style={{ color: "var(--color-success)" }}
+                    <IconComp
+                      size={14}
+                      className="text-[var(--ps-ink-muted)] group-hover:text-[var(--ps-cobalt)] transition-colors shrink-0"
                     />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: "var(--color-text)",
-                        }}
-                      >
-                        Generate tests
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          padding: "1px 5px",
-                          borderRadius: 4,
-                          background: "rgba(52, 211, 153, 0.15)",
-                          color: "var(--color-success)",
-                          border: "1px solid rgba(52, 211, 153, 0.3)",
-                        }}
-                      >
-                        3 Levels
-                      </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-[var(--ps-ink)]">
+                        {item.title}
+                      </div>
+                      <div className="text-[11px] text-[var(--ps-ink-muted)] truncate">
+                        {item.desc}
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "var(--color-text-secondary)",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      Select test level: Unit, Integration, or System
-                    </div>
-                  </div>
-                  <ChevronDown
-                    size={14}
-                    style={{
-                      color: "var(--color-text-secondary)",
-                      transform: generateExpanded
-                        ? "rotate(180deg)"
-                        : "rotate(0deg)",
-                      transition: "transform 0.2s ease",
-                    }}
-                  />
-                </div>
-
-                {/* 3 Sub-items */}
-                <AnimatePresence>
-                  {generateExpanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2, ease: "easeOut" }}
-                      style={{
-                        borderTop: "1px solid var(--color-border)",
-                        background: "var(--color-bg)",
-                        padding: "6px 8px 8px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                      }}
-                    >
-                      {[
-                        {
-                          id: "unit",
-                          title: "Unit Tests",
-                          desc: "Test individual functions & component methods",
-                          icon: TestTube2,
-                          color: "var(--color-primary)",
-                          prompt:
-                            "Generate comprehensive unit tests for the core functions and classes in this project.",
-                        },
-                        {
-                          id: "integration",
-                          title: "Integration Tests",
-                          desc: "Test API endpoints & module interactions",
-                          icon: Layers,
-                          color: "var(--color-info, #38bdf8)",
-                          prompt:
-                            "Generate integration tests verifying API endpoints and module interactions in this project.",
-                        },
-                        {
-                          id: "system",
-                          title: "System Tests",
-                          desc: "End-to-end user workflows & scenarios",
-                          icon: Workflow,
-                          color: "var(--color-success)",
-                          prompt:
-                            "Generate end-to-end system tests verifying user workflows and full application behavior.",
-                        },
-                      ].map((sub) => {
-                        const SubIcon = sub.icon;
-                        return (
-                          <motion.button
-                            key={sub.id}
-                            whileHover={{ scale: 1.01, x: 2 }}
-                            whileTap={{ scale: 0.99 }}
-                            onClick={() => {
-                              if (sub.id === "unit" && snapshotId && internalTree.length) {
-                                const uncoveredFiles = flattenFiles(internalTree)
-                                  .map((file) => file.path)
-                                  .filter((path) => /\.[cm]?[jt]sx?$/.test(path) && !isTestFile(path));
-                                handleSuggestBulk({ uncoveredFiles });
-                              } else {
-                                handleSend(sub.prompt);
-                              }
-                            }}
-                            className="flex items-center gap-2.5 p-2 rounded-lg text-left cursor-pointer transition-all"
-                            style={{
-                              background: "var(--color-surface)",
-                              border: "1px solid var(--color-border)",
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background =
-                                "var(--color-bg)";
-                              e.currentTarget.style.borderColor =
-                                "var(--color-primary)";
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background =
-                                "var(--color-surface)";
-                              e.currentTarget.style.borderColor =
-                                "var(--color-border)";
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: 22,
-                                height: 22,
-                                borderRadius: 5,
-                                background: "var(--color-bg)",
-                                border: "1px solid var(--color-border)",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                flexShrink: 0,
-                              }}
-                            >
-                              <SubIcon size={12} style={{ color: sub.color }} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 600,
-                                  color: "var(--color-text)",
-                                }}
-                              >
-                                {sub.title}
-                              </div>
-                              <div
-                                style={{
-                                  fontSize: 10,
-                                  color: "var(--color-text-secondary)",
-                                  whiteSpace: "nowrap",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  lineHeight: 1.3,
-                                }}
-                              >
-                                {sub.desc}
-                              </div>
-                            </div>
-                            <ChevronRight
-                              size={12}
-                              style={{ color: "var(--color-text-muted)" }}
-                            />
-                          </motion.button>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {/* 3. Explain coverage gaps */}
-              <motion.button
-                whileHover={{ scale: 1.01, x: 2 }}
-                whileTap={{ scale: 0.99 }}
-                onClick={() =>
-                  handleSend(
-                    "Explain the code coverage gaps in this project and identify which logic branches need testing most.",
-                  )
-                }
-                className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all"
-                style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--color-bg)";
-                  e.currentTarget.style.borderColor = "var(--color-primary)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--color-surface)";
-                  e.currentTarget.style.borderColor = "var(--color-border)";
-                }}
-              >
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 6,
-                    background: "rgba(251, 191, 36, 0.1)",
-                    border: "1px solid rgba(251, 191, 36, 0.2)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Zap
-                    size={13}
-                    style={{ color: "var(--color-warning, #fbbf24)" }}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                    }}
-                  >
-                    Explain coverage gaps
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--color-text-secondary)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    Analyze untested logic branches and risk areas
-                  </div>
-                </div>
-                <ChevronRight
-                  size={13}
-                  style={{ color: "var(--color-text-muted)" }}
-                />
-              </motion.button>
-            </div>
+                    <ChevronRight
+                      size={13}
+                      className="text-[var(--ps-ink-muted)] group-hover:text-[var(--ps-ink)] transition-colors shrink-0"
+                    />
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* Message Stream */}
+        {/* Message Stream (avoid duplicating initial greeting on empty chat) */}
         <AnimatePresence>
           {messages.map((msg, index) => {
+            if (messages.length === 1 && msg.isGreeting) {
+              return null;
+            }
             const canRevise = msg.role === "user" && msg.savedMessageId && access.can("chat.write");
             return (
             <ChatMessage

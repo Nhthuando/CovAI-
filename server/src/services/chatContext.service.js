@@ -100,12 +100,13 @@ export const boundHistory = (messages, summaryThroughId, maxBytes = 40000) => {
     return { recent, omitted: pending.length - recent.length, cursorValid: !summaryThroughId || cursor >= 0 };
 };
 export const assembleChatContext = async (projectId, userId, options = {}) => {
-    const project = await requireContextOwner(projectId, userId);
-    const [settings, session, snapshot] = await Promise.all([
+    const [project, settings, session, snapshot] = await Promise.all([
+        requireContextOwner(projectId, userId),
         ensureContextSettings(projectId, userId),
-        options.sessionId ? requireOwnedSession(projectId, userId, options.sessionId) : null,
+        options.sessionId ? prisma.chatSession.findFirst({ where: { id: options.sessionId, projectId } }) : null,
         resolveContextSnapshot(projectId, options.snapshotId),
     ]);
+    if (options.sessionId && !session) throw new ServiceError("Conversation not found", 404);
     const memoryEnabled = settings.automaticMemory && (options.useMemory ?? session?.useMemory ?? true);
     const { displayedMetrics, ...location } = options.screenContext || {};
     const screenKind = location.activity === "overview" ? "overview" : location.activity === "coverage" ? location.testType : null;

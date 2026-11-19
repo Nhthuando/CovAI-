@@ -17,7 +17,6 @@ import {
   ZoomOut,
   Maximize2,
   Sparkles,
-  Layers,
   Box,
   FileCode,
   FunctionSquare,
@@ -26,11 +25,9 @@ import {
   X,
   Filter,
   LayoutGrid,
-  ChevronRight,
   PanelRightClose,
   PanelRightOpen,
   ArrowDownUp,
-  Sliders,
 } from "lucide-react";
 import {
   getProjectSnapshotsApi,
@@ -39,80 +36,81 @@ import {
   getArchitectureAiSummaryApi,
 } from "../../services/project.service";
 import { getProjectJobsApi } from "../../services/job.service";
+import "./portfolio/portfolio.css";
 
-/* --- ROLE VISUAL THEMES (DUAL-THEME ACCESSIBLE) --- */
+/* --- ROLE VISUAL THEMES (QUIET DESATURATED STUDIO PALETTE) --- */
 export const ROLE_THEMES = {
   route: {
     label: "Route",
-    color: "#3b82f6",
-    bg: "rgba(59, 130, 246, 0.12)",
-    border: "#3b82f6",
+    color: "var(--ps-cobalt)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   controller: {
     label: "Controller",
-    color: "#06b6d4",
-    bg: "rgba(6, 182, 212, 0.12)",
-    border: "#06b6d4",
+    color: "var(--ps-teal)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   service: {
     label: "Service",
-    color: "#8b5cf6",
-    bg: "rgba(139, 92, 246, 0.12)",
-    border: "#8b5cf6",
+    color: "var(--ps-indigo)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   component: {
     label: "Component",
-    color: "#10b981",
-    bg: "rgba(16, 185, 129, 0.12)",
-    border: "#10b981",
+    color: "var(--ps-emerald)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   page: {
     label: "Page",
-    color: "#14b8a6",
-    bg: "rgba(20, 184, 166, 0.12)",
-    border: "#14b8a6",
+    color: "var(--ps-teal)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   hook: {
     label: "Hook",
-    color: "#6366f1",
-    bg: "rgba(99, 102, 241, 0.12)",
-    border: "#6366f1",
+    color: "var(--ps-cobalt)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   model: {
     label: "Model",
-    color: "#ec4899",
-    bg: "rgba(236, 72, 153, 0.12)",
-    border: "#ec4899",
+    color: "var(--ps-indigo)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   validator: {
     label: "Validator",
-    color: "#f59e0b",
-    bg: "rgba(245, 158, 11, 0.12)",
-    border: "#f59e0b",
+    color: "var(--ps-amber)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   utility: {
     label: "Utility",
-    color: "#64748b",
-    bg: "rgba(100, 116, 139, 0.12)",
-    border: "#64748b",
+    color: "var(--ps-ink-muted)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line)",
   },
   config: {
     label: "Config",
-    color: "#f43f5e",
-    bg: "rgba(244, 63, 94, 0.12)",
-    border: "#f43f5e",
+    color: "var(--ps-ink-muted)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line)",
   },
   test: {
     label: "Test",
-    color: "#f97316",
-    bg: "rgba(249, 115, 22, 0.12)",
-    border: "#f97316",
+    color: "var(--ps-amber)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line-strong)",
   },
   unknown: {
     label: "Other",
-    color: "#64748b",
-    bg: "rgba(100, 116, 139, 0.12)",
-    border: "#64748b",
+    color: "var(--ps-ink-muted)",
+    bg: "var(--ps-inset)",
+    border: "var(--ps-line)",
   },
 };
 
@@ -668,84 +666,86 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   }
 
   return (
-    <section className="flex flex-col h-full w-full overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] font-sans select-none">
+    <section className="portfolio-studio flex flex-col h-full w-full overflow-hidden bg-[var(--ps-bg)] text-[var(--ps-ink)] font-sans select-none">
       {/* --- TOP HEADER & CONTROLS --- */}
-      <header className="shrink-0 px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] font-mono">
-            <Network size={14} className="text-[var(--color-primary)]" />
+      <header className="shrink-0 h-12 px-4 border-b border-[var(--ps-line)] bg-[var(--ps-surface)] flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-xs text-[var(--ps-ink-muted)] ps-mono min-w-0">
+            <Network size={14} style={{ color: "var(--ps-cobalt)" }} className="shrink-0" />
             <span>Architecture</span>
-            <span>/</span>
-            <span className="text-[var(--color-text)] font-medium">
+            <span className="text-[var(--ps-line-strong)]">/</span>
+            <span className="text-[var(--ps-ink)] font-medium truncate">
               Network Graph
             </span>
           </div>
-          {status && (
-            <span
-              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-sm)] text-[11px] font-mono border font-medium ${
-                status === "SUCCESS"
-                  ? "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/20"
-                  : status === "RUNNING"
-                    ? "bg-[var(--color-warning)]/10 text-[var(--color-warning)] border-[var(--color-warning)]/20 animate-pulse"
-                    : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-              }`}
-            >
-              <CircleDot size={10} />
-              {STATUS_COPY[status] || status}
-            </span>
-          )}
-          {status && (
+
+          {status && ["QUEUED", "RUNNING"].includes(status) ? (
             <div
-              className="flex items-center gap-2 pl-2.5 border-l border-[var(--color-border)]"
+              className="flex items-center gap-2 pl-2.5 border-l border-[var(--ps-line)]"
               title={`Analysis Progress: ${analysisProgress}%`}
             >
-              <div className="w-20 sm:w-28 h-1.5 rounded-full bg-[var(--color-surface-secondary)] border border-[var(--color-border)] overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    status === "SUCCESS"
-                      ? "bg-[var(--color-success)]"
-                      : status === "RUNNING"
-                        ? "bg-[var(--color-warning)] animate-pulse"
-                        : "bg-[var(--color-primary)]"
-                  }`}
-                  style={{ width: `${analysisProgress}%` }}
-                />
-              </div>
-              <span className="text-[11px] font-mono text-[var(--color-text-muted)] font-medium select-none">
-                {analysisProgress}%
+              <span
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] ps-mono border"
+                style={{
+                  backgroundColor: "color-mix(in srgb, var(--ps-amber) 10%, transparent)",
+                  borderColor: "color-mix(in srgb, var(--ps-amber) 25%, transparent)",
+                  color: "var(--ps-amber)",
+                }}
+              >
+                <CircleDot size={10} className="animate-pulse" />
+                <span>{STATUS_COPY[status] || status}</span>
+                <span>{analysisProgress}%</span>
               </span>
             </div>
-          )}
+          ) : status ? (
+            <span
+              className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] ps-mono border border-[var(--ps-line)] bg-[var(--ps-inset)] text-[var(--ps-ink-secondary)]"
+              title={`Status: ${STATUS_COPY[status] || status}`}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{
+                  backgroundColor:
+                    status === "SUCCESS"
+                      ? "var(--ps-emerald)"
+                      : status === "FAILED"
+                        ? "var(--ps-rose)"
+                        : "var(--ps-ink-muted)",
+                }}
+              />
+              <span>{STATUS_COPY[status] || status}</span>
+            </span>
+          ) : null}
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Dual View Mode Selector */}
-          <div className="flex items-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-0.5">
+          <div className="flex items-center rounded-md border border-[var(--ps-line)] bg-[var(--ps-inset)] p-0.5">
             <button
               type="button"
               onClick={() => setViewMode("overview")}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-[calc(var(--radius-md)-2px)] transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-[5px] transition-colors cursor-pointer ${
                 viewMode === "overview"
-                  ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-xs"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                  ? "bg-[var(--ps-surface)] text-[var(--ps-ink)] border border-[var(--ps-line-strong)]"
+                  : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] border border-transparent"
               }`}
               title="View entire project network architecture"
             >
-              <LayoutGrid size={13} />
+              <LayoutGrid size={12} />
               <span>System Overview</span>
             </button>
             <button
               type="button"
               onClick={() => setViewMode("module")}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-[calc(var(--radius-md)-2px)] transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-[5px] transition-colors cursor-pointer ${
                 viewMode === "module"
-                  ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-xs"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                  ? "bg-[var(--ps-surface)] text-[var(--ps-ink)] border border-[var(--ps-line-strong)]"
+                  : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] border border-transparent"
               }`}
               title="Focus on specific domain modules"
             >
-              <Box size={13} />
+              <Box size={12} />
               <span>Module View</span>
             </button>
           </div>
@@ -754,7 +754,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
           <select
             value={snapshotId}
             onChange={(e) => setSnapshotId(e.target.value)}
-            className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1 text-xs font-mono outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-primary)] font-medium"
+            className="ps-select !h-7"
             title="Select Git commit snapshot"
           >
             {snapshots.map((s) => (
@@ -768,7 +768,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
             type="button"
             onClick={loadAnalysis}
             disabled={loading}
-            className="p-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer disabled:opacity-50"
+            className="w-7 h-7 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] inline-flex items-center justify-center cursor-pointer disabled:opacity-45 transition-colors"
             title="Refresh Data"
             aria-label="Refresh Data"
           >
@@ -781,7 +781,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
             disabled={
               loading || !snapshotId || ["QUEUED", "RUNNING"].includes(status)
             }
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+            className="h-7 px-3 rounded-md ps-btn-contrast text-xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
           >
             <Play size={11} fill="currentColor" />
             <span>{analysis ? "Re-analyze" : "Run Analysis"}</span>
@@ -792,10 +792,10 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
             <button
               type="button"
               onClick={() => setIsDrawerOpen((prev) => !prev)}
-              className={`p-1.5 rounded-[var(--radius-md)] border transition-colors cursor-pointer ${
+              className={`w-7 h-7 rounded-md border inline-flex items-center justify-center transition-colors cursor-pointer ${
                 isDrawerOpen
-                  ? "border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                  ? "border-[var(--ps-line-strong)] bg-[var(--ps-surface-2)] text-[var(--ps-ink)]"
+                  : "border-[var(--ps-line)] bg-[var(--ps-surface)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)]"
               }`}
               title={isDrawerOpen ? "Collapse Inspector" : "Expand Inspector"}
               aria-label={
@@ -814,24 +814,24 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
 
       {/* --- SUB-BAR: DOMAIN PILLS & ROLE FILTERS --- */}
       {analysis && (
-        <div className="shrink-0 px-4 py-2 bg-[var(--color-surface-secondary)]/50 border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="shrink-0 px-4 py-2 bg-[var(--ps-inset)] border-b border-[var(--ps-line)] flex flex-wrap items-center justify-between gap-3 text-xs">
           {/* Left: Domain Pills (in Module view) or Stats Summary */}
           {viewMode === "module" ? (
             <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-0.5">
-              <span className="text-[var(--color-text-muted)] font-medium flex items-center gap-1 pr-1 text-xs">
+              <span className="text-[var(--ps-ink-muted)] font-medium flex items-center gap-1 pr-1 text-xs">
                 <Box size={12} />
                 Module:
               </span>
               <button
                 type="button"
                 onClick={() => setSelectedDomain("All")}
-                className={`px-2.5 py-0.5 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer border ${
+                className={`px-2.5 py-0.5 rounded-md text-xs font-medium transition-colors cursor-pointer border ${
                   selectedDomain === "All"
-                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
-                    : "bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-primary)] border-[var(--color-border)]"
+                    ? "bg-[var(--ps-ink)] text-[var(--ps-bg)] border-transparent"
+                    : "bg-[var(--ps-surface)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] border-[var(--ps-line)]"
                 }`}
               >
-                All Modules ({allNodes.length})
+                All ({allNodes.length})
               </button>
               {availableDomains.map((dom) => {
                 const count = allNodes.filter((n) => n.domain === dom).length;
@@ -841,18 +841,16 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                     type="button"
                     key={dom}
                     onClick={() => setSelectedDomain(dom)}
-                    className={`px-2.5 py-0.5 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 border ${
+                    className={`px-2.5 py-0.5 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 border ${
                       isSelected
-                        ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
-                        : "bg-[var(--color-surface)] text-[var(--color-text)] hover:border-[var(--color-primary)] border-[var(--color-border)]"
+                        ? "bg-[var(--ps-ink)] text-[var(--ps-bg)] border-transparent"
+                        : "bg-[var(--ps-surface)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] border-[var(--ps-line)]"
                     }`}
                   >
                     <span>{dom}</span>
                     <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-medium ${
-                        isSelected
-                          ? "bg-white/20 text-white"
-                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"
+                      className={`text-[10px] ps-mono ${
+                        isSelected ? "opacity-75" : "text-[var(--ps-ink-muted)]"
                       }`}
                     >
                       {count}
@@ -862,28 +860,28 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
               })}
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
-              <span className="font-semibold text-[var(--color-text)]">
+            <div className="flex items-center gap-2 text-xs ps-mono text-[var(--ps-ink-muted)]">
+              <span className="font-semibold text-[var(--ps-ink)]">
                 {visibleNodes.length}
               </span>
               <span>files</span>
-              <span className="text-[var(--color-text-muted)]">·</span>
-              <span className="font-semibold text-[var(--color-text)]">
+              <span>·</span>
+              <span className="font-semibold text-[var(--ps-ink)]">
                 {visibleEdges.length}
               </span>
               <span>dependencies</span>
-              <span className="text-[var(--color-text-muted)]">·</span>
-              <span className="font-semibold text-[var(--color-text)]">
+              <span>·</span>
+              <span className="font-semibold text-[var(--ps-ink)]">
                 {totalFunctionsCount}
               </span>
               <span>functions</span>
             </div>
           )}
 
-          {/* Right: Multi-select Role Chips */}
+          {/* Right: Calm Monochrome Role Chips */}
           <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-0.5">
-            <span className="text-[var(--color-text-muted)] font-medium flex items-center gap-1 pr-1 text-xs">
-              <Filter size={12} />
+            <span className="text-[var(--ps-ink-muted)] font-medium flex items-center gap-1 pr-1 text-[11px]">
+              <Filter size={11} />
               Roles:
             </span>
             {availableRoles.map(([role, count]) => {
@@ -894,15 +892,11 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                   type="button"
                   key={role}
                   onClick={() => toggleRole(role)}
-                  className={`px-2 py-0.5 rounded-[var(--radius-sm)] text-[11px] font-mono font-medium transition-all cursor-pointer flex items-center gap-1.5 border ${
+                  className={`px-2 py-0.5 rounded-md text-[11px] ps-mono transition-colors cursor-pointer flex items-center gap-1.5 border ${
                     isActive
-                      ? "shadow-2xs text-[var(--color-text)]"
-                      : "border-transparent bg-[var(--color-surface)]/60 text-[var(--color-text-muted)] opacity-60 hover:opacity-100"
+                      ? "bg-[var(--ps-surface)] border-[var(--ps-line-strong)] text-[var(--ps-ink)]"
+                      : "bg-transparent border-transparent text-[var(--ps-ink-muted)] opacity-55 hover:opacity-90"
                   }`}
-                  style={{
-                    borderColor: isActive ? theme.color : "transparent",
-                    backgroundColor: isActive ? theme.bg : undefined,
-                  }}
                   title={`Toggle role ${theme.label}`}
                 >
                   <span
@@ -910,31 +904,23 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                     style={{ backgroundColor: theme.color }}
                   />
                   <span>{theme.label}</span>
-                  <span className="text-[10px] opacity-75">({count})</span>
+                  <span className="text-[10px] text-[var(--ps-ink-muted)]">{count}</span>
                 </button>
               );
             })}
-            <div className="w-[1px] h-3.5 bg-[var(--color-border)] mx-0.5 shrink-0" />
+            <div className="w-[1px] h-3.5 bg-[var(--ps-line)] mx-0.5 shrink-0" />
             <button
               type="button"
               onClick={selectAllRoles}
-              className={`px-2.5 py-0.5 rounded-[var(--radius-sm)] text-[11px] font-mono font-medium transition-all cursor-pointer flex items-center gap-1.5 border shrink-0 ${
+              className={`px-2 py-0.5 rounded-md text-[11px] ps-mono transition-colors cursor-pointer flex items-center gap-1 border shrink-0 ${
                 selectedRoles.size === availableRoles.length
-                  ? "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)]/40"
-                  : "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-2xs hover:bg-[var(--color-primary-hover)] font-semibold"
+                  ? "bg-[var(--ps-surface)] border-[var(--ps-line)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)]"
+                  : "ps-btn-contrast border-transparent"
               }`}
               title="Show all roles"
             >
               <span>All</span>
-              <span
-                className={`text-[10px] font-mono ${
-                  selectedRoles.size === availableRoles.length
-                    ? "text-[var(--color-text-muted)]"
-                    : "text-white/80"
-                }`}
-              >
-                ({allNodes.length})
-              </span>
+              <span className="text-[10px] opacity-75">({allNodes.length})</span>
             </button>
           </div>
         </div>
@@ -995,22 +981,21 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
 
       {/* --- EMPTY STATE --- */}
       {!analysis && !loading && !["QUEUED", "RUNNING"].includes(status) && (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[var(--color-bg)]">
-          <div className="w-12 h-12 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-primary)] mb-3">
-            <Network size={22} />
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[var(--ps-bg)]">
+          <div className="w-11 h-11 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-cobalt)] mb-3">
+            <Network size={20} />
           </div>
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
-            Architecture map not available for this snapshot
+          <h2 className="ps-display text-sm font-semibold text-[var(--ps-ink)]">
+            Architecture map unavailable
           </h2>
-          <p className="mt-1 text-xs text-[var(--color-text-secondary)] max-w-sm">
-            Run architecture analysis to analyze file dependencies and generate
-            the interactive network.
+          <p className="mt-1 text-xs text-[var(--ps-ink-secondary)] max-w-sm">
+            Run architecture analysis to inspect repository dependencies and module interactions.
           </p>
           <button
             type="button"
             onClick={startAnalysis}
             disabled={!snapshotId || loading}
-            className="mt-4 flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-medium shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            className="mt-4 flex items-center gap-1.5 px-3.5 py-1.5 rounded-md ps-btn-contrast text-xs cursor-pointer disabled:opacity-45"
           >
             <Play size={11} fill="currentColor" />
             <span>Run Analysis</span>
@@ -1219,22 +1204,22 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                       transition:
                         "transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease",
                     }}
-                    className={`rounded-[var(--radius-md)] border p-2.5 flex flex-col justify-between cursor-pointer select-none bg-[var(--color-surface)] ${
+                    className={`rounded-lg border p-2.5 flex flex-col justify-between cursor-pointer select-none bg-[var(--ps-surface)] ${
                       isSelected
-                        ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/25 shadow-xs"
+                        ? "border-[var(--ps-cobalt)] ring-1 ring-[var(--ps-cobalt)]/35 shadow-sm"
                         : isHovered
-                          ? "border-[var(--color-primary)] shadow-2xs"
-                          : "border-[var(--color-border)] hover:border-[var(--color-primary)]/50"
+                          ? "border-[var(--ps-line-strong)]"
+                          : "border-[var(--ps-line)] hover:border-[var(--ps-line-strong)]"
                     }`}
                   >
-                    {/* Top Row: Sleek Role Badge & Domain Tag */}
+                    {/* Top Row: Quiet Role Dot Badge & Domain Tag */}
                     <div className="flex items-center justify-between gap-1.5 leading-none">
                       <span
-                        className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-medium truncate"
+                        className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded border text-[10px] ps-mono font-medium truncate"
                         style={{
-                          color: theme.color,
+                          color: "var(--ps-ink-secondary)",
                           backgroundColor: theme.bg,
-                          border: `1px solid ${theme.color}33`,
+                          borderColor: theme.border,
                         }}
                         title={`Role: ${theme.label}`}
                       >
@@ -1246,7 +1231,8 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                       </span>
                       {isSelected && isAiLoading ? (
                         <span
-                          className="flex items-center gap-1 text-[10px] font-mono text-[var(--color-primary)] font-medium"
+                          className="flex items-center gap-1 text-[10px] ps-mono font-medium"
+                          style={{ color: "var(--ps-cobalt)" }}
                           title="Analyzing file architecture..."
                         >
                           <RefreshCw size={10} className="animate-spin" />
@@ -1254,7 +1240,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                         </span>
                       ) : node.domain ? (
                         <span
-                          className="text-[10px] font-mono text-[var(--color-text-muted)] truncate max-w-[95px]"
+                          className="text-[10px] ps-mono text-[var(--ps-ink-muted)] truncate max-w-[95px]"
                           title={`Domain: ${node.domain}`}
                         >
                           {node.domain}
@@ -1262,23 +1248,23 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                       ) : null}
                     </div>
 
-                    {/* Middle: File Name (Clean, Unclipped Monospace) */}
+                    {/* Middle: File Name */}
                     <div
-                      className="font-mono text-xs font-semibold text-[var(--color-text)] truncate leading-normal py-0.5"
+                      className="ps-mono text-xs font-semibold text-[var(--ps-ink)] truncate leading-normal py-0.5"
                       title={node.relativePath}
                     >
                       {fileName}
                     </div>
 
                     {/* Bottom: LOC & Functions Stats */}
-                    <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)] pt-1 border-t border-[var(--color-border)] leading-none">
+                    <div className="flex items-center justify-between text-[10px] ps-mono text-[var(--ps-ink-muted)] pt-1.5 border-t border-[var(--ps-line)] leading-none">
                       <span
                         className="flex items-center gap-1"
                         title={`${node.lineCount || 0} Lines of code`}
                       >
                         <FileCode
                           size={11}
-                          className="shrink-0 text-[var(--color-text-muted)]"
+                          className="shrink-0 text-[var(--ps-ink-muted)]"
                         />
                         <span>{node.lineCount || 0}L</span>
                       </span>
@@ -1288,7 +1274,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                       >
                         <FunctionSquare
                           size={11}
-                          className="shrink-0 text-[var(--color-text-muted)]"
+                          className="shrink-0 text-[var(--ps-ink-muted)]"
                         />
                         <span>{node.functions?.length || 0} fn</span>
                       </span>
@@ -1299,11 +1285,11 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
             </div>
 
             {/* FLOATING CANVAS CONTROLS TOOLBAR */}
-            <div className="absolute bottom-5 left-5 flex items-center gap-1 p-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-md z-30">
+            <div className="absolute bottom-5 left-5 flex items-center gap-1 p-1 bg-[var(--ps-surface)] border border-[var(--ps-line-strong)] rounded-lg shadow-lg z-30">
               <button
                 type="button"
                 onClick={() => setZoom((prev) => Math.min(2.5, prev * 1.15))}
-                className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] transition-colors cursor-pointer"
+                className="p-1.5 text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] rounded-md transition-colors cursor-pointer"
                 title="Zoom In (+)"
                 aria-label="Zoom In"
               >
@@ -1312,7 +1298,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
               <button
                 type="button"
                 onClick={() => setZoom((prev) => Math.max(0.25, prev * 0.85))}
-                className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] transition-colors cursor-pointer"
+                className="p-1.5 text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] rounded-md transition-colors cursor-pointer"
                 title="Zoom Out (-)"
                 aria-label="Zoom Out"
               >
@@ -1321,7 +1307,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
               <button
                 type="button"
                 onClick={handleResetView}
-                className="px-2 py-1 text-xs font-mono font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] cursor-pointer"
+                className="px-2 py-1 text-xs ps-mono font-medium text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] rounded-md cursor-pointer"
                 title="Reset View (100%)"
                 aria-label="Reset View"
               >
@@ -1330,14 +1316,14 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
               <button
                 type="button"
                 onClick={handleFitView}
-                className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] transition-colors cursor-pointer"
+                className="p-1.5 text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] rounded-md transition-colors cursor-pointer"
                 title="Fit to Screen"
                 aria-label="Fit to Screen"
               >
                 <Maximize2 size={14} />
               </button>
 
-              <div className="w-[1px] h-4 bg-[var(--color-border)] mx-1" />
+              <div className="w-[1px] h-4 bg-[var(--ps-line)] mx-1" />
 
               {/* Orientation toggle */}
               <button
@@ -1345,7 +1331,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                 onClick={() =>
                   setOrientation((prev) => (prev === "LR" ? "TB" : "LR"))
                 }
-                className="px-2 py-1 text-xs font-mono font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] cursor-pointer flex items-center gap-1"
+                className="px-2 py-1 text-xs ps-mono font-medium text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] rounded-md cursor-pointer flex items-center gap-1"
                 title="Toggle Graph Layout (Horizontal / Vertical)"
                 aria-label="Toggle Graph Layout"
               >
@@ -1353,16 +1339,16 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                 <span>{orientation === "LR" ? "Horizontal" : "Vertical"}</span>
               </button>
 
-              <div className="w-[1px] h-4 bg-[var(--color-border)] mx-1" />
+              <div className="w-[1px] h-4 bg-[var(--ps-line)] mx-1" />
 
               {/* Card Size Scale Toggle */}
               <button
                 type="button"
                 onClick={() => setCardScale((prev) => (prev === 1 ? 1.15 : 1))}
-                className={`px-2 py-1 text-xs font-mono font-medium rounded-[var(--radius-sm)] cursor-pointer transition-colors ${
+                className={`px-2 py-1 text-xs ps-mono font-medium rounded-md cursor-pointer transition-colors ${
                   cardScale > 1
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                    ? "ps-btn-contrast"
+                    : "text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)]"
                 }`}
                 title="Toggle Card Display Size (Normal / Large)"
                 aria-label="Toggle Card Display Size"
@@ -1381,36 +1367,31 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                 exit={{ width: 0, opacity: 0 }}
                 transition={{ duration: 0.2, ease: "easeOut" }}
                 style={{ width: `${drawerWidth}px` }}
-                className="h-full shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col z-40 shadow-lg relative"
+                className="h-full shrink-0 border-l border-[var(--ps-line)] bg-[var(--ps-surface)] flex flex-col z-40 shadow-xl relative"
               >
                 {/* Drag Resize Handle on left border of drawer */}
                 <div
                   onMouseDown={handleDrawerResizeStart}
                   className={`absolute -left-1.5 top-0 bottom-0 w-3 cursor-col-resize z-50 transition-colors ${
                     isResizingDrawer
-                      ? "bg-[var(--color-primary)]"
-                      : "hover:bg-[var(--color-primary)]/40"
+                      ? "bg-[var(--ps-cobalt)]"
+                      : "hover:bg-[var(--ps-cobalt)]/40"
                   }`}
                   title="Drag to resize Inspector drawer"
                 />
 
                 {/* Drawer Header */}
-                <div className="p-3.5 border-b border-[var(--color-border)] flex items-start justify-between gap-3 bg-[var(--color-surface-secondary)]/30">
+                <div className="p-3.5 border-b border-[var(--ps-line)] flex items-start justify-between gap-3 bg-[var(--ps-inset)]">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 mb-1">
+                    <div className="flex items-center gap-1.5 mb-1.5">
                       <span
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-medium"
+                        className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded border text-[10px] ps-mono font-medium"
                         style={{
                           backgroundColor:
-                            ROLE_THEMES[selectedNode.role]?.bg ||
-                            "rgba(100,116,139,0.12)",
-                          color:
-                            ROLE_THEMES[selectedNode.role]?.color ||
-                            "var(--color-text)",
-                          border: `1px solid ${
-                            ROLE_THEMES[selectedNode.role]?.color ||
-                            "var(--color-border)"
-                          }33`,
+                            ROLE_THEMES[selectedNode.role]?.bg || "var(--ps-surface)",
+                          color: "var(--ps-ink-secondary)",
+                          borderColor:
+                            ROLE_THEMES[selectedNode.role]?.border || "var(--ps-line)",
                         }}
                       >
                         <span
@@ -1418,20 +1399,20 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                           style={{
                             backgroundColor:
                               ROLE_THEMES[selectedNode.role]?.color ||
-                              "#64748b",
+                              "var(--ps-ink-muted)",
                           }}
                         />
                         {ROLE_THEMES[selectedNode.role]?.label ||
                           selectedNode.role}
                       </span>
                       {selectedNode.domain && (
-                        <span className="px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono text-[var(--color-text-secondary)] bg-[var(--color-surface)] border border-[var(--color-border)]">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] ps-mono text-[var(--ps-ink-muted)] bg-[var(--ps-surface)] border border-[var(--ps-line)]">
                           {selectedNode.domain}
                         </span>
                       )}
                     </div>
                     <h2
-                      className="text-sm font-semibold font-mono text-[var(--color-text)] truncate"
+                      className="ps-mono text-sm font-semibold text-[var(--ps-ink)] truncate"
                       title={selectedNode.relativePath}
                     >
                       {(selectedNode.relativePath || "")
@@ -1439,22 +1420,22 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                         .split("/")
                         .pop()}
                     </h2>
-                    <p className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5 truncate">
+                    <p className="text-[11px] ps-mono text-[var(--ps-ink-muted)] mt-0.5 truncate">
                       {selectedNode.relativePath}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
                     {isAiLoading && (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono text-[var(--color-primary)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20 animate-pulse">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] ps-mono text-[var(--ps-cobalt)] bg-[var(--ps-surface)] border border-[var(--ps-line)]">
                         <RefreshCw size={10} className="animate-spin" />
-                        <span>AI Analyzing</span>
+                        <span>AI</span>
                       </span>
                     )}
                     <button
                       type="button"
                       onClick={() => setIsDrawerOpen(false)}
-                      className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] cursor-pointer"
+                      className="p-1 rounded text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] cursor-pointer transition-colors"
                       title="Close Inspector"
                       aria-label="Close Inspector"
                     >
@@ -1464,36 +1445,42 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                 </div>
 
                 {/* Metrics Stats Grid */}
-                <div className="grid grid-cols-4 p-3 gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/20 text-center font-mono">
-                  <div className="p-2 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-                    <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+                <div className="grid grid-cols-4 p-3 gap-2 border-b border-[var(--ps-line)] bg-[var(--ps-surface)] text-center ps-mono">
+                  <div className="p-2 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
+                    <div className="text-[9.5px] font-medium text-[var(--ps-ink-muted)] uppercase tracking-wider">
                       Lines
                     </div>
-                    <div className="text-sm font-semibold text-[var(--color-text)] mt-0.5">
+                    <div className="text-sm font-semibold text-[var(--ps-ink)] mt-0.5">
                       {selectedNode.lineCount || 0}
                     </div>
                   </div>
-                  <div className="p-2 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-                    <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+                  <div className="p-2 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
+                    <div className="text-[9.5px] font-medium text-[var(--ps-ink-muted)] uppercase tracking-wider">
                       Functions
                     </div>
-                    <div className="text-sm font-semibold text-[var(--color-text)] mt-0.5">
+                    <div className="text-sm font-semibold text-[var(--ps-ink)] mt-0.5">
                       {selectedNode.functions?.length || 0}
                     </div>
                   </div>
-                  <div className="p-2 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-                    <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+                  <div className="p-2 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
+                    <div className="text-[9.5px] font-medium text-[var(--ps-ink-muted)] uppercase tracking-wider">
                       Calls Out
                     </div>
-                    <div className="text-sm font-semibold text-[var(--color-success)] mt-0.5">
+                    <div
+                      className="text-sm font-semibold mt-0.5"
+                      style={{ color: "var(--ps-emerald)" }}
+                    >
                       {selectedNodeDeps.outgoing.length}
                     </div>
                   </div>
-                  <div className="p-2 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-                    <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+                  <div className="p-2 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
+                    <div className="text-[9.5px] font-medium text-[var(--ps-ink-muted)] uppercase tracking-wider">
                       Called In
                     </div>
-                    <div className="text-sm font-semibold text-[var(--color-primary)] mt-0.5">
+                    <div
+                      className="text-sm font-semibold mt-0.5"
+                      style={{ color: "var(--ps-cobalt)" }}
+                    >
                       {selectedNodeDeps.incoming.length}
                     </div>
                   </div>
@@ -1503,25 +1490,26 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
                   {/* Rotating Loading Spinner for AI Summary */}
                   {isAiLoading && (
-                    <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-center gap-2.5 text-xs text-[var(--color-text-secondary)] shadow-2xs">
+                    <div className="p-4 rounded-lg border border-[var(--ps-line)] bg-[var(--ps-inset)] flex items-center justify-center gap-2.5 text-xs text-[var(--ps-ink-secondary)]">
                       <RefreshCw
-                        size={15}
-                        className="animate-spin text-[var(--color-primary)] shrink-0"
+                        size={14}
+                        className="animate-spin shrink-0"
+                        style={{ color: "var(--ps-cobalt)" }}
                       />
-                      <span className="font-mono">
-                        Analyzing file architecture with AI...
+                      <span className="ps-mono">
+                        Analyzing file architecture...
                       </span>
                     </div>
                   )}
 
                   {/* AI Architectural Summary Block */}
                   {selectedAiSummary && !isAiLoading && (
-                    <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xs">
+                    <div className="p-3.5 rounded-lg border border-[var(--ps-line)] bg-[var(--ps-inset)]">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text)]">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--ps-ink)]">
                           <Sparkles
                             size={13}
-                            className="text-[var(--color-primary)]"
+                            style={{ color: "var(--ps-cobalt)" }}
                           />
                           <span>AI Architecture Summary</span>
                         </div>
@@ -1533,14 +1521,14 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                               true,
                             )
                           }
-                          className="inline-flex items-center gap-1 text-[11px] font-mono text-[var(--color-primary)] hover:underline cursor-pointer"
+                          className="inline-flex items-center gap-1 text-[11px] ps-mono text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] cursor-pointer transition-colors"
                           title="Re-analyze summary"
                         >
                           <RefreshCw size={10} />
                           <span>Re-analyze</span>
                         </button>
                       </div>
-                      <p className="text-xs text-[var(--color-text)] leading-relaxed font-sans">
+                      <p className="text-xs text-[var(--ps-ink-secondary)] leading-relaxed">
                         {selectedAiSummary.fileSummary}
                       </p>
                     </div>
@@ -1549,7 +1537,14 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                   {aiError &&
                     !isAiLoading &&
                     !selectedAiSummary && (
-                      <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20 text-xs text-[var(--color-danger)] flex items-center justify-between gap-2">
+                      <div
+                        className="p-3 rounded-lg border text-xs flex items-center justify-between gap-2"
+                        style={{
+                          backgroundColor: "color-mix(in srgb, var(--ps-rose) 8%, transparent)",
+                          borderColor: "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
+                          color: "var(--ps-rose)",
+                        }}
+                      >
                         <span className="truncate">{aiError}</span>
                         <button
                           type="button"
@@ -1568,25 +1563,24 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
 
                   {/* Functions List with AI Explanations */}
                   <div>
-                    <h3 className="text-xs font-semibold text-[var(--color-text)] flex items-center justify-between mb-2.5">
+                    <h3 className="text-xs font-semibold text-[var(--ps-ink)] flex items-center justify-between mb-2.5">
                       <span className="flex items-center gap-1.5">
                         <FunctionSquare
                           size={13}
-                          className="text-[var(--color-primary)]"
+                          style={{ color: "var(--ps-cobalt)" }}
                         />
                         <span>
-                          Functions & Methods (
-                          {selectedNode.functions?.length || 0})
+                          Functions &amp; Methods ({selectedNode.functions?.length || 0})
                         </span>
                       </span>
                     </h3>
 
                     {!selectedNode.functions || selectedNode.functions.length === 0 ? (
-                      <div className="p-3 text-center text-xs text-[var(--color-text-muted)] border border-dashed border-[var(--color-border)] rounded-[var(--radius-sm)]">
+                      <div className="p-3 text-center text-xs text-[var(--ps-ink-muted)] border border-dashed border-[var(--ps-line)] rounded-lg">
                         No functions detected in this file.
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="rounded-lg border border-[var(--ps-line)] bg-[var(--ps-inset)] divide-y divide-[var(--ps-line)] overflow-hidden">
                         {selectedNode.functions.map((fn, idx) => {
                           const isArrow = fn.type === "ArrowFunctionExpression";
                           const isAnon = !fn.name || fn.name === "anonymous";
@@ -1621,26 +1615,33 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                           return (
                             <div
                               key={fn.id || idx}
-                              className="p-2.5 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-subtle,var(--color-text-muted))] transition-colors"
+                              className="p-2.5 hover:bg-[var(--ps-surface)]/70 transition-colors"
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5 min-w-0">
-                                  <span className="font-mono text-xs font-semibold text-[var(--color-text)] truncate">
+                                  <span className="ps-mono text-xs font-medium text-[var(--ps-ink)] truncate">
                                     {displayName}
                                   </span>
                                   {isArrow && (
-                                    <span className="text-[9px] font-mono font-medium px-1 py-0.2 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] shrink-0">
+                                    <span className="text-[9px] ps-mono px-1 py-0.2 rounded bg-[var(--ps-surface)] text-[var(--ps-ink-muted)] border border-[var(--ps-line)] shrink-0">
                                       =&gt;
                                     </span>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   {fn.exported && (
-                                    <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-[var(--color-success)]/10 text-[var(--color-success)] border border-[var(--color-success)]/20 uppercase">
+                                    <span
+                                      className="text-[9px] ps-mono px-1.5 py-0.2 rounded border uppercase"
+                                      style={{
+                                        backgroundColor: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                                        borderColor: "color-mix(in srgb, var(--ps-emerald) 25%, transparent)",
+                                        color: "var(--ps-emerald)",
+                                      }}
+                                    >
                                       exp
                                     </span>
                                   )}
-                                  <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                                  <span className="text-[10px] ps-mono text-[var(--ps-ink-muted)]">
                                     L{fn.startLine}–L{fn.endLine}
                                   </span>
                                 </div>
@@ -1648,7 +1649,7 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
 
                               {/* AI Explanation for function (only if available) */}
                               {fnAiSummary && (
-                                <p className="text-[11px] text-[var(--color-text-secondary)] mt-1.5 pl-2 border-l border-[var(--color-primary)] leading-relaxed">
+                                <p className="text-[11px] text-[var(--ps-ink-secondary)] mt-1.5 pl-2.5 border-l border-[var(--ps-line-strong)] leading-relaxed">
                                   {fnAiSummary}
                                 </p>
                               )}
@@ -1660,22 +1661,21 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                   </div>
 
                   {/* Connected Dependencies */}
-                  <div className="space-y-3 pt-3 border-t border-[var(--color-border)]">
+                  <div className="space-y-3 pt-3 border-t border-[var(--ps-line)]">
                     {/* Outgoing */}
                     <div>
-                      <h4 className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-1.5 mb-2">
+                      <h4 className="text-xs font-semibold text-[var(--ps-ink)] flex items-center gap-1.5 mb-2">
                         <ArrowRight
                           size={13}
-                          className="text-[var(--color-success)]"
+                          style={{ color: "var(--ps-emerald)" }}
                         />
                         <span>
-                          Outgoing Dependencies (Imports) (
-                          {selectedNodeDeps.outgoing.length})
+                          Outgoing Dependencies ({selectedNodeDeps.outgoing.length})
                         </span>
                       </h4>
                       {selectedNodeDeps.outgoing.length === 0 ? (
-                        <p className="text-[11px] text-[var(--color-text-muted)] italic pl-1">
-                          This file does not import any internal source files.
+                        <p className="text-[11px] text-[var(--ps-ink-muted)] pl-1">
+                          No internal source imports.
                         </p>
                       ) : (
                         <div className="space-y-1.5">
@@ -1684,24 +1684,20 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                               type="button"
                               key={dep.id}
                               onClick={() => jumpToNode(dep.id)}
-                              className="w-full text-left p-2 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/40 hover:bg-[var(--color-surface-secondary)] hover:border-[var(--color-primary)] transition-colors flex items-center justify-between text-xs font-mono cursor-pointer"
+                              className="w-full text-left p-2 rounded-md border border-[var(--ps-line)] bg-[var(--ps-inset)] hover:bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] transition-colors flex items-center justify-between text-xs ps-mono cursor-pointer"
                               title={`Jump to ${dep.relativePath}`}
                             >
-                              <span className="truncate text-[var(--color-text)] font-semibold">
+                              <span className="truncate text-[var(--ps-ink)] font-medium">
                                 {(dep.relativePath || "")
                                   .replace(/\\/g, "/")
                                   .split("/")
                                   .pop()}
                               </span>
-                              <span
-                                className="text-[10px] font-mono font-medium uppercase px-1.5 py-0.5 rounded-[var(--radius-sm)]"
-                                style={{
-                                  color:
-                                    ROLE_THEMES[dep.role]?.color || "inherit",
-                                  backgroundColor:
-                                    ROLE_THEMES[dep.role]?.bg || "transparent",
-                                }}
-                              >
+                              <span className="inline-flex items-center gap-1.5 text-[10px] ps-mono uppercase px-1.5 py-0.5 rounded border border-[var(--ps-line)] bg-[var(--ps-surface)] text-[var(--ps-ink-secondary)]">
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full"
+                                  style={{ backgroundColor: ROLE_THEMES[dep.role]?.color || "var(--ps-ink-muted)" }}
+                                />
                                 {dep.role}
                               </span>
                             </button>
@@ -1712,19 +1708,18 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
 
                     {/* Incoming */}
                     <div>
-                      <h4 className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-1.5 mb-2">
+                      <h4 className="text-xs font-semibold text-[var(--ps-ink)] flex items-center gap-1.5 mb-2">
                         <ArrowLeft
                           size={13}
-                          className="text-[var(--color-primary)]"
+                          style={{ color: "var(--ps-cobalt)" }}
                         />
                         <span>
-                          Incoming Dependencies (Imported by) (
-                          {selectedNodeDeps.incoming.length})
+                          Incoming Dependencies ({selectedNodeDeps.incoming.length})
                         </span>
                       </h4>
                       {selectedNodeDeps.incoming.length === 0 ? (
-                        <p className="text-[11px] text-[var(--color-text-muted)] italic pl-1">
-                          No internal source files import this file.
+                        <p className="text-[11px] text-[var(--ps-ink-muted)] pl-1">
+                          Not imported by other internal files.
                         </p>
                       ) : (
                         <div className="space-y-1.5">
@@ -1733,24 +1728,20 @@ export default function ProjectArchitecturePanel({ projectId, initialFile }) {
                               type="button"
                               key={dep.id}
                               onClick={() => jumpToNode(dep.id)}
-                              className="w-full text-left p-2 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/40 hover:bg-[var(--color-surface-secondary)] hover:border-[var(--color-primary)] transition-colors flex items-center justify-between text-xs font-mono cursor-pointer"
+                              className="w-full text-left p-2 rounded-md border border-[var(--ps-line)] bg-[var(--ps-inset)] hover:bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] transition-colors flex items-center justify-between text-xs ps-mono cursor-pointer"
                               title={`Jump to ${dep.relativePath}`}
                             >
-                              <span className="truncate text-[var(--color-text)] font-semibold">
+                              <span className="truncate text-[var(--ps-ink)] font-medium">
                                 {(dep.relativePath || "")
                                   .replace(/\\/g, "/")
                                   .split("/")
                                   .pop()}
                               </span>
-                              <span
-                                className="text-[10px] font-mono font-medium uppercase px-1.5 py-0.5 rounded-[var(--radius-sm)]"
-                                style={{
-                                  color:
-                                    ROLE_THEMES[dep.role]?.color || "inherit",
-                                  backgroundColor:
-                                    ROLE_THEMES[dep.role]?.bg || "transparent",
-                                }}
-                              >
+                              <span className="inline-flex items-center gap-1.5 text-[10px] ps-mono uppercase px-1.5 py-0.5 rounded border border-[var(--ps-line)] bg-[var(--ps-surface)] text-[var(--ps-ink-secondary)]">
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full"
+                                  style={{ backgroundColor: ROLE_THEMES[dep.role]?.color || "var(--ps-ink-muted)" }}
+                                />
                                 {dep.role}
                               </span>
                             </button>

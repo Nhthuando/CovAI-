@@ -445,13 +445,13 @@ export async function sendAiChatMessageApi(
     body: JSON.stringify({ message, model, attachments, sessionId, ...context, clientRequestId: context.clientRequestId || crypto.randomUUID(), screenContext: normalizeChatScreenContext(context.screenContext) }),
   }); } catch (error) {
     const code = ['TimeoutError', 'AbortError'].includes(error.name) ? 'AI_REQUEST_TIMEOUT' : 'CHAT_CONNECTION_ERROR';
-    throw Object.assign(new Error(chatErrorMessage({ code })), { code });
+    throw Object.assign(new Error(chatErrorMessage({ code }, message)), { code });
   }
   let result;
   try { result = await handleResponse(res); }
-  catch (error) { throw Object.assign(new Error(chatErrorMessage(error)), { code: error.code, status: error.status, retryAt: error.retryAt, resetAt: error.resetAt }); }
-  if (result.data?.processing) throw Object.assign(new Error(chatErrorMessage({ code: 'CHAT_BUSY' })), { code: 'CHAT_BUSY' });
-  if (typeof result.data?.reply !== 'string') throw new Error(chatErrorMessage());
+  catch (error) { throw Object.assign(new Error(chatErrorMessage(error, message)), { code: error.code, status: error.status, retryAt: error.retryAt, resetAt: error.resetAt }); }
+  if (result.data?.processing) throw Object.assign(new Error(chatErrorMessage({ code: 'CHAT_BUSY' }, message)), { code: 'CHAT_BUSY' });
+  if (typeof result.data?.reply !== 'string') throw new Error(chatErrorMessage({}, message));
   return result;
 }
 

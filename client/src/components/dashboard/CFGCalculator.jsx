@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import dagre from "dagre";
 import {
   X,
-  Sparkles,
   Info,
   ZoomIn,
   ZoomOut,
@@ -30,6 +29,7 @@ import {
   buildCfgApi,
 } from "../../services/project.service.js";
 import { useBreakpoints } from "../../hooks/useMediaQuery";
+import "./portfolio/portfolio.css";
 
 /* --- ANIMATION VARIANTS --- */
 const containerVariants = {
@@ -50,24 +50,24 @@ function syntaxHighlight(text) {
         )
       )
         return (
-          <span key={i} className="text-[var(--color-primary)] font-semibold">
+          <span key={i} className="text-[var(--ps-cobalt)] font-medium">
             {part}
           </span>
         );
       if (part.startsWith('"') || part.startsWith("'"))
         return (
-          <span key={i} className="text-[var(--color-success)]">
+          <span key={i} className="text-[var(--ps-emerald)]">
             {part}
           </span>
         );
       if (/^\d+$/.test(part))
         return (
-          <span key={i} className="text-[var(--color-warning)]">
+          <span key={i} className="text-[var(--ps-amber)]">
             {part}
           </span>
         );
       return (
-        <span key={i} className="text-[var(--color-text)]">
+        <span key={i} className="text-[var(--ps-ink)]">
           {part}
         </span>
       );
@@ -136,10 +136,10 @@ const getComplexityMeta = (value) => {
       summary: "Low complexity, concise structure, easy to maintain.",
       recommendation:
         "Minimal defect risk. Standard unit test cases provide sufficient coverage.",
-      color: "var(--color-success)",
-      textColor: "text-[var(--color-success)]",
+      color: "var(--ps-emerald)",
+      textColor: "text-[var(--ps-emerald)]",
       badgeClass:
-        "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30",
+        "bg-[var(--ps-emerald)]/10 text-[var(--ps-emerald)] border-[var(--ps-emerald)]/25",
       tier: 1,
       icon: CheckCircle2,
     };
@@ -151,10 +151,10 @@ const getComplexityMeta = (value) => {
       summary: "Moderate complexity with multiple decision paths.",
       recommendation:
         "Thoroughly test all conditional branches (if / else / switch / loop).",
-      color: "var(--color-warning)",
-      textColor: "text-[var(--color-warning)]",
+      color: "var(--ps-amber)",
+      textColor: "text-[var(--ps-amber)]",
       badgeClass:
-        "bg-[var(--color-warning)]/10 text-[var(--color-warning)] border-[var(--color-warning)]/30",
+        "bg-[var(--ps-amber)]/10 text-[var(--ps-amber)] border-[var(--ps-amber)]/25",
       tier: 2,
       icon: AlertTriangle,
     };
@@ -167,10 +167,10 @@ const getComplexityMeta = (value) => {
         "High complexity, difficult to exhaustively verify all execution paths.",
       recommendation:
         "Refactoring recommended: decompose into smaller helper functions or services.",
-      color: "var(--color-danger)",
-      textColor: "text-[var(--color-danger)]",
+      color: "var(--ps-rose)",
+      textColor: "text-[var(--ps-rose)]",
       badgeClass:
-        "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30",
+        "bg-[var(--ps-rose)]/10 text-[var(--ps-rose)] border-[var(--ps-rose)]/25",
       tier: 3,
       icon: AlertOctagon,
     };
@@ -182,10 +182,10 @@ const getComplexityMeta = (value) => {
       "Critical complexity (spaghetti flow), very high probability of regression bugs.",
     recommendation:
       "Immediate refactoring mandatory before deploying to production.",
-    color: "var(--color-danger)",
-    textColor: "text-[var(--color-danger)]",
+    color: "var(--ps-rose)",
+    textColor: "text-[var(--ps-rose)]",
     badgeClass:
-      "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/40",
+      "bg-[var(--ps-rose)]/12 text-[var(--ps-rose)] border-[var(--ps-rose)]/30",
     tier: 4,
     icon: AlertOctagon,
   };
@@ -201,29 +201,29 @@ function FuncNode({ label, x, y, onClick }) {
         e.stopPropagation();
         onClick?.();
       }}
-      className="flex items-center justify-center font-mono select-none cursor-pointer rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] hover:border-[var(--color-primary)] text-[var(--color-text)] transition-colors shadow-sm"
+      className="group flex items-center justify-center ps-mono select-none cursor-pointer rounded-lg border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] hover:border-[var(--ps-cobalt)] text-[var(--ps-ink)] transition-colors duration-150"
       initial={{ x: "-50%", y: "-50%", scale: 1 }}
       whileHover={{
-        scale: 1.05,
+        scale: 1.02,
         x: "-50%",
         y: "-50%",
       }}
-      whileTap={{ scale: 0.95, x: "-50%", y: "-50%" }}
+      whileTap={{ scale: 0.98, x: "-50%", y: "-50%" }}
       style={{
         position: "absolute",
         left: x,
         top: y,
         zIndex: 10,
-        fontSize: "13px",
-        padding: "10px 24px",
+        fontSize: "12.5px",
+        padding: "9px 18px",
         whiteSpace: "nowrap",
       }}
     >
       <Network
-        size={15}
-        className="mr-2 text-[var(--color-primary)] opacity-80"
+        size={14}
+        className="mr-2 text-[var(--ps-ink-muted)] group-hover:text-[var(--ps-cobalt)] transition-colors"
       />
-      {label}()
+      <span>{label}()</span>
     </motion.div>
   );
 }
@@ -247,64 +247,57 @@ function CFGNode({
         e.stopPropagation();
         onClick?.();
       }}
-      initial={{ x: "-50%", y: "-50%", scale: 0.8, opacity: 0 }}
-      animate={
-        isSelected
-          ? { x: "-50%", y: "-50%", scale: 1.08, opacity: 1 }
-          : active
-            ? { x: "-50%", y: "-50%", scale: [1, 1.04, 1], opacity: 1 }
-            : { x: "-50%", y: "-50%", scale: 1, opacity: 1 }
-      }
-      transition={{
-        scale: isSelected
-          ? { duration: 0.2 }
-          : active
-            ? { repeat: Infinity, duration: 2.5 }
-            : { duration: 0.3 },
-        default: { duration: 0.3 },
+      initial={{ x: "-50%", y: "-50%", scale: 0.96, opacity: 0 }}
+      animate={{
+        x: "-50%",
+        y: "-50%",
+        scale: isSelected ? 1.03 : 1,
+        opacity: 1,
       }}
-      whileHover={{ scale: isSelected ? 1.1 : 1.05 }}
-      whileTap={{ scale: 0.96 }}
-      className={`flex items-center justify-center font-mono select-none text-center shadow-sm cursor-pointer transition-all ${isDiamond ? "rounded-[var(--radius-md)]" : "rounded-full"
-        } ${isSelected
-          ? "border-2 border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-bold ring-2 ring-[var(--color-primary)]/50 ring-offset-2 ring-offset-[var(--color-bg)] z-30 shadow-md"
+      transition={{ duration: 0.15 }}
+      whileHover={{ scale: isSelected ? 1.04 : 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      className={`flex items-center justify-center ps-mono select-none text-center cursor-pointer transition-colors duration-150 ${
+        isDiamond ? "rounded-lg" : "rounded-md"
+      } ${
+        isSelected
+          ? "border border-[var(--ps-cobalt)] bg-[var(--ps-surface-2)] text-[var(--ps-ink)] font-semibold ring-1 ring-[var(--ps-cobalt)]/40 z-30"
           : active
-            ? "border-2 border-[var(--color-primary)] bg-[var(--color-surface)] text-[var(--color-primary)] font-semibold z-10 hover:border-[var(--color-primary)]"
-            : "border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/70 text-[var(--color-text)] z-10"
-        }`}
+            ? "border border-[var(--ps-cobalt)]/70 bg-[var(--ps-surface)] text-[var(--ps-ink)] font-medium z-10"
+            : "border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] hover:border-[var(--ps-cobalt)]/60 hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink)] z-10"
+      }`}
       style={{
         position: "absolute",
         left: x,
         top: y,
         fontSize: "12px",
-        padding: "8px 20px",
+        padding: "7px 16px",
         minWidth: `${width}px`,
       }}
     >
-      {isSelected && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-primary)] opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-3 w-3 bg-[var(--color-primary)]"></span>
-        </span>
-      )}
-      {active && !isSelected && (
-        <span className="absolute -left-1.5 w-2.5 h-2.5 rounded-full bg-[var(--color-primary)] animate-ping" />
+      {(isSelected || active) && (
+        <span
+          className={`w-1.5 h-1.5 rounded-full mr-2 flex-shrink-0 ${
+            isSelected ? "bg-[var(--ps-cobalt)]" : "bg-[var(--ps-cobalt)]/75"
+          }`}
+        />
       )}
       {isDiamond && (
         <GitBranch
-          size={13}
-          className="mr-1.5 text-[var(--color-warning)] opacity-90"
+          size={12.5}
+          className="mr-1.5 text-[var(--ps-amber)] opacity-90 flex-shrink-0"
         />
       )}
       <span>{label}</span>
       {line ? (
         <span
-          className={`text-[11px] ml-1.5 font-mono ${isSelected
-              ? "text-[var(--color-primary)] font-bold opacity-100"
-              : "opacity-60"
-            }`}
+          className={`text-[11px] ml-1.5 ps-mono ${
+            isSelected
+              ? "text-[var(--ps-cobalt)] font-medium"
+              : "text-[var(--ps-ink-muted)]"
+          }`}
         >
-          (L{line})
+          L{line}
         </span>
       ) : null}
     </motion.div>
@@ -328,14 +321,25 @@ export const normalizePathForCompare = (p) => {
  * Checks whether candidate files contain a target file match
  */
 export const hasCfgFileMatch = (candidateFiles, targetPath) => {
-  if (!targetPath || !Array.isArray(candidateFiles) || candidateFiles.length === 0) return false;
+  if (
+    !targetPath ||
+    !Array.isArray(candidateFiles) ||
+    candidateFiles.length === 0
+  )
+    return false;
   const targetNorm = normalizePathForCompare(targetPath);
-  const strippedTarget = targetNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+  const strippedTarget = targetNorm.replace(
+    /^(?:backend|server|client|api|app|frontend)\//i,
+    "",
+  );
   const baseTarget = targetNorm.split("/").pop();
 
   return candidateFiles.some((f) => {
     const fNorm = normalizePathForCompare(f);
-    const strippedCandidate = fNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+    const strippedCandidate = fNorm.replace(
+      /^(?:backend|server|client|api|app|frontend)\//i,
+      "",
+    );
     return (
       fNorm === targetNorm ||
       targetNorm.endsWith("/" + fNorm) ||
@@ -352,27 +356,39 @@ export const hasCfgFileMatch = (candidateFiles, targetPath) => {
  * Matches target file within candidate CFG files
  */
 export const findMatchingCfgFile = (candidateFiles, targetPath) => {
-  if (!targetPath || !Array.isArray(candidateFiles) || candidateFiles.length === 0) {
+  if (
+    !targetPath ||
+    !Array.isArray(candidateFiles) ||
+    candidateFiles.length === 0
+  ) {
     return candidateFiles?.[0] || null;
   }
   const targetNorm = normalizePathForCompare(targetPath);
 
   // 1. Exact full path match
-  const exact = candidateFiles.find((f) => normalizePathForCompare(f) === targetNorm);
+  const exact = candidateFiles.find(
+    (f) => normalizePathForCompare(f) === targetNorm,
+  );
   if (exact) return exact;
 
   // 2. Suffix match (endsWith)
   const endsWithMatch = candidateFiles.find(
     (f) =>
       targetNorm.endsWith("/" + normalizePathForCompare(f)) ||
-      normalizePathForCompare(f).endsWith("/" + targetNorm)
+      normalizePathForCompare(f).endsWith("/" + targetNorm),
   );
   if (endsWithMatch) return endsWithMatch;
 
   // 3. Match after stripping common monorepo root prefixes (backend/, server/, client/, api/, app/)
-  const strippedTarget = targetNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+  const strippedTarget = targetNorm.replace(
+    /^(?:backend|server|client|api|app|frontend)\//i,
+    "",
+  );
   const strippedMatch = candidateFiles.find((f) => {
-    const strippedCandidate = normalizePathForCompare(f).replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+    const strippedCandidate = normalizePathForCompare(f).replace(
+      /^(?:backend|server|client|api|app|frontend)\//i,
+      "",
+    );
     return (
       strippedCandidate === strippedTarget ||
       strippedTarget.endsWith("/" + strippedCandidate) ||
@@ -384,7 +400,7 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   // 4. Basename match
   const baseTarget = targetNorm.split("/").pop();
   const baseMatch = candidateFiles.find(
-    (f) => normalizePathForCompare(f).split("/").pop() === baseTarget
+    (f) => normalizePathForCompare(f).split("/").pop() === baseTarget,
   );
   if (baseMatch) return baseMatch;
 
@@ -392,7 +408,7 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   const cleanPrefix = targetNorm.replace(/\.{2,}$/, "");
   if (cleanPrefix.length > 5) {
     const prefixMatch = candidateFiles.find((f) =>
-      normalizePathForCompare(f).startsWith(cleanPrefix)
+      normalizePathForCompare(f).startsWith(cleanPrefix),
     );
     if (prefixMatch) return prefixMatch;
   }
@@ -408,9 +424,14 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
  * 4. Synthetic func_L{N} match
  * 5. Fallback to first function
  */
-export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) => {
+export const findMatchingCfgFunction = (
+  fileCfgs,
+  targetFuncName,
+  targetLine,
+) => {
   if (!Array.isArray(fileCfgs) || fileCfgs.length === 0) return null;
-  const lineNum = targetLine && Number(targetLine) > 0 ? Number(targetLine) : null;
+  const lineNum =
+    targetLine && Number(targetLine) > 0 ? Number(targetLine) : null;
 
   // 1. Function name match (if not anonymous or synthetic func_L...)
   if (targetFuncName && typeof targetFuncName === "string") {
@@ -427,7 +448,7 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
 
       // 1b. Case-insensitive match
       const caseMatch = fileCfgs.find(
-        (c) => c.functionName?.toLowerCase() === cleanTarget.toLowerCase()
+        (c) => c.functionName?.toLowerCase() === cleanTarget.toLowerCase(),
       );
       if (caseMatch) return caseMatch.functionName;
 
@@ -438,7 +459,7 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
           (c) =>
             c.functionName &&
             (c.functionName.startsWith(prefix) ||
-              c.functionName.toLowerCase().startsWith(prefix.toLowerCase()))
+              c.functionName.toLowerCase().startsWith(prefix.toLowerCase())),
         );
         if (prefixMatch) return prefixMatch.functionName;
       }
@@ -454,11 +475,11 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
   // 3. Innermost Span match
   if (lineNum !== null) {
     const containingFunctions = fileCfgs.filter(
-      (c) => c.startLine <= lineNum && c.endLine && c.endLine >= lineNum
+      (c) => c.startLine <= lineNum && c.endLine && c.endLine >= lineNum,
     );
     if (containingFunctions.length > 0) {
       containingFunctions.sort(
-        (a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine)
+        (a, b) => a.endLine - a.startLine - (b.endLine - b.startLine),
       );
       return containingFunctions[0].functionName;
     }
@@ -503,20 +524,28 @@ export default function CFGCalculator({
   initialLine,
   onOpenFile,
 }) {
-  const cleanPropSnapshotId = typeof selectedSnapshotId === "object"
-    ? selectedSnapshotId?.id || selectedSnapshotId?.snapshotId || ""
-    : (String(selectedSnapshotId || "").trim() === "[object Object]" || selectedSnapshotId === "undefined" || selectedSnapshotId === "null" ? "" : selectedSnapshotId || "");
+  const cleanPropSnapshotId =
+    typeof selectedSnapshotId === "object"
+      ? selectedSnapshotId?.id || selectedSnapshotId?.snapshotId || ""
+      : String(selectedSnapshotId || "").trim() === "[object Object]" ||
+          selectedSnapshotId === "undefined" ||
+          selectedSnapshotId === "null"
+        ? ""
+        : selectedSnapshotId || "";
 
-  const targetSnapshotId = (
+  const targetSnapshotId =
     cleanPropSnapshotId ||
     project?.snapshotId ||
     project?.snapshots?.[0]?.id ||
     project?.latestSnapshotId ||
-    ""
-  );
+    "";
   const { isMobile } = useBreakpoints();
   const projectId = project?.id;
-  const snapshotId = selectedSnapshotId || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id;
+  const snapshotId =
+    selectedSnapshotId ||
+    project?.activeSnapshotId ||
+    project?.latestSnapshotId ||
+    project?.snapshots?.[0]?.id;
   const [cfgs, setCfgs] = useState([]);
   const [ccs, setCcs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -586,8 +615,14 @@ export default function CFGCalculator({
       ]);
       setCfgs(cfgRes.data || []);
       setCcs(ccRes.data || []);
-      const files = [...new Set((cfgRes?.data || []).map((cfg) => cfg.filePath))];
-      setSelectedFile(findMatchingCfgFile(files, selectedFile || initialFile) || files[0] || null);
+      const files = [
+        ...new Set((cfgRes?.data || []).map((cfg) => cfg.filePath)),
+      ];
+      setSelectedFile(
+        findMatchingCfgFile(files, selectedFile || initialFile) ||
+          files[0] ||
+          null,
+      );
       setSelectedFunc(null);
     } catch (err) {
       setError(err.message || "Failed to rebuild CFG");
@@ -647,13 +682,20 @@ export default function CFGCalculator({
         setCcs(currentCcs);
 
         if (currentCfgs.length > 0) {
-          const targetFile = findMatchingCfgFile(files, initialFile) || files[0];
+          const targetFile =
+            findMatchingCfgFile(files, initialFile) || files[0];
           setSelectedFile(targetFile);
           setSelectedFunc(null);
 
           if (initialFunc || initialLine) {
-            const fileCfgs = currentCfgs.filter((c) => c.filePath === targetFile);
-            const targetFunc = findMatchingCfgFunction(fileCfgs, initialFunc, initialLine);
+            const fileCfgs = currentCfgs.filter(
+              (c) => c.filePath === targetFile,
+            );
+            const targetFunc = findMatchingCfgFunction(
+              fileCfgs,
+              initialFunc,
+              initialLine,
+            );
             if (targetFunc) {
               setSelectedFunc(targetFunc);
             }
@@ -666,7 +708,9 @@ export default function CFGCalculator({
       }
     }
     if (projectId) fetchData();
-    return () => { current = false; };
+    return () => {
+      current = false;
+    };
   }, [projectId, snapshotId, initialFile, initialFunc, initialLine]);
 
   // Keep selectedFile / selectedFunc synchronized if initialFile / initialFunc changes dynamically
@@ -678,8 +722,14 @@ export default function CFGCalculator({
       setSelectedFile(matchedFile);
     }
     if (initialFunc || initialLine) {
-      const relevantCfgs = cfgs.filter((c) => c.filePath === (matchedFile || selectedFile));
-      const matchedFunc = findMatchingCfgFunction(relevantCfgs, initialFunc, initialLine);
+      const relevantCfgs = cfgs.filter(
+        (c) => c.filePath === (matchedFile || selectedFile),
+      );
+      const matchedFunc = findMatchingCfgFunction(
+        relevantCfgs,
+        initialFunc,
+        initialLine,
+      );
       if (matchedFunc && matchedFunc !== selectedFunc) {
         setSelectedFunc(matchedFunc);
       }
@@ -691,7 +741,10 @@ export default function CFGCalculator({
     if (!selectedFile || !project?.id) return;
     const controller = new AbortController();
     getFileContentApi(project.id, selectedFile, {
-      snapshotId: targetSnapshotId || project.snapshots?.[0]?.id || project.latestSnapshotId,
+      snapshotId:
+        targetSnapshotId ||
+        project.snapshots?.[0]?.id ||
+        project.latestSnapshotId,
       signal: controller.signal,
     })
       .then((res) => {
@@ -943,39 +996,37 @@ export default function CFGCalculator({
       initial="hidden"
       animate="visible"
       exit="exit"
-      className="fixed inset-0 z-50 flex flex-col"
+      className="portfolio-studio fixed inset-0 z-50 flex flex-col bg-[var(--ps-bg)] text-[var(--ps-ink)]"
       style={{
-        background: "var(--color-bg)",
         fontFamily: "var(--font-sans)",
-        color: "var(--color-text)",
       }}
     >
       {/* --- HEADER --- */}
-      <div className="flex items-center justify-between flex-shrink-0 px-5 h-14 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between flex-shrink-0 px-4 h-12 bg-[var(--ps-surface)] border-b border-[var(--ps-line)]">
+        <div className="flex items-center gap-2.5 min-w-0">
           <select
             value={selectedFile || ""}
             onChange={(e) => {
               setSelectedFile(e.target.value);
               setSelectedFunc(null);
             }}
-            className="bg-[var(--color-bg)] text-[var(--color-text)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-1.5 text-xs outline-none cursor-pointer font-mono focus:border-[var(--color-primary)]"
+            className="ps-select h-8 rounded-md px-2.5 text-xs ps-mono outline-none cursor-pointer max-w-[320px]"
           >
             {uniqueFiles.map((f) => (
               <option
                 key={f}
                 value={f}
-                className="bg-[var(--color-surface)] text-[var(--color-text)]"
+                className="bg-[var(--ps-surface)] text-[var(--ps-ink)]"
               >
                 {f}
               </option>
             ))}
           </select>
-          <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
+          <div className="flex items-center gap-1.5 text-xs text-[var(--ps-ink-secondary)] min-w-0">
             {!isCallGraph && (
               <>
-                <span className="text-[var(--color-text-muted)]">/</span>
-                <span className="text-[var(--color-primary)] font-mono font-bold">
+                <span className="text-[var(--ps-ink-muted)]">/</span>
+                <span className="text-[var(--ps-ink)] ps-mono font-medium truncate">
                   {selectedFunc}()
                 </span>
               </>
@@ -991,59 +1042,62 @@ export default function CFGCalculator({
                   selectedFile,
                   activeCfg?.startLine || highlightedLine || initialLine || 1,
                   selectedFunc,
-                  activeCfg?.endLine
+                  activeCfg?.endLine,
                 );
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20 transition-all text-xs font-medium cursor-pointer shadow-sm"
+              className="flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--ps-line-strong)] bg-[var(--ps-surface-2)] hover:bg-[var(--ps-line)]/60 text-[var(--ps-ink)] transition-colors duration-150 active:scale-[0.98] text-xs font-medium cursor-pointer"
               title="Open this function in Monaco Editor"
             >
-              <ExternalLink size={13} />
+              <ExternalLink
+                size={13}
+                className="text-[var(--ps-ink-secondary)]"
+              />
               <span>Open in Editor</span>
             </button>
           )}
           <button
-            className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer bg-transparent border-none"
+            className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] transition-colors duration-150 cursor-pointer bg-transparent border-none"
             onClick={onClose}
             title="Close"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </div>
       </div>
 
       {loading || rebuilding ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--color-text-secondary)]">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--ps-ink-secondary)]">
           <motion.div
             animate={{ rotate: 360 }}
             transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
           >
-            <RefreshCw size={28} className="text-[var(--color-primary)]" />
+            <RefreshCw size={22} className="text-[var(--ps-cobalt)]" />
           </motion.div>
-          <span className="text-xs font-mono">
+          <span className="text-xs ps-mono text-[var(--ps-ink-muted)]">
             {rebuilding ? "Rebuilding CFG..." : "Loading analysis data..."}
           </span>
         </div>
       ) : error ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--color-danger)]">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--ps-rose)]">
           <span className="text-xs">{error}</span>
           <button
             onClick={handleRebuild}
-            className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] cursor-pointer text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm border-none"
+            className="ps-btn-contrast px-4 py-2 rounded-md cursor-pointer text-xs font-medium flex items-center gap-2 transition-colors duration-150"
           >
-            <RefreshCw size={14} /> Rebuild CFG
+            <RefreshCw size={13} /> Rebuild CFG
           </button>
         </div>
       ) : cfgs.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 text-center">
           <div className="flex flex-col items-center gap-2">
             <Network
-              size={44}
-              className="text-[var(--color-text-muted)] opacity-60"
+              size={36}
+              className="text-[var(--ps-ink-muted)] opacity-60"
             />
-            <span className="text-base font-bold text-[var(--color-text)]">
-              No CFG Data Available
+            <span className="text-sm font-semibold text-[var(--ps-ink)]">
+              No CFG data available
             </span>
-            <span className="text-xs text-[var(--color-text-secondary)] max-w-md leading-relaxed">
+            <span className="text-xs text-[var(--ps-ink-secondary)] max-w-md leading-relaxed">
               Control Flow Graph and Cyclomatic Complexity data have not been
               generated for the current snapshot. Click the button below to
               build.
@@ -1051,9 +1105,9 @@ export default function CFGCalculator({
           </div>
           <button
             onClick={handleRebuild}
-            className="px-5 py-2.5 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] cursor-pointer text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm border-none"
+            className="ps-btn-contrast px-4 py-2 rounded-md cursor-pointer text-xs font-medium flex items-center gap-2 transition-colors duration-150"
           >
-            <RefreshCw size={16} /> Build CFG & CC
+            <RefreshCw size={14} /> Build CFG & CC
           </button>
         </div>
       ) : (
@@ -1064,7 +1118,7 @@ export default function CFGCalculator({
             display: "flex",
             overflowX: isMobile ? "hidden" : "auto",
             overflowY: "hidden",
-            background: "var(--color-bg)",
+            background: "var(--ps-bg)",
             width: "100%",
           }}
         >
@@ -1083,8 +1137,8 @@ export default function CFGCalculator({
                 flexShrink: 0,
                 display: "flex",
                 flexDirection: "column",
-                borderRight: "1px solid var(--color-border)",
-                background: "var(--color-surface)",
+                borderRight: "1px solid var(--ps-line)",
+                background: "var(--ps-surface)",
                 height: isMobile ? `${topHeight}%` : "100%",
                 position: "relative",
               }}
@@ -1104,22 +1158,24 @@ export default function CFGCalculator({
                   zIndex: 100,
                 }}
               />
-              <div className="px-5 py-3 text-[11px] font-mono tracking-wider text-[var(--color-text-secondary)] uppercase font-bold flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+              <div className="h-10 px-4 flex items-center justify-between border-b border-[var(--ps-line)] bg-[var(--ps-surface)] flex-shrink-0">
                 <div className="flex items-center gap-2">
-                  <span>Source Code</span>
+                  <span className="text-xs font-medium text-[var(--ps-ink)]">
+                    Source code
+                  </span>
                   {highlightedLine && (
-                    <span className="bg-[var(--color-primary)]/15 text-[var(--color-primary)] border border-[var(--color-primary)]/30 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-bold">
+                    <span className="bg-[var(--ps-cobalt)]/10 text-[var(--ps-cobalt)] border border-[var(--ps-cobalt)]/30 px-2 py-0.5 rounded-md text-[11px] ps-mono">
                       Line {highlightedLine}
                     </span>
                   )}
                 </div>
-                <span className="bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-semibold">
+                <span className="bg-[var(--ps-inset)] text-[var(--ps-ink-muted)] border border-[var(--ps-line)] px-2 py-0.5 rounded-md text-[10px] ps-mono">
                   JS/TS
                 </span>
               </div>
               <div
                 ref={codeContainerRef}
-                className="flex-1 overflow-y-auto py-3 font-mono text-xs leading-relaxed bg-[var(--color-bg)]"
+                className="flex-1 overflow-y-auto py-3 ps-mono text-xs leading-relaxed bg-[var(--ps-bg)]"
               >
                 {sourceLines.map((line) => {
                   const isTargetLine = highlightedLine === line.num;
@@ -1143,33 +1199,34 @@ export default function CFGCalculator({
                         }
                         setHighlightedLine(line.num);
                       }}
-                      className={`flex items-start px-4 py-0.5 transition-all cursor-pointer ${isTargetLine
-                          ? "bg-[var(--color-primary)]/20 border-l-[4px] border-l-[var(--color-primary)] shadow-sm font-semibold"
+                      className={`flex items-start px-3 py-0.5 transition-colors duration-100 cursor-pointer ${
+                        isTargetLine
+                          ? "bg-[var(--ps-cobalt)]/12 border-l-2 border-l-[var(--ps-cobalt)]"
                           : isActiveScope
-                            ? "bg-[var(--color-primary)]/5 border-l-[3px] border-l-[var(--color-primary)]/50 hover:bg-[var(--color-surface-secondary)]/50"
-                            : "border-l-[3px] border-l-transparent hover:bg-[var(--color-surface-secondary)]/40"
-                        } ${isDimmed ? "opacity-35" : "opacity-100"}`}
+                            ? "bg-[var(--ps-surface)] border-l-2 border-l-[var(--ps-line-strong)] hover:bg-[var(--ps-surface-2)]/60"
+                            : "border-l-2 border-l-transparent hover:bg-[var(--ps-surface)]"
+                      } ${isDimmed ? "opacity-40" : "opacity-100"}`}
                     >
                       <span
-                        className={`w-11 flex-shrink-0 text-right pr-2 select-none font-mono text-[11px] flex items-center justify-end gap-1 ${isTargetLine
-                            ? "text-[var(--color-primary)] font-bold"
+                        className={`w-10 flex-shrink-0 text-right pr-2.5 select-none ps-mono text-[11px] flex items-center justify-end gap-1 ${
+                          isTargetLine
+                            ? "text-[var(--ps-cobalt)] font-semibold"
                             : isActiveScope
-                              ? "text-[var(--color-primary)] font-semibold"
-                              : "text-[var(--color-text-muted)]"
-                          }`}
+                              ? "text-[var(--ps-ink-secondary)]"
+                              : "text-[var(--ps-ink-muted)]"
+                        }`}
                       >
                         {isTargetLine && (
-                          <span className="text-[var(--color-primary)] text-[10px] animate-pulse">
-                            ▶
-                          </span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-cobalt)]" />
                         )}
                         <span>{line.num}</span>
                       </span>
                       <span
-                        className={`whitespace-pre-wrap break-all flex-1 font-mono text-xs ${isTargetLine
-                            ? "text-[var(--color-text)] font-semibold"
-                            : "text-[var(--color-text)]"
-                          }`}
+                        className={`whitespace-pre-wrap break-all flex-1 ps-mono text-xs ${
+                          isTargetLine
+                            ? "text-[var(--ps-ink)] font-medium"
+                            : "text-[var(--ps-ink)]"
+                        }`}
                       >
                         {syntaxHighlight(line.text)}
                       </span>
@@ -1186,30 +1243,29 @@ export default function CFGCalculator({
                 minWidth: isMobile ? "100%" : "550px",
                 display: "flex",
                 flexDirection: "column",
-                borderRight: "1px solid var(--color-border)",
-                background: "var(--color-bg)",
+                borderRight: "1px solid var(--ps-line)",
+                background: "var(--ps-bg)",
                 position: "relative",
                 height: isMobile ? "40%" : "100%",
               }}
             >
-              <div className="px-5 py-3 text-[11px] font-mono tracking-wider text-[var(--color-text-secondary)] uppercase font-bold flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] z-20">
-                <div className="flex items-center gap-3">
+              <div className="h-10 px-4 flex items-center justify-between border-b border-[var(--ps-line)] bg-[var(--ps-surface)] z-20 flex-shrink-0">
+                <div className="flex items-center gap-2.5">
                   {!isCallGraph && (
-                    <motion.button
-                      whileHover={{ x: -2 }}
+                    <button
                       onClick={() => setSelectedFunc(null)}
-                      className="flex items-center gap-1.5 text-[var(--color-primary)] hover:opacity-80 font-bold font-mono text-xs cursor-pointer bg-transparent border-none"
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-[var(--ps-line)] bg-[var(--ps-inset)] hover:border-[var(--ps-line-strong)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors duration-150 text-xs font-medium cursor-pointer"
                     >
-                      <ArrowLeft size={14} /> Back
-                    </motion.button>
+                      <ArrowLeft size={13} /> Back
+                    </button>
                   )}
-                  <span className="text-[var(--color-text)]">
-                    {isCallGraph ? "Functions in File" : "Control Flow Graph"}
+                  <span className="text-xs font-medium text-[var(--ps-ink)]">
+                    {isCallGraph ? "Functions in file" : "Control flow graph"}
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5 bg-[var(--color-bg)] px-2.5 py-1 rounded-[var(--radius-md)] border border-[var(--color-border)]">
+                <div className="flex items-center gap-1.5 bg-[var(--ps-inset)] h-7 px-2 rounded-md border border-[var(--ps-line)]">
                   <ZoomOut
-                    size={14}
+                    size={13}
                     onClick={() =>
                       setZoom((z) =>
                         Math.min(
@@ -1218,14 +1274,14 @@ export default function CFGCalculator({
                         ),
                       )
                     }
-                    className="cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+                    className="cursor-pointer text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] transition-colors"
                     title="Zoom Out"
                   />
-                  <span className="text-xs text-[var(--color-text-secondary)] w-11 text-center font-mono font-bold select-none">
+                  <span className="text-[11px] text-[var(--ps-ink-secondary)] w-10 text-center ps-mono select-none">
                     {Math.round(zoom * 100)}%
                   </span>
                   <ZoomIn
-                    size={14}
+                    size={13}
                     onClick={() =>
                       setZoom((z) =>
                         Math.min(
@@ -1234,19 +1290,19 @@ export default function CFGCalculator({
                         ),
                       )
                     }
-                    className="cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+                    className="cursor-pointer text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] transition-colors"
                     title="Zoom In"
                   />
-                  <div className="w-[1px] h-3.5 bg-[var(--color-border)] mx-1" />
+                  <div className="w-[1px] h-3.5 bg-[var(--ps-line)] mx-1" />
                   <button
                     onClick={() => {
                       setZoom(1);
                       setPan({ x: 0, y: 0 });
                     }}
                     title="Reset View (Center Graph)"
-                    className="flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors p-0.5 cursor-pointer bg-transparent border-none text-[11px] font-mono font-medium"
+                    className="flex items-center gap-1 text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors p-0.5 cursor-pointer bg-transparent border-none text-[11px] ps-mono"
                   >
-                    <RotateCcw size={12} />
+                    <RotateCcw size={11.5} />
                     <span>Reset</span>
                   </button>
                 </div>
@@ -1259,7 +1315,10 @@ export default function CFGCalculator({
                   flex: 1,
                   position: "relative",
                   overflow: "hidden",
-                  background: "var(--color-bg)",
+                  backgroundColor: "var(--ps-bg)",
+                  backgroundImage:
+                    "radial-gradient(var(--ps-line) 1px, transparent 1px)",
+                  backgroundSize: "20px 20px",
                   cursor: isDragging ? "grabbing" : "grab",
                   userSelect: "none",
                 }}
@@ -1276,15 +1335,15 @@ export default function CFGCalculator({
                   }}
                 >
                   {graphLayout.nodes.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center p-8 text-center text-[var(--color-text-secondary)]">
+                    <div className="flex flex-col items-center justify-center p-8 text-center text-[var(--ps-ink-secondary)]">
                       <GitBranch
-                        size={32}
-                        className="text-[var(--color-text-muted)] mb-3 opacity-50"
+                        size={28}
+                        className="text-[var(--ps-ink-muted)] mb-3 opacity-60"
                       />
-                      <span className="text-sm font-semibold text-[var(--color-text)]">
+                      <span className="text-sm font-medium text-[var(--ps-ink)]">
                         No graph nodes found
                       </span>
-                      <span className="text-xs text-[var(--color-text-muted)] mt-1">
+                      <span className="text-xs text-[var(--ps-ink-muted)] mt-1">
                         This function might be empty or unparseable.
                       </span>
                     </div>
@@ -1329,15 +1388,15 @@ export default function CFGCalculator({
                         <defs>
                           <marker
                             id="arrowhead"
-                            markerWidth="10"
-                            markerHeight="7"
-                            refX="9"
-                            refY="3.5"
+                            markerWidth="8"
+                            markerHeight="6"
+                            refX="7"
+                            refY="3"
                             orient="auto"
                           >
                             <polygon
-                              points="0 0, 10 3.5, 0 7"
-                              fill="var(--color-primary)"
+                              points="0 0, 8 3, 0 6"
+                              fill="var(--ps-cobalt)"
                             />
                           </marker>
                         </defs>
@@ -1346,9 +1405,9 @@ export default function CFGCalculator({
                             key={i}
                             d={pointsToSvgPath(e.points)}
                             fill="none"
-                            stroke="var(--color-primary)"
+                            stroke="var(--ps-cobalt)"
                             strokeOpacity="0.6"
-                            strokeWidth="2"
+                            strokeWidth="1.5"
                             markerEnd="url(#arrowhead)"
                           />
                         ))}
@@ -1376,12 +1435,14 @@ export default function CFGCalculator({
                   )}
                 </div>
 
-                {/* Floating Hint Pill */}
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface)]/90 backdrop-blur-sm px-4 py-2 rounded-full border border-[var(--color-border)] flex items-center gap-2 whitespace-nowrap shadow-sm pointer-events-none select-none z-20">
-                  <Sparkles size={14} className="text-[var(--color-primary)]" />
-                  {isCallGraph
-                    ? "Click a function node to analyze its CFG • Drag canvas to pan"
-                    : "Click any node to navigate to code • Drag canvas to pan • Scroll to zoom"}
+                {/* Canvas Status Strip */}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] text-[var(--ps-ink-muted)] bg-[var(--ps-surface)] px-3 py-1.5 rounded-md border border-[var(--ps-line)] flex items-center gap-2 whitespace-nowrap pointer-events-none select-none z-20">
+                  <Info size={13} className="text-[var(--ps-ink-muted)]" />
+                  <span>
+                    {isCallGraph
+                      ? "Click a function node to analyze its CFG • Drag canvas to pan"
+                      : "Click any node to navigate to code • Drag canvas to pan • Scroll to zoom"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1393,9 +1454,9 @@ export default function CFGCalculator({
                 flexShrink: 0,
                 display: "flex",
                 flexDirection: "column",
-                padding: isMobile ? "20px" : "32px",
+                padding: isMobile ? "16px" : "20px",
                 overflowY: "auto",
-                background: "var(--color-surface)",
+                background: "var(--ps-surface)",
                 height: isMobile ? "30%" : "100%",
                 position: "relative",
               }}
@@ -1418,92 +1479,103 @@ export default function CFGCalculator({
                 {isCallGraph ? (
                   <motion.div
                     key="metrics-macro"
-                    initial={{ opacity: 0, x: 20 }}
+                    initial={{ opacity: 0, x: 16 }}
                     animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.3 }}
+                    exit={{ opacity: 0, x: -16 }}
+                    transition={{ duration: 0.2 }}
                     className="flex flex-col h-full"
                   >
-                    <div className="flex items-center gap-2 mb-5 pb-3 border-b border-[var(--color-border)]">
+                    <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--ps-line)]">
                       <Layers
-                        size={15}
-                        className="text-[var(--color-primary)]"
+                        size={14}
+                        className="text-[var(--ps-ink-muted)]"
                       />
-                      <div className="text-xs font-mono tracking-wider text-[var(--color-text)] uppercase font-bold">
-                        File Architecture Overview
+                      <div className="text-xs font-medium text-[var(--ps-ink)]">
+                        File architecture overview
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 mb-4">
-                      <div className="bg-[var(--color-bg)] p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border)]">
-                        <div className="text-[10px] font-mono font-semibold tracking-wider text-[var(--color-text-muted)] uppercase mb-1">
-                          Total Functions
+                      <div className="bg-[var(--ps-inset)] p-3.5 rounded-lg border border-[var(--ps-line)]">
+                        <div className="text-[11px] text-[var(--ps-ink-muted)] mb-1">
+                          Total functions
                         </div>
-                        <div className="text-2xl font-mono font-bold text-[var(--color-text)]">
+                        <div className="text-2xl ps-mono font-semibold text-[var(--ps-ink)] tabular-nums">
                           {fileCfgs.length}
                         </div>
                       </div>
-                      <div className="bg-[var(--color-bg)] p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border)]">
-                        <div className="text-[10px] font-mono font-semibold tracking-wider text-[var(--color-text-muted)] uppercase mb-1">
+                      <div className="bg-[var(--ps-inset)] p-3.5 rounded-lg border border-[var(--ps-line)]">
+                        <div className="text-[11px] text-[var(--ps-ink-muted)] mb-1">
                           Max McCabe CC
                         </div>
-                        <div
-                          className={`text-2xl font-mono font-bold ${maxCc >= 10
-                              ? "text-[var(--color-danger)]"
-                              : maxCc >= 5
-                                ? "text-[var(--color-warning)]"
-                                : "text-[var(--color-success)]"
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl ps-mono font-semibold text-[var(--ps-ink)] tabular-nums">
+                            {maxCc}
+                          </span>
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              maxCc >= 10
+                                ? "bg-[var(--ps-rose)]"
+                                : maxCc >= 5
+                                  ? "bg-[var(--ps-amber)]"
+                                  : "bg-[var(--ps-emerald)]"
                             }`}
-                        >
-                          {maxCc}
+                            title={
+                              maxCc >= 10
+                                ? "High complexity"
+                                : maxCc >= 5
+                                  ? "Moderate complexity"
+                                  : "Low complexity"
+                            }
+                          />
                         </div>
                       </div>
                     </div>
 
                     {/* Complexity Distribution */}
-                    <div className="rounded-[var(--radius-md)] p-4 border border-[var(--color-border)] bg-[var(--color-bg)] mb-4">
-                      <div className="text-xs font-mono font-bold text-[var(--color-text)] mb-2.5 flex items-center justify-between">
+                    <div className="rounded-lg p-4 border border-[var(--ps-line)] bg-[var(--ps-inset)] mb-4">
+                      <div className="text-xs font-medium text-[var(--ps-ink)] mb-3 flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                           <Activity
                             size={13}
-                            className="text-[var(--color-primary)]"
+                            className="text-[var(--ps-ink-muted)]"
                           />
-                          <span>Complexity Distribution</span>
+                          <span>Complexity distribution</span>
                         </div>
-                        <span className="text-[10px] text-[var(--color-text-muted)] font-normal">
+                        <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)] font-normal">
                           {fileCcs.length} analyzed
                         </span>
                       </div>
-                      <div className="flex gap-1 h-2 w-full rounded-full overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border)] mb-2.5">
+                      <div className="flex gap-0.5 h-1.5 w-full rounded-sm overflow-hidden bg-[var(--ps-surface-2)] border border-[var(--ps-line)] mb-3">
                         <div
                           style={{
                             width: `${(fileCcs.filter((c) => c.value <= 4).length / (fileCcs.length || 1)) * 100}%`,
                           }}
-                          className="bg-[var(--color-success)] transition-all"
+                          className="bg-[var(--ps-emerald)]/85 transition-all"
                           title="Low risk (<= 4)"
                         />
                         <div
                           style={{
                             width: `${(fileCcs.filter((c) => c.value > 4 && c.value <= 10).length / (fileCcs.length || 1)) * 100}%`,
                           }}
-                          className="bg-[var(--color-warning)] transition-all"
+                          className="bg-[var(--ps-amber)]/85 transition-all"
                           title="Moderate risk (5-10)"
                         />
                         <div
                           style={{
                             width: `${(fileCcs.filter((c) => c.value > 10).length / (fileCcs.length || 1)) * 100}%`,
                           }}
-                          className="bg-[var(--color-danger)] transition-all"
+                          className="bg-[var(--ps-rose)]/85 transition-all"
                           title="High risk (> 10)"
                         />
                       </div>
-                      <div className="flex justify-between text-[10px] font-mono text-[var(--color-text-secondary)]">
-                        <span className="flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-[var(--color-success)] inline-block" />
+                      <div className="flex justify-between text-[11px] ps-mono text-[var(--ps-ink-secondary)]">
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-emerald)] inline-block" />
                           Low ({fileCcs.filter((c) => c.value <= 4).length})
                         </span>
-                        <span className="flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] inline-block" />
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-amber)] inline-block" />
                           Mod (
                           {
                             fileCcs.filter((c) => c.value > 4 && c.value <= 10)
@@ -1511,20 +1583,23 @@ export default function CFGCalculator({
                           }
                           )
                         </span>
-                        <span className="flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-[var(--color-danger)] inline-block" />
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-rose)] inline-block" />
                           High ({fileCcs.filter((c) => c.value > 10).length})
                         </span>
                       </div>
                     </div>
 
                     {/* Navigation Help */}
-                    <div className="rounded-[var(--radius-md)] p-4 border border-[var(--color-border)] bg-[var(--color-bg)]">
-                      <div className="flex items-center gap-2 mb-2 text-[var(--color-primary)] font-bold text-xs font-mono uppercase tracking-wider">
-                        <Info size={14} />
-                        Call Graph Navigation
+                    <div className="rounded-lg p-4 border border-[var(--ps-line)] bg-[var(--ps-inset)]">
+                      <div className="flex items-center gap-2 mb-2 text-[var(--ps-ink)] font-medium text-xs">
+                        <Info
+                          size={13.5}
+                          className="text-[var(--ps-ink-muted)]"
+                        />
+                        <span>Call graph navigation</span>
                       </div>
-                      <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed m-0">
+                      <p className="text-xs text-[var(--ps-ink-secondary)] leading-relaxed m-0">
                         Select a function node in the Call Graph to inspect its
                         internal Control Flow Graph, McCabe complexity index,
                         decision paths, and recommended test cases.
@@ -1534,38 +1609,38 @@ export default function CFGCalculator({
                 ) : (
                   <motion.div
                     key="metrics-micro"
-                    initial={{ opacity: 0, x: 20 }}
+                    initial={{ opacity: 0, x: 16 }}
                     animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.3 }}
+                    exit={{ opacity: 0, x: -16 }}
+                    transition={{ duration: 0.2 }}
                     className="flex flex-col h-full"
                   >
                     {/* Header */}
-                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-[var(--color-border)]">
+                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-[var(--ps-line)] gap-2">
                       <div className="flex items-center gap-2">
                         <Activity
-                          size={15}
-                          className="text-[var(--color-primary)]"
+                          size={14}
+                          className="text-[var(--ps-ink-muted)]"
                         />
-                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)]">
-                          Complexity Analysis
+                        <span className="text-xs font-medium text-[var(--ps-ink)]">
+                          Complexity analysis
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] font-semibold truncate max-w-[140px]">
+                      <span className="text-[11px] ps-mono px-2 py-0.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)] text-[var(--ps-ink-secondary)] truncate max-w-[140px]">
                         {selectedFunc}()
                       </span>
                     </div>
 
                     {/* --- SELECTED NODE INSPECTOR --- */}
                     {selectedNode ? (
-                      <div className="rounded-[var(--radius-md)] border-2 border-[var(--color-primary)]/40 bg-[var(--color-bg)] p-3.5 mb-4 shadow-sm">
-                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-[var(--color-border)]">
-                          <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)]">
+                      <div className="rounded-lg border border-[var(--ps-cobalt)]/40 bg-[var(--ps-inset)] p-3.5 mb-4">
+                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-[var(--ps-line)]">
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--ps-ink)]">
                             <GitBranch
                               size={13}
-                              className="text-[var(--color-primary)]"
+                              className="text-[var(--ps-ink-muted)]"
                             />
-                            <span>Node Inspector</span>
+                            <span>Node inspector</span>
                           </div>
                           <button
                             onClick={() => {
@@ -1573,7 +1648,7 @@ export default function CFGCalculator({
                               setHighlightedLine(null);
                             }}
                             title="Deselect Node"
-                            className="flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] cursor-pointer bg-transparent border-none text-[11px] font-mono"
+                            className="flex items-center gap-1 text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] transition-colors px-1.5 py-0.5 rounded-md hover:bg-[var(--ps-surface-2)] cursor-pointer bg-transparent border-none text-[11px] ps-mono"
                           >
                             <X size={12} />
                             <span>Deselect</span>
@@ -1583,28 +1658,29 @@ export default function CFGCalculator({
                         {/* Node Identity & Type */}
                         <div className="flex items-center justify-between gap-2 mb-2.5 flex-wrap">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm font-bold text-[var(--color-text)]">
+                            <span className="ps-mono text-sm font-semibold text-[var(--ps-ink)]">
                               {selectedNode.label ||
                                 selectedNode.type ||
                                 selectedNode.id}
                             </span>
                             {selectedNode.line && (
-                              <span className="text-[10px] font-mono font-bold text-[var(--color-primary)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20 px-2 py-0.5 rounded-[var(--radius-sm)]">
+                              <span className="text-[11px] ps-mono text-[var(--ps-cobalt)] bg-[var(--ps-cobalt)]/10 border border-[var(--ps-cobalt)]/25 px-2 py-0.5 rounded-md">
                                 Line {selectedNode.line}
                               </span>
                             )}
                           </div>
 
                           <span
-                            className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full border ${selectedNode.type === "condition"
-                                ? "bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/30"
+                            className={`text-[10.5px] ps-mono font-medium px-2 py-0.5 rounded-md border ${
+                              selectedNode.type === "condition"
+                                ? "bg-[var(--ps-amber)]/10 text-[var(--ps-amber)] border-[var(--ps-amber)]/25"
                                 : selectedNode.type === "start"
-                                  ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/30"
+                                  ? "bg-[var(--ps-cobalt)]/10 text-[var(--ps-cobalt)] border-[var(--ps-cobalt)]/25"
                                   : selectedNode.type === "return" ||
-                                    selectedNode.type === "exit"
-                                    ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/30"
-                                    : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
-                              }`}
+                                      selectedNode.type === "exit"
+                                    ? "bg-[var(--ps-rose)]/10 text-[var(--ps-rose)] border-[var(--ps-rose)]/25"
+                                    : "bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] border-[var(--ps-line)]"
+                            }`}
                           >
                             {selectedNode.type === "condition"
                               ? "Decision (Branch)"
@@ -1620,46 +1696,47 @@ export default function CFGCalculator({
 
                         {/* Code snippet preview */}
                         {selectedNodeLineText && (
-                          <div className="mb-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] p-2 font-mono text-xs text-[var(--color-text)] leading-relaxed">
-                            <div className="text-[9px] uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-1 flex items-center justify-between">
-                              <span>Source Line Preview</span>
-                              <span className="text-[var(--color-primary)] font-bold">
+                          <div className="mb-2.5 rounded-md bg-[var(--ps-surface)] border border-[var(--ps-line)] p-2.5 ps-mono text-xs text-[var(--ps-ink)] leading-relaxed">
+                            <div className="text-[10px] text-[var(--ps-ink-muted)] mb-1.5 flex items-center justify-between">
+                              <span>Source line preview</span>
+                              <span className="text-[var(--ps-cobalt)] ps-mono">
                                 L{selectedNode.line || activeCfg?.startLine}
                               </span>
                             </div>
-                            <div className="text-xs font-mono whitespace-pre-wrap break-all text-[var(--color-text)] bg-[var(--color-bg)]/80 p-2 rounded-[var(--radius-sm)] border border-[var(--color-border)]/50">
+                            <div className="text-xs ps-mono whitespace-pre-wrap break-all text-[var(--ps-ink)] bg-[var(--ps-bg)] p-2 rounded-md border border-[var(--ps-line)]">
                               {syntaxHighlight(selectedNodeLineText)}
                             </div>
                           </div>
                         )}
 
                         {/* Connectivity Grid */}
-                        <div className="grid grid-cols-3 gap-1.5 mb-2.5">
-                          <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center">
-                            <div className="text-[9px] font-mono uppercase text-[var(--color-text-muted)] tracking-wider">
-                              In-Degree
+                        <div className="grid grid-cols-3 gap-2 mb-2.5">
+                          <div className="p-2 rounded-md bg-[var(--ps-surface)] border border-[var(--ps-line)] text-center">
+                            <div className="text-[10px] text-[var(--ps-ink-muted)]">
+                              In-degree
                             </div>
-                            <div className="text-sm font-mono font-bold text-[var(--color-text)] mt-0.5">
+                            <div className="text-sm ps-mono font-semibold text-[var(--ps-ink)] tabular-nums mt-0.5">
                               {selectedNodeInEdges.length}
                             </div>
                           </div>
-                          <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center">
-                            <div className="text-[9px] font-mono uppercase text-[var(--color-text-muted)] tracking-wider">
-                              Out-Degree
+                          <div className="p-2 rounded-md bg-[var(--ps-surface)] border border-[var(--ps-line)] text-center">
+                            <div className="text-[10px] text-[var(--ps-ink-muted)]">
+                              Out-degree
                             </div>
-                            <div className="text-sm font-mono font-bold text-[var(--color-text)] mt-0.5">
+                            <div className="text-sm ps-mono font-semibold text-[var(--ps-ink)] tabular-nums mt-0.5">
                               {selectedNodeOutEdges.length}
                             </div>
                           </div>
-                          <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center">
-                            <div className="text-[9px] font-mono uppercase text-[var(--color-text-muted)] tracking-wider">
+                          <div className="p-2 rounded-md bg-[var(--ps-surface)] border border-[var(--ps-line)] text-center">
+                            <div className="text-[10px] text-[var(--ps-ink-muted)]">
                               Complexity
                             </div>
                             <div
-                              className={`text-sm font-mono font-bold mt-0.5 ${selectedNode.type === "condition"
-                                  ? "text-[var(--color-warning)]"
-                                  : "text-[var(--color-text-secondary)]"
-                                }`}
+                              className={`text-sm ps-mono font-semibold tabular-nums mt-0.5 ${
+                                selectedNode.type === "condition"
+                                  ? "text-[var(--ps-amber)]"
+                                  : "text-[var(--ps-ink-secondary)]"
+                              }`}
                             >
                               {selectedNode.type === "condition"
                                 ? "+1 CC"
@@ -1669,13 +1746,13 @@ export default function CFGCalculator({
                         </div>
 
                         {/* Node Flow Description */}
-                        <div className="text-[11px] text-[var(--color-text-secondary)] bg-[var(--color-surface)] p-2 rounded-[var(--radius-sm)] border border-[var(--color-border)] leading-relaxed">
+                        <div className="text-[11px] text-[var(--ps-ink-secondary)] bg-[var(--ps-surface)] p-2.5 rounded-md border border-[var(--ps-line)] leading-relaxed">
                           {selectedNode.type === "condition" && (
-                            <span className="flex items-start gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-warning)] mt-1 flex-shrink-0 inline-block" />
+                            <span className="flex items-start gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-amber)] mt-1.5 flex-shrink-0 inline-block" />
                               <span>
-                                <strong className="text-[var(--color-text)]">
-                                  Branching Node:
+                                <strong className="text-[var(--ps-ink)] font-medium">
+                                  Branching node:
                                 </strong>{" "}
                                 Evaluates predicate condition and creates 2
                                 alternative execution branches (+1 McCabe
@@ -1684,11 +1761,11 @@ export default function CFGCalculator({
                             </span>
                           )}
                           {selectedNode.type === "start" && (
-                            <span className="flex items-start gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1 flex-shrink-0 inline-block" />
+                            <span className="flex items-start gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-cobalt)] mt-1.5 flex-shrink-0 inline-block" />
                               <span>
-                                <strong className="text-[var(--color-text)]">
-                                  Entry Point:
+                                <strong className="text-[var(--ps-ink)] font-medium">
+                                  Entry point:
                                 </strong>{" "}
                                 Function entry root node initializing call scope
                                 and parameter bindings.
@@ -1696,11 +1773,11 @@ export default function CFGCalculator({
                             </span>
                           )}
                           {selectedNode.type === "return" && (
-                            <span className="flex items-start gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-danger)] mt-1 flex-shrink-0 inline-block" />
+                            <span className="flex items-start gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-rose)] mt-1.5 flex-shrink-0 inline-block" />
                               <span>
-                                <strong className="text-[var(--color-text)]">
-                                  Return Statement:
+                                <strong className="text-[var(--ps-ink)] font-medium">
+                                  Return statement:
                                 </strong>{" "}
                                 Terminates execution along this branch and
                                 yields return value to caller.
@@ -1708,11 +1785,11 @@ export default function CFGCalculator({
                             </span>
                           )}
                           {selectedNode.type === "exit" && (
-                            <span className="flex items-start gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-danger)] mt-1 flex-shrink-0 inline-block" />
+                            <span className="flex items-start gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-rose)] mt-1.5 flex-shrink-0 inline-block" />
                               <span>
-                                <strong className="text-[var(--color-text)]">
-                                  Terminal Sink:
+                                <strong className="text-[var(--ps-ink)] font-medium">
+                                  Terminal sink:
                                 </strong>{" "}
                                 Virtual McCabe exit node absorbing all terminal
                                 return paths (P = 1).
@@ -1723,11 +1800,11 @@ export default function CFGCalculator({
                             selectedNode.type !== "start" &&
                             selectedNode.type !== "return" &&
                             selectedNode.type !== "exit" && (
-                              <span className="flex items-start gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)] mt-1 flex-shrink-0 inline-block" />
+                              <span className="flex items-start gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-ink-muted)] mt-1.5 flex-shrink-0 inline-block" />
                                 <span>
-                                  <strong className="text-[var(--color-text)]">
-                                    Sequential Statement:
+                                  <strong className="text-[var(--ps-ink)] font-medium">
+                                    Sequential statement:
                                   </strong>{" "}
                                   Linear execution block without conditional
                                   branching.
@@ -1737,11 +1814,11 @@ export default function CFGCalculator({
                         </div>
                       </div>
                     ) : (
-                      <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] p-3 mb-4 text-center bg-[var(--color-bg)]/40">
-                        <div className="flex items-center justify-center gap-1.5 text-xs text-[var(--color-text-secondary)] font-mono">
-                          <Sparkles
+                      <div className="rounded-lg border border-dashed border-[var(--ps-line-strong)] p-3.5 mb-4 text-center bg-[var(--ps-inset)]/60">
+                        <div className="flex items-center justify-center gap-1.5 text-xs text-[var(--ps-ink-secondary)]">
+                          <Info
                             size={13}
-                            className="text-[var(--color-primary)]"
+                            className="text-[var(--ps-ink-muted)]"
                           />
                           <span>
                             Click any node in graph to inspect its parameters
@@ -1762,39 +1839,39 @@ export default function CFGCalculator({
 
                       return (
                         <>
-                          <div className="flex flex-col items-center justify-center p-5 mb-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)]">
+                          <div className="flex flex-col items-center justify-center p-5 mb-4 rounded-lg border border-[var(--ps-line)] bg-[var(--ps-inset)]">
                             <div className="relative flex items-center justify-center w-36 h-36">
                               <svg className="w-full h-full -rotate-90">
                                 <circle
                                   cx="72"
                                   cy="72"
                                   r="58"
-                                  stroke="var(--color-border)"
-                                  strokeWidth="10"
+                                  stroke="var(--ps-line-strong)"
+                                  strokeWidth="7"
                                   fill="none"
-                                  opacity="0.4"
+                                  opacity="0.45"
                                 />
                                 <circle
                                   cx="72"
                                   cy="72"
                                   r="58"
                                   stroke={meta.color}
-                                  strokeWidth="10"
+                                  strokeWidth="7"
                                   fill="none"
                                   strokeDasharray={circumference}
                                   strokeDashoffset={dashoffset}
                                   strokeLinecap="round"
                                   style={{
                                     transition:
-                                      "stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1)",
+                                      "stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
                                   }}
                                 />
                               </svg>
                               <div className="absolute flex flex-col items-center">
-                                <span className="text-3xl font-extrabold font-mono text-[var(--color-text)] tracking-tight">
+                                <span className="text-3xl font-semibold ps-mono text-[var(--ps-ink)] tabular-nums tracking-tight">
                                   {ccVal}
                                 </span>
-                                <span className="text-[10px] font-mono font-bold tracking-wider text-[var(--color-text-secondary)] uppercase mt-0.5">
+                                <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)] mt-0.5">
                                   McCabe CC
                                 </span>
                               </div>
@@ -1803,7 +1880,7 @@ export default function CFGCalculator({
                             {/* Status Pill */}
                             <div className="mt-4 flex flex-col items-center gap-2.5 w-full">
                               <div
-                                className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold border ${meta.badgeClass}`}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${meta.badgeClass}`}
                               >
                                 <MetaIcon size={13} />
                                 <span>
@@ -1811,41 +1888,47 @@ export default function CFGCalculator({
                                 </span>
                               </div>
 
-                              <p className="text-center text-xs text-[var(--color-text-secondary)]">{meta.summary}</p>
+                              <p className="text-center text-xs text-[var(--ps-ink-secondary)]">
+                                {meta.summary}
+                              </p>
 
                               {/* 4-Tier Interactive Scale Bar */}
-                              <div className="w-full px-2 mt-1">
-                                <div className="flex gap-1.5 h-1.5 w-full rounded-full overflow-hidden bg-[var(--color-border)]/50 p-0.5">
+                              <div className="w-full px-1 mt-1">
+                                <div className="flex gap-1 h-1.5 w-full rounded-sm overflow-hidden bg-[var(--ps-surface-2)]">
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 1
-                                        ? "bg-[var(--color-success)] shadow-xs"
-                                        : "bg-[var(--color-border)] opacity-30"
-                                      }`}
+                                    className={`flex-1 rounded-sm transition-all duration-200 ${
+                                      meta.tier === 1
+                                        ? "bg-[var(--ps-emerald)]"
+                                        : "bg-[var(--ps-line)] opacity-50"
+                                    }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 2
-                                        ? "bg-[var(--color-warning)] shadow-xs"
-                                        : "bg-[var(--color-border)] opacity-30"
-                                      }`}
+                                    className={`flex-1 rounded-sm transition-all duration-200 ${
+                                      meta.tier === 2
+                                        ? "bg-[var(--ps-amber)]"
+                                        : "bg-[var(--ps-line)] opacity-50"
+                                    }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 3
-                                        ? "bg-[var(--color-danger)] shadow-xs"
-                                        : "bg-[var(--color-border)] opacity-30"
-                                      }`}
+                                    className={`flex-1 rounded-sm transition-all duration-200 ${
+                                      meta.tier === 3
+                                        ? "bg-[var(--ps-rose)]"
+                                        : "bg-[var(--ps-line)] opacity-50"
+                                    }`}
                                   />
                                   <div
-                                    className={`flex-1 rounded-full transition-all duration-300 ${meta.tier === 4
-                                        ? "bg-[var(--color-danger)] shadow-xs"
-                                        : "bg-[var(--color-border)] opacity-30"
-                                      }`}
+                                    className={`flex-1 rounded-sm transition-all duration-200 ${
+                                      meta.tier === 4
+                                        ? "bg-[var(--ps-rose)]"
+                                        : "bg-[var(--ps-line)] opacity-50"
+                                    }`}
                                   />
                                 </div>
-                                <div className="flex justify-between text-[10px] font-mono text-[var(--color-text-muted)] mt-1.5 px-0.5">
+                                <div className="flex justify-between text-[10px] ps-mono text-[var(--ps-ink-muted)] mt-1.5 px-0.5">
                                   <span
                                     className={
                                       meta.tier === 1
-                                        ? "text-[var(--color-success)] font-bold"
+                                        ? "text-[var(--ps-emerald)] font-medium"
                                         : ""
                                     }
                                   >
@@ -1854,7 +1937,7 @@ export default function CFGCalculator({
                                   <span
                                     className={
                                       meta.tier === 2
-                                        ? "text-[var(--color-warning)] font-bold"
+                                        ? "text-[var(--ps-amber)] font-medium"
                                         : ""
                                     }
                                   >
@@ -1863,7 +1946,7 @@ export default function CFGCalculator({
                                   <span
                                     className={
                                       meta.tier === 3
-                                        ? "text-[var(--color-danger)] font-bold"
+                                        ? "text-[var(--ps-rose)] font-medium"
                                         : ""
                                     }
                                   >
@@ -1872,7 +1955,7 @@ export default function CFGCalculator({
                                   <span
                                     className={
                                       meta.tier === 4
-                                        ? "text-[var(--color-danger)] font-bold"
+                                        ? "text-[var(--ps-rose)] font-medium"
                                         : ""
                                     }
                                   >
@@ -1884,75 +1967,75 @@ export default function CFGCalculator({
                           </div>
 
                           {/* Graph Formula Card */}
-                          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4 mb-4">
-                            <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-[var(--color-border)]">
-                              <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)]">
+                          <div className="rounded-lg border border-[var(--ps-line)] bg-[var(--ps-inset)] p-4 mb-4">
+                            <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-[var(--ps-line)]">
+                              <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--ps-ink)]">
                                 <Calculator
                                   size={13}
-                                  className="text-[var(--color-primary)]"
+                                  className="text-[var(--ps-ink-muted)]"
                                 />
-                                <span>Graph Formula</span>
+                                <span>Graph formula</span>
                               </div>
-                              <span className="text-[10px] font-mono font-bold text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-2 py-0.5 rounded-[var(--radius-sm)] border border-[var(--color-primary)]/20">
+                              <span className="text-[11px] ps-mono text-[var(--ps-ink-secondary)] bg-[var(--ps-surface)] px-2 py-0.5 rounded-md border border-[var(--ps-line)]">
                                 M = E - N + 2P
                               </span>
                             </div>
 
                             {/* Equation calculation visualization */}
-                            <div className="bg-[var(--color-surface)] rounded-[var(--radius-sm)] py-2 px-3 mb-3 border border-[var(--color-border)] flex items-center justify-center gap-2 font-mono text-xs text-[var(--color-text)]">
-                              <span className="font-bold text-[var(--color-primary)] text-sm">
+                            <div className="bg-[var(--ps-surface)] rounded-md py-2 px-3 mb-3 border border-[var(--ps-line)] flex items-center justify-center gap-2 ps-mono text-xs text-[var(--ps-ink)] tabular-nums">
+                              <span className="font-semibold text-[var(--ps-cobalt)] text-sm">
                                 {ccVal}
                               </span>
-                              <span className="text-[var(--color-text-muted)]">
+                              <span className="text-[var(--ps-ink-muted)]">
                                 =
                               </span>
-                              <span className="font-semibold">
+                              <span className="font-medium">
                                 {graphLayout.edges.length}
                               </span>
-                              <span className="text-[var(--color-text-muted)] text-[10px]">
+                              <span className="text-[var(--ps-ink-muted)] text-[10px]">
                                 (E)
                               </span>
-                              <span className="text-[var(--color-text-muted)]">
+                              <span className="text-[var(--ps-ink-muted)]">
                                 -
                               </span>
-                              <span className="font-semibold">
+                              <span className="font-medium">
                                 {graphLayout.nodes.length}
                               </span>
-                              <span className="text-[var(--color-text-muted)] text-[10px]">
+                              <span className="text-[var(--ps-ink-muted)] text-[10px]">
                                 (N)
                               </span>
-                              <span className="text-[var(--color-text-muted)]">
+                              <span className="text-[var(--ps-ink-muted)]">
                                 +
                               </span>
-                              <span className="font-semibold">2</span>
-                              <span className="text-[var(--color-text-muted)] text-[10px]">
+                              <span className="font-medium">2</span>
+                              <span className="text-[var(--ps-ink-muted)] text-[10px]">
                                 (P)
                               </span>
                             </div>
 
                             {/* 3 Metrics Mini Cards Grid */}
                             <div className="grid grid-cols-3 gap-2">
-                              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center transition-colors hover:border-[var(--color-primary)]/40">
-                                <div className="text-[10px] font-mono font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                              <div className="p-2.5 rounded-md bg-[var(--ps-surface)] border border-[var(--ps-line)] text-center">
+                                <div className="text-[10.5px] text-[var(--ps-ink-muted)]">
                                   Edges (E)
                                 </div>
-                                <div className="text-base font-mono font-bold text-[var(--color-primary)] mt-0.5">
+                                <div className="text-base ps-mono font-semibold text-[var(--ps-ink)] tabular-nums mt-0.5">
                                   {graphLayout.edges.length}
                                 </div>
                               </div>
-                              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center transition-colors hover:border-[var(--color-primary)]/40">
-                                <div className="text-[10px] font-mono font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                              <div className="p-2.5 rounded-md bg-[var(--ps-surface)] border border-[var(--ps-line)] text-center">
+                                <div className="text-[10.5px] text-[var(--ps-ink-muted)]">
                                   Nodes (N)
                                 </div>
-                                <div className="text-base font-mono font-bold text-[var(--color-success)] mt-0.5">
+                                <div className="text-base ps-mono font-semibold text-[var(--ps-ink)] tabular-nums mt-0.5">
                                   {graphLayout.nodes.length}
                                 </div>
                               </div>
-                              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center transition-colors hover:border-[var(--color-primary)]/40">
-                                <div className="text-[10px] font-mono font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                              <div className="p-2.5 rounded-md bg-[var(--ps-surface)] border border-[var(--ps-line)] text-center">
+                                <div className="text-[10.5px] text-[var(--ps-ink-muted)]">
                                   Exits (P)
                                 </div>
-                                <div className="text-base font-mono font-bold text-[var(--color-text)] mt-0.5">
+                                <div className="text-base ps-mono font-semibold text-[var(--ps-ink)] tabular-nums mt-0.5">
                                   1
                                 </div>
                               </div>
@@ -1960,47 +2043,47 @@ export default function CFGCalculator({
                           </div>
 
                           {/* QA & Testing Insights Card */}
-                          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-                            <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)] mb-3 pb-2 border-b border-[var(--color-border)]">
+                          <div className="rounded-lg border border-[var(--ps-line)] bg-[var(--ps-inset)] p-4">
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--ps-ink)] mb-3 pb-2 border-b border-[var(--ps-line)]">
                               <ShieldCheck
                                 size={13}
-                                className="text-[var(--color-primary)]"
+                                className="text-[var(--ps-ink-muted)]"
                               />
-                              <span>QA & Testing Guidance</span>
+                              <span>QA & testing guidance</span>
                             </div>
 
                             <div className="space-y-2.5 text-xs">
-                              <div className="flex items-start gap-2.5 text-[var(--color-text-secondary)]">
-                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1.5 flex-shrink-0" />
+                              <div className="flex items-start gap-2.5 text-[var(--ps-ink-secondary)]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--ps-cobalt)] mt-1.5 flex-shrink-0" />
                                 <div className="leading-relaxed">
-                                  <strong className="text-[var(--color-text)]">
-                                    Basis Path Coverage:
+                                  <strong className="text-[var(--ps-ink)] font-medium">
+                                    Basis path coverage:
                                   </strong>{" "}
                                   Requires at least{" "}
-                                  <span className="font-mono font-bold text-[var(--color-primary)]">
+                                  <span className="ps-mono font-medium text-[var(--ps-ink)]">
                                     {ccVal} independent test cases
                                   </span>{" "}
                                   to achieve 100% path coverage.
                                 </div>
                               </div>
-                              <div className="flex items-start gap-2.5 text-[var(--color-text-secondary)]">
-                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1.5 flex-shrink-0" />
+                              <div className="flex items-start gap-2.5 text-[var(--ps-ink-secondary)]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--ps-ink-muted)] mt-1.5 flex-shrink-0" />
                                 <div className="leading-relaxed">
-                                  <strong className="text-[var(--color-text)]">
-                                    Decision Points:
+                                  <strong className="text-[var(--ps-ink)] font-medium">
+                                    Decision points:
                                   </strong>{" "}
                                   Detected{" "}
-                                  <span className="font-mono font-bold text-[var(--color-text)]">
+                                  <span className="ps-mono font-medium text-[var(--ps-ink)]">
                                     {Math.max(0, ccVal - 1)} conditional
                                     branches
                                   </span>{" "}
                                   (if, switch, loop, ternary).
                                 </div>
                               </div>
-                              <div className="flex items-start gap-2.5 text-[var(--color-text-secondary)]">
-                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1.5 flex-shrink-0" />
+                              <div className="flex items-start gap-2.5 text-[var(--ps-ink-secondary)]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--ps-ink-muted)] mt-1.5 flex-shrink-0" />
                                 <div className="leading-relaxed">
-                                  <strong className="text-[var(--color-text)]">
+                                  <strong className="text-[var(--ps-ink)] font-medium">
                                     Recommendation:
                                   </strong>{" "}
                                   {meta.recommendation}

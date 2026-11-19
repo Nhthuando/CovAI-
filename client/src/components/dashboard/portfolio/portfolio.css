@@ -45,10 +45,18 @@
   --color-surface: var(--ps-surface);
   --color-surface-secondary: var(--ps-surface-2);
   --color-border: var(--ps-line);
+  --color-border-strong: var(--ps-line-strong);
   --color-text: var(--ps-ink);
   --color-text-secondary: var(--ps-ink-secondary);
   --color-text-muted: var(--ps-ink-muted);
   --color-primary: var(--ps-cobalt);
+  --color-primary-hover: var(--ps-ink);
+  --color-primary-foreground: var(--ps-bg);
+  --color-success: var(--ps-emerald);
+  --color-warning: var(--ps-amber);
+  --color-danger: var(--ps-rose);
+  --color-info: var(--ps-cobalt);
+  --color-focus: var(--ps-cobalt);
 
   background-color: var(--ps-bg);
   color: var(--ps-ink);
