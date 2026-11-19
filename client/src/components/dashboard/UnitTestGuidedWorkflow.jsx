@@ -15,9 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
-  Download,
 } from "lucide-react";
-import { ExportUnitTestReportModal } from "./modals/ExportUnitTestReportModal.jsx";
 
 /**
  * UnitTestGuidedWorkflow
@@ -124,7 +122,6 @@ export default function UnitTestGuidedWorkflow({
     return 1;
   };
 
-  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [currentStage, setCurrentStage] = useState(getInitialActiveStage);
   const [maxUnlockedStage, setMaxUnlockedStage] = useState(getInitialActiveStage);
   const [selectedStage, setSelectedStage] = useState(null);
@@ -692,15 +689,6 @@ export default function UnitTestGuidedWorkflow({
               )}
               <button
                 type="button"
-                onClick={() => setIsExportModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
-                title="Export Unit Test Report (Markdown, JSON, Standalone HTML)"
-              >
-                <Download size={13} className="text-[var(--color-primary)]" />
-                <span>Export Report</span>
-              </button>
-              <button
-                type="button"
                 onClick={() => onRun && onRun({ restart: true })}
                 disabled={running}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
@@ -754,20 +742,6 @@ export default function UnitTestGuidedWorkflow({
           )}
         </div>
       </div>
-
-      {/* Export Unit Test Report Modal */}
-      <ExportUnitTestReportModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        data={{
-          snapshotId,
-          summary,
-          rawTotals,
-          executions,
-          testTotals,
-          scenarios: scenarios || summary?.scenarios || summary?.data?.scenarios || [],
-        }}
-      />
     </section>
   );
 }

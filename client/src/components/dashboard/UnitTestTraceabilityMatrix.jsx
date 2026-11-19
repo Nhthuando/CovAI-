@@ -1509,19 +1509,6 @@ export default function UnitTestTraceabilityMatrix({
                               <span>Select &amp; Review</span>
                             </button>
                           )}
-                          {onDryRunFileSuggestions && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDryRunFileSuggestions(group.filePath, fileSugs);
-                              }}
-                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
-                              title="Run candidate tests for this file in sandbox before applying"
-                            >
-                              <Activity size={11} className="text-[var(--color-primary)]" />
-                              <span>Test First</span>
-                            </button>
-                          )}
                         </div>
                       ) : (hasPassed || isFileFullyCovered) ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -1645,20 +1632,6 @@ export default function UnitTestTraceabilityMatrix({
                           <span>Suggest tests</span>
                         </button>
                       ) : null}
-
-                      {/* Prominent File-Level 4-Metric Proof Button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setInspectingFileProof(group.filePath);
-                          fetchFileCoverage(group.filePath);
-                        }}
-                        className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
-                        title="View mathematical 4-metric calculation and Istanbul execution proof for this file"
-                      >
-                        <Calculator size={11} className="text-[var(--color-text-muted)]" />
-                        <span>4-Metric Proof</span>
-                      </button>
 
                       <button
                         onClick={(e) => {
@@ -2282,17 +2255,6 @@ export default function UnitTestTraceabilityMatrix({
                                             >
                                               <FileDiff size={12} className="text-[var(--color-text-muted)]" />
                                               <span>Select &amp; Review</span>
-                                            </button>
-                                          )}
-                                          {onDryRunFileSuggestions && (
-                                            <button
-                                              onClick={() => onDryRunFileSuggestions(fn.filePath, fileSugs)}
-                                              disabled={isApplying}
-                                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150 disabled:opacity-50"
-                                              title="Run candidate tests in sandbox before applying"
-                                            >
-                                              <Activity size={11} className="text-[var(--color-primary)]" />
-                                              <span>Test First</span>
                                             </button>
                                           )}
                                         </div>

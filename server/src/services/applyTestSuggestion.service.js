@@ -4269,15 +4269,50 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         healIterations++;
         let healed = false;
         try {
-            const missingDep = extractMissingDependency(combinedOutput);
+            const detectedMissingDeps = collectWorkspaceMissingDependencies(origWorkspaceRoot || rootDir, [combinedOutput]);
+            const missingDep = detectedMissingDeps[0] || extractMissingDependency(combinedOutput);
+            const missingDepsToInstall = detectedMissingDeps.length > 0
+                ? detectedMissingDeps
+                : (missingDep ? [missingDep] : []);
             const hasNonAutoRewritableMismatch = classifiedFailures.length > 0 &&
                 classifiedFailures.every(failure => failure.code === 'D' || failure.code === 'A');
-            if (enforceQualityGate && hasNonAutoRewritableMismatch) break;
-            if (missingDep && (!enforceQualityGate || inspectWorkspaceDependency({ rootDir, ...missingDep }).inPackageJson)) {
-                const repair = await resolveUnitTestDependency({ rootDir, output: combinedOutput, attempted: attemptedPackageInstalls });
-                healed = repair.resolved;
-                qualityGate.repairs.push({ iteration: healIterations, code: 'E', action: 'RESTORE_DECLARED_DEPENDENCY',
-                    packageName: missingDep.packageName, status: repair.status || 'UNRESOLVED', timestamp: new Date().toISOString() });
+            if (enforceQualityGate && hasNonAutoRewritableMismatch && missingDepsToInstall.length === 0) break;
+            if (missingDepsToInstall.length > 0) {
+                for (const dep of missingDepsToInstall) {
+                    if (!dep?.packageName || !isValidNpmPackageName(dep.packageName)) continue;
+                    if (attemptedPackageInstalls.has(dep.packageName)) continue;
+                    const inspection = inspectWorkspaceDependency({ rootDir, ...dep });
+                    const repair = await resolveUnitTestDependency({
+                        rootDir,
+                        output: combinedOutput,
+                        dependency: dep,
+                        attempted: attemptedPackageInstalls,
+                        maxPackages: 10,
+                    });
+                    if (repair.resolved) {
+                        healed = true;
+                        if (origWorkspaceRoot && path.resolve(origWorkspaceRoot) !== path.resolve(rootDir) && !dryRun && !validationOnly) {
+                            const origHasPkg = fs.existsSync(path.join(origWorkspaceRoot, 'node_modules', ...dep.packageName.split('/')));
+                            if (!origHasPkg) {
+                                await installPackageInWorkspace({
+                                    rootDir: origWorkspaceRoot,
+                                    ...dep,
+                                    isDev: /(?:tests?\/|__tests__|\.(test|spec|steps?)\.)/.test(dep.importedFrom || ''),
+                                }).catch((syncErr) => {
+                                    console.warn(`[applyUnitTestSuggestion] Failed to sync installed dependency '${dep.packageName}' to origin workspace:`, syncErr?.message || syncErr);
+                                });
+                            }
+                        }
+                    }
+                    qualityGate.repairs.push({
+                        iteration: healIterations,
+                        code: 'E',
+                        action: inspection.inPackageJson ? 'RESTORE_DECLARED_DEPENDENCY' : 'AUTO_INSTALL_MISSING_DEPENDENCY',
+                        packageName: dep.packageName,
+                        status: repair.status || 'UNRESOLVED',
+                        timestamp: new Date().toISOString(),
+                    });
+                }
             }
             if (!healed && enforceQualityGate) {
                 for (const item of appliedList) {

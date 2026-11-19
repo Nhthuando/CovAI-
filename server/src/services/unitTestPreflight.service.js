@@ -26,8 +26,8 @@ export function collectUnitTestEnvironmentFiles(rootDir, files) {
 
 // Shared, bounded resolver for analysis and apply. The caller supplies the isolated
 // workspace, never the immutable upload or an origin node_modules junction.
-export async function resolveUnitTestDependency({ rootDir, output, attempted = new Set(), jobId = null, maxPackages = 5, install = installPackageInWorkspace }) {
-    const dependency = extractMissingDependency(output);
+export async function resolveUnitTestDependency({ rootDir, output, dependency: explicitDependency = null, attempted = new Set(), jobId = null, maxPackages = 10, install = installPackageInWorkspace }) {
+    const dependency = explicitDependency || extractMissingDependency(output);
     if (!dependency || !isValidNpmPackageName(dependency.packageName)) return { resolved: false, dependency: null };
     const { packageName } = dependency;
     if (!dependencyBudgetStarts.has(attempted)) dependencyBudgetStarts.set(attempted,Date.now());
