@@ -13,7 +13,10 @@ import {
   Printer,
 } from "lucide-react";
 import IntegrationGuidancePanel from "./IntegrationGuidancePanel.jsx";
-import { getEndpointCaseCoverage } from "./integrationCaseCoverage.js";
+import {
+  getEndpointCaseCoverage,
+  summarizeIntegrationFailure,
+} from "./integrationCaseCoverage.js";
 import { downloadIntegrationReportApi } from "../../../services/report.service.js";
 
 const METHOD_STYLES = {
@@ -1014,28 +1017,50 @@ export default function IntegrationReportEmbed({
           </div>
 
           <div className="divide-y divide-[var(--color-border)]">
-            {failureLogs.map((f, i) => (
-              <div key={f.id || i} className="px-4 py-3 space-y-1.5 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 font-mono">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-500/[0.06] text-rose-300/85 border border-rose-500/20">
-                      {f.failureLayer || "ASSERTION_FAILED"}
-                    </span>
-                    <span className="font-semibold text-[var(--color-text)]">
-                      {f.targetEndpoint}
+            {failureLogs.map((f, i) => {
+              const rawText = (f.rawErrorMessage || f.errorMessage || "")
+                .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+                .replace(/\u001b/g, "");
+              const conciseSummary = summarizeIntegrationFailure(f.errorMessage);
+              const showRawToggle = Boolean(rawText && rawText.trim() !== conciseSummary.trim());
+
+              return (
+                <div key={f.id || i} className="px-4 py-3 space-y-1.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-mono min-w-0">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-500/[0.06] text-rose-300/85 border border-rose-500/20 shrink-0">
+                        {f.failureLayer || "ASSERTION_FAILED"}
+                      </span>
+                      <span className="font-semibold text-[var(--color-text)] truncate">
+                        {f.targetEndpoint}
+                      </span>
+                      {f.title && f.title !== f.targetEndpoint && (
+                        <span className="text-[11px] font-sans text-[var(--color-text-muted)] truncate">
+                          — {f.title}
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-mono text-[11px] text-rose-300/85 tabular-nums shrink-0">
+                      Expected {f.expectedStatus || 200} · Received{" "}
+                      {f.responseStatus || "Error"}
                     </span>
                   </div>
-                  <span className="font-mono text-[11px] text-rose-300/85 tabular-nums">
-                    Expected {f.expectedStatus || 200} · Received{" "}
-                    {f.responseStatus || "Error"}
-                  </span>
+                  <div className="font-sans text-[12px] text-[var(--color-text-secondary)] pl-3 border-l-2 border-rose-400/35">
+                    {conciseSummary}
+                  </div>
+                  {showRawToggle && (
+                    <details className="pl-3 pt-0.5">
+                      <summary className="text-[11px] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer select-none">
+                        Technical details
+                      </summary>
+                      <pre className="mt-1.5 p-2.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto custom-scrollbar">
+                        {rawText}
+                      </pre>
+                    </details>
+                  )}
                 </div>
-                <div className="font-mono text-[11px] text-[var(--color-text-secondary)] pl-3 border-l-2 border-rose-400/35">
-                  {f.errorMessage ||
-                    "Assertion mismatch or unhandled exception."}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       ) : (

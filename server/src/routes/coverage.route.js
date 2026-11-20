@@ -49,6 +49,11 @@ import {
     getSimulationTrace,
     getSuitesReadinessController,
     confirmBatchSystemScenariosController,
+    getUnitTestCaseController,
+    addUnitTestCaseController,
+    updateUnitTestCaseController,
+    deleteUnitTestCaseController,
+    aiFixUnitTestCaseController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -106,6 +111,13 @@ router.post("/:snapshotId/unit-test-versions/save", authMiddleware, saveUnitTest
 // Unit test execution simulation routes
 router.get("/:snapshotId/simulation/sources", authMiddleware, getSimulationSources);
 router.post("/:snapshotId/simulation/trace", authMiddleware, getSimulationTrace);
+
+// Unit test case CRUD & AI Fix routes (Integration-aligned Cockpit operations)
+router.get("/:snapshotId/unit/test-case", authMiddleware, getUnitTestCaseController);
+router.post("/:snapshotId/unit/test-case", authMiddleware, addUnitTestCaseController);
+router.put("/:snapshotId/unit/test-case", authMiddleware, updateUnitTestCaseController);
+router.delete("/:snapshotId/unit/test-case", authMiddleware, deleteUnitTestCaseController);
+router.post("/:snapshotId/unit/test-case/ai-fix", authMiddleware, aiFixUnitTestCaseController);
 
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);

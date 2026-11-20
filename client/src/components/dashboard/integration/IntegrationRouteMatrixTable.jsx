@@ -30,6 +30,7 @@ import {
   CATEGORY_LABELS,
   classifyScenario,
   getEndpointCaseCoverage,
+  summarizeIntegrationFailure,
 } from "./integrationCaseCoverage.js";
 
 export const METHOD_STYLES = {
@@ -882,7 +883,7 @@ export default function IntegrationRouteMatrixTable({
               <th className="py-2.5 px-3 w-52">Handler</th>
               <th className="py-2.5 px-3 w-28">Status</th>
               <th className="py-2.5 px-3 w-24 text-right">Scenarios</th>
-              <th className="py-2.5 pl-3 pr-4 w-48 text-right">Actions</th>
+              <th className="py-2.5 pl-3 pr-4 w-24 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)] text-xs">
@@ -1089,23 +1090,6 @@ export default function IntegrationRouteMatrixTable({
                               <span>Add</span>
                             </button>
                           )}
-
-                          {onGenerateTest && (
-                            <button
-                              type="button"
-                              onClick={() => onGenerateTest(ep)}
-                              disabled={isGenerating || isRunning}
-                              title="Generate integration test suite for this endpoint"
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors disabled:opacity-50 cursor-pointer"
-                            >
-                              {isThisGenerating ? (
-                                <RefreshCw className="w-3 h-3 animate-spin text-[var(--color-text-secondary)]" />
-                              ) : (
-                                <Zap className="w-3 h-3 text-[var(--color-text-muted)]" />
-                              )}
-                              <span>Generate</span>
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -1248,67 +1232,75 @@ export default function IntegrationRouteMatrixTable({
                             )}
 
                             {/* Case Coverage & Execution Readiness Strip */}
-                            {(() => {
-                              const cov = getEndpointCaseCoverage(
-                                ep,
-                                scenarios,
-                              );
-                              return (
-                                <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-mono">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-[var(--color-text-muted)]">
-                                      Cases ({cov.coveredCount}/
-                                      {cov.totalRequired}):
+                            <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-mono">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[var(--color-text-muted)]">
+                                  Cases ({epCaseCov.coveredCount}/
+                                  {epCaseCov.totalRequired}):
+                                </span>
+                                {epCaseCov.cases.map((c) => (
+                                  <span
+                                    key={c.key}
+                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+                                      c.covered
+                                        ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                                        : "bg-transparent text-[var(--color-text-muted)] border-[var(--color-border)] border-dashed"
+                                    }`}
+                                  >
+                                    <span className={c.covered ? "text-emerald-500/75" : "text-[var(--color-text-muted)]"}>
+                                      {c.covered ? "✓" : "○"}
                                     </span>
-                                    {cov.cases.map((c) => (
-                                      <span
-                                        key={c.key}
-                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
-                                          c.covered
-                                            ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
-                                            : "bg-transparent text-[var(--color-text-muted)] border-[var(--color-border)] border-dashed"
-                                        }`}
-                                      >
-                                        <span className={c.covered ? "text-emerald-500/75" : "text-[var(--color-text-muted)]"}>
-                                          {c.covered ? "✓" : "○"}
-                                        </span>
-                                        <span>{c.label}</span>
-                                      </span>
-                                    ))}
-                                  </div>
-                                  <div className="flex items-center gap-2 text-[var(--color-text-secondary)] tabular-nums">
-                                    {scenarios.length === 0 ? (
-                                      <span className="text-[var(--color-text-muted)]">
-                                        No scenarios
-                                      </span>
-                                    ) : cov.passedCount + cov.failedCount ===
-                                      0 ? (
-                                      <span className="text-[var(--color-text-muted)]">
-                                        {scenarios.length} ready • not run yet
-                                      </span>
-                                    ) : (
-                                      <span>
-                                        <span className="text-[var(--color-text-secondary)]">
-                                          {cov.passedCount} passed
-                                        </span>
-                                        {cov.failedCount > 0 && (
-                                          <span className="text-rose-300/85">
-                                            {" "}
-                                            · {cov.failedCount} failed
-                                          </span>
-                                        )}
-                                        {cov.notRunCount > 0 && (
-                                          <span className="text-[var(--color-text-muted)]">
-                                            {" "}
-                                            · {cov.notRunCount} pending
-                                          </span>
-                                        )}
+                                    <span>{c.label}</span>
+                                  </span>
+                                ))}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 text-[var(--color-text-secondary)] tabular-nums">
+                                {scenarios.length === 0 ? (
+                                  <span className="text-[var(--color-text-muted)]">
+                                    No scenarios
+                                  </span>
+                                ) : epCaseCov.passedCount + epCaseCov.failedCount ===
+                                  0 ? (
+                                  <span className="text-[var(--color-text-muted)]">
+                                    {scenarios.length} ready • not run yet
+                                  </span>
+                                ) : (
+                                  <span>
+                                    <span className="text-[var(--color-text-secondary)]">
+                                      {epCaseCov.passedCount} passed
+                                    </span>
+                                    {epCaseCov.failedCount > 0 && (
+                                      <span className="text-rose-300/85">
+                                        {" "}
+                                        · {epCaseCov.failedCount} failed
                                       </span>
                                     )}
-                                  </div>
-                                </div>
-                              );
-                            })()}
+                                    {epCaseCov.notRunCount > 0 && (
+                                      <span className="text-[var(--color-text-muted)]">
+                                        {" "}
+                                        · {epCaseCov.notRunCount} pending
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                                {epCaseCov.redundantCount > 0 && (
+                                  <span
+                                    title="Multiple scenarios cover the same required case — duplicates can be removed."
+                                    className="px-1.5 py-0.2 rounded border border-amber-500/25 bg-amber-500/10 text-amber-300/90 text-[10px]"
+                                  >
+                                    {epCaseCov.redundantCount} duplicate
+                                  </span>
+                                )}
+                                {epCaseCov.extraCount > 0 && (
+                                  <span
+                                    title="Supplementary scenarios outside the endpoint's required Cases list."
+                                    className="px-1.5 py-0.2 rounded border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] text-[10px]"
+                                  >
+                                    {epCaseCov.extraCount} optional
+                                  </span>
+                                )}
+                              </div>
+                            </div>
 
                             {/* Test Scenarios Section (Shown after Run Coverage or if scenarios already exist) */}
                             {!hasAnalyzedCoverage && scenarios.length === 0 ? (
@@ -1319,20 +1311,13 @@ export default function IntegrationRouteMatrixTable({
                                   <span className="font-semibold text-[var(--color-text)]">
                                     Run Coverage
                                   </span>{" "}
-                                  above to scan project tests and measure
-                                  coverage, or generate 100% tests for this API.
+                                  above to scan existing tests, or select the
+                                  checkbox on this row and click{" "}
+                                  <span className="font-semibold text-[var(--color-text)]">
+                                    Generate Tests
+                                  </span>
+                                  .
                                 </span>
-                                {onGenerateTest && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onGenerateTest(ep)}
-                                    disabled={isGenerating || isRunning}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] cursor-pointer"
-                                  >
-                                    <Zap className="w-3 h-3 text-[var(--color-primary)]" />
-                                    <span>Generate tests</span>
-                                  </button>
-                                )}
                               </div>
                             ) : scenarios.length > 0 ? (
                               <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]/70 overflow-hidden">
@@ -1347,14 +1332,16 @@ export default function IntegrationRouteMatrixTable({
                                     scStatus === "FAILED" ||
                                     scStatus === "FAIL";
                                   const catInfo = classifyScenario(sc);
+                                  const caseAnnot =
+                                    epCaseCov.scenarioAnnotations?.[sIdx] || null;
                                   const scKey = `${rowKey}-sc-${sc.scenarioId || sIdx}`;
                                   const isCodeOpen =
                                     expandedScenarioCodeKey === scKey;
                                   const canMutate = Boolean(
-                                    sc.aiTestId &&
-                                    !String(sc.aiTestId).startsWith("existing_test_") &&
-                                    sc.origin !== "PROJECT_EXISTING" &&
-                                    sc.scenarioId,
+                                    sc.aiTestId ||
+                                    sc.scenarioId ||
+                                    sc.title ||
+                                    sc.testName,
                                   );
                                   const canDelete = Boolean(
                                     onDeleteScenario &&
@@ -1417,6 +1404,38 @@ export default function IntegrationRouteMatrixTable({
                                                 `Scenario #${sIdx + 1}`}
                                             </div>
                                             <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono text-[var(--color-text-muted)]">
+                                              {caseAnnot && (
+                                                <span
+                                                  title={
+                                                    caseAnnot.role === "DUPLICATE"
+                                                      ? `Another scenario already covers "${caseAnnot.caseLabel}" — safe to remove if redundant.`
+                                                      : caseAnnot.role === "OPTIONAL_EXTRA"
+                                                        ? `Supplementary scenario outside the endpoint's required Cases (${epCaseCov.totalRequired}).`
+                                                        : `Assigned to cover required case "${caseAnnot.caseLabel}".`
+                                                  }
+                                                  className={`px-1.5 py-0.2 rounded border font-medium ${
+                                                    caseAnnot.role === "MATCHED_PASS"
+                                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                                      : caseAnnot.role === "MATCHED_FAIL"
+                                                        ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                                                        : caseAnnot.role === "MATCHED_PENDING"
+                                                          ? "border-[var(--color-primary)]/35 bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                                                          : caseAnnot.role === "DUPLICATE"
+                                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                                            : "border-dashed border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)]"
+                                                  }`}
+                                                >
+                                                  {caseAnnot.role === "MATCHED_PASS"
+                                                    ? `✓ Case: ${caseAnnot.caseLabel}`
+                                                    : caseAnnot.role === "MATCHED_FAIL"
+                                                      ? `! Case: ${caseAnnot.caseLabel}`
+                                                      : caseAnnot.role === "MATCHED_PENDING"
+                                                        ? `○ Case: ${caseAnnot.caseLabel}`
+                                                        : caseAnnot.role === "DUPLICATE"
+                                                          ? `Duplicate · ${caseAnnot.caseLabel}`
+                                                          : "Optional · Extra"}
+                                                </span>
+                                              )}
                                               <span
                                                 className="px-1.5 py-0.2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] font-medium"
                                               >
@@ -1613,25 +1632,50 @@ export default function IntegrationRouteMatrixTable({
                                       {/* Inline Preview & Failure Diagnostics Drawer */}
                                       {isCodeOpen && (
                                         <div className="px-3.5 pb-3 pt-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] space-y-2">
-                                          {(sc.executionReason ||
+                                          {(sc.failureSummary ||
+                                            sc.executionReason ||
                                             (sc.failureMessages &&
                                               sc.failureMessages.length >
-                                                0)) && (
-                                            <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] font-mono text-rose-300 space-y-1">
-                                              <div className="flex items-center gap-1.5 font-semibold text-rose-400">
-                                                <AlertTriangle className="w-3.5 h-3.5" />
-                                                <span>
-                                                  Execution Diagnostics
-                                                </span>
-                                              </div>
-                                              <pre className="whitespace-pre-wrap break-words text-[10px] max-h-40 overflow-y-auto">
-                                                {sc.executionReason ||
-                                                  sc.failureMessages?.join(
-                                                    "\n",
+                                                0)) && (() => {
+                                            const rawDiag = (
+                                              sc.failureMessages?.join("\n") ||
+                                              sc.executionReason ||
+                                              ""
+                                            )
+                                              .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+                                              .replace(/\u001b/g, "");
+                                            const summaryDiag =
+                                              sc.failureSummary ||
+                                              summarizeIntegrationFailure(
+                                                sc.executionReason ||
+                                                  sc.failureMessages,
+                                              );
+                                            return (
+                                              <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-200 space-y-1.5">
+                                                <div className="flex items-center gap-1.5 font-semibold text-rose-400">
+                                                  <AlertTriangle className="w-3.5 h-3.5" />
+                                                  <span>
+                                                    Failure Summary
+                                                  </span>
+                                                </div>
+                                                <p className="text-xs leading-relaxed text-[var(--color-text)] m-0">
+                                                  {summaryDiag}
+                                                </p>
+                                                {rawDiag &&
+                                                  rawDiag.trim() !==
+                                                    summaryDiag.trim() && (
+                                                    <details className="pt-0.5">
+                                                      <summary className="text-[10px] font-mono text-rose-300/80 hover:text-rose-200 cursor-pointer select-none">
+                                                        Technical details
+                                                      </summary>
+                                                      <pre className="mt-1 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words font-mono text-[10px] text-[var(--color-text-muted)] max-h-40 overflow-y-auto custom-scrollbar">
+                                                        {rawDiag}
+                                                      </pre>
+                                                    </details>
                                                   )}
-                                              </pre>
-                                            </div>
-                                          )}
+                                              </div>
+                                            );
+                                          })()}
 
                                           {sc.code ? (
                                             <div className="rounded border border-[var(--color-border)] overflow-hidden">
@@ -1704,17 +1748,6 @@ export default function IntegrationRouteMatrixTable({
                                     >
                                       <Plus className="w-3.5 h-3.5" />
                                       <span>Add Custom Scenario</span>
-                                    </button>
-                                  )}
-                                  {onGenerateTest && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onGenerateTest(ep)}
-                                      disabled={isGenerating || isRunning}
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors disabled:opacity-50 cursor-pointer"
-                                    >
-                                      <Zap className="w-3.5 h-3.5" />
-                                      <span>Generate Scenarios</span>
                                     </button>
                                   )}
                                 </div>

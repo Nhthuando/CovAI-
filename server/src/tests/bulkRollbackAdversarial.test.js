@@ -56,6 +56,7 @@ const mockCreateRunTestsJob = jest.fn().mockResolvedValue({ id: "job_adv_test" }
 const mockAddJobToQueue = jest.fn().mockResolvedValue(true);
 
 await jest.unstable_mockModule("../services/job.service.js", () => ({
+    createSnapshotJob: jest.fn().mockResolvedValue({ id: "job-snapshot-1" }),
     createInstallDepsJob: jest.fn().mockResolvedValue({ id: "install-1" }),
     createRunTestsJob: mockCreateRunTestsJob,
     createSupertestCoverageJob: jest.fn().mockResolvedValue({ id: "super-1" }),

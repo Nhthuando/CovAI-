@@ -125,6 +125,9 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
         ...(isRestart ? { restart: true } : {}),
         ...(useHermeticMock ? { useHermeticMock: true } : {}),
         ...(options?.targetEndpoint ? { targetEndpoint: options.targetEndpoint } : {}),
+        ...(Array.isArray(options?.targetFiles) && options.targetFiles.length > 0
+            ? { targetFiles: options.targetFiles }
+            : {}),
         ...(Array.isArray(options?.targetEndpoints) && options.targetEndpoints.length > 0
             ? { targetEndpoints: options.targetEndpoints }
             : {}),
@@ -522,6 +525,52 @@ export async function getUnitTestSimulationSources(snapshotId, options = {}) {
 
 export async function getUnitTestSimulationTrace(snapshotId, payload = {}) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/simulation/trace`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function getUnitTestCaseDetail(snapshotId, { testFile, testName } = {}) {
+    const params = new URLSearchParams();
+    if (testFile) params.set("testFile", testFile);
+    if (testName) params.set("testName", testName);
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case?${params}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function addUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function updateUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case`, {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function deleteUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function aiFixUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case/ai-fix`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(payload),

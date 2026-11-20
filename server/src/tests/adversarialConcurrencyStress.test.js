@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import prisma from '../config/prisma.js';
 import { withProjectGuard, resolveProjectAccess, isRetryableTransactionError } from '../services/projectAccess.service.js';
 import { deliverToProjectSubscribers, deliverScopedProjectTransport, subscribeToProjectRoom, unsubscribeFromProjectRoom } from '../services/projectSubscription.service.js';
 import { suggestUnitTestcases } from '../services/unitTestSuggestion.service.js';
@@ -534,18 +535,25 @@ describe('Adversarial Empirical Stress Test Suite: Milestone 2 Concurrency & Tra
         });
 
         test('controller returns 404 when snapshotId is not found', async () => {
-            const req = {
-                user: { id: 'user-no-proj' },
-                params: { snapshotId: 'snap-orphan' },
-                body: { filePath: 'src/test.js' }
-            };
-            const res = {
-                status: jest.fn().mockReturnThis(),
-                json: jest.fn()
-            };
+            const findUniqueSpy = jest.spyOn(prisma.projectSnapshot, 'findUnique').mockResolvedValue(null);
+            const findFirstSpy = jest.spyOn(prisma.projectSnapshot, 'findFirst').mockResolvedValue(null);
+            try {
+                const req = {
+                    user: { id: 'user-no-proj' },
+                    params: { snapshotId: 'snap-orphan' },
+                    body: { filePath: 'src/test.js' }
+                };
+                const res = {
+                    status: jest.fn().mockReturnThis(),
+                    json: jest.fn()
+                };
 
-            await suggestUnitTestcase(req, res);
-            expect(res.status).toHaveBeenCalledWith(404);
+                await suggestUnitTestcase(req, res);
+                expect(res.status).toHaveBeenCalledWith(404);
+            } finally {
+                findUniqueSpy.mockRestore();
+                findFirstSpy.mockRestore();
+            }
         });
 
         test('controller returns 400 on hostile or corrupted validationMode', async () => {

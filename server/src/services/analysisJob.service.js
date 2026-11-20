@@ -69,18 +69,9 @@ export const processAnalysisJob = async (jobId) => {
 
         if (isJobCanceled(jobId, abortController.signal)) return;
 
-        // In non-test runtime, yield to event loop during source loading stage
-        // to permit live UI cancellation before CPU-bound AST parsing completes
+        // In non-test runtime, yield once to the event loop to permit cancellation checks
         if (process.env.NODE_ENV !== "test") {
-            await new Promise((resolve) => {
-                const timer = setTimeout(resolve, 3000);
-                if (abortController.signal) {
-                    abortController.signal.addEventListener("abort", () => {
-                        clearTimeout(timer);
-                        resolve();
-                    }, { once: true });
-                }
-            });
+            await new Promise((resolve) => setImmediate(resolve));
         }
 
         if (isJobCanceled(jobId, abortController.signal)) {

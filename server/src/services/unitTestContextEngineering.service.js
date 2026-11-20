@@ -2124,6 +2124,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         const contractsList = universalMockResult?.contractReport?.contracts || [];
         const contractFixture = buildFixtureRecord(contractsList);
         const defaultItemBase = {
+            ...contractFixture,
             id: 1,
             _id: "507f1f77bcf86cd799439011",
             name: "Sample Item",
@@ -2145,8 +2146,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
             ok: true,
             data: { reply: "Sample assistant reply", text: "Sample assistant text", items: [] },
             choices: [{ message: { role: "assistant", content: "Sample assistant content" } }],
-            analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 },
-            ...contractFixture
+            analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }
         };
         const defaultItemJson = JSON.stringify(defaultItemBase);
         const contractMethodLines = (fnMakerVar) => {

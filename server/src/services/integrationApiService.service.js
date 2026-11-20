@@ -508,7 +508,7 @@ export const runIntegrationGenerationPipeline = async ({
     {
       taskType: "integration",
       temperature: 0.2,
-      maxOutputTokens: 1500,
+      maxOutputTokens: 4096,
       returnTelemetry: true,
     },
   );

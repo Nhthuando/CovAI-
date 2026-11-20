@@ -22,7 +22,7 @@ describe('supertestCoverage.service', () => {
 
         try {
             const result = await runSupertest('job1', tempDir, null, [path.join(tempDir, 'api.test.js')]);
-            expect(result.coverageDir).toBe(path.join(tempDir, 'coverage'));
+            expect(result.coverageDir).toBe(path.join(tempDir, 'coverage', 'integration'));
         } finally {
             dockerRunner.run = originalRun;
         }

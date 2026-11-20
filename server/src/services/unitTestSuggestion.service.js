@@ -4,6 +4,7 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
 import {
@@ -132,10 +133,14 @@ export const sanitizeSourceFilePath = (rootDir, filePath) => {
  * full repo, monorepo subprojects, and container/host paths.
  */
 export const findSourceOnDisk = (rootDir, relPath) => {
-    if (!relPath || !rootDir) return { path: null, content: "" };
+    if (!relPath || !rootDir || typeof relPath !== "string") return { path: null, content: "" };
+    if (relPath.includes("\0") || /%2e%2e|%2f|%5c/i.test(relPath) || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(relPath)) {
+        return { path: null, content: "" };
+    }
     const clean = sanitizeSourceFilePath(rootDir, relPath);
 
     const CONTAINER_NAMES = new Set(["uploads", "storage", "snapshots", "projects", "app", ".covai-temp", "collaboration-operations", "tmp", "temp", "var", "opt", "home", "users"]);
+    const MONOREPO_SUBDIRS = new Set(["server", "backend", "client", "frontend", "services", "api", "app", "packages", "apps"]);
     const allowedRoots = [path.resolve(rootDir)];
     const repoIdx = rootDir.replace(/\\/g, "/").lastIndexOf("/repo");
     if (repoIdx !== -1) {
@@ -143,8 +148,10 @@ export const findSourceOnDisk = (rootDir, relPath) => {
     }
     const parentDir = path.dirname(rootDir);
     if (parentDir && parentDir !== rootDir) {
+        const rootBase = path.basename(rootDir).toLowerCase();
         const parentBase = path.basename(parentDir).toLowerCase();
-        if ((repoIdx !== -1 && parentDir.startsWith(rootDir.slice(0, repoIdx + 5))) || !CONTAINER_NAMES.has(parentBase)) {
+        if ((repoIdx !== -1 && parentDir.startsWith(rootDir.slice(0, repoIdx + 5))) ||
+            (MONOREPO_SUBDIRS.has(rootBase) && !CONTAINER_NAMES.has(parentBase))) {
             allowedRoots.push(path.resolve(parentDir));
         }
     }
@@ -1576,12 +1583,7 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
 
     const resolveRootDir = (r) => {
         if (!r) return null;
-        let candidate = r;
-        if (fs.existsSync(r)) candidate = r;
-        else if (r.startsWith("/app/")) {
-            const hostCandidate = path.resolve(process.cwd(), r.replace(/^\/app\//, ""));
-            if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
-        }
+        const candidate = normalizeDiskPath(r) || r;
         const resolved = resolveProjectRoot(candidate);
         return resolved || candidate;
     };

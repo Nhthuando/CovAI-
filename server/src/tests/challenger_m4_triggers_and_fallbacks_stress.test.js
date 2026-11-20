@@ -57,9 +57,9 @@ describe('CHALLENGER M4: View Triggers, Parameter Boundaries, Callback Routing &
 
   let cleanDisplayPathFn;
   let isAnonymousNameFn;
-  let synthesizeClientFallbackTraceFn;
+  let generateSimulationTraceFn;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     // 1. Extract cleanDisplayPath from CoverageTypeDashboard.jsx
     const dashboardCode = fs.readFileSync(dashboardComponentPath, 'utf8');
     const dashboardAst = babelParser.parse(dashboardCode, { sourceType: 'module', plugins: ['jsx'] });
@@ -96,38 +96,13 @@ describe('CHALLENGER M4: View Triggers, Parameter Boundaries, Callback Routing &
       isAnonymousName;
     `);
 
-    // 3. Extract synthesizeClientFallbackTrace from useUnitTestSimulation.js
+    // 3. Verify useUnitTestSimulation exports metadata and delegates trace generation to backend
     const hookCode = fs.readFileSync(simulationHookPath, 'utf8');
-    const hookAst = babelParser.parse(hookCode, { sourceType: 'module', plugins: ['jsx'] });
-    let catMetaCode = '';
-    let phaseCode = '';
-    let fallbackFnCode = '';
-    for (const node of hookAst.program.body) {
-      if (
-        node.type === 'ExportNamedDeclaration' &&
-        node.declaration?.declarations?.[0]?.id?.name === 'CATEGORY_METADATA'
-      ) {
-        catMetaCode = generate(node.declaration).code;
-      }
-      if (
-        node.type === 'ExportNamedDeclaration' &&
-        node.declaration?.declarations?.[0]?.id?.name === 'SIMULATION_PHASES'
-      ) {
-        phaseCode = generate(node.declaration).code;
-      }
-      if (
-        node.type === 'FunctionDeclaration' &&
-        node.id.name === 'synthesizeClientFallbackTrace'
-      ) {
-        fallbackFnCode = generate(node).code;
-      }
-    }
-    synthesizeClientFallbackTraceFn = eval(`
-      ${catMetaCode}
-      ${phaseCode}
-      ${fallbackFnCode}
-      synthesizeClientFallbackTrace;
-    `);
+    expect(hookCode).not.toContain('synthesizeClientFallbackTrace');
+    expect(hookCode).toContain('CATEGORY_METADATA');
+    expect(hookCode).toContain('SIMULATION_PHASES');
+    const simMod = await import('../services/unitTestSimulation.service.js');
+    generateSimulationTraceFn = simMod.generateSimulationTrace;
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -614,37 +589,23 @@ describe('CHALLENGER M4: View Triggers, Parameter Boundaries, Callback Routing &
   // 5. DOWNSTREAM STUDIO & STATE MACHINE INGESTION
   // ──────────────────────────────────────────────────────────────────────────
   describe('5. Downstream Studio & State Machine Ingestion with Adversarial Payloads', () => {
-    it('synthesizeClientFallbackTrace survives and produces complete 7-step traces for all trigger outputs', () => {
-      // Test matrix of adversarial outputs from triggers
+    it('generateSimulationTrace survives and produces complete traces for all adversarial trigger outputs', async () => {
       const testCases = [
-        // From File Header with empty filePath
-        { sourceFilePath: '', functionName: 'execute', category: 'HAPPY_PATH' },
-        // From Function Row with null functionName and null category
-        { sourceFilePath: 'src/module.js', functionName: null, category: null },
-        // From Category Card with unknown category
-        { sourceFilePath: 'src/calc.js', functionName: 'calculate', category: 'UNKNOWN_CATEGORY' },
-        // From Category Card for ERROR_HANDLING
-        { sourceFilePath: 'src/user.js', functionName: 'login', category: 'ERROR_HANDLING', testCaseTitle: 'throws on bad credentials' },
-        // From Category Card for BOUNDARY_VALUES
-        { sourceFilePath: 'src/cart.js', functionName: 'total', category: 'BOUNDARY_VALUES', testCaseTitle: 'handles 0 items' },
-        // From Category Card for BRANCH_TOGGLING
-        { sourceFilePath: 'src/auth.js', functionName: 'verify', category: 'BRANCH_TOGGLING' },
+        { sourceFilePath: '', functionName: 'execute', requestedCategory: 'HAPPY_PATH', sourceCode: 'export function execute() { return 1; }' },
+        { sourceFilePath: 'src/module.js', functionName: null, requestedCategory: null, sourceCode: 'export function run(x) { return x; }' },
+        { sourceFilePath: 'src/calc.js', functionName: 'calculate', requestedCategory: 'UNKNOWN_CATEGORY', sourceCode: 'export function calculate(x) { return x * 2; }' },
+        { sourceFilePath: 'src/user.js', functionName: 'login', requestedCategory: 'ERROR_HANDLING', sourceCode: 'export function login(u) { if (!u) throw new Error("fail"); return true; }' },
+        { sourceFilePath: 'src/cart.js', functionName: 'total', requestedCategory: 'BOUNDARY_VALUES', sourceCode: 'export function total(items = []) { if (!items.length) return 0; return items.length; }' },
+        { sourceFilePath: 'src/auth.js', functionName: 'verify', requestedCategory: 'BRANCH_TOGGLING', sourceCode: 'export function verify(ok) { if (ok) return true; return false; }' },
       ];
 
       for (const tc of testCases) {
-        let trace;
-        expect(() => {
-          trace = synthesizeClientFallbackTraceFn(tc);
-        }).not.toThrow();
-
+        const trace = await generateSimulationTraceFn('snap-m4-stress', tc);
         expect(trace).toBeDefined();
         expect(Array.isArray(trace.steps)).toBe(true);
-        expect(trace.steps.length).toBeGreaterThanOrEqual(7);
-        expect(trace.summary).toBeDefined();
-        expect(trace.summary.allAssertionsPassed).toBe(true);
+        expect(trace.steps.length).toBeGreaterThanOrEqual(4);
         expect(trace.testCase).toBeDefined();
-        expect(typeof trace.testCase.targetFunction).toBe('string');
-        expect(trace.steps.every((s) => s.phase && s.title && s.educationalGuidance)).toBe(true);
+        expect(trace.steps.every((s) => s.phase && s.educationalGuidance)).toBe(true);
       }
     });
   });

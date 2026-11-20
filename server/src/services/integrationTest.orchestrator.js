@@ -1,18 +1,33 @@
+import prisma from "../config/prisma.js";
 import { detectFrameworks } from "./testDetection.service.js";
+import { detectSupertest } from "./supertestDetection.service.js";
 import { runPlaywrightTests } from "./playwrightRunner.service.js";
 import { runSupertestTests } from "./supertestRunner.service.js";
-import { ServiceError } from "./project.service.js";
+import { ServiceError } from "../utils/serviceError.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 /**
  * Orchestrator cho Integration Test Pipeline
- * Orchestrate framework detection and execute corresponding runner
+ * Resolves the snapshot workspace and invokes detected runners with valid arguments.
  */
 export const runIntegrationTestPipeline = async ({
   projectId,
   snapshotId,
-  userId,
 }) => {
-  // 1. Detect active frameworks
+  const snapshot = await prisma.projectSnapshot.findFirst({
+    where: {
+      ...(snapshotId ? { id: snapshotId } : {}),
+      projectId,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, rootDir: true, jestConfigPath: true },
+  });
+
+  if (!snapshot?.rootDir) {
+    throw new ServiceError("Snapshot workspace is not ready for integration testing.", 404);
+  }
+
+  const rootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
   const frameworks = await detectFrameworks(projectId);
 
   if (!frameworks || frameworks.length === 0) {
@@ -24,15 +39,23 @@ export const runIntegrationTestPipeline = async ({
 
   const results = [];
 
-  // 2. Run detected runners sequentially
   for (const item of frameworks) {
     const fw = item.framework;
     try {
       let result = null;
       if (fw === "playwright") {
-        result = await runPlaywrightTests({ projectId, snapshotId, userId });
+        result = await runPlaywrightTests(null, rootDir);
       } else if (fw === "supertest") {
-        result = await runSupertestTests({ projectId, snapshotId, userId });
+        const supertestInfo = await detectSupertest(rootDir);
+        const testFiles = supertestInfo?.supertestFiles?.length
+          ? supertestInfo.supertestFiles
+          : (supertestInfo?.testFiles || []);
+        result = await runSupertestTests(
+          null,
+          rootDir,
+          snapshot.jestConfigPath ?? supertestInfo?.configPath ?? null,
+          testFiles,
+        );
       }
 
       if (result) {
@@ -44,7 +67,6 @@ export const runIntegrationTestPipeline = async ({
     }
   }
 
-  // 3. Aggregate results (Can expand with DB persistence logic here)
   return {
     success: true,
     results,

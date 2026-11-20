@@ -16,6 +16,7 @@ import { dockerRunner } from './dockerRunner.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { autStartupCommand } from "../utils/autStartupCommand.js";
 import { isolatedProcessEnvironment } from '../utils/isolatedProcessEnvironment.js';
+import { isOwnedIsolatedDatabaseHost } from './systemRuntimeResources.service.js';
 
 const safeAddJobLog = async (jobId, level, message) => {
   if (!jobId) return;
@@ -271,11 +272,14 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
     await safeAddJobLog(jobId,'INFO','[AUT Seed] Database seed is reserved for the isolated Full Stack database; frontend execution does not run it.');
     return {executed:false,reason:'ISOLATED_DATABASE_REQUIRED'};
   }
-  let database;
-  try{database=new URL(env.DATABASE_URL);}catch{throw new ServiceError('Seed requires the isolated test database URL',422);}
-  const sqlite=database.protocol==='file:' && env.SQLITE_DB_PATH && env.DATABASE_URL==='file:'+env.SQLITE_DB_PATH.replaceAll('\\','/') && path.basename(env.SQLITE_DB_PATH)==='covai_test.db';
-  if(sqlite)containedPath(repositoryRoot,path.relative(repositoryRoot,env.SQLITE_DB_PATH));
-  else if(!['mysql:','postgres:','postgresql:','mongodb:'].includes(database.protocol)||!['127.0.0.1','localhost','[::1]'].includes(database.hostname)||database.pathname!=='/covai_test')throw new ServiceError('Seed requires the isolated test database',422);
+  const isMockDb = env.COVAI_MOCK_DB === 'true';
+  if (!isMockDb) {
+    let database;
+    try{database=new URL(env.DATABASE_URL);}catch{throw new ServiceError('Seed requires the isolated test database URL',422);}
+    const sqlite=database.protocol==='file:' && env.SQLITE_DB_PATH && env.DATABASE_URL==='file:'+env.SQLITE_DB_PATH.replaceAll('\\','/') && path.basename(env.SQLITE_DB_PATH)==='covai_test.db';
+    if(sqlite)containedPath(repositoryRoot,path.relative(repositoryRoot,env.SQLITE_DB_PATH));
+    else if(!['mysql:','postgres:','postgresql:','mongodb:'].includes(database.protocol)||!isOwnedIsolatedDatabaseHost(database.hostname)||database.pathname!=='/covai_test')throw new ServiceError('Seed requires the isolated test database',422);
+  }
   const runtime=await (dependencies.prepare || prepareProjectDependencies)({directory:chosenDir,repositoryRoot,jobId,signal,env});
   let command=`${runtime.command} run ${seedScript}`;
   if(seedScript==='prisma db seed') {

@@ -105,3 +105,26 @@ it('stops probing SQL if the Docker engine becomes unavailable',async()=>{
     await expect(provisionSystemResources({database:{engine:'mysql'},dependencies:{docker}})).rejects.toMatchObject({code:'SYSTEM_RUNTIME_INFRASTRUCTURE_UNAVAILABLE'});
     expect(docker.mock.calls.filter(([args])=>args[0]==='exec')).toHaveLength(1);
 });
+it('applies memory, CPU, pids, and tmpfs limits on ephemeral containers',async()=>{
+    const docker=jest.fn(async args=>{
+        if(args[0]==='port')return {stdout:'127.0.0.1:41234\n'};
+        return {stdout:''};
+    });
+    const resources=await provisionSystemResources({database:{engine:'postgres'},dependencies:{docker}});
+    const runArgs=docker.mock.calls.find(([args])=>args[0]==='run')[0];
+    expect(runArgs).toEqual(expect.arrayContaining(['--memory','512m','--cpus','1','--pids-limit','256','--tmpfs']));
+    await resources.cleanup();
+});
+it('joins compose network and exposes container hostnames when networkMode is active',async()=>{
+    const docker=jest.fn(async args=>({stdout:''}));
+    const resources=await provisionSystemResources({database:{engine:'postgres'},services:{redis:true},dependencies:{docker,networkMode:'covai_default'}});
+    const runCalls=docker.mock.calls.filter(([args])=>args[0]==='run').map(([args])=>args);
+    expect(runCalls).toHaveLength(2);
+    for(const args of runCalls)expect(args).toEqual(expect.arrayContaining(['--network','covai_default']));
+    expect(docker.mock.calls.some(([args])=>args[0]==='port')).toBe(false);
+    expect(resources.environment.DB_HOST).toBe(resources.sqlContainer);
+    expect(resources.environment.DB_PORT).toBe('5432');
+    expect(resources.environment.DATABASE_URL).toContain(`@${resources.sqlContainer}:5432/covai_test`);
+    expect(resources.environment.REDIS_URL).toMatch(/^redis:\/\/covai-system-redis-[a-f0-9-]+:6379$/);
+    await resources.cleanup();
+});

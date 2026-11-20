@@ -374,6 +374,15 @@ export const runCoverageByType = async (req, res) => {
         hasJest && hasVitest ? "jest & vitest" : hasVitest ? "vitest" : "jest";
       if (!framework) framework = "jest";
 
+      const targetFiles = Array.isArray(req.body?.targetFiles)
+        ? req.body.targetFiles.filter((f) => typeof f === "string" && f.trim())
+        : [];
+      const targetTestNames = Array.isArray(req.body?.targetTestNames)
+        ? req.body.targetTestNames.filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const isTargetedUnitRun = targetFiles.length > 0 || targetTestNames.length > 0;
+      const runMode = isTargetedUnitRun ? "TARGETED" : "FULL";
+
       // Unified Unit Test Job: Check if a RUN_TESTS job is already active for this snapshot
       const activeUnitJob = await prisma.job.findFirst({
         where: {
@@ -389,14 +398,14 @@ export const runCoverageByType = async (req, res) => {
         const elapsedMs = startTime
           ? Date.now() - new Date(startTime).getTime()
           : 0;
-        // If user requested restart, or stuck in QUEUED > 2m, or running > 15m timeout, cancel and recreate
+        // If user requested restart/targeted run, or stuck in QUEUED > 2m, or running > 15m timeout, cancel and recreate
         const isOrphanedQueued =
           activeUnitJob.status === "QUEUED" && elapsedMs > 2 * 60 * 1000;
         const isStaleRunning =
           activeUnitJob.status === "RUNNING" &&
           elapsedMs > (STALE_JOB_TIMEOUT_MS || 15 * 60 * 1000);
 
-        if (isRestart || isOrphanedQueued || isStaleRunning) {
+        if (isRestart || isTargetedUnitRun || isOrphanedQueued || isStaleRunning) {
           await prisma.job
             .update({
               where: { id: activeUnitJob.id },
@@ -418,10 +427,12 @@ export const runCoverageByType = async (req, res) => {
             projectId: snapshot.projectId,
             snapshotId: snapshot.id,
             userId,
-            mode: "FULL",
+            mode: runMode,
             useHermeticMock,
+            targetFiles,
+            targetTestNames,
           });
-          await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
+          await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock, targetFiles, targetTestNames });
         } else {
           job = activeUnitJob;
           if (job.status === "QUEUED") {
@@ -434,10 +445,12 @@ export const runCoverageByType = async (req, res) => {
           projectId: snapshot.projectId,
           snapshotId: snapshot.id,
           userId,
-          mode: "FULL",
+          mode: runMode,
           useHermeticMock,
+          targetFiles,
+          targetTestNames,
         });
-        await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock });
+        await addJobToQueue("RUN_TESTS", job.id, { useHermeticMock, targetFiles, targetTestNames });
       }
       jobs = [job];
     } else {
@@ -479,7 +492,12 @@ export const runCoverageByType = async (req, res) => {
         };
         const isTargetedRun =
           targetTestNames.length > 0 || selectedScenarioIds.length > 0;
-        if (isTargetedRun && hasIntDeps) {
+        const hasInstalledNodeModules =
+          fs.existsSync(path.join(resolvedRootDir, "node_modules")) ||
+          ["server", "backend", "api"].some((sub) =>
+            fs.existsSync(path.join(resolvedRootDir, sub, "node_modules")),
+          );
+        if ((isTargetedRun || hasInstalledNodeModules) && hasIntDeps) {
           job = await createSupertestCoverageJob({
             projectId: snapshot.projectId,
             snapshotId,
@@ -1552,8 +1570,39 @@ export const runSupertestCoverage = async (req, res) => {
     };
     const hasPayload = Object.keys(supertestPayload).length > 0;
 
-    // Snapshots normally do not include node_modules. Install first so the
-    // runner never falls back to npx downloading arbitrary packages.
+    const isTargetedRun =
+      targetTestNames.length > 0 || selectedScenarioIds.length > 0;
+    const { detectIntegrationFrameworks } =
+      await import("../services/integrationDetection.service.js");
+    const intDetect = await detectIntegrationFrameworks(resolvedRootDir);
+    const hasIntDeps = Boolean(
+      intDetect?.hasDependencies ?? intDetect?.summary?.hasDependencies,
+    );
+    const hasInstalledNodeModules =
+      fs.existsSync(path.join(resolvedRootDir, "node_modules")) ||
+      ["server", "backend", "api"].some((sub) =>
+        fs.existsSync(path.join(resolvedRootDir, sub, "node_modules")),
+      );
+
+    if ((isTargetedRun || hasInstalledNodeModules) && hasIntDeps) {
+      const job = await createSupertestCoverageJob({
+        projectId: snapshot.projectId,
+        snapshotId,
+        userId,
+        ...(hasPayload ? { payloadJson: supertestPayload } : {}),
+      });
+      await addJobToQueue("SUPERTEST_COVERAGE", job.id, hasPayload ? supertestPayload : {});
+
+      return res.status(202).json({
+        success: true,
+        message: "Supertest coverage job queued (dependencies already present).",
+        jobId: job.id,
+        snapshotId,
+        supertestFileCount: supertestInfo.supertestFiles.length,
+      });
+    }
+
+    // Snapshots without node_modules yet: install dependencies first.
     const installJob = await createInstallDepsJob({
       projectId: snapshot.projectId,
       snapshotId,
@@ -1955,17 +2004,28 @@ export const getTestExecution = async (req, res) => {
         : []) || [];
 
     // Map to expected frontend structure with sanitized paths
+    const { summarizeUnitFailure } = await import("../../../shared/unitTestCaseCoverage.js");
     const sanitizeRun = (r) => {
       if (!r) return null;
       return {
         ...r,
-        scenarios: r.scenarios?.map((s) => ({
-          ...s,
-          testFile: cleanStoragePath(s.testFile) || null,
-          failureMessages: (s.failureMessages || []).map((m) =>
+        scenarios: r.scenarios?.map((s) => {
+          const cleanedFailureMsgs = (s.failureMessages || []).map((m) =>
             cleanStorageText(m),
-          ),
-        })),
+          );
+          const statusUpper = String(s.status || "").toUpperCase();
+          return {
+            ...s,
+            testFile: cleanStoragePath(s.testFile) || null,
+            failureMessages: cleanedFailureMsgs,
+            ...(statusUpper === "FAILED" || statusUpper === "FAIL"
+              ? {
+                  failureSummary:
+                    s.failureSummary || summarizeUnitFailure(cleanedFailureMsgs),
+                }
+              : {}),
+          };
+        }),
       };
     };
 
@@ -3833,9 +3893,22 @@ export const getSourceFileDiff = async (req, res) => {
   }
 };
 
-const resolveOrCreateAiTest = async (snapshotId, aiTestId, userId) => {
-  // 1. Try finding by aiTestId directly if valid
-  if (aiTestId && aiTestId !== "default" && aiTestId !== "new") {
+const isSyntheticAiTestId = (aiTestId) =>
+  !aiTestId ||
+  [
+    "default",
+    "new",
+    "fallback",
+    "existing_test_lookup",
+    "workspace_scenario_lookup",
+  ].includes(aiTestId) ||
+  String(aiTestId).startsWith("existing_test_");
+
+const resolveOrCreateAiTest = async (snapshotId, aiTestId, userId, context = {}) => {
+  const { filePath: hintFilePath, testName: hintTestName, scenarioId: hintScenarioId } = context || {};
+
+  // 1. Try finding by aiTestId directly if not synthetic
+  if (!isSyntheticAiTestId(aiTestId)) {
     const found = await prisma.aiTest.findFirst({
       where: { id: aiTestId, snapshotId },
       select: { id: true, projectId: true, snapshotId: true },
@@ -3850,7 +3923,118 @@ const resolveOrCreateAiTest = async (snapshotId, aiTestId, userId) => {
     }
   }
 
-  // 2. Try finding any existing AiTest for this snapshotId
+  // 1.5 Match an existing AiTest by filePath, scenarioId, or testName before creating/falling back
+  if (hintFilePath || hintTestName || hintScenarioId) {
+    const allAiTests = await prisma.aiTest.findMany({
+      where: { snapshotId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, projectId: true, snapshotId: true, filePath: true, content: true, metaJson: true },
+    });
+    const normHintPath = hintFilePath
+      ? String(hintFilePath).replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase()
+      : null;
+
+    const matched = allAiTests.find((row) => {
+      if (normHintPath && row.filePath) {
+        const normRowPath = String(row.filePath).replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+        if (normRowPath === normHintPath || normRowPath.endsWith(normHintPath) || normHintPath.endsWith(normRowPath)) {
+          return true;
+        }
+      }
+      if (hintTestName && row.content && row.content.includes(hintTestName)) {
+        return true;
+      }
+      if (hintScenarioId && row.metaJson && String(row.metaJson).includes(hintScenarioId)) {
+        return true;
+      }
+      return false;
+    });
+
+    if (matched) {
+      await resolveProjectAccess({
+        projectId: matched.projectId,
+        userId,
+        capability: "project.read",
+      });
+      return { id: matched.id, projectId: matched.projectId, snapshotId: matched.snapshotId };
+    }
+  }
+
+  // 2. If targeting an existing project test file (PROJECT_EXISTING), import it into an editable workspace AiTest
+  const snapshot = await prisma.projectSnapshot.findUnique({
+    where: { id: snapshotId },
+    select: { id: true, projectId: true, rootDir: true },
+  });
+  if (!snapshot) return null;
+
+  const { normalizeDiskPath } = await import("../utils/snapshotWorkspace.js");
+  const rootDir = snapshot.rootDir ? (resolveSnapshotRootDir(snapshot.rootDir) || normalizeDiskPath(snapshot.rootDir) || snapshot.rootDir) : null;
+
+  if (rootDir && fs.existsSync(rootDir) && (hintFilePath || hintTestName || isSyntheticAiTestId(aiTestId))) {
+    try {
+      const { discoverProjectIntegrationTests } = await import("../services/integrationWorkspace.service.js");
+      const { extractTestRequests } = await import("../services/testSourceParser.service.js");
+      const projectSuites = await discoverProjectIntegrationTests(rootDir).catch(() => []);
+      const normHintPath = hintFilePath
+        ? String(hintFilePath).replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase()
+        : null;
+
+      let matchedSuite = null;
+      if (aiTestId && String(aiTestId).startsWith("existing_test_")) {
+        matchedSuite = projectSuites.find((s) => s.id === aiTestId) || null;
+      }
+      if (!matchedSuite && normHintPath) {
+        matchedSuite = projectSuites.find((s) => {
+          const p = String(s.filePath || "").replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+          return p === normHintPath || p.endsWith(normHintPath) || normHintPath.endsWith(p);
+        }) || null;
+      }
+      if (!matchedSuite && hintTestName) {
+        matchedSuite = projectSuites.find((s) =>
+          (s.requests || []).some((r) => r.testName === hintTestName) ||
+          (s.content && s.content.includes(hintTestName))
+        ) || null;
+      }
+
+      if (matchedSuite && matchedSuite.content) {
+        await resolveProjectAccess({
+          projectId: snapshot.projectId,
+          userId,
+          capability: "files.write",
+        });
+        const parsedReqs = (matchedSuite.requests && matchedSuite.requests.length > 0
+          ? matchedSuite.requests
+          : extractTestRequests(matchedSuite.content, matchedSuite.filePath)
+        ).map((r) => ({
+          ...r,
+          enabled: r.enabled !== false,
+          origin: r.origin || "PROJECT_EXISTING",
+        }));
+        const created = await prisma.aiTest.create({
+          data: {
+            projectId: snapshot.projectId,
+            snapshotId: snapshot.id,
+            mode: "FULL",
+            status: "VERIFIED",
+            filePath: matchedSuite.filePath,
+            content: matchedSuite.content,
+            metaJson: JSON.stringify({
+              framework: "SUPERTEST",
+              status: "APPROVED",
+              origin: "PROJECT_EXISTING",
+              requests: parsedReqs,
+            }),
+          },
+          select: { id: true, projectId: true, snapshotId: true },
+        });
+        return created;
+      }
+    } catch (importErr) {
+      console.warn("[resolveOrCreateAiTest] Could not import PROJECT_EXISTING suite:", importErr.message);
+    }
+  }
+
+  // 3. Try finding any existing AiTest for this snapshotId (for ADD scenario mode)
   const existing = await prisma.aiTest.findFirst({
     where: { snapshotId },
     orderBy: { createdAt: "desc" },
@@ -3865,23 +4049,12 @@ const resolveOrCreateAiTest = async (snapshotId, aiTestId, userId) => {
     return existing;
   }
 
-  // 3. No AiTest in DB: Load snapshot to find project directory and existing test files
-  const snapshot = await prisma.projectSnapshot.findUnique({
-    where: { id: snapshotId },
-    select: { id: true, projectId: true, rootDir: true },
-  });
-  if (!snapshot) return null;
-
+  // 4. No AiTest in DB: create default scaffold
   await resolveProjectAccess({
     projectId: snapshot.projectId,
     userId,
     capability: "files.write",
   });
-
-  const fs = (await import("fs")).default;
-  const path = (await import("path")).default;
-  const { normalizeDiskPath } = await import("../utils/snapshotWorkspace.js");
-  const rootDir = normalizeDiskPath(snapshot.rootDir);
 
   let testFilePath = "tests/integration/api.test.js";
   let testContent = "";
@@ -3946,18 +4119,21 @@ const verifyAiTestOwnership = async (
   userId,
   res,
   expectedSnapshotId = null,
+  context = {},
 ) => {
-  let aiTest = await prisma.aiTest.findUnique({
-    where: { id: aiTestId },
-    select: {
-      id: true,
-      projectId: true,
-      snapshotId: true,
-      project: { select: { ownerId: true } },
-    },
-  });
+  let aiTest = !isSyntheticAiTestId(aiTestId)
+    ? await prisma.aiTest.findUnique({
+        where: { id: aiTestId },
+        select: {
+          id: true,
+          projectId: true,
+          snapshotId: true,
+          project: { select: { ownerId: true } },
+        },
+      })
+    : null;
   if (!aiTest && expectedSnapshotId) {
-    aiTest = await resolveOrCreateAiTest(expectedSnapshotId, aiTestId, userId);
+    aiTest = await resolveOrCreateAiTest(expectedSnapshotId, aiTestId, userId, context);
   }
   if (!aiTest) {
     res.status(404).json({ success: false, message: "AiTest not found." });
@@ -3978,24 +4154,27 @@ const verifyAiTestOwnership = async (
 export const updateScenario = async (req, res) => {
   try {
     const { snapshotId, aiTestId, scenarioId } = req.params;
-    const { code } = req.body;
+    const { code, filePath, testName, origin } = req.body || {};
+    const decodedScenarioId = decodeURIComponent(scenarioId);
 
     const targetAiTest = await verifyAiTestOwnership(
       aiTestId,
       req.user.id,
       res,
       req.params.snapshotId,
+      { filePath, testName, scenarioId: decodedScenarioId, origin },
     );
     if (!targetAiTest) return;
 
     const updatedTest = await updateScenarioService(
       targetAiTest.id,
-      decodeURIComponent(scenarioId),
+      decodedScenarioId,
       code,
       {
         userId: req.user.id,
         snapshotId: req.params.snapshotId,
         expectedVersion: req.body?.expectedVersion,
+        fallbackTestName: testName,
       },
     );
     if (snapshotId) invalidateEndpointCache(snapshotId);
@@ -4011,12 +4190,13 @@ export const updateScenario = async (req, res) => {
 export const addScenario = async (req, res) => {
   try {
     const { snapshotId, aiTestId } = req.params;
-    const { code, endpoint } = req.body;
+    const { code, endpoint, filePath, testName, origin } = req.body || {};
 
     const aiTest = await resolveOrCreateAiTest(
       snapshotId,
       aiTestId,
       req.user.id,
+      { filePath, testName, origin },
     );
     if (!aiTest) {
       return res
@@ -4106,19 +4286,21 @@ export const deleteScenario = async (req, res) => {
 export const toggleScenario = async (req, res) => {
   try {
     const { snapshotId, aiTestId, scenarioId } = req.params;
-    const { enable } = req.body;
+    const { enable, filePath, testName, origin } = req.body || {};
+    const decodedScenarioId = decodeURIComponent(scenarioId);
 
     const targetAiTest = await verifyAiTestOwnership(
       aiTestId,
       req.user.id,
       res,
       req.params.snapshotId,
+      { filePath, testName, scenarioId: decodedScenarioId, origin },
     );
     if (!targetAiTest) return;
 
     const updatedTest = await toggleScenarioService(
       targetAiTest.id,
-      decodeURIComponent(scenarioId),
+      decodedScenarioId,
       enable,
       {
         userId: req.user.id,
@@ -4195,18 +4377,21 @@ import { getScenarioService } from "../services/scenarioManager.service.js";
 export const getScenario = async (req, res) => {
   try {
     const { aiTestId, scenarioId } = req.params;
+    const decodedScenarioId = decodeURIComponent(scenarioId);
+    const { filePath, testName, origin } = req.query || {};
 
     const targetAiTest = await verifyAiTestOwnership(
       aiTestId,
       req.user.id,
       res,
       req.params.snapshotId,
+      { filePath, testName, scenarioId: decodedScenarioId, origin },
     );
     if (!targetAiTest) return;
 
     const result = await getScenarioService(
       targetAiTest.id,
-      decodeURIComponent(scenarioId),
+      decodedScenarioId,
       { userId: req.user.id, snapshotId: req.params.snapshotId },
     );
     return res.status(200).json({ success: true, data: result });
@@ -6107,5 +6292,102 @@ export const confirmBatchSystemScenariosController = async (req, res) => {
       success: false,
       message: error.message || "Failed to confirm system scenarios.",
     });
+  }
+};
+
+const loadUnitCaseSnapshotAndAccess = async (snapshotId, userId, capability) => {
+  if (!userId) throw new ServiceError("Unauthorized.", 401);
+  if (!snapshotId) throw new ServiceError("snapshotId is required.", 400);
+  const snapshot = await prisma.projectSnapshot.findUnique({
+    where: { id: snapshotId },
+    select: { id: true, projectId: true, rootDir: true },
+  });
+  if (!snapshot) throw new ServiceError("Snapshot not found.", 404);
+  await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability });
+  return snapshot;
+};
+
+/**
+ * GET /api/coverage/:snapshotId/unit/test-case?testFile=...&testName=...
+ */
+export const getUnitTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "project.read");
+    const { getUnitTestCaseDetail } = await import("../services/unitTestCaseOperations.service.js");
+    const data = await getUnitTestCaseDetail({
+      snapshot,
+      testFile: req.query?.testFile,
+      testName: req.query?.testName,
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[getUnitTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to load unit test case." });
+  }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/unit/test-case
+ */
+export const addUnitTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "files.write");
+    const { addUnitTestCase } = await import("../services/unitTestCaseOperations.service.js");
+    const data = await addUnitTestCase({ snapshot, ...(req.body || {}) });
+    return res.status(201).json({ success: true, data });
+  } catch (error) {
+    console.error("[addUnitTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to add unit test case." });
+  }
+};
+
+/**
+ * PUT /api/coverage/:snapshotId/unit/test-case
+ */
+export const updateUnitTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "files.write");
+    const { updateUnitTestCase } = await import("../services/unitTestCaseOperations.service.js");
+    const data = await updateUnitTestCase({ snapshot, ...(req.body || {}) });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[updateUnitTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to update unit test case." });
+  }
+};
+
+/**
+ * DELETE /api/coverage/:snapshotId/unit/test-case
+ */
+export const deleteUnitTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "files.write");
+    const { deleteUnitTestCase } = await import("../services/unitTestCaseOperations.service.js");
+    const bodyOrQuery = { ...(req.query || {}), ...(req.body || {}) };
+    const data = await deleteUnitTestCase({ snapshot, ...bodyOrQuery });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[deleteUnitTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to delete unit test case." });
+  }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/unit/test-case/ai-fix
+ */
+export const aiFixUnitTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "ai.use");
+    await resolveProjectAccess({ projectId: snapshot.projectId, userId: req.user?.id, capability: "files.write" });
+    const { aiFixUnitTestCase } = await import("../services/unitTestCaseOperations.service.js");
+    const data = await aiFixUnitTestCase({
+      snapshot,
+      ...(req.body || {}),
+      model: requestedAiModel(req),
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[aiFixUnitTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to AI fix unit test case." });
   }
 };

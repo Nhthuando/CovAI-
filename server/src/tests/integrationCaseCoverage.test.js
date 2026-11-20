@@ -2,6 +2,8 @@ import { describe, it, expect } from "@jest/globals";
 import {
   getEndpointRequiredCases,
   getEndpointCaseCoverage,
+  annotateEndpointScenarios,
+  summarizeIntegrationFailure,
   getScenarioCaseKey,
   detectIntegrationLanguage,
 } from "../../../shared/integrationCaseCoverage.js";
@@ -221,5 +223,57 @@ describe("Integration Case Coverage Contract (Option A)", () => {
       passedTests: 25,
     });
     expect(partialImprovedRunScore).toBeGreaterThan(fullRunScore);
+  });
+
+  it("annotates scenarios with matched required case vs duplicate vs optional extra", () => {
+    const postEventEp = {
+      method: "POST",
+      fullPath: "/api/events",
+      responseStatusCodes: [201, 400],
+    };
+    const scenarios = [
+      { title: "returns 201 and persists event", status: "passed", expectedStatus: 201, origin: "PROJECT_EXISTING" },
+      { title: "happy path creates event successfully", status: "passed", expectedStatus: 201, origin: "AI_GENERATED" },
+      { title: "returns 400 when Zod rejects payload", status: "passed", expectedStatus: 400, origin: "PROJECT_EXISTING" },
+      { title: "returns 500 when downstream fails", status: "passed", expectedStatus: 500, origin: "PROJECT_EXISTING" },
+    ];
+    const cov = getEndpointCaseCoverage(postEventEp, scenarios);
+    expect(cov.scenarioAnnotations.map((a) => a.role)).toEqual([
+      "MATCHED_PASS",
+      "DUPLICATE",
+      "MATCHED_PASS",
+      "OPTIONAL_EXTRA",
+    ]);
+    expect(cov.redundantCount).toBe(1);
+    expect(cov.extraCount).toBe(1);
+  });
+
+  it("strips ANSI escape sequences and summarizes verbose Jest/Supertest errors concisely", () => {
+    const rawAnsiWall = `\u001b[1m\u001b[22mTest suite failed to run\u001b[39m\u001b[22m Jest encountered an unexpected token.\nDetails:\nSyntaxError: Cannot use import statement outside a module (tests/integration/ai-d99a539f.test.js:3)`;
+    const summary = summarizeIntegrationFailure(rawAnsiWall);
+    expect(summary).not.toContain("\u001b");
+    expect(summary).not.toContain("Jest encountered an unexpected token");
+    expect(summary).toContain("Module syntax mismatch");
+  });
+
+  it("converts accidental ESM imports to CommonJS require() when moduleType is commonjs", () => {
+    const raw = JSON.stringify({
+      suggestions: [],
+      tests: [
+        {
+          filePath: "tests/integration/ai-cjs.test.js",
+          content: "import { jest } from '@jest/globals';\nimport request from 'supertest';\nimport app from '../../src/app.js';\ndescribe('GET /', () => { it('returns 200', async () => { const res = await request(app).get('/'); expect(res.status).toBe(200); }); });",
+        },
+      ],
+    });
+    const processed = processSupertestTests(raw, {
+      projectId: "p1",
+      snapshotId: "s1",
+      moduleType: "commonjs",
+    });
+    const code = processed.allTests[0].content;
+    expect(code).not.toContain("@jest/globals");
+    expect(code).toContain("const request = require('supertest');");
+    expect(code).toContain("const app = require('../../src/app.js');");
   });
 });

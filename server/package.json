@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "prisma generate && nodemon index.js",
-    "dev:docker": "prisma generate && nodemon index.js",
+    "dev:docker": "prisma generate && nodemon -L index.js",
     "db:push": "prisma db push",
     "start": "prisma generate && node index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",

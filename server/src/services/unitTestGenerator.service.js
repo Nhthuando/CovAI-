@@ -387,6 +387,8 @@ ${deltaDecisionTableMarkdown}
    - Category D (Error & Exception Handling):
      * Test error handling and schema violations while respecting the non-null body guarantee.
      * For pure collection normalizers without throw statements, test tolerance for malformed elements within a populated collection.
+   - REQUIRED CATEGORY COVERAGE MANDATE:
+     * Generate at least ONE dedicated, standalone \`it(...)\` or \`test(...)\` block for EVERY applicable category above (A. Happy Path, B. Boundary Values, C. Branch Toggling when branches exist, D. Error Handling when guards/throws/async calls exist) that is not yet covered in the existing tests. Do NOT generate just 1 smoke test!
    - CRITICAL NON-DUPLICATION INVARIANT:
    - Carefully review the EXISTING TEST CODE in ${testFileInfo.relativePath}.
    - Do NOT regenerate or duplicate test cases that already exist in the test file!
@@ -497,6 +499,8 @@ ${deltaDecisionTableMarkdown || decisionTableMarkdown}
    - Category D (Error & Exception Handling):
      * Test error handling and schema violations while respecting the non-null body guarantee.
      * For pure collection normalizers without throw statements, test tolerance for malformed elements within a populated collection.
+   - REQUIRED CATEGORY COVERAGE MANDATE:
+     * Generate at least ONE dedicated, standalone \`it(...)\` or \`test(...)\` block for EVERY applicable category above (A. Happy Path, B. Boundary Values, C. Branch Toggling when branches exist, D. Error Handling when guards/throws/async calls exist) that is not yet covered in the existing tests. Do NOT generate just 1 smoke test!
    - Never generate fake or placeholder assertions like expect(true).toBe(true) for unreachable or environment-dependent code.
 5. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
    - DO NOT write placeholder assertions like expect(true).toBe(true) or expect(1).toBe(1).
@@ -968,7 +972,8 @@ export const parseAndSanitizeAiTestResponse = ({
                 const contractCheck = validateMockContracts({
                     code: parsedJson[field],
                     contracts: sourceContracts,
-                    framework
+                    framework,
+                    sourceFile: cleanSource,
                 });
                 for (const v of contractCheck.violations || []) {
                     if (v.severity === "error" && !errors.includes(v.message)) {

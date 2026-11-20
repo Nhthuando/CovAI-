@@ -70,6 +70,7 @@ jest.unstable_mockModule('../utils/projectRootResolver.js', () => ({
 }));
 
 jest.unstable_mockModule('../services/job.service.js', () => ({
+    createSnapshotJob: jest.fn().mockResolvedValue({ id: 'job-snapshot-1' }),
     createInstallDepsJob: jest.fn().mockResolvedValue({ id: 'install-1' }),
     createRunTestsJob: jest.fn().mockResolvedValue({ id: 'run-1' }),
     createSupertestCoverageJob: jest.fn().mockResolvedValue({ id: 'super-1' }),

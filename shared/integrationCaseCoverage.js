@@ -214,6 +214,85 @@ export function getEndpointRequiredCases(ep) {
 }
 
 /**
+ * Classify each scenario's role relative to an endpoint's required contract cases.
+ * Marks which scenario satisfies each required case (so users see which tests are needed)
+ * vs redundant duplicates or optional/extra scenarios outside required cases.
+ */
+export function annotateEndpointScenarios(ep, scenarios = []) {
+  const requiredCases = getEndpointRequiredCases(ep);
+  const requiredMap = new Map(requiredCases.map((c) => [c.key, c]));
+
+  const isPrimaryBetter = (candidate, current) => {
+    const score = (sc) => {
+      if (isScenarioPassed(sc)) return 30;
+      if (!isScenarioFailed(sc)) return 20;
+      return 10;
+    };
+    const originScore = (sc) => {
+      const origin = String(sc?.origin || "").toUpperCase();
+      if (sc?.userEdited || origin === "PROJECT_EXISTING" || origin === "USER_ADDED" || origin === "USER_MODIFIED") {
+        return 2;
+      }
+      return 1;
+    };
+    return score(candidate) + originScore(candidate) > score(current) + originScore(current);
+  };
+
+  // Pick one primary scenario per required case key
+  const primaryByCaseKey = new Map();
+  scenarios.forEach((sc, idx) => {
+    const caseKey = getScenarioCaseKey(sc);
+    if (!requiredMap.has(caseKey)) return;
+    const prevIdx = primaryByCaseKey.get(caseKey);
+    if (prevIdx === undefined || isPrimaryBetter(sc, scenarios[prevIdx])) {
+      primaryByCaseKey.set(caseKey, idx);
+    }
+  });
+
+  const primaryIndexSet = new Set(primaryByCaseKey.values());
+  let redundantCount = 0;
+  let extraCount = 0;
+
+  const annotations = scenarios.map((sc, idx) => {
+    const caseKey = getScenarioCaseKey(sc);
+    const reqDef = requiredMap.get(caseKey);
+    const passed = isScenarioPassed(sc);
+    const failed = isScenarioFailed(sc);
+
+    if (reqDef) {
+      if (primaryIndexSet.has(idx)) {
+        return {
+          caseKey,
+          caseLabel: reqDef.label,
+          isRequiredCase: true,
+          isPrimaryMatch: true,
+          role: passed ? "MATCHED_PASS" : failed ? "MATCHED_FAIL" : "MATCHED_PENDING",
+        };
+      }
+      redundantCount++;
+      return {
+        caseKey,
+        caseLabel: reqDef.label,
+        isRequiredCase: true,
+        isPrimaryMatch: false,
+        role: "DUPLICATE",
+      };
+    }
+
+    extraCount++;
+    return {
+      caseKey,
+      caseLabel: CASE_DEFINITIONS[caseKey]?.label || caseKey,
+      isRequiredCase: false,
+      isPrimaryMatch: false,
+      role: "OPTIONAL_EXTRA",
+    };
+  });
+
+  return { annotations, redundantCount, extraCount };
+}
+
+/**
  * Evaluate whether an endpoint's scenarios cover and pass all required contract cases.
  */
 export function getEndpointCaseCoverage(ep, scenarios = []) {
@@ -265,6 +344,8 @@ export function getEndpointCaseCoverage(ep, scenarios = []) {
   }));
   const coveredCount = cases.filter((c) => c.covered).length;
   const passedCasesCount = cases.filter((c) => c.passed).length;
+  const { annotations: scenarioAnnotations, redundantCount, extraCount } =
+    annotateEndpointScenarios(ep, scenarios);
 
   return {
     cases,
@@ -281,6 +362,9 @@ export function getEndpointCaseCoverage(ep, scenarios = []) {
     passedCount,
     failedCount,
     notRunCount: Math.max(0, scenarios.length - passedCount - failedCount),
+    scenarioAnnotations,
+    redundantCount,
+    extraCount,
   };
 }
 
@@ -333,4 +417,86 @@ export function detectIntegrationLanguage({
     .join("\n");
 
   return VIETNAMESE_CHAR_REGEX.test(apiSourceSample) ? "vi" : "en";
+}
+
+/**
+ * Strips ANSI color escape codes and summarizes verbose Jest / Supertest error logs
+ * into a concise, human-readable root cause string.
+ */
+export function summarizeIntegrationFailure(rawInput, parsedFailure = null) {
+  const rawJoined = Array.isArray(rawInput)
+    ? rawInput.join("\n")
+    : String(rawInput || "");
+  const cleanText = rawJoined
+    .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+    .replace(/\u001b/g, "")
+    .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "")
+    .trim();
+
+  if (!cleanText) {
+    return "Assertion or runtime failure during API test execution.";
+  }
+
+  if (/Cannot use import statement outside a module/i.test(cleanText)) {
+    const fileMatch = cleanText.match(/([A-Za-z0-9_.\-/]+\.(?:test|spec)\.[cm]?[jt]s):(\d+)/);
+    const loc = fileMatch ? ` (${fileMatch[1]}:${fileMatch[2]})` : "";
+    return `Module syntax mismatch${loc}: Test uses ES module 'import' inside a CommonJS Jest runner (use require() or enable ESM).`;
+  }
+
+  const modNotFound = cleanText.match(/Cannot find module ['"]([^'"]+)['"]/i);
+  if (modNotFound) {
+    return `Missing module '${modNotFound[1]}': Check relative import path or install dependency.`;
+  }
+
+  const jsErrorMatch = cleanText.match(
+    /(?:SyntaxError|TypeError|ReferenceError|RangeError):\s*([^\n\r]{1,180})/,
+  );
+  if (jsErrorMatch && !/expect\(/i.test(jsErrorMatch[0])) {
+    return jsErrorMatch[0].trim();
+  }
+
+  if (
+    parsedFailure?.expected &&
+    parsedFailure?.received &&
+    /^\d{3}$/.test(String(parsedFailure.expected).trim()) &&
+    /^\d{3}$/.test(String(parsedFailure.received).trim())
+  ) {
+    return `HTTP status mismatch: Expected ${String(parsedFailure.expected).trim()}, got ${String(parsedFailure.received).trim()}.`;
+  }
+
+  const statusPair = cleanText.match(/Expected:\s*(\d{3})[\s\S]{0,60}?Received:\s*(\d{3})/i)
+    || cleanText.match(/expected\s+(\d{3})\b[^,\n]*,\s*got\s+(\d{3})\b/i);
+  if (statusPair) {
+    return `HTTP status mismatch: Expected ${statusPair[1]}, got ${statusPair[2]}.`;
+  }
+
+  if (parsedFailure?.expected && parsedFailure?.received) {
+    const expShort = String(parsedFailure.expected).replace(/\s+/g, " ").slice(0, 70);
+    const recShort = String(parsedFailure.received).replace(/\s+/g, " ").slice(0, 70);
+    return `Assertion mismatch: Expected ${expShort}, got ${recShort}.`;
+  }
+
+  if (/Exceeded timeout of \d+ ms|Timeout - Async callback/i.test(cleanText)) {
+    return "Test timed out waiting for HTTP response or async operation.";
+  }
+
+  const meaningfulLines = cleanText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !/^Test suite failed to run$/i.test(l) &&
+        !/^Jest encountered an unexpected token/i.test(l) &&
+        !/^Out of the box Jest supports/i.test(l) &&
+        !/^Here's what you can do:/i.test(l) &&
+        !/^Details:/i.test(l) &&
+        !/^[•*-]\s/.test(l) &&
+        !/^https?:\/\//.test(l) &&
+        !/^at\s+/.test(l) &&
+        !/^\d+\s*\|/.test(l),
+    );
+
+  const firstUseful = meaningfulLines[0] || cleanText.split("\n")[0];
+  return firstUseful.length > 200 ? `${firstUseful.slice(0, 197)}...` : firstUseful;
 }

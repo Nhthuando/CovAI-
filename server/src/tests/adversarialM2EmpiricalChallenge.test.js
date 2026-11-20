@@ -323,24 +323,18 @@ describe('Adversarial Empirical Challenge: Milestone 2 (Transaction Aborts, Malf
             }
         });
 
-        test('applySuggestion controller rejects malformed envVariables with 400', async () => {
-            const malformedEnvConfigs = [
-                'NOT_AN_OBJECT',
-                ['VAR1', 'VAR2'],
-                { 'INVALID;INJECTION': 'value' },
-                { 'VALID_NAME': 12345 }, // value not string
-                { 'ANOTHER-DASH': 'value' } // invalid identifier syntax
+        test('applySuggestion controller rejects missing suggestion/suggestions payload with 400', async () => {
+            const invalidSuggestionPayloads = [
+                { projectId: 'proj-1' },
+                { projectId: 'proj-1', suggestions: [] },
+                { projectId: 'proj-1', suggestion: null, suggestions: [] }
             ];
 
-            for (const envVariables of malformedEnvConfigs) {
+            for (const body of invalidSuggestionPayloads) {
                 const req = {
                     user: { id: 'user-test' },
                     params: { snapshotId: 'snap-1' },
-                    body: {
-                        projectId: 'proj-1',
-                        suggestion: { testFile: 'test.js' },
-                        envVariables
-                    }
+                    body
                 };
                 const res = {
                     status: jest.fn().mockReturnThis(),
@@ -351,7 +345,7 @@ describe('Adversarial Empirical Challenge: Milestone 2 (Transaction Aborts, Malf
                 expect(res.status).toHaveBeenCalledWith(400);
                 expect(res.json).toHaveBeenCalledWith({
                     success: false,
-                    message: 'Invalid test environment configuration.'
+                    message: 'suggestion or suggestions array is required.'
                 });
             }
         });

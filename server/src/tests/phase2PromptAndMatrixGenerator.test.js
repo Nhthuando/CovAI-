@@ -235,9 +235,9 @@ export async function processCustomerInvoice(invoice, options = {}) {
             expect(prompt).toContain("### 5. STRICT GENERATION RULES & METHODOLOGY");
             expect(prompt).toContain("NEVER USE test.skip / it.skip / describe.skip / xit / xtest");
             expect(prompt).toContain("MANDATORY TEST MATRIX (DECISION TABLE)");
-            expect(prompt).toContain("Category A (Happy Path)");
-            expect(prompt).toContain("Category B (Boundary Values)");
-            expect(prompt).toContain("Category C (Branch Toggling)");
+            expect(prompt).toContain("Category A (Happy Path - CORE LOGIC PATH TRAVERSAL)");
+            expect(prompt).toContain("Category B (Boundary Values - GUARD VERIFICATION)");
+            expect(prompt).toContain("Category C (Branch Toggling - GUARD CLAUSE PRECEDENCE INVARIANT)");
             expect(prompt).toContain("Category D (Error & Exception Handling)");
             expect(prompt).toContain("DO NOT write placeholder assertions like expect(true).toBe(true)");
             expect(prompt).toContain("ISOLATION MOCK CONTRACTS");

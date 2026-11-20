@@ -166,7 +166,7 @@ describe("CovAI- Unit Test Simulation: Comprehensive Opaque-Box E2E Test Suite",
 
       it("R1-T1-03: Tab bar strictly organizes the 4 canonical unit test tabs with simulation beside traceability", () => {
         // 4 canonical tabs: Logic & Test Traceability, Test Execution Simulation, Test Suites & Specs, Version History
-        const unitTabsMatch = dashboardContent.match(/\.\.\.\(type\s*===\s*["']unit["']\s*\?\s*\[([\s\S]*?)\]\s*:\s*\[/);
+        const unitTabsMatch = dashboardContent.match(/\{type\s*===\s*["']unit["']\s*&&\s*\([\s\S]*?\[([\s\S]*?)\]\.map\(\(tab\)/);
         expect(unitTabsMatch).not.toBeNull();
         const tabsBlock = unitTabsMatch[1];
 
@@ -184,7 +184,7 @@ describe("CovAI- Unit Test Simulation: Comprehensive Opaque-Box E2E Test Suite",
       });
 
       it("R1-T1-04: Test Execution Simulation tab is positioned directly beside Logic & Test Traceability", () => {
-        const unitTabsMatch = dashboardContent.match(/\.\.\.\(type\s*===\s*["']unit["']\s*\?\s*\[([\s\S]*?)\]\s*:\s*\[/);
+        const unitTabsMatch = dashboardContent.match(/\{type\s*===\s*["']unit["']\s*&&\s*\([\s\S]*?\[([\s\S]*?)\]\.map\(\(tab\)/);
         expect(unitTabsMatch).not.toBeNull();
         const tabsBlock = unitTabsMatch[1];
         expect(tabsBlock).toMatch(/id:\s*["']traceability["'][\s\S]*?id:\s*["']simulation["']/);
@@ -221,7 +221,7 @@ describe("CovAI- Unit Test Simulation: Comprehensive Opaque-Box E2E Test Suite",
 
       it("R2-T1-04: Missing category cards are clean without intrusive simulate buttons", () => {
         expect(traceabilityContent).not.toMatch(/⚡ Simulate .*? Scenario/);
-        expect(traceabilityContent).toMatch(/cat\.missingMsg/);
+        expect(traceabilityContent).toMatch(/missingCategories/);
       });
 
       it("R2-T1-05: InPlaceCoverageFileModal renders actionable '⚡ Simulate Execution' button in modal header", () => {
@@ -482,7 +482,8 @@ describe("CovAI- Unit Test Simulation: Comprehensive Opaque-Box E2E Test Suite",
       const dashboardContent = fs.readFileSync(dashboardComponentPath, "utf8");
 
       it("R1-T2-01: Tab bar configuration maintains 4 unit tabs with simulation beside traceability", () => {
-        const tabsMatch = dashboardContent.match(/\.\.\.\(type\s*===\s*["']unit["']\s*\?\s*\[([\s\S]*?)\]\s*:\s*\[/);
+        const tabsMatch = dashboardContent.match(/\{type\s*===\s*["']unit["']\s*&&\s*\([\s\S]*?\[([\s\S]*?)\]\.map\(\(tab\)/);
+        expect(tabsMatch).not.toBeNull();
         const tabsBlock = tabsMatch[1];
         const tabEntries = tabsBlock.match(/id:\s*["'][^"']+["']/g);
         expect(tabEntries).toHaveLength(4);
@@ -493,7 +494,7 @@ describe("CovAI- Unit Test Simulation: Comprehensive Opaque-Box E2E Test Suite",
       });
 
       it("R1-T2-03: Tab bar container preserves clean flex styling across light/dark themes", () => {
-        expect(dashboardContent).toMatch(/isLight \? "#f8fafc" : "var\(--color-surface/);
+        expect(dashboardContent).toMatch(/border-\[var\(--color-border\)\]\s+flex\s+items-center/);
       });
 
       it("R1-T2-04: Non-unit coverage modes do not render unit simulation widgets in toolbar", () => {
@@ -533,7 +534,7 @@ describe("CovAI- Unit Test Simulation: Comprehensive Opaque-Box E2E Test Suite",
       });
 
       it("R2-T2-05: Untested functions render clean missing message without inline simulate buttons", () => {
-        expect(traceabilityContent).toMatch(/cat\.missingMsg/);
+        expect(traceabilityContent).toMatch(/No dedicated test assertion/);
         expect(traceabilityContent).not.toMatch(/⚡ Simulate .*? Scenario/);
       });
     });

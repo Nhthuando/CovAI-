@@ -17,7 +17,11 @@ import {
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
 import { Button } from "../../../common/Button.jsx";
-import { fmtDuration, fmtPct, fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
+import {
+  fmtDuration,
+  fmtPct,
+  fmtRelativeTime,
+} from "../../../../services/unifiedDashboard/format.js";
 import { getUnifiedTestRunInspection } from "../../../../services/coverage.service.js";
 import { useToast } from "../../ToastContext.jsx";
 
@@ -45,11 +49,17 @@ export function SlideOverInspectorDrawer({
   useEffect(() => {
     setFetchedRunDetails(null);
     if (!item) return;
-    const isRunItem = item.inspectorType === "run" || Boolean(item.startedAt && item.type);
+    const isRunItem =
+      item.inspectorType === "run" || Boolean(item.startedAt && item.type);
     const runId = item.runId || item.id;
     const targetSnapId = item.snapshotId || snapshotId;
 
-    if (isRunItem && runId && targetSnapId && !String(runId).startsWith("run-")) {
+    if (
+      isRunItem &&
+      runId &&
+      targetSnapId &&
+      !String(runId).startsWith("run-")
+    ) {
       let cancelled = false;
       setLoadingRunDetails(true);
       getUnifiedTestRunInspection(targetSnapId, runId)
@@ -70,20 +80,24 @@ export function SlideOverInspectorDrawer({
 
   if (!item) return null;
 
-  const effectiveItem = fetchedRunDetails ? { ...item, ...fetchedRunDetails } : item;
+  const effectiveItem = fetchedRunDetails
+    ? { ...item, ...fetchedRunDetails }
+    : item;
 
   // Normalize whether `item` is an Action Item, Matrix Module, or Recent Execution Run
-  const isRun = effectiveItem.inspectorType === "run" || Boolean(effectiveItem.startedAt && effectiveItem.type);
+  const isRun =
+    effectiveItem.inspectorType === "run" ||
+    Boolean(effectiveItem.startedAt && effectiveItem.type);
   const pillar = isRun
     ? effectiveItem.type
     : effectiveItem.pillar || effectiveItem.diagnostics?.suspectLayer || "unit";
   const status = isRun
     ? effectiveItem.status
     : effectiveItem.priority === "CRITICAL" || effectiveItem.priority === "HIGH"
-    ? "fail"
-    : effectiveItem.priority === "MEDIUM"
-    ? "warn"
-    : "pass";
+      ? "fail"
+      : effectiveItem.priority === "MEDIUM"
+        ? "warn"
+        : "pass";
 
   const title = isRun
     ? `Execution Run ${String(effectiveItem.id || "").slice(0, 10)}`
@@ -121,7 +135,7 @@ export function SlideOverInspectorDrawer({
     window.dispatchEvent(
       new CustomEvent("covai:prefill-prompt", {
         detail: { promptText: aiPrompt },
-      })
+      }),
     );
     addToast({
       title: "Sent Context to COV AI Agent",
@@ -197,9 +211,17 @@ export function SlideOverInspectorDrawer({
                     <span>Pass / Fail</span>
                   </span>
                   <span className="font-mono text-xs font-semibold mt-1 block">
-                    <span className="text-[var(--ud-pass)]">{effectiveItem.passed} passed</span>
+                    <span className="text-[var(--ud-pass)]">
+                      {effectiveItem.passed} passed
+                    </span>
                     <span className="text-[var(--ud-text-muted)]"> / </span>
-                    <span className={effectiveItem.failed > 0 ? "text-[var(--ud-fail)]" : "text-[var(--ud-text-muted)]"}>
+                    <span
+                      className={
+                        effectiveItem.failed > 0
+                          ? "text-[var(--ud-fail)]"
+                          : "text-[var(--ud-text-muted)]"
+                      }
+                    >
                       {effectiveItem.failed} failed
                     </span>
                   </span>
@@ -210,7 +232,11 @@ export function SlideOverInspectorDrawer({
                     <span>Coverage & Time</span>
                   </span>
                   <span className="font-mono text-xs font-semibold text-[var(--ud-text)] mt-1 block">
-                    {fmtPct(effectiveItem.coverageLinesPct ?? effectiveItem.coveragePct)} • {fmtDuration(effectiveItem.durationMs)}
+                    {fmtPct(
+                      effectiveItem.coverageLinesPct ??
+                        effectiveItem.coveragePct,
+                    )}{" "}
+                    • {fmtDuration(effectiveItem.durationMs)}
                   </span>
                 </div>
               </>
@@ -222,9 +248,13 @@ export function SlideOverInspectorDrawer({
                   </span>
                   <span
                     className="font-mono text-xs font-semibold text-[var(--ud-text)] mt-1 block truncate"
-                    title={diag.endpoint !== "N/A" ? diag.endpoint : diag.filePath}
+                    title={
+                      diag.endpoint !== "N/A" ? diag.endpoint : diag.filePath
+                    }
                   >
-                    {diag.endpoint && diag.endpoint !== "N/A" ? diag.endpoint : diag.filePath || "N/A"}
+                    {diag.endpoint && diag.endpoint !== "N/A"
+                      ? diag.endpoint
+                      : diag.filePath || "N/A"}
                   </span>
                 </div>
                 <div className="p-2.5 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/50 col-span-2 sm:col-span-1">
@@ -232,7 +262,9 @@ export function SlideOverInspectorDrawer({
                     HTTP / Step Status
                   </span>
                   <span className="font-mono text-xs font-semibold text-[var(--ud-warn)] mt-1 block truncate">
-                    {diag.httpStatus ? `HTTP ${diag.httpStatus}` : diag.failedStep || "Needs Fix"}
+                    {diag.httpStatus
+                      ? `HTTP ${diag.httpStatus}`
+                      : diag.failedStep || "Needs Fix"}
                   </span>
                 </div>
               </>
@@ -270,7 +302,11 @@ export function SlideOverInspectorDrawer({
                 onClick={handleCopyStack}
                 className="inline-flex items-center gap-1 text-[11px] font-mono text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] px-2 py-0.5 rounded border border-[var(--ud-border)] bg-[var(--ud-surface-2)] cursor-pointer"
               >
-                {copied ? <Check size={11} className="text-[var(--ud-pass)]" /> : <Copy size={11} />}
+                {copied ? (
+                  <Check size={11} className="text-[var(--ud-pass)]" />
+                ) : (
+                  <Copy size={11} />
+                )}
                 <span>{copied ? "Copied" : "Copy Log"}</span>
               </button>
             </div>
@@ -305,11 +341,20 @@ export function SlideOverInspectorDrawer({
                     >
                       <div className="flex items-start gap-2 min-w-0">
                         {isFail ? (
-                          <AlertTriangle size={14} className="shrink-0 mt-0.5 text-[var(--ud-fail)]" />
+                          <AlertTriangle
+                            size={14}
+                            className="shrink-0 mt-0.5 text-[var(--ud-fail)]"
+                          />
                         ) : isPass ? (
-                          <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-[var(--ud-pass)]" />
+                          <CheckCircle2
+                            size={14}
+                            className="shrink-0 mt-0.5 text-[var(--ud-pass)]"
+                          />
                         ) : (
-                          <MinusCircle size={14} className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]" />
+                          <MinusCircle
+                            size={14}
+                            className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]"
+                          />
                         )}
                         <div className="min-w-0">
                           <div className="font-mono text-[11px] font-semibold text-[var(--ud-text)] break-words">
@@ -318,7 +363,9 @@ export function SlideOverInspectorDrawer({
                           {tc.step && (
                             <div
                               className={`text-[11px] font-sans mt-0.5 ${
-                                isFail ? "text-[var(--ud-fail)]" : "text-[var(--ud-text-muted)]"
+                                isFail
+                                  ? "text-[var(--ud-fail)]"
+                                  : "text-[var(--ud-text-muted)]"
                               }`}
                             >
                               {tc.step}
@@ -377,9 +424,8 @@ export function SlideOverInspectorDrawer({
         </div>
       </aside>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 export default SlideOverInspectorDrawer;
-

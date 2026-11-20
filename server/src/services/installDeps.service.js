@@ -15,6 +15,7 @@ import { ServiceError } from "../utils/serviceError.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { ensureWorkspaceNodeModulesLinked } from "./dependencyResolution.service.js";
 import { currentProjectOperation } from "./projectOperationWorkspace.service.js";
+import { dockerRunner } from "./dockerRunner.service.js";
 
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -116,8 +117,21 @@ export const processInstallDepsJob = async (jobId) => {
     return;
   }
 
-  const packageJsonPath = path.join(resolvedRootDir, "package.json");
-  const packageJsonExists = fs.existsSync(packageJsonPath);
+  const subPkgCandidateDirs = ["", "server", "backend", "api", "client"];
+  let installTargetDir = resolvedRootDir;
+  let packageJsonPath = path.join(resolvedRootDir, "package.json");
+  let packageJsonExists = fs.existsSync(packageJsonPath);
+  if (!packageJsonExists) {
+    for (const sub of subPkgCandidateDirs.slice(1)) {
+      const subPkg = path.join(resolvedRootDir, sub, "package.json");
+      if (fs.existsSync(subPkg)) {
+        installTargetDir = path.join(resolvedRootDir, sub);
+        packageJsonPath = subPkg;
+        packageJsonExists = true;
+        break;
+      }
+    }
+  }
   console.log(`[InstallDeps ${jobId}] packageJson=${packageJsonPath}`);
   console.log(
     `[InstallDeps ${jobId}] package.json exists=${packageJsonExists}`,
@@ -129,7 +143,11 @@ export const processInstallDepsJob = async (jobId) => {
     return;
   }
 
-  if (resolvedRootDir !== rootDir) {
+  // Never persist ephemeral collaboration-operations workspace paths into DB snapshots
+  const isEphemeralWorkspace =
+    Boolean(currentProjectOperation()) ||
+    /[\\/]\.?covai-temp[\\/]/i.test(resolvedRootDir);
+  if (resolvedRootDir !== rootDir && !isEphemeralWorkspace) {
     await prisma.projectSnapshot
       .update({
         where: { id: job.snapshotId },
@@ -158,14 +176,18 @@ export const processInstallDepsJob = async (jobId) => {
         : path.join(resolvedRootDir, "node_modules");
       if (fs.existsSync(srcNm) && !fs.existsSync(dstNm)) {
         try {
-          fs.symlinkSync(
-            srcNm,
-            dstNm,
-            process.platform === "win32" ? "junction" : "dir",
-          );
+          if (dockerRunner.containerEnabled) {
+            fs.cpSync(srcNm, dstNm, { recursive: true, dereference: true });
+          } else {
+            fs.symlinkSync(
+              srcNm,
+              dstNm,
+              process.platform === "win32" ? "junction" : "dir",
+            );
+          }
         } catch (_) {
           try {
-            fs.cpSync(srcNm, dstNm, { recursive: true });
+            fs.cpSync(srcNm, dstNm, { recursive: true, dereference: true });
           } catch (_) {}
         }
       }
@@ -185,8 +207,17 @@ export const processInstallDepsJob = async (jobId) => {
     const hasNodeModules = fs.existsSync(
       path.join(resolvedRootDir, "node_modules"),
     );
+    const hasInstalledJestAndSupertest =
+      (hasNodeModules &&
+        fs.existsSync(path.join(resolvedRootDir, "node_modules", "jest")) &&
+        fs.existsSync(path.join(resolvedRootDir, "node_modules", "supertest"))) ||
+      ["server", "backend", "api"].some(
+        (sub) =>
+          fs.existsSync(path.join(resolvedRootDir, sub, "node_modules", "jest")) &&
+          fs.existsSync(path.join(resolvedRootDir, sub, "node_modules", "supertest")),
+      );
 
-    if (hasJest && hasSupertest && hasNodeModules) {
+    if ((hasJest && hasSupertest && hasNodeModules) || hasInstalledJestAndSupertest) {
       const subCandidates = ["server", "backend", "api"];
       let hasUninstalledSub = false;
       for (const sub of subCandidates) {
@@ -250,11 +281,11 @@ export const processInstallDepsJob = async (jobId) => {
       "--progress=false",
     ];
     console.log(
-      `[InstallDeps ${jobId}] Running command: ${command} ${args.join(" ")} at ${resolvedRootDir}`,
+      `[InstallDeps ${jobId}] Running command: ${command} ${args.join(" ")} at ${installTargetDir}`,
     );
 
     const child = spawn(command, args, {
-      cwd: resolvedRootDir,
+      cwd: installTargetDir,
       shell: process.platform === "win32",
       env: { ...process.env, CI: "true" },
       stdio: ["ignore", "pipe", "pipe"],

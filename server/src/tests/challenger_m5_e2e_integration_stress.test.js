@@ -64,6 +64,20 @@ await jest.unstable_mockModule("../services/projectAccess.service.js", () => ({
     })),
 }));
 
+// Mock gemini.service.js to prevent slow/hanging live network calls during unit stress tests
+await jest.unstable_mockModule("../services/gemini.service.js", () => ({
+    generateText: jest.fn().mockRejectedValue(new Error("Mocked offline Gemini in M5 stress suite")),
+    generateTextWithTelemetry: jest.fn().mockRejectedValue(new Error("Mocked offline Gemini in M5 stress suite")),
+    generateMultimodalText: jest.fn().mockRejectedValue(new Error("Mocked offline Gemini in M5 stress suite")),
+    validateGeminiKeys: jest.fn(),
+    getGeminiApiKey: jest.fn(() => "mock-key"),
+    getGeminiClient: jest.fn(),
+    markModelExhausted: jest.fn(),
+    withGeminiChannel: jest.fn((_, fn) => fn()),
+    getCurrentGeminiChannel: jest.fn(() => "unit"),
+    TASK_KEY_MAP: { unit: ["GEMINI_KEY_UNIT_TEST"] },
+}));
+
 // Mock fileCoverage.service.js
 await jest.unstable_mockModule("../services/fileCoverage.service.js", () => ({
     normalizePath: (p) => (p ? String(p).replace(/\\/g, "/") : ""),

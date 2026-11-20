@@ -6,5 +6,7 @@ export {
   classifyScenario,
   getScenarioCaseKey,
   getEndpointRequiredCases,
+  annotateEndpointScenarios,
   getEndpointCaseCoverage,
+  summarizeIntegrationFailure,
 } from "../../../../../shared/integrationCaseCoverage.js";

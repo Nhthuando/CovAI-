@@ -152,10 +152,49 @@ const processAiTestsJobInWorkspace = async (jobId) => {
             return {success:!result.failed,dryRunPassed:!result.failed,filePath,error:result.error};
         }
 
-        // SCRUM-393: Send AI context
+        if (mode === "INTEGRATION_GENERATION") {
+            const { runIntegrationGenerationPipeline } = await import("./integrationApiService.service.js");
+            const result = await runIntegrationGenerationPipeline({
+                jobId,
+                snapshotId,
+                projectId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                targetEndpoints: payloadJsonObj.targetEndpoints || [],
+                model:selectedAiModel,
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
+        if (mode === "INTEGRATION_REGENERATE") {
+            const { runRegenerateScenarioPipeline } = await import("./integrationApiService.service.js");
+            const result = await runRegenerateScenarioPipeline({
+                jobId,
+                snapshotId,
+                scenarioId: payloadJsonObj.scenarioId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                failureContext: payloadJsonObj.failureContext || null,
+                expectedVersion:payloadJsonObj.expectedVersion,
+                model:selectedAiModel,
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
+        // SCRUM-393: Send AI context (lightweight for Supertest/Integration modes)
         await addJobLog(jobId, "INFO", `Building AI Context Payload for ${mode} Tests...`);
-        const aiPayloadResult = await buildAiPayload(snapshotId);
-        const payload = aiPayloadResult.payload;
+        let payload;
+        if (mode === "SUPERTEST" || mode === "SUPERTEST_REGENERATE") {
+            const { loadSourceCode, loadTestFiles } = await import("./aiContextBuilder.service.js");
+            const [sourceCode, testFiles] = await Promise.all([
+                loadSourceCode(snapshotId, job.snapshot?.rootDir).catch(() => []),
+                loadTestFiles(snapshotId).catch(() => []),
+            ]);
+            payload = { snapshotId, sourceCode, testFiles };
+        } else {
+            const aiPayloadResult = await buildAiPayload(snapshotId);
+            payload = aiPayloadResult.payload;
+        }
 
         await updateGenerationJobStatus({ jobId, progress: 30 });
 
@@ -427,35 +466,6 @@ const processAiTestsJobInWorkspace = async (jobId) => {
         }
 
         // ── Supertest Integration Generation Branch ────────────────────────
-        if (mode === "INTEGRATION_GENERATION") {
-            const { runIntegrationGenerationPipeline } = await import("./integrationApiService.service.js");
-            const result = await runIntegrationGenerationPipeline({
-                jobId,
-                snapshotId,
-                projectId,
-                framework: payloadJsonObj.framework || "SUPERTEST",
-                targetEndpoints: payloadJsonObj.targetEndpoints || [],
-                model:selectedAiModel,
-                abortSignal: abortController.signal
-            });
-            return { success: true, ...result };
-        }
-
-        if (mode === "INTEGRATION_REGENERATE") {
-            const { runRegenerateScenarioPipeline } = await import("./integrationApiService.service.js");
-            const result = await runRegenerateScenarioPipeline({
-                jobId,
-                snapshotId,
-                scenarioId: payloadJsonObj.scenarioId,
-                framework: payloadJsonObj.framework || "SUPERTEST",
-                failureContext: payloadJsonObj.failureContext || null,
-                expectedVersion:payloadJsonObj.expectedVersion,
-                model:selectedAiModel,
-                abortSignal: abortController.signal
-            });
-            return { success: true, ...result };
-        }
-
         if (mode === "SUPERTEST_REGENERATE") {
             const { aiTestId, scenarioId } = payloadJsonObj;
             
@@ -499,7 +509,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
         if (mode === "SUPERTEST") {
             const { extractValidEndpoints } = await import("./apiEndpointParser.service.js");
             const allEndpoints = extractValidEndpoints(payload.sourceCode || []);
-            const CHUNK_SIZE = 2; // Strict requirement: start with 2
+            const CHUNK_SIZE = 4;
             const allTestsCombined = [];
             const suggestionsCombined = [];
             let summaryCombined = { message: "" };
@@ -759,8 +769,8 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 for (let i = 0; i < currentQueue.length; i += CHUNK_SIZE) {
                     if (isJobCanceled(jobId, abortController.signal)) break;
                     if (i > 0) {
-                        // Rate limit backoff between batches to prevent burst 429
-                        await new Promise(r => setTimeout(r, 2500));
+                        // Brief rate-limit spacing between batches
+                        await new Promise(r => setTimeout(r, 500));
                     }
                     if (isJobCanceled(jobId, abortController.signal)) break;
                     const chunkKeys = currentQueue.slice(i, i + CHUNK_SIZE);
@@ -816,7 +826,37 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                         }
                     }
 
-                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk, chunkConstraints);
+                    const detectSupertestModuleType = () => {
+                        const root = job.snapshot?.rootDir;
+                        if (root) {
+                            const pkgCandidates = [
+                                path.join(root, "package.json"),
+                                path.join(root, "server", "package.json"),
+                                path.join(root, "backend", "package.json"),
+                            ];
+                            for (const p of pkgCandidates) {
+                                if (fs.existsSync(p)) {
+                                    try {
+                                        const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+                                        if (pkg?.type === "module") return "esm";
+                                        if (pkg?.dependencies?.express || pkg?.devDependencies?.jest) {
+                                            // Found backend/root package without "type": "module" -> check existing tests or source
+                                            const existingTestStr = (payload?.testFiles || []).map(f => f.content || "").join("\n");
+                                            if (/\brequire\s*\(/.test(existingTestStr)) return "commonjs";
+                                            if (/^\s*import\s+.+\s+from\s+/m.test(existingTestStr)) return "esm";
+                                            return "commonjs";
+                                        }
+                                    } catch (_) {}
+                                }
+                            }
+                        }
+                        const sample = (payload?.testFiles || []).concat(payload?.sourceCode || []).map(f => f.content || "").join("\n");
+                        if (/\bmodule\.exports\b|\brequire\s*\(\s*['"]supertest['"]\s*\)/.test(sample)) return "commonjs";
+                        return /^\s*import\s+.+\s+from\s+/m.test(sample) ? "esm" : "commonjs";
+                    };
+                    const projectModuleType = detectSupertestModuleType();
+
+                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk, chunkConstraints, { moduleType: projectModuleType });
                     
                     let batchStatus = "SUCCESS";
                     let acceptedScenarios = 0;
@@ -836,7 +876,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                         
                         if (supertestResponseText) {
                             try {
-                                const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, { projectId, snapshotId });
+                                const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, { projectId, snapshotId, moduleType: projectModuleType });
 
                                 // VALIDATION: Strict per-endpoint output validation
                                 const validTestsForBatch = [];

@@ -480,19 +480,26 @@ describe('Milestone 2: Prisma Database Transactions & Concurrency Reliability (R
     });
 
     describe('6. Controller Guards Against Undefined projectId (coverage.controller.js)', () => {
-        test('suggestUnitTestcase returns 400 when projectId cannot be resolved from body or snapshot', async () => {
-            const req = {
-                user: { id: 'user-ctrl' },
-                params: { snapshotId: 'snap-nonexistent' },
-                body: { filePath: 'src/main.js' }
-            };
-            const res = {
-                status: jest.fn().mockReturnThis(),
-                json: jest.fn()
-            };
+        test('suggestUnitTestcase returns 404 when snapshot cannot be resolved', async () => {
+            const findUniqueSpy = jest.spyOn(prisma.projectSnapshot, 'findUnique').mockResolvedValue(null);
+            const findFirstSpy = jest.spyOn(prisma.projectSnapshot, 'findFirst').mockResolvedValue(null);
+            try {
+                const req = {
+                    user: { id: 'user-ctrl' },
+                    params: { snapshotId: 'snap-nonexistent' },
+                    body: { filePath: 'src/main.js' }
+                };
+                const res = {
+                    status: jest.fn().mockReturnThis(),
+                    json: jest.fn()
+                };
 
-            await suggestUnitTestcase(req, res);
-            expect(res.status).toHaveBeenCalledWith(404); // snapshot not found
+                await suggestUnitTestcase(req, res);
+                expect(res.status).toHaveBeenCalledWith(404); // snapshot not found
+            } finally {
+                findUniqueSpy.mockRestore();
+                findFirstSpy.mockRestore();
+            }
         });
 
         test('applySuggestion returns 400 when suggestion payload is missing', async () => {

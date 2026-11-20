@@ -2978,7 +2978,7 @@ export default function CoverageTypeDashboard({
                 }
               } else {
                 if (prog <= 20) {
-                  s = "Preparing dependencies & Docker environment...";
+                  s = "Preparing dependencies & isolated mock environment...";
                 } else if (prog <= 45) {
                   s = "Running Jest unit test suites & generating coverage...";
                 } else if (prog <= 65) {

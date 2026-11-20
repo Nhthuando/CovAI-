@@ -1,5 +1,10 @@
-import CoverageTypeDashboard from "./CoverageTypeDashboard.jsx";
+import UnitTestWorkspace from "./unit/UnitTestWorkspace.jsx";
 
 export default function UnitTestDashboard(props) {
-  return <CoverageTypeDashboard {...props} type="unit" />;
+  return (
+    <UnitTestWorkspace
+      key={`${props.projectId}:${props.snapshotId}`}
+      {...props}
+    />
+  );
 }

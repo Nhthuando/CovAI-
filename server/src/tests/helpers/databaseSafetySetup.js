@@ -43,13 +43,12 @@ export const createSafeDatabaseFallbackProxy = () => {
             }
             if (typeof prop === 'string') {
                 if (modelCache.has(prop)) return modelCache.get(prop);
-                const methodCache = new Map();
                 const modelProxy = new Proxy({}, {
                     get(mTarget, method) {
                         if (method === 'then' || method === 'catch' || method === 'finally' || typeof method === 'symbol') {
                             return undefined;
                         }
-                        if (methodCache.has(method)) return methodCache.get(method);
+                        if (Object.prototype.hasOwnProperty.call(mTarget, method)) return mTarget[method];
                         let fnImpl;
                         if (method === 'findMany' || method === 'findRaw') {
                             fnImpl = async () => [];
@@ -65,7 +64,7 @@ export const createSafeDatabaseFallbackProxy = () => {
                             });
                         }
                         const fn = typeof jest !== 'undefined' && jest.fn ? jest.fn(fnImpl) : fnImpl;
-                        methodCache.set(method, fn);
+                        mTarget[method] = fn;
                         return fn;
                     }
                 });

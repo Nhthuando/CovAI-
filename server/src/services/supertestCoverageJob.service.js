@@ -522,14 +522,18 @@ export const processSupertestCoverageJob = async (jobId) => {
             : path.join(rootDir, "node_modules");
           if (fs.existsSync(srcNm) && !fs.existsSync(dstNm)) {
             try {
-              fs.symlinkSync(
-                srcNm,
-                dstNm,
-                process.platform === "win32" ? "junction" : "dir",
-              );
+              if (dockerRunner.containerEnabled) {
+                fs.cpSync(srcNm, dstNm, { recursive: true, dereference: true });
+              } else {
+                fs.symlinkSync(
+                  srcNm,
+                  dstNm,
+                  process.platform === "win32" ? "junction" : "dir",
+                );
+              }
             } catch (_) {
               try {
-                fs.cpSync(srcNm, dstNm, { recursive: true });
+                fs.cpSync(srcNm, dstNm, { recursive: true, dereference: true });
               } catch (_) {}
             }
           }

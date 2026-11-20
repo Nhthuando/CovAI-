@@ -9,6 +9,7 @@ import {
     getEndpointRequiredCases,
 } from "../../../shared/integrationCaseCoverage.js";
 import { extractDatabaseSchemaConstraints } from "./integrationAiTestGenerator.service.js";
+import { parsePrismaSchemaModels, generatePrismaSeeds } from "./databaseMockTemplate.service.js";
 
 
 /**
@@ -117,6 +118,29 @@ export const includeDatabaseSchemaContext = (sourceCode = []) => {
         hasSchema = true;
         segment += `#### Prisma Schema File (\`${file.path}\`)\n`;
         segment += "```prisma\n" + file.content + "\n```\n\n";
+        try {
+            const parsedModels = parsePrismaSchemaModels(file.content);
+            const seeds = generatePrismaSeeds(parsedModels);
+            const seedPreview = {};
+            for (const [mKey, rows] of Object.entries(seeds)) {
+                if (Array.isArray(rows) && rows.length > 0) seedPreview[mKey] = rows.slice(0, 2);
+            }
+            if (Object.keys(seedPreview).length > 0) {
+                segment += "#### Pre-Seeded Mock Database Records (Available in In-Memory Prisma Store at Test Start)\n";
+                segment += "```json\n" + JSON.stringify(seedPreview, null, 2) + "\n```\n\n";
+            }
+        } catch (_) {}
+    }
+
+    const mongooseFiles = (sourceCode || []).filter(
+        f => /mongoose\.model|new\s+(?:mongoose\.)?Schema/i.test(f.content || "")
+    );
+    if (mongooseFiles.length > 0) {
+        hasSchema = true;
+        segment += "#### Mongoose Model Definitions (In-Memory Mock Active — Pre-Seeded `_id`: `'507f191e810c19729de860ea'`)\n";
+        mongooseFiles.slice(0, 5).forEach(f => {
+            segment += `##### File: \`${f.path}\`\n\`\`\`javascript\n${(f.content || "").split("\n").slice(0, 80).join("\n")}\n\`\`\`\n\n`;
+        });
     }
 
     if (hasSchema) {
@@ -247,15 +271,22 @@ const detectAppImportPath = (sourceCode) => {
     return "../../server/index.js";
 };
 
-export const includeSupertestInstructions = (sourceCode) => {
+export const includeSupertestInstructions = (sourceCode, options = {}) => {
     const appImportPath = detectAppImportPath(sourceCode);
+    const moduleType = options?.moduleType || "auto";
 
     let segment = "### Integration Test Generation Rules\n\n";
     segment += "You MUST generate **Supertest + Jest** integration tests to verify the complete API processing flow (Client -> Route -> Controller -> Service -> Database -> Response).\n\n";
     
     segment += "#### 1. API Flow & Application Startup\n";
     segment += `- **CRITICAL: Import the app from \`${appImportPath}\`** (the Express app module that exports the app WITHOUT calling \`app.listen()\`). DO NOT import from \`server.js\` because it starts the HTTP server on a port.\n`;
-    segment += "- If the source code uses ES modules (`import`/`export`), you MUST use `import` syntax. If it uses CommonJS (`require`), use `require`.\n";
+    if (moduleType === "commonjs") {
+        segment += "- **MODULE SYNTAX (MANDATORY — COMMONJS):** This project runs Jest in **CommonJS** mode. You MUST use `const request = require('supertest');` and `const app = require('...');`. Do NOT use ES module `import` / `export` syntax.\n";
+    } else if (moduleType === "esm") {
+        segment += "- **MODULE SYNTAX (MANDATORY — ES MODULES):** This project runs Jest in **ES Module** mode. You MUST use `import request from 'supertest';` and `import app from '...';`.\n";
+    } else {
+        segment += "- If the source code uses ES modules (`import`/`export`), you MUST use `import` syntax. If it uses CommonJS (`require`), use `require`.\n";
+    }
     segment += "- **AST PARSER COMPATIBILITY (CRITICAL):** You MUST write tests using inline Supertest chains exactly like: `await request(app).get('/api/users')`. DO NOT assign `request(app)` to a variable first. DO NOT abstract it into a helper function. The `request(app)` call MUST be inline inside the `it()` or `test()` block or else the tests will be silently ignored.\n";
     segment += "- DO NOT start the Express server on a port (do not call `app.listen()`).\n";
     segment += "- Send realistic request bodies, query params, and path params.\n";
@@ -289,7 +320,11 @@ export const includeSupertestInstructions = (sourceCode) => {
     return segment;
 };
 
-export const includeSupertestOutputFormat = () => {
+export const includeSupertestOutputFormat = (options = {}) => {
+    const isCjs = options?.moduleType === "commonjs";
+    const sampleContent = isCjs
+        ? `"const request = require(\\'supertest\\');\\nconst app = require(\\'../../src/app.js\\');\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`
+        : `"import request from \\'supertest\\';\\nimport app from \\'../../src/app.js\\';\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`;
     let segment = "### Required Output Format\n\n";
     segment += "You MUST output a **JSON object** wrapped in a markdown code block (```json ... ```).\n";
     segment += "The JSON must have TWO keys: `suggestions` (for test planning / chain of thought) and `tests` (for code generation):\n\n";
@@ -306,7 +341,7 @@ export const includeSupertestOutputFormat = () => {
     segment += '  "tests": [\n';
     segment += "    {\n";
     segment += '      "filePath": "tests/integration/users.test.js",\n';
-    segment += '      "content": "import request from \\\'supertest\\\';\\nimport app from \\\'../../src/app.js\\\';\\n\\ndescribe(\\\'User API\\\', () => { it(\\\'happy path: should return 200\\\', async () => { const res = await request(app).get(\\\'/api/users\\\'); expect(res.status).toBe(200); }); });"\n';
+    segment += `      "content": ${sampleContent}\n`;
     segment += "    }\n";
     segment += "  ]\n";
     segment += "}\n";
@@ -390,7 +425,7 @@ export const includePathConstraints = (pathConstraints = []) => {
  * @param {Array} pathConstraints - Optional array of backward path slicing constraints
  * @returns {string} The complete prompt string
  */
-export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstraints = []) => {
+export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstraints = [], options = {}) => {
     const existingScenarios = Array.isArray(targetEndpoints)
         ? targetEndpoints.flatMap((ep) => (Array.isArray(ep?.existingScenarios) ? ep.existingScenarios : []))
         : [];
@@ -399,6 +434,7 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstr
         testFiles: payload?.testFiles || [],
         sourceCode: payload?.sourceCode || [],
     });
+    const moduleType = options?.moduleType || payload?.moduleType || "auto";
 
     let prompt = "You are an expert Backend QA Engineer. Your task is to analyze the provided source code, API contracts, existing test suites, and client consumers to generate comprehensive Supertest integration test files for the API endpoints.\n\n";
 
@@ -423,8 +459,8 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstr
         prompt += includePathConstraints(effectiveConstraints);
     }
 
-    prompt += includeSupertestInstructions(payload.sourceCode);
-    prompt += includeSupertestOutputFormat();
+    prompt += includeSupertestInstructions(payload.sourceCode, { moduleType });
+    prompt += includeSupertestOutputFormat({ moduleType });
 
     prompt += "---\n\n";
     prompt += "Now analyze the source code and contracts above and generate the Supertest integration test files in the exact JSON format specified. Output ONLY the JSON object inside a markdown code block. Do NOT add any explanations before or after the JSON block.";

@@ -478,7 +478,7 @@ export const ensureWorkspaceNodeModulesLinked = (originalRootDir, preparedRootDi
             console.warn(`[ensureWorkspaceNodeModulesLinked] Could not remove cache dir ${prepNm}:`, rmErr.message);
           }
         } else {
-          // prepNm has real contents; link missing individual packages from origNm into prepNm
+          // prepNm has real contents; link (or copy in Docker mode) missing individual packages from origNm into prepNm
           try {
             const origEntries = fs.readdirSync(origNm, { withFileTypes: true });
             for (const oe of origEntries) {
@@ -486,12 +486,16 @@ export const ensureWorkspaceNodeModulesLinked = (originalRootDir, preparedRootDi
               const prepItem = path.join(prepNm, oe.name);
               if (!fs.existsSync(prepItem)) {
                 try {
-                  fs.symlinkSync(
-                    origItem,
-                    prepItem,
-                    process.platform === "win32" ? "junction" : "dir"
-                  );
-                  createdLinks.push(prepItem);
+                  if (dockerRunner.containerEnabled) {
+                    fs.cpSync(origItem, prepItem, { recursive: true, dereference: true });
+                  } else {
+                    fs.symlinkSync(
+                      origItem,
+                      prepItem,
+                      process.platform === "win32" ? "junction" : "dir"
+                    );
+                    createdLinks.push(prepItem);
+                  }
                 } catch (_) { }
               }
             }
@@ -499,6 +503,17 @@ export const ensureWorkspaceNodeModulesLinked = (originalRootDir, preparedRootDi
           continue;
         }
       }
+    }
+
+    // When Docker runner executes in sibling containers, symlinks pointing outside
+    // the mounted workspace are dangling inside the container; copy instead.
+    if (dockerRunner.containerEnabled) {
+      try {
+        fs.cpSync(origNm, prepNm, { recursive: true, dereference: true });
+      } catch (err) {
+        console.warn(`[ensureWorkspaceNodeModulesLinked] Could not copy ${origNm} -> ${prepNm}:`, err.message);
+      }
+      continue;
     }
 
     // Create fresh symlink/junction from origNm to prepNm

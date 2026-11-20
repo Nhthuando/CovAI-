@@ -1460,7 +1460,7 @@ function LayoutInner() {
               <span className="hidden sm:inline text-[11px]">AI Chatbot</span>
             </button>
 
-            <NotificationCenter userId={user?.id} size={14} />
+            <NotificationCenter userId={user?.id} size={14} variant="compact" />
           </div>
         </div>
       </div>
@@ -1644,7 +1644,7 @@ function LayoutInner() {
           {(activeActivity === "coverage" || visitedPanels.has("coverage")) && (
             <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
               {(coverageType === "unit" || visitedPanels.has("coverage:unit")) && (
-                <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
+                <div className={coverageType === "unit" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
                   <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'unit'}>
                     <UnitTestDashboard
                       onChatContextChange={updateChatTestContext}
@@ -1664,6 +1664,7 @@ function LayoutInner() {
                       onOpenFile={handleOpenFileByPath}
                       onSuggestTestcase={handleSuggestTestcase}
                       onOpenCFG={handleOpenCFG}
+                      onOpenJobQueue={() => setCoverageJobsOpen(true)}
                       runTrigger={coverageRunTrigger}
                     />
                   </RetainedPanel>

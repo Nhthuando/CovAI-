@@ -406,7 +406,7 @@ describe("CovAI- E2E Resilience: Prisma v7 & Express Controller Mocking Suite", 
                 const healed = healControllerFixturesWithAst(testCodeWithoutFixtures, "src/controllers/cartController.js");
 
                 expect(healed).toContain("beforeEach(() => {");
-                expect(healed).toContain("req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], cookies: {}, user: { id: 1, role: 'admin' } };");
+                expect(healed).toContain("req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], cookies: { jwt: 'valid_mock_token' }, user: { id: 1, role: 'admin' } };");
                 expect(healed).toContain("res = {");
                 expect(healed).toContain("status:");
                 expect(healed).toContain("json:");

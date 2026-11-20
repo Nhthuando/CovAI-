@@ -388,7 +388,7 @@ describe("MathUtil", () => {
                 targetDir: 'd:/NCKH/CovAI-/server/src'
             });
 
-            expect(setupScript).toContain("jest.mock('@prisma/client'");
+            expect(setupScript).toContain("jest.doMock('@prisma/client'");
             expect(setupScript).toContain("_relPrismaPaths");
             expect(setupScript).toContain("'../config/prisma'");
             expect(setupScript).toContain("'../../config/prisma'");

@@ -290,7 +290,19 @@ const createTypedJob =
 
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
-export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL", testType, requestId, chainBuildCfg = false, useHermeticMock = true, verifyPublishedUnitTests = false }) =>
+export const createRunTestsJob = ({
+  projectId,
+  snapshotId,
+  userId,
+  mode = "FULL",
+  testType,
+  requestId,
+  chainBuildCfg = false,
+  useHermeticMock = true,
+  verifyPublishedUnitTests = false,
+  targetFiles = [],
+  targetTestNames = [],
+}) =>
   createSnapshotJob({
     projectId,
     snapshotId,
@@ -302,6 +314,8 @@ export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL"
       ...(testType ? { testType } : {}),
       ...(chainBuildCfg ? { chainBuildCfg: true } : {}),
       ...(verifyPublishedUnitTests ? { verifyPublishedUnitTests: true } : {}),
+      ...(Array.isArray(targetFiles) && targetFiles.length > 0 ? { targetFiles } : {}),
+      ...(Array.isArray(targetTestNames) && targetTestNames.length > 0 ? { targetTestNames } : {}),
       useHermeticMock: useHermeticMock !== false,
     },
     requestId,

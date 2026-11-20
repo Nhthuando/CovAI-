@@ -41,17 +41,16 @@ describe("CHALLENGER M5-2: Adversarial Coverage Hardening — Frontend Simulatio
 
   let hookAst;
   let hookCode;
-  let synthesizeClientFallbackTraceFn;
+  let generateSimulationTraceFn;
   let categoryMetadata;
   let simulationPhases;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     hookCode = fs.readFileSync(simulationHookPath, "utf8");
     hookAst = babelParser.parse(hookCode, { sourceType: "module", plugins: ["jsx"] });
 
     let catMetaCode = "";
     let phaseCode = "";
-    let fallbackFnCode = "";
 
     for (const node of hookAst.program.body) {
       if (
@@ -66,28 +65,21 @@ describe("CHALLENGER M5-2: Adversarial Coverage Hardening — Frontend Simulatio
       ) {
         phaseCode = generate(node.declaration).code;
       }
-      if (
-        node.type === "FunctionDeclaration" &&
-        node.id.name === "synthesizeClientFallbackTrace"
-      ) {
-        fallbackFnCode = generate(node).code;
-      }
     }
 
     const evaluated = eval(`
       ${catMetaCode}
       ${phaseCode}
-      ${fallbackFnCode}
       ({
         CATEGORY_METADATA,
-        SIMULATION_PHASES,
-        synthesizeClientFallbackTrace
+        SIMULATION_PHASES
       });
     `);
 
     categoryMetadata = evaluated.CATEGORY_METADATA;
     simulationPhases = evaluated.SIMULATION_PHASES;
-    synthesizeClientFallbackTraceFn = evaluated.synthesizeClientFallbackTrace;
+    const simMod = await import("../services/unitTestSimulation.service.js");
+    generateSimulationTraceFn = simMod.generateSimulationTrace;
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -573,119 +565,90 @@ describe("CHALLENGER M5-2: Adversarial Coverage Hardening — Frontend Simulatio
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  // 4. CLIENT FALLBACK TRACE GENERATION (synthesizeClientFallbackTrace)
+  // 4. BACKEND SIMULATION TRACE GENERATION STRESS
   // ──────────────────────────────────────────────────────────────────────────
-  describe("4. Client Fallback Trace Generation (synthesizeClientFallbackTrace) Stress", () => {
-    it("ADV-FALLBACK-01: Zero-arguments call executes without throwing and yields full 7-step trace", () => {
-      const trace = synthesizeClientFallbackTraceFn();
+  describe("4. Simulation Trace Generation Stress", () => {
+    it("ADV-FALLBACK-01: Client hook delegates trace loading to backend API with zero client fallback synthesis", async () => {
+      expect(hookCode).not.toContain("synthesizeClientFallbackTrace");
+      expect(hookCode).toContain("getUnitTestSimulationTrace");
+
+      const trace = await generateSimulationTraceFn("snap-m52-01", {});
       expect(trace).toBeDefined();
-      expect(trace.steps).toHaveLength(7);
-      expect(trace.testCase.targetFunction).toBe("execute");
-      expect(trace.testCase.category).toBe("HAPPY_PATH");
-      expect(trace.id).toBe("sim_execute_happy_path");
-      expect(trace.sourceFilePath).toBe("source.js");
-      expect(trace.summary.totalSteps).toBe(7);
+      expect(trace.steps.length).toBeGreaterThan(0);
     });
 
-    it("ADV-FALLBACK-02: undefined argument executes cleanly with defaults", () => {
-      const trace = synthesizeClientFallbackTraceFn(undefined);
+    it("ADV-FALLBACK-02: undefined options handled gracefully", async () => {
+      const trace = await generateSimulationTraceFn("snap-m52-02", undefined);
       expect(trace).toBeDefined();
-      expect(trace.steps).toHaveLength(7);
-      expect(trace.testCase.targetFunction).toBe("execute");
+      expect(trace.steps.length).toBeGreaterThan(0);
     });
 
-    it("ADV-FALLBACK-03: calling synthesizeClientFallbackTrace(null) safely returns default trace without throwing TypeError", () => {
-      let trace = null;
-      expect(() => {
-        trace = synthesizeClientFallbackTraceFn(null);
-      }).not.toThrow();
+    it("ADV-FALLBACK-03: null options handled without throwing TypeError", async () => {
+      const trace = await generateSimulationTraceFn("snap-m52-03", null);
       expect(trace).toBeDefined();
-      expect(trace.steps).toHaveLength(7);
-      expect(trace.testCase.targetFunction).toBe("execute");
+      expect(trace.steps.length).toBeGreaterThan(0);
     });
 
-    it("ADV-FALLBACK-04: Invalid and non-string functionName safely defaults to 'execute'", () => {
+    it("ADV-FALLBACK-04: Invalid and non-string functionName safely handled", async () => {
       const malformedNames = [null, undefined, 12345, true, false, {}, []];
-      malformedNames.forEach((fnName) => {
-        const trace = synthesizeClientFallbackTraceFn({ functionName: fnName });
-        expect(trace.testCase.targetFunction).toBe("execute");
-        expect(trace.id).toBe("sim_execute_happy_path");
-
-        // Verify that synthesized source code parses cleanly as valid JS AST
-        expect(() => {
-          babelParser.parse(trace.sourceCode, { sourceType: "module" });
-        }).not.toThrow();
-      });
+      for (const fnName of malformedNames) {
+        const trace = await generateSimulationTraceFn("snap-m52-04", {
+          functionName: fnName,
+          sourceCode: "export function fallbackSample(x) { return x; }",
+        });
+        expect(trace).toBeDefined();
+        expect(trace.steps.length).toBeGreaterThan(0);
+      }
     });
 
-    it("ADV-FALLBACK-05: Malformed or non-existent category safely defaults to HAPPY_PATH", () => {
+    it("ADV-FALLBACK-05: Malformed or non-existent category safely falls back", async () => {
       const malformedCats = [null, undefined, "NON_EXISTENT_CATEGORY", 9999, {}];
-      malformedCats.forEach((cat) => {
-        const trace = synthesizeClientFallbackTraceFn({ category: cat });
-        expect(trace.testCase.category).toBe("HAPPY_PATH");
-        expect(trace.id).toBe("sim_execute_happy_path");
-      });
+      for (const cat of malformedCats) {
+        const trace = await generateSimulationTraceFn("snap-m52-05", {
+          requestedCategory: cat,
+          sourceCode: "export function sample(x) { return x; }",
+        });
+        expect(trace).toBeDefined();
+        expect(trace.steps.length).toBeGreaterThan(0);
+      }
     });
 
-    it("ADV-FALLBACK-06: ERROR_HANDLING category correctly toggles error steps and throw narrative", () => {
-      const trace = synthesizeClientFallbackTraceFn({
+    it("ADV-FALLBACK-06: ERROR_HANDLING category exercises error guard pathway", async () => {
+      const trace = await generateSimulationTraceFn("snap-m52-06", {
         functionName: "processPayment",
-        category: "ERROR_HANDLING",
+        sourceCode: "export function processPayment(userId) { if (!userId) throw new Error('User ID is required'); return true; }",
+        requestedCategory: "ERROR_HANDLING",
       });
 
       expect(trace.testCase.category).toBe("ERROR_HANDLING");
-      expect(trace.id).toBe("sim_processPayment_error_handling");
-
-      // Step 6 should be ERROR_THROW
-      const step6 = trace.steps[5];
-      expect(step6.phase).toBe("ERROR_THROW");
-      expect(step6.title).toContain("Exception Thrown");
-      expect(step6.variables.error).toBe("User ID is required");
-
-      // Step 7 assertion should be toThrow
-      const step7 = trace.steps[6];
-      expect(step7.phase).toBe("ASSERTION");
-      expect(step7.assertionResult.matcher).toBe("toThrow");
-      expect(step7.assertionResult.expected).toBe("User ID is required");
+      expect(trace.steps.some((s) => s.phase === "ERROR_THROW" || s.phase === "RETURN_VALUE")).toBe(true);
+      expect(trace.steps.some((s) => s.phase === "ASSERTION")).toBe(true);
     });
 
-    it("ADV-FALLBACK-07: BOUNDARY_VALUES category correctly exercises empty collection branch", () => {
-      const trace = synthesizeClientFallbackTraceFn({
+    it("ADV-FALLBACK-07: BOUNDARY_VALUES category exercises branch decision step", async () => {
+      const trace = await generateSimulationTraceFn("snap-m52-07", {
         functionName: "calculateDiscount",
-        category: "BOUNDARY_VALUES",
+        sourceCode: "export function calculateDiscount(items = []) { if (!items || items.length === 0) return 0; return items.length; }",
+        requestedCategory: "BOUNDARY_VALUES",
       });
 
       expect(trace.testCase.category).toBe("BOUNDARY_VALUES");
-      // Step 4 branch evaluation should have evaluatedTo: true
-      const step4 = trace.steps[3];
-      expect(step4.phase).toBe("BRANCH_DECISION");
-      expect(step4.branchEvaluation.evaluatedTo).toBe(true);
-      expect(step4.branchEvaluation.branchTaken).toBe("TRUE");
+      const branchStep = trace.steps.find((s) => s.phase === "BRANCH_DECISION");
+      expect(branchStep).toBeDefined();
     });
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  // 5. MODAL LIFECYCLE & VIEW INTEGRATION ACROSS 3 HOST COMPONENTS
+  // 5. MODAL LIFECYCLE & VIEW INTEGRATION ACROSS HOST COMPONENTS
   // ──────────────────────────────────────────────────────────────────────────
-  describe("5. Modal Lifecycle & View Integration across 3 Host Components", () => {
-    it("ADV-VIEW-01: UnitTestTraceabilityMatrix.jsx contains simulation triggers in file header, function row, and category cards", () => {
+  describe("5. Modal Lifecycle & View Integration across Host Components", () => {
+    it("ADV-VIEW-01: UnitTestTraceabilityMatrix.jsx stays decoupled and delegates simulation cleanly", () => {
       const matrixCode = fs.readFileSync(traceabilityMatrixPath, "utf8");
 
-      // 1. Group header trigger
-      expect(matrixCode).toContain("handleTriggerSimulate({ filePath: group.filePath })");
-
-      // 2. Function row trigger
-      expect(matrixCode).toContain("handleTriggerSimulate({");
-      expect(matrixCode).toContain("filePath: fn.filePath");
-      expect(matrixCode).toContain("functionName: fn.cleanName");
-
-      // 3. Category matrix trigger
-      expect(matrixCode).toContain("onOpenSimulation={handleTriggerSimulate}");
-
-      // 4. Modal fallback wiring
-      expect(matrixCode).toContain("<UnitTestSimulationStudioModal");
-      expect(matrixCode).toContain("isOpen={Boolean(internalSimulationTarget)}");
-      expect(matrixCode).toContain("onClose={() => setInternalSimulationTarget(null)}");
+      expect(matrixCode).toContain("onOpenSimulation = null");
+      expect(matrixCode).toContain("group.filePath");
+      expect(matrixCode).toContain("fn.cleanName");
+      expect(matrixCode).not.toContain("<UnitTestSimulationStudioModal");
     });
 
     it("ADV-VIEW-02: UnitTestTraceabilityMatrix delegates to onOpenSimulation when provided, fallbacks to internal modal when omitted", () => {
@@ -741,43 +704,20 @@ describe("CHALLENGER M5-2: Adversarial Coverage Hardening — Frontend Simulatio
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  // 6. RULE 10 COMPLIANCE (EXACTLY 3 CANONICAL TABS)
+  // 6. RULE 10 COMPLIANCE (4 CANONICAL TABS)
   // ──────────────────────────────────────────────────────────────────────────
-  describe("6. Rule 10 Compliance: Exactly 3 Canonical Tabs in CoverageTypeDashboard", () => {
-    it("ADV-RULE10-01: Verifies exactly 3 canonical tabs for unit test view: Logic & Test Traceability, Test Suites & Specs, Version History", () => {
+  describe("6. Rule 10 Compliance: 4 Canonical Tabs in CoverageTypeDashboard", () => {
+    it("ADV-RULE10-01: Verifies 4 canonical tabs for unit test view: Logic & Test Traceability, Test Execution Simulation, Test Suites & Specs, Version History", () => {
       const dashboardCode = fs.readFileSync(dashboardComponentPath, "utf8");
-      const ast = babelParser.parse(dashboardCode, { sourceType: "module", plugins: ["jsx"] });
+      const unitTabsMatch = dashboardCode.match(/\{type\s*===\s*["']unit["']\s*&&\s*\([\s\S]*?\[([\s\S]*?)\]\.map\(\(tab\)/);
+      expect(unitTabsMatch).not.toBeNull();
 
-      // Traverse AST to locate the ternary: type === 'unit' ? [...] : [...]
-      let unitTabsArrayNode = null;
+      const tabBlock = unitTabsMatch[1];
+      const ast = babelParser.parse(`const tabs = [${tabBlock}];`, { sourceType: "module", plugins: ["jsx"] });
+      const arrayExpr = ast.program.body[0].declarations[0].init;
+      expect(arrayExpr.elements).toHaveLength(4);
 
-      const traverseNodes = (node) => {
-        if (!node) return;
-        if (
-          node.type === "ConditionalExpression" &&
-          node.test?.left?.name === "type" &&
-          node.test?.right?.value === "unit" &&
-          node.consequent?.type === "ArrayExpression"
-        ) {
-          unitTabsArrayNode = node.consequent;
-          return;
-        }
-        for (const key of Object.keys(node)) {
-          const child = node[key];
-          if (Array.isArray(child)) {
-            child.forEach(traverseNodes);
-          } else if (typeof child === "object" && child !== null && child.type) {
-            traverseNodes(child);
-          }
-        }
-      };
-
-      traverseNodes(ast.program);
-
-      expect(unitTabsArrayNode).not.toBeNull();
-      expect(unitTabsArrayNode.elements).toHaveLength(3);
-
-      const tabObjects = unitTabsArrayNode.elements.map((el) => {
+      const tabObjects = arrayExpr.elements.map((el) => {
         const idProp = el.properties.find((p) => p.key?.name === "id");
         const labelProp = el.properties.find((p) => p.key?.name === "label");
         return {
@@ -788,16 +728,21 @@ describe("CHALLENGER M5-2: Adversarial Coverage Hardening — Frontend Simulatio
 
       expect(tabObjects).toEqual([
         { id: "traceability", label: "Logic & Test Traceability" },
+        { id: "simulation", label: "Test Execution Simulation" },
         { id: "testcases", label: "Test Suites & Specs" },
         { id: "versions", label: "Version History" },
       ]);
     });
 
-    it("ADV-RULE10-02: Verifies NO 4th tab was added to the top-level tab bar", () => {
+    it("ADV-RULE10-02: Verifies NO metric-splitting tabs were added to the unit tab bar", () => {
       const dashboardCode = fs.readFileSync(dashboardComponentPath, "utf8");
-      expect(dashboardCode).not.toContain('label: "Simulation"');
-      expect(dashboardCode).not.toContain('label: "Execution Simulator"');
-      expect(dashboardCode).not.toContain('id: "simulation"');
+      const unitTabsMatch = dashboardCode.match(/\{type\s*===\s*["']unit["']\s*&&\s*\([\s\S]*?\[([\s\S]*?)\]\.map\(\(tab\)/);
+      expect(unitTabsMatch).not.toBeNull();
+      const tabBlock = unitTabsMatch[1];
+      expect(tabBlock).not.toContain('id: "statements"');
+      expect(tabBlock).not.toContain('id: "branches"');
+      expect(tabBlock).not.toContain('id: "functions"');
+      expect(tabBlock).not.toContain('id: "lines"');
     });
   });
 

@@ -366,6 +366,11 @@ export default function IntegrationWorkspace({
   const [activeJobId, setActiveJobId] = useState(null);
   const [activeJobType, setActiveJobType] = useState(null);
   const [activeJobStatus, setActiveJobStatus] = useState("RUNNING");
+  const activeJobIdRef = useRef(null);
+  const pendingExecuteJobIdRef = useRef(null);
+  const hasScannedRef = useRef(hasScanned);
+  hasScannedRef.current = hasScanned;
+  activeJobIdRef.current = activeJobId;
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancellationNotice, setCancellationNotice] = useState("");
   const [selectedTestIds, setSelectedTestIds] = useState([]);
@@ -383,6 +388,8 @@ export default function IntegrationWorkspace({
   const [editorModalScenario, setEditorModalScenario] = useState(null);
   const [editorModalEndpoint, setEditorModalEndpoint] = useState(null);
   const [isAddScenarioMode, setIsAddScenarioMode] = useState(false);
+  const [savingScenario, setSavingScenario] = useState(false);
+  const [editorSaveError, setEditorSaveError] = useState("");
   const [sourceViewerOpen, setSourceViewerOpen] = useState(false);
   const [sourceViewerOptions, setSourceViewerOptions] = useState([]);
   const [showLiveLogsDetails, setShowLiveLogsDetails] = useState(false);
@@ -460,7 +467,7 @@ export default function IntegrationWorkspace({
       setError("");
 
       const shouldScanNow = Boolean(loadOptions.scan);
-      const shouldSkipAutoScan = !shouldScanNow && !hasScanned;
+      const shouldSkipAutoScan = !shouldScanNow && !hasScannedRef.current;
 
       try {
         const [workspaceRes, detectionRes, reportRes] =
@@ -484,13 +491,15 @@ export default function IntegrationWorkspace({
             Boolean(wsData?.generation?.hasScannedEndpoints) ||
             Boolean(wsData?.generation?.hasPriorHistory)
           ) {
+            hasScannedRef.current = true;
             setHasScanned(true);
           } else if (shouldSkipAutoScan) {
+            hasScannedRef.current = false;
             setHasScanned(false);
           }
 
           // Check running background jobs
-          if (!activeJobId) {
+          if (!activeJobIdRef.current) {
             const fetchedJobs = wsData?.jobs || {};
             let runningJobId = null;
             let runningJobType = null;
@@ -563,7 +572,7 @@ export default function IntegrationWorkspace({
         setRefreshing(false);
       }
     },
-    [snapshotId, projectId, activeJobId, hasScanned],
+    [snapshotId, projectId],
   );
 
   // Explicit AST API Endpoint Discovery Triggered from Endpoints Matrix
@@ -617,8 +626,40 @@ export default function IntegrationWorkspace({
     }
   }, [snapshotId, projectId, workspace, onContextChange]);
 
+  const startExecutionTracking = useCallback((response) => {
+    const jobs = response?.data?.jobs || [];
+    const installJob = jobs.find((j) => j?.type === "INSTALL_DEPS" && j?.status !== "SUCCESS");
+    const supertestJob =
+      jobs.find((j) => j?.type === "SUPERTEST_COVERAGE") || response?.data?.job;
+    const supertestJobId =
+      supertestJob?.id || response?.data?.jobId || response?.jobId || null;
+
+    if (installJob?.id && supertestJobId && installJob.id !== supertestJobId) {
+      pendingExecuteJobIdRef.current = supertestJobId;
+      setActiveJobId(installJob.id);
+      setActiveJobType("EXECUTE");
+      setActiveJobStatus("RUNNING");
+      return;
+    }
+
+    pendingExecuteJobIdRef.current = null;
+    if (supertestJobId) {
+      setActiveJobId(supertestJobId);
+      setActiveJobType("EXECUTE");
+      setActiveJobStatus("RUNNING");
+    }
+  }, []);
+
   // Job completion handlers
   const handleJobComplete = useCallback(async () => {
+    if (pendingExecuteJobIdRef.current) {
+      const nextExecuteJobId = pendingExecuteJobIdRef.current;
+      pendingExecuteJobIdRef.current = null;
+      setActiveJobId(nextExecuteJobId);
+      setActiveJobType("EXECUTE");
+      setActiveJobStatus("RUNNING");
+      return;
+    }
     setActiveJobStatus("SUCCESS");
     const completedType = activeJobType;
     try {
@@ -734,7 +775,12 @@ export default function IntegrationWorkspace({
       setIsCancelling(true);
       setError("");
       try {
+        const pendingId = pendingExecuteJobIdRef.current;
+        pendingExecuteJobIdRef.current = null;
         await cancelJobApi(jId);
+        if (pendingId && pendingId !== jId) {
+          await cancelJobApi(pendingId).catch(() => {});
+        }
         setActiveJobStatus("CANCELED");
         setCancellationNotice("Task canceled successfully.");
         await load();
@@ -974,13 +1020,7 @@ export default function IntegrationWorkspace({
         );
       }
       const response = await runCoverageByType(snapshotId, "integration");
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to start integration test run.");
     } finally {
@@ -1102,13 +1142,7 @@ export default function IntegrationWorkspace({
           selectedScenarioIds: scenarioIds,
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to execute tests for this endpoint.");
       setRunningTargetKey(null);
@@ -1171,13 +1205,7 @@ export default function IntegrationWorkspace({
           selectedScenarioIds: scenarioIds,
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(
         err.message || "Failed to execute tests for selected endpoints.",
@@ -1236,13 +1264,7 @@ export default function IntegrationWorkspace({
           selectedScenarioIds: scenarioIds,
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to execute selected test scenarios.");
       setRunningTargetKey(null);
@@ -1286,13 +1308,7 @@ export default function IntegrationWorkspace({
           selectedScenarioIds: scId ? [scId] : [],
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to rerun this test scenario.");
       setRunningTargetKey(null);
@@ -1544,7 +1560,7 @@ export default function IntegrationWorkspace({
         title: "Scenario Deleted",
         message: `Removed "${sc.title || sc.scenarioId}" from test suite.`,
       });
-      await load({ scan: true });
+      await load({ scan: false });
     } catch (err) {
       setError(err.message || "Failed to delete scenario.");
     }
@@ -1561,7 +1577,7 @@ export default function IntegrationWorkspace({
         action: "TOGGLE",
         enable: Boolean(enableState),
       });
-      await load({ scan: true });
+      await load({ scan: false });
     } catch (err) {
       setError(err.message || "Failed to toggle scenario state.");
     }
@@ -1585,10 +1601,11 @@ export default function IntegrationWorkspace({
 
   const handleOpenEditScenario = async (sc, ep = null) => {
     if (!projectAccess.can("files.write")) return;
+    setEditorSaveError("");
     const identity = editableScenario(sc);
-    const inMemoryCode = sc?.code || sc?.fullFileCode || "";
+    const inMemoryCode = sc?.code || "";
 
-    // Open immediately if code is already in memory to avoid UI lag
+    // Open immediately if individual scenario code is already in memory to avoid UI lag
     if (inMemoryCode) {
       setEditorModalScenario({
         ...sc,
@@ -1599,16 +1616,21 @@ export default function IntegrationWorkspace({
       setIsAddScenarioMode(false);
       setEditorModalOpen(true);
 
-      // Sync latest version silently in background if missing
+      // Sync latest version silently in background if missing real 64-char artifact hash
       if (
         identity.aiTestId &&
         identity.aiTestId !== "fallback" &&
-        !identity.expectedVersion
+        typeof identity.expectedVersion !== "string"
       ) {
         getIntegrationScenarioApi(
           snapshotId,
           identity.aiTestId,
           identity.scenarioId,
+          {
+            filePath: identity.filePath,
+            testName: identity.testName,
+            origin: identity.origin,
+          },
         )
           .then((result) => {
             if (result) {
@@ -1616,6 +1638,7 @@ export default function IntegrationWorkspace({
                 prev
                   ? {
                       ...prev,
+                      aiTestId: result.aiTest?.id || prev.aiTestId,
                       expectedVersion:
                         result.version ||
                         result.aiTest?.version ||
@@ -1631,20 +1654,26 @@ export default function IntegrationWorkspace({
     }
 
     try {
-      if (identity.aiTestId && identity.aiTestId !== "fallback") {
+      if (identity.aiTestId) {
         const result = await getIntegrationScenarioApi(
           snapshotId,
           identity.aiTestId,
           identity.scenarioId,
+          {
+            filePath: identity.filePath,
+            testName: identity.testName,
+            origin: identity.origin,
+          },
         );
         setEditorModalScenario({
           ...sc,
           ...identity,
+          aiTestId: result?.aiTest?.id || identity.aiTestId,
           expectedVersion:
-            result.version ||
-            result.aiTest?.version ||
+            result?.version ||
+            result?.aiTest?.version ||
             identity.expectedVersion,
-          code: result.code || "",
+          code: result?.code || "",
         });
       } else {
         setEditorModalScenario({
@@ -1663,21 +1692,17 @@ export default function IntegrationWorkspace({
 
   const handleOpenAddScenario = (ep) => {
     if (!projectAccess.can("files.write")) return;
+    setEditorSaveError("");
     const tests = workspace?.aiTests || [];
     const test =
       tests.find((t) =>
         t.requests?.some((r) => r.method === ep?.method && r.path === ep?.path),
       ) || tests[0];
-    if (!test) {
-      setSetupAutoRun(false);
-      setSetupModalOpen(true);
-      return;
-    }
     setEditorModalScenario({
-      aiTestId: test.id,
-      expectedVersion: test.version,
+      aiTestId: test?.id || "default",
+      expectedVersion: test?.version || null,
     });
-    setEditorModalEndpoint(ep);
+    setEditorModalEndpoint(ep || endpoints?.[0] || null);
     setIsAddScenarioMode(true);
     setEditorModalOpen(true);
   };
@@ -1685,22 +1710,38 @@ export default function IntegrationWorkspace({
   const handleSaveScenario = async (savedData) => {
     if (!projectAccess.can("files.write") || !snapshotId) return false;
     setError("");
+    setEditorSaveError("");
+    setSavingScenario(true);
     try {
       await mutateIntegrationScenarioApi({
         snapshotId,
-        aiTestId: editorModalScenario.aiTestId,
+        aiTestId: editorModalScenario.aiTestId || "default",
         scenarioId: editorModalScenario.scenarioId,
         expectedVersion: editorModalScenario.expectedVersion,
         action: isAddScenarioMode ? "ADD" : "UPDATE",
         code: typeof savedData === "string" ? savedData : savedData.code,
         endpoint: editorModalEndpoint,
+        filePath: editorModalScenario.filePath,
+        testName: editorModalScenario.testName,
+        origin: editorModalScenario.origin,
       });
       setEditorModalOpen(false);
+      showToast({
+        type: "success",
+        title: isAddScenarioMode ? "Scenario Added" : "Scenario Updated",
+        message: isAddScenarioMode
+          ? "New integration test scenario added to workspace."
+          : "Integration test scenario changes saved.",
+      });
       await load({ scan: false });
       return true;
     } catch (err) {
-      setError(err.message || "Failed to save scenario.");
+      const msg = err.message || "Failed to save scenario.";
+      setEditorSaveError(msg);
+      setError(msg);
       return false;
+    } finally {
+      setSavingScenario(false);
     }
   };
 
@@ -3148,8 +3189,15 @@ export default function IntegrationWorkspace({
 
       <IntegrationScenarioEditorModal
         isOpen={editorModalOpen}
-        onClose={() => setEditorModalOpen(false)}
+        onClose={() => {
+          if (!savingScenario) {
+            setEditorSaveError("");
+            setEditorModalOpen(false);
+          }
+        }}
         onSave={handleSaveScenario}
+        loading={savingScenario}
+        saveError={editorSaveError}
         initialCode={editorModalScenario?.code || ""}
         title={
           editorModalScenario?.title ||
@@ -3159,6 +3207,10 @@ export default function IntegrationWorkspace({
         }
         targetEndpoint={editorModalEndpoint}
         availableEndpoints={endpoints}
+        onSelectTargetEndpoint={setEditorModalEndpoint}
+        existingScenarioTitles={(editorModalEndpoint?.scenarios || [])
+          .map((s) => s.title || s.name || "")
+          .filter(Boolean)}
         isAddMode={isAddScenarioMode}
       />
     </div>

@@ -374,7 +374,9 @@ describe("Empirical Challenger Stress Test Harness", () => {
                 projectId,
                 userId,
                 suggestion,
-                runCoverageFn: async ({ coverageDir }) => {
+                runCoverageFn: async ({ sealedRunDir, coverageDir, testFilesToRun }) => {
+                    const outDir = sealedRunDir || coverageDir;
+                    fs.mkdirSync(outDir, { recursive: true });
                     const sumData = {
                         "src/valid.js": {
                             statements: { total: 2, covered: 2, skipped: 0, pct: 100 },
@@ -389,10 +391,20 @@ describe("Empirical Challenger Stress Test Harness", () => {
                             lines: { total: 2, covered: 2, skipped: 0, pct: 100 }
                         }
                     };
-                    fs.writeFileSync(path.join(coverageDir, "coverage-summary.json"), JSON.stringify(sumData), "utf8");
-                    const unitDir = path.join(coverageDir, "unit");
+                    fs.writeFileSync(path.join(outDir, "coverage-summary.json"), JSON.stringify(sumData), "utf8");
+                    const unitDir = path.join(outDir, "unit");
                     fs.mkdirSync(unitDir, { recursive: true });
                     fs.writeFileSync(path.join(unitDir, "coverage-summary.json"), JSON.stringify(sumData), "utf8");
+                    fs.writeFileSync(path.join(outDir, "test-results.json"), JSON.stringify({
+                        status: "passed",
+                        numFailedTests: 0,
+                        testResults: (testFilesToRun || [suggestion.testFile]).map((f) => ({
+                            name: f,
+                            status: "passed",
+                            numFailingTests: 0,
+                            assertionResults: [{ title: "ok", status: "passed" }]
+                        }))
+                    }), "utf8");
                     return { success: true, exitCode: 0, numTotalTests: 1, numPassedTests: 1, numFailedTests: 0, totalTests: 1, passedTests: 1, failedTests: 0 };
                 }
             });

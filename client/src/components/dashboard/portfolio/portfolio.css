@@ -22,12 +22,12 @@
   --ps-ink-muted: #71717a;
 
   /* Desaturated, harmonious studio tones */
-  --ps-cobalt: #7ba3c9;       /* Muted Steel Blue (Unit / Primary accent) */
-  --ps-indigo: #8d93b8;       /* Muted Slate Indigo (API) */
-  --ps-teal: #739c99;         /* Muted Seafoam Slate (E2E) */
-  --ps-emerald: #6fa38b;      /* Soft Sage (Pass / Positive) */
-  --ps-amber: #b89b6a;        /* Muted Sand / Ochre (At Risk — never bright orange/yellow) */
-  --ps-rose: #ba7279;         /* Dusty Rose (Blocked / Fail — never neon red) */
+  --ps-cobalt: #7ba3c9; /* Muted Steel Blue (Unit / Primary accent) */
+  --ps-indigo: #8d93b8; /* Muted Slate Indigo (API) */
+  --ps-teal: #739c99; /* Muted Seafoam Slate (E2E) */
+  --ps-emerald: #6fa38b; /* Soft Sage (Pass / Positive) */
+  --ps-amber: #b89b6a; /* Muted Sand / Ochre (At Risk — never bright orange/yellow) */
+  --ps-rose: #ba7279; /* Dusty Rose (Blocked / Fail — never neon red) */
   --ps-neutral: #52525b;
 
   /* Map --ud-* variables inside .portfolio-studio */
@@ -65,7 +65,11 @@
 
   background-color: var(--ps-bg);
   color: var(--ps-ink);
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 
 [data-theme="light"] .portfolio-studio,
@@ -122,7 +126,9 @@
   color: var(--ps-ink-secondary);
   outline: none;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .portfolio-studio .ps-select:hover {
@@ -140,7 +146,9 @@
   color: var(--ps-bg);
   font-weight: 600;
   border-radius: 7px;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
 .portfolio-studio .ps-btn-contrast:hover {

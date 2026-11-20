@@ -100,7 +100,9 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".markdown") ||
     lower.endsWith(".txt")
   ) {
-    return <FileText size={14} className="text-[var(--ps-ink-muted)] shrink-0" />;
+    return (
+      <FileText size={14} className="text-[var(--ps-ink-muted)] shrink-0" />
+    );
   }
 
   // Git / Env / Lock
@@ -330,8 +332,8 @@ function TreeNode({
           isActive
             ? "bg-[var(--ps-surface-2)] border-l-[var(--ps-cobalt)] text-[var(--ps-ink)] font-medium"
             : isSelected
-            ? "bg-[var(--ps-surface-2)]/70 border-l-transparent text-[var(--ps-ink)] font-medium"
-            : "border-l-transparent text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)]/40"
+              ? "bg-[var(--ps-surface-2)]/70 border-l-transparent text-[var(--ps-ink)] font-medium"
+              : "border-l-transparent text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)]/40"
         }`}
         style={{
           paddingLeft: indent,
@@ -381,10 +383,7 @@ function TreeNode({
             />
           </form>
         ) : (
-          <span
-            className="truncate leading-tight flex-1"
-            title={node.name}
-          >
+          <span className="truncate leading-tight flex-1" title={node.name}>
             {node.name}
           </span>
         )}
@@ -498,7 +497,9 @@ export default function Sidebar({
         const parent = act.node.id.includes("/")
           ? act.node.id.slice(0, act.node.id.lastIndexOf("/"))
           : "";
-        const newPath = parent ? `${parent}/${act.value.trim()}` : act.value.trim();
+        const newPath = parent
+          ? `${parent}/${act.value.trim()}`
+          : act.value.trim();
         onRenameEntry(act.node.id, newPath);
       } else if (act.value?.trim()) {
         const targetPath = act.parentPath
@@ -780,9 +781,7 @@ export default function Sidebar({
       <div className="flex items-center gap-2 shrink-0 border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-secondary)] ps-mono py-2 px-4 bg-[var(--ps-surface)]">
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-emerald)] inline-block shrink-0" />
         <span className="text-[var(--ps-ink-secondary)]">main</span>
-        <span className="text-[var(--ps-emerald)] ml-auto">
-          ↑ 2 commits
-        </span>
+        <span className="text-[var(--ps-emerald)] ml-auto">↑ 2 commits</span>
       </div>
 
       {/* ── Context Menu (VS Code style) ─────────────────── */}
@@ -804,8 +803,11 @@ export default function Sidebar({
                 ? contextMenu.node.type === "folder"
                   ? contextMenu.node.id
                   : contextMenu.node.id.includes("/")
-                  ? contextMenu.node.id.slice(0, contextMenu.node.id.lastIndexOf("/"))
-                  : ""
+                    ? contextMenu.node.id.slice(
+                        0,
+                        contextMenu.node.id.lastIndexOf("/"),
+                      )
+                    : ""
                 : "";
               setContextMenu(null);
               handleStartAction({ type: "file", parentPath });
@@ -825,8 +827,11 @@ export default function Sidebar({
                 ? contextMenu.node.type === "folder"
                   ? contextMenu.node.id
                   : contextMenu.node.id.includes("/")
-                  ? contextMenu.node.id.slice(0, contextMenu.node.id.lastIndexOf("/"))
-                  : ""
+                    ? contextMenu.node.id.slice(
+                        0,
+                        contextMenu.node.id.lastIndexOf("/"),
+                      )
+                    : ""
                 : "";
               setContextMenu(null);
               handleStartAction({ type: "folder", parentPath });

@@ -1,6 +1,14 @@
 import { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { X, FileText, Code2, Printer, CheckSquare, Square, Download } from "lucide-react";
+import {
+  X,
+  FileText,
+  Code2,
+  Printer,
+  CheckSquare,
+  Square,
+  Download,
+} from "lucide-react";
 import { Button } from "../../../common/Button.jsx";
 import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import {
@@ -16,12 +24,14 @@ const SECTION_CONFIGS = [
   {
     key: "executive",
     title: "Executive KPIs & Quality Gate Checklist",
-    description: "Health score, pass rate totals, multi-layer coverage index, and 4 gate prerequisites",
+    description:
+      "Health score, pass rate totals, multi-layer coverage index, and 4 gate prerequisites",
   },
   {
     key: "pyramidPillars",
     title: "Testing Pyramid & Three-Pillar Breakdown",
-    description: "Architecture distribution and Unit / Integration / System metrics",
+    description:
+      "Architecture distribution and Unit / Integration / System metrics",
   },
   {
     key: "traceMatrix",
@@ -122,11 +132,15 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
           <div className="flex items-center gap-2.5">
             <Download size={16} className="text-[var(--ud-unit)]" />
             <div>
-              <h2 id="ud-export-modal-title" className="text-sm font-bold text-[var(--ud-text)]">
+              <h2
+                id="ud-export-modal-title"
+                className="text-sm font-bold text-[var(--ud-text)]"
+              >
                 Export Unified Quality Report
               </h2>
               <p className="text-[11px] text-[var(--ud-text-muted)] font-mono">
-                Project: {vm?.context?.projectName || "CovAI"} • Snapshot: {(vm?.context?.snapshotId || "N/A").slice(0, 8)}
+                Project: {vm?.context?.projectName || "CovAI"} • Snapshot:{" "}
+                {(vm?.context?.snapshotId || "N/A").slice(0, 8)}
               </p>
             </div>
           </div>
@@ -162,7 +176,9 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
                 }}
                 className="text-[11px] font-mono text-[var(--ud-unit)] hover:underline cursor-pointer"
               >
-                {selectedCount === SECTION_CONFIGS.length ? "Deselect All" : "Select All"}
+                {selectedCount === SECTION_CONFIGS.length
+                  ? "Deselect All"
+                  : "Select All"}
               </button>
             </div>
 
@@ -181,9 +197,15 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
                     }`}
                   >
                     {checked ? (
-                      <CheckSquare size={15} className="shrink-0 mt-0.5 text-[var(--ud-unit)]" />
+                      <CheckSquare
+                        size={15}
+                        className="shrink-0 mt-0.5 text-[var(--ud-unit)]"
+                      />
                     ) : (
-                      <Square size={15} className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]" />
+                      <Square
+                        size={15}
+                        className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]"
+                      />
                     )}
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-[var(--ud-text)]">
@@ -267,9 +289,8 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
         </div>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 export default ExportReportModal;
-

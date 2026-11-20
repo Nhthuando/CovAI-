@@ -422,7 +422,7 @@ describe('Vitest API', () => {
                         targetTestFile: targetPath,
                         generatedCode: "describe('illegal overwrite', () => {});"
                     });
-                }).toThrow(/Strict Storage Guard: Cannot write test code into source/i);
+                }).toThrow(/(?:Strict Storage Guard: Cannot write test code into source|Invalid test target .* \(SOURCE\))/i);
             }
         });
 

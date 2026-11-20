@@ -191,7 +191,7 @@ export default function SystemTestSetupDialog({
     report?.docker.status === 'AVAILABLE'
       ? 'Available'
       : report?.docker.status === 'NOT_REQUIRED'
-      ? 'Not required'
+      ? 'Schema-aware Mock DB (No Docker required)'
       : report?.docker.status === 'UNAVAILABLE'
       ? 'Start Docker Desktop on the server'
       : 'Not checked';
@@ -398,14 +398,14 @@ export default function SystemTestSetupDialog({
                           <p className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                             <span
                               className={`h-1.5 w-1.5 rounded-full ${
-                                report.docker.status === 'AVAILABLE'
+                                report.docker.status === 'AVAILABLE' || report.docker.status === 'NOT_REQUIRED'
                                   ? 'bg-emerald-500'
                                   : report.docker.status === 'UNAVAILABLE'
                                   ? 'bg-amber-500'
                                   : 'bg-slate-400'
                               }`}
                             />
-                            <span>Docker: {dockerStatusLabel}</span>
+                            <span>Runtime: {dockerStatusLabel}</span>
                           </p>
                         </div>
                       </dl>

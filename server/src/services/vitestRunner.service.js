@@ -329,7 +329,10 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
 
         const backendBase = `${baseCmd} ${configArg}`;
         const workerArgs = runtime.major >= 2 ? '--maxWorkers=2' : '--maxWorkers=2 --minWorkers=1';
-        const vitestCmd = `cd backend && ${backendBase} ${targetArg} --globals --coverage ${coverageAllFlag} --testTimeout=10000 ${workerArgs} --coverage.reportsDirectory=../${relCovDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --coverage.reportOnFailure=true --reporter=default --reporter=json --outputFile=../${relCovDir}/vitest-results.json --passWithNoTests`;
+        const testNameFlag = options?.testNamePattern && typeof options.testNamePattern === 'string' && options.testNamePattern.trim()
+            ? ` -t ${JSON.stringify(options.testNamePattern.trim())}`
+            : '';
+        const vitestCmd = `cd backend && ${backendBase} ${targetArg}${testNameFlag} --globals --coverage ${coverageAllFlag} --testTimeout=10000 ${workerArgs} --coverage.reportsDirectory=../${relCovDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --coverage.reportOnFailure=true --reporter=default --reporter=json --outputFile=../${relCovDir}/vitest-results.json --passWithNoTests`;
 
         await addJobLog(jobId, "INFO", `[VITEST] Running Vitest in backend/ with command: ${vitestCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
@@ -411,8 +414,11 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         const prefix=executionRelative ? `cd "${executionRelative}" && ` : '';
         const projectCoverageDir=path.relative(executionDir,targetCovDir).replaceAll('\\','/');
         const rootWorkerArgs = runtime.major >= 2 ? '--maxWorkers=2' : '--maxWorkers=2 --minWorkers=1';
+        const rootTestNameFlag = options?.testNamePattern && typeof options.testNamePattern === 'string' && options.testNamePattern.trim()
+            ? ` -t ${JSON.stringify(options.testNamePattern.trim())}`
+            : '';
 
-        const coverageCmd = `${prefix}${baseCmd} ${configArg} ${targetArg} --passWithNoTests --globals --testTimeout=10000 ${rootWorkerArgs} --coverage.enabled=true --coverage.provider=v8 ${coverageAllFlag} --coverage.reportsDirectory=${projectCoverageDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --coverage.reportOnFailure=true --reporter=default --reporter=json --outputFile=${projectCoverageDir}/vitest-results.json`.replace(/\s+/g, " ").trim();
+        const coverageCmd = `${prefix}${baseCmd} ${configArg} ${targetArg}${rootTestNameFlag} --passWithNoTests --globals --testTimeout=10000 ${rootWorkerArgs} --coverage.enabled=true --coverage.provider=v8 ${coverageAllFlag} --coverage.reportsDirectory=${projectCoverageDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --coverage.reportOnFailure=true --reporter=default --reporter=json --outputFile=${projectCoverageDir}/vitest-results.json`.replace(/\s+/g, " ").trim();
 
         await addJobLog(jobId, "INFO", `[VITEST] Running Vitest at rootDir: ${coverageCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 

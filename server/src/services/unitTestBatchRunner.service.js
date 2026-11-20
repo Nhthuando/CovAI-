@@ -69,12 +69,11 @@ async function runUnitTestBatchInternal({ rootDir, snapshot, testFiles, targetSo
                 code: dockerRunner.containerEnabled ? 'RUNNER_AVAILABLE' : 'RUNNER_UNAVAILABLE',
                 reason: 'Docker runner is unavailable.',
             };
-        const allowWindowsHostFallback =
-            process.platform === 'win32' &&
+        const allowHostFallback =
             !process.env.FORCE_DOCKER_RUNNER &&
             process.env.COVAI_FORCE_DOCKER_ONLY !== 'true' &&
             availability.code === 'RUNNER_DISABLED';
-        if (!availability.available && !allowWindowsHostFallback) {
+        if (!availability.available && !allowHostFallback) {
             const err = new Error(`Docker is required for generated unit test verification and is unavailable [${availability.code}]: ${availability.reason}`);
             err.code = availability.code;
             err.dockerDiagnostics = availability;

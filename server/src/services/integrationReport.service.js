@@ -2,8 +2,9 @@ import prisma from '../config/prisma.js';
 import { loadSourceCode } from './aiContextBuilder.service.js';
 import { extractValidEndpoints } from './apiEndpointParser.service.js';
 import { extractTestRequests } from './testSourceParser.service.js';
-import { isMatchSuite, buildIntegrationWorkspace } from './integrationWorkspace.service.js';
+import { isMatchSuite, buildIntegrationWorkspace, summarizeFailureMessage } from './integrationWorkspace.service.js';
 import { getEndpointCaseCoverage } from '../../../shared/integrationCaseCoverage.js';
+import { stripAnsi } from '../utils/pathSanitizer.js';
 
 export const computeIntegrationCoverageRank = ({
     coveredEndpoints = 0,
@@ -86,15 +87,20 @@ export const capturePeakIntegrationReportIfHigher = async (
 
     const failureLogs = allScenarios
         .filter((s) => s.status === 'failed' || s.executionVerdict === 'FAIL')
-        .map((s) => ({
-            id: s.id || s.scenarioId || s.title,
-            targetEndpoint: s.targetEndpoint,
-            title: s.title || s.name,
-            failureLayer: s.failureLayer || 'ASSERTION_FAILED',
-            responseStatus: s.actualStatus ?? null,
-            expectedStatus: s.expectedStatus ?? null,
-            errorMessage: s.executionReason || (s.failureMessages && s.failureMessages[0]) || 'Assertion or runtime failure during API test execution.',
-        }));
+        .map((s) => {
+            const rawMsg = stripAnsi((s.failureMessages && s.failureMessages[0]) || s.failureDetails?.raw || s.executionReason || '');
+            const summaryMsg = s.failureSummary || summarizeFailureMessage(s.failureMessages || s.executionReason, s.failureDetails, s);
+            return {
+                id: s.id || s.scenarioId || s.title,
+                targetEndpoint: s.targetEndpoint,
+                title: s.title || s.name,
+                failureLayer: s.failureLayer || 'ASSERTION_FAILED',
+                responseStatus: s.actualStatus ?? null,
+                expectedStatus: s.expectedStatus ?? null,
+                errorMessage: summaryMsg,
+                rawErrorMessage: rawMsg && rawMsg !== summaryMsg ? rawMsg : null,
+            };
+        });
 
     const qualityScore = totalDiscovered > 0
         ? Math.min(100, Math.max(0, Math.round(endpointCovPct * 0.45 + passRate * 0.45 + (failedTests === 0 ? 10 : 0))))
@@ -444,15 +450,20 @@ export const getIntegrationAnalytics = async (projectId) => {
     }
     let testedApis = 0;
 
-    const failureLogs = latestRunScenarios.filter(s => s.status === 'failed' || s.executionVerdict === 'FAIL').map(s => ({
-        id: s.id,
-        targetEndpoint: s.targetEndpoint || s.testFile,
-        title: s.title,
-        failureLayer: s.failureLayer || 'ASSERTION_FAILED',
-        responseStatus: s.responseStatus,
-        expectedStatus: s.expectedStatus,
-        errorMessage: (s.failureMessages && s.failureMessages[0]) || s.failureMessage || 'Assertion or runtime failure during API test execution.',
-    }));
+    const failureLogs = latestRunScenarios.filter(s => s.status === 'failed' || s.executionVerdict === 'FAIL').map(s => {
+        const rawMsg = stripAnsi((s.failureMessages && s.failureMessages[0]) || s.failureMessage || '');
+        const summaryMsg = s.failureSummary || summarizeFailureMessage(s.failureMessages || s.failureMessage, null, s);
+        return {
+            id: s.id,
+            targetEndpoint: s.targetEndpoint || s.testFile,
+            title: s.title,
+            failureLayer: s.failureLayer || 'ASSERTION_FAILED',
+            responseStatus: s.responseStatus,
+            expectedStatus: s.expectedStatus,
+            errorMessage: summaryMsg,
+            rawErrorMessage: rawMsg && rawMsg !== summaryMsg ? rawMsg : null,
+        };
+    });
 
     const routeMatrix = (discoveredEndpoints || []).map(ep => {
         const isRequestMatched = allParsedRequests.some(req => isMatch(req, ep));

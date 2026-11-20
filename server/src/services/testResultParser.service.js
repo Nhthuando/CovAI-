@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { canonicalizeFilePath, cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import { canonicalizeFilePath, cleanStoragePath, cleanStorageText, stripAnsi } from "../utils/pathSanitizer.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
+import { summarizeUnitFailure } from "../../../shared/unitTestCaseCoverage.js";
 
 /**
  * Helper to extract real duration from test execution results JSON
@@ -110,18 +111,20 @@ export const parseJestResults = (coverageDir, options = {}) => {
                 const cleanedSuiteFile = canonicalizeFilePath(suiteFile, options.rootDir) || cleanStoragePath(suiteFile);
                 if (suite.assertionResults && suite.assertionResults.length > 0) {
                     suite.assertionResults.forEach(assertion => {
+                        const cleanedMsgs = (assertion.failureMessages || []).map(m => stripAnsi(cleanStorageText(m)));
                         scenarios.push({
                             title: assertion.title,
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status, // "passed", "failed", "pending"
                             duration: assertion.duration || 0,
-                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            failureMessages: cleanedMsgs,
+                            ...(assertion.status === "failed" && cleanedMsgs.length > 0 ? { failureSummary: summarizeUnitFailure(cleanedMsgs) } : {}),
                             testFile: cleanedSuiteFile
                         });
                     });
                 } else if (suite.status === "failed" || suite.message || suite.failureMessage || suite.testExecError) {
                     // Test suite failed at module load or syntax phase
-                    const suiteFailMsg = cleanStorageText(suite.failureMessage || suite.message || suite.testExecError?.stack || suite.testExecError?.message || "Test suite failed to run");
+                    const suiteFailMsg = stripAnsi(cleanStorageText(suite.failureMessage || suite.message || suite.testExecError?.stack || suite.testExecError?.message || "Test suite failed to run"));
                     
                     // Recover registered scenarios for this test file
                     let registeredScenarios = [];
@@ -356,18 +359,20 @@ export const parseVitestResults = (coverageDir, options = {}) => {
                 const cleanedSuiteFile = canonicalizeFilePath(suite.name, options.rootDir);
                 if (suite.assertionResults?.length) {
                     suite.assertionResults.forEach(assertion => {
+                        const cleanedMsgs = (assertion.failureMessages || []).map(m => stripAnsi(cleanStorageText(m)));
                         scenarios.push({
                             title: assertion.title,
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status,
                             duration: assertion.duration || 0,
-                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            failureMessages: cleanedMsgs,
+                            ...(assertion.status === "failed" && cleanedMsgs.length > 0 ? { failureSummary: summarizeUnitFailure(cleanedMsgs) } : {}),
                             testFile: cleanedSuiteFile
                         });
                     });
                 } else if (suite.status === "failed" || suite.message) {
                     // Test suite failed at module load or syntax phase
-                    const suiteFailMsg = suite.message ? cleanStorageText(suite.message) : "Test suite failed to run";
+                    const suiteFailMsg = suite.message ? stripAnsi(cleanStorageText(suite.message)) : "Test suite failed to run";
 
                     // Recover registered scenarios for this test file
                     let registeredScenarios = [];

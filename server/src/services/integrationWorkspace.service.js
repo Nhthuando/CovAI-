@@ -4,7 +4,7 @@ import { scenarioArtifactVersion } from "./scenarioManager.service.js";
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
-import { cleanStoragePath } from "../utils/pathSanitizer.js";
+import { cleanStoragePath, stripAnsi } from "../utils/pathSanitizer.js";
 import {
   loadSourceCode,
   clearSourceCodeCache,
@@ -120,7 +120,7 @@ export function parseFailureMessages(failureMessages, req = null) {
   if (!text.trim()) return null;
 
   // Clean ANSI escape codes
-  const cleanText = text.replace(
+  const cleanText = stripAnsi(text).replace(
     /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
     "",
   );
@@ -212,6 +212,104 @@ export function parseFailureMessages(failureMessages, req = null) {
     column: colNum,
     raw: cleanText,
   };
+}
+
+/**
+ * Produces a short, human-readable summary from verbose Jest / Supertest failure logs
+ * so UI dashboards show the root cause directly instead of raw ANSI / boilerplate stack dumps.
+ */
+export function summarizeFailureMessage(
+  failureMessages,
+  parsedFailure = null,
+  req = null,
+) {
+  const parsed = parsedFailure || parseFailureMessages(failureMessages, req);
+  const rawText = stripAnsi(
+    parsed?.raw ||
+      (Array.isArray(failureMessages)
+        ? failureMessages.join("\n")
+        : String(failureMessages || "")),
+  ).trim();
+
+  if (!rawText) {
+    return "Assertion or runtime failure during API test execution.";
+  }
+
+  // 1. CommonJS / ESM syntax mismatch
+  if (/Cannot use import statement outside a module/i.test(rawText)) {
+    const fileMatch = rawText.match(/([A-Za-z0-9_.\-/]+\.(?:test|spec)\.[cm]?[jt]s):(\d+)/);
+    const loc = fileMatch ? ` (${fileMatch[1]}:${fileMatch[2]})` : "";
+    return `Module syntax mismatch${loc}: Test file uses ES module 'import' syntax inside a CommonJS Jest runner. Re-generate or convert imports to require().`;
+  }
+
+  // 2. Missing module / wrong relative path
+  const modNotFound = rawText.match(/Cannot find module ['"]([^'"]+)['"]/i);
+  if (modNotFound) {
+    return `Missing module '${modNotFound[1]}': Check the relative app/dependency import path in this test file.`;
+  }
+
+  // 3. SyntaxError / ReferenceError / TypeError
+  const jsErrorMatch = rawText.match(
+    /(?:SyntaxError|TypeError|ReferenceError|RangeError):\s*([^\n\r]{1,180})/,
+  );
+  if (jsErrorMatch && !/expect\(/i.test(jsErrorMatch[0])) {
+    return jsErrorMatch[0].trim();
+  }
+
+  // 4. Supertest HTTP status assertion mismatch
+  if (
+    parsed?.expected &&
+    parsed?.received &&
+    /^\d{3}$/.test(parsed.expected.trim()) &&
+    /^\d{3}$/.test(parsed.received.trim())
+  ) {
+    return `HTTP status mismatch: Expected ${parsed.expected.trim()}, but server returned ${parsed.received.trim()}.`;
+  }
+
+  // 5. General Jest Expect (Expected vs Received)
+  if (parsed?.expected && parsed?.received) {
+    const expShort = parsed.expected.replace(/\s+/g, " ").slice(0, 70);
+    const recShort = parsed.received.replace(/\s+/g, " ").slice(0, 70);
+    const propMatch = rawText.match(/Expected path:\s*"([^"]+)"/);
+    if (propMatch) {
+      return `Response contract mismatch at '${propMatch[1]}': Expected ${expShort}, got ${recShort}.`;
+    }
+    return `Assertion mismatch: Expected ${expShort}, but received ${recShort}.`;
+  }
+
+  // 6. Supertest 'expected 200 "OK", got 404 "Not Found"'
+  const supertestStatus = rawText.match(
+    /expected\s+(\d{3})\b[^,\n]*,\s*got\s+(\d{3})\b/i,
+  );
+  if (supertestStatus) {
+    return `HTTP status mismatch: Expected ${supertestStatus[1]}, but received ${supertestStatus[2]}.`;
+  }
+
+  // 7. Timeout
+  if (/Exceeded timeout of \d+ ms|Timeout - Async callback/i.test(rawText)) {
+    return "Test timed out waiting for HTTP response or async database operation.";
+  }
+
+  // 8. Fallback: pick first meaningful non-boilerplate line
+  const meaningfulLines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !/^Test suite failed to run$/i.test(l) &&
+        !/^Jest encountered an unexpected token/i.test(l) &&
+        !/^Out of the box Jest supports/i.test(l) &&
+        !/^Details:/i.test(l) &&
+        !/^Here's what you can do:/i.test(l) &&
+        !/^[•*-]\s/.test(l) &&
+        !/^https?:\/\//.test(l) &&
+        !/^at\s+/.test(l) &&
+        !/^\d+\s*\|/.test(l),
+    );
+
+  const firstUseful = meaningfulLines[0] || parsed?.headline || rawText.split("\n")[0];
+  return firstUseful.length > 200 ? `${firstUseful.slice(0, 197)}...` : firstUseful;
 }
 
 const endpointCache = new Map();
@@ -2388,7 +2486,14 @@ const executeBuildIntegrationWorkspace = async (
           runtimeEvidence: structuredEvidence,
           setupRequests,
           teardownRequests,
+          failureSummary:
+            rest.status === "failed" || parsedFailure
+              ? summarizeFailureMessage(rest.failureMessages, parsedFailure, req)
+              : null,
           failureDetails: parsedFailure,
+          failureMessages: Array.isArray(rest.failureMessages)
+            ? rest.failureMessages.map((m) => stripAnsi(String(m || "")))
+            : rest.failureMessages,
         };
       },
     );

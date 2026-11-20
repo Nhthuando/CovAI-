@@ -595,6 +595,26 @@ export function validateScenarioAst(ast) {
   }
 }
 
+function findFirstTestCallExpression(ast) {
+  let foundNode = null;
+  traverse(ast, {
+    CallExpression(p) {
+      if (foundNode) return;
+      const { callee } = p.node;
+      const isDirectTest =
+        callee.type === "Identifier" &&
+        (callee.name === "it" || callee.name === "test");
+      const isMemberTest =
+        callee.type === "MemberExpression" &&
+        (callee.object?.name === "it" || callee.object?.name === "test");
+      if (isDirectTest || isMemberTest) {
+        foundNode = p.node;
+      }
+    },
+  });
+  return foundNode;
+}
+
 const updateScenarioServiceUnsafe = async (
   aiTestId,
   scenarioId,
@@ -612,18 +632,16 @@ const updateScenarioServiceUnsafe = async (
   const updatedAst = parseCode(updatedCode);
   validateScenarioAst(updatedAst);
 
-  // Check if it actually contains a test
-  let updatedNode = null;
-  traverse(updatedAst, {
-    CallExpression(path) {
-      if (!updatedNode) updatedNode = path.node; // Take the first CallExpression (e.g. it(...))
-    },
-  });
+  // Extract the actual it(...)/test(...) call expression (never an earlier helper/require call)
+  const updatedNode = findFirstTestCallExpression(updatedAst);
   if (!updatedNode)
     throw new Error("Updated code does not contain a valid test statement");
 
   const originalAst = parseCode(aiTest.content);
-  const path = findScenarioPath(originalAst, testName, nameIndex);
+  let path = findScenarioPath(originalAst, testName, nameIndex);
+  if (!path && options?.fallbackTestName && options.fallbackTestName !== testName) {
+    path = findScenarioPath(originalAst, options.fallbackTestName, 0);
+  }
   if (!path)
     throw new Error(
       `Scenario '${testName}' (index ${nameIndex}) not found in AST`,
@@ -1300,12 +1318,7 @@ const addScenarioServiceUnsafe = async (
   const newAst = parseCode(newScenarioCode);
   validateScenarioAst(newAst);
 
-  let newScenarioNode = null;
-  traverse(newAst, {
-    CallExpression(path) {
-      if (!newScenarioNode) newScenarioNode = path.node;
-    },
-  });
+  const newScenarioNode = findFirstTestCallExpression(newAst);
   if (!newScenarioNode)
     throw new Error("New code does not contain a valid test statement");
 
@@ -1323,23 +1336,28 @@ const addScenarioServiceUnsafe = async (
     },
   });
 
-  if (!describePath)
-    throw new Error("No describe block found in target test file");
-
-  // Add to describe block
-  const bodyNode = describePath.node.arguments[1];
-  if (bodyNode) {
-    if (bodyNode.body && Array.isArray(bodyNode.body.body)) {
-      bodyNode.body.body.push({
-        type: "ExpressionStatement",
-        expression: newScenarioNode,
-      });
-    } else if (Array.isArray(bodyNode.body)) {
-      bodyNode.body.push({
-        type: "ExpressionStatement",
-        expression: newScenarioNode,
-      });
+  if (describePath) {
+    // Add to describe block
+    const bodyNode = describePath.node.arguments[1];
+    if (bodyNode) {
+      if (bodyNode.body && Array.isArray(bodyNode.body.body)) {
+        bodyNode.body.body.push({
+          type: "ExpressionStatement",
+          expression: newScenarioNode,
+        });
+      } else if (Array.isArray(bodyNode.body)) {
+        bodyNode.body.push({
+          type: "ExpressionStatement",
+          expression: newScenarioNode,
+        });
+      }
     }
+  } else {
+    // Fallback when target test file has top-level test(...) blocks without describe(...)
+    ast.program.body.push({
+      type: "ExpressionStatement",
+      expression: newScenarioNode,
+    });
   }
 
   const { code: finalCode } = generate(ast);

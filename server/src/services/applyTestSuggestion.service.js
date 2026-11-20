@@ -3709,22 +3709,9 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         existingVariables: operationEnv,
         zeroEnv: true
     });
-    // Hermetic in-memory mock environment synthesized in RAM (Zero .env disk writes)
+    // Hermetic in-memory mock environment synthesized in RAM (Zero .env disk writes, Zero Docker DB containers)
     const hermeticMockEnvironment = generateHermeticMockEnvironment(envCheck?.detectedVariables || [], operationEnv);
-
     let isolatedDb = null;
-    try {
-        const { isDatabaseRequiredForProject, provisionIsolatedDatabase, syncDatabaseSchema } = await import("./virtualDatabase.service.js");
-        if (isDatabaseRequiredForProject(rootDir)) {
-            isolatedDb = await provisionIsolatedDatabase(`apply_${snapshotId || Date.now()}`);
-            if (isolatedDb?.env) {
-                Object.assign(hermeticMockEnvironment, isolatedDb.env);
-            }
-            await syncDatabaseSchema(isolatedDb.databaseUrl, null, rootDir).catch(() => {});
-        }
-    } catch (vDbErr) {
-        console.warn("[applyUnitTestSuggestion] Virtual DB provisioning notice:", vDbErr.message);
-    }
 
     try {
 
@@ -3843,7 +3830,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
         baselineRepairs = await prepareBaselineTestRepairs({rootDir,
             originalRootDir:activeSnapshot?.originalRootDir || currentProjectOperation()?.originalRootDir,
             snapshot,projectId:actualProjectId,suggestions:itemsToApply,review:false,sourceFingerprint:sourceHashesBefore._compositeHash,
-            environment:operationEnv,requireDocker:enforceQualityGate && !runCoverageFn});
+            environment:operationEnv,requireDocker:process.env.COVAI_FORCE_DOCKER_ONLY === 'true'});
         let appliedIdx = 0;
         for (const sug of itemsToApply) {
             appliedIdx++;
@@ -4196,7 +4183,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
             const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: 0, hermeticMocks: hermeticMockEnvironment, useHermeticMock: true });
             runnerExitCode = result?.exitCode ?? 0;
         } else {
-            const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile,hermeticMocks:hermeticMockEnvironment,useHermeticMock:true,requireDocker:enforceQualityGate});
+            const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile,hermeticMocks:hermeticMockEnvironment,useHermeticMock:true,requireDocker:process.env.COVAI_FORCE_DOCKER_ONLY === 'true'});
             runnerExitCode = result.exitCode;
             rawOutput = result.stdout + '\n' + result.stderr;
         }
@@ -4519,7 +4506,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 const result = await runCoverageFn({ rootDir, testFilesToRun, isVitest, coverageDir, sealedRunDir, runId, pass: healIterations, hermeticMocks: hermeticMockEnvironment, useHermeticMock: true });
                 runnerExitCode = result?.exitCode ?? 0;
             } else {
-                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile,hermeticMocks:hermeticMockEnvironment,useHermeticMock:true,requireDocker:enforceQualityGate});
+                const result = await runUnitTestBatch({rootDir,snapshot,testFiles:testFilesToRun,targetSourceFiles,coverageDir:sealedRunDir,frameworkByFile,hermeticMocks:hermeticMockEnvironment,useHermeticMock:true,requireDocker:process.env.COVAI_FORCE_DOCKER_ONLY === 'true'});
                 runnerExitCode = result.exitCode;
                 rawOutput = result.stdout + '\n' + result.stderr;
             }
@@ -4883,7 +4870,7 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                         sealedRunDir: baselineDirectory, isVitest, phase: 'quality-baseline', runId: baselineExecutionId,
                         hermeticMocks: hermeticMockEnvironment, useHermeticMock: true })
                     : await runUnitTestBatch({ rootDir, snapshot, testFiles: baselines, targetSourceFiles, coverageDir: baselineDirectory,
-                        frameworkByFile, hermeticMocks: hermeticMockEnvironment, requireDocker: true });
+                        frameworkByFile, hermeticMocks: hermeticMockEnvironment, requireDocker: process.env.COVAI_FORCE_DOCKER_ONLY === 'true' });
                 if (baseline?.exitCode !== 0) throw new Error("Unchanged tests did not produce a successful coverage baseline.");
                 if (!fs.existsSync(baselineArtifactPath)) {
                     throw new Error("Unchanged tests did not produce a fresh coverage-final.json.");

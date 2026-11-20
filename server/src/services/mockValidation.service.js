@@ -815,6 +815,7 @@ export function validateMockContracts({
     code = "",
     contracts = [],
     framework = "",
+    sourceFile = "",
 } = {}) {
     if (!code || (!Array.isArray(contracts) || contracts.length === 0)) {
         // Still allow empty-mock-object check against assertion requirements if code has assertions
@@ -893,8 +894,25 @@ export function validateMockContracts({
         },
     });
 
+    const stripModExt = (spec = "") => String(spec).replace(/\\/g, "/").replace(/\.(?:[cm]?[jt]sx?)$/i, "");
+    const resolveMockEntry = (importSource = "") => {
+        if (mockedModules.has(importSource)) return mockedModules.get(importSource);
+        const normImport = stripModExt(importSource);
+        const srcDir = sourceFile ? path.posix.dirname(String(sourceFile).replace(/\\/g, "/")) : "";
+        const resolvedFromSrc = (normImport.startsWith(".") && srcDir)
+            ? stripModExt(path.posix.normalize(path.posix.join(srcDir, normImport))).replace(/^(?:\.\/)+/, "")
+            : normImport.replace(/^(?:\.\.?\/)+/, "");
+        for (const [spec, entry] of mockedModules.entries()) {
+            const normSpec = stripModExt(spec).replace(/^(?:\.\.?\/)+/, "");
+            if (normSpec === resolvedFromSrc || normSpec.endsWith("/" + resolvedFromSrc) || resolvedFromSrc.endsWith("/" + normSpec)) {
+                return entry;
+            }
+        }
+        return null;
+    };
+
     for (const contract of contracts) {
-        const modEntry = mockedModules.get(contract.importSource);
+        const modEntry = resolveMockEntry(contract.importSource);
         if (!modEntry) continue; // Not mocked in this file (or mocked via relative path resolution)
 
         const methodInfo = modEntry.definedMethods.get(contract.method);

@@ -152,15 +152,18 @@ export function getScenarioMonacoMarkers(code = "", targetEndpoint = null) {
     });
   }
 
-  // 2. Check for Supertest API call
-  const hasRequestCall = /request\s*\(\s*(?:app|server)?\s*\)/i.test(code);
+  // 2. Check for Supertest / Playwright API call
+  const hasRequestCall =
+    /\brequest\s*(?:\([^)]*\)|\.(?:get|post|put|patch|delete|head|options)\s*\()|\bsupertest\s*\(/i.test(
+      code,
+    );
   if (!hasRequestCall && code.trim().length > 0) {
     markers.push({
       startLineNumber: 1,
       startColumn: 1,
       endLineNumber: 1,
       endColumn: Math.max(lines[0]?.length || 1, 10),
-      message: "Missing Supertest call: Scenario must execute 'await request(app).<method>(...)'.",
+      message: "Missing API request call: Scenario must execute 'await request(app).<method>(...)' or 'await request.<method>(...)'.",
       severity: 8,
     });
   }
@@ -302,6 +305,7 @@ export default function IntegrationScenarioEditorModal({
   existingScenarioTitles = [],
   isAddMode = false,
   onSaveAndApply,
+  saveError = "",
 }) {
   const [code, setCode] = useState(initialCode || "");
   const [charCount, setCharCount] = useState((initialCode || "").length);
@@ -446,6 +450,11 @@ export default function IntegrationScenarioEditorModal({
           return { suggestions };
         },
       });
+
+      // Sync code into Monaco if applyProgrammaticCode ran before mount
+      if (codeRef.current && editor.getValue() !== codeRef.current) {
+        editor.setValue(codeRef.current);
+      }
 
       // Run initial marker sync
       syncMarkersForCode(codeRef.current);
@@ -712,13 +721,18 @@ export default function IntegrationScenarioEditorModal({
                       if (found) {
                         onSelectTargetEndpoint(found);
                         if (!isCustomEdited) {
+                          const cat = CATEGORIES.find((c) => c.id === selectedCategory) || CATEGORIES[0];
+                          const nextMethod = (found.method || "GET").toUpperCase();
+                          const nextPath = found.path || found.route || "/";
+                          const nextTitle = `${cat.prefix}: should handle ${nextMethod} ${nextPath} with status ${cat.status}`;
+                          setScenarioName(nextTitle);
                           const generated = buildSupertestTemplate({
-                            method: found.method,
-                            path: found.path || found.route,
-                            title: scenarioName,
-                            expectedStatus,
+                            method: nextMethod,
+                            path: nextPath,
+                            title: nextTitle,
+                            expectedStatus: cat.status,
                           });
-                          setCode(generated);
+                          applyProgrammaticCode(generated);
                         }
                       }
                     }}
@@ -760,7 +774,7 @@ export default function IntegrationScenarioEditorModal({
                     key={cat.id}
                     type="button"
                     onClick={() => handleCategoryChange(cat.id)}
-                    className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer ${
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
                       selectedCategory === cat.id
                         ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] border-transparent font-semibold shadow-xs"
                         : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]"
@@ -801,6 +815,14 @@ export default function IntegrationScenarioEditorModal({
             options={editorOptions}
           />
         </div>
+
+        {/* Save error feedback */}
+        {saveError && (
+          <div className="px-6 py-2 bg-rose-500/10 border-t border-rose-500/25 text-xs text-rose-400 flex items-center gap-2 shrink-0">
+            <AlertCircle size={13} className="shrink-0" />
+            <span className="truncate">{saveError}</span>
+          </div>
+        )}
 
         {/* 4. Sleek IDE Footer */}
         <div className="h-14 px-6 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between gap-3 shrink-0">

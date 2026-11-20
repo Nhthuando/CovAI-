@@ -33,15 +33,14 @@ describe('Milestone 4 Adversarial Stress Harness & Empirical Verification', () =
     const workflowSrc = fs.readFileSync(workflowPath, 'utf8');
 
     describe('Challenge 1: User Rule 10 Layout Invariants (AST Analysis)', () => {
-        it('AST parse verifies exactly 3 canonical tabs under type === "unit"', () => {
+        it('AST parse verifies 4 canonical tabs under type === "unit"', () => {
             const ast = babelParser.parse(dashboardSrc, {
                 sourceType: 'module',
                 plugins: ['jsx'],
             });
 
-            // Find the array of tabs in the unit test branch
-            // Pattern: type === 'unit' ? [ { id: 'traceability' ... }, { id: 'testcases' ... }, { id: 'versions' ... } ]
-            const unitTabsRegex = /\.\.\.\(type\s*===\s*["']unit["']\s*\?\s*\[([\s\S]*?)\]\s*:\s*\[/;
+            // Pattern: {type === "unit" && ( ... [ { id: 'traceability' ... }, { id: 'simulation' ... }, { id: 'testcases' ... }, { id: 'versions' ... } ].map((tab)
+            const unitTabsRegex = /\{type\s*===\s*["']unit["']\s*&&\s*\([\s\S]*?\[([\s\S]*?)\]\.map\(\(tab\)/;
             const match = dashboardSrc.match(unitTabsRegex);
             expect(match).not.toBeNull();
 
@@ -52,22 +51,21 @@ describe('Milestone 4 Adversarial Stress Harness & Empirical Verification', () =
                 tabIds.push(m[1]);
             }
 
-            expect(tabIds).toEqual(['traceability', 'testcases', 'versions']);
-            expect(tabIds).toHaveLength(3);
+            expect(tabIds).toEqual(['traceability', 'simulation', 'testcases', 'versions']);
+            expect(tabIds).toHaveLength(4);
 
             // Verify no metric-splitting tabs exist in the unit test branch
             expect(tabIds).not.toContain('statements');
             expect(tabIds).not.toContain('branches');
             expect(tabIds).not.toContain('functions');
             expect(tabIds).not.toContain('lines');
-            expect(tabIds).not.toContain('simulation');
         });
 
         it('AST verifies 4-Category Decision Table Matrix covers all 4 categories with explanations', () => {
-            expect(traceabilitySrc).toContain('🟢 A. Happy Path');
-            expect(traceabilitySrc).toContain('🟡 B. Boundary Values');
-            expect(traceabilitySrc).toContain('🔵 C. Branch Toggling');
-            expect(traceabilitySrc).toContain('🔴 D. Error Handling');
+            expect(traceabilitySrc).toContain('A. Happy Path');
+            expect(traceabilitySrc).toContain('B. Boundary Values');
+            expect(traceabilitySrc).toContain('C. Branch Toggling');
+            expect(traceabilitySrc).toContain('D. Error & Exception Handling');
 
             // Verify category keys
             expect(traceabilitySrc).toContain('HAPPY_PATH');
@@ -75,8 +73,8 @@ describe('Milestone 4 Adversarial Stress Harness & Empirical Verification', () =
             expect(traceabilitySrc).toContain('BRANCH_TOGGLING');
             expect(traceabilitySrc).toContain('ERROR_HANDLING');
 
-            // Verify CategoryMatrix4Cards receives simulation trigger prop
-            expect(traceabilitySrc).toMatch(/function\s+CategoryMatrix4Cards\(\{[\s\S]*?onOpenSimulation\s*=\s*null/);
+            // Verify UnitTestTraceabilityMatrix accepts simulation trigger prop
+            expect(traceabilitySrc).toMatch(/onOpenSimulation\s*=\s*null/);
         });
 
         it('Single Authoritative Action Driver: suppresses duplicate actions in header and workflow', () => {
@@ -84,7 +82,7 @@ describe('Milestone 4 Adversarial Stress Harness & Empirical Verification', () =
             expect(dashboardSrc).toMatch(/\{type\s*!==\s*["']unit["']\s*&&\s*\([\s\S]*?Run Integration Test/);
 
             // Guided workflow header has only stage quick controls, no duplicate Refresh or Job Queue
-            expect(workflowSrc).toContain('Guided Unit Test Workflow');
+            expect(workflowSrc).toContain('Unit Test Workflow');
             expect(workflowSrc).not.toMatch(/<div[^>]*header[^>]*>[\s\S]*?Refresh[\s\S]*?<\/div>/i);
         });
     });
@@ -135,9 +133,9 @@ describe('Milestone 4 Adversarial Stress Harness & Empirical Verification', () =
             expect(inPlaceZ).toBe(9999);
             expect(simStudioZ).toBe(9999);
 
-            // In CoverageTypeDashboard, verify UnitTestSimulationStudioModal is rendered AFTER InPlaceCoverageFileModal in DOM
-            const inPlaceMountPos = dashboardSrc.indexOf('<InPlaceCoverageFileModal');
-            const simStudioMountPos = dashboardSrc.indexOf('<UnitTestSimulationStudioModal');
+            // In CoverageTypeDashboard, verify overlay UnitTestSimulationStudioModal is rendered AFTER InPlaceCoverageFileModal in DOM
+            const inPlaceMountPos = dashboardSrc.lastIndexOf('<InPlaceCoverageFileModal');
+            const simStudioMountPos = dashboardSrc.lastIndexOf('<UnitTestSimulationStudioModal');
 
             expect(inPlaceMountPos).toBeGreaterThan(-1);
             expect(simStudioMountPos).toBeGreaterThan(-1);
@@ -160,12 +158,9 @@ describe('Milestone 4 Adversarial Stress Harness & Empirical Verification', () =
     });
 
     describe('Challenge 4: Dual-Mounting Prevention (Prop Delegation vs Fallback Guards)', () => {
-        it('UnitTestTraceabilityMatrix prevents dual mounting with !onOpenSimulation guard', () => {
-            // Must have guard !onOpenSimulation && internalSimulationTarget
-            expect(traceabilitySrc).toMatch(/\{!onOpenSimulation\s*&&\s*internalSimulationTarget\s*&&\s*\(\s*<UnitTestSimulationStudioModal/);
-
-            // When onOpenSimulation is provided, handleTriggerSimulate delegates
-            expect(traceabilitySrc).toMatch(/if\s*\(typeof\s+onOpenSimulation\s*===\s*["']function["']\)\s*\{\s*onOpenSimulation\(simContext\);\s*\}\s*else\s*\{\s*setInternalSimulationTarget\(simContext\);\s*\}/);
+        it('UnitTestTraceabilityMatrix prevents dual mounting by delegating simulation without internal modal', () => {
+            expect(traceabilitySrc).toMatch(/onOpenSimulation\s*=\s*null/);
+            expect(traceabilitySrc).not.toMatch(/<UnitTestSimulationStudioModal/);
         });
 
         it('InPlaceCoverageFileModal prevents dual mounting with !onOpenSimulation guard', () => {

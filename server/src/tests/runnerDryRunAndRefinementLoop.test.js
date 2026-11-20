@@ -57,7 +57,7 @@ describe("Phase 5: Runner Dry-Run & Iterative Refinement Loop", () => {
     });
 
     describe("5.2 Diagnostics & Auto-Heal Engine", () => {
-        test("heals Assertion Mismatch: Expected X vs Received Y by adjusting to actual business return", () => {
+        test("does not blindly rewrite assertion mismatch (Expected X vs Received Y) from observed output", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "order.test.js");
@@ -89,17 +89,16 @@ describe('Order Service', () => {
             };
 
             const healed = autoHealTestFailures(tempDir, ["tests/order.test.js"], fakeTestResults, "");
-            expect(healed).toBe(true);
+            expect(healed).toBe(false);
 
             const contentAfter = fs.readFileSync(testFile, "utf8");
-            expect(contentAfter).toContain("expect(total).toEqual(90)");
-            expect(contentAfter).not.toContain("expect(total).toBe(100)");
+            expect(contentAfter).toContain("expect(total).toBe(100)");
 
             const ast = parseJavaScriptCode(contentAfter);
             expect(ast.success).toBe(true);
         });
 
-        test("heals Assertion Mismatch when received is undefined (.toBeUndefined)", () => {
+        test("does not blindly rewrite assertion mismatch to .toBeUndefined() when received is undefined", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "optional.test.js");
@@ -130,10 +129,10 @@ describe('Optional Field', () => {
             };
 
             const healed = autoHealTestFailures(tempDir, ["tests/optional.test.js"], fakeTestResults, "");
-            expect(healed).toBe(true);
+            expect(healed).toBe(false);
 
             const contentAfter = fs.readFileSync(testFile, "utf8");
-            expect(contentAfter).toContain("toBeUndefined()");
+            expect(contentAfter).toContain("expect(tag).toBe('default')");
             const ast = parseJavaScriptCode(contentAfter);
             expect(ast.success).toBe(true);
         });
@@ -161,7 +160,7 @@ describe('Auth Service', () => {
             expect(ast.success).toBe(true);
         });
 
-        test("heals persistent uncalled mock assertions (Number of calls: 0) by relaxing to .toBeDefined()", () => {
+        test("does not relax uncalled mock assertion (Number of calls: 0) via autoHealTestFailures", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "logger.test.js");
@@ -192,10 +191,10 @@ describe('Audit Logger', () => {
             };
 
             const healed = autoHealTestFailures(tempDir, ["tests/logger.test.js"], fakeTestResults, "");
-            expect(healed).toBe(true);
+            expect(healed).toBe(false);
 
             const contentAfter = fs.readFileSync(testFile, "utf8");
-            expect(contentAfter).toContain("expect(mockAuditHook).toBeDefined();");
+            expect(contentAfter).toContain("expect(mockAuditHook).toHaveBeenCalled();");
             const ast = parseJavaScriptCode(contentAfter);
             expect(ast.success).toBe(true);
         });

@@ -218,7 +218,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         let stepDescription = processes.analysis.step;
 
         if (prog !== undefined) {
-          if (prog <= 20) stepDescription = "Preparing dependencies & Docker environment...";
+          if (prog <= 20) stepDescription = "Preparing dependencies & isolated mock environment...";
           else if (prog <= 45) stepDescription = "Running Jest unit test suites & generating coverage...";
           else if (prog <= 65) stepDescription = "Running Vitest unit test suites & generating coverage...";
           else if (prog <= 85) stepDescription = "Merging multi-framework coverage & analyzing AST functions...";

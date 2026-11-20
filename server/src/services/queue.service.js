@@ -38,6 +38,8 @@ import { normalizeDiskPath } from '../utils/snapshotWorkspace.js';
 
 let isRedisConnected = false;
 export const QUEUE_NAME = process.env.QUEUE_NAME || 'covai-jobs-main';
+const activeExecutionJobIds = new Set();
+export const isJobActivelyExecuting = (jobId) => Boolean(jobId && activeExecutionJobIds.has(jobId));
 const durableOperationTypes = new Set(['RUN_TESTS', 'ANALYSIS', 'AI_TESTS', 'AI_SUGGEST',
   'SUPERTEST_COVERAGE', 'INSTALL_DEPS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'BUILD_CFG', 'PERFORMANCE_ANALYSIS', 'CODE_HYGIENE', 'QUALITY_ANALYSIS', 'SECURITY_ANALYSIS', 'COVERAGE', 'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT',
   'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION', 'AI_EVALUATION', 'AI_EVALUATION_PREPARE']);
@@ -115,8 +117,19 @@ if (typeof flowProducer?.on === 'function') {
 }
 
 export const executeJobDirectly = async (type, jobId, customData = {}) => {
-  if (['RUN_TESTS','ANALYSIS','SUPERTEST_COVERAGE','INSTALL_DEPS','RUN_VITEST_TESTS','VITEST_COVERAGE','BUILD_CFG','PERFORMANCE_ANALYSIS','CODE_HYGIENE','QUALITY_ANALYSIS','SECURITY_ANALYSIS','COVERAGE'].includes(type)) return runJobInOperationWorkspace(jobId,()=>executeUnscopedJob(type,jobId,customData));
-  return executeUnscopedJob(type,jobId,customData);
+  if (jobId && activeExecutionJobIds.has(jobId)) {
+    console.log(`[DirectExecutor] Skipping duplicate in-flight execution: type=${type}, jobId=${jobId}`);
+    return;
+  }
+  if (jobId) activeExecutionJobIds.add(jobId);
+  try {
+    if (['RUN_TESTS','ANALYSIS','SUPERTEST_COVERAGE','INSTALL_DEPS','RUN_VITEST_TESTS','VITEST_COVERAGE','BUILD_CFG','PERFORMANCE_ANALYSIS','CODE_HYGIENE','QUALITY_ANALYSIS','SECURITY_ANALYSIS','COVERAGE'].includes(type)) {
+      return await runJobInOperationWorkspace(jobId, () => executeUnscopedJob(type, jobId, customData));
+    }
+    return await executeUnscopedJob(type, jobId, customData);
+  } finally {
+    if (jobId) activeExecutionJobIds.delete(jobId);
+  }
 };
 
 const executeUnscopedJob = async (type, jobId, customData = {}) => {

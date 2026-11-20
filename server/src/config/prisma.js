@@ -21,7 +21,13 @@ if (process.env.DATABASE_URL) {
         console.warn("[pg-pool] Handled non-fatal pool client error:", err.message);
     });
     const adapter = new PrismaPg(pool);
-    const rawClient = new PrismaClient({ adapter });
+    const rawClient = new PrismaClient({
+        adapter,
+        transactionOptions: {
+            maxWait: 15000,
+            timeout: 30000,
+        },
+    });
     prismaClient = rawClient.$extends({
         query: {
             $allModels: {

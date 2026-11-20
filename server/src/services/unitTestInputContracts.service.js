@@ -485,7 +485,7 @@ function inferParamUsagesFromBody(fn, jsdocMap) {
                         continue;
                     }
                     if (!directProperties.get(pName).has(prop)) {
-                        directProperties.get(pName).set(prop, { kind: 'string', sampleValues: new Set() });
+                        directProperties.get(pName).set(prop, { kind: 'unknown', sampleValues: new Set() });
                     }
                 }
             }
@@ -628,6 +628,61 @@ function inferParamUsagesFromBody(fn, jsdocMap) {
                 info.kind = typeof lit.value;
                 info.sampleValues.add(lit.value);
             }
+        }
+
+        // Infer concrete property types on direct object parameter aliases (e.g. order.total > 1000, item.name.trim())
+        const setDirectPropKind = (memberNode, inferredKind, sampleVal) => {
+            if (!memberNode || (memberNode.type !== 'MemberExpression' && memberNode.type !== 'OptionalMemberExpression')) return;
+            if (memberNode.computed || memberNode.object?.type !== 'Identifier') return;
+            const prop = memberNode.property?.name || (memberNode.property?.type === 'StringLiteral' ? memberNode.property.value : null);
+            if (!prop || COMMON_PROTOTYPE_PROPERTIES.has(prop)) return;
+            for (const [pName, aliasSet] of aliases) {
+                if (!aliasSet.has(memberNode.object.name)) continue;
+                const dMap = directProperties.get(pName);
+                if (!dMap) continue;
+                if (!dMap.has(prop)) dMap.set(prop, { kind: inferredKind || 'unknown', sampleValues: new Set() });
+                const entry = dMap.get(prop);
+                if (inferredKind) entry.kind = inferredKind;
+                if (sampleVal !== undefined) entry.sampleValues.add(sampleVal);
+            }
+        };
+
+        if ((node.type === 'CallExpression' || node.type === 'OptionalCallExpression') &&
+            (node.callee?.type === 'MemberExpression' || node.callee?.type === 'OptionalMemberExpression') &&
+            node.callee.object?.type === 'MemberExpression' &&
+            STRING_ONLY_PROTOTYPE_METHODS.has(node.callee.property?.name)) {
+            setDirectPropKind(node.callee.object, 'string');
+        }
+
+        if (node.type === 'BinaryExpression') {
+            if (['-', '*', '/', '%', '**', '<', '<=', '>', '>='].includes(node.operator)) {
+                setDirectPropKind(node.left, 'number', node.right?.type === 'NumericLiteral' ? node.right.value : undefined);
+                setDirectPropKind(node.right, 'number', node.left?.type === 'NumericLiteral' ? node.left.value : undefined);
+            } else if (node.operator === '+') {
+                if (node.right?.type === 'NumericLiteral') setDirectPropKind(node.left, 'number', node.right.value);
+                if (node.left?.type === 'NumericLiteral') setDirectPropKind(node.right, 'number', node.left.value);
+            } else if (['===', '==', '!==', '!='].includes(node.operator)) {
+                const typeofSide = node.left?.type === 'UnaryExpression' && node.left.operator === 'typeof' ? node.left
+                    : (node.right?.type === 'UnaryExpression' && node.right.operator === 'typeof' ? node.right : null);
+                const litSide = typeofSide === node.left ? node.right : node.left;
+                if (typeofSide?.argument?.type === 'MemberExpression' && litSide?.type === 'StringLiteral' &&
+                    ['string', 'number', 'boolean'].includes(litSide.value)) {
+                    setDirectPropKind(typeofSide.argument, litSide.value);
+                }
+                if (node.left?.type === 'MemberExpression' && ['StringLiteral', 'NumericLiteral', 'BooleanLiteral'].includes(node.right?.type)) {
+                    setDirectPropKind(node.left, typeof node.right.value, node.right.value);
+                } else if (node.right?.type === 'MemberExpression' && ['StringLiteral', 'NumericLiteral', 'BooleanLiteral'].includes(node.left?.type)) {
+                    setDirectPropKind(node.right, typeof node.left.value, node.left.value);
+                }
+            }
+        }
+
+        if (node.type === 'AssignmentExpression' && ['-=', '*=', '/=', '%=', '**='].includes(node.operator)) {
+            setDirectPropKind(node.left, 'number');
+        }
+
+        if (node.type === 'UpdateExpression' || (node.type === 'UnaryExpression' && ['+', '-'].includes(node.operator))) {
+            setDirectPropKind(node.argument, 'number');
         }
     });
 
