@@ -19,7 +19,7 @@ import { modifyAwarenessUpdate } from 'y-protocols/awareness';
 import prisma from '../config/prisma.js';
 import { withProjectGuard, resolveProjectAccess } from '../services/projectAccess.service.js';
 import { openEditorDocument, applyEditorUpdate, syncEditorDocument } from '../services/projectEditorDocument.service.js';
-import { EDITOR_LIMITS } from '../../../shared/editorProtocol.js';
+import { EDITOR_LIMITS, editorEnabled } from '../../../shared/editorProtocol.js';
 import * as Y from 'yjs';
 import { rememberEditorCommit, catchUpEditorOpen } from '../services/projectEditorDeliveryCache.service.js';
 
@@ -108,6 +108,7 @@ export async function notifyEditorProjectChange(projectId) {
     }
 }
 export function attachProjectEditorGateway(io, services = {}) {
+    console.log(editorEnabled() ? '[Editor] Live collaborative editing enabled' : '[Editor] Live collaborative editing disabled (PROJECT_EDITOR_ENABLED=false)');
     namespace = io.of('/editor');
     const open = services.open || openEditorDocument, apply = services.apply || applyEditorUpdate, sync = services.sync || syncEditorDocument;
     namespace.use(async (socket, next) => {

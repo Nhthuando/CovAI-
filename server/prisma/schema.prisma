@@ -240,6 +240,23 @@ model AiEvaluationHumanReview {
   @@index([criterionResultId, createdAt])
 }
 
+model AiEvaluationDesignAudit {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  detected Boolean @default(false)
+  designScore Float?
+  summaryJson Json
+  findingsJson Json
+  autoFillConfigJson Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  @@unique([projectId, snapshotId])
+  @@index([projectId, createdAt])
+}
+
 model User {
   id                   String         @id @default(cuid())
   email                String         @unique
@@ -288,6 +305,7 @@ model Project {
   evaluationSources AiEvaluationKnowledgeSource[]
   evaluationProfiles AiEvaluationProfile[]
   evaluationRuns AiEvaluationRun[]
+  evaluationDesignAudits AiEvaluationDesignAudit[]
   id                   String            @id @default(cuid())
   editorDocuments ProjectEditorDocument[]
   codeChanges ProjectCodeChange[]
@@ -347,6 +365,7 @@ model Project {
 }
 
 model ProjectSnapshot {
+  evaluationDesignAudits AiEvaluationDesignAudit[]
   systemSuiteState SystemSuiteState?
   systemSuiteVersions SystemSuiteVersion[]
   editorDocuments ProjectEditorDocument[]

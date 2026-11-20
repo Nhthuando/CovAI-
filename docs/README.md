@@ -63,8 +63,9 @@ Chứa toàn bộ các kế hoạch thực hiện tính năng, checklist và tas
 - `business-logic-to-test-traceability-plan.md`: Cơ chế truy vết code nghiệp vụ tới test.
 
 ### 6. `ai-trustworthiness-evaluation/` (Đánh Giá AI Chatbot)
-- `ai-trustworthiness-implementation-plan.md`: Kế hoạch đánh giá chatbot.
-- `chatbot-trustworthiness-plan.md`: Bộ tiêu chuẩn đánh giá độ tin cậy của chatbot.
+- `chatbot-evaluation-design-v2.md`: Thiết kế kiến trúc 2 lớp (Soi thiết kế tĩnh + Chạy thử hộp đen) & kế hoạch triển khai v2.
+- `ai-trustworthiness-implementation-plan.md`: Kế hoạch đánh giá chatbot (v1).
+- `chatbot-trustworthiness-plan.md`: Bộ tiêu chuẩn đánh giá độ tin cậy của chatbot (v1).
 
 ### 7. `architecture/` (Kiến Trúc)
 - Sơ đồ kiến trúc tổng thể, mô hình dữ liệu (ERD) và các biểu đồ PlantUML.

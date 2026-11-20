@@ -336,7 +336,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
 
   if (!chosenDir) {
     await safeAddJobLog(jobId, "INFO", "[AUT Lifecycle] No web server script found in package.json.");
-    return { started: false, port };
+    return { started: false, port, recentOutput: () => '' };
   }
   const dirLabel = chosenDir === snapshotDir ? "root" : path.relative(snapshotDir, chosenDir).replace(/\\/g, "/");
   const runtime=await (dependencies.prepare || prepareProjectDependencies)({directory:chosenDir,repositoryRoot,jobId,signal,env});
@@ -436,6 +436,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     port,
     command,
     httpStatus: httpResult.status,
+    recentOutput: (maxChars = 1200) => redactRuntimeOutput(`${stdoutBuffer}\n${stderrBuffer}`.trim(), env).slice(-maxChars),
   };
 };
 

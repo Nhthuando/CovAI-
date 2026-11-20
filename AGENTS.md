@@ -99,63 +99,64 @@ Mọi chi tiết kiến trúc và kế hoạch đã được quy hoạch trong [
 
 <!-- project-context:start -->
 ## Project context (auto-maintained; edit freely, keep short)
-Last synced: 2026-11-14 | git: 3174aaa
+Last synced: 2026-11-16 | git: 56795b3
 
 ### Must follow
 - UI language: English (all user-facing text). Docs/guideline files are Vietnamese. Never translate existing UI text.
 - Rules above (root whitelist, no cross-import, shared/ as SSOT, flat dark UI, 3-layer backend, BullMQ for heavy work) apply as written.
 - LANDING EXCEPTION (user-approved 2026-11-12): only the landing page (`client/src/components/landing/`, styles scoped under `.lp` in `landing.css`) may use gradients, aurora blobs, glow, glass blur, pill buttons and WebGL (`three` + `@react-three/fiber`). Every other page keeps the flat rules above. Do not reuse `.lp-*` classes outside the landing.
+- SHADCN EXCEPTION (user-approved 2026-11-18): copy-in shadcn/ui + Tremor components live in `client/src/components/ui/` (button, badge, card, tabs, tooltip, sheet, input, table, tremor) with `cn()` in `client/src/lib/utils.js`; deps added: `@radix-ui/react-{slot,tabs,tooltip,dialog}`, `class-variance-authority`, `clsx`, `tailwind-merge`. Used by Chatbot Evaluation (`trustworthiness/`); reuse them for new UI instead of adding other UI libraries.
 - NOTE: file:// links in AGENTS.md files point to stale `e:/Express/CovAI-/`; real root is `D:\HuuThuan - Project\NCKH\CovAI`.
 
 ### Stack & commands
 - Client: React 19 + Vite 8 + Tailwind v4 + react-query + Monaco/Yjs + socket.io-client, JS (JSX). Dev port 5173, proxies `/api` -> localhost:5000.
-- Server: Node ESM, Express 5, Prisma 7 (PostgreSQL), BullMQ/Redis, Socket.IO, Babel AST, Gemini.
+- Server: Node ESM, Express 5, Prisma 7 (PostgreSQL), BullMQ/Redis (worker runs in-process via `server/index.js` unless `COVAI_WORKER_ENABLED=false`), Socket.IO, Babel AST, Gemini (`@google/generative-ai`), `pdfjs-dist`, `pdfkit`, `adm-zip`, `jsonrepair`, `zod`.
 - run all: `npm run dev` (root, concurrently); `npm run install:all`
-- client: `npm run dev|build|lint` (in client/); server: `npm run dev`, `db:push`, `test` (jest ESM), `test:evaluation` (node --test)
+- client: `npm run dev|build|lint` (in client/); server: `npm run dev`, `db:push`, `test` (jest ESM; preferred test runner)
 - Vitest/Playwright also present server-side; `docker-compose.yml` at root.
 
 ### Map
 - client/src/pages: Login, Register, ResetPassword, ProjectSelection, Dashboard, IntegrationReport, Invitation, GithubCallback
-- client/src/components/{common,auth,dashboard,editor}: common = Button/Card/Badge/ConfirmDialog/Skeleton; dashboard = IDE workspace (Unit/Integration/System test dashboards, Coverage, CFG, Git, AI panel, Jobs)
-- client/src/services: one `*.service.js` per API area (axios); contexts/ hooks/ lib/ utils/
-- client/src/shared/aiModels.js: client copy of AI_MODELS (alias `@shared`); canonical is /shared
-- server/src/{routes,controllers,services,validators,middlewares,realtime,config,errors,constants}; tests in server/src/tests (+ *.test.js beside services)
-- server/prisma/schema.prisma: User, Project, ProjectSnapshot, Job*, Coverage*, Cfg, Cyclomatic, Ai*, TestRun, TestScenario, AiEvaluation*
-- shared/: aiModels, projectRoles, projectAccess, editorProtocol, editorBatchQueue, systemExpectedOutcome, systemImprovement
-- Other root dirs present but non-whitelisted (verify before touching): specs/, .specify/, prototype/, scratch/, temp/, tmp/, output(s)/
+- client/src/components/{common,auth,dashboard,editor}: common = Button/Card/Badge/ConfirmDialog/Skeleton; dashboard = IDE workspace (Unit/Integration/System test dashboards, Coverage, CFG, Git, AI panel, Jobs, `trustworthiness/` = Chatbot Evaluation)
+- client/src/services: one `*.service.js` per API area (`editorAwareRequest` + `authSession`); contexts/ hooks/ lib/ utils/
+- client/src/shared/aiModels.js: client copy of AI_MODELS (`@shared` alias in `client/vite.config.js`); canonical is `/shared/aiModels.js`
+- server/src/{routes,controllers,services,validators,middlewares,realtime,config,errors,constants,utils}; tests in `server/src/tests` (+ `*.test.js` beside services)
+- server/src/services/aiEvaluation: Chatbot Evaluation backend (`AI_EVALUATION_ENABLED=true`, optional mock gateway `AI_EVALUATION_ACTION_ENABLED=true`)
+- server/prisma/schema.prisma: User, Project, ProjectSnapshot, Job*, Coverage*, Cfg, Cyclomatic, Ai*, TestRun, TestScenario, System*, AiEvaluation* (15 tables)
+- shared/: aiModels (4 Gemini models), projectRoles, projectAccess, editorProtocol, editorBatchQueue, systemExpectedOutcome, systemImprovement
+- Other root dirs present but git-ignored by root whitelist: specs/, .specify/, scratch/, temp/
 
 ### Conventions
-- Controllers return `{ success: true, data }`; heavy jobs return jobId (202) and stream via Socket.IO job:* events.
-- Prisma: always `select`; singleton from server/src/config/prisma.js; `$transaction` for multi-table writes.
-- Colors only via CSS vars in client/src/index.css; rounded-md/lg; transition-colors duration-150; mono + tabular-nums for numbers.
-- Commits: Conventional Commits. Branch: develop (also PR base). Bug fixes referenced as `fix bug: TC_xxx`.
-- Auth (client): access token 15 min + HttpOnly refresh cookie. Use client/src/lib/authSession.js (refreshAccessToken, handleUnauthorizedResponse, installAxiosAuthRefresh, socketAuth + attachSocketAuthRecovery). Never clear the token / redirect to /login directly on a 401; fetch calls to auth endpoints need `credentials: "include"`.
-- System Test flags: server/src/services/systemFeatureFlags.service.js. Assessment, measured coverage and AI improvement are ON unless the env var is "false"; mutation stays opt-in.
-- System Test UI errors: client/src/components/dashboard/system/SystemTestErrorNotice.jsx (cause + folded technical details + View job logs / Review setup).
+- Controllers return `{ success: true, data }`; heavy jobs return jobId (202) and stream via Socket.IO (`user:${userId}` / project rooms).
+- Prisma: always `select`; singleton from `server/src/config/prisma.js`; `$transaction` for multi-table writes.
+- Gemini calls: route through `gemini.service.js` / `geminiRequestPolicy.service.js` + `aiQuota.service.js` (`AI_DAILY_QUOTA` default 50 req/day/user) + `geminiTokenTracker.service.js`, parse JSON with `jsonrepair` + `zod`.
+- Colors only via CSS vars in `client/src/index.css`; `rounded-md`/`lg`; `transition-colors duration-150`; `font-mono tabular-nums` for numbers.
+- Commits: Conventional Commits. Branch: `develop` (also PR base). Bug fixes referenced as `fix bug: TC_xxx`.
+- Auth (client): access token 15 min + HttpOnly refresh cookie. Use `client/src/lib/authSession.js` (`refreshAccessToken`, `handleUnauthorizedResponse`, `installAxiosAuthRefresh`, `socketAuth` + `attachSocketAuthRecovery`). Never clear the token / redirect to `/login` directly on a 401; fetch calls to auth endpoints need `credentials: "include"`.
+- System Test flags: `server/src/services/systemFeatureFlags.service.js`. Errors: `client/src/components/dashboard/system/SystemTestErrorNotice.jsx`.
 
 ### Existing guidance (read when relevant)
-- client/AGENTS.md - UI tokens, forbidden patterns (read before any UI work)
-- server/AGENTS.md - 3-layer, Prisma, BullMQ, temp-file rules (read before backend work)
-- docs/rules/COVAI_FRONTEND_AGENT_RULES.md (878 lines) - detailed UI rules
-- docs/README.md - index of plans/specs/runbooks; .agents/skills/covai-ui-components - component skill
-- specs/ + .specify/ - speckit feature specs (001 structure analyzer, 002 quality dashboard)
+- `client/AGENTS.md` - UI tokens, forbidden patterns (read before any UI work)
+- `server/AGENTS.md` - 3-layer, Prisma, BullMQ, Gemini JSON parsing, temp-file rules (read before backend work)
+- `docs/rules/COVAI_FRONTEND_AGENT_RULES.md` (878 lines) - detailed UI rules
+- `docs/README.md` - index of plans/specs/runbooks; `.agents/skills/covai-ui-components` - component skill
+- `docs/ai-trustworthiness-evaluation/` - Chatbot Evaluation plans & design specs
 
 ### Environment quirks
 - Windows 11; PowerShell primary, Git Bash available.
-- Server dev runs `prisma generate` first; needs PostgreSQL + Redis (docker-compose). Dev DATABASE_URL points to a remote Railway DB (~0.3 s per query): each System Test API call costs ~1-3 s.
-- System Test runs imported apps on the host Node (24.x): legacy tooling (old react-scripts/webpack) can fail to start; autLifecycle adds a "Cause:" hint.
-- Untracked at scan time: server/scripts/sync_latest.mjs, server/test_post.mjs (user scratch, leave alone).
+- Server dev runs `prisma generate` first; needs PostgreSQL + Redis (`docker-compose`). Dev `DATABASE_URL` points to a remote Railway DB (~0.3 s per query).
+- System Test runs imported apps on the host Node (24.x): legacy tooling (old react-scripts/webpack) can fail to start; `autLifecycle` adds a "Cause:" hint.
 
 ### Integration points
-- Landing page (`/`): client/src/components/landing/LandingPage.jsx (LandingHero + lazy CfgScene WebGL, LandingCoverage (unit = code, integration = API endpoint, system = flow coverage), LandingCapabilities tabs, LandingShowcase = bento tiles/pipeline/CTA, LandingSections = proof/pricing/FAQ; shared: LandingPrimitives.jsx, landingUtils.js); Navbar/Footer still in client/src/components/. Old Hero/IDEPreview/Features/Workflow/Pricing.jsx are no longer imported.
-- Brand: logo mark = client/src/components/common/CovaiLogo.jsx (flat, usable everywhere; also client/public/favicon.svg). Mascot "Covy" = client/src/components/landing/LandingMascot.jsx (poses shield/think/cheer, landing only). AuthLayout, ProjectSelectionPage and dashboard ActivityBar still show the old Terminal icon.
-- Routes/nav: client/src/App.jsx (routes: /, /login, /register, /reset-password, /projects, /editor, /main-editor, /project/:id/reports/integration, /invitations/:token, /auth/github/callback)
-- Sidebar/workspace: client/src/components/dashboard/{Sidebar,ActivityBar,Layout}.jsx
-- Theme: client/src/index.css, contexts/ThemeContext, components/common/ThemeSelector
-- API: server/index.js mounts routes from server/src/routes/*.route.js; client calls via client/src/services
-- Roles/permissions/AI models: /shared
+- Landing page (`/`): `client/src/components/landing/LandingPage.jsx`; Navbar/Footer in `client/src/components/`.
+- Brand: `client/src/components/common/CovaiLogo.jsx` (`client/public/favicon.svg`); mascot `LandingMascot.jsx` (landing only).
+- Routes/nav: `client/src/App.jsx` (`/`, `/login`, `/register`, `/reset-password`, `/projects`, `/editor`, `/main-editor`, `/project/:id/reports/integration`, `/invitations/:token`, `/auth/github/callback`)
+- Sidebar/workspace: `client/src/components/dashboard/{Sidebar,ActivityBar,Layout}.jsx` (`?projectId=<id>&tab=trustworthiness` opens Chatbot Evaluation)
+- Theme: `client/src/index.css`, `contexts/ThemeContext`, `components/common/ThemeSelector`
+- API: `server/index.js` mounts `server/src/routes/*.route.js` (including `/api/projects/:projectId/ai-evaluations` & `/api/ai-evaluation-gateway`); client calls via `client/src/services`
+- Roles/permissions/AI models: `/shared`
 
 ### Open questions
-- Which task is next (feature area / bug ID)? Needed to list touch points.
-- Is client/src/shared/aiModels.js meant to be a synced copy of /shared/aiModels.js (violates SSOT?) - confirm before editing either.
+- Active design work: Chatbot Evaluation v2 (`docs/ai-trustworthiness-evaluation/chatbot-evaluation-design-v2.md`) — confirm open product choices before implementation.
+- `client/src/shared/aiModels.js` duplicates `/shared/aiModels.js` via Vite `@shared` alias — confirm before editing either.
 <!-- project-context:end -->

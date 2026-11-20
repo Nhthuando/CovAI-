@@ -58,7 +58,70 @@ export const uploadSingleArchive = (req, res, next) => {
   });
 };
 
-const BLACKLIST_EXTENSIONS = [".env", ".pem", ".key"];
+const ALLOWED_ENV_TEMPLATES = new Set([
+  ".env.example",
+  ".env.sample",
+  ".env.template",
+]);
+const BLACKLIST_EXTENSIONS = new Set([".env", ".pem", ".key"]);
+
+export const isDisallowedSecretFile = (rawPath = "") => {
+  const normalized = String(rawPath || "")
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "");
+  if (!normalized) return false;
+  const base = path.posix.basename(normalized).toLowerCase();
+  if (!base) return false;
+  if (ALLOWED_ENV_TEMPLATES.has(base)) {
+    return false;
+  }
+  if (base === ".env" || base.startsWith(".env.")) {
+    return true;
+  }
+  const ext = path.posix.extname(base);
+  return BLACKLIST_EXTENSIONS.has(ext);
+};
+
+export const purgeDisallowedSecretFiles = (targetDir) => {
+  const removed = [];
+  const walk = (dir) => {
+    if (!dir || !fs.existsSync(dir)) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      console.warn(`[UploadGuard] Could not scan directory ${dir}: ${err.message}`);
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        if (isDisallowedSecretFile(entry.name)) {
+          try {
+            fs.rmSync(fullPath, { force: true });
+            removed.push(fullPath);
+          } catch (err) {
+            throw new Error(`Could not remove disallowed secret file: ${path.relative(targetDir, fullPath)}`);
+          }
+        }
+        continue;
+      }
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.isFile() && isDisallowedSecretFile(entry.name)) {
+        try {
+          fs.rmSync(fullPath, { force: true });
+          removed.push(fullPath);
+        } catch (err) {
+          throw new Error(`Could not remove disallowed secret file: ${path.relative(targetDir, fullPath)}`);
+        }
+      }
+    }
+  };
+  walk(targetDir);
+  return removed;
+};
 
 export const scanArchiveBomb = async (source, filename) => {
   const ext = path.extname(filename).toLowerCase();
@@ -100,8 +163,11 @@ export const scanArchiveBomb = async (source, filename) => {
         throw new Error("Nested archives are not allowed.");
       }
 
-      const entryExt = path.extname(rawPath).toLowerCase();
-      if (BLACKLIST_EXTENSIONS.includes(entryExt)) {
+      if (
+        file.type !== "Directory" &&
+        !rawPath.endsWith("/") &&
+        isDisallowedSecretFile(rawPath)
+      ) {
         throw new Error(`Disallowed file detected: ${rawPath}`);
       }
 
@@ -158,8 +224,7 @@ export const scanArchiveBomb = async (source, filename) => {
           throw new Error("Nested archives are not allowed.");
         }
 
-        const entryExt = path.extname(filePath).toLowerCase();
-        if (BLACKLIST_EXTENSIONS.includes(entryExt)) {
+        if (isDisallowedSecretFile(filePath)) {
           throw new Error(`Disallowed file detected: ${filePath}`);
         }
 

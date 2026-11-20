@@ -38,10 +38,10 @@ describe('automatic Run preparation',()=>{
     });
     it('prepares missing setup before discovery from an imported backend subdirectory without .git',async()=>{
         const root=fixture(),generate=jest.fn().mockResolvedValue(JSON.stringify(proposal)),progress=jest.fn();
-        const result=await prepareAutomaticAssessment({rootDir:path.join(root,'server'),input:{autoDiscover:true,runner:'playwright',executionMode:'full',model:'gemini-2.5-flash'},onProgress:progress,dependencies:{generate}});
+        const result=await prepareAutomaticAssessment({rootDir:path.join(root,'server'),input:{autoDiscover:true,runner:'playwright',executionMode:'full',model:'gemini-3.1-flash-lite'},onProgress:progress,dependencies:{generate}});
         expect(result.rootDir).toBe(fs.realpathSync(root));
         expect(result.input).toMatchObject({testFiles:['server/tests/todo.spec.js'],coverageScope:{frontend:{root:'client'},backend:{root:'server'}}});
-        expect(generate.mock.calls[0][1]).toBe('gemini-2.5-flash');
+        expect(generate.mock.calls[0][1]).toBe('gemini-3.1-flash-lite');
         expect(fs.existsSync(path.join(root,'.covai/system-test.json'))).toBe(true);
         expect(progress.mock.calls.some(([message])=>message.includes('configuration prepared'))).toBe(true);
         await prepareAutomaticAssessment({rootDir:root,input:{runner:'playwright',executionMode:'full'},dependencies:{generate}});

@@ -4,6 +4,7 @@ import path from "path";
 import util from "util";
 import { GitHubRepositoryAccessService } from "./github.service.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { purgeDisallowedSecretFiles } from "../middlewares/upload.middleware.js";
 
 const execAsync = util.promisify(exec);
 
@@ -111,6 +112,7 @@ export class GitHubCloneService {
         recursive: true,
         force: true,
       });
+      purgeDisallowedSecretFiles(repoDir);
 
       return {
         localPath: repoDir,

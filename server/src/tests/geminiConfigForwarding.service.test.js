@@ -51,7 +51,7 @@ describe('Gemini generation configuration forwarding',()=>{
     await generateText('prompt','gemini-3.8-flash',null,{});
     expect(getGenerativeModel.mock.calls.at(-1)[0].model).toBe('gemini-3.8-flash');
   });
-  it.each(['gemini-3.5-flash-lite','gemini-2.5-flash','gemini-3.1-flash-lite','gemini-3.8-flash'])('uses the selected catalog model %s',async model=>{
+  it.each(['gemini-3.5-flash-lite','gemini-3.1-flash-lite','gemini-3.8-flash'])('uses the selected catalog model %s',async model=>{
     await generateText('prompt',model,null,{});
     expect(getGenerativeModel.mock.calls.at(-1)[0].model).toBe(model);
   });

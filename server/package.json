@@ -9,8 +9,7 @@
     "db:push": "prisma db push",
     "start": "prisma generate && node index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:evaluation": "node --test src/tests/aiEvaluation.integration.test.mjs src/tests/aiEvaluation.contract.test.mjs",
-    "test:evaluation:ui": "node --test src/tests/aiEvaluation.browser.test.mjs"
+    "test:evaluation": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/tests/aiEvaluation"
   },
   "keywords": [],
   "author": "",

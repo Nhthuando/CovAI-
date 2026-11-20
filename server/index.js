@@ -120,11 +120,18 @@ app.use('/api/projects/:projectId/ai-evaluations', aiEvaluationRoutes);
 app.use("/api/projects", projectRoutes);
 if (process.env.AI_EVALUATION_ENABLED === 'true') {
   let recoveringEvaluation = false;
+  let startupReconciled = false;
   const recover = async () => {
     if (recoveringEvaluation) return;
     recoveringEvaluation = true;
-    try { await reconcileEvaluations(); } catch { console.error('[Evaluation] Recovery failed; check database and migration status'); }
-    finally { recoveringEvaluation = false; }
+    try {
+      await reconcileEvaluations(prisma, { startup: !startupReconciled });
+      startupReconciled = true;
+    } catch (err) {
+      console.error('[Evaluation] Recovery failed; check database and migration status:', err?.message || err);
+    } finally {
+      recoveringEvaluation = false;
+    }
   };
   void recover();
   setInterval(recover, 30000).unref();

@@ -68,9 +68,9 @@ describe('Evidence authorization boundaries', () => {
             const local=createAssessmentControllers({client:localClient,createJob,queue:async()=>({getSystemEvidenceRedis:()=>redis,addJobToQueue})});
             const localApp=express();localApp.use(express.json());localApp.use((req,res,next)=>{req.user={id:'owner'};next();});localApp.post('/:snapshotId/prepare',local.prepareCatalog);
             process.env.SYSTEM_MEASURED_COVERAGE_ENABLED='true';
-            const response=await request(localApp).post('/snapshot/prepare').set('X-Covai-AI-Model','gemini-2.5-flash').send({executionMode:'full'});
+            const response=await request(localApp).post('/snapshot/prepare').set('X-Covai-AI-Model','gemini-3.1-flash-lite').send({executionMode:'full'});
             expect(response.status).toBe(202);
-            expect(createJob.mock.calls[0][0].payloadJson).toMatchObject({autoDiscover:true,prepareOnly:true,executionMode:'full',model:'gemini-2.5-flash'});
+            expect(createJob.mock.calls[0][0].payloadJson).toMatchObject({autoDiscover:true,prepareOnly:true,executionMode:'full',model:'gemini-3.1-flash-lite'});
             expect(localClient.projectSnapshot.update).toHaveBeenCalledWith({where:{id:'snapshot'},data:{rootDir:fs.realpathSync(root)}});
             expect(addJobToQueue).toHaveBeenCalledWith('SYSTEM_TEST_ASSESSMENT','job');
             expect(fs.existsSync(path.join(root,'.covai/system-test.json'))).toBe(false);

@@ -1,0 +1,13 @@
+{
+  "name": "shop-assistant-sloppy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.21.2",
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^16.4.7"
+  }
+}

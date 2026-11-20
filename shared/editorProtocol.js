@@ -7,4 +7,5 @@ export function editorBinaryBytes(value) {
     if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     throw new Error('Invalid editor binary message.');
 }
-export const editorEnabled = () => typeof process !== 'undefined' && process.env.PROJECT_EDITOR_ENABLED === 'true';
+// Live editing is on unless explicitly disabled (PROJECT_EDITOR_ENABLED=false), so a rewritten .env cannot silently turn it off.
+export const editorEnabled = () => typeof process !== 'undefined' && String(process.env.PROJECT_EDITOR_ENABLED ?? '').trim().toLowerCase() !== 'false';
