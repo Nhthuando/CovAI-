@@ -1726,10 +1726,10 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
                 }
             }
         };
-        // Keep at most two AI requests in flight; CLI execution has its own
-        // shared semaphore. Preserve deterministic ordering within each pair.
-        for (let offset = 0; offset < targetFiles.length; offset += 2) {
-            await Promise.all(targetFiles.slice(offset, offset + 2).map(generateFile));
+        // Keep at most three AI requests in flight; CLI execution has its own
+        // shared semaphore. Preserve deterministic ordering within each batch.
+        for (let offset = 0; offset < targetFiles.length; offset += 3) {
+            await Promise.all(targetFiles.slice(offset, offset + 3).map(generateFile));
         }
         const order = new Map(targetFiles.map((file,index) => [file.filePath,index]));
         batchResults.sort((a,b) => order.get(a.sourceFile || a.targetSourceFile) - order.get(b.sourceFile || b.targetSourceFile));

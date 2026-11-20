@@ -2,15 +2,14 @@ import { SYSTEM_TEST_QUALITY_RULES } from './systemTestQuality.service.js';
 import { formatTestDesignForPrompt } from './systemValidationFacts.service.js';
 export const SYSTEM_PROMPT_VERSION = 'system-test-v4';
 export const SYSTEM_TEST_DESIGN_RULES = `Test design (plan before writing code):
-- List the user-facing features reachable in the UI: authentication, forms, lists, create/update/delete, search/filter, navigation.
-- For every form: one valid submission, each required field left empty, and every rule in "Validation facts" using boundary values
-  (just below, at, and just above each limit) plus one invalid value per format rule (email, pattern, number).
-- For authentication when the source supports it: successful sign-up/sign-in with credentials created inside the test,
-  wrong password, unknown account, and opening a protected page while signed out.
-- Name each test after the feature, the input class and the result, e.g. "Register rejects a 7-character password".
-- For rejected input assert the exact error text only when it appears in the validation facts or source; otherwise assert the
-  observable rejection (URL unchanged, form still shown, no new record listed).
-- Smoke or navigation tests alone are not enough when forms or validation rules exist. Never invent rules absent from source or requirements.`;
+- Cover the 4 core System E2E dimensions concisely (1 focused scenario per dimension rather than spawning many tiny tests):
+  1. Happy Flow: visit the primary page/workflow and assert expected rendered content, data list, or valid submission outcome.
+  2. Edge / Input: group related empty, invalid, and boundary checks for forms/inputs into a single coherent Edge scenario verifying rejection or validation feedback.
+  3. State / Auth: verify route transitions, sign-up/sign-in or auth guard behavior, and persistence across reload where supported.
+  4. Error / Fallback: verify error states, delete/cancel fallback, or unexpected API response recovery where supported.
+- Name each scenario clearly after the feature, input class, and expected result (e.g. "Register rejects empty and short passwords").
+- Assert exact observable errors from validation facts/source when known, or observable UI rejection (URL unchanged, form still shown, no new record listed).
+- Keep total generated scenario count strictly matched to the proposed required case budget (3–4 focused E2E scenarios max unless explicit multi-item checklist gaps demand more). Never invent rules absent from source or requirements.`;
 export const testDesignPromptSection = (context) => {
   const checklist = context?.testDesign || [];
   return formatTestDesignForPrompt({ facts: context?.validationFacts || [], checklist }) +

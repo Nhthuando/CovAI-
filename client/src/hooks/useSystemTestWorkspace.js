@@ -9,7 +9,7 @@ export default function useSystemTestWorkspace({ snapshotId, runner, executionMo
   useEffect(() => {
     let current = true;
     if (!snapshotId) return;
-    const query = new URLSearchParams({ runner, executionMode, limit: '20' });
+    const query = new URLSearchParams({ runner, limit: '20' });
     systemEvidenceRequest(snapshotId, `assessments/history?${query}`).then(async history => {
       const id = selectedId || history.items.find(row => row.status === 'COMPLETED')?.id;
       const assessment = id ? await systemEvidenceRequest(snapshotId, `assessments/${id}`) : null;

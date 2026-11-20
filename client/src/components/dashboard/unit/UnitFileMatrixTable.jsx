@@ -760,6 +760,13 @@ export default function UnitFileMatrixTable({
                                               <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px] font-mono">
                                                 {ann && (
                                                   <span
+                                                    title={
+                                                      ann.badgeType === "DUPLICATE"
+                                                        ? `Another test already covers "${ann.caseLabel}" — safe to delete if redundant.`
+                                                        : ann.badgeType === "OPTIONAL"
+                                                          ? `Supplementary scenario outside this file's required cases.`
+                                                          : `Assigned to cover required case "${ann.caseLabel}".`
+                                                    }
                                                     className={`px-1.5 py-0.5 rounded border ${
                                                       ann.badgeType === "DUPLICATE"
                                                         ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
@@ -767,7 +774,9 @@ export default function UnitFileMatrixTable({
                                                           ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
                                                           : ann.badgeType === "PRIMARY_FAIL"
                                                             ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-                                                            : "bg-sky-500/10 text-sky-400 border-sky-500/25"
+                                                            : ann.badgeType === "OPTIONAL"
+                                                              ? "border-dashed border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)]"
+                                                              : "bg-sky-500/10 text-sky-400 border-sky-500/25"
                                                     }`}
                                                   >
                                                     {ann.badgeLabel}

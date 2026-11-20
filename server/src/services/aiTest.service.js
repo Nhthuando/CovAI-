@@ -48,58 +48,10 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
   // 2.5 Ensure the job proceeds immediately to background processing.
   // The worker will load source code and extract endpoints asynchronously.
 
-  // 2.8 Pre-flight Dirty Check (F-03)
-  if (!force) {
-    const allTests = await db.aiTest.findMany({
-      where: { snapshotId: resolvedSnapshotId }
-    });
-    const existingTests = allTests.filter(t => {
-      if (!t.metaJson) return false;
-      try {
-        return JSON.parse(t.metaJson).framework === "SUPERTEST";
-      } catch { return false; }
-    });
-    
-    let hasEdits = false;
-    const targetSet = (targetEndpoints && Array.isArray(targetEndpoints) && targetEndpoints.length > 0)
-      ? new Set(targetEndpoints.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase()))
-      : null;
-
-    for (const test of existingTests) {
-      if (test.metaJson) {
-        try {
-          const meta = JSON.parse(test.metaJson);
-          if (targetSet) {
-            // Only check requests matching the targeted endpoints
-            const targetRequests = meta.requests?.filter(r => {
-              const k = `${r.method} ${r.path}`.toUpperCase();
-              return targetSet.has(k);
-            }) || [];
-            if (targetRequests.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
-              hasEdits = true;
-              break;
-            }
-          } else {
-            if (meta.userModified) {
-              hasEdits = true;
-              break;
-            }
-            if (meta.requests?.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
-              hasEdits = true;
-              break;
-            }
-          }
-        } catch (e) {}
-      }
-    }
-    
-    if (hasEdits) {
-      const err = new Error("Cannot overwrite user-edited integration scenarios.");
-      err.status = 409;
-      err.code = "USER_MODIFICATIONS_EXIST";
-      throw err;
-    }
-  }
+  // Non-destructive generation policy: existing user/manual scenarios are preserved
+  // alongside newly generated AI scenarios (no 409 overwrite prompt).
+  void force;
+  void projectId;
 
   // 3. Create job (deduped — reuses active job if exists)
   const job = await createAiTestsJob({

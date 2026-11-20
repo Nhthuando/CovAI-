@@ -1,31 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import { parse as babelParse } from "@babel/parser";
 import { ServiceError } from "../utils/serviceError.js";
 import { inside, normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { saveUnitTestFileVersions } from "./unitTestVersion.service.js";
 import { generateText, withGeminiChannel } from "./gemini.service.js";
 import { summarizeUnitFailure } from "../../../shared/unitTestCaseCoverage.js";
+import { extractUnitTestBlocks, parseTestAst as parseAst } from "../utils/testBlockExtractor.js";
 
-const PARSER_PLUGINS = [
-  "jsx",
-  "typescript",
-  "decorators-legacy",
-  "classProperties",
-  "classPrivateProperties",
-  "classPrivateMethods",
-  "optionalChaining",
-  "nullishCoalescingOperator",
-];
-
-function parseAst(code) {
-  return babelParse(code, {
-    sourceType: "unambiguous",
-    plugins: PARSER_PLUGINS,
-    errorRecovery: false,
-  });
-}
+export { extractUnitTestBlocks };
 
 function assertValidTestSyntax(code, label = "test file") {
   try {
@@ -68,89 +51,6 @@ function resolveSafeTestFile(snapshotRootDir, relTestFile, { mustExist = true } 
     absPath,
     relPath: path.relative(path.resolve(diskRoot), absPath).replace(/\\/g, "/"),
   };
-}
-
-function resolveCalleeName(callee) {
-  if (!callee) return "";
-  if (callee.type === "Identifier") return callee.name;
-  if (callee.type === "MemberExpression" && callee.object?.type === "Identifier") {
-    return callee.object.name;
-  }
-  return "";
-}
-
-function extractStringLiteral(node) {
-  if (!node) return "";
-  if (node.type === "StringLiteral") return node.value;
-  if (node.type === "TemplateLiteral" && node.quasis?.length === 1 && node.expressions?.length === 0) {
-    return node.quasis[0].value?.cooked ?? "";
-  }
-  return "";
-}
-
-/**
- * Parses `it(...)` and `test(...)` ExpressionStatement nodes with exact byte offsets.
- */
-export function extractUnitTestBlocks(code = "") {
-  let ast;
-  try {
-    ast = parseAst(code);
-  } catch (err) {
-    console.warn("[unitTestCaseOperations] AST parse warning:", err.message);
-    return [];
-  }
-
-  const blocks = [];
-  const describeBlocks = [];
-
-  const visit = (node, suitePath = []) => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) {
-      for (const child of node) visit(child, suitePath);
-      return;
-    }
-
-    if (node.type === "ExpressionStatement" && node.expression?.type === "CallExpression") {
-      const call = node.expression;
-      const calleeName = resolveCalleeName(call.callee);
-      const title = extractStringLiteral(call.arguments?.[0]);
-
-      if (calleeName === "describe" && title) {
-        describeBlocks.push({
-          title,
-          start: node.start,
-          end: node.end,
-          bodyStart: call.arguments?.[1]?.body?.start ?? null,
-          bodyEnd: call.arguments?.[1]?.body?.end ?? null,
-        });
-        visit(call.arguments?.[1], [...suitePath, title]);
-        return;
-      }
-
-      if ((calleeName === "it" || calleeName === "test") && title) {
-        blocks.push({
-          title,
-          suiteName: suitePath.join(" > "),
-          start: node.start,
-          end: node.end,
-          startLine: node.loc?.start?.line ?? 1,
-          endLine: node.loc?.end?.line ?? 1,
-          code: code.slice(node.start, node.end),
-        });
-        return;
-      }
-    }
-
-    for (const key of Object.keys(node)) {
-      if (key === "loc" || key === "start" || key === "end") continue;
-      const val = node[key];
-      if (val && typeof val === "object") visit(val, suitePath);
-    }
-  };
-
-  visit(ast.program?.body || [], []);
-  blocks.describeBlocks = describeBlocks;
-  return blocks;
 }
 
 function findMatchingBlock(blocks, targetTitle) {

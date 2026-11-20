@@ -54,6 +54,11 @@ import {
     updateUnitTestCaseController,
     deleteUnitTestCaseController,
     aiFixUnitTestCaseController,
+    getSystemTestCaseController,
+    addSystemTestCaseController,
+    updateSystemTestCaseController,
+    deleteSystemTestCaseController,
+    aiFixSystemTestCaseController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -80,6 +85,13 @@ router.get("/:snapshotId/system/tests/content", authMiddleware, getSystemTestFil
 router.put("/:snapshotId/system/tests/content", authMiddleware, updateSystemTestFileContent);
 router.post("/:snapshotId/system/tests/run-single", authMiddleware, runSingleSystemTest);
 router.post("/:snapshotId/system/optimize-test", authMiddleware, optimizeSystemTestController);
+
+// System test case CRUD & AI Fix routes (Integration-aligned Cockpit operations)
+router.get("/:snapshotId/system/test-case", authMiddleware, getSystemTestCaseController);
+router.post("/:snapshotId/system/test-case", authMiddleware, addSystemTestCaseController);
+router.put("/:snapshotId/system/test-case", authMiddleware, updateSystemTestCaseController);
+router.delete("/:snapshotId/system/test-case", authMiddleware, deleteSystemTestCaseController);
+router.post("/:snapshotId/system/test-case/ai-fix", authMiddleware, aiFixSystemTestCaseController);
 
 // GET /api/coverage/:snapshotId/files — fetch CoverageFile list
 // Query: ?sortBy=filePath|linesPct|branchesPct|funcsPct|stmtsPct&order=asc|desc&page=1&limit=50

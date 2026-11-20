@@ -1698,7 +1698,7 @@ function LayoutInner() {
                 </div>
               )}
               {(coverageType === "system" || visitedPanels.has("coverage:system")) && (
-                <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
+                <div className={coverageType === "system" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
                   <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'system'}>
                     {project?.id ? (
                       <SystemTestDashboard

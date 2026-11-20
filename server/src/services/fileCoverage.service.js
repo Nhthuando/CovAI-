@@ -856,9 +856,11 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
                     score -= 300;
                 }
 
-                // Direct import/require match - checks actual import/require statements
+                // Direct import/require match - checks actual SUT imports/requires, never mock declarations (jest.mock/unstable_mockModule)
                 const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const hasDirectImport = new RegExp(`(?:import|require|jest\\.mock|unstable_mockModule)\\s*\\(?\\s*['"][^'"]*\\b${escapedBase}(?:\\.[a-z0-9]+)?['"]`).test(content);
+                const nonMockContent = content
+                    .replace(/^\s*(?:await\s+)?(?:jest|vi)\.(?:mock|unstable_mockModule|doMock)\s*\([^)]*\)/gm, '');
+                const hasDirectImport = new RegExp(`(?:import(?:\\s+[\\s\\S]*?\\s+from)?|require)\\s*\\(?\\s*['"][^'"]*\\b${escapedBase}(?:\\.[cm]?[jt]sx?)?['"]`).test(nonMockContent);
 
                 const isNameMatch = (testBaseName === baseName) ||
                     testBaseName.startsWith(baseName) ||

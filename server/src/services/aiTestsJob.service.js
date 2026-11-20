@@ -7,7 +7,7 @@ import { updateJobStatus } from "./jobUpdate.service.js";
 import { buildAiPayload } from "./aiContextBuilder.service.js";
 import { buildFinalPrompt, buildPlaywrightPrompt } from "./aiPromptBuilder.service.js";
 import { buildCypressPrompt } from "./cypressPromptBuilder.service.js";
-import { buildSupertestPrompt } from "./supertestPromptBuilder.service.js";
+import { buildSupertestPrompt, detectBackendSubdir } from "./supertestPromptBuilder.service.js";
 import { generateText } from "./gemini.service.js";
 import { withGeminiFeature } from './geminiRouting.service.js';
 import { processAiSuggestions } from "./aiSuggestionParser.service.js";
@@ -509,7 +509,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
         if (mode === "SUPERTEST") {
             const { extractValidEndpoints } = await import("./apiEndpointParser.service.js");
             const allEndpoints = extractValidEndpoints(payload.sourceCode || []);
-            const CHUNK_SIZE = 4;
+            const CHUNK_SIZE = 8;
             const allTestsCombined = [];
             const suggestionsCombined = [];
             let summaryCombined = { message: "" };
@@ -733,31 +733,27 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 });
             }
 
-            const MAX_RETRIES = 2;
+            const MAX_RETRIES = 1;
             let currentQueue = [];
             for (const key of allTrackerKeys) {
                 const tr = endpointTracker.get(key);
-                const missingCases = tr.requiredCases.filter(
-                    (rc) => !tr.coveredCaseKeys.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
+                const fullRequiredCases = tr.requiredCases.filter(
+                    (rc) => !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
                 );
                 if (tr.existingScenarios.length > 0) {
                     const existingLabels = tr.requiredCases
                         .filter((rc) => tr.preExistingCaseKeys.has(rc.key))
                         .map((rc) => rc.label)
                         .join(", ") || `${tr.existingScenarios.length} scenario(s)`;
-                    if (missingCases.length === 0) {
-                        await addJobLog(jobId, "INFO", `Endpoint ${key} already covers all required cases (${existingLabels}) via existing tests. Skipping duplicate AI generation.`);
-                        continue;
-                    }
-                    await addJobLog(jobId, "INFO", `Endpoint ${key} already covers [${existingLabels}] via existing tests. Generating only missing cases: [${missingCases.map((c) => c.label).join(", ")}].`);
+                    await addJobLog(jobId, "INFO", `Endpoint ${key} preserves ${tr.existingScenarios.length} existing user/project scenario(s) [${existingLabels}] while generating the full proposed case suite ([${fullRequiredCases.map((c) => c.label).join(", ")}]).`);
                 }
-                if (missingCases.length > 0) {
+                if (fullRequiredCases.length > 0) {
                     currentQueue.push(key);
                 }
             }
             let generationCycles = 0;
 
-            while (currentQueue.length > 0 && generationCycles < 5) { // Limit total cycles to prevent infinite loops
+            while (currentQueue.length > 0 && generationCycles < 2) {
                 if (isJobCanceled(jobId, abortController.signal)) {
                     await addJobLog(jobId, "INFO", "Generation loop stopped due to job cancellation.");
                     break;
@@ -786,18 +782,20 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                         progress: chunkProgress 
                     }));
 
-                    // We instruct the model precisely for the missing required contract cases only
+                    // Request the FULL proposed required cases for each endpoint (preserving any existing user scenarios separately;
+                    // duplicate/coverage annotations will label redundant overlap without discarding user tests).
                     const batchNeededCases = new Map();
                     const promptChunk = chunkEndpoints.map(ep => {
                         const key = `${ep.method} ${ep.fullPath}`;
                         const tr = endpointTracker.get(key);
-                        const missingCases = tr.requiredCases.filter(
-                            (rc) => !tr.coveredCaseKeys.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
+                        const generatedSoFar = tr.generatedCaseKeys || (tr.generatedCaseKeys = new Set());
+                        const neededCases = tr.requiredCases.filter(
+                            (rc) => !generatedSoFar.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
                         );
-                        batchNeededCases.set(key, new Set(missingCases.map((rc) => rc.key)));
+                        batchNeededCases.set(key, new Set(neededCases.map((rc) => rc.key)));
                         return {
                             ...ep,
-                            missingCoverageRequested: missingCases.map((rc) => rc.promptHint),
+                            missingCoverageRequested: neededCases.map((rc) => rc.promptHint),
                             existingScenarios: tr.existingScenarios,
                         };
                     });
@@ -871,12 +869,23 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                 taskType: "integration",
                                 temperature: 0.2,
                                 maxOutputTokens: 3500,
+                                requestTimeoutMs: 45000,
+                                totalTimeoutMs: 90000,
+                                maxAttempts: 2,
                             }
                         ));
                         
                         if (supertestResponseText) {
                             try {
-                                const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, { projectId, snapshotId, moduleType: projectModuleType });
+                                const backendSubdir = detectBackendSubdir(payload?.sourceCode || [], payload?.testFiles || []);
+                                const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, {
+                                    projectId,
+                                    snapshotId,
+                                    moduleType: projectModuleType,
+                                    sourceCode: payload?.sourceCode || [],
+                                    rootDir: job.snapshot?.rootDir || null,
+                                    backendSubdir,
+                                });
 
                                 // VALIDATION: Strict per-endpoint output validation
                                 const validTestsForBatch = [];
@@ -905,15 +914,19 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                             expectedStatuses: req.expectedStatuses,
                                         });
 
-                                        // Enforce strict non-duplication against existing tests and already-generated cases
-                                        if (tr.preExistingCaseKeys.has(caseKey) || !neededSet.has(caseKey)) {
+                                        // Enforce non-duplication ONLY within the newly generated AI batch itself;
+                                        // do NOT prune AI scenarios when the user already has pre-existing scenarios,
+                                        // so full proposed cases coexist alongside user tests with Duplicate/Case labels.
+                                        const generatedSoFar = tr.generatedCaseKeys || (tr.generatedCaseKeys = new Set());
+                                        if (!neededSet.has(caseKey) || generatedSoFar.has(caseKey)) {
                                             rejectedScenarios++;
-                                            await addJobLog(jobId, "INFO", `Pruned duplicate/redundant scenario '${req.testName}' for '${matchedKey}': Case '${caseKey}' is already covered.`);
+                                            await addJobLog(jobId, "INFO", `Pruned intra-batch duplicate AI scenario '${req.testName}' for '${matchedKey}' (case '${caseKey}').`);
                                             rejectedRequests.push(req);
                                             continue;
                                         }
 
                                         neededSet.delete(caseKey);
+                                        generatedSoFar.add(caseKey);
                                         tr.coveredCaseKeys.add(caseKey);
                                         tr.generatedCount++;
 
@@ -969,11 +982,12 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                         await addJobLog(jobId, "ERROR", `Provider generation failed for batch ${batchId}: ${genErr.message}`);
                     }
                     
-                    // Evaluate missing coverage for the chunk and queue retries
+                    // Evaluate missing generated cases for the chunk and queue retries so the full proposed suite is produced
                     for (const key of chunkKeys) {
                         const tr = endpointTracker.get(key);
+                        const generatedSoFar = tr.generatedCaseKeys || new Set();
                         const missingCases = tr.requiredCases.filter(
-                            (rc) => !tr.coveredCaseKeys.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
+                            (rc) => !generatedSoFar.has(rc.key) && !(tr.negativeNotApplicable && rc.key !== "HAPPY"),
                         );
                         const isComplete = missingCases.length === 0 || Boolean(tr.generationCompleted);
                         if (!isComplete) {

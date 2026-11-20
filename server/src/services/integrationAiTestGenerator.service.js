@@ -346,9 +346,9 @@ export const buildIntegrationTestPrompt = ({
         prompt += `- Target file path MUST start with: \`tests/integration/\` (e.g. \`tests/integration/orders.test.js\`).\n\n`;
     }
 
-    prompt += `### 2. REQUIRED CASE CONTRACT & ANTI-DUPLICATION RULES\n`;
-    prompt += `- Generate **EXACTLY ONE** dedicated \`${isPlaywright ? "test" : "it"}(...)\` block for each **missing required case** listed on an endpoint.\n`;
-    prompt += `- Do **NOT** duplicate any case already covered in \`Already Covered Existing Scenarios\`.\n`;
+    prompt += `### 2. REQUIRED CASE CONTRACT & STRICT TOKEN-SAVING CAP\n`;
+    prompt += `- Generate **EXACTLY ONE** dedicated \`${isPlaywright ? "test" : "it"}(...)\` block for each item under **Required Cases to Generate** (1 test per case, **NO MORE, NO LESS** — never add extra exploratory tests beyond that exact count).\n`;
+    prompt += `- Existing user scenarios are always preserved separately; still generate the exact N required cases per endpoint so overlaps can be inspected and triaged by the user.\n`;
     prompt += `- **STRICT STATUS ASSERTION:** Assert ONE exact HTTP status code per test (e.g. \`expect(res.status).toBe(200)\`, \`400\`, \`404\`). NEVER hedge with \`expect([200, 201, 404]).toContain(res.status)\`.\n\n`;
 
     prompt += `### 3. DEEP API ENDPOINT INVENTORY & SOURCE CONTEXT\n\n`;
@@ -364,10 +364,10 @@ export const buildIntegrationTestPrompt = ({
 
         prompt += `#### Endpoint: \`${deepCtx.method} ${deepCtx.path}\`\n`;
         prompt += `- Controller File: \`${deepCtx.controllerFile}\`\n`;
-        prompt += `- Missing Required Cases to Generate: ${requiredHints.join(" | ")}\n`;
+        prompt += `- Required Cases to Generate (EXACT COUNT = ${requiredHints.length}): ${requiredHints.join(" | ")}\n`;
 
         if (Array.isArray(ep.existingScenarios) && ep.existingScenarios.length > 0) {
-            prompt += `- **Already Covered Existing Scenarios (DO NOT DUPLICATE)**:\n`;
+            prompt += `- **Existing User Scenarios (Preserved Separately — Reference Only)**:\n`;
             ep.existingScenarios.forEach((ex) => {
                 prompt += `  * \`${ex.testName}\` (${ex.caseLabel || ex.caseKey}, Expected ${ex.expectedStatus || "asserted"})\n`;
             });

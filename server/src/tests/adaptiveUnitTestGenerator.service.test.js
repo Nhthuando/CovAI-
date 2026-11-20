@@ -636,9 +636,8 @@ export function compute(x) {
                 unitTestContext
             });
 
-            expect(prompt).toContain("MANDATORY DELTA DECISION TABLE");
-            expect(prompt).toContain("CRITICAL NON-DUPLICATION INVARIANT");
-            expect(prompt).toContain("Never re-test already covered scenarios");
+            expect(prompt).toContain("MANDATORY COMPLETE CASE SUITE");
+            expect(prompt).toContain("STRUCTURED COEXISTENCE WITH EXISTING TESTS");
             expect(prompt).toContain("Never generate fake or tautological assertions");
             expect(prompt).toContain("expect(true).toBe(true)");
         });

@@ -166,13 +166,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
   try {
     await markJobRunning(jobId);
     const job = await getJobById(jobId);
-    if (
-      job?.snapshot?.rootDir &&
-      /^\/?app\/(?:storage|uploads)\//i.test(
-        String(job.snapshot.rootDir).replace(/\\/g, "/"),
-      ) &&
-      !fs.existsSync(job.snapshot.rootDir)
-    ) {
+    if (job?.snapshot?.rootDir) {
       job.snapshot.rootDir =
         resolveSnapshotRootDir(job.snapshot.rootDir) || job.snapshot.rootDir;
     }
@@ -213,6 +207,20 @@ export const processSystemTestAnalysisJob = async (jobId) => {
           ? execution.command + specArg
           : execution.command.slice(0, redirection) + specArg + execution.command.slice(redirection);
       }
+    }
+    if (Array.isArray(payload.selectedFiles) && payload.selectedFiles.length > 0) {
+      execution.selectedFiles = payload.selectedFiles.map((f) =>
+        resolveSystemTestFile(job.snapshot.rootDir, execution.rootDir || job.snapshot.rootDir, f),
+      );
+      if (!execution.testFile && execution.selectedFiles.length === 1) {
+        execution.testFile = execution.selectedFiles[0];
+      }
+    }
+    if (Array.isArray(payload.selectedTitles) && payload.selectedTitles.length > 0) {
+      execution.selectedTitles = payload.selectedTitles;
+    }
+    if (payload.headed) {
+      execution.headed = true;
     }
 
     await broadcastJobProgress(jobId, {

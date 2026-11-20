@@ -28,6 +28,15 @@ export const resolveSystemTestFile = (rootDir, runnerRoot, testFile) => {
 
 export const prepareFullSystemExecution = async ({rootDir,execution,jobId,onProgress=async()=>{},dependencies={}}) => {
     const runnerRoot=execution.rootDir || rootDir;
+    if(Array.isArray(execution.selectedFiles) && execution.selectedFiles.length > 0) {
+        const validated = execution.selectedFiles.map(f => {
+            const abs = path.isAbsolute(f) ? f : resolveSystemTestFile(rootDir, runnerRoot, f);
+            try { validateFullSystemTest(fs.readFileSync(abs,'utf8')); }
+            catch(error) { throw new ServiceError(`${path.relative(rootDir,abs).replace(/\\/g,'/')}: ${error.message}`,422); }
+            return abs;
+        });
+        return {execution:{...execution,selectedFiles:validated}};
+    }
     if(execution.testFile) {
         const file=resolveSystemTestFile(rootDir,runnerRoot,execution.testFile);
         try { validateFullSystemTest(fs.readFileSync(file,'utf8')); }

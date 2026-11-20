@@ -47,8 +47,10 @@ import {
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
+import SystemTestWorkspace from "./system/SystemTestWorkspace.jsx";
+
 export default function SystemTestDashboard(props) {
-  return <SystemTestDashboardWorkspace key={`${props.projectId}:${props.snapshotId}`} {...props} />;
+  return <SystemTestWorkspace key={`${props.projectId}:${props.snapshotId}`} {...props} />;
 }
 
 function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = null, onOpenFile, onChatContextChange, onOpenJobQueue }) {

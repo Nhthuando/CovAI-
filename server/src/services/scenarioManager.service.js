@@ -1184,6 +1184,18 @@ export const flushStagedIntegrationDeletesToDisk = async ({
   return { appliedDeletions, filesUpdated };
 };
 
+const isUserOwnedIntegrationScenario = (r) => {
+  const origin = String(r?.origin || "").toUpperCase();
+  return Boolean(
+    r?.userEdited ||
+      r?.isManuallyAdded ||
+      r?.enabled === false ||
+      origin === "USER_ADDED" ||
+      origin === "USER_MODIFIED" ||
+      origin === "PROJECT_EXISTING",
+  );
+};
+
 export const stripAiScenariosService = (aiTest) => {
   let meta = {};
   if (aiTest.metaJson) {
@@ -1193,13 +1205,12 @@ export const stripAiScenariosService = (aiTest) => {
   }
   const requests = Array.isArray(meta.requests) ? meta.requests : [];
 
-  // If no manual scenarios, return null to indicate file should be deleted
-  const hasManual = requests.some((r) => r.userEdited);
-  if (!hasManual) return null;
+  // Preserve ALL user-owned/manual/existing/disabled scenarios; strip only old AI-generated items
+  const manualRequests = requests.filter(isUserOwnedIntegrationScenario);
+  if (manualRequests.length === 0) return null;
 
   const ast = parseCode(aiTest.content);
-  const aiRequests = requests.filter((r) => !r.userEdited);
-  const manualRequests = requests.filter((r) => r.userEdited);
+  const aiRequests = requests.filter((r) => !isUserOwnedIntegrationScenario(r));
 
   for (const r of aiRequests) {
     let nameIndex = 0;

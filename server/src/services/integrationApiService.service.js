@@ -13,6 +13,7 @@ import {
   updateScenarioService,
   getScenarioService,
   regenerateScenarioService,
+  pruneScenariosFromCode,
 } from "./scenarioManager.service.js";
 import { createSnapshotJob } from "./job.service.js";
 const invalidateAfterCommit = (snapshotId) =>
@@ -282,55 +283,9 @@ export const queueIntegrationTestGenerationService = async ({
   });
   const normFramework = normalizeFramework(framework);
 
-  // Pre-flight dirty check (F-03): Check if user edited scenarios exist on targeted endpoints
-  if (!force) {
-    const existingAiTests = await prisma.aiTest.findMany({
-      where: { snapshotId },
-    });
-    const targetSet =
-      Array.isArray(targetEndpoints) && targetEndpoints.length > 0
-        ? new Set(
-            targetEndpoints.map((t) =>
-              typeof t === "string"
-                ? t.trim().toUpperCase()
-                : `${t.method} ${t.path}`.trim().toUpperCase(),
-            ),
-          )
-        : null;
-
-    for (const test of existingAiTests) {
-      if (!test.metaJson) continue;
-      try {
-        const meta =
-          typeof test.metaJson === "string"
-            ? JSON.parse(test.metaJson)
-            : test.metaJson;
-        if (meta.framework !== normFramework) continue;
-
-        if (targetSet) {
-          const matchedReqs = (meta.requests || []).filter((r) =>
-            targetSet.has(`${r.method} ${r.path}`.toUpperCase()),
-          );
-          if (matchedReqs.some((r) => r.userEdited || r.enabled === false)) {
-            throw new ServiceError(
-              "Cannot overwrite user-edited integration scenarios. Pass force=true to override.",
-              409,
-            );
-          }
-        } else if (
-          meta.userModified ||
-          (meta.requests || []).some((r) => r.userEdited || r.enabled === false)
-        ) {
-          throw new ServiceError(
-            "Cannot overwrite user-edited integration scenarios. Pass force=true to override.",
-            409,
-          );
-        }
-      } catch (err) {
-        if (err.statusCode === 409) throw err;
-      }
-    }
-  }
+  // Non-destructive generation policy: existing user/manual scenarios are preserved
+  // alongside newly generated AI scenarios cleanly.
+  void force;
 
   const payload = {
     mode: "INTEGRATION_GENERATION",
@@ -467,11 +422,11 @@ export const runIntegrationGenerationPipeline = async ({
         caseLabel: matchedDef?.label || caseKey,
       };
     });
-    const missingCases = requiredCases.filter((rc) => !coveredKeys.has(rc.key));
     return {
       ...ep,
       existingScenarios,
-      missingCoverageRequested: missingCases.map((rc) => rc.promptHint),
+      // Always generate the exact N required cases (existing user tests stay preserved separately)
+      missingCoverageRequested: requiredCases.map((rc) => rc.promptHint),
     };
   });
 
@@ -602,7 +557,42 @@ export const runIntegrationGenerationPipeline = async ({
       ? "tests/api/api-integration.spec.js"
       : "tests/integration/api-integration.test.js";
 
-  const testRequests = extractTestRequests(cleanedCode, targetFilePath);
+  const originalTestRequests = extractTestRequests(cleanedCode, targetFilePath);
+  const seenGeneratedCaseKeys = new Map();
+  const keptRequests = [];
+  const prunedRequests = [];
+  for (const r of originalTestRequests) {
+    const matchedEp = endpointsToGenerate.find((ep) => {
+      const epMethod = String(ep.method || "GET").toUpperCase();
+      if (String(r.method || "").toUpperCase() !== epMethod) return false;
+      const epPath = (ep.fullPath || ep.path || "/").replace(/\/+$/, "") || "/";
+      const cleanReq = String(r.path || "/").split("?")[0].replace(/\/+$/, "") || "/";
+      return new RegExp("^" + epPath.replace(/:[^\/]+/g, "[^/]+") + "$").test(cleanReq);
+    });
+    if (!matchedEp) {
+      prunedRequests.push(r);
+      continue;
+    }
+    const epKey = `${String(matchedEp.method || "GET").toUpperCase()} ${matchedEp.fullPath || matchedEp.path || "/"}`;
+    const reqCaseSet = new Set(getEndpointRequiredCases(matchedEp).map((c) => c.key));
+    const caseKey = getScenarioCaseKey({
+      title: r.testName,
+      expectedStatus: r.expectedStatus,
+      expectedStatuses: r.expectedStatuses,
+    });
+    const usedCases = seenGeneratedCaseKeys.get(epKey) || new Set();
+    if (!reqCaseSet.has(caseKey) || usedCases.has(caseKey)) {
+      prunedRequests.push(r);
+      continue;
+    }
+    usedCases.add(caseKey);
+    seenGeneratedCaseKeys.set(epKey, usedCases);
+    keptRequests.push(r);
+  }
+  if (keptRequests.length > 0 && prunedRequests.length > 0) {
+    cleanedCode = pruneScenariosFromCode(cleanedCode, originalTestRequests, prunedRequests);
+  }
+  const testRequests = keptRequests.length > 0 ? keptRequests : originalTestRequests;
   const requestsMeta = testRequests.map((r) => ({
     scenarioId: crypto.randomUUID(),
     testName: r.testName,

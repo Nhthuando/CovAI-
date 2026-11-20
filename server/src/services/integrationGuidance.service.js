@@ -332,43 +332,69 @@ function isLineInLoc(targetLine, loc) {
  * @param {number} targetLine - 1-based line number that is not covered
  * @returns {Array<{type: string, condition: string, requiredBranch: string, line: number, status?: string}>}
  */
+function isIgnoredCoveragePath(filePath = "") {
+    const norm = String(filePath || "").replace(/\\/g, "/").toLowerCase();
+    return (
+        /(?:^|\/)(?:node_modules|playwright-report|test-results|coverage|coverage-report|dist|build|\.covai-temp|\.nyc_output|\.git)(?:\/|$)/.test(norm) ||
+        /\.min\.[cm]?js$|\.bundle\.[cm]?js$/i.test(norm)
+    );
+}
+
+function isMinifiedOrOversizedSource(code = "") {
+    if (!code || code.length > 150000) return true;
+    const lines = code.split("\n");
+    return lines.length > 0 && code.length / lines.length > 350;
+}
+
+function buildBackwardPathAstCache(sourceCode) {
+    if (!sourceCode || isMinifiedOrOversizedSource(sourceCode)) return null;
+    try {
+        const ast = parse(sourceCode, {
+            sourceType: 'unambiguous',
+            plugins: ['jsx', 'typescript'],
+            ranges: true,
+            errorRecovery: true
+        });
+        const locatedPaths = [];
+        traverseAst(ast, {
+            enter(p) {
+                if (p.node?.loc) {
+                    locatedPaths.push(p);
+                }
+            }
+        });
+        return { ast, locatedPaths };
+    } catch (e) {
+        console.warn('[BackwardPathSlicing] Failed to parse source code:', e.message);
+        return null;
+    }
+}
+
 export function extractBackwardPathConstraints(sourceCode, targetLine, options = {}) {
     if (!sourceCode || typeof targetLine !== 'number' || targetLine <= 0) {
         return [];
     }
 
-    let ast;
-    try {
-        ast = parse(sourceCode, {
-            sourceType: 'module',
-            plugins: ['jsx', 'typescript'],
-            ranges: true,
-            errorRecovery: true
-        });
-    } catch (e) {
-        console.warn('[BackwardPathSlicing] Failed to parse source code:', e.message);
-        return [];
-    }
+    const cache = options.astCache || buildBackwardPathAstCache(sourceCode);
+    if (!cache) return [];
 
-    // Find innermost node covering targetLine
+    // Find innermost node covering targetLine using pre-indexed AST paths
     let targetPath = null;
     let smallestSpan = Infinity;
 
-    traverseAst(ast, {
-        enter(path) {
-            const loc = path.node.loc;
-            if (!loc) return;
-            if (isLineInLoc(targetLine, loc)) {
-                const lineSpan = loc.end.line - loc.start.line;
-                const colSpan = (loc.end.column ?? 0) - (loc.start.column ?? 0);
-                const span = lineSpan * 1000 + colSpan;
-                if (span <= smallestSpan) {
-                    smallestSpan = span;
-                    targetPath = path;
-                }
+    for (const p of cache.locatedPaths) {
+        const loc = p.node.loc;
+        if (!loc) continue;
+        if (isLineInLoc(targetLine, loc)) {
+            const lineSpan = loc.end.line - loc.start.line;
+            const colSpan = (loc.end.column ?? 0) - (loc.start.column ?? 0);
+            const span = lineSpan * 1000 + colSpan;
+            if (span <= smallestSpan) {
+                smallestSpan = span;
+                targetPath = p;
             }
         }
-    });
+    }
 
     if (!targetPath) {
         return [];
@@ -669,7 +695,8 @@ export async function resolvePathConstraintsForProject(analytics, options = {}) 
 
         const allConstraints = [];
         for (const [coveredFilePath, covEntry] of Object.entries(coverageFinal)) {
-            const uncoveredBranches = findUncoveredBranches(coverageFinal, coveredFilePath);
+            if (isIgnoredCoveragePath(coveredFilePath)) continue;
+            const uncoveredBranches = findUncoveredBranches(coverageFinal, coveredFilePath).slice(0, 30);
             if (!uncoveredBranches.length) continue;
 
             let code = null;
@@ -726,6 +753,9 @@ export async function resolvePathConstraintsForProject(analytics, options = {}) 
                 ? path.relative(snapshot.rootDir, coveredFilePath).replace(/\\/g, '/')
                 : coveredFilePath.replace(/\\/g, '/');
 
+            const astCache = buildBackwardPathAstCache(code);
+            if (!astCache) continue;
+
             for (const branch of uncoveredBranches) {
                 const targetLine = branch.location?.start?.line || branch.line;
                 if (!targetLine) {
@@ -744,6 +774,7 @@ export async function resolvePathConstraintsForProject(analytics, options = {}) 
                 }
 
                 const constraints = extractBackwardPathConstraints(code, targetLine, {
+                    astCache,
                     branchIndex: branch.branchIndex,
                     branchType: branch.type,
                     location: branch.location
@@ -796,7 +827,10 @@ export function extractConstraintsFromCoverage(coverageFinal, sourceCodeOrFiles,
 
     if (typeof sourceCodeOrFiles === 'string') {
         const filePath = defaultFilePath || Object.keys(coverageFinal)[0] || 'source.js';
-        const uncovered = findUncoveredBranches(coverageFinal, filePath);
+        if (isIgnoredCoveragePath(filePath)) return results;
+        const astCache = buildBackwardPathAstCache(sourceCodeOrFiles);
+        if (!astCache) return results;
+        const uncovered = findUncoveredBranches(coverageFinal, filePath).slice(0, 30);
         for (const branch of uncovered) {
             const targetLine = branch.location?.start?.line || branch.line;
             if (!targetLine) {
@@ -814,6 +848,7 @@ export function extractConstraintsFromCoverage(coverageFinal, sourceCodeOrFiles,
                 continue;
             }
             const constraints = extractBackwardPathConstraints(sourceCodeOrFiles, targetLine, {
+                astCache,
                 branchIndex: branch.branchIndex,
                 branchType: branch.type,
                 location: branch.location
@@ -842,11 +877,15 @@ export function extractConstraintsFromCoverage(coverageFinal, sourceCodeOrFiles,
         }
     } else if (Array.isArray(sourceCodeOrFiles)) {
         for (const file of sourceCodeOrFiles) {
-            const uncovered = findUncoveredBranches(coverageFinal, file.path);
+            if (isIgnoredCoveragePath(file.path)) continue;
+            const astCache = buildBackwardPathAstCache(file.content);
+            if (!astCache) continue;
+            const uncovered = findUncoveredBranches(coverageFinal, file.path).slice(0, 30);
             for (const branch of uncovered) {
                 const targetLine = branch.location?.start?.line || branch.line;
                 if (!targetLine) continue;
                 const constraints = extractBackwardPathConstraints(file.content, targetLine, {
+                    astCache,
                     branchIndex: branch.branchIndex,
                     branchType: branch.type,
                     location: branch.location

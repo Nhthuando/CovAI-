@@ -17,10 +17,15 @@ function collectFiles(dir, isMatch, rootDir = dir) {
                 item === "node_modules" ||
                 item === ".git" ||
                 item === "coverage" ||
+                item === "coverage-report" ||
                 item === "dist" ||
                 item === "build" ||
                 item === ".covai-temp" ||
-                item === "test-results"
+                item === "test-results" ||
+                item === "playwright-report" ||
+                item === ".nyc_output" ||
+                item === ".next" ||
+                item === ".nuxt"
             ) continue;
 
             const itemPath = path.join(dir, item);
@@ -29,6 +34,7 @@ function collectFiles(dir, isMatch, rootDir = dir) {
             if (stat.isDirectory()) {
                 results = results.concat(collectFiles(itemPath, isMatch, rootDir));
             } else {
+                if (/\.min\.[cm]?js$|\.bundle\.[cm]?js$/i.test(item)) continue;
                 if (isMatch(item, itemPath)) {
                     // Limit file size to avoid loading huge minified or generated files
                     if (stat.size <= 500 * 1024) { // max 500KB per file

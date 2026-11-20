@@ -35,9 +35,18 @@ const toFrameDataUri = frame => {
   return `data:${mime};base64,${frame}`;
 };
 
-export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, initialAssessmentId = null }) {
+export default function SystemTestLiveRun({
+  projectId,
+  snapshotId,
+  activeJobId,
+  initialAssessmentId = null,
+  specGroups = [],
+  runningTests = false,
+  onRunScenario = null,
+}) {
   const access = useProjectAccess(projectId);
   const { userId } = useAuth();
+  const [selectedCaseKey, setSelectedCaseKey] = useState('');
   const [jobActor, setJobActor] = useState(null);
   const [accessRevoked, setAccessRevoked] = useState(false);
   const [assessmentId, setAssessmentId] = useState(initialAssessmentId);
@@ -297,6 +306,24 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
     }
   };
 
+  const liveScenarios = [];
+  for (const g of specGroups || []) {
+    for (const sc of g.scenarios || []) {
+      const title = sc.title || sc.testName;
+      if (!title || sc.origin === 'AI_DRAFT') continue;
+      liveScenarios.push({
+        key: `${g.filePath}::${title}`,
+        filePath: sc.testFile || g.filePath,
+        title,
+        status: sc.status,
+        group: g,
+        scenario: sc,
+      });
+    }
+  }
+  const activeSelectedCase =
+    liveScenarios.find((item) => item.key === selectedCaseKey) || liveScenarios[0] || null;
+
   return (
     <section
       className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden font-sans"
@@ -336,24 +363,54 @@ export default function SystemTestLiveRun({ projectId, snapshotId, activeJobId, 
           </div>
         </div>
 
-        <button
-          type="button"
-          disabled={!mayStop || stopping || !activeJobId || isAllFinished}
-          onClick={handleStopRun}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-rose-500/30 bg-rose-500/[0.07] text-rose-400 hover:bg-rose-500/15 text-xs font-medium transition-colors duration-150 cursor-pointer disabled:opacity-45"
-        >
-          {stopping ? (
-            <>
-              <Loader2 size={13} className="animate-spin" />
-              Stopping…
-            </>
-          ) : (
-            <>
-              <Square size={12} fill="currentColor" />
-              Stop Run
-            </>
+        <div className="flex flex-wrap items-center gap-2">
+          {onRunScenario && liveScenarios.length > 0 && access.can('tests.run') && (
+            <div className="flex items-center gap-1.5">
+              <select
+                value={activeSelectedCase?.key || ''}
+                onChange={(e) => setSelectedCaseKey(e.target.value)}
+                disabled={runningTests}
+                className="max-w-[260px] px-2.5 py-1.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-mono truncate focus:outline-none focus:border-[var(--color-primary)]"
+                title="Select an individual E2E test case to simulate live"
+              >
+                {liveScenarios.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.filePath} › {item.title}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={runningTests || !activeSelectedCase}
+                onClick={() => activeSelectedCase && onRunScenario(activeSelectedCase.scenario, activeSelectedCase.group)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 cursor-pointer disabled:opacity-45"
+                title="Run only this test case in the live browser simulator"
+              >
+                <Play size={12} fill="currentColor" />
+                <span>Run Case Live</span>
+              </button>
+            </div>
           )}
-        </button>
+
+          <button
+            type="button"
+            disabled={!mayStop || stopping || !activeJobId || isAllFinished}
+            onClick={handleStopRun}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-rose-500/30 bg-rose-500/[0.07] text-rose-400 hover:bg-rose-500/15 text-xs font-medium transition-colors duration-150 cursor-pointer disabled:opacity-45"
+          >
+            {stopping ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                Stopping…
+              </>
+            ) : (
+              <>
+                <Square size={12} fill="currentColor" />
+                Stop Run
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {error && (

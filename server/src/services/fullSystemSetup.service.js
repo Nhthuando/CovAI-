@@ -73,7 +73,7 @@ const generateSetupProposal = async ({ prompt, generate, onProgress }) => {
     throw new ServiceError(`AI returned invalid Full Stack setup JSON after 2 attempts (${reason}); no configuration was written`, 422);
 };
 
-const ignored = new Set([...runtimeIgnoredDirectories,'.covai','__tests__','__mocks__','.yarn','vendor']);
+const ignored = new Set([...runtimeIgnoredDirectories,'.covai','__tests__','__mocks__','.yarn','vendor','playwright-report','test-results','coverage','blob-report','.nyc_output']);
 const redact = content => content
     .replace(/((?:password|secret|token|api[_-]?key|private[_-]?key)["']?\s*[:=]\s*)['"`][^'"`]*['"`]/gi, '$1"[redacted]"')
     .replace(/(?:mysql|postgres(?:ql)?|mongodb(?:\+srv)?):\/\/[^\s'"`]+/gi, '[redacted connection URL]')
@@ -104,6 +104,22 @@ export const inspectSystemSetupSource = root => {
         }
     };
     walk(root);
+    // Deterministically ensure each package's schema and entrypoints are present even if the 120KB walk budget truncated earlier folders.
+    const seenPaths = new Set(files.map(f => f.path));
+    for (const pkg of packages) {
+        const prefix = pkg.directory === '.' ? '' : pkg.directory + '/';
+        for (const relCandidate of ['prisma/schema.prisma', 'schema.prisma', 'init.sql', 'schema.sql', 'src/index.js', 'src/app.js', 'src/server.js', 'index.js', 'app.js', 'server.js']) {
+            const relPath = prefix + relCandidate;
+            if (seenPaths.has(relPath)) continue;
+            try {
+                const abs = containedPath(root, relPath);
+                if (fs.existsSync(abs) && fs.statSync(abs).isFile() && fs.statSync(abs).size <= 80000) {
+                    files.push({ path: relPath, content: redact(fs.readFileSync(abs, 'utf8')) });
+                    seenPaths.add(relPath);
+                }
+            } catch (_) {}
+        }
+    }
     return { files, packages, inspection:{truncated,sourceFiles:files.length,visitedEntries:visited} };
 };
 

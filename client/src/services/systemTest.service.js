@@ -34,12 +34,26 @@ export const getSystemTestFrameworks = async (projectId, snapshotId = null) => {
  */
 export const runSystemTest = async (
   snapshotId,
-  { framework = "playwright", executionMode = "full", testFile = null } = {}
+  {
+    framework = "playwright",
+    executionMode = "full",
+    testFile = null,
+    selectedFiles = [],
+    selectedTitles = [],
+    headed = false,
+  } = {}
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
     `${API_BASE}/coverage/${snapshotId}/system/run`,
-    { framework, executionMode, testFile },
+    {
+      framework,
+      executionMode,
+      testFile,
+      ...(Array.isArray(selectedFiles) && selectedFiles.length > 0 ? { selectedFiles } : {}),
+      ...(Array.isArray(selectedTitles) && selectedTitles.length > 0 ? { selectedTitles } : {}),
+      ...(headed ? { headed: true } : {}),
+    },
     { headers }
   );
   return response.data;
@@ -220,6 +234,52 @@ export const downloadSystemAssessmentPdf = async (snapshotId, assessmentId) => {
     link.click();
     link.remove();
   } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+};
+
+export const getSystemTestCaseDetail = async (snapshotId, { testFile, testName } = {}) => {
+  const params = new URLSearchParams();
+  if (testFile) params.set("testFile", testFile);
+  if (testName) params.set("testName", testName);
+  const response = await axios.get(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case?${params.toString()}`,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
+export const addSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.post(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case`,
+    payload,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
+export const updateSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.put(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case`,
+    payload,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
+export const deleteSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.delete(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case`,
+    { headers: getAuthHeaders(), data: payload },
+  );
+  return response.data;
+};
+
+export const aiFixSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.post(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case/ai-fix`,
+    payload,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
 };
 
 

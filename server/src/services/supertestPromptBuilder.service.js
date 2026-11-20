@@ -10,6 +10,8 @@ import {
 } from "../../../shared/integrationCaseCoverage.js";
 import { extractDatabaseSchemaConstraints } from "./integrationAiTestGenerator.service.js";
 import { parsePrismaSchemaModels, generatePrismaSeeds } from "./databaseMockTemplate.service.js";
+import { parseJavaScriptCode } from "./babelParser.service.js";
+import path from "path";
 
 
 /**
@@ -195,19 +197,26 @@ export const includeRouteContext = (sourceCode, targetEndpoints = null, options 
         }
         segment += "\n";
         if (endpointsWithExisting.length > 0) {
-            segment += "#### Already Covered Existing Scenarios (STRICTLY DO NOT DUPLICATE)\n";
+            segment += "#### Existing User Scenarios (Preserved Automatically — Reference Only)\n";
             for (const ep of endpointsWithExisting) {
                 segment += `- **${ep.method} ${ep.fullPath}**:\n`;
                 for (const ex of ep.existingScenarios) {
                     const statusText = ex.expectedStatus ? `Expected ${ex.expectedStatus}` : "Status asserted";
                     const caseText = ex.caseLabel || ex.caseKey || "Covered";
-                    segment += `  * \`${ex.testName}\` (${caseText}, ${statusText}) — ALREADY EXISTS, DO NOT regenerate or duplicate this case!\n`;
+                    segment += `  * \`${ex.testName}\` (${caseText}, ${statusText}) — preserved as user scenario.\n`;
                 }
             }
             segment += "\n";
         }
 
-        segment += "**CRITICAL INSTRUCTION:** For each endpoint listed above, you MUST write **EXACTLY ONE dedicated `it(...)` test block for EACH individual item** in 'Required Coverage Focus' (do NOT merge two error types such as 400 and 404 into a single test, and do **NOT** generate extra tests for cases already listed under 'Already Covered Existing Scenarios').\n";
+        const totalRequiredTests = endpoints.reduce((sum, ep) => {
+            const count = Array.isArray(ep.missingCoverageRequested) && ep.missingCoverageRequested.length > 0
+                ? ep.missingCoverageRequested.length
+                : getEndpointRequiredCases(ep).length;
+            return sum + count;
+        }, 0);
+
+        segment += `**CRITICAL TOKEN-SAVING CAP:** For each endpoint listed above, write **EXACTLY ONE dedicated \`it(...)\` test block for EACH individual item** in 'Required Coverage Focus' (TOTAL = **${totalRequiredTests}** \`it(...)\` blocks across all endpoints — NEVER generate extra/bonus scenarios beyond those exact items! Always generate the exact proposed cases even if user scenarios exist; overlap is labeled automatically in the UI).\n`;
         segment += "**STRICT STATUS ASSERTION RULE:** Inspect the controller implementation and assert a **SINGLE exact HTTP status code** per test (`expect(res.status).toBe(200)`, `expect(res.status).toBe(400)`, `expect(res.status).toBe(404)`). **NEVER** use `expect([...]).toContain(res.status)` with multiple unrelated codes like `[200, 201, 404]` or `[400, 422, 404, 500]`.\n";
         if (language === "vi") {
             segment += "**LANGUAGE RULE (MANDATORY — VIETNAMESE):** The existing tests and/or API messages in this repository are in **Vietnamese**. You MUST write ALL `describe(...)` and `it(...)` test descriptions, inline comments, and `suggestions[].message` in **natural Vietnamese** matching the project's existing test style (e.g., `'Thành công (200): Xóa lớp học hợp lệ'`, `'Lỗi dữ liệu (400): Mã lớp học không hợp lệ'`, `'Không tìm thấy (404): Lớp học không tồn tại'`). Do NOT write English test titles!\n";
@@ -242,58 +251,245 @@ export const includeRouteContext = (sourceCode, targetEndpoints = null, options 
 };
 
 /**
- * Detects the correct app entry point file path for import.
- * Returns the path to app.js (not server.js) to avoid calling app.listen().
- * @param {Array<{path: string, content: string}>} sourceCode
- * @returns {string} Relative import path for tests
+ * Detects the backend subpackage prefix (e.g. "server", "backend", "api", or "")
+ * so generated integration tests sit inside the backend package's test root.
  */
-const detectAppImportPath = (sourceCode) => {
-    if (!sourceCode || sourceCode.length === 0) return "../../server/index.js";
+export const detectBackendSubdir = (sourceCode = [], testFiles = []) => {
+    const allPaths = [...(sourceCode || []), ...(testFiles || [])]
+        .map((f) => String(f?.path || "").replace(/\\/g, "/"))
+        .filter(Boolean);
 
-    // 1. Prefer app.js over server.js to avoid calling app.listen()
-    const appFile = sourceCode.find((f) => f.path.endsWith("app.js") && !f.path.includes("node_modules") && !f.path.includes("test"));
-    if (appFile) {
-        return `../../${appFile.path}`;
+    for (const sub of ["server", "backend", "api"]) {
+        const hasBackendFiles = allPaths.some((p) =>
+            p.startsWith(`${sub}/`) && (
+                p.includes("/routes/") ||
+                p.includes("/controllers/") ||
+                p.endsWith("/index.js") ||
+                p.endsWith("/app.js") ||
+                p.endsWith("/server.js") ||
+                p.includes("/tests/integration/")
+            )
+        );
+        if (hasBackendFiles) return sub;
+    }
+    return "";
+};
+
+export const detectIntegrationTestBaseDir = (sourceCode = [], testFiles = []) => {
+    const sub = detectBackendSubdir(sourceCode, testFiles);
+    return sub ? `${sub}/tests/integration` : "tests/integration";
+};
+
+const analyzeEntryExports = (content = "", filePath = "") => {
+    const info = {
+        hasDefaultExport: false,
+        hasNamedAppExport: false,
+        hasTopLevelListen: false,
+        mountedRouters: [],
+        inlineRoutes: [],
+    };
+    if (!content) return info;
+
+    const parsed = parseJavaScriptCode(content, { filePath });
+    if (!parsed.success || !parsed.ast?.program?.body) {
+        info.hasDefaultExport = /\bexport\s+default\b/.test(content);
+        info.hasNamedAppExport = /\bexport\s+(?:const|let|var)\s+app\b|\bexport\s*\{[^}]*\bapp\b/.test(content);
+        info.hasTopLevelListen = /\.listen\s*\(/.test(content);
+        return info;
     }
 
-    // 2. Check for index.js in server/, src/, app/
-    const serverIndex = sourceCode.find((f) => f.path.endsWith("index.js") && (f.path.includes("server/") || f.path.includes("src/") || f.path.includes("app/")) && !f.path.includes("node_modules") && !f.path.includes("test"));
-    if (serverIndex) {
-        return `../../${serverIndex.path}`;
+    const importMap = new Map();
+    for (const stmt of parsed.ast.program.body) {
+        if (stmt.type === "ImportDeclaration") {
+            const spec = stmt.source?.value;
+            if (!spec) continue;
+            for (const sp of stmt.specifiers || []) {
+                importMap.set(sp.local?.name, {
+                    source: spec,
+                    imported: sp.type === "ImportDefaultSpecifier" ? "default" : (sp.imported?.name || sp.local?.name),
+                });
+            }
+        } else if (stmt.type === "ExportDefaultDeclaration") {
+            info.hasDefaultExport = true;
+        } else if (stmt.type === "ExportNamedDeclaration") {
+            if (stmt.declaration?.type === "VariableDeclaration") {
+                for (const d of stmt.declaration.declarations || []) {
+                    if (d.id?.name === "app") info.hasNamedAppExport = true;
+                }
+            }
+            for (const sp of stmt.specifiers || []) {
+                if ((sp.exported?.name || sp.exported?.value) === "app") info.hasNamedAppExport = true;
+            }
+        } else if (stmt.type === "ExpressionStatement") {
+            const expr = stmt.expression;
+            if (expr?.type === "CallExpression" && expr.callee?.type === "MemberExpression") {
+                const objName = expr.callee.object?.name;
+                const propName = expr.callee.property?.name;
+                if (propName === "listen") {
+                    info.hasTopLevelListen = true;
+                }
+                if (objName === "app" && propName === "use") {
+                    const firstArg = expr.arguments?.[0];
+                    const secondArg = expr.arguments?.[1];
+                    const mountPrefix = firstArg?.type === "StringLiteral" ? firstArg.value : null;
+                    const handlerNode = mountPrefix ? secondArg : firstArg;
+                    if (handlerNode?.type === "Identifier" && importMap.has(handlerNode.name)) {
+                        const imported = importMap.get(handlerNode.name);
+                        if (imported.source.startsWith(".")) {
+                            info.mountedRouters.push({
+                                varName: handlerNode.name,
+                                prefix: mountPrefix,
+                                source: imported.source,
+                                imported: imported.imported,
+                            });
+                        }
+                    }
+                }
+                if (objName === "app" && ["get", "post", "put", "patch", "delete"].includes(propName)) {
+                    const routeArg = expr.arguments?.[0];
+                    if (routeArg?.type === "StringLiteral") {
+                        info.inlineRoutes.push({
+                            method: propName.toUpperCase(),
+                            path: routeArg.value,
+                        });
+                    }
+                }
+            }
+            // Check module.exports = app / module.exports = { app }
+            if (expr?.type === "AssignmentExpression" && expr.left?.type === "MemberExpression") {
+                const leftObj = expr.left.object?.name;
+                const leftProp = expr.left.property?.name;
+                if (leftObj === "module" && leftProp === "exports") {
+                    if (expr.right?.type === "Identifier" && expr.right.name === "app") {
+                        info.hasDefaultExport = true;
+                    } else if (expr.right?.type === "ObjectExpression") {
+                        const props = expr.right.properties || [];
+                        if (props.some((p) => (p.key?.name || p.key?.value) === "app")) {
+                            info.hasNamedAppExport = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return info;
+};
+
+/**
+ * Detects the correct app entry point context and exact import strategy.
+ * Handles default exports, named `{ app }` exports, and route-composed monorepos where `index.js` does not export `app`.
+ */
+export const detectAppEntryContext = (sourceCode = [], testFiles = [], testFilePath = null) => {
+    const testBaseDir = detectIntegrationTestBaseDir(sourceCode, testFiles);
+    const effectiveTestFile = testFilePath || `${testBaseDir}/api.test.js`;
+    const fromDir = path.posix.dirname(effectiveTestFile.replace(/\\/g, "/"));
+    const relFromTest = (targetPath) => {
+        const cleanTarget = String(targetPath || "").replace(/\\/g, "/").replace(/^\/+/, "");
+        let rel = path.posix.relative(fromDir, cleanTarget);
+        if (!rel.startsWith(".")) rel = `./${rel}`;
+        return rel;
+    };
+
+    const candidates = (sourceCode || []).filter((f) => {
+        const p = String(f?.path || "").replace(/\\/g, "/");
+        if (!p || p.includes("node_modules") || p.includes("test") || p.startsWith("client/") || p.startsWith("frontend/")) return false;
+        return /(?:^|\/)(?:app|index|server)\.[cm]?[jt]s$/i.test(p);
+    });
+    candidates.sort((a, b) => {
+        const score = (p) => (/app\.[cm]?[jt]s$/i.test(p) ? 0 : /index\.[cm]?[jt]s$/i.test(p) ? 1 : 2);
+        return score(a.path) - score(b.path);
+    });
+
+    const entry = candidates[0] || null;
+    if (!entry) {
+        return {
+            testBaseDir,
+            entryPath: null,
+            appImportPath: "../../server/src/app.js",
+            exportKind: "COMPOSE_ROUTES",
+            exportsApp: false,
+            mountedRouters: [],
+            inlineRoutes: [],
+        };
     }
 
-    // 3. Fallback to any index.js
-    const indexFile = sourceCode.find((f) => f.path.endsWith("index.js") && !f.path.includes("node_modules") && !f.path.includes("test"));
-    if (indexFile) {
-        return `../../${indexFile.path}`;
+    const exportsInfo = analyzeEntryExports(entry.content || "", entry.path);
+    const appImportPath = relFromTest(entry.path);
+    let exportKind = "COMPOSE_ROUTES";
+    if (exportsInfo.hasDefaultExport && !exportsInfo.hasTopLevelListen) {
+        exportKind = "DEFAULT_EXPORT";
+    } else if (exportsInfo.hasNamedAppExport && !exportsInfo.hasTopLevelListen) {
+        exportKind = "NAMED_APP_EXPORT";
+    } else if (exportsInfo.hasDefaultExport) {
+        exportKind = "DEFAULT_EXPORT";
+    } else if (exportsInfo.hasNamedAppExport) {
+        exportKind = "NAMED_APP_EXPORT";
     }
 
-    return "../../server/index.js";
+    const entryDir = path.posix.dirname(String(entry.path).replace(/\\/g, "/"));
+    const mountedRouters = exportsInfo.mountedRouters.map((r) => {
+        const resolved = path.posix.normalize(path.posix.join(entryDir, r.source));
+        return { ...r, resolvedPath: resolved, importFromTest: relFromTest(resolved) };
+    });
+
+    return {
+        testBaseDir,
+        entryPath: entry.path,
+        appImportPath,
+        exportKind,
+        exportsApp: exportKind !== "COMPOSE_ROUTES",
+        hasTopLevelListen: exportsInfo.hasTopLevelListen,
+        mountedRouters,
+        inlineRoutes: exportsInfo.inlineRoutes,
+    };
+};
+
+const detectAppImportPath = (sourceCode, testFiles = []) => {
+    return detectAppEntryContext(sourceCode, testFiles).appImportPath;
 };
 
 export const includeSupertestInstructions = (sourceCode, options = {}) => {
-    const appImportPath = detectAppImportPath(sourceCode);
+    const appContext = detectAppEntryContext(sourceCode, options?.testFiles || []);
+    const appImportPath = appContext.appImportPath;
     const moduleType = options?.moduleType || "auto";
+    const usesPrisma = (sourceCode || []).some((f) => /@prisma\/client|prisma\.(?:find|create|update|delete|upsert|count)/.test(f.content || ""));
 
     let segment = "### Integration Test Generation Rules\n\n";
     segment += "You MUST generate **Supertest + Jest** integration tests to verify the complete API processing flow (Client -> Route -> Controller -> Service -> Database -> Response).\n\n";
     
     segment += "#### 1. API Flow & Application Startup\n";
-    segment += `- **CRITICAL: Import the app from \`${appImportPath}\`** (the Express app module that exports the app WITHOUT calling \`app.listen()\`). DO NOT import from \`server.js\` because it starts the HTTP server on a port.\n`;
-    if (moduleType === "commonjs") {
-        segment += "- **MODULE SYNTAX (MANDATORY — COMMONJS):** This project runs Jest in **CommonJS** mode. You MUST use `const request = require('supertest');` and `const app = require('...');`. Do NOT use ES module `import` / `export` syntax.\n";
-    } else if (moduleType === "esm") {
-        segment += "- **MODULE SYNTAX (MANDATORY — ES MODULES):** This project runs Jest in **ES Module** mode. You MUST use `import request from 'supertest';` and `import app from '...';`.\n";
+    if (appContext.exportKind === "COMPOSE_ROUTES") {
+        segment += `- **CRITICAL (ROUTE COMPOSITION MODE):** \`${appContext.entryPath || "index.js"}\` does **NOT** export \`app\` (and/or calls \`listen()\` at startup). **DO NOT** import \`app\` from \`${appImportPath}\`! Importing it directly will crash with \`SyntaxError: does not provide an export named 'default'\`.\n`;
+        segment += "- Instead, create a fresh Express app inside the test file and mount only the route/middleware modules being tested:\n";
+        if (moduleType === "commonjs") {
+            segment += "  ```js\n  const express = require('express');\n  const request = require('supertest');\n  const eventRoutes = require('../../src/routes/event.routes.js');\n  const app = express(); app.use(express.json()); app.use(eventRoutes);\n  ```\n";
+        } else {
+            segment += "  ```js\n  import { jest, describe, it, expect, beforeEach } from '@jest/globals';\n  import express from 'express';\n  import request from 'supertest';\n  // Register await jest.unstable_mockModule(...) FIRST, then dynamically await import routes:\n  const { default: routeMod } = await import('../../src/routes/...');\n  const app = express(); app.use(express.json()); app.use(routeMod);\n  ```\n";
+            if (appContext.mountedRouters.length > 0) {
+                segment += `- **Detected Route / Middleware Modules** (import relative to \`${appContext.testBaseDir}/\`): ${appContext.mountedRouters.map((r) => `\`${r.importFromTest}\`${r.prefix ? ` mounted at \`${r.prefix}\`` : ""}`).join(", ")}.\n`;
+            }
+            if (appContext.inlineRoutes.length > 0) {
+                segment += `- **Inline Routes in entry file**: ${appContext.inlineRoutes.map((r) => `\`${r.method} ${r.path}\``).join(", ")} — reproduce simple health routes on the test \`app\` if testing them.\n`;
+            }
+        }
+    } else if (appContext.exportKind === "NAMED_APP_EXPORT") {
+        segment += `- **CRITICAL:** \`${appContext.entryPath}\` exports \`app\` as a **NAMED** export! Import it as \`${moduleType === "commonjs" ? `const { app } = require('${appImportPath}');` : `const { app } = await import('${appImportPath}');`}\` — NEVER use default import \`import app from ...\`. DO NOT call \`app.listen()\`.\n`;
     } else {
-        segment += "- If the source code uses ES modules (`import`/`export`), you MUST use `import` syntax. If it uses CommonJS (`require`), use `require`.\n";
+        segment += `- **CRITICAL: Import the app from \`${appImportPath}\`** (default export, WITHOUT calling \`app.listen()\`). DO NOT import from \`server.js\` if it starts the HTTP server on a port.\n`;
+    }
+
+    if (moduleType === "commonjs") {
+        segment += "- **MODULE SYNTAX (MANDATORY — COMMONJS):** This project runs Jest in **CommonJS** mode. You MUST use `const request = require('supertest');` and `require(...)`. Do NOT use ES module `import` syntax.\n";
+    } else if (moduleType === "esm") {
+        segment += "- **MODULE SYNTAX (MANDATORY — ES MODULES):** This project runs Jest in **ES Module** (`--experimental-vm-modules`) mode. Use `import { jest, describe, it, expect, beforeEach } from '@jest/globals';`, `import request from 'supertest';`, ALWAYS include `.js` extensions on all relative module paths, register any module mocks using `await jest.unstable_mockModule(...)` BEFORE dynamically calling `await import(...)`, and place test files under `" + appContext.testBaseDir + "/`.\n";
+    } else {
+        segment += "- Match the project's module system (`import` with `.js` extensions for `" + '"type": "module"' + "`, `require` for CommonJS).\n";
     }
     segment += "- **AST PARSER COMPATIBILITY (CRITICAL):** You MUST write tests using inline Supertest chains exactly like: `await request(app).get('/api/users')`. DO NOT assign `request(app)` to a variable first. DO NOT abstract it into a helper function. The `request(app)` call MUST be inline inside the `it()` or `test()` block or else the tests will be silently ignored.\n";
     segment += "- DO NOT start the Express server on a port (do not call `app.listen()`).\n";
     segment += "- Send realistic request bodies, query params, and path params.\n";
     segment += "- Assert meaningful HTTP status codes and response bodies (`expect(res.status).toBe(200)`).\n";
-    segment += "- Do NOT use `describe.only` or `it.only`.\n";
-    segment += "- Check if the project uses ES Modules (`type: \"module\"` in package.json or import statements in source). If it does, you MUST use `import` statements instead of `require`.\n";
-    segment += "- If the project uses CommonJS, use `require`.\n\n";
+    segment += "- Do NOT use `describe.only` or `it.only`.\n\n";
 
     segment += "#### ENDPOINT VERIFICATION (MANDATORY)\n";
     segment += "- **NEVER invent an endpoint or generate tests for unlisted routes.** Every HTTP method + path in your tests MUST appear in the 'VALID API ENDPOINTS' table above.\n";
@@ -301,10 +497,16 @@ export const includeSupertestInstructions = (sourceCode, options = {}) => {
     segment += "- If an endpoint is NOT in the table, DO NOT generate any tests or describe blocks for it.\n\n";
 
     segment += "#### 2. Database & External Dependencies\n";
-    segment += "- **AUTOMATED DATABASE MOCKING ACTIVE:** CovAI automatically provides an in-memory database mock environment (for Prisma, Mongoose, etc.) through Jest's `setupFilesAfterEnv`. Database calls (such as `findMany`, `findUnique`, `create`, `update`, `delete`, `$connect`) are safely intercepted in-memory and will succeed without needing a live database connection.\n";
-    segment += "- **STRICT PROHIBITION ON INTERNAL SERVICE/CONTROLLER MOCKING:** DO NOT use `jest.mock()`, `jest.spyOn()`, `mockResolvedValue`, or `mockRejectedValue` on internal controllers, services, routers, or database clients. Tests that attempt to call `mockResolvedValue` or `mockRejectedValue` will fail at runtime with `TypeError: mockResolvedValue is not a function`. You MUST test the system as an integrated whole via Supertest HTTP requests.\n";
-    segment += "- If the source code uses ES modules (`import`/`export`), use standard `import request from 'supertest';` and `import app from '...';`.\n";
-    segment += "- If the source code uses CommonJS (`require`), use `const request = require('supertest');` and `const app = require('...');`.\n\n";
+    if (moduleType === "esm") {
+        segment += "- **ESM DATABASE & AI SDK MOCKING (CRITICAL):** In `--experimental-vm-modules`, `setupFilesAfterEnv` `jest.mock()` does **NOT** intercept ES `import` statements! You MUST mock database modules (`@prisma/client` and relative `prisma.js` path) AND external network AI SDKs (`@google/generative-ai` / `ai.service.js`) using `await jest.unstable_mockModule(...)` **BEFORE** calling `const { ... } = await import(...)` on your routes/controllers so tests NEVER fail trying to reach Postgres/external Gemini APIs.\n";
+        if (usesPrisma) {
+            segment += "- Include realistic mock return values on Prisma model `jest.fn()` stubs matching the route/service expectations.\n";
+        }
+    } else {
+        segment += "- **AUTOMATED DATABASE MOCKING ACTIVE:** CovAI provides an in-memory database mock environment (Prisma/Mongoose/SQL) via Jest's `setupFilesAfterEnv`.\n";
+        segment += "- **STRICT PROHIBITION ON INTERNAL SERVICE/CONTROLLER MOCKING:** DO NOT mock internal controllers/services in CommonJS when testing integrated DB flows via Supertest HTTP requests.\n";
+    }
+    segment += "\n";
 
     segment += "#### 3. Multi-Scenario 5-Tier Testing Strategy (Ground Truth & Contract-Driven)\n";
     segment += "- **TIER 1 — Happy Path (200/201)**: Provide valid payloads fulfilling all non-nullable database and schema constraints. Assert exact success status and returned payload fields.\n";
@@ -322,9 +524,11 @@ export const includeSupertestInstructions = (sourceCode, options = {}) => {
 
 export const includeSupertestOutputFormat = (options = {}) => {
     const isCjs = options?.moduleType === "commonjs";
+    const testBaseDir = options?.testBaseDir || "tests/integration";
+    const appImportPath = options?.appImportPath || "../../src/app.js";
     const sampleContent = isCjs
-        ? `"const request = require(\\'supertest\\');\\nconst app = require(\\'../../src/app.js\\');\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`
-        : `"import request from \\'supertest\\';\\nimport app from \\'../../src/app.js\\';\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`;
+        ? `"const request = require(\\'supertest\\');\\nconst app = require(\\'${appImportPath}\\');\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`
+        : `"import { jest, describe, it, expect } from \\'@jest/globals\\';\\nimport express from \\'express\\';\\nimport request from \\'supertest\\';\\nconst app = express(); app.use(express.json());\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`;
     let segment = "### Required Output Format\n\n";
     segment += "You MUST output a **JSON object** wrapped in a markdown code block (```json ... ```).\n";
     segment += "The JSON must have TWO keys: `suggestions` (for test planning / chain of thought) and `tests` (for code generation):\n\n";
@@ -340,7 +544,7 @@ export const includeSupertestOutputFormat = (options = {}) => {
     segment += "  ],\n";
     segment += '  "tests": [\n';
     segment += "    {\n";
-    segment += '      "filePath": "tests/integration/users.test.js",\n';
+    segment += `      "filePath": "${testBaseDir}/users.test.js",\n`;
     segment += `      "content": ${sampleContent}\n`;
     segment += "    }\n";
     segment += "  ]\n";
@@ -459,8 +663,13 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstr
         prompt += includePathConstraints(effectiveConstraints);
     }
 
-    prompt += includeSupertestInstructions(payload.sourceCode, { moduleType });
-    prompt += includeSupertestOutputFormat({ moduleType });
+    prompt += includeSupertestInstructions(payload.sourceCode, { moduleType, testFiles: payload?.testFiles || [] });
+    const appCtxForFormat = detectAppEntryContext(payload?.sourceCode || [], payload?.testFiles || []);
+    prompt += includeSupertestOutputFormat({
+        moduleType,
+        testBaseDir: appCtxForFormat.testBaseDir,
+        appImportPath: appCtxForFormat.appImportPath,
+    });
 
     prompt += "---\n\n";
     prompt += "Now analyze the source code and contracts above and generate the Supertest integration test files in the exact JSON format specified. Output ONLY the JSON object inside a markdown code block. Do NOT add any explanations before or after the JSON block.";

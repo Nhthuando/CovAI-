@@ -1292,6 +1292,7 @@ export const getCoverageSummary = async (req, res) => {
         const missingDependency = missingDependencies[0] || null;
 
         // Return formatted response with explicit distinction between current run and last successful coverage
+        const hasTypeRun = Boolean(latestTestRun || latestJob?.status === "SUCCESS");
         const lastSuccessfulCoverage = coverage ?? storedCoverage;
         return res.status(200).json({
             success: true,
@@ -1302,6 +1303,7 @@ export const getCoverageSummary = async (req, res) => {
                 source: snapshot.source,
                 commitSha: snapshot.commitSha ?? null,
                 snapshotCreatedAt: snapshot.createdAt,
+                hasRun: hasTypeRun,
                 coverage: isFatalFailure ? null : coverage,
                 previousCoverage: lastSuccessfulCoverage,
                 lastSuccessfulCoverage,
@@ -4545,7 +4547,9 @@ export const runSystemTestCoverage = async (req, res) => {
       userId,
       capability: "project.read",
     });
-    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
+    if (snapshot.rootDir) {
+      snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res.status(409).json({
         success: false,
@@ -4586,6 +4590,13 @@ export const runSystemTestCoverage = async (req, res) => {
     const testFile = req.body?.testFile
       ? String(req.body.testFile).trim()
       : null;
+    const selectedFiles = Array.isArray(req.body?.selectedFiles)
+      ? req.body.selectedFiles.filter((f) => typeof f === "string" && f.trim())
+      : [];
+    const selectedTitles = Array.isArray(req.body?.selectedTitles)
+      ? req.body.selectedTitles.filter((t) => typeof t === "string" && t.trim())
+      : [];
+    const headed = Boolean(req.body?.headed);
 
     const job = await createSystemTestAnalysisJob({
       projectId: snapshot.projectId,
@@ -4594,6 +4605,9 @@ export const runSystemTestCoverage = async (req, res) => {
       runner,
       executionMode,
       testFile,
+      selectedFiles,
+      selectedTitles,
+      headed,
     });
 
     await addJobToQueue("SYSTEM_TEST_ANALYSIS", job.id, {
@@ -4603,6 +4617,9 @@ export const runSystemTestCoverage = async (req, res) => {
       runner,
       executionMode,
       testFile,
+      selectedFiles,
+      selectedTitles,
+      headed,
     });
 
     return res.status(202).json({
@@ -5002,36 +5019,44 @@ export const getSystemTestScenarios = async (req, res) => {
       );
     }
 
-    const enrichedScenarios = rawScenarios.map((s) => ({
-      id: s.id,
-      title: s.title,
-      suiteName: s.suiteName,
-      status: s.status,
-      durationMs: s.durationMs ?? null,
-      executionDetails: s.executionDetails || null,
-      failureMessages: s.failureMessages || [],
-      testFile: s.testFile || "unknown",
-      failureBreakpoint: {
-        failureStep: s.failureStep || null,
-        failureCategory: s.failureCategory || null,
-        failureCodeSnippet: s.failureCodeSnippet || null,
-        hasDomSnapshot: Boolean(s.domSnapshot),
-      },
-      coverageContributions: {
-        linesPct: null,
-        branchesPct: null,
-      },
-      evidence: {
-        hasScreenshot: Boolean(s.screenshotPath),
-        screenshotUrl: s.screenshotPath
-          ? `/api/coverage/${snapshotId}/system/scenarios/${s.id}/evidence`
-          : null,
-        hasDomSnapshot: Boolean(s.domSnapshot),
-        domSnapshotUrl: s.domSnapshot
-          ? `/api/coverage/${snapshotId}/system/scenarios/${s.id}/evidence?type=dom`
-          : null,
-      },
-    }));
+    const { summarizeSystemFailure } = await import("../../../shared/systemCaseCoverage.js");
+    const enrichedScenarios = rawScenarios.map((s) => {
+      const cleanedMsgs = (s.failureMessages || []).map((m) => cleanStorageText(m));
+      const statusUpper = String(s.status || "").toUpperCase();
+      return {
+        id: s.id,
+        title: s.title,
+        suiteName: s.suiteName,
+        status: s.status,
+        durationMs: s.durationMs ?? null,
+        executionDetails: s.executionDetails || null,
+        failureMessages: cleanedMsgs,
+        ...(statusUpper === "FAILED" || statusUpper === "FAIL" || statusUpper === "FLAKY"
+          ? { failureSummary: summarizeSystemFailure(cleanedMsgs) }
+          : {}),
+        testFile: cleanStoragePath(s.testFile) || "unknown",
+        failureBreakpoint: {
+          failureStep: s.failureStep || null,
+          failureCategory: s.failureCategory || null,
+          failureCodeSnippet: s.failureCodeSnippet || null,
+          hasDomSnapshot: Boolean(s.domSnapshot),
+        },
+        coverageContributions: {
+          linesPct: null,
+          branchesPct: null,
+        },
+        evidence: {
+          hasScreenshot: Boolean(s.screenshotPath),
+          screenshotUrl: s.screenshotPath
+            ? `/api/coverage/${snapshotId}/system/scenarios/${s.id}/evidence`
+            : null,
+          hasDomSnapshot: Boolean(s.domSnapshot),
+          domSnapshotUrl: s.domSnapshot
+            ? `/api/coverage/${snapshotId}/system/scenarios/${s.id}/evidence?type=dom`
+            : null,
+        },
+      };
+    });
 
     const fileGroupsMap = new Map();
     for (const scenario of enrichedScenarios) {
@@ -5440,7 +5465,9 @@ export const getSystemTestFileContent = async (req, res) => {
         success: false,
         message: "Snapshot not found or unauthorized.",
       });
-    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
+    if (snapshot.rootDir) {
+      snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res
         .status(409)
@@ -5531,7 +5558,9 @@ export const updateSystemTestFileContent = async (req, res) => {
         success: false,
         message: "Snapshot not found or unauthorized.",
       });
-    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
+    if (snapshot.rootDir) {
+      snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res
         .status(409)
@@ -5644,7 +5673,9 @@ export const runSingleSystemTest = async (req, res) => {
       userId,
       capability: "project.read",
     });
-    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
+    if (snapshot.rootDir) {
+      snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res.status(409).json({
         success: false,
@@ -5745,7 +5776,9 @@ export const optimizeSystemTestController = async (req, res) => {
         success: false,
         message: "Snapshot not found or unauthorized.",
       });
-    if (snapshot.rootDir && /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, "/")) && !fs.existsSync(snapshot.rootDir)) { snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir; }
+    if (snapshot.rootDir) {
+      snapshot.rootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    }
     if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
       return res.status(409).json({
         success: false,
@@ -6389,5 +6422,91 @@ export const aiFixUnitTestCaseController = async (req, res) => {
   } catch (error) {
     console.error("[aiFixUnitTestCaseController] Error:", error);
     return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to AI fix unit test case." });
+  }
+};
+
+/**
+ * GET /api/coverage/:snapshotId/system/test-case
+ */
+export const getSystemTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "project.read");
+    const { getSystemTestCaseDetail } = await import("../services/systemTestCaseOperations.service.js");
+    const data = await getSystemTestCaseDetail({
+      snapshot,
+      testFile: req.query?.testFile,
+      testName: req.query?.testName,
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[getSystemTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to load system test scenario." });
+  }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/system/test-case
+ */
+export const addSystemTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "files.write");
+    const { addSystemTestCase } = await import("../services/systemTestCaseOperations.service.js");
+    const data = await addSystemTestCase({ snapshot, userId: req.user?.id, ...(req.body || {}) });
+    return res.status(201).json({ success: true, data });
+  } catch (error) {
+    console.error("[addSystemTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to add system test scenario." });
+  }
+};
+
+/**
+ * PUT /api/coverage/:snapshotId/system/test-case
+ */
+export const updateSystemTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "files.write");
+    const { updateSystemTestCase } = await import("../services/systemTestCaseOperations.service.js");
+    const data = await updateSystemTestCase({ snapshot, userId: req.user?.id, ...(req.body || {}) });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[updateSystemTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to update system test scenario." });
+  }
+};
+
+/**
+ * DELETE /api/coverage/:snapshotId/system/test-case
+ */
+export const deleteSystemTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "files.write");
+    const { deleteSystemTestCase } = await import("../services/systemTestCaseOperations.service.js");
+    const bodyOrQuery = { ...(req.query || {}), ...(req.body || {}) };
+    const data = await deleteSystemTestCase({ snapshot, userId: req.user?.id, ...bodyOrQuery });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[deleteSystemTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to delete system test scenario." });
+  }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/system/test-case/ai-fix
+ */
+export const aiFixSystemTestCaseController = async (req, res) => {
+  try {
+    const snapshot = await loadUnitCaseSnapshotAndAccess(req.params.snapshotId, req.user?.id, "ai.use");
+    await resolveProjectAccess({ projectId: snapshot.projectId, userId: req.user?.id, capability: "files.write" });
+    const { aiFixSystemTestCase } = await import("../services/systemTestCaseOperations.service.js");
+    const data = await aiFixSystemTestCase({
+      snapshot,
+      userId: req.user?.id,
+      ...(req.body || {}),
+      model: requestedAiModel(req),
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[aiFixSystemTestCaseController] Error:", error);
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to AI fix system test scenario." });
   }
 };

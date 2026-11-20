@@ -324,11 +324,12 @@ const isRelevant=step=>{
   if(step.category==='hook')return false;
   return ['test.step','expect','pw:api'].includes(step.category);
 };
+const cleanErr=msg=>String(msg||'').replace(/\x1b\[[0-9;]*m/g,'').trim().slice(0,800);
 class CovaiReporter {
   onTestBegin(test){send('SCENARIO_STARTED',test);}
   onStepBegin(test,result,step){if(isRelevant(step))send('STEP_STARTED',test,{stepTitle:String(step.title||'').slice(0,300),stepCategory:step.category});}
-  onStepEnd(test,result,step){if(isRelevant(step))send('STEP_ENDED',test,{stepTitle:String(step.title||'').slice(0,300),stepCategory:step.category,status:step.error?'FAILED':'PASSED'});}
-  onTestEnd(test,result){const image=result.attachments?.find(item=>item.contentType==='image/png'&&item.path);send('SCENARIO_ENDED',test,{status:result.status,durationMs:result.duration,screenshotPath:image?.path||null});}
+  onStepEnd(test,result,step){if(isRelevant(step))send('STEP_ENDED',test,{stepTitle:String(step.title||'').slice(0,300),stepCategory:step.category,status:step.error?'FAILED':'PASSED',...(step.error?{errorMessage:cleanErr(step.error.message||String(step.error))}:{})});}
+  onTestEnd(test,result){const image=result.attachments?.find(item=>item.contentType==='image/png'&&item.path);const errMsg=result.error?.message||result.errors?.[0]?.message||'';send('SCENARIO_ENDED',test,{status:result.status,durationMs:result.duration,screenshotPath:image?.path||null,...(errMsg?{errorMessage:cleanErr(errMsg)}:{})});}
   onEnd(result){send('RUN_ENDED',{},{status:result.status});}
 }
 module.exports=CovaiReporter;`, 'utf8');

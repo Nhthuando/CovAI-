@@ -799,16 +799,16 @@ export default function UnitTestWorkspace({
     return <UnitCockpitSkeleton />;
   }
 
-  const linesPct = Number(summary?.coverage?.lines ?? summary?.linesPct ?? 0);
-  const branchesPct = Number(summary?.coverage?.branches ?? summary?.branchesPct ?? 0);
-  const funcsPct = Number(summary?.coverage?.functions ?? summary?.funcsPct ?? 0);
-  const stmtsPct = Number(summary?.coverage?.statements ?? summary?.stmtsPct ?? 0);
+  const hasExecuted = testTotals.total > 0 || Boolean(summary?.hasRun);
+  const linesPct = hasExecuted ? Number(summary?.coverage?.lines ?? summary?.linesPct ?? 0) : 0;
+  const branchesPct = hasExecuted ? Number(summary?.coverage?.branches ?? summary?.branchesPct ?? 0) : 0;
+  const funcsPct = hasExecuted ? Number(summary?.coverage?.functions ?? summary?.funcsPct ?? 0) : 0;
+  const stmtsPct = hasExecuted ? Number(summary?.coverage?.statements ?? summary?.stmtsPct ?? 0) : 0;
   const rawTotals = summary?.rawTotals || null;
 
-  const coveredFilesCount = fileEntries.filter((f) => Number(f.linesPct ?? 0) > 0).length;
+  const coveredFilesCount = hasExecuted ? fileEntries.filter((f) => Number(f.linesPct ?? 0) > 0).length : 0;
   const totalFilesCount = fileEntries.length;
   const passRate = testTotals.total > 0 ? Math.round((testTotals.passed / testTotals.total) * 100) : 0;
-  const hasExecuted = testTotals.total > 0 || Boolean(summary?.hasRun);
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-[var(--color-bg)] text-[var(--color-text)] font-sans select-text overflow-hidden">

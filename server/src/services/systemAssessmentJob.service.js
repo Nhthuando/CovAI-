@@ -57,7 +57,12 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
             if (input.runner !== 'playwright') throw new ServiceError('Managed evidence execution currently supports Playwright only; Cypress needs a verified adapter', 422);
             const reportDirectory = path.join(workspace.rootDir, '.covai-system-test');
             fs.mkdirSync(reportDirectory, { recursive: true });
-            const execution = { runner: 'playwright', rootDir: workspace.rootDir, testDirectory: 'tests', selectedFiles: input.testFiles.map(file => containedPath(workspace.rootDir, file)), selectedTitles: ['scenario','execution'].includes(input.reviewMode) ? catalog.map(scenario => scenario.title) : undefined, command: 'npx playwright test --reporter=json', reportDirectory, reportPath: path.join(reportDirectory, 'results.json'), headed: Boolean(input.headed) };
+            const selectedTitles = input.selectedTitles?.length
+                ? input.selectedTitles
+                : ['scenario','execution'].includes(input.reviewMode)
+                    ? catalog.map(scenario => scenario.title)
+                    : undefined;
+            const execution = { runner: 'playwright', rootDir: workspace.rootDir, testDirectory: 'tests', selectedFiles: input.testFiles.map(file => containedPath(workspace.rootDir, file)), selectedTitles, command: 'npx playwright test --reporter=json', reportDirectory, reportPath: path.join(reportDirectory, 'results.json'), headed: Boolean(input.headed) };
             const startedAt = new Date();
             const result = await (dependencies.run || runSystemTests)({ rootDir: workspace.rootDir, jobId, execution, executionMode: input.executionMode, measurementPreparation: preparation, assertionBindings: bindings, signal, onEvent: event => onEvent({ runIndex: index + 1, ...event }), onPreparing: (progress, message) => onProgress(`Run ${index + 1}/${input.repeatRuns}: ${message}`, baseProgress + Math.min(25, progress * 0.7)), onReady: () => onProgress(`Run ${index + 1}/${input.repeatRuns}: executing ${input.testFiles.length} test file(s)`, baseProgress + 30) });
             const testRun = parseSystemTestResult({ runner: 'playwright', resultPath: result.reportPath, startedAt, finishedAt: new Date(), rootDir: workspace.rootDir, stderr: result.stderr });

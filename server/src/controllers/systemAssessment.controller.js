@@ -12,6 +12,7 @@ import prisma from '../config/prisma.js';
 import { createSnapshotJob, markQueuedJobFailed, autoTransitionProjectToDoingIfNeeded } from '../services/job.service.js';
 import { snapshotIdentity, acquireSnapshotLease, purgeExpiredAssessmentArtifacts } from '../services/systemAssessmentWorkspace.service.js';
 import { containedPath, resolveSystemRepositoryRoot } from '../services/fullSystemConfig.service.js';
+import { resolveSnapshotRootDir } from '../utils/projectRootResolver.js';
 import { digest, analyzeSystemTestFile } from '../services/systemTestStaticAnalysis.service.js';
 import { createRequirementRevision, confirmRequirementRevision, createAssertionBinding, approveAssertionBinding } from '../services/systemRequirement.service.js';
 import { assessmentRequest, automaticAssessmentRequest, requirementsRequest, bindingRequest, improvementRequest, parseRequest } from '../validators/systemAssessment.validator.js';
@@ -36,9 +37,7 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
         const snapshot = await client.projectSnapshot.findFirst({ where: { id: req.params.snapshotId, project: membershipWhere(req.user.id) } });
         if (!snapshot) throw new ServiceError('Snapshot not found', 404);
         if (snapshot.rootDir) {
-            const candidateRoot = /^\/?app\/(?:storage|uploads)\//i.test(String(snapshot.rootDir).replace(/\\/g, '/'))
-                ? resolveSystemRepositoryRoot(snapshot.rootDir)
-                : snapshot.rootDir;
+            const candidateRoot = resolveSnapshotRootDir(snapshot.rootDir) || resolveSystemRepositoryRoot(snapshot.rootDir);
             if (fs.existsSync(candidateRoot)) {
                 const rootDir = resolveSystemRepositoryRoot(candidateRoot);
                 if (rootDir !== snapshot.rootDir) {

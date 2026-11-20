@@ -154,7 +154,7 @@ describe("Integration Case Coverage Contract (Option A)", () => {
 
     const supertestPrompt = buildSupertestPrompt(payload, [deleteClassEp]);
     expect(supertestPrompt).toContain("LANGUAGE RULE (MANDATORY — VIETNAMESE)");
-    expect(supertestPrompt).toContain("Already Covered Existing Scenarios (STRICTLY DO NOT DUPLICATE)");
+    expect(supertestPrompt).toContain("Existing User Scenarios (Preserved Automatically — Reference Only)");
     expect(supertestPrompt).toContain("Kịch bản 5: Ngăn chặn xóa lớp học khi lớp vẫn đang có sinh viên");
     expect(supertestPrompt).toContain("Happy Path (200/201) AND Not Found / Conflict (404/409)");
     expect(supertestPrompt).not.toContain("| DELETE | /api/classes/:id | - | - | - | - | undefined | Happy Path (200/201) AND Validation Error (400/422)");
@@ -165,7 +165,7 @@ describe("Integration Case Coverage Contract (Option A)", () => {
       testFiles: payload.testFiles,
     });
     expect(integrationPrompt).toContain("LANGUAGE RULE (MANDATORY — VIETNAMESE)");
-    expect(integrationPrompt).toContain("Already Covered Existing Scenarios (DO NOT DUPLICATE)");
+    expect(integrationPrompt).toContain("Existing User Scenarios (Preserved Separately — Reference Only)");
     expect(integrationPrompt).toContain("Happy Path (200/201) | Not Found / Conflict (404/409)");
   });
 

@@ -332,6 +332,9 @@ export const createSystemTestAnalysisJob = ({
   runner = null,
   executionMode = "frontend",
   testFile = null,
+  selectedFiles = [],
+  selectedTitles = [],
+  headed = false,
 }) => {
   const normalizedMode = String(executionMode || "frontend").toLowerCase().trim();
   if (!["full", "frontend"].includes(normalizedMode)) {
@@ -352,6 +355,9 @@ export const createSystemTestAnalysisJob = ({
       runner: normalizedRunner,
       executionMode: normalizedMode,
       testFile: testFile ? String(testFile).trim() : null,
+      ...(Array.isArray(selectedFiles) && selectedFiles.length > 0 ? { selectedFiles } : {}),
+      ...(Array.isArray(selectedTitles) && selectedTitles.length > 0 ? { selectedTitles } : {}),
+      ...(headed ? { headed: true } : {}),
     },
   });
 };

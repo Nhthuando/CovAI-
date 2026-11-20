@@ -50,11 +50,37 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
     let generatedTests;
     try{resolved=discover();}catch(error){
         if(input.executionMode!=='full' || !['FULL_STACK_TESTS_REQUIRED','SYSTEM_TESTS_NOT_FOUND'].includes(error.code))throw error;
-        if(!input.allowGenerate)throw new ServiceError('No compatible tests are applied. Generate a draft, review it and apply the tests before running.',409);
-        generatedTests=await (dependencies.prepareMissing || prepareMissingSystemTests)({rootDir,jobId,model:input.model,signal,onProgress:(progress,message)=>onProgress(message,progress)});
-        resolved=discover();
+        if(!input.allowGenerate) {
+            if (error.code === 'FULL_STACK_TESTS_REQUIRED' && input.autoDiscover) {
+                await checkpoint(32, 'Existing specs mock API calls; running measured coverage in Frontend mode');
+                resolved = (dependencies.discover || discoverSystemAssessment)({rootDir, runner: input.runner, executionMode: 'frontend'});
+            } else {
+                throw new ServiceError('No compatible tests are applied. Generate a draft, review it and apply the tests before running.',409);
+            }
+        } else {
+            generatedTests=await (dependencies.prepareMissing || prepareMissingSystemTests)({rootDir,jobId,model:input.model,signal,onProgress:(progress,message)=>onProgress(message,progress)});
+            resolved=discover();
+        }
     }
     const executionOnly=input.autoDiscover && !input.prepareOnly;
-    const catalog=executionOnly?discoverExecutionScenarios({rootDir,testFiles:resolved.testFiles}):undefined;
-    return {rootDir, input: parseRequest(assessmentRequest, {...resolved,...(input.headed!==undefined?{headed:input.headed}:{}),...(executionOnly?{reviewMode:'execution',scenarioIds:catalog.map(row=>row.id)}:{})}),catalog,generatedTests,aiUsage:currentAiJobBudget()?.snapshot()};
+    if (Array.isArray(input.selectedFiles) && input.selectedFiles.length > 0) {
+        const want = new Set(input.selectedFiles.map(f => String(f).replace(/\\/g, '/')));
+        const filtered = resolved.testFiles.filter(f => want.has(String(f).replace(/\\/g, '/')));
+        if (!filtered.length && resolved.executionMode === 'full') {
+            await checkpoint(32, 'Selected spec uses frontend mode; switching to Frontend mode');
+            resolved = (dependencies.discover || discoverSystemAssessment)({rootDir, runner: input.runner, executionMode: 'frontend'});
+        }
+        const matched = resolved.testFiles.filter(f => want.has(String(f).replace(/\\/g, '/')));
+        if (!matched.length) throw new ServiceError('Selected test file was not found in system specs.', 422);
+        resolved = { ...resolved, testFiles: matched };
+    }
+    const rawCatalog=executionOnly?discoverExecutionScenarios({rootDir,testFiles:resolved.testFiles}):undefined;
+    const selectedTitleSet = Array.isArray(input.selectedTitles) && input.selectedTitles.length > 0
+        ? new Set(input.selectedTitles.map(t => String(t).trim().toLowerCase()))
+        : null;
+    const catalog = rawCatalog && selectedTitleSet
+        ? rawCatalog.filter(row => selectedTitleSet.has(String(row.title || '').trim().toLowerCase()))
+        : rawCatalog;
+    const repeatRuns = input.repeatRuns || (selectedTitleSet ? 1 : resolved.repeatRuns || 2);
+    return {rootDir, input: parseRequest(assessmentRequest, {...resolved,repeatRuns,...(input.selectedTitles?.length?{selectedTitles:input.selectedTitles}:{}),...(input.headed!==undefined?{headed:input.headed}:{}),...(executionOnly?{reviewMode:'execution',scenarioIds:(catalog||[]).map(row=>row.id)}:{})}),catalog,generatedTests,aiUsage:currentAiJobBudget()?.snapshot()};
 };
