@@ -204,14 +204,24 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
 
     const cov = unifiedIntegration.coverageMetrics || {};
     const totalApis = Number(cov.totalApis ?? 0);
+    const uncoveredApis = Number(cov.uncoveredApis ?? 0);
     const hasIntExecuted = totalTests > 0;
+    const coveredApis =
+      hasIntExecuted && totalApis > 0
+        ? Math.min(
+            totalApis,
+            Number(cov.coveredApis ?? Math.max(0, totalApis - uncoveredApis))
+          )
+        : 0;
     const coverageMetrics = {
       lines: hasIntExecuted ? toFixedPct(cov.lines) : 0,
       branches: hasIntExecuted ? toFixedPct(cov.branches) : 0,
       functions: hasIntExecuted ? toFixedPct(cov.functions) : 0,
       statements: hasIntExecuted ? toFixedPct(cov.statements) : 0,
       apiEndpoint: hasIntExecuted && totalApis > 0 ? toFixedPct(cov.apiEndpoint) : 0,
-      uncoveredApis: Number(cov.uncoveredApis ?? 0),
+      coveredApis,
+      failedApis: Number(cov.failedApis ?? 0),
+      uncoveredApis,
       totalApis,
     };
 
@@ -300,8 +310,21 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
   const executedTests = Number(
     wsSummary.totalTests ?? wsSummary.executedApis ?? passedTests + failedTests + skippedTests
   );
-  const totalApis = Number(wsSummary.totalApis ?? wsSummary.totalEndpoints ?? (endpoints.length || executedTests));
-  const coveredApis = executedTests > 0 ? passedTests : 0;
+  const totalApis = Number(wsSummary.totalApis ?? wsSummary.discoveredApis ?? wsSummary.totalEndpoints ?? (endpoints.length || executedTests));
+  const coveredApis =
+    executedTests > 0 && totalApis > 0
+      ? Math.min(
+          totalApis,
+          Number(
+            wsSummary.endpointCoverageMetrics?.coveredEndpoints ??
+              (coveredCountFromEndpoints > 0 ? coveredCountFromEndpoints : passedTests)
+          )
+        )
+      : 0;
+  const failedApis = Math.min(
+    Math.max(0, totalApis - coveredApis),
+    failedCountFromEndpoints
+  );
   const uncoveredApis = Math.max(0, totalApis - coveredApis);
 
   const flakyTests = 0;
@@ -316,7 +339,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       ? 0
       : epMetrics.endpointCoveragePct !== undefined
       ? toFixedPct(epMetrics.endpointCoveragePct)
-      : toFixedPct((passedTests / totalApis) * 100);
+      : toFixedPct((coveredApis / totalApis) * 100);
 
   const codeCov = wsSummary.codeCoverage || coverageSummary?.coverage || {};
   const coverageMetrics = {
@@ -325,6 +348,8 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     functions: executedTests > 0 ? toFixedPct(codeCov.function?.pct ?? codeCov.function ?? codeCov.functions) : 0,
     statements: executedTests > 0 ? toFixedPct(codeCov.statement?.pct ?? codeCov.statement ?? codeCov.statements) : 0,
     apiEndpoint: apiEndpointPct,
+    coveredApis,
+    failedApis,
     uncoveredApis,
     totalApis,
   };
@@ -918,11 +943,19 @@ export function adaptUnifiedDashboard({
     context: {
       projectId: context.projectId || unifiedBackendRaw?.context?.projectId || "",
       projectName: context.projectName || unifiedBackendRaw?.context?.projectName || "CovAI Project",
+      branch: unifiedBackendRaw?.context?.branch || context.branch || "main",
       lifecycleStatus:
         unifiedBackendRaw?.context?.lifecycleStatus ||
         context.lifecycleStatus ||
         (execution.total > 0 ? "DOING" : null),
       snapshotId: activeSnapshotId,
+      snapshotLabel:
+        unifiedBackendRaw?.context?.snapshotLabel ||
+        effectiveSnapshots
+          .find((s) => s.id === activeSnapshotId)
+          ?.label?.replace(/ — Active$/, "") ||
+        context.snapshotLabel ||
+        "",
       snapshots: effectiveSnapshots,
       activeSuiteRun:
         unifiedBackendRaw?.context?.activeSuiteRun ??

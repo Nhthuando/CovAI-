@@ -3,6 +3,7 @@ import { ZonePanel } from "../primitives/ZonePanel.jsx";
 import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import { CoverageTrendChart } from "../charts/CoverageTrendChart.jsx";
 import { fmtPct, fmtCount, fmtDuration } from "../../../../services/unifiedDashboard/format.js";
+import { getPassRate } from "../../../../services/unifiedDashboard/unifiedDashboard.selectors.js";
 
 /**
  * TierComparisonBarChart
@@ -19,10 +20,10 @@ function TierComparisonBarChart({ vm, loading = false, onNavigateWorkspace }) {
   const coverage = vm?.coverage || {};
 
   const computePassRate = (p) => {
-    const total = Number(p.totalTests || 0);
-    const passed = Number(p.passedTests || 0);
-    if (total <= 0) return 0;
-    return Math.round((passed / total) * 1000) / 10;
+    if (p.passRate !== undefined && p.passRate !== null && Number(p.totalTests || 0) > 0) {
+      return Number(p.passRate);
+    }
+    return getPassRate(p.passedTests, p.failedTests) ?? 0;
   };
 
   const tiers = [
@@ -54,7 +55,7 @@ function TierComparisonBarChart({ vm, loading = false, onNavigateWorkspace }) {
       key: "system",
       label: "System E2E",
       subLabel: sysPillar.framework || "Playwright",
-      coveragePct: Number(coverage.flowPct ?? sysPillar.coverageMetrics?.flowCoverage ?? 0),
+      coveragePct: Number(coverage.flowPct ?? sysPillar.coverageMetrics?.flow ?? 0),
       passRatePct: computePassRate(sysPillar),
       passed: Number(sysPillar.passedTests || 0),
       failed: Number(sysPillar.failedTests || 0),

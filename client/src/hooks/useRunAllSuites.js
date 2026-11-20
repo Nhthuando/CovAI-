@@ -2,9 +2,6 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import {
   runCoverageByType,
   getSuitesReadiness,
-  installIntegrationDependencies,
-  approveIntegrationScenarios,
-  confirmBatchSystemScenarios
 } from "../services/coverage.service.js";
 import { getJobDetailApi, cancelJobApi } from "../services/job.service.js";
 import { invalidateCoverageQueries } from "./useCoverageQuery.js";
@@ -53,7 +50,9 @@ async function pollJobUntilDone(jobId, stepKey, { isCancelledCheck, onProgress }
       if (isCancelledCheck()) {
         try {
           await cancelJobApi(jobId);
-        } catch (_) {}
+        } catch (cancelErr) {
+          console.warn("[RunAllSuites] Failed to cancel job on abort:", cancelErr?.message);
+        }
         const cancelErr = new Error("Suite execution cancelled by user.");
         cancelErr.isCancelled = true;
         throw cancelErr;
@@ -74,7 +73,9 @@ async function pollJobUntilDone(jobId, stepKey, { isCancelledCheck, onProgress }
       } catch (pollErr) {
         consecutiveErrors += 1;
         if (consecutiveErrors > 15) {
-          throw new Error(pollErr?.message || "Failed to communicate with job service.");
+          throw new Error(pollErr?.message || "Failed to communicate with job service.", {
+            cause: pollErr,
+          });
         }
       }
 
@@ -107,7 +108,9 @@ async function pollJobUntilDone(jobId, stepKey, { isCancelledCheck, onProgress }
 
     try {
       await cancelJobApi(jobId);
-    } catch (_) {}
+    } catch (timeoutErr) {
+      console.warn("[RunAllSuites] Failed to cancel timed-out job:", timeoutErr?.message);
+    }
     throw new Error("Suite execution timed out after 12 minutes.");
   } finally {
     if (typeof window !== "undefined") {
@@ -144,17 +147,11 @@ export function useRunAllSuites({
 
   const [overallPercent, setOverallPercent] = useState(0);
 
-  // Pre-flight Human-in-the-Loop Gate state
-  const [readinessGate, setReadinessGate] = useState({
-    isOpen: false,
-    data: null,
-    isChecking: false,
-    loadingAction: null,
-    error: null,
-  });
-
   const isCancelledRef = useRef(false);
   const activeJobIdRef = useRef(null);
+  const stepStatesRef = useRef(stepStates);
+  const selectedKeysRef = useRef(["unit", "integration", "system"]);
+  const isRunningRef = useRef(false);
 
   // Calculate overall pipeline progress based on completed and currently active steps
   const recalculateOverallProgress = useCallback((activeStates, activeProgress, selectedKeys = ["unit", "integration", "system"]) => {
@@ -186,10 +183,10 @@ export function useRunAllSuites({
           message: payload.message || payload.stage || prev[stepKey]?.message || "",
         },
       };
-      recalculateOverallProgress(stepStates, next);
+      recalculateOverallProgress(stepStatesRef.current, next, selectedKeysRef.current);
       return next;
     });
-  }, [recalculateOverallProgress, stepStates]);
+  }, [recalculateOverallProgress]);
 
   // Cancel running and queued suites
   const cancelRemaining = useCallback(async () => {
@@ -198,19 +195,21 @@ export function useRunAllSuites({
     if (currentJobId) {
       try {
         await cancelJobApi(currentJobId);
-      } catch (_) {}
+      } catch (cancelErr) {
+        console.warn("[RunAllSuites] Failed to cancel running job:", cancelErr?.message);
+      }
     }
 
-    setStepStates((prev) => {
-      const updated = { ...prev };
-      for (const k of ["unit", "integration", "system"]) {
-        if (updated[k] === "queued" || updated[k] === "running") {
-          updated[k] = "idle";
-        }
+    const updatedStates = { ...stepStatesRef.current };
+    for (const k of ["unit", "integration", "system"]) {
+      if (updatedStates[k] === "queued" || updatedStates[k] === "running") {
+        updatedStates[k] = "idle";
       }
-      return updated;
-    });
+    }
+    stepStatesRef.current = updatedStates;
+    setStepStates(updatedStates);
 
+    isRunningRef.current = false;
     setIsRunning(false);
     setActiveStep(null);
     activeJobIdRef.current = null;
@@ -233,6 +232,8 @@ export function useRunAllSuites({
 
     isCancelledRef.current = false;
     activeJobIdRef.current = null;
+    selectedKeysRef.current = selectedKeys;
+    isRunningRef.current = true;
     setIsRunning(true);
     setOverallPercent(0);
 
@@ -241,6 +242,7 @@ export function useRunAllSuites({
       integration: selectedKeys.includes("integration") ? "queued" : "skipped",
       system: selectedKeys.includes("system") ? "queued" : "skipped",
     };
+    stepStatesRef.current = initialStates;
     setStepStates(initialStates);
 
     const initialProgress = {
@@ -262,11 +264,10 @@ export function useRunAllSuites({
       if (isCancelledRef.current) break;
 
       setActiveStep(step.key);
-      setStepStates((prev) => {
-        const next = { ...prev, [step.key]: "running" };
-        recalculateOverallProgress(next, initialProgress, selectedKeys);
-        return next;
-      });
+      const runningStates = { ...stepStatesRef.current, [step.key]: "running" };
+      stepStatesRef.current = runningStates;
+      setStepStates(runningStates);
+      recalculateOverallProgress(runningStates, initialProgress, selectedKeys);
 
       handleStepProgress(step.key, { progress: 5, stage: `Starting ${step.label}...` });
 
@@ -291,11 +292,10 @@ export function useRunAllSuites({
           }
         }
 
-        setStepStates((prev) => {
-          const next = { ...prev, [step.key]: "done" };
-          recalculateOverallProgress(next, initialProgress, selectedKeys);
-          return next;
-        });
+        const doneStates = { ...stepStatesRef.current, [step.key]: "done" };
+        stepStatesRef.current = doneStates;
+        setStepStates(doneStates);
+        recalculateOverallProgress(doneStates, initialProgress, selectedKeys);
 
         handleStepProgress(step.key, { progress: 100, stage: "Complete", message: "Suite finished" });
 
@@ -305,12 +305,16 @@ export function useRunAllSuites({
         }
       } catch (err) {
         if (err.isCancelled || isCancelledRef.current) {
-          setStepStates((prev) => ({ ...prev, [step.key]: "idle" }));
+          const idleStates = { ...stepStatesRef.current, [step.key]: "idle" };
+          stepStatesRef.current = idleStates;
+          setStepStates(idleStates);
           break;
         }
 
         console.error(`[RunAllSuites] Error executing ${step.key}:`, err);
-        setStepStates((prev) => ({ ...prev, [step.key]: "failed" }));
+        const failedStates = { ...stepStatesRef.current, [step.key]: "failed" };
+        stepStatesRef.current = failedStates;
+        setStepStates(failedStates);
         overallSuccess = false;
         addToast({
           title: `${step.label} Issue`,
@@ -322,6 +326,7 @@ export function useRunAllSuites({
       }
     }
 
+    isRunningRef.current = false;
     setIsRunning(false);
     setActiveStep(null);
     activeJobIdRef.current = null;
@@ -344,132 +349,6 @@ export function useRunAllSuites({
     }
   }, [snapshotId, addToast, onCompleted, handleStepProgress, recalculateOverallProgress]);
 
-  // Pre-flight check entry point triggered when user clicks "Run All Suites"
-  const initiateRunAll = useCallback(async () => {
-    if (!snapshotId || isRunning) return;
-
-    setReadinessGate((prev) => ({ ...prev, isChecking: true, error: null }));
-
-    try {
-      const res = await getSuitesReadiness(snapshotId);
-      const readinessData = res?.data;
-
-      if (readinessData?.allReady === true) {
-        // All suites ready -> start pipeline immediately
-        setReadinessGate({ isOpen: false, data: readinessData, isChecking: false, loadingAction: null, error: null });
-        await executePipeline(["unit", "integration", "system"]);
-      } else {
-        // Blocker exists -> display interactive Pre-flight HITL Gate
-        setReadinessGate({
-          isOpen: true,
-          data: readinessData,
-          isChecking: false,
-          loadingAction: null,
-          error: null,
-        });
-      }
-    } catch (err) {
-      console.warn("[RunAllSuites] Pre-flight check failed, falling back to direct run:", err.message);
-      setReadinessGate((prev) => ({ ...prev, isChecking: false }));
-      // Fallback: run directly
-      await executePipeline(["unit", "integration", "system"]);
-    }
-  }, [snapshotId, isRunning, executePipeline]);
-
-  // Execute in-place HITL actions from Pre-flight Gate
-  const resolveHitlAction = useCallback(async (action) => {
-    if (!snapshotId || !action?.actionType) return;
-
-    setReadinessGate((prev) => ({ ...prev, loadingAction: action.actionType }));
-
-    try {
-      if (action.actionType === "INSTALL_INTEGRATION_DEPS") {
-        await installIntegrationDependencies(snapshotId);
-        addToast({
-          title: "Dependencies Installed",
-          message: "supertest & jest were successfully added to package.json.",
-          type: "success",
-        });
-      } else if (action.actionType === "APPROVE_INTEGRATION_SCENARIOS") {
-        await approveIntegrationScenarios(snapshotId, { approveAll: true });
-        addToast({
-          title: "Scenarios Approved",
-          message: "Integration scenarios have been approved and marked ready for execution.",
-          type: "success",
-        });
-      } else if (action.actionType === "CONFIRM_SYSTEM_OUTCOMES") {
-        await confirmBatchSystemScenarios(snapshotId);
-        addToast({
-          title: "Outcomes Confirmed",
-          message: "System scenario expected outcomes confirmed.",
-          type: "success",
-        });
-      }
-
-      // Re-check readiness after performing action
-      const refreshed = await getSuitesReadiness(snapshotId);
-      setReadinessGate({
-        isOpen: true,
-        data: refreshed?.data,
-        isChecking: false,
-        loadingAction: null,
-        error: null,
-      });
-
-      if (refreshed?.data?.allReady) {
-        addToast({
-          title: "All Suites Ready",
-          message: "All 3 test suites now satisfy pre-flight readiness checks.",
-          type: "success",
-        });
-      }
-    } catch (err) {
-      console.error("[RunAllSuites] HITL Action failed:", err);
-      setReadinessGate((prev) => ({
-        ...prev,
-        loadingAction: null,
-        error: err.message || "Action could not be completed.",
-      }));
-      addToast({
-        title: "Action Failed",
-        message: err.message || "Failed to resolve pre-condition.",
-        type: "error",
-      });
-    }
-  }, [snapshotId, addToast]);
-
-  // Run only ready suites (skipping blocked ones)
-  const runReadySuitesOnly = useCallback(async () => {
-    const suites = readinessGate.data?.suites;
-    if (!suites) {
-      setReadinessGate((prev) => ({ ...prev, isOpen: false }));
-      await executePipeline(["unit", "integration", "system"]);
-      return;
-    }
-
-    const readyKeys = [];
-    if (suites.unit?.readyForExecution) readyKeys.push("unit");
-    if (suites.integration?.readyForExecution) readyKeys.push("integration");
-    if (suites.system?.readyForExecution) readyKeys.push("system");
-
-    setReadinessGate((prev) => ({ ...prev, isOpen: false }));
-
-    if (readyKeys.length === 0) {
-      addToast({
-        title: "No Suites Ready",
-        message: "None of the test suites meet the readiness pre-conditions. Please resolve the blockers first.",
-        type: "warning",
-      });
-      return;
-    }
-
-    await executePipeline(readyKeys);
-  }, [readinessGate.data, executePipeline, addToast]);
-
-  const closeReadinessGate = useCallback(() => {
-    setReadinessGate((prev) => ({ ...prev, isOpen: false }));
-  }, []);
-
   // F5 Reload & Network Reconnection Recovery
   useEffect(() => {
     if (!snapshotId) return;
@@ -479,12 +358,15 @@ export function useRunAllSuites({
     const attachToActiveRun = (activeRun) => {
       if (!isMounted || !activeRun) return;
       if (activeRun.status !== "RUNNING" && activeRun.status !== "QUEUED") return;
-      if (activeJobIdRef.current === activeRun.jobId && isRunning) return;
+      if (activeJobIdRef.current === activeRun.jobId && isRunningRef.current) return;
 
+      isRunningRef.current = true;
       setIsRunning(true);
       const pillar = activeRun.pillar || "unit";
       setActiveStep(pillar);
-      setStepStates((prev) => ({ ...prev, [pillar]: "running" }));
+      const runningStates = { ...stepStatesRef.current, [pillar]: "running" };
+      stepStatesRef.current = runningStates;
+      setStepStates(runningStates);
       setStepProgress((prev) => ({
         ...prev,
         [pillar]: {
@@ -501,14 +383,19 @@ export function useRunAllSuites({
       })
         .then(() => {
           if (isMounted) {
-            setStepStates((prev) => ({ ...prev, [pillar]: "done" }));
+            const doneStates = { ...stepStatesRef.current, [pillar]: "done" };
+            stepStatesRef.current = doneStates;
+            setStepStates(doneStates);
+            isRunningRef.current = false;
             setIsRunning(false);
             setActiveStep(null);
             invalidateCoverageQueries(snapshotId);
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn("[RunAllSuites] Failed to poll resumed job:", err?.message);
           if (isMounted) {
+            isRunningRef.current = false;
             setIsRunning(false);
             setActiveStep(null);
           }
@@ -535,26 +422,22 @@ export function useRunAllSuites({
         if (!isMounted) return;
         attachToActiveRun(res?.data?.activeSuiteRun);
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn("[RunAllSuites] Failed to fetch initial active suite run:", err?.message);
+      });
 
     return () => {
       isMounted = false;
     };
-  }, [snapshotId, initialActiveSuiteRun, skipInitialFetch, handleStepProgress, isRunning]);
+  }, [snapshotId, initialActiveSuiteRun, skipInitialFetch, handleStepProgress]);
 
   return {
-    runAll: initiateRunAll,
-    initiateRunAll,
     executePipeline,
     isRunning,
     activeStep,
     stepStates,
     stepProgress,
     overallPercent,
-    readinessGate,
-    resolveHitlAction,
-    runReadySuitesOnly,
-    closeReadinessGate,
     cancelRemaining,
   };
 }

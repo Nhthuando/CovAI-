@@ -466,9 +466,21 @@ export const isMatch = (parsedReq, discoveredEp) => {
   // 2. Exact match
   if (cleanPath.toLowerCase() === cleanRoute.toLowerCase()) return true;
 
-  // 3. Parameterized match: e.g. /api/food-items/get/:id matches /api/food-items/get/123 or /api/food-items/get/:param
-  const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
-  if (new RegExp(regexStr, "i").test(cleanPath)) return true;
+  // 3. Parameterized & wildcard match: escape regex metacharacters safely before expanding "*" and ":param"
+  const escapedRoute = cleanRoute
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/:[^/]+/g, "[^/]+");
+  const regexStr = `^${escapedRoute}$`;
+  try {
+    if (new RegExp(regexStr, "i").test(cleanPath)) return true;
+  } catch (regexErr) {
+    console.warn(
+      "[IntegrationWorkspace] Skipped invalid route regex:",
+      regexStr,
+      regexErr?.message,
+    );
+  }
 
   // 4. Subpath suffix match: only when cleanRoute has at least 2 segments and does not conflict
   if (

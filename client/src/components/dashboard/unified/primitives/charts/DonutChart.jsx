@@ -1,4 +1,3 @@
-import React from "react";
 
 /**
  * DonutChart - Pure SVG 360° Donut Chart for Test Executions & Outcomes.

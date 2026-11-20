@@ -12,7 +12,9 @@ export function getPassRate(passed = 0, failed = 0) {
 
 /**
  * Compute Executive Quality Health Score (0 - 100) and letter grade (A/B/C/D).
- * Gracefully normalizes weights when 1 or 2 pillars lack data.
+ * Uses fixed 50% Unit / 30% Integration / 20% System weights across all 3 layers
+ * (unexecuted layers contribute 0 to avoid artificial score inflation) minus a failure
+ * penalty up to 15 pts. Returns null score/grade when no pillars have tests or coverage.
  */
 export function computeHealth(pillars = {}, customWeights = null, qualityGate = null) {
   const cfgWeights = customWeights || UNIFIED_DASHBOARD_CONFIG.weights;
@@ -21,6 +23,7 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
   const layerScores = [];
   let totalAvailableWeight = 0;
   let totalFailedTests = 0;
+  let hasAnyData = false;
 
   for (const key of pillarKeys) {
     const p = pillars[key];
@@ -35,6 +38,10 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
     const hasTests = (p.totalTests || 0) > 0 || (p.passedTests || 0) > 0 || (p.failedTests || 0) > 0;
     const coverage = p.coverageMetrics?.lines ?? p.coverageMetrics?.apiEndpoint ?? p.coverageMetrics?.flow ?? 0;
     const hasMeaningfulCoverage = coverage !== null && Number(coverage) > 0;
+
+    if (hasTests || hasMeaningfulCoverage) {
+      hasAnyData = true;
+    }
 
     totalFailedTests += Number(p.failedTests || 0);
 
@@ -52,7 +59,7 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
     totalAvailableWeight += weight;
   }
 
-  if (totalAvailableWeight <= 0) {
+  if (!hasAnyData || totalAvailableWeight <= 0) {
     return { score: null, grade: null, delta: null };
   }
 
@@ -68,11 +75,12 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
   }
 
   const roundedScore = Math.round(finalScore);
+  const grades = UNIFIED_DASHBOARD_CONFIG.grades;
 
   let grade = "D";
-  if (roundedScore >= 80) grade = "A";
-  else if (roundedScore >= 65) grade = "B";
-  else if (roundedScore >= 50) grade = "C";
+  if (roundedScore >= grades.A) grade = "A";
+  else if (roundedScore >= grades.B) grade = "B";
+  else if (roundedScore >= grades.C) grade = "C";
 
   // If Quality Gate failed or is warning, health grade cannot be A
   if ((qualityGate?.status === "WARNING" || qualityGate?.status === "FAILED") && grade === "A") {

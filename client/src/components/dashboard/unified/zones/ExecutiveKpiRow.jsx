@@ -1,4 +1,3 @@
-import React from "react";
 import { Activity, CheckCircle2, ShieldCheck, Sparkles, ArrowRight } from "lucide-react";
 import { KpiCard } from "../primitives/KpiCard.jsx";
 import { DeltaIndicator } from "../primitives/DeltaIndicator.jsx";

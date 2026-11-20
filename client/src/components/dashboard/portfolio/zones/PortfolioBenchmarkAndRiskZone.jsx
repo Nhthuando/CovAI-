@@ -12,6 +12,7 @@ const VISIBLE_ATTENTION_LIMIT = 4;
 export function PortfolioBenchmarkAndRiskZone({
   kpis = {},
   lifecycleCounts = null,
+  lifecycleScopeLabel = "Projects",
   analytics = {},
   attentionQueue = [],
   projects = [],
@@ -107,7 +108,7 @@ export function PortfolioBenchmarkAndRiskZone({
               Lifecycle Split
             </h3>
             <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)]">
-              Projects
+              {lifecycleScopeLabel}
             </span>
           </div>
           <GateDistributionDonut

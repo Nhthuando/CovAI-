@@ -46,7 +46,7 @@ export function generateMarkdownReport(vm, sections = DEFAULT_EXPORT_SECTIONS) {
   const lines = [
     `# Unified Quality & Testing Report — ${context.projectName || "Project"}`,
     ``,
-    `> **Snapshot ID:** \`${context.snapshotId || "N/A"}\``,
+    `> **Branch:** \`${context.branch || "main"}\` | **Snapshot:** \`${context.snapshotLabel || context.snapshotId || "N/A"}\` (\`${context.snapshotId || "N/A"}\`)`,
     `> **Generated:** ${new Date().toISOString()} (${fmtRelativeTime(context.updatedAt)})`,
     `> **Quality Gate Status:** **${qualityGate.label || "N/A"}** (${qualityGate.status || "N/A"})`,
     ``,
@@ -410,7 +410,7 @@ function renderPdfTrendOrTargetSvg(trend = {}, coverage = {}) {
     const labels = pts
       .map(
         (p, i) =>
-          `<text x="${toX(i).toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="8.5" font-family="ui-monospace,monospace" fill="#64748b">${escapeHtml(p.label || p.snapshotLabel || `#${i + 1}`)}</text>`
+          `<text x="${toX(i).toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="8.5" font-family="ui-monospace,monospace" fill="#64748b">${escapeHtml(p.runLabel || p.label || p.snapshotLabel || `#${i + 1}`)}</text>`
       )
       .join("");
 
@@ -432,10 +432,10 @@ function renderPdfTrendOrTargetSvg(trend = {}, coverage = {}) {
               return `<line x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}" stroke="${v === 80 ? "#f59e0b" : "#e2e8f0"}" stroke-width="0.9" ${v === 80 ? 'stroke-dasharray="4 3"' : ""}/><text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="8.5" font-family="ui-monospace,monospace" fill="#64748b">${v}%</text>`;
             })
             .join("")}
-          ${lineFor((p) => p.overall ?? p.coveragePct ?? 0, "#2563eb")}
-          ${lineFor((p) => p.codePct ?? p.unit ?? 0, "#0ea5e9")}
-          ${lineFor((p) => p.apiPct ?? p.integration ?? 0, "#8b5cf6")}
-          ${lineFor((p) => p.flowPct ?? p.system ?? 0, "#10b981")}
+          ${lineFor((p) => p.overallCoverage ?? p.overall ?? p.coveragePct ?? 0, "#2563eb")}
+          ${lineFor((p) => p.unitCoverage ?? p.codePct ?? p.unit ?? 0, "#0ea5e9")}
+          ${lineFor((p) => p.integrationCoverage ?? p.apiPct ?? p.integration ?? 0, "#8b5cf6")}
+          ${lineFor((p) => p.systemCoverage ?? p.flowPct ?? p.system ?? 0, "#10b981")}
           ${labels}
         </svg>
       </div>
@@ -676,7 +676,14 @@ export function exportUnifiedDashboardPdf(vm, sections = DEFAULT_EXPORT_SECTIONS
                   ${actions.items
                     .map(
                       (act) => `<tr>
-                        <td>${renderStatusBadgeHtml(act.priority === "P0" ? "FAIL" : act.priority === "P1" ? "WARN" : "PASS", act.priority)}</td>
+                        <td>${renderStatusBadgeHtml(
+                          ["CRITICAL", "P0"].includes(act.priority)
+                            ? "FAIL"
+                            : ["HIGH", "P1", "MEDIUM"].includes(act.priority)
+                              ? "WARN"
+                              : "NEUTRAL",
+                          act.priority
+                        )}</td>
                         <td class="mono">${escapeHtml(String(act.pillar || "").toUpperCase())}</td>
                         <td><strong>${escapeHtml(act.title)}</strong><div style="font-size:10.5px;color:#475569;margin-top:2px;">${escapeHtml(act.description)}</div></td>
                         <td class="mono">${escapeHtml(act.targetName)}</td>

@@ -1262,6 +1262,8 @@ function LayoutInner() {
               {project?.id && (
                 <LifecycleStatusSelect
                   projectId={project.id}
+                  align="left"
+                  disabled={!projectAccess.can("files.write")}
                   currentStatus={
                     (project.lifecycleStatus && project.lifecycleStatus !== "NOT_STARTED"
                       ? project.lifecycleStatus
@@ -1292,7 +1294,7 @@ function LayoutInner() {
                     queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
                     queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
                   }}
-                  className="ml-1"
+                  className="ml-1 shrink-0"
                 />
               )}
               {filePathSegments.map((segment, idx) => {

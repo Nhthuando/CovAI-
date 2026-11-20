@@ -11,11 +11,11 @@ export const UNIFIED_DASHBOARD_CONFIG = {
     system: 0.20,
   },
 
-  // Health Score Grade Thresholds
+  // Health Score Grade Thresholds (synchronized with backend & portfolio)
   grades: {
-    A: 90,
-    B: 75,
-    C: 60,
+    A: 80,
+    B: 65,
+    C: 50,
     D: 0,
   },
 

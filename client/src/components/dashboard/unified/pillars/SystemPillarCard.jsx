@@ -1,4 +1,3 @@
-import React from "react";
 import { CheckCircle2, PlayCircle } from "lucide-react";
 import { PillarCardShell } from "./PillarCardShell.jsx";
 import { HorizontalBarList } from "../primitives/charts/HorizontalBarList.jsx";
@@ -31,7 +30,7 @@ export function SystemPillarCard({
 
   const dist = p.failureDistribution || {};
   const activeFailureKinds = Object.entries(dist)
-    .filter(([_, count]) => Number(count) > 0)
+    .filter(([, count]) => Number(count) > 0)
     .map(([key, count]) => ({
       key,
       label: SYSTEM_FAILURE_LABELS[key] || key,

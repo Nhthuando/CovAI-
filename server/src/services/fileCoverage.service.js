@@ -702,15 +702,22 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
         const fullTest = path.join(rootDir, normSource);
         const exists = fs.existsSync(fullTest);
         const testCode = exists ? fs.readFileSync(fullTest, "utf8") : "";
-        const primary = {
+        const testCount = exists ? countTestCases(testCode) : 0;
+        const rawSelf = {
             found: exists,
             filePath: normSource,
             fileName: path.basename(normSource),
             suggestedFilePath: normSource,
             testCode,
+            testCount,
+            confidence: exists ? 1.0 : 0,
             framework: testCode.includes("vitest") ? "vitest" : (framework || "jest"),
             relationType: "SELF",
             isPrimary: true
+        };
+        const primary = {
+            ...rawSelf,
+            score: calculateTraceabilityScore(rawSelf, path.basename(normSource, path.extname(normSource)), path.dirname(normSource))
         };
         return {
             primaryTestFile: primary,
@@ -773,8 +780,13 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     } catch (_) { }
 
     if (linkedMap.size === 1) {
-        const primary = {...linkedMap.values().next().value,isPrimary:true};
-        return {primaryTestFile:primary,linkedTestFiles:[primary],suggestedNewTestPath:defaultNewTestPath,hasExecutingTests:true};
+        const entry = linkedMap.values().next().value;
+        const primary = {
+            ...entry,
+            score: calculateTraceabilityScore(entry, baseName, dirName),
+            isPrimary: true
+        };
+        return { primaryTestFile: primary, linkedTestFiles: [primary], suggestedNewTestPath: defaultNewTestPath, hasExecutingTests: true };
     }
 
     // 2. TIER 2: SCAN EXISTING TEST FILES (NAMING & TEXT HEURISTICS)
