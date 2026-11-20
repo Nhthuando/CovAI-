@@ -1,5 +1,3 @@
-import { Skeleton } from "../../../common/Skeleton.jsx";
-
 export function KpiCard({
   label,
   value,
@@ -15,29 +13,10 @@ export function KpiCard({
   className = "",
   id = null,
 }) {
-  if (loading) {
-    return (
-      <div
-        id={id}
-        className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between min-h-[140px] ${className}`}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="h-5 w-5 rounded-full" />
-        </div>
-        <div className="space-y-2 my-2">
-          <Skeleton className="h-8 w-24" />
-          <Skeleton className="h-3 w-40" />
-        </div>
-        <Skeleton className="h-3 w-full mt-3" />
-      </div>
-    );
-  }
-
   return (
     <div
       id={id}
-      className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between min-h-[140px] transition-colors hover:border-[var(--ud-border)]/80 ${className}`}
+      className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between min-h-[140px] transition-colors hover:border-[var(--ud-border-strong)] ${className}`}
     >
       {/* Top Header */}
       <div className="flex items-center justify-between text-xs text-[var(--ud-text-muted)] font-medium mb-1">
@@ -49,7 +28,7 @@ export function KpiCard({
       </div>
 
       {/* Main Metric Value & Supporting info */}
-      <div className="my-1.5">
+      <div className={`my-1.5 transition-opacity duration-200 ${loading ? "opacity-65" : "opacity-100"}`}>
         <div className="flex items-baseline gap-2.5">
           {value !== undefined && value !== null && (
             <div className="flex items-baseline font-mono tabular-nums font-bold text-2xl tracking-tight text-[var(--ud-text)]">

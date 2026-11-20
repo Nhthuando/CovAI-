@@ -6,6 +6,7 @@ import { SystemPillarCard } from "../pillars/SystemPillarCard.jsx";
 
 export function PyramidAndPillarsZone({
   vm,
+  loading = false,
   onNavigateWorkspace,
   activeCrossFilter = null,
   onSelectCrossFilter = null,
@@ -28,6 +29,7 @@ export function PyramidAndPillarsZone({
         >
           <TestPyramidVisualizer
             pyramid={pyramid}
+            loading={loading}
             activeCrossFilter={activeCrossFilter}
             onSelectCrossFilter={onSelectCrossFilter}
           />
@@ -39,18 +41,21 @@ export function PyramidAndPillarsZone({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-full">
           <UnitPillarCard
             pillarData={pillars.unit}
+            loading={loading}
             onNavigateWorkspace={onNavigateWorkspace}
             activeCrossFilter={activeCrossFilter}
             onSelectCrossFilter={onSelectCrossFilter}
           />
           <IntegrationPillarCard
             pillarData={pillars.integration}
+            loading={loading}
             onNavigateWorkspace={onNavigateWorkspace}
             activeCrossFilter={activeCrossFilter}
             onSelectCrossFilter={onSelectCrossFilter}
           />
           <SystemPillarCard
             pillarData={pillars.system}
+            loading={loading}
             onNavigateWorkspace={onNavigateWorkspace}
             activeCrossFilter={activeCrossFilter}
             onSelectCrossFilter={onSelectCrossFilter}

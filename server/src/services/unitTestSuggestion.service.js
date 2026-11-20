@@ -4,6 +4,7 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
 import {
@@ -11,7 +12,6 @@ import {
     analyzeSourceAst,
     mapCoverageGaps
 } from "./businessLogicAstAnalyzer.service.js";
-import { isTestFilePath } from "../utils/businessLogicFileDetector.js";
 import {
     assembleUnitTestContext,
     buildDecisionTableMatrix,
@@ -27,8 +27,17 @@ import {
     CANONICAL_BUILTIN_HELPERS,
     deduplicateAstDeclarations
 } from "./testHelperRegistry.service.js";
+import { classifyFeasibleCoverage } from "./feasibleCoverageClassifier.service.js";
+import { validateUnitTestDraft } from './unitTestDraftValidation.service.js';
+import { classifyUnitTestPath, assertUnitTestTarget, suggestUnitTestTarget, unitTestInventory } from './unitTestFilePolicy.service.js';
+import { needsUnitTestSuggestion } from '../../../shared/unitTestCoverageGoal.js';
+import { canonicalizeFilePath } from '../utils/pathSanitizer.js';
+import { mergeUnitTestSuggestions } from './unitTestSuggestionBatch.service.js';
+import { measureUnitTestPhase, queueUnitTestSuggestion, withUnitTestTimings } from './unitTestWork.service.js';
+import { isImportTimeProcessExitScript, proposeImportTimeExitScriptDraft } from './commonJsTestDraft.service.js';
+import { definesMongooseModel, proposeMongooseModelFallbackTests } from './mongooseModelDraft.service.js';
 
-export { buildStandardUnitTestPrompt };
+export { buildStandardUnitTestPrompt, classifyFeasibleCoverage };
 
 /**
  * Builds standard 6-part unit test prompt for LLM (Jest & Vitest).
@@ -69,7 +78,10 @@ export const buildUnitTestPrompt = (options = {}) => {
         sourceCode,
         coverageDetails,
         framework,
-        existingTestCode: actualTestFileInfo.content
+        existingTestCode: actualTestFileInfo.content,
+        sourceFile: actualCleanSource,
+        targetTestFile: actualTargetTest,
+        rootDir
     });
 
     return buildStandardUnitTestPrompt({
@@ -121,31 +133,88 @@ export const sanitizeSourceFilePath = (rootDir, filePath) => {
  * full repo, monorepo subprojects, and container/host paths.
  */
 export const findSourceOnDisk = (rootDir, relPath) => {
-    if (!relPath || !rootDir) return { path: null, content: "" };
+    if (!relPath || !rootDir || typeof relPath !== "string") return { path: null, content: "" };
+    if (relPath.includes("\0") || /%2e%2e|%2f|%5c/i.test(relPath) || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(relPath)) {
+        return { path: null, content: "" };
+    }
     const clean = sanitizeSourceFilePath(rootDir, relPath);
-    const candidates = [
+
+    const CONTAINER_NAMES = new Set(["uploads", "storage", "snapshots", "projects", "app", ".covai-temp", "collaboration-operations", "tmp", "temp", "var", "opt", "home", "users"]);
+    const MONOREPO_SUBDIRS = new Set(["server", "backend", "client", "frontend", "services", "api", "app", "packages", "apps"]);
+    const allowedRoots = [path.resolve(rootDir)];
+    const repoIdx = rootDir.replace(/\\/g, "/").lastIndexOf("/repo");
+    if (repoIdx !== -1) {
+        allowedRoots.push(path.resolve(rootDir.slice(0, repoIdx + 5)));
+    }
+    const parentDir = path.dirname(rootDir);
+    if (parentDir && parentDir !== rootDir) {
+        const rootBase = path.basename(rootDir).toLowerCase();
+        const parentBase = path.basename(parentDir).toLowerCase();
+        if ((repoIdx !== -1 && parentDir.startsWith(rootDir.slice(0, repoIdx + 5))) ||
+            (MONOREPO_SUBDIRS.has(rootBase) && !CONTAINER_NAMES.has(parentBase))) {
+            allowedRoots.push(path.resolve(parentDir));
+        }
+    }
+
+    const isSafePath = (targetPath) => {
+        if (!targetPath || typeof targetPath !== "string") return false;
+        try {
+            const resolved = path.resolve(targetPath);
+            return allowedRoots.some(root => {
+                const relative = path.relative(root, resolved);
+                return !relative.startsWith("..") && !path.isAbsolute(relative);
+            });
+        } catch {
+            return false;
+        }
+    };
+
+    const strippedVariants = new Set([relPath, clean].filter(Boolean));
+    for (const baseVariant of [relPath, clean].filter(Boolean)) {
+        const parts = baseVariant.replace(/\\/g, "/").replace(/^\/+/, "").split("/").filter(Boolean);
+        for (let i = 1; i < parts.length; i++) {
+            strippedVariants.add(parts.slice(i).join("/"));
+        }
+    }
+
+    const rawCandidates = [
         path.join(rootDir, relPath),
         path.join(rootDir, clean),
         path.join(path.dirname(rootDir), relPath),
-        path.join(path.dirname(rootDir), clean),
-        relPath
+        path.join(path.dirname(rootDir), clean)
     ];
-    const base = path.basename(rootDir);
-    if (relPath.startsWith(base + "/") || relPath.startsWith(base + "\\")) {
-        candidates.push(path.join(rootDir, relPath.slice(base.length + 1)));
-    }
-    if (clean.startsWith(base + "/") || clean.startsWith(base + "\\")) {
-        candidates.push(path.join(rootDir, clean.slice(base.length + 1)));
-    }
-    const repoIdx = rootDir.replace(/\\/g, "/").lastIndexOf("/repo");
-    if (repoIdx !== -1) {
-        const repoRoot = rootDir.slice(0, repoIdx + 5);
-        candidates.push(path.join(repoRoot, relPath));
-        candidates.push(path.join(repoRoot, clean));
+
+    if (!path.isAbsolute(relPath)) {
+        rawCandidates.push(path.join(rootDir, relPath));
+    } else if (isSafePath(relPath)) {
+        rawCandidates.push(relPath);
     }
 
-    for (const cand of candidates) {
-        if (cand && fs.existsSync(cand)) {
+    const base = path.basename(rootDir);
+    if (relPath.startsWith(base + "/") || relPath.startsWith(base + "\\")) {
+        rawCandidates.push(path.join(rootDir, relPath.slice(base.length + 1)));
+    }
+    if (clean.startsWith(base + "/") || clean.startsWith(base + "\\")) {
+        rawCandidates.push(path.join(rootDir, clean.slice(base.length + 1)));
+    }
+    if (repoIdx !== -1) {
+        const repoRoot = rootDir.slice(0, repoIdx + 5);
+        rawCandidates.push(path.join(repoRoot, relPath));
+        rawCandidates.push(path.join(repoRoot, clean));
+    }
+
+    const SUBPROJECT_DIRS = ["server", "backend", "client", "frontend", "services", "api", "app"];
+    for (const variant of strippedVariants) {
+        rawCandidates.push(path.join(rootDir, variant));
+        rawCandidates.push(path.join(parentDir, variant));
+        for (const sub of SUBPROJECT_DIRS) {
+            rawCandidates.push(path.join(rootDir, sub, variant));
+            rawCandidates.push(path.join(parentDir, sub, variant));
+        }
+    }
+
+    for (const cand of rawCandidates) {
+        if (cand && isSafePath(cand) && fs.existsSync(cand)) {
             try {
                 if (!fs.statSync(cand).isDirectory()) {
                     return { path: cand, content: fs.readFileSync(cand, "utf8") };
@@ -217,6 +286,17 @@ export const computeRelativeImportPath = (targetTestFile, sourceFile, rootDir = 
 export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = null) => {
     const cleanSource = sanitizeSourceFilePath(rootDir, rawSourceFilePath);
     const associated = findAssociatedTestFile(rootDir, cleanSource, framework);
+    const direct = associated?.linkedTestFiles?.filter(file => file.relationType === 'DIRECT_IMPORT') || [];
+    if (direct.length > 1) {
+        const preferred = (associated.suggestedNewTestPath || associated.suggestedFilePath || `tests/${path.basename(cleanSource)}`)
+            .replace(/(?:\.(?:vitest|jest))?\.(?:test|spec|steps?)(\.[^.]+)$/, '.coverage.test$1');
+        const relativePath = suggestUnitTestTarget(rootDir,cleanSource,framework || direct[0].framework,preferred);
+        const absolutePath = path.join(rootDir,relativePath);
+        assertUnitTestTarget(rootDir,relativePath,framework || direct[0].framework);
+        return {found:fs.existsSync(absolutePath),relativePath,suggestedFilePath:relativePath,absolutePath,
+            fileName:path.basename(relativePath),content:fs.existsSync(absolutePath)?fs.readFileSync(absolutePath,'utf8'):'',
+            framework:framework || direct[0].framework,targetCandidates:direct.map(file => file.filePath)};
+    }
 
     if (associated && associated.found) {
         return {
@@ -230,7 +310,8 @@ export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = nul
         };
     }
 
-    const defaultRel = associated?.suggestedFilePath || (cleanSource ? `tests/${path.basename(cleanSource, path.extname(cleanSource))}.test${path.extname(cleanSource) || ".js"}` : "tests/sample.test.js");
+    const preferred = associated?.suggestedFilePath || (cleanSource ? `tests/${path.basename(cleanSource, path.extname(cleanSource))}.test${path.extname(cleanSource) || ".js"}` : "tests/sample.test.js");
+    const defaultRel = suggestUnitTestTarget(rootDir,cleanSource,framework || associated?.framework || 'jest',preferred);
     return {
         found: false,
         relativePath: defaultRel,
@@ -251,60 +332,131 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     const cleanSource = sanitizeSourceFilePath(rootDir, sourceFile);
     const cleanImportPath = computeRelativeImportPath(targetTestFile, cleanSource, rootDir);
     const isTs = /\.[cm]?tsx?$/i.test(cleanSource || "") || /\.[cm]?tsx?$/i.test(targetTestFile || "");
+    const effectiveTestFile = targetTestFile || `tests/${baseName || path.basename(cleanSource || "sample", path.extname(cleanSource || ".js"))}.test${isTs ? ".ts" : ".js"}`;
 
-    // Extract function, class, and export names from sourceCode (AST + Regex)
+    // Mongoose Schema / Model preservation fallback
+    if (sourceCode && definesMongooseModel(sourceCode)) {
+        const modelDraft = proposeMongooseModelFallbackTests({
+            sourceCode,
+            sourceFile: cleanSource,
+            testFile: effectiveTestFile,
+            framework,
+            cleanImportPath,
+            existingContent
+        });
+        if (modelDraft) return modelDraft;
+    }
+
+    // Import-time process.exit script isolation fallback (never top-level require/import)
+    const hasEsmSyntax = /^\s*(?:import|export)\s+/m.test(sourceCode || "");
+    const hasCjsExports = /module\.exports|exports\.[a-zA-Z0-9_$]+\s*=/.test(sourceCode || "");
+    const isCommonJS = !isVitest && !isTs && !hasEsmSyntax && (hasCjsExports || /require\s*\(/.test(sourceCode || ""));
+    if (sourceCode && !existingContent?.trim() && isImportTimeProcessExitScript(sourceCode)) {
+        if (!hasEsmSyntax) {
+            const cjsExitDraft = proposeImportTimeExitScriptDraft({
+                sourceCode,
+                sourceFile: cleanSource,
+                testFile: effectiveTestFile,
+                framework,
+                original: existingContent
+            });
+            if (cjsExitDraft) {
+                return {
+                    explanation: cjsExitDraft.explanation,
+                    suggestedTestCode: cjsExitDraft.fullUpdatedContent.trim(),
+                    fullUpdatedContent: cjsExitDraft.fullUpdatedContent
+                };
+            }
+        } else {
+            const runner = isVitest ? "vi" : "jest";
+            const runnerImp = isVitest
+                ? "import { describe, test, expect, vi } from 'vitest';\n"
+                : (isTs ? "import { describe, test, expect, jest } from '@jest/globals';\n" : "");
+            const esmScriptCode = `${runnerImp}describe('${baseName || "script"} import-time execution', () => {\n` +
+                `    test('intercepts process.exit during dynamic module evaluation', async () => {\n` +
+                `        let finish;\n` +
+                `        const completed = new Promise(resolve => { finish = resolve; });\n` +
+                `        const exitSpy = ${runner}.spyOn(process, 'exit').mockImplementation(code => { finish(code); });\n` +
+                `        const timer = setTimeout(() => finish(undefined), 50);\n` +
+                `        try {\n` +
+                `            await import('${cleanImportPath}');\n` +
+                `            const code = await completed;\n` +
+                `            expect(exitSpy).toHaveBeenCalled();\n` +
+                `            expect([0, 1, undefined]).toContain(code);\n` +
+                `        } finally {\n` +
+                `            clearTimeout(timer);\n` +
+                `            exitSpy.mockRestore();\n` +
+                `        }\n` +
+                `    });\n` +
+                `});\n`;
+            return {
+                explanation: "Isolate ESM import-time process.exit execution with dynamic import and spyOn(process, 'exit').",
+                suggestedTestCode: esmScriptCode.trim(),
+                fullUpdatedContent: esmScriptCode
+            };
+        }
+    }
+
+    // Extract function, class, and export names from sourceCode (AST + Regex fallback only when AST yields 0)
     const nonCallableExportNames = new Set(["prisma", "db", "database", "redis", "redisclient", "bull", "queue", "app", "server", "router"]);
-    const exportedFunctions = [];
+    const exportedEntries = [];
+    const pushEntry = (name, isDefault = false, type = "function") => {
+        if (!name || name === "default" || nonCallableExportNames.has(name.toLowerCase())) return;
+        const safeName = name === "defaultExport" ? "defaultExport" : name;
+        if (!exportedEntries.some(e => e.name === name && e.isDefault === isDefault)) {
+            exportedEntries.push({ name, safeName, isDefault, type });
+        }
+    };
     if (sourceCode) {
         try {
-            const astMeta = analyzeSourceAst(sourceCode);
-            if (astMeta && astMeta.exportedSymbolNames && astMeta.exportedSymbolNames.length > 0) {
-                for (const name of astMeta.exportedSymbolNames) {
-                    if (name && !exportedFunctions.includes(name) && !nonCallableExportNames.has(name.toLowerCase())) {
-                        exportedFunctions.push(name);
-                    }
+            const astMeta = analyzeSourceAst(sourceCode, rootDir && cleanSource ? { rootDir, sourceFile: cleanSource } : {});
+            if (astMeta && Array.isArray(astMeta.exportedSymbols)) {
+                for (const sym of astMeta.exportedSymbols) {
+                    if (!sym || sym.exportKind === "type") continue;
+                    const resolvedName = sym.name === "default" ? (sym.localName || "defaultExport") : sym.name;
+                    pushEntry(resolvedName, Boolean(sym.isDefault), sym.type || "function");
                 }
             }
         } catch (_) { }
 
-        // Fallback regex matching ESM and CommonJS
-        const fnMatches = [...sourceCode.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
-        for (const m of fnMatches) {
-            if (m[1] && !exportedFunctions.includes(m[1]) && !nonCallableExportNames.has(m[1].toLowerCase())) {
-                exportedFunctions.push(m[1]);
+        if (exportedEntries.length === 0) {
+            // Fallback regex matching ESM and CommonJS only when AST yielded zero symbols
+            const fnMatches = [...sourceCode.matchAll(/export\s+(default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
+            for (const m of fnMatches) {
+                if (m[2]) pushEntry(m[2], Boolean(m[1]), "function");
             }
-        }
-        const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
-        for (const m of namedExpMatches) {
-            for (const s of m[1].split(",")) {
-                const clean = s.trim().split(/\s+as\s+/)[0].trim();
-                if (clean && !exportedFunctions.includes(clean)) exportedFunctions.push(clean);
-            }
-        }
-        const cjsObjMatch = sourceCode.match(/module\.exports\s*=\s*\{([^}]+)\}/s);
-        if (cjsObjMatch) {
-            for (const s of cjsObjMatch[1].split(",")) {
-                const clean = s.trim().split(":")[0].trim();
-                if (clean && /^[a-zA-Z0-9_$]+$/.test(clean) && !exportedFunctions.includes(clean)) {
-                    exportedFunctions.push(clean);
+            const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
+            for (const m of namedExpMatches) {
+                for (const s of m[1].split(",")) {
+                    const cleanSpec = s.trim();
+                    if (!cleanSpec || /^type\s+/.test(cleanSpec)) continue;
+                    const parts = cleanSpec.split(/\s+as\s+/);
+                    const local = parts[0].trim();
+                    const exported = (parts[1] || local).trim();
+                    const isDef = exported === "default";
+                    pushEntry(isDef ? (local || "defaultExport") : exported, isDef, "named-export");
                 }
             }
-        }
-        const cjsSingleMatch = sourceCode.match(/module\.exports\s*=\s*([a-zA-Z0-9_$]+)\s*;?/);
-        if (cjsSingleMatch && !['null', 'undefined', 'true', 'false'].includes(cjsSingleMatch[1])) {
-            const single = cjsSingleMatch[1];
-            if (!exportedFunctions.includes(single)) {
-                exportedFunctions.push(single);
+            const cjsObjMatch = sourceCode.match(/module\.exports\s*=\s*\{([^}]+)\}/s);
+            if (cjsObjMatch) {
+                for (const s of cjsObjMatch[1].split(",")) {
+                    const clean = s.trim().split(":")[0].trim();
+                    if (clean && /^[a-zA-Z0-9_$]+$/.test(clean)) {
+                        pushEntry(clean, false, "function");
+                    }
+                }
+            }
+            const cjsSingleMatch = sourceCode.match(/module\.exports\s*=\s*([a-zA-Z0-9_$]+)\s*;?/);
+            if (cjsSingleMatch && !["null", "undefined", "true", "false"].includes(cjsSingleMatch[1])) {
+                pushEntry(cjsSingleMatch[1], true, "function");
+            }
+            const cjsNamed = [...sourceCode.matchAll(/(?:module\.)?exports\.([a-zA-Z0-9_$]+)\s*=/g)];
+            for (const m of cjsNamed) {
+                if (m[1]) pushEntry(m[1], false, "function");
             }
         }
-        const cjsNamed = [...sourceCode.matchAll(/exports\.([a-zA-Z0-9_$]+)\s*=/g)];
-        for (const m of cjsNamed) {
-            if (m[1] && !exportedFunctions.includes(m[1])) exportedFunctions.push(m[1]);
-        }
     }
-
-    // Detect if module under test is CommonJS
-    const isCommonJS = !isVitest && !isTs && (/module\.exports|exports\.|require\s*\(/.test(sourceCode || "") || !/^\s*import\s+/m.test(sourceCode || ""));
+    const exportedFunctions = Array.from(new Set(exportedEntries.map(e => e.name)));
 
     // Extract real parameter names accessed from req.body, req.query, req.params, req.file
     const bodyKeys = new Set();
@@ -314,10 +466,10 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
 
     if (sourceCode) {
         // e.g. const { a, b, c } = req.body;
-        const bodyDestructureMatches = [...sourceCode.matchAll(/\{\s*([^}]+)\s*\}\s*=\s*req\.body/g)];
+        const bodyDestructureMatches = [...sourceCode.matchAll(/(?:const|let|var|\(|;|=|^)\s*\{([^}]+)\}\s*=\s*req\.body/g)];
         for (const m of bodyDestructureMatches) {
             for (const key of m[1].split(",")) {
-                const k = key.trim().split(":")[0].trim();
+                const k = key.trim().split(":")[0].split("=")[0].trim();
                 if (/^[a-zA-Z0-9_$]+$/.test(k)) bodyKeys.add(k);
             }
         }
@@ -326,10 +478,10 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             if (m[1]) bodyKeys.add(m[1]);
         }
 
-        const queryDestructureMatches = [...sourceCode.matchAll(/\{\s*([^}]+)\s*\}\s*=\s*req\.query/g)];
+        const queryDestructureMatches = [...sourceCode.matchAll(/(?:const|let|var|\(|;|=|^)\s*\{([^}]+)\}\s*=\s*req\.query/g)];
         for (const m of queryDestructureMatches) {
             for (const key of m[1].split(",")) {
-                const k = key.trim().split(":")[0].trim();
+                const k = key.trim().split(":")[0].split("=")[0].trim();
                 if (/^[a-zA-Z0-9_$]+$/.test(k)) queryKeys.add(k);
             }
         }
@@ -338,10 +490,10 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             if (m[1]) queryKeys.add(m[1]);
         }
 
-        const paramsDestructureMatches = [...sourceCode.matchAll(/\{\s*([^}]+)\s*\}\s*=\s*req\.params/g)];
+        const paramsDestructureMatches = [...sourceCode.matchAll(/(?:const|let|var|\(|;|=|^)\s*\{([^}]+)\}\s*=\s*req\.params/g)];
         for (const m of paramsDestructureMatches) {
             for (const key of m[1].split(",")) {
-                const k = key.trim().split(":")[0].trim();
+                const k = key.trim().split(":")[0].split("=")[0].trim();
                 if (/^[a-zA-Z0-9_$]+$/.test(k)) paramsKeys.add(k);
             }
         }
@@ -359,19 +511,30 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         const obj = {};
         if (bodyKeys.size > 0) {
             for (const k of bodyKeys) {
+                const kLower = k.toLowerCase();
+                const isCollectionKey = /items|list|products|records|ids|files|messages|history|turns|entries|rows/.test(kLower);
                 if (isBoundary) {
-                    if (k.toLowerCase().includes("id")) obj[k] = "0";
-                    else if (k.toLowerCase().includes("score") || k.toLowerCase().includes("amount") || k.toLowerCase().includes("num")) obj[k] = 0;
+                    if (isCollectionKey) obj[k] = [];
+                    else if (kLower.includes("id")) obj[k] = "0";
+                    else if (kLower.includes("score") || kLower.includes("amount") || kLower.includes("num") || kLower.includes("total") || kLower.includes("price")) obj[k] = 0;
                     else obj[k] = "";
                 } else {
-                    if (k.toLowerCase().includes("id")) obj[k] = "1";
-                    else if (k.toLowerCase().includes("expr") || k.toLowerCase().includes("calc")) obj[k] = isBoundary ? "" : "2 + 3 * 4";
-                    else if (k.toLowerCase().includes("mode")) obj[k] = "initial";
-                    else if (k.toLowerCase().includes("score") || k.toLowerCase().includes("amount") || k.toLowerCase().includes("num")) obj[k] = 50;
-                    else if (k.toLowerCase().includes("status")) obj[k] = "active";
-                    else if (k.toLowerCase().includes("text")) obj[k] = "Sample requirement text for test validation";
-                    else if (k.toLowerCase().includes("session")) obj[k] = "session-123";
-                    else if (k.toLowerCase().includes("message")) obj[k] = "What is the requirement?";
+                    if (kLower.includes("history") || kLower.includes("messages") || kLower.includes("turns")) {
+                        obj[k] = [
+                            { role: 'user', content: 'Sample user message', text: 'Sample user text' },
+                            { role: 'model', content: 'Sample model reply', text: 'Sample model reply' }
+                        ];
+                    } else if (isCollectionKey) obj[k] = [{ id: 1, foodId: 1, quantity: 1, name: 'Sample' }];
+                    else if (kLower.includes("id")) obj[k] = "1";
+                    else if (kLower.includes("expr") || kLower.includes("calc")) obj[k] = isBoundary ? "" : "2 + 3 * 4";
+                    else if (kLower.includes("mode")) obj[k] = "initial";
+                    else if (kLower.includes("score") || kLower.includes("amount") || kLower.includes("num") || kLower.includes("total") || kLower.includes("price")) obj[k] = 50;
+                    else if (kLower.includes("currency")) obj[k] = "vnd";
+                    else if (kLower.includes("payment") || kLower.includes("intent")) obj[k] = "pi_mock_123";
+                    else if (kLower.includes("status")) obj[k] = "active";
+                    else if (kLower.includes("text")) obj[k] = "Sample requirement text for test validation";
+                    else if (kLower.includes("session")) obj[k] = "session-123";
+                    else if (kLower.includes("message")) obj[k] = "What is the requirement?";
                     else obj[k] = `Sample ${k}`;
                 }
             }
@@ -382,6 +545,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             obj.status = isBoundary ? '' : 'ACTIVE';
             obj.text = isBoundary ? '' : 'Sample requirement text';
             obj.score = isBoundary ? 0 : 50;
+            obj.items = isBoundary ? [] : [{ id: 1, foodId: 1, quantity: 1, name: 'Sample' }];
         }
         return JSON.stringify(obj, null, 16).replace(/\n\s*}/, "\n            }");
     };
@@ -462,20 +626,32 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         : `    // Universal Service / Business Logic Member Invoker (Registered once per suite)
     const _collectCallableMembers = (target${isTs ? ": any" : ""}, fallbackName = 'target') => {
         const list${isTs ? ": { name: string; fn: Function }[]" : ""} = [];
+        const dangerousMethods = new Set([
+            'bclient', 'eclient', 'client', 'whenCurrentJobsFinished', 'obliterate',
+            'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',
+            'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
+            'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
+            'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
+            'save', 'validate', 'validateSync', 'bulkWrite', 'insertMany', 'watch',
+            'populate', 'aggregate', 'createIndex', 'ensureIndexes', 'dropIndex', 'collection',
+            'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
+        ]);
         if (!target) return list;
         if (typeof target === 'function') {
+            list.push({ name: fallbackName, fn: target });
             for (const p of Object.getOwnPropertyNames(target)) {
-                if (!['length', 'name', 'prototype', 'caller', 'arguments', 'constructor'].includes(p) && typeof target[p] === 'function') {
+                if (!dangerousMethods.has(p) && typeof target[p] === 'function') {
                     list.push({ name: p, fn: target[p].bind(target) });
                 }
             }
-            if (list.length === 0) {
+            const protoProps = target.prototype ? Object.getOwnPropertyNames(target.prototype).filter(p => p !== 'constructor') : [];
+            if (protoProps.length > 0) {
                 try {
                     const inst = new target();
                     let proto = Object.getPrototypeOf(inst);
-                    while (proto && proto !== Object.prototype) {
+                    while (proto && proto !== Object.prototype && proto !== Array.prototype && proto.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient', 'Array', 'Map', 'Set', 'WeakMap', 'WeakSet', 'RegExp', 'Date', 'Error', 'Promise'].includes(proto.constructor.name)) {
                         for (const p of Object.getOwnPropertyNames(proto)) {
-                            if (p !== 'constructor' && typeof inst[p] === 'function') {
+                            if (!dangerousMethods.has(p) && typeof inst[p] === 'function') {
                                 list.push({ name: p, fn: inst[p].bind(inst) });
                             }
                         }
@@ -483,10 +659,18 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                     }
                 } catch (_) {}
             }
-            if (list.length === 0) list.push({ name: fallbackName, fn: target });
         } else if (typeof target === 'object') {
+            const isQueueOrEmitter = Boolean(
+                (target.constructor && ['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(target.constructor.name)) ||
+                (target.client && target.bclient)
+            );
             for (const p of Object.keys(target)) {
-                if (typeof target[p] === 'function') list.push({ name: p, fn: target[p].bind(target) });
+                if (!dangerousMethods.has(p) && typeof target[p] === 'function') {
+                    if (isQueueOrEmitter && ['process', 'on', 'add', 'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'close'].includes(p)) {
+                        continue;
+                    }
+                    list.push({ name: p, fn: target[p].bind(target) });
+                }
             }
         }
         return list;
@@ -524,7 +708,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const actions = _collectControllerActions(target);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             expect(res.status || res.json || next).toBeDefined();
         } catch (err) {
@@ -557,7 +741,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const actions = _collectControllerActions(target);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             expect(res.status || res.json || next).toBeDefined();
         } catch (err) {
@@ -589,7 +773,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const actions = _collectControllerActions(target);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             expect(res.status || next).toBeDefined();
         } catch (err) {
@@ -600,7 +784,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     // Category D: Error & Exception Handling (Downstream rejection, invalid params, catch execution)
     test('${fn} [Category D: Error Handling] - handles error paths, invalid params, and rejections gracefully', async () => {
         try {
-            const req = { body: null, query: null, params: null, file: null, user: null };
+            const req = { body: {}, query: {}, params: {}, headers: {}, file: null, user: null };
             const _getMock = () => {
                 if (typeof jest !== 'undefined' && typeof jest.fn === 'function') return jest.fn().mockReturnThis();
                 if (typeof vi !== 'undefined' && typeof vi.fn === 'function') return vi.fn().mockReturnThis();
@@ -614,7 +798,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             const actions = _collectControllerActions(target);
             if (typeof setStubRejectMode === 'function') setStubRejectMode(true);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             if (typeof setStubRejectMode === 'function') setStubRejectMode(false);
             expect(next).toBeDefined();
@@ -628,13 +812,27 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         try {
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const defaultArgs = { requirement: 'Sample requirement', text: 'Sample text', description: 'Sample description', options: {}, id: '1', name: 'sample', amount: 100, status: 'active' };
+            const chatHistoryFixture = [
+                { role: 'user', content: 'test message', text: 'test message' },
+                { role: 'model', content: 'reply message', text: 'reply message' }
+            ];
+            const collectionFixture = [
+                { id: 1, name: 'Sample Item 1', role: 'user', content: 'content 1', text: 'text 1', status: 'active', amount: 100, value: 50 },
+                { id: 2, name: 'Sample Item 2', role: 'model', content: 'content 2', text: 'text 2', status: 'pending', amount: 200, value: 100 }
+            ];
+            const stringListFixture = ['item-alpha', 'item-beta', 'item-gamma'];
             const members = _collectCallableMembers(target);
             for (const m of members) {
-                try { await Promise.resolve(m.fn('2 + 3 * 4', '14')).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(10)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(1)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn()).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(defaultArgs)).catch(() => {}); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn('2 + 3 * 4', '14')).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(10)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(1)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(defaultArgs)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                // Multi-element collections & populated fixtures traversing beyond guard clauses
+                try { await Promise.race([Promise.resolve(m.fn(chatHistoryFixture)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(collectionFixture)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(stringListFixture, 'item-alpha')).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(collectionFixture, defaultArgs)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
             }
             expect(target).toBeDefined();
         } catch (err) {
@@ -662,14 +860,20 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 '2 + + * 3',
                 '0.1 + 0.2',
                 'invalid input',
-                []
+                [],
+                [{ role: 'user', content: '' }],
+                [{ role: 'user', text: '   ' }],
+                [{ role: 'user', count: 42 }],
+                [{ id: 0, amount: 0, items: [] }],
+                [{ role: 'user', content: 'single turn' }],
+                [{ role: 'model', content: 'single model turn' }]
             ];
             for (const m of members) {
                 for (const input of boundaryInputs) {
                     try {
                         const res = m.fn(input);
                         if (res && typeof res.then === 'function') {
-                            await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                            await Promise.race([res.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
                         }
                     } catch (_) {}
                 }
@@ -688,13 +892,37 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             for (const m of members) {
                 try {
                     const res1 = m.fn({ requirement: 'Test requirement', errors: true, tagFilter: '@test', scenariosMustMatchFeatureFile: true, status: 'active', includeDetails: true });
-                    if (res1 && typeof res1.then === 'function') await res1.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                    if (res1 && typeof res1.then === 'function') await Promise.race([res1.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
                 } catch (_) {}
                 try {
                     const res2 = m.fn({ requirement: '', errors: false, tagFilter: '', status: 'inactive' });
-                    if (res2 && typeof res2.then === 'function') await res2.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                    if (res2 && typeof res2.then === 'function') await Promise.race([res2.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
                 } catch (_) {}
-                try { await Promise.resolve(m.fn()).catch(() => {}); } catch {}
+                // Branch toggling for collections: assistant role, consecutive role merges, leading/trailing pruning
+                try {
+                    const branchHistory1 = [
+                        { role: 'assistant', text: 'Initial assistant greeting' },
+                        { role: 'user', text: 'Prompt 1' },
+                        { role: 'user', content: 'Consecutive prompt 2' },
+                        { role: 'model', text: 'Reply 1' },
+                        { role: 'assistant', content: 'Consecutive reply 2' },
+                        { role: 'user', content: 'Trailing user turn' }
+                    ];
+                    const res3 = m.fn(branchHistory1);
+                    if (res3 && typeof res3.then === 'function') await Promise.race([res3.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
+                } catch (_) {}
+                try {
+                    const branchHistory2 = [
+                        { role: 'model', content: 'Leading model turn' },
+                        { role: 'system', content: 'System instruction to skip' },
+                        { role: 'user', text: '' },
+                        { role: 'user', text: 'Valid message' },
+                        { role: 'model', content: 'Valid answer' }
+                    ];
+                    const res4 = m.fn(branchHistory2);
+                    if (res4 && typeof res4.then === 'function') await Promise.race([res4.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
+                } catch (_) {}
+                try { await Promise.race([Promise.resolve(m.fn()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
             }
             expect(target).toBeDefined();
         } catch (err) {
@@ -708,9 +936,11 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const members = _collectCallableMembers(target);
             for (const m of members) {
-                try { await Promise.resolve(m.fn(null)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(undefined)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn({})).catch(() => {}); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(null)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(undefined)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn({})).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                // Error handling for malformed collection items (nulls, primitives, non-objects)
+                try { await Promise.race([Promise.resolve(m.fn([null, undefined, 123, 'corrupt', {}, { role: null, content: null }])).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
             }
             expect(target).toBeDefined();
         } catch (err) {
@@ -726,18 +956,23 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 'bclient', 'eclient', 'client', 'whenCurrentJobsFinished', 'obliterate',
                 'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',
                 'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
-                'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect'
+                'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
+                'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
+                'save', 'validate', 'validateSync', 'bulkWrite', 'insertMany', 'watch',
+                'populate', 'aggregate', 'createIndex', 'ensureIndexes', 'dropIndex', 'collection',
+                'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
             ]);
             // 1. Static methods on class constructor
             if (typeof target === 'function') {
                 for (const name of Object.getOwnPropertyNames(target)) {
                     if (!['length', 'name', 'prototype', 'caller', 'arguments', 'constructor'].includes(name) && typeof target[name] === 'function' && !dangerousMethods.has(name)) {
-                        try { await Promise.resolve(target[name]('2 + 3 * 4', '14')).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name](10)).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name](1)).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name]()).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name]({})).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name](null)).catch(() => {}); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name]('2 + 3 * 4', '14')).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name](10)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name](1)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name]()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name]({})).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name](null)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name]([{ role: 'user', content: 'test' }, { role: 'model', content: 'reply' }])).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
                     }
                 }
             }
@@ -749,7 +984,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             if (inst && (typeof inst === 'object' || typeof inst === 'function')) {
                 const methods = new Set(Object.keys(inst).filter(k => typeof inst[k] === 'function' && !dangerousMethods.has(k)));
                 let p = Object.getPrototypeOf(inst);
-                while (p && p !== Object.prototype) {
+                while (p && p !== Object.prototype && p !== Array.prototype && p.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient', 'Array', 'Map', 'Set', 'WeakMap', 'WeakSet', 'RegExp', 'Date', 'Error', 'Promise'].includes(p.constructor.name)) {
                     for (const name of Object.getOwnPropertyNames(p)) {
                         if (name !== 'constructor' && typeof p[name] === 'function' && !dangerousMethods.has(name)) {
                             methods.add(name);
@@ -758,10 +993,11 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                     p = Object.getPrototypeOf(p);
                 }
                 for (const mName of methods) {
-                    try { await Promise.resolve(inst[mName]()).catch(() => {}); } catch {}
-                    try { await Promise.resolve(inst[mName]({})).catch(() => {}); } catch {}
-                    try { await Promise.resolve(inst[mName]({ id: '1', status: 'active', filter: 'all', options: {} })).catch(() => {}); } catch {}
-                    try { await Promise.resolve(inst[mName](null)).catch(() => {}); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName]()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName]({})).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName]({ id: '1', status: 'active', filter: 'all', options: {} })).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName](null)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName]([{ role: 'user', content: 'test' }, { role: 'model', content: 'reply' }])).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
                 }
             }
             expect(target).toBeDefined();
@@ -864,7 +1100,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 // Category D: Error & Exception Handling (null req, rejecting promises)
                 const resD = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
                 const nextD = _getMock();
-                await Promise.resolve(callerRef({ body: null, query: null, params: null }, resD, nextD)).catch(() => {});
+                await Promise.resolve(callerRef({ body: {}, query: {}, params: {}, headers: {}, file: null, user: null }, resD, nextD)).catch(() => {});
                 expect(callerRef).toBeDefined();
             }
         } catch (err) {
@@ -875,13 +1111,22 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     }
 
     const linesComment = uncoveredLines && uncoveredLines.length > 0 ? ` for lines: ${uncoveredLines.join(", ")}` : "";
-    const suiteBody = [sharedHelperDef, ...testCases].filter(Boolean).join("\n\n");
+    const callsProcessExitInExports = /\bprocess\s*\.\s*(?:exit|abort)\s*\(/.test(sourceCode || "");
+    const exitRunner = isVitest ? "vi" : "jest";
+    const exitGuardHooks = callsProcessExitInExports
+        ? `    let _exitSpy;\n    beforeEach(() => { _exitSpy = ${exitRunner}.spyOn(process, 'exit').mockImplementation(() => {}); });\n    afterEach(() => { _exitSpy?.mockRestore(); });`
+        : "";
+    const suiteBody = [exitGuardHooks, sharedHelperDef, ...testCases].filter(Boolean).join("\n\n");
     const newTests = `
 describe('${baseName} unit tests', () => {
     // Tests specifically targeting >=90% to 100% branch and statement coverage${linesComment}
 ${suiteBody}
 });
 `;
+
+    const defaultEntry = exportedEntries.find(e => e.isDefault) || null;
+    const namedFns = Array.from(new Set(exportedEntries.filter(e => !e.isDefault).map(e => e.safeName)))
+        .filter(n => n !== defaultEntry?.safeName);
 
     if (existingContent && existingContent.trim()) {
         let updatedContent = existingContent.trimEnd();
@@ -900,7 +1145,7 @@ ${suiteBody}
         const importedIdentifier = cjsDefaultImportMatch ? cjsDefaultImportMatch[1] : (esmDefaultImportMatch ? esmDefaultImportMatch[1] : null);
 
         // Check which imported symbols are missing from existingContent
-        const missingImports = exportedFunctions.filter(fn => {
+        const missingImports = namedFns.filter(fn => {
             if (fn === "default") return false;
             const declRegex = new RegExp(`(?:import\\s+.*?\\b${fn}\\b|const\\s+.*?\\b${fn}\\b|let\\s+.*?\\b${fn}\\b|function\\s+${fn}\\b|class\\s+${fn}\\b)`, "m");
             return !declRegex.test(updatedContent);
@@ -933,37 +1178,31 @@ ${suiteBody}
             }
         }
 
-        if (exportedFunctions.includes("default") && !/\bdefaultExport\b/.test(updatedContent)) {
-            if (importedIdentifier) {
-                const defaultStmt = `const defaultExport = ${importedIdentifier};\n`;
-                const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
-                if (firstDescribeIdx !== -1) {
-                    updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n" + defaultStmt + updatedContent.slice(firstDescribeIdx);
-                } else {
-                    updatedContent = defaultStmt + updatedContent;
-                }
-            } else if (!updatedContent.includes(cleanImportPath)) {
-                if (isCommonJS) {
-                    updatedContent = `const defaultExport = require('${cleanImportPath}');\n` + updatedContent;
-                } else {
-                    updatedContent = `import defaultExport from '${cleanImportPath}';\n` + updatedContent;
+        if (defaultEntry) {
+            const defName = defaultEntry.safeName;
+            const hasDefDecl = new RegExp(`(?:import\\s+${defName}\\b|(?:const|let|var)\\s+${defName}\\b)`).test(updatedContent);
+            if (!hasDefDecl) {
+                if (importedIdentifier) {
+                    const defaultStmt = `const ${defName} = ${importedIdentifier};\n`;
+                    const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
+                    if (firstDescribeIdx !== -1) {
+                        updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n" + defaultStmt + updatedContent.slice(firstDescribeIdx);
+                    } else {
+                        updatedContent = defaultStmt + updatedContent;
+                    }
+                } else if (!updatedContent.includes(cleanImportPath)) {
+                    if (isCommonJS) {
+                        updatedContent = `const ${defName} = require('${cleanImportPath}');\n` + updatedContent;
+                    } else {
+                        updatedContent = `import ${defName} from '${cleanImportPath}';\n` + updatedContent;
+                    }
                 }
             }
         }
 
-        if (isolationMockPreamble) {
-            const safePreamble = isolationMockPreamble.trim() + "\n\n";
-            const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
-            if (firstDescribeIdx !== -1) {
-                updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n\n" + safePreamble + updatedContent.slice(firstDescribeIdx);
-            } else {
-                updatedContent = safePreamble + updatedContent;
-            }
-        }
-
-        if (isTs && !updatedContent.includes("@ts-nocheck")) {
-            updatedContent = "// @ts-nocheck\n" + updatedContent;
-        }
+        // Do NOT inject isolationMockPreamble into existing test files.
+        // Existing test files already establish their own imports and mock environment.
+        // Injecting isolation mocks into pre-existing suites causes toxic mock hoisting.
 
         updatedContent = updatedContent.trimEnd() + "\n\n" + newTests.trim() + "\n";
         updatedContent = deduplicateAstDeclarations(updatedContent).code;
@@ -976,28 +1215,31 @@ ${suiteBody}
     }
 
     const testRunnerImport = isVitest
-        ? "import { describe, test, expect } from 'vitest';\n"
-        : (isTs ? "import { describe, test, it, expect } from '@jest/globals';\n" : "");
-
-    const hasDefault = exportedFunctions.includes("default");
-    const namedFns = exportedFunctions.filter(f => f !== "default");
+        ? (callsProcessExitInExports
+            ? "import { describe, test, expect, beforeEach, afterEach } from 'vitest';\n"
+            : "import { describe, test, expect } from 'vitest';\n")
+        : (isTs
+            ? (callsProcessExitInExports
+                ? "import { describe, test, it, expect, jest, beforeEach, afterEach } from '@jest/globals';\n"
+                : "import { describe, test, it, expect } from '@jest/globals';\n")
+            : "");
 
     let importStatement = "";
     if (isCommonJS) {
-        if (hasDefault && namedFns.length > 0) {
-            importStatement = `const defaultExport = require('${cleanImportPath}');\nconst { ${namedFns.join(", ")} } = defaultExport || {};\n`;
-        } else if (hasDefault) {
-            importStatement = `const defaultExport = require('${cleanImportPath}');\n`;
+        if (defaultEntry && namedFns.length > 0) {
+            importStatement = `const ${defaultEntry.safeName} = require('${cleanImportPath}');\nconst { ${namedFns.join(", ")} } = ${defaultEntry.safeName} || {};\n`;
+        } else if (defaultEntry) {
+            importStatement = `const ${defaultEntry.safeName} = require('${cleanImportPath}');\n`;
         } else if (namedFns.length > 0) {
             importStatement = `const { ${namedFns.join(", ")} } = require('${cleanImportPath}');\n`;
         } else {
             importStatement = `const importedModule = require('${cleanImportPath}');\n`;
         }
     } else {
-        if (hasDefault && namedFns.length > 0) {
-            importStatement = `import defaultExport, { ${namedFns.join(", ")} } from '${cleanImportPath}';\n`;
-        } else if (hasDefault) {
-            importStatement = `import defaultExport from '${cleanImportPath}';\n`;
+        if (defaultEntry && namedFns.length > 0) {
+            importStatement = `import ${defaultEntry.safeName}, { ${namedFns.join(", ")} } from '${cleanImportPath}';\n`;
+        } else if (defaultEntry) {
+            importStatement = `import ${defaultEntry.safeName} from '${cleanImportPath}';\n`;
         } else if (namedFns.length > 0) {
             importStatement = `import { ${namedFns.join(", ")} } from '${cleanImportPath}';\n`;
         } else {
@@ -1008,9 +1250,6 @@ ${suiteBody}
     const safePreamble = isolationMockPreamble ? (isolationMockPreamble.trim() + "\n\n") : "";
     const vitestHeader = isVitest ? "import { vi } from 'vitest';\n" : "";
     let fullCode = `${vitestHeader}${safePreamble}${testRunnerImport}${importStatement}${newTests}`;
-    if (isTs && !fullCode.includes("@ts-nocheck")) {
-        fullCode = "// @ts-nocheck\n" + fullCode;
-    }
     fullCode = deduplicateAstDeclarations(fullCode).code;
 
     return {
@@ -1142,8 +1381,8 @@ export const findAssociatedSourceFile = (rootDir, testFilePath) => {
  * - exceptionPoints: throw, catch, promise-reject
  * Falls back safely to regex parsing if source contains experimental or malformed syntax.
  */
-export const extractAstMetadata = (sourceCode = "") => {
-    const analysis = analyzeSourceAst(sourceCode);
+export const extractAstMetadata = (sourceCode = "", options = {}) => {
+    const analysis = analyzeSourceAst(sourceCode, options);
     return {
         exportedSymbols: analysis.exportedSymbolNames || analysis.exportedSymbols.map(s => s.name),
         exportedSymbolDetails: analysis.exportedSymbols || [],
@@ -1167,7 +1406,8 @@ export const extractSourceGapsAndDecisions = ({ sourceCode = "", fileCoverageDat
         astMetadata: astMeta.details || astMeta,
         fileCoverageData,
         sourceCode,
-        uncoveredLinesList: uncoveredLines
+        uncoveredLinesList: uncoveredLines,
+        infeasibleCodeBlocks: astMeta.details?.infeasibleNodes || astMeta.infeasibleNodes || []
     });
 
     const decisionTable = buildDecisionTableMatrix({
@@ -1258,7 +1498,8 @@ const generateSuggestionForFramework = async ({
     coverageDetails,
     isTest,
     filePath,
-    targetTestFile
+    selectedAiModel = null,
+    targetTestFile = null
 }) => {
     return generateAiUnitTestSuite({
         userId,
@@ -1269,26 +1510,67 @@ const generateSuggestionForFramework = async ({
         coverageDetails,
         isTest,
         filePath,
-        targetTestFile
+        selectedAiModel,
+        targetTestFile,
+        validateCollection: false
     });
 };
 
 /**
  * AI Agent for suggesting unit test cases for uncovered lines, branches, and assertion errors.
  */
-export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, userId, framework: requestedFramework }) => {
-    const { resolveProjectAccess } = await import("./projectAccess.service.js");
-    const proposalAccess = await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
-    const capturedWorkspaceRevision = proposalAccess.project.workspaceRevision;
+export const suggestUnitTestcases = async input => {
+    let projectId = input.projectId;
+    if (!projectId && input.snapshotId) {
+        const snap = await prisma.projectSnapshot.findUnique({
+            where: { id: input.snapshotId },
+            select: { projectId: true }
+        });
+        if (snap?.projectId) {
+            projectId = snap.projectId;
+            input.projectId = projectId;
+        }
+    }
+    if (!projectId) {
+        throw new ServiceError("projectId is required", 400, "PROJECT_REQUIRED");
+    }
+    if (!input.filePath) {
+        throw new ServiceError("filePath is required", 400, "FILEPATH_REQUIRED");
+    }
+    const { resolveProjectAccess } = await import('./projectAccess.service.js');
+    const access = await resolveProjectAccess({projectId,userId:input.userId,capability:'ai.use'});
+    const expectedRevision = access.project.workspaceRevision ?? 0;
+    return withUnitTestTimings(() => queueUnitTestSuggestion({userId:input.userId,projectId,
+        snapshotId:input.snapshotId,filePath:input.filePath,filePaths:input.filePaths,framework:input.framework,
+        model:input.selectedAiModel,mode:input.validationMode || 'fast',revision:expectedRevision},
+    () => suggestUnitTestcasesInternal({...input,projectId,expectedRevision})));
+};
+
+const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, filePaths = [], userId, framework: requestedFramework, selectedAiModel = null, validationMode = 'fast', expectedRevision }) => {
+    if (!projectId && snapshotId) {
+        const snap = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { projectId: true }
+        });
+        if (snap?.projectId) {
+            projectId = snap.projectId;
+        }
+    }
     if (!projectId || !filePath) {
         throw new ServiceError("projectId and filePath are required", 400);
+    }
+    const { resolveProjectAccess } = await import("./projectAccess.service.js");
+    const proposalAccess = await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
+    const capturedWorkspaceRevision = proposalAccess.project.workspaceRevision ?? 0;
+    if (expectedRevision !== undefined && expectedRevision !== capturedWorkspaceRevision) {
+        throw new ServiceError('Workspace changed while the suggestion was queued. Regenerate the proposal.',409,'OPERATION_STALE');
     }
 
     const project = await prisma.project.findFirst({
         where: { id: projectId },
         include: {
             snapshots: {
-                where: snapshotId ? { id: snapshotId } : undefined,
+                where: snapshotId ? { id: snapshotId } : {},
                 orderBy: { createdAt: "desc" },
                 take: 1
             }
@@ -1301,12 +1583,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
 
     const resolveRootDir = (r) => {
         if (!r) return null;
-        let candidate = r;
-        if (fs.existsSync(r)) candidate = r;
-        else if (r.startsWith("/app/")) {
-            const hostCandidate = path.resolve(process.cwd(), r.replace(/^\/app\//, ""));
-            if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
-        }
+        const candidate = normalizeDiskPath(r) || r;
         const resolved = resolveProjectRoot(candidate);
         return resolved || candidate;
     };
@@ -1340,8 +1617,9 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
 
     let targetFilePath = filePath;
     if (filePath === "all") {
+        let candidateFiles = [];
         try {
-            let candidateFiles = await prisma.coverageFile.findMany({
+            candidateFiles = await prisma.coverageFile.findMany({
                 where: {
                     snapshotId: snapshot.id,
                     AND: [
@@ -1362,14 +1640,144 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
                 }
             });
             candidateFiles = candidateFiles.filter(f => isBusinessLogicFile(f.filePath));
-            const uncovered = candidateFiles.find(f => (f.stmtsPct != null && f.stmtsPct < 100) || (f.branchesPct != null && f.branchesPct < 100) || (f.linesPct != null && f.linesPct < 100));
-            targetFilePath = uncovered ? uncovered.filePath : (candidateFiles[0]?.filePath || "src/services/ai.service.js");
-        } catch (_) {
-            targetFilePath = "src/services/ai.service.js";
+        } catch (error) {
+            throw new ServiceError(`Could not load coverage candidates: ${error.message}`, 500);
         }
+
+        // Coverage may only contain files touched by the last run. Always include
+        // eligible source files from disk, even when the database is non-empty.
+        if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
+            const byPath = new Map(candidateFiles.map(file => {
+                const filePath = canonicalizeFilePath(file.filePath, snapshot.rootDir) || file.filePath;
+                return [filePath, {...file, filePath}];
+            }));
+            for (const filePath of unitTestInventory(snapshot.rootDir).sourcePaths) {
+                if (isBusinessLogicFile(filePath) && !byPath.has(filePath)) byPath.set(filePath, {filePath});
+            }
+            candidateFiles = [...byPath.values()];
+        }
+
+        if (candidateFiles.length === 0 && !filePaths.length) {
+            return {
+                isBatch: true,
+                count: 0,
+                results: [],
+                suggestions: [],
+                testCode: "",
+                suggestedTestCode: "",
+                targetSourceFile: "",
+                sourceFile: "",
+                targetTestFile: "",
+                testFile: "",
+                scenarioMatrix: [],
+                targetFiles: [],
+                isFullyCovered: false,
+                message: "No business logic files found for unit test suggestion."
+            };
+        }
+
+        // Prioritize files that have coverage gaps
+        const uncovered = candidateFiles.filter(needsUnitTestSuggestion);
+        const requested = new Set(filePaths);
+        const targetFiles = requested.size ? [...requested].map(filePath => candidateFiles.find(file => file.filePath === filePath) || {filePath}) : uncovered.length > 0 ? uncovered : candidateFiles;
+
+        const batchResults = [];
+        const failedFiles = [];
+        let completedCount = 0;
+        const totalCount = targetFiles.length;
+        const generateFile = async fileItem => {
+            try {
+                const singleRes = await suggestUnitTestcases({
+                    projectId,
+                    snapshotId: snapshot.id,
+                    filePath: fileItem.filePath,
+                    userId,
+                    framework: requestedFramework,
+                    selectedAiModel,
+                    validationMode: 'fast'
+                });
+                if (singleRes && (singleRes.isFullyCovered ||
+                    [singleRes.fullUpdatedContent, singleRes.suggestedTestCode, singleRes.generatedCode, singleRes.testCode].some(code => typeof code === 'string' && code.trim()))) {
+                    batchResults.push(singleRes);
+                } else {
+                    throw new Error(singleRes?.message || 'No test draft was returned for this file.');
+                }
+            } catch (fileErr) {
+                console.warn(`[unitTestSuggestion] Batch file ${fileItem.filePath} skipped: ${fileErr.message}`);
+                failedFiles.push({filePath: fileItem.filePath, status: 'FAILED', message: fileErr.message,
+                    ...(fileErr.code === 'INVALID_TEST_TARGET' && { classification: 'INVALID_TEST_TARGET' })});
+            } finally {
+                completedCount++;
+                if (global.io) {
+                    try {
+                        const progressPayload = {
+                            snapshotId: snapshot.id,
+                            projectId,
+                            completedCount,
+                            totalCount,
+                            currentFile: fileItem.filePath,
+                            status: 'GENERATING',
+                            progressPct: Math.round((completedCount / totalCount) * 100),
+                            step: `Generated ${completedCount}/${totalCount} files (${fileItem.filePath})...`
+                        };
+                        if (userId) global.io.to(`user:${userId}`).emit("unit_test:suggest_progress", progressPayload);
+                        if (projectId) global.io.to(`project:${projectId}`).emit("unit_test:suggest_progress", progressPayload);
+                    } catch (_) {}
+                }
+            }
+        };
+        // Keep at most two AI requests in flight; CLI execution has its own
+        // shared semaphore. Preserve deterministic ordering within each pair.
+        for (let offset = 0; offset < targetFiles.length; offset += 2) {
+            await Promise.all(targetFiles.slice(offset, offset + 2).map(generateFile));
+        }
+        const order = new Map(targetFiles.map((file,index) => [file.filePath,index]));
+        batchResults.sort((a,b) => order.get(a.sourceFile || a.targetSourceFile) - order.get(b.sourceFile || b.targetSourceFile));
+        failedFiles.sort((a,b) => order.get(a.filePath) - order.get(b.filePath));
+
+        const combined = mergeUnitTestSuggestions(snapshot.rootDir,batchResults.flatMap(result => result.suggestions || [result]), failedFiles);
+        let batchValidation = {status:'DRAFT',coverageGoalStatus:'UNAVAILABLE'};
+        if (validationMode === 'full' && combined.length) batchValidation = await measureUnitTestPhase('draftVerification', () => validateUnitTestDraft({
+            projectId,snapshotId:snapshot.id,userId,workspaceRevision:capturedWorkspaceRevision,suggestions:combined}));
+        for (const candidate of combined) {
+            candidate.validation = {...batchValidation,files:undefined};
+            const validated = batchValidation.files?.find(file => file.testFile === candidate.testFile);
+            if (validated) {
+                Object.assign(candidate,{fullUpdatedContent:validated.content,suggestedTestCode:validated.content,
+                    generatedCode:validated.content,testCode:validated.content,testRepairs:validated.testRepairs,changeSet:validated.changeSet});
+            }
+        }
+        const primary = combined[0] || batchResults[0] || {};
+        const batchTestCode = primary.testCode || primary.suggestedTestCode || primary.generatedCode || "";
+        const batchTargetSource = primary.targetSourceFile || primary.sourceFile || "";
+        const batchTargetTest = primary.targetTestFile || primary.testFile || "";
+        const batchScenarioMatrix = primary.scenarioMatrix || [];
+        return {
+            ...primary,
+            testCode: batchTestCode,
+            suggestedTestCode: batchTestCode,
+            targetSourceFile: batchTargetSource,
+            sourceFile: batchTargetSource,
+            targetTestFile: batchTargetTest,
+            testFile: batchTargetTest,
+            scenarioMatrix: batchScenarioMatrix,
+            isBatch: true,
+            count: batchResults.length,
+            requestedCount: targetFiles.length,
+            failedFiles,
+            status: failedFiles.length ? 'PARTIAL' : 'COMPLETED',
+            results: batchResults,
+            suggestions: combined,
+            validation: {...batchValidation,files:undefined},
+            targetFiles: batchResults.map(r => r.targetSourceFile || r.sourceFile || r.sourceFileToInspect || r.filePath)
+        };
     }
 
-    const isTest = isTestFilePath(targetFilePath);
+    const selectedRole = classifyUnitTestPath(snapshot.rootDir, targetFilePath, requestedFramework === 'all' ? null : requestedFramework);
+    if (!['SOURCE','TEST'].includes(selectedRole.role)) {
+        throw new ServiceError(`Cannot suggest unit tests for '${targetFilePath}' (${selectedRole.role}): ${selectedRole.reason}. Select a business source file or runnable suite.`, 422, 'INVALID_TEST_SOURCE', selectedRole);
+    }
+    const isTest = selectedRole.writable;
 
     if (!isTest && !isBusinessLogicFile(targetFilePath)) {
         throw new ServiceError(
@@ -1431,6 +1839,37 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         typeof lPct === "number" &&
         ((coverageDetails.summary.statementsTotal ?? 0) > 0 || (coverageDetails.summary.linesTotal ?? 0) > 0 || sPct > 0 || lPct > 0);
 
+    // Extract infeasible code blocks, branches, and summaries
+    const infeasibleCode = coverageDetails.coverageGapAnalysis?.infeasibleCodeBlocks ||
+        coverageDetails.astMetadata?.infeasibleNodes || [];
+    const allUncoveredBranches = coverageDetails.uncoveredBranches ||
+        coverageDetails.coverageGapAnalysis?.uncoveredBranches || [];
+    const infeasibleBranches = allUncoveredBranches.filter(b => b.isInfeasible);
+
+    const infeasibleSummaries = [];
+    for (const b of infeasibleBranches) {
+        infeasibleSummaries.push({
+            line: b.line || b.loc?.start?.line,
+            type: b.infeasibleMeta?.type || b.type || "ENVIRONMENT_GUARD",
+            condition: b.condition || "",
+            justification: b.infeasibleMeta?.actionableJustification || b.infeasibleMeta?.justification || "Unreachable branch or environment safeguard",
+            category: b.infeasibleMeta?.category || "BRANCH_TOGGLING"
+        });
+    }
+    for (const block of infeasibleCode) {
+        if (!infeasibleSummaries.some(s => s.line === block.line)) {
+            infeasibleSummaries.push({
+                line: block.line,
+                type: block.type,
+                condition: block.justification || "",
+                justification: block.justification || "Infeasible code block",
+                category: block.category || "DEAD_CODE"
+            });
+        }
+    }
+
+    const feasibility = classifyFeasibleCoverage(coverageDetails, infeasibleCode);
+
     const is100Coverage = hasValidMetrics &&
         !hasMissedBranches &&
         !hasUncoveredBranchesList &&
@@ -1442,7 +1881,14 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         (funcsTotal > 0 ? (fPct != null && fPct >= 100) : (fPct == null || fPct >= 100)) &&
         !hasUncovered && !hasFailed;
 
-    if (is100Coverage && coverageDetails.summary) {
+    let existingCoverageVerification = null;
+    if (is100Coverage && validationMode === 'full') {
+        const existing = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, requestedFramework === 'vitest' ? 'vitest' : 'jest');
+        if (existing.found && existing.content) existingCoverageVerification = await validateUnitTestDraft({projectId,snapshotId:snapshot.id,userId,
+            workspaceRevision:capturedWorkspaceRevision,suggestions:[{sourceFile:sourceFileToInspect,testFile:existing.relativePath,
+                framework:existing.framework || requestedFramework || 'jest',fullUpdatedContent:existing.content,suggestedTestCode:existing.content}]});
+    }
+    if (is100Coverage && existingCoverageVerification?.status === 'VERIFIED_DRAFT' && existingCoverageVerification.coverageGoalStatus === 'MET') {
         const testFileRef = isTest ? targetFilePath : findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "jest").relativePath;
         const fullyCoveredSummary = {
             linesPct: coverageDetails.summary.linesPct ?? 100,
@@ -1454,8 +1900,11 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         return {
             suggestionId: `sug-${Date.now()}-1`,
             isFullyCovered: true,
+            isFeasibleLogicCovered: true,
             status: "FULLY_COVERED",
+            validation: { ...existingCoverageVerification, files: undefined },
             sourceFile: sourceFileToInspect,
+            targetSourceFile: sourceFileToInspect,
             testFile: testFileRef,
             targetTestFile: testFileRef,
             framework: isTest ? (targetFilePath.includes("vitest") ? "vitest" : "jest") : "jest",
@@ -1464,6 +1913,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             explanation: `File \`${sourceFileToInspect}\` has reached 100% test coverage (Statements: 100%, Branches: 100%, Lines: 100%) with 0 assertion errors. No further suggestions needed!`,
             suggestedTestCode: "",
             generatedCode: "",
+            testCode: "",
             originalCode: "",
             fullUpdatedContent: "",
             uncoveredLines: [],
@@ -1471,8 +1921,13 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             summary: fullyCoveredSummary,
             astMetadata: coverageDetails.astMetadata || null,
             coverageGapAnalysis: coverageDetails.coverageGapAnalysis || null,
+            uncoverageDiagnostics: coverageDetails.uncoverageDiagnostics || { summary: { totalUncoveredLines: 0, totalUncoveredBranches: 0, totalUncoveredStatements: 0, byReasonCategory: {} }, lines: [], branches: [], statements: [], items: [] },
             uncoveredBranches: [],
             decisionPoints: coverageDetails.decisionPoints || [],
+            infeasibleCode,
+            infeasibleBranches,
+            infeasibleSummaries,
+            scenarioMatrix: [],
             suggestions: []
         };
     }
@@ -1527,30 +1982,11 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         frameworksToGenerate = ["jest"];
     }
 
-    let targets = frameworksToGenerate.map(framework => ({ framework }));
-    if (frameworksToGenerate.length > 1) {
-        const existingContents = {};
-        targets = targets.map(target => {
-            const info = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, target.framework);
-            existingContents[normalizePath(info.relativePath)] = info.content;
-            return { ...target, targetTestFile: info.relativePath };
-        });
-        let vitestIncludes = [];
-        for (const config of ["vitest.config.js", "vitest.config.ts", "vitest.config.mjs", "vitest.config.mts", "backend/vitest.config.js", "backend/vitest.config.ts"]) {
-            const configPath = path.join(snapshot.rootDir, config);
-            if (!fs.existsSync(configPath)) continue;
-            const configCode = fs.readFileSync(configPath, "utf8");
-            const include = configCode.match(/\binclude\s*:\s*\[((?:"[^"]*"|'[^']*'|[^\]])*)\]/);
-            if (include) vitestIncludes = [...include[1].matchAll(/['"]([^'"]+)['"]/g)].map(m => m[1]);
-            break;
-        }
-        targets = resolveMultiFrameworkTargets(targets, sourceFileToInspect, existingContents, supportedFrameworks[0] || "jest", vitestIncludes);
-    }
-
-    // 4. Concurrently generate suggestions for all requested frameworks
-    const suggestions = await Promise.all(
-        targets.map(({ framework: fw, targetTestFile }) =>
-            generateSuggestionForFramework({
+    // One admitted source request generates one framework at a time so the
+    // project queue also bounds AI calls when both frameworks are requested.
+    const suggestions = [];
+    for (const fw of frameworksToGenerate) {
+        suggestions.push(await measureUnitTestPhase('generation', () => generateSuggestionForFramework({
                 userId,
                 framework: fw,
                 snapshot,
@@ -1559,21 +1995,59 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
                 coverageDetails,
                 isTest,
                 filePath,
-                targetTestFile
-            })
-        )
-    );
+                selectedAiModel
+        })));
+    }
 
     for (const suggestion of suggestions) {
         suggestion.proposalBase = { ...(suggestion.proposalBase || {}), snapshotId: snapshot.id, workspaceRevision: capturedWorkspaceRevision };
+        suggestion.infeasibleCode = infeasibleCode;
+        suggestion.infeasibleBranches = infeasibleBranches;
+        suggestion.infeasibleSummaries = infeasibleSummaries;
+        suggestion.uncoverageDiagnostics = coverageDetails.uncoverageDiagnostics || null;
+        suggestion.isFeasibleLogicCovered = Boolean(feasibility.isFeasibleLogicCovered);
     }
-    const primary = suggestions[0];
+    for (const suggestion of suggestions) assertUnitTestTarget(snapshot.rootDir,suggestion.testFile || suggestion.targetTestFile,suggestion.framework);
+    const draftValidation = validationMode === 'full' ? await measureUnitTestPhase('draftVerification', () => validateUnitTestDraft({ projectId, snapshotId: snapshot.id, userId,
+        workspaceRevision: capturedWorkspaceRevision, suggestions })) : {status:'DRAFT',coverageGoalStatus:'UNAVAILABLE',files:[],message:'Draft passed target and syntax checks. Full regression and coverage verification run during Apply.'};
+    for (const suggestion of suggestions) {
+        suggestion.validation = { ...draftValidation, files: undefined };
+        const validated = draftValidation.files?.find(file => file.testFile === suggestion.testFile);
+        if (validated) {
+            // Preview and Apply must use the same runner-verified, repaired draft.
+            suggestion.fullUpdatedContent = validated.content;
+            suggestion.suggestedTestCode = validated.content;
+            suggestion.generatedCode = validated.content;
+            suggestion.testCode = validated.content;
+            suggestion.testRepairs = validated.testRepairs;
+            suggestion.changeSet = validated.changeSet;
+        }
+    }
+    const primary = suggestions[0] || {};
+    const primaryTestCode = primary.testCode || primary.suggestedTestCode || primary.generatedCode || "";
+    const primaryTargetSource = primary.targetSourceFile || primary.sourceFile || sourceFileToInspect;
+    const primaryTargetTest = primary.targetTestFile || primary.testFile;
+    const primaryScenarioMatrix = primary.scenarioMatrix || coverageDetails.decisionTable?.matrixEntries || [];
+
     return {
         ...primary,
+        validation: { ...draftValidation, files: undefined },
+        testCode: primaryTestCode,
+        suggestedTestCode: primaryTestCode,
+        targetSourceFile: primaryTargetSource,
+        sourceFile: primaryTargetSource,
+        targetTestFile: primaryTargetTest,
+        testFile: primaryTargetTest,
+        scenarioMatrix: primaryScenarioMatrix,
         astMetadata: coverageDetails.astMetadata || null,
         coverageGapAnalysis: coverageDetails.coverageGapAnalysis || null,
+        uncoverageDiagnostics: coverageDetails.uncoverageDiagnostics || null,
         uncoveredBranches: coverageDetails.uncoveredBranches || coverageDetails.coverageGapAnalysis?.uncoveredBranches || [],
         decisionPoints: coverageDetails.decisionPoints || coverageDetails.astMetadata?.decisionPoints || [],
+        infeasibleCode,
+        infeasibleBranches,
+        infeasibleSummaries,
+        isFeasibleLogicCovered: Boolean(feasibility.isFeasibleLogicCovered),
         frameworks: suggestions.map(s => s.framework),
         suggestions
     };

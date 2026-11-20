@@ -88,10 +88,10 @@ export default function GlobalAiTokenPill() {
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-mono border transition-all cursor-pointer select-none shadow-2xs ${
+        className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono border transition-colors duration-150 cursor-pointer select-none ${
           isOpen
-            ? "bg-[var(--color-surface)] border-[var(--color-primary)] text-[var(--color-text)] shadow-xs"
-            : "bg-[var(--color-surface-secondary)]/80 hover:bg-[var(--color-surface-hover)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+            ? "bg-[var(--ps-surface-2)] border-[var(--ps-line-strong)] text-[var(--ps-ink)]"
+            : "bg-[var(--ps-inset)] hover:bg-[var(--ps-surface-2)] border-[var(--ps-line)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)]"
         }`}
         title="View AI Token Usage & Daily Quota"
         aria-label="AI Token Quota Hub"
@@ -100,18 +100,18 @@ export default function GlobalAiTokenPill() {
           size={12}
           className={
             isCritical
-              ? "text-rose-400 fill-rose-400"
+              ? "text-[var(--ps-rose)]"
               : isWarning
-              ? "text-amber-400 fill-amber-400"
-              : "text-[var(--color-primary)] group-hover:scale-110 transition-transform"
+              ? "text-[var(--ps-amber)]"
+              : "text-[var(--ps-cobalt)]"
           }
         />
-        <span className="font-semibold text-[var(--color-text)]">
+        <span className="font-semibold text-[var(--ps-ink)] tabular-nums">
           {quota.remainingRequests}
-          <span className="text-[10px] text-[var(--color-text-muted)] font-normal font-sans ml-0.5">reqs</span>
+          <span className="text-[10px] text-[var(--ps-ink-muted)] font-normal font-sans ml-0.5">reqs</span>
         </span>
-        <span className="text-[var(--color-border)] opacity-60">|</span>
-        <span className="text-[11px] text-[var(--color-text-muted)] font-sans hidden md:inline">
+        <span className="text-[var(--ps-line-strong)]">|</span>
+        <span className="text-[11px] text-[var(--ps-ink-muted)] font-sans hidden md:inline tabular-nums">
           {(quota.totalTokens || 0).toLocaleString()} <span className="text-[10px]">tok</span>
         </span>
         <ChevronDown size={11} className={`opacity-60 transition-transform ${isOpen ? "rotate-180" : ""}`} />
@@ -158,14 +158,14 @@ export default function GlobalAiTokenPill() {
                 <span className="text-[10px] text-[var(--color-text-muted)]">({quota.remainingRequests} left)</span>
               </span>
             </div>
-            <div className="w-full h-2 rounded-full bg-[var(--color-surface-secondary)] overflow-hidden">
+            <div className="w-full h-1.5 rounded-sm bg-[var(--ps-inset)] border border-[var(--ps-line)] overflow-hidden">
               <div
-                className={`h-full transition-all duration-300 rounded-full ${
+                className={`h-full transition-all duration-300 rounded-sm ${
                   isCritical
-                    ? "bg-rose-500"
+                    ? "bg-[var(--ps-rose)]"
                     : isWarning
-                    ? "bg-amber-500"
-                    : "bg-[var(--color-primary)]"
+                    ? "bg-[var(--ps-amber)]"
+                    : "bg-[var(--ps-cobalt)]"
                 }`}
                 style={{ width: `${usedPct}%` }}
               />
@@ -173,44 +173,44 @@ export default function GlobalAiTokenPill() {
           </div>
 
           {/* Cumulative Token Telemetry */}
-          <div className="py-3 space-y-2 border-b border-[var(--color-border)]">
+          <div className="py-3 space-y-2 border-b border-[var(--ps-line)]">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)] text-[11px]">
-                <Zap size={13} className="text-amber-400" />
+              <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)] text-[11px]">
+                <Zap size={13} className="text-[var(--ps-amber)]" />
                 <span>Total Tokens Consumed</span>
               </div>
-              <span className="text-base font-bold font-mono text-[var(--color-text)]">
+              <span className="text-base font-bold ps-mono text-[var(--ps-ink)]">
                 {(quota.totalTokens || 0).toLocaleString()}
               </span>
             </div>
-            <p className="text-[10px] text-[var(--color-text-muted)] m-0 leading-relaxed">
+            <p className="text-[10px] text-[var(--ps-ink-muted)] m-0 leading-relaxed">
               Tokens are dynamically metered during AST branch synthesis, Supertest contract creation, and Playwright journeys.
             </p>
           </div>
 
           {/* Level Status & Reset Window */}
           <div className="pt-3 space-y-2">
-            <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
+            <div className="flex items-center justify-between text-[10px] text-[var(--ps-ink-muted)]">
               <span className="flex items-center gap-1">
                 <Clock size={11} />
                 <span>Daily Reset</span>
               </span>
-              <span className="font-mono font-semibold text-[var(--color-text-secondary)]">
+              <span className="ps-mono font-semibold text-[var(--ps-ink-secondary)]">
                 00:00 (UTC+7)
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-1.5 pt-1 text-center font-mono text-[10px]">
-              <div className="p-1 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
-                <span className="text-[var(--color-text-muted)] block text-[9px] font-sans">Unit</span>
-                <span className="text-emerald-400 font-bold">Active</span>
+            <div className="grid grid-cols-3 gap-1.5 pt-1 text-center ps-mono text-[10px]">
+              <div className="p-1.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
+                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">Unit</span>
+                <span className="text-[var(--ps-emerald)] font-medium">Active</span>
               </div>
-              <div className="p-1 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
-                <span className="text-[var(--color-text-muted)] block text-[9px] font-sans">Integration</span>
-                <span className="text-emerald-400 font-bold">Active</span>
+              <div className="p-1.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
+                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">Integration</span>
+                <span className="text-[var(--ps-emerald)] font-medium">Active</span>
               </div>
-              <div className="p-1 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
-                <span className="text-[var(--color-text-muted)] block text-[9px] font-sans">System</span>
-                <span className="text-emerald-400 font-bold">Active</span>
+              <div className="p-1.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
+                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">System</span>
+                <span className="text-[var(--ps-emerald)] font-medium">Active</span>
               </div>
             </div>
           </div>

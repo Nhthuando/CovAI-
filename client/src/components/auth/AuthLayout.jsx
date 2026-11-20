@@ -1,152 +1,229 @@
-import { useState, useEffect } from "react";
+import { useState, Suspense, lazy } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Terminal, ArrowLeft, GitBranch, Cpu, ShieldCheck } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import CovaiLogo from "../common/CovaiLogo";
+import ThemeSelector from "../common/ThemeSelector";
 import AuthForm from "./AuthForm";
 import ForgotPasswordForm from "./ForgotPasswordForm";
 import ResetPasswordForm from "./ResetPasswordForm";
-import CodePreview from "./CodePreview";
-import ThemeSelector from "../common/ThemeSelector";
 
-const ARCHITECTURE_PILLARS = [
-  {
-    icon: GitBranch,
-    title: "Control Flow",
-    desc: "AST branch graph",
-  },
-  {
-    icon: Cpu,
-    title: "Test Synthesis",
-    desc: "Targeted Jest suites",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Sandbox Runner",
-    desc: "Isolated execution",
-  },
-];
+const AuthVisualCanvas = lazy(() => import("./AuthVisualCanvas"));
 
-export default function AuthLayout({ initialMode = "login", children, invitationNotice }) {
+const MODE_COPY = {
+  login: {
+    caption: "Workspace session",
+    headline: "Resume your coverage graph.",
+    status: "Docker runners & AST sync online",
+  },
+  register: {
+    caption: "New repository",
+    headline: "Map every branch in seconds.",
+    status: "Unit CFG · API Matrix · Playwright E2E",
+  },
+  forgot_password: {
+    caption: "Account recovery",
+    headline: "Restore access to your workspace.",
+    status: "Encrypted token dispatch",
+  },
+  reset_password: {
+    caption: "Credentials update",
+    headline: "Set a new workspace password.",
+    status: "Session security check",
+  },
+};
+
+export default function AuthLayout({
+  initialMode = "login",
+  children,
+  invitationNotice,
+}) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [mode, setMode] = useState(initialMode);
+  const [subMode, setSubMode] = useState(
+    initialMode === "reset_password" || initialMode === "forgot_password"
+      ? initialMode
+      : null
+  );
 
-  useEffect(() => {
-    if (location.pathname === "/register") {
-      setMode("register");
-    } else if (location.pathname === "/login") {
-      setMode("login");
+  const routeMode =
+    location.pathname === "/register"
+      ? "register"
+      : location.pathname === "/login"
+        ? "login"
+        : initialMode;
+
+  const mode = subMode || routeMode;
+  const copy = MODE_COPY[mode] || MODE_COPY.login;
+
+  const handleSetMode = (next) => {
+    if (next === "login" || next === "register") {
+      setSubMode(null);
+      navigate(next === "login" ? "/login" : "/register");
+    } else {
+      setSubMode(next);
     }
-  }, [location.pathname]);
+  };
 
   const toggleMode = (e) => {
     if (e?.preventDefault) e.preventDefault();
     const nextMode = mode === "login" ? "register" : "login";
-    setMode(nextMode);
+    setSubMode(null);
     navigate(nextMode === "login" ? "/login" : "/register");
   };
 
   return (
-    <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150">
+    <div className="lp min-h-screen grid grid-cols-1 lg:grid-cols-12 bg-[var(--lp-bg)] text-[var(--lp-ink)] relative overflow-hidden">
+      {/* Architectural Drafting Grid */}
+      <div className="absolute inset-0 lp-draft-grid lp-radial-fade pointer-events-none" />
+
       {/* ══════════════════════════════════════════════════════
-          LEFT PANEL — Technical Showcase (Desktop only)
+          LEFT PANEL — Full-Height 3D Visual Stage (Minimal Copy)
           ══════════════════════════════════════════════════════ */}
-      <div className="hidden lg:flex flex-col justify-between p-8 lg:p-12 xl:p-16 bg-[var(--color-surface)] border-r border-[var(--color-border)]">
-        {/* Brand Header */}
-        <div className="flex items-center justify-between">
+      <div className="hidden lg:flex lg:col-span-6 xl:col-span-7 relative z-10 flex-col justify-between p-10 xl:p-14 border-r border-[var(--lp-line)] overflow-hidden">
+        {/* Ambient radial highlight behind 3D sculpture */}
+        <div
+          className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[560px] h-[560px] rounded-full blur-[140px] opacity-20"
+          style={{
+            background:
+              "radial-gradient(circle, var(--lp-signal) 0%, transparent 70%)",
+          }}
+        />
+
+        {/* Top Brand Link */}
+        <div className="relative z-20 flex items-center justify-between">
           <Link
             to="/"
             id="auth-logo"
-            className="inline-flex items-center gap-2.5 text-decoration-none focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)]"
+            className="inline-flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-[var(--lp-signal)] rounded-md"
           >
-            <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-sm shrink-0">
-              <Terminal className="w-4 h-4 stroke-[2.5]" />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-base tracking-tight text-[var(--color-text)]">
-                CovAI
-              </span>
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-                v2.4
-              </span>
-            </div>
+            <CovaiLogo size={28} />
+            <span className="lp-display font-bold text-lg tracking-tight text-[var(--lp-ink)]">
+              CovAI
+            </span>
           </Link>
+
+          <span className="inline-flex items-center gap-2 text-xs lp-mono text-[var(--lp-ink-secondary)]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--lp-signal)]" />
+            <span>{copy.caption}</span>
+          </span>
         </div>
 
-        {/* Center Technical Showcase */}
-        <div className="max-w-[500px] w-full mx-auto my-auto py-6 space-y-6">
-          <div>
-            <h2 className="text-2xl xl:text-3xl font-bold tracking-tight text-[var(--color-text)] leading-snug mb-2.5">
-              Automated Test Coverage & Deterministic Branch Verification
-            </h2>
-            <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
-              CovAI synthesizes targeted unit test suites, detects missing logic
-              paths in your Control Flow Graphs, and executes tests in a secure
-              sandbox.
-            </p>
-          </div>
-
-          {/* Interactive Monaco-style Code Preview */}
-          <CodePreview />
-        </div>
-
-        {/* Bottom Platform Pillars */}
-        <div className="grid grid-cols-3 gap-3 pt-6 border-t border-[var(--color-border)] max-w-[500px] w-full mx-auto">
-          {ARCHITECTURE_PILLARS.map((pillar, i) => {
-            const Icon = pillar.icon;
-            return (
-              <div
-                key={i}
-                className="p-3 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)]"
-              >
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text)] mb-0.5">
-                  <Icon className="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" />
-                  <span className="truncate">{pillar.title}</span>
-                </div>
-                <p className="text-[11px] text-[var(--color-text-secondary)] truncate">
-                  {pillar.desc}
-                </p>
+        {/* Center Full-Scale Interactive 3D Canvas */}
+        <div className="relative z-10 flex-1 flex items-center justify-center my-4">
+          <Suspense
+            fallback={
+              <div className="w-full h-[460px] flex items-center justify-center text-xs lp-mono text-[var(--lp-ink-muted)]">
+                Loading 3D scene...
               </div>
-            );
-          })}
+            }
+          >
+            <AuthVisualCanvas mode={mode} />
+          </Suspense>
+        </div>
+
+        {/* Bottom Minimal Headline & Telemetry Line */}
+        <div className="relative z-20 flex items-end justify-between gap-6 pt-5 border-t border-[var(--lp-line)]">
+          <h2 className="lp-display text-2xl xl:text-3xl font-bold tracking-tight text-[var(--lp-ink)]">
+            {copy.headline}
+          </h2>
+          <span className="text-xs lp-mono text-[var(--lp-ink-muted)] shrink-0">
+            {copy.status}
+          </span>
         </div>
       </div>
 
       {/* ══════════════════════════════════════════════════════
-          RIGHT PANEL — Form Container
+          RIGHT PANEL — Airy Machined Form Container
           ══════════════════════════════════════════════════════ */}
-      <div className="flex flex-col justify-between p-6 sm:p-10 lg:p-12 xl:p-16">
-        {/* Top bar: Back to home + Theme Selector */}
-        <div className="flex items-center justify-between w-full h-8">
+      <div className="lg:col-span-6 xl:col-span-5 relative z-10 flex flex-col justify-between p-6 sm:p-10 xl:p-14">
+        {/* Top Bar */}
+        <div className="flex items-center justify-between w-full">
           <Link
             to="/"
             id="auth-back-home"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)] py-1"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg lp-btn-secondary text-xs font-medium"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to home</span>
+            <span>Home</span>
           </Link>
 
-          <ThemeSelector compact />
+          <div className="flex items-center gap-2.5">
+            <Link to="/" className="inline-flex lg:hidden items-center gap-2">
+              <CovaiLogo size={24} />
+              <span className="lp-display font-bold text-sm text-[var(--lp-ink)]">
+                CovAI
+              </span>
+            </Link>
+            <ThemeSelector compact className="!rounded-lg" />
+          </div>
         </div>
 
-        {/* Center: Auth Form */}
-        <div className="my-auto py-8">
-          {invitationNotice && <p role="status" className="max-w-[380px] mx-auto mb-5 p-3 text-xs rounded-md border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-[var(--color-text-secondary)]">{invitationNotice}</p>}
-          {children || (mode === "forgot_password" ? (
-            <ForgotPasswordForm setMode={setMode} />
-          ) : mode === "reset_password" ? (
-            <ResetPasswordForm />
-          ) : (
-            <AuthForm key={mode} mode={mode} onToggleMode={toggleMode} setMode={setMode} />
-          ))}
+        {/* Center Card */}
+        <div className="my-auto py-8 w-full max-w-[390px] mx-auto">
+          {invitationNotice && (
+            <p
+              role="status"
+              className="mb-5 p-3.5 text-xs rounded-xl border border-[var(--lp-signal-border)] bg-[var(--lp-signal-bg)] text-[var(--lp-ink)] lp-mono"
+            >
+              {invitationNotice}
+            </p>
+          )}
+
+          <div className="rounded-2xl lp-machined p-6 sm:p-8">
+            {!children && (mode === "login" || mode === "register") && (
+              <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[var(--lp-pill-bg)] border border-[var(--lp-line)] mb-6 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => handleSetMode("login")}
+                  className={`py-2 rounded-md transition-colors cursor-pointer ${
+                    mode === "login"
+                      ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] border border-[var(--lp-line-strong)] shadow-xs"
+                      : "text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] border border-transparent"
+                  }`}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetMode("register")}
+                  className={`py-2 rounded-md transition-colors cursor-pointer ${
+                    mode === "register"
+                      ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] border border-[var(--lp-line-strong)] shadow-xs"
+                      : "text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] border border-transparent"
+                  }`}
+                >
+                  Create account
+                </button>
+              </div>
+            )}
+
+            {children ||
+              (mode === "forgot_password" ? (
+                <ForgotPasswordForm setMode={handleSetMode} />
+              ) : mode === "reset_password" ? (
+                <ResetPasswordForm />
+              ) : (
+                <AuthForm
+                  key={mode}
+                  mode={mode}
+                  onToggleMode={toggleMode}
+                  setMode={handleSetMode}
+                />
+              ))}
+          </div>
         </div>
 
-        {/* Bottom footer note */}
-        <div className="pt-6 border-t border-[var(--color-border)] text-center text-xs text-[var(--color-text-muted)]">
-          <span>
-            © {new Date().getFullYear()} CovAI Platform. Protected by isolated
-            test sandbox.
-          </span>
+        {/* Minimal Footer */}
+        <div className="pt-5 border-t border-[var(--lp-line)] flex items-center justify-between text-xs text-[var(--lp-ink-muted)]">
+          <span>© {new Date().getFullYear()} CovAI</span>
+          <div className="flex items-center gap-4">
+            <Link to="/privacy" className="hover:text-[var(--lp-ink)] transition-colors">
+              Privacy
+            </Link>
+            <Link to="/terms" className="hover:text-[var(--lp-ink)] transition-colors">
+              Terms
+            </Link>
+          </div>
         </div>
       </div>
     </div>

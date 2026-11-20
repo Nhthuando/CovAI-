@@ -6,6 +6,7 @@ import {
     isBusinessLogicFile,
     classifyBusinessLogicFiles,
     analyzeSourceAst,
+    analyzeBusinessLogicFile,
     mapCoverageGaps,
     normalizeRelativePath
 } from "../services/businessLogicAstAnalyzer.service.js";
@@ -387,6 +388,169 @@ export function handleFailure(err) {
             expect(report.uncoveredFunctions).toHaveLength(1);
             expect(report.uncoveredFunctions[0].name).toBe("processJob");
             expect(report.uncoveredLines).toEqual([6, 7]);
+        });
+    });
+
+    describe("1.4 sourceImports Scoping & analyzeBusinessLogicFile Alias (Requirement R1)", () => {
+        test("correctly scopes and extracts ESM imports across default, named, and namespace variants", () => {
+            const esmCode = `
+import express from 'express';
+import { create, all, evaluate } from 'mathjs';
+import * as path from 'path';
+import fs, { readFileSync } from 'fs';
+
+export function calculateExpression(expr) {
+    const math = create(all);
+    return math.evaluate(expr);
+}
+`;
+            const result = analyzeSourceAst(esmCode);
+            expect(result.imports).toBeDefined();
+            expect(result.sourceImports).toBeDefined();
+            expect(result.formattedImports).toBeDefined();
+
+            // Compatibility: all three properties refer to the same formatted object
+            expect(result.imports).toEqual(result.formattedImports);
+            expect(result.sourceImports).toEqual(result.formattedImports);
+
+            // Verify 'express' default import
+            expect(result.imports["express"]).toEqual({
+                default: true,
+                namespace: false,
+                names: []
+            });
+
+            // Verify 'mathjs' named specifiers
+            expect(result.imports["mathjs"]).toEqual({
+                default: false,
+                namespace: false,
+                names: ["create", "all", "evaluate"]
+            });
+
+            // Verify 'path' namespace import
+            expect(result.imports["path"]).toEqual({
+                default: false,
+                namespace: true,
+                names: []
+            });
+
+            // Verify 'fs' combined default and named import
+            expect(result.imports["fs"]).toEqual({
+                default: true,
+                namespace: false,
+                names: ["readFileSync"]
+            });
+        });
+
+        test("correctly scopes and extracts CommonJS requires across default and destructured variants", () => {
+            const cjsCode = `
+const lodash = require('lodash');
+const { get, set } = require('lodash/fp');
+const crypto = require('crypto');
+
+function hashData(data) {
+    return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+module.exports = { hashData };
+`;
+            const result = analyzeSourceAst(cjsCode);
+            expect(result.imports).toBeDefined();
+
+            expect(result.imports["lodash"]).toEqual({
+                default: true,
+                namespace: false,
+                names: []
+            });
+
+            expect(result.imports["lodash/fp"]).toEqual({
+                default: false,
+                namespace: false,
+                names: ["get", "set"]
+            });
+
+            expect(result.imports["crypto"]).toEqual({
+                default: true,
+                namespace: false,
+                names: []
+            });
+        });
+
+        test("handles source code with zero imports without throwing ReferenceError", () => {
+            const pureCode = `
+export function add(a, b) {
+    return a + b;
+}
+
+export function multiply(a, b) {
+    return a * b;
+}
+`;
+            expect(() => analyzeSourceAst(pureCode)).not.toThrow();
+            const result = analyzeSourceAst(pureCode);
+            expect(result.imports).toEqual({});
+            expect(result.sourceImports).toEqual({});
+            expect(result.formattedImports).toEqual({});
+            expect(result.exportedSymbolNames).toEqual(["add", "multiply"]);
+        });
+
+        test("handles malformed or syntax-error code gracefully without throwing ReferenceError", () => {
+            const brokenCode = `
+export function broken(a, b {
+    return a + ;
+`;
+            expect(() => analyzeSourceAst(brokenCode)).not.toThrow();
+            const result = analyzeSourceAst(brokenCode);
+            expect(result).toBeDefined();
+            expect(result.ast).toBeNull();
+            expect(result.imports).toEqual({});
+            expect(result.sourceImports).toEqual({});
+            expect(result.formattedImports).toEqual({});
+            expect(result.callEdges).toEqual([]);
+
+            // Also test malformed code without any export statements
+            const nonExportBrokenCode = `;;; {{{{ invalid syntax ()`;
+            const nonExportResult = analyzeSourceAst(nonExportBrokenCode);
+            expect(nonExportResult.ast).toBeNull();
+            expect(nonExportResult.imports).toEqual({});
+            expect(nonExportResult.exportedSymbols).toEqual([]);
+        });
+
+        test("returns safe default structures on empty, null, undefined, and non-string inputs", () => {
+            const emptyInputs = ["", null, undefined, 42, {}, false];
+
+            for (const input of emptyInputs) {
+                expect(() => analyzeSourceAst(input)).not.toThrow();
+                const result = analyzeSourceAst(input);
+                expect(result).toBeDefined();
+                expect(result.ast).toBeNull();
+                expect(result.imports).toEqual({});
+                expect(result.sourceImports).toEqual({});
+                expect(result.formattedImports).toEqual({});
+                expect(result.exportedSymbols).toEqual([]);
+                expect(result.internalFunctions).toEqual([]);
+                expect(result.callEdges).toEqual([]);
+                expect(result.cyclomaticComplexity).toBe(1);
+                expect(result.basisPathsCount).toBe(1);
+            }
+        });
+
+        test("verifies analyzeBusinessLogicFile alias is exported and behaves identically to analyzeSourceAst", () => {
+            expect(typeof analyzeBusinessLogicFile).toBe("function");
+            expect(analyzeBusinessLogicFile).toBe(analyzeSourceAst);
+
+            const sampleCode = `
+import { format } from 'date-fns';
+export function formatDate(d) {
+    return format(d, 'yyyy-MM-dd');
+}
+`;
+            const directResult = analyzeSourceAst(sampleCode);
+            const aliasResult = analyzeBusinessLogicFile(sampleCode, "src/services/date.service.js");
+
+            expect(aliasResult).toEqual(directResult);
+            expect(aliasResult.imports["date-fns"].names).toContain("format");
+            expect(aliasResult.exportedSymbolNames).toContain("formatDate");
         });
     });
 });

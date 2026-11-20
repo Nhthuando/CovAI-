@@ -18,10 +18,7 @@ import {
   validateArchiveApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
-import Button from "../../common/Button";
-import Badge from "../../common/Badge";
 
-/* ── Drag states ─────────────────────────────────────────── */
 const DRAG_STATES = {
   idle: "idle",
   over: "over",
@@ -47,34 +44,37 @@ export default function LocalUpload({ onClose, onSuccess }) {
   const [errorMsg, setErrorMsg] = useState("");
   const { showToast } = useToast();
 
-  const checkArchive = async (file) => {
-    setValidating(true);
-    setErrorMsg("");
-    setValidationInfo(null);
-    try {
-      const res = await validateArchiveApi(file);
-      setValidationInfo({
-        isSupported: true,
-        language: res.primaryLanguage,
-        reason: res.reason,
-      });
-    } catch (err) {
-      const msg =
-        err.message || "Invalid archive file or unsupported project language.";
-      setValidationInfo({
-        isSupported: false,
-        reason: msg,
-      });
-      setErrorMsg(msg);
-      showToast({
-        type: "error",
-        title: "Unsupported Language",
-        message: msg,
-      });
-    } finally {
-      setValidating(false);
-    }
-  };
+  const checkArchive = useCallback(
+    async (file) => {
+      setValidating(true);
+      setErrorMsg("");
+      setValidationInfo(null);
+      try {
+        const res = await validateArchiveApi(file);
+        setValidationInfo({
+          isSupported: true,
+          language: res.primaryLanguage,
+          reason: res.reason,
+        });
+      } catch (err) {
+        const msg =
+          err.message || "Invalid archive file or unsupported project language.";
+        setValidationInfo({
+          isSupported: false,
+          reason: msg,
+        });
+        setErrorMsg(msg);
+        showToast({
+          type: "error",
+          title: "Unsupported archive",
+          message: msg,
+        });
+      } finally {
+        setValidating(false);
+      }
+    },
+    [showToast],
+  );
 
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
@@ -88,18 +88,21 @@ export default function LocalUpload({ onClose, onSuccess }) {
     setDragState(DRAG_STATES.idle);
   }, []);
 
-  const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      setFileObj(file);
-      setFileName(file.name);
-      setDragState(DRAG_STATES.dropped);
-      setErrorMsg("");
-      checkArchive(file);
-    }
-  }, []);
+  const handleDrop = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const file = e.dataTransfer.files?.[0];
+      if (file) {
+        setFileObj(file);
+        setFileName(file.name);
+        setDragState(DRAG_STATES.dropped);
+        setErrorMsg("");
+        checkArchive(file);
+      }
+    },
+    [checkArchive],
+  );
 
   const handleFileSelect = useCallback(() => {
     const input = document.createElement("input");
@@ -116,7 +119,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
       }
     };
     input.click();
-  }, []);
+  }, [checkArchive]);
 
   const handleClear = useCallback(() => {
     setFileObj(null);
@@ -170,7 +173,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
       showToast({
         type: "info",
         title: "Processing started",
-        message: `"${projectName}" is being processed. Track progress in Job Queue.`,
+        message: `"${projectName}" is being indexed. Track progress in Job Queue.`,
       });
 
       if (onSuccess) onSuccess();
@@ -181,7 +184,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
       }
       const msg =
         error.message === "Failed to fetch"
-          ? "Network error or server unreachable. Please verify the backend service is active."
+          ? "Network error or server unreachable. Verify the backend service is active."
           : error.message || "An unexpected error occurred during upload.";
       setErrorMsg(msg);
       showToast({
@@ -197,6 +200,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
   const isOver = dragState === DRAG_STATES.over;
   const isDropped = dragState === DRAG_STATES.dropped;
   const isRar = fileName?.toLowerCase().endsWith(".rar");
+  const isUnsupported = validationInfo && !validationInfo.isSupported;
 
   return (
     <div className="flex flex-col flex-1">
@@ -204,87 +208,85 @@ export default function LocalUpload({ onClose, onSuccess }) {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative flex flex-col items-center justify-center flex-1 rounded-[var(--radius-lg)] border-2 border-dashed p-6 transition-colors min-h-[300px] ${
+        className={`relative flex flex-col items-center justify-center flex-1 rounded-[10px] border border-dashed p-5 transition-colors duration-150 min-h-[290px] ${
           isOver
-            ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5"
+            ? "border-[var(--ps-cobalt)] bg-[var(--ps-surface)]"
             : isDropped
-              ? validationInfo && !validationInfo.isSupported
-                ? "border-[var(--color-danger)] bg-[var(--color-danger)]/5"
-                : "border-[var(--color-success)] bg-[var(--color-success)]/5"
-              : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-subtle)] cursor-pointer"
+              ? isUnsupported
+                ? "border-[var(--ps-rose)] bg-[var(--ps-surface)]"
+                : "border-[var(--ps-emerald)] bg-[var(--ps-surface)]"
+              : "border-[var(--ps-line-strong)] bg-[var(--ps-surface)]/75 hover:bg-[var(--ps-surface)] hover:border-[var(--ps-ink-muted)] cursor-pointer"
         }`}
         onClick={!isDropped ? handleFileSelect : undefined}
         id="dropzone-area"
       >
         {isDropped ? (
-          /* ── File Dropped State ── */
-          <div className="flex flex-col items-center w-full max-w-sm relative z-10 gap-4">
-            {/* Status icon */}
-            {validating ? (
-              <div className="relative">
-                <div className="w-14 h-14 rounded-[var(--radius-lg)] flex items-center justify-center border border-[var(--color-border)] bg-[var(--color-surface)]">
-                  <FolderArchive
-                    size={26}
-                    className="text-[var(--color-primary)]"
-                  />
-                </div>
-                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center shadow-xs">
-                  <Loader2 size={12} className="animate-spin" strokeWidth={3} />
-                </div>
+          <div className="flex flex-col items-center w-full max-w-xs gap-3.5">
+            {/* Status Glyph */}
+            <div className="relative">
+              <div
+                className="w-12 h-12 rounded-lg flex items-center justify-center border bg-[var(--ps-surface-2)]"
+                style={{
+                  borderColor: isUnsupported
+                    ? "var(--ps-rose)"
+                    : validating
+                      ? "var(--ps-line-strong)"
+                      : "var(--ps-emerald)",
+                }}
+              >
+                <FolderArchive
+                  size={22}
+                  style={{
+                    color: isUnsupported
+                      ? "var(--ps-rose)"
+                      : isRar
+                        ? "var(--ps-amber)"
+                        : "var(--ps-cobalt)",
+                  }}
+                />
               </div>
-            ) : validationInfo && !validationInfo.isSupported ? (
-              <div className="relative">
-                <div className="w-14 h-14 rounded-[var(--radius-lg)] flex items-center justify-center border border-[var(--color-danger)] bg-[var(--color-surface)]">
-                  <FolderArchive
-                    size={26}
-                    className="text-[var(--color-danger)]"
-                  />
-                </div>
-                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center shadow-xs">
-                  <AlertCircle size={12} strokeWidth={3} />
-                </div>
+              <div
+                className="absolute -bottom-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center border border-[var(--ps-surface)]"
+                style={{
+                  backgroundColor: validating
+                    ? "var(--ps-cobalt)"
+                    : isUnsupported
+                      ? "var(--ps-rose)"
+                      : "var(--ps-emerald)",
+                  color: "#ffffff",
+                }}
+              >
+                {validating ? (
+                  <Loader2 size={11} className="animate-spin" strokeWidth={2.5} />
+                ) : isUnsupported ? (
+                  <AlertCircle size={11} strokeWidth={2.5} />
+                ) : (
+                  <CheckCircle2 size={11} strokeWidth={2.5} />
+                )}
               </div>
-            ) : (
-              <div className="relative">
-                <div className="w-14 h-14 rounded-[var(--radius-lg)] flex items-center justify-center border border-[var(--color-border)] bg-[var(--color-surface)]">
-                  <FolderArchive
-                    size={26}
-                    className={
-                      isRar ? "text-amber-500" : "text-[var(--color-primary)]"
-                    }
-                  />
-                </div>
-                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[var(--color-success)] text-white flex items-center justify-center shadow-xs">
-                  <CheckCircle2 size={12} strokeWidth={3} />
-                </div>
-              </div>
-            )}
+            </div>
 
-            {/* File details card */}
-            <div className="w-full rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] p-3 flex flex-col gap-2.5">
-              <div className="flex items-start justify-between gap-3">
+            {/* File Metadata Card */}
+            <div className="w-full rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] p-3 flex flex-col gap-2">
+              <div className="flex items-start justify-between gap-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <FileArchive
-                    size={16}
-                    className="text-[var(--color-primary)] shrink-0"
+                    size={15}
+                    style={{ color: "var(--ps-cobalt)" }}
+                    className="shrink-0"
                   />
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold text-[var(--color-text)] truncate font-mono">
+                    <p className="text-xs font-medium text-[var(--ps-ink)] truncate ps-mono">
                       {fileName}
                     </p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
-                        {formatBytes(fileObj?.size)}
-                      </span>
-                      <span className="text-[var(--color-border)]">•</span>
-                      <Badge variant={isRar ? "warning" : "primary"} size="sm">
-                        {isRar ? "RAR Archive" : "ZIP Archive"}
-                      </Badge>
+                    <div className="flex items-center gap-2 mt-0.5 text-[11px] text-[var(--ps-ink-muted)] ps-mono">
+                      <span>{formatBytes(fileObj?.size)}</span>
+                      <span>·</span>
+                      <span>{isRar ? "RAR" : "ZIP"}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Remove button */}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -293,139 +295,123 @@ export default function LocalUpload({ onClose, onSuccess }) {
                   }}
                   title="Remove file"
                   aria-label="Remove file"
-                  className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                  className="p-1 rounded hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer"
                 >
-                  <X size={14} />
+                  <X size={13} />
                 </button>
               </div>
 
-              {/* Language validation status indicator */}
               {validating && (
-                <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-secondary)]">
+                <div className="flex items-center gap-2 pt-2 border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-secondary)]">
                   <Loader2
-                    size={13}
-                    className="animate-spin text-[var(--color-primary)] shrink-0"
+                    size={12}
+                    className="animate-spin shrink-0"
+                    style={{ color: "var(--ps-cobalt)" }}
                   />
-                  <span>Checking language & project structure...</span>
+                  <span>Inspecting project structure...</span>
                 </div>
               )}
 
               {validationInfo?.isSupported && (
-                <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)] text-[11px]">
-                  <span className="text-[var(--color-text-secondary)]">
-                    Language:
-                  </span>
-                  <Badge variant="success" size="sm">
+                <div className="flex items-center justify-between pt-2 border-t border-[var(--ps-line)] text-[11px]">
+                  <span className="text-[var(--ps-ink-muted)]">Detected runtime</span>
+                  <span
+                    className="px-2 py-0.5 rounded text-[10.5px] font-medium ps-mono border"
+                    style={{
+                      backgroundColor: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                      borderColor: "color-mix(in srgb, var(--ps-emerald) 25%, transparent)",
+                      color: "var(--ps-emerald)",
+                    }}
+                  >
                     {validationInfo.language}
-                  </Badge>
+                  </span>
                 </div>
               )}
 
-              {validationInfo && !validationInfo.isSupported && (
-                <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)] text-[11px]">
-                  <span className="text-[var(--color-danger)] font-medium">
-                    Language:
-                  </span>
-                  <Badge variant="danger" size="sm">
+              {isUnsupported && (
+                <div className="flex items-center justify-between pt-2 border-t border-[var(--ps-line)] text-[11px]">
+                  <span className="text-[var(--ps-ink-muted)]">Detected runtime</span>
+                  <span
+                    className="px-2 py-0.5 rounded text-[10.5px] font-medium ps-mono border"
+                    style={{
+                      backgroundColor: "color-mix(in srgb, var(--ps-rose) 10%, transparent)",
+                      borderColor: "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
+                      color: "var(--ps-rose)",
+                    }}
+                  >
                     Unsupported
-                  </Badge>
+                  </span>
                 </div>
               )}
             </div>
 
-            {/* Error message card */}
-            {(errorMsg || (validationInfo && !validationInfo.isSupported)) && (
-              <div className="w-full rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/25 p-3 flex items-start gap-2.5 text-[var(--color-danger)] text-xs">
-                <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold">
-                    {validationInfo && !validationInfo.isSupported
-                      ? "Unsupported Project Language"
-                      : "Import Failed"}
-                  </p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed opacity-90">
-                    {errorMsg || validationInfo?.reason}
-                  </p>
+            {(errorMsg || isUnsupported) && (
+              <div
+                className="w-full rounded-lg p-2.5 flex items-start gap-2 text-xs border"
+                style={{
+                  backgroundColor: "color-mix(in srgb, var(--ps-rose) 8%, transparent)",
+                  borderColor: "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
+                  color: "var(--ps-rose)",
+                }}
+              >
+                <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0 text-[11px] leading-relaxed">
+                  {errorMsg || validationInfo?.reason}
                 </div>
               </div>
             )}
 
-            {/* Import button */}
-            <Button
+            <button
               type="button"
-              variant={
-                validationInfo && !validationInfo.isSupported
-                  ? "secondary"
-                  : "primary"
-              }
-              size="md"
               onClick={handleUpload}
-              disabled={
-                uploading ||
-                validating ||
-                (validationInfo && !validationInfo.isSupported)
-              }
-              loading={uploading}
-              icon={ArrowUpRight}
-              className="w-full"
+              disabled={uploading || validating || isUnsupported}
               id="upload-import-btn"
+              className="w-full h-9 px-4 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
             >
-              {uploading
-                ? "Extracting & Ingesting..."
-                : validating
-                  ? "Checking Language..."
-                  : validationInfo && !validationInfo.isSupported
-                    ? "Unsupported Project"
-                    : "Import Project"}
-            </Button>
+              {uploading ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  <span>Extracting &amp; ingesting...</span>
+                </>
+              ) : validating ? (
+                <span>Checking language...</span>
+              ) : isUnsupported ? (
+                <span>Unsupported archive</span>
+              ) : (
+                <>
+                  <ArrowUpRight size={14} />
+                  <span>Import archive</span>
+                </>
+              )}
+            </button>
           </div>
         ) : (
-          /* ── Idle / Drag-over State ── */
-          <div className="flex flex-col items-center text-center relative z-10 gap-3 max-w-xs">
-            {/* Icon */}
-            <div className="w-12 h-12 rounded-[var(--radius-lg)] flex items-center justify-center bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-primary)]">
-              <CloudUpload size={24} strokeWidth={2} />
+          <div className="flex flex-col items-center text-center gap-3 max-w-[230px]">
+            <div className="w-11 h-11 rounded-lg flex items-center justify-center bg-[var(--ps-surface-2)] border border-[var(--ps-line)] text-[var(--ps-ink)]">
+              <CloudUpload size={20} strokeWidth={1.75} />
             </div>
 
-            {/* Title & Description */}
             <div>
-              <h3 className="text-sm font-semibold text-[var(--color-text)] tracking-tight">
-                Upload Project Archive
-              </h3>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                Drag and drop your codebase archive here to parse and synthesize
-                tests
+              <p className="text-xs font-semibold text-[var(--ps-ink)]">
+                Drop codebase archive
+              </p>
+              <p className="text-[11px] text-[var(--ps-ink-muted)] mt-1 leading-relaxed">
+                Supports <span className="ps-mono">.zip</span>, <span className="ps-mono">.rar</span>, <span className="ps-mono">.tar.gz</span> up to <span className="ps-mono">200 MB</span>
               </p>
             </div>
 
-            {/* Supported formats */}
-            <div className="flex items-center gap-2">
-              <Badge variant="neutral" size="sm">
-                .ZIP
-              </Badge>
-              <Badge variant="neutral" size="sm">
-                .RAR
-              </Badge>
-              <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
-                Max 200MB
-              </span>
-            </div>
-
-            {/* Browse Button */}
-            <Button
+            <button
               type="button"
-              variant="secondary"
-              size="sm"
               onClick={(e) => {
                 e.stopPropagation();
                 handleFileSelect();
               }}
-              icon={HardDrive}
-              className="mt-1"
               id="browse-files-btn"
+              className="mt-1 h-8 px-3 rounded-md border border-[var(--ps-line-strong)] bg-[var(--ps-surface-2)] hover:bg-[var(--ps-line)]/60 text-xs font-medium text-[var(--ps-ink)] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
             >
-              Browse Local Files
-            </Button>
+              <HardDrive size={13} className="text-[var(--ps-ink-secondary)]" />
+              <span>Choose local file</span>
+            </button>
           </div>
         )}
       </div>

@@ -30,7 +30,7 @@ export async function evaluationDatabase() {
 
     const migrationsDir = path.join(serverDir, 'prisma/migrations');
     const entries = (await fs.readdir(migrationsDir, { withFileTypes: true }))
-        .filter(entry => entry.isDirectory() && entry.name.includes('ai_evaluation'))
+        .filter(entry => entry.isDirectory() && /ai_evaluation|imported_chatbot_evaluation|chatbot_project_settings/.test(entry.name))
         .map(entry => entry.name)
         .sort();
     for (const dirName of entries) {

@@ -17,7 +17,7 @@ import {
 import { parseJavaScriptCode } from "../services/babelParser.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 
-describe("Phase 3: Hoàn Thiện Cơ Chế Safe Apply & AST Sanitizer", () => {
+describe("Phase 3: Safe Apply & AST Sanitizer Mechanism", () => {
     let tempDir;
 
     beforeEach(() => {
@@ -30,8 +30,8 @@ describe("Phase 3: Hoàn Thiện Cơ Chế Safe Apply & AST Sanitizer", () => {
         } catch { }
     });
 
-    describe("3.1 Chiến Lược Áp Dụng: Tạo Mới Test File (Case 1: New Test File)", () => {
-        test("tạo mới file test hoàn chỉnh với runner imports, module import và mock contract", () => {
+    describe("3.1 Apply Strategy: Create New Test File (Case 1: New Test File)", () => {
+        test("creates complete new test file with runner imports, module import and mock contracts", () => {
             const srcDir = path.join(tempDir, "src", "services");
             fs.mkdirSync(srcDir, { recursive: true });
             const srcFile = path.join(srcDir, "billing.service.js");
@@ -57,17 +57,17 @@ describe("Phase 3: Hoàn Thiện Cơ Chế Safe Apply & AST Sanitizer", () => {
             expect(fs.existsSync(writtenPath)).toBe(true);
             const content = fs.readFileSync(writtenPath, "utf8");
 
-            // Kiểm tra import module nguồn và describe block
+            // Verify source module import and describe block
             expect(content).toContain("billing.service");
             expect(content).toContain("describe('BillingService'");
             expect(content).toContain("test('generates valid invoice for customer'");
 
-            // Xác minh AST hợp lệ 100% bằng Babel parser (0 syntax error)
+            // Verify 100% valid AST via Babel parser (0 syntax errors)
             const ast = parseJavaScriptCode(content);
             expect(ast.success).toBe(true);
         });
 
-        test("tạo mới file test Vitest với ESM runner import chuẩn", () => {
+        test("creates new Vitest test file with standard ESM runner imports", () => {
             const suggestion = {
                 sourceFile: "src/utils/math.js",
                 testFile: "tests/math.test.js",
@@ -96,8 +96,8 @@ describe("Phase 3: Hoàn Thiện Cơ Chế Safe Apply & AST Sanitizer", () => {
         });
     });
 
-    describe("3.2 Chiến Lược Hợp Nhất & Khử Trùng Lặp (Case 2: Merge & Deduplicate)", () => {
-        test("bảo tồn 100% test cũ của người dùng, hoist imports/mocks lên đầu file, và append test mới", () => {
+    describe("3.2 Merge & Deduplicate Strategy (Case 2: Merge & Deduplicate)", () => {
+        test("preserves 100% of user existing tests, hoists imports/mocks to top, and appends new tests", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "user.service.test.js");
@@ -135,33 +135,33 @@ describe('UserService - Additional Delta Coverage', () => {
 
             const mergedContent = fs.readFileSync(testFile, "utf8");
 
-            // 1. Bảo tồn 100% test cũ của người dùng
+            // 1. Preserve 100% of user existing tests
             expect(mergedContent).toContain("describe('UserService - Original Suite'");
             expect(mergedContent).toContain("it('fetches existing user by ID'");
 
-            // 2. Hoist import và mock lên trước describe block đầu tiên
+            // 2. Hoist imports and mocks before first describe block
             const firstDescribeIdx = mergedContent.indexOf("describe('UserService - Original Suite'");
             const axiosMockIdx = mergedContent.indexOf("jest.mock('axios'");
             const auditLogIdx = mergedContent.indexOf("auditLog");
             expect(axiosMockIdx).toBeLessThan(firstDescribeIdx);
             expect(auditLogIdx).toBeLessThan(firstDescribeIdx);
 
-            // 3. Khử trùng lặp destructuring require: getUserById không bị khai báo trùng
+            // 3. Deduplicate destructuring require: getUserById not redundantly declared
             const declCount = (mergedContent.match(/getUserById/g) || []).length;
             expect(declCount).toBeGreaterThanOrEqual(1);
-            // Không có 2 câu lệnh const khai báo lại cùng biến
+            // No duplicate const statements declaring identical identifier
             expect(mergedContent).not.toMatch(/const\s+\{\s*getUserById\s*\}\s*=\s*require[\s\S]*const\s+\{\s*getUserById/);
 
-            // 4. Nối khối describe mới vào cuối file
+            // 4. Append new describe block to end of file
             expect(mergedContent).toContain("describe('UserService - Additional Delta Coverage'");
             expect(mergedContent).toContain("it('deletes user cleanly'");
 
-            // 5. AST an toàn 100%
+            // 5. 100% safe AST
             const ast = parseJavaScriptCode(mergedContent);
             expect(ast.success).toBe(true);
         });
 
-        test("tự động đổi tên các khối describe mới nếu trùng tên để tránh ghi đè test cũ (hỗ trợ cả backtick)", () => {
+        test("automatically renames new describe blocks upon name collision to protect existing tests", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "auth.test.js");
@@ -174,7 +174,7 @@ describe('UserService - Additional Delta Coverage', () => {
 `;
             fs.writeFileSync(testFile, initialContent, "utf8");
 
-            // Suggestion 1: Trùng tên describe 'Auth Suite'
+            // Suggestion 1: Colliding describe name 'Auth Suite'
             const suggestion1 = {
                 sourceFile: "src/auth.js",
                 testFile: "tests/auth.test.js",
@@ -192,7 +192,7 @@ describe('UserService - Additional Delta Coverage', () => {
             expect(content).toContain("describe('Auth Suite'");
             expect(content).toContain("describe('Auth Suite - Additional Coverage'");
 
-            // Suggestion 2: Trùng tên bằng template literal `Auth Suite`
+            // Suggestion 2: Colliding name via template literal `Auth Suite`
             const suggestion2 = {
                 sourceFile: "src/auth.js",
                 testFile: "tests/auth.test.js",
@@ -203,14 +203,14 @@ describe('UserService - Additional Delta Coverage', () => {
             applyCodeToTestFile(tempDir, suggestion2);
             content = fs.readFileSync(testFile, "utf8");
 
-            // Khối thứ 3 tự động nhận suffix '- Additional Coverage 2'
+            // Third block automatically receives suffix '- Additional Coverage 2'
             expect(content).toContain("describe(`Auth Suite - Additional Coverage 2`");
 
             const ast = parseJavaScriptCode(content);
             expect(ast.success).toBe(true);
         });
 
-        test("đảm bảo tính lũy thừa (Idempotency): không chèn lặp khi cùng suggestion được apply nhiều lần", () => {
+        test("ensures idempotency: does not duplicate when same suggestion applied multiple times", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "idempotent.test.js");
@@ -237,8 +237,8 @@ describe('UserService - Additional Delta Coverage', () => {
         });
     });
 
-    describe("3.3 Bộ Lọc Cú Pháp AST Sanitizer (Syntax Protection Filters)", () => {
-        test("Rule 1: Heal Mismatched Quotes - sửa các cặp nháy lệch do AI sinh ra", () => {
+    describe("3.3 AST Sanitizer Syntax Protection Filters", () => {
+        test("Rule 1: Heal Mismatched Quotes - repairs unclosed quotes from AI", () => {
             const mismatched = `
 it(\`rejects invalid input', async () => {
   expect(val).toBe(\`OK');
@@ -256,19 +256,19 @@ describe("AuthModule', () => {
             expect(healed).toContain("expect(token).toEqual('VALID');");
         });
 
-        test("Rule 2: Heal Multiline Strings - chuyển chuỗi nhiều dòng có newline thành template literals", () => {
+        test("Rule 2: Heal Multiline Strings - converts multiline strings with newlines to template literals", () => {
             const multiline = "const sql = 'SELECT *\\nFROM orders\\nWHERE status = \"OPEN\"';";
             const multilineCode = "const sql = 'SELECT *\nFROM orders\nWHERE status = \"OPEN\"';";
             const healed = healMultilineStrings(multilineCode);
             expect(healed).toContain("`SELECT *\nFROM orders\nWHERE status = \"OPEN\"`");
 
-            // Bảo vệ comment tiếng Anh có dấu apostrophe không bị biến thành backtick
+            // Protect English comments with apostrophes from converting to backticks
             const englishComment = `// User's order doesn't have an ID\nconst a = 1;`;
             const healedComment = healMultilineStrings(englishComment);
             expect(healedComment).toContain("// User's order doesn't have an ID");
         });
 
-        test("Rule 3: Orphan Mock Protection - loại bỏ đoạn mock bị cắt xén dở dang cú pháp", () => {
+        test("Rule 3: Orphan Mock Protection - removes truncated incomplete mock fragments", () => {
             const brokenMock = `
 const path = require('path');
 
@@ -287,7 +287,7 @@ describe('Clean Suite', () => {
             expect(ast.success).toBe(true);
         });
 
-        test("Rule 4: Heal Unclosed Object Literals - tự động đóng object literal bị bỏ lửng", () => {
+        test("Rule 4: Heal Unclosed Object Literals - auto-closes dangling object literals", () => {
             const unclosedObject = `
 describe('Account', () => {
   it('validates account profile', () => {
@@ -305,7 +305,7 @@ describe('Account', () => {
             expect(ast.success).toBe(true);
         });
 
-        test("Rule 5: CommonJS Jest Global Rule - khử bỏ khai báo const jest = require('@jest/globals')", () => {
+        test("Rule 5: CommonJS Jest Global Rule - removes redundant const jest = require('@jest/globals')", () => {
             const codeWithRedeclaredJest = `
 const { jest } = require('@jest/globals');
 const { processItem } = require('../src/item');
@@ -323,7 +323,7 @@ describe('Item', () => {
             expect(ast.success).toBe(true);
         });
 
-        test("Rule 6: Strict Storage Guard - từ chối mọi thao tác ghi hoặc duyệt ra ngoài thư mục an toàn", () => {
+        test("Rule 6: Strict Storage Guard - rejects any write or traversal outside safe directory", () => {
             const storageAttempt = {
                 sourceFile: "src/user.js",
                 testFile: "storage/projects/p1/repo/tests/hack.test.js",

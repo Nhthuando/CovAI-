@@ -113,7 +113,7 @@ export const toolSchema = z.object({
 }).strict();
 
 export const ruleSchema = z.object({
-    type: z.enum(['equals', 'containsAll', 'orderedSteps', 'forbiddenText', 'jsonValue', 'latency', 'cost', 'consistency', 'sourceSupport', 'retrievalRecall', 'toolSelection', 'toolParameters', 'confirmation', 'forbiddenActions', 'duplicates', 'toolResult', 'state']),
+    type: z.enum(['equals', 'containsAll', 'orderedSteps', 'forbiddenText', 'secretDisclosure', 'jsonValue', 'latency', 'cost', 'consistency', 'sourceSupport', 'retrievalRecall', 'toolSelection', 'toolParameters', 'confirmation', 'forbiddenActions', 'duplicates', 'toolResult', 'state']),
     expected: z.unknown().optional(), path: pointer.optional(), toolName: id.optional(), max: z.number().nonnegative().optional(), currency: z.string().max(12).optional(),
 }).strict();
 

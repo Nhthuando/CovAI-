@@ -1,11 +1,11 @@
-import { handleUnauthorizedResponse } from "../lib/authSession.js";
+import { authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 export async function downloadProjectExportApi(projectId, { snapshotId, format, signal }) {
   const query = new URLSearchParams({ type: format === "zip" ? "project" : "analysis", snapshotId });
   if (format !== "zip") query.set("format", format);
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${BASE_URL}/projects/${encodeURIComponent(projectId)}/export?${query}`, {
+  const token = getAccessToken();
+  const response = await authAwareFetch(fetch, `${BASE_URL}/projects/${encodeURIComponent(projectId)}/export?${query}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}, signal,
   });
   if (!response.ok) {

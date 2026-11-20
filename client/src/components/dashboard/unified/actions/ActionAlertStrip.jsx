@@ -25,7 +25,7 @@ export function ActionAlertStrip({
     P2: "bg-[var(--ud-surface-2)] border-[var(--ud-border)] text-[var(--ud-text-muted)]",
     CRITICAL: "bg-[var(--ud-fail)]/15 border-[var(--ud-fail)]/40 text-[var(--ud-fail)]",
     HIGH: "bg-[var(--ud-warn)]/15 border-[var(--ud-warn)]/40 text-[var(--ud-warn)]",
-    MEDIUM: "bg-blue-500/15 border-blue-500/40 text-blue-400",
+    MEDIUM: "bg-[var(--ud-unit)]/12 border-[var(--ud-unit)]/30 text-[var(--ud-unit)]",
     LOW: "bg-[var(--ud-surface-2)] border-[var(--ud-border)] text-[var(--ud-text-muted)]",
   };
 

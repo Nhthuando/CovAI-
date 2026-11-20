@@ -1,238 +1,125 @@
-import { CheckCircle2, Terminal } from "lucide-react";
+import { useState } from "react";
 
-const CODE_LINES = [
-  {
-    num: 1,
-    tokens: [
-      { t: "kw", v: "import" },
-      { t: "punct", v: " { " },
-      { t: "id", v: "checkout" },
-      { t: "punct", v: " } " },
-      { t: "kw", v: "from" },
-      { t: "punct", v: " " },
-      { t: "str", v: "'./services/checkout'" },
-      { t: "punct", v: ";" },
-    ],
-  },
-  { num: 2, tokens: [] },
-  {
-    num: 3,
-    tokens: [
-      { t: "fn", v: "describe" },
-      { t: "punct", v: "(" },
-      { t: "str", v: "'checkout() edge cases'" },
-      { t: "punct", v: ", () => {" },
-    ],
-  },
-  {
-    num: 4,
-    tokens: [
-      { t: "indent", v: "  " },
-      { t: "fn", v: "it" },
-      { t: "punct", v: "(" },
-      { t: "str", v: "'should throw on insufficient balance'" },
-      { t: "punct", v: ", () => {" },
-    ],
-  },
-  {
-    num: 5,
-    tokens: [
-      { t: "indent", v: "    " },
-      { t: "kw", v: "const" },
-      { t: "punct", v: " " },
-      { t: "id", v: "cart" },
-      { t: "punct", v: " = { " },
-      { t: "id", v: "items" },
-      { t: "punct", v: ": [{ " },
-      { t: "id", v: "price" },
-      { t: "punct", v: ": " },
-      { t: "num", v: "100" },
-      { t: "punct", v: " }] };" },
-    ],
-  },
-  {
-    num: 6,
-    tokens: [
-      { t: "indent", v: "    " },
-      { t: "kw", v: "const" },
-      { t: "punct", v: " " },
-      { t: "id", v: "user" },
-      { t: "punct", v: " = { " },
-      { t: "id", v: "balance" },
-      { t: "punct", v: ": " },
-      { t: "num", v: "20" },
-      { t: "punct", v: " };" },
-    ],
-  },
-  {
-    num: 7,
-    highlight: true,
-    tokens: [
-      { t: "indent", v: "    " },
-      { t: "fn", v: "expect" },
-      { t: "punct", v: "(() => " },
-      { t: "fn", v: "checkout" },
-      { t: "punct", v: "(" },
-      { t: "id", v: "cart" },
-      { t: "punct", v: ", " },
-      { t: "id", v: "user" },
-      { t: "punct", v: "))" },
-    ],
-  },
-  {
-    num: 8,
-    highlight: true,
-    tokens: [
-      { t: "indent", v: "      ." },
-      { t: "fn", v: "toThrow" },
-      { t: "punct", v: "(" },
-      { t: "str", v: "'Insufficient funds'" },
-      { t: "punct", v: ");" },
-    ],
-  },
-  {
-    num: 9,
-    tokens: [
-      { t: "indent", v: "  " },
-      { t: "punct", v: "});" },
-    ],
-  },
-  { num: 10, tokens: [] },
-  {
-    num: 11,
-    tokens: [
-      { t: "indent", v: "  " },
-      { t: "fn", v: "it" },
-      { t: "punct", v: "(" },
-      { t: "str", v: "'should reject empty cart items'" },
-      { t: "punct", v: ", () => {" },
-    ],
-  },
-  {
-    num: 12,
-    tokens: [
-      { t: "indent", v: "    " },
-      { t: "fn", v: "expect" },
-      { t: "punct", v: "(() => " },
-      { t: "fn", v: "checkout" },
-      { t: "punct", v: "({ " },
-      { t: "id", v: "items" },
-      { t: "punct", v: ": [] }, { " },
-      { t: "id", v: "balance" },
-      { t: "punct", v: ": " },
-      { t: "num", v: "50" },
-      { t: "punct", v: " }))" },
-    ],
-  },
-  {
-    num: 13,
-    tokens: [
-      { t: "indent", v: "      ." },
-      { t: "fn", v: "toThrow" },
-      { t: "punct", v: "(" },
-      { t: "str", v: "'Cart is empty'" },
-      { t: "punct", v: ");" },
-    ],
-  },
-  {
-    num: 14,
-    tokens: [
-      { t: "indent", v: "  " },
-      { t: "punct", v: "});" },
-    ],
-  },
-  {
-    num: 15,
-    tokens: [{ t: "punct", v: "});" }],
-  },
+const BEFORE_LINES = [
+  { num: 1, code: "export async function verifyWebhook(req, secret) {", state: "normal" },
+  { num: 2, code: "  const sig = req.headers['x-covai-signature'];", state: "normal" },
+  { num: 3, code: "  if (!sig || !timingSafeEqual(sig, secret)) {", state: "normal" },
+  { num: 4, code: "    throw new AuthError('ERR_INVALID_HMAC_DIGEST');", state: "fault" },
+  { num: 5, code: "  }", state: "normal" },
+  { num: 6, code: "  if (Date.now() - req.timestamp > 300_000) {", state: "normal" },
+  { num: 7, code: "    throw new AuthError('ERR_REPLAY_WINDOW_EXPIRED');", state: "fault" },
+  { num: 8, code: "  }", state: "normal" },
+  { num: 9, code: "  return { verified: true, eventId: req.body.id };", state: "normal" },
+  { num: 10, code: "}", state: "normal" },
+];
+
+const AFTER_LINES = [
+  { num: 1, code: "describe('verifyWebhook() branch verification', () => {", state: "normal" },
+  { num: 2, code: "  it('rejects tampered HMAC digest (line 4)', async () => {", state: "verified" },
+  { num: 3, code: "    const req = mockRequest({ sig: '0xdeadbeef' });", state: "normal" },
+  { num: 4, code: "    await expect(verifyWebhook(req, SECRET))", state: "verified" },
+  { num: 5, code: "      .rejects.toThrow('ERR_INVALID_HMAC_DIGEST');", state: "verified" },
+  { num: 6, code: "  });", state: "normal" },
+  { num: 7, code: "  it('blocks expired replay timestamp (line 7)', async () => {", state: "verified" },
+  { num: 8, code: "    const req = mockRequest({ timestamp: Date.now() - 600_000 });", state: "normal" },
+  { num: 9, code: "    await expect(verifyWebhook(req, SECRET))", state: "verified" },
+  { num: 10, code: "      .rejects.toThrow('ERR_REPLAY_WINDOW_EXPIRED');", state: "verified" },
+  { num: 11, code: "  });", state: "normal" },
+  { num: 12, code: "});", state: "normal" },
 ];
 
 export default function CodePreview() {
-  const getTokenClass = (type) => {
-    switch (type) {
-      case "kw":
-        return "text-[#a78bfa] dark:text-[#c084fc] font-semibold";
-      case "fn":
-        return "text-[#2563eb] dark:text-[#60a5fa]";
-      case "str":
-        return "text-[#16a34a] dark:text-[#4ade80]";
-      case "num":
-        return "text-[#d97706] dark:text-[#fb923c]";
-      case "id":
-        return "text-[var(--color-text)]";
-      case "punct":
-        return "text-[var(--color-text-muted)]";
-      default:
-        return "text-[var(--color-text)]";
-    }
-  };
+  const [view, setView] = useState("spec"); // "spec" | "ast"
+  const lines = view === "spec" ? AFTER_LINES : BEFORE_LINES;
 
   return (
-    <div className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden shadow-sm font-mono text-xs">
-      {/* Title Bar */}
-      <div className="h-9 px-4 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between">
+    <div className="w-full rounded-xl lp-machined overflow-hidden lp-mono text-xs select-none">
+      {/* Header Bar */}
+      <div className="px-4 py-2.5 bg-[var(--lp-surface)] border-b border-[var(--lp-line)] flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 mr-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-danger)]/80 inline-block" />
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-warning)]/80 inline-block" />
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-success)]/80 inline-block" />
-          </div>
-          <span className="text-[var(--color-text-secondary)] text-[11px] font-medium">
-            tests / checkout.test.js
+          <span
+            className={`w-2 h-2 rounded-full ${
+              view === "spec" ? "bg-[var(--lp-signal)]" : "bg-[var(--lp-fault)]"
+            }`}
+          />
+          <span className="text-[var(--lp-ink)] text-[11px] font-medium">
+            {view === "spec"
+              ? "tests/unit/verifyWebhook.spec.ts"
+              : "src/security/verifyWebhook.ts"}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-success)] font-medium">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>Jest 29.0 Pass</span>
+        <div className="inline-flex items-center p-0.5 rounded-md bg-[var(--lp-pill-bg)] border border-[var(--lp-line)] text-[10px]">
+          <button
+            type="button"
+            onClick={() => setView("ast")}
+            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+              view === "ast"
+                ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] shadow-xs"
+                : "text-[var(--lp-ink-muted)] hover:text-[var(--lp-ink)]"
+            }`}
+          >
+            Untested AST
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("spec")}
+            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+              view === "spec"
+                ? "bg-[var(--lp-pill-active)] text-[var(--lp-signal)] shadow-xs"
+                : "text-[var(--lp-ink-muted)] hover:text-[var(--lp-ink)]"
+            }`}
+          >
+            Verified Spec
+          </button>
         </div>
       </div>
 
-      {/* Editor Body */}
-      <div className="p-3 bg-[var(--color-bg)] leading-relaxed select-text overflow-x-auto">
-        {CODE_LINES.map((line) => (
+      {/* Code Lines */}
+      <div className="p-3.5 bg-[var(--lp-inset)] leading-[1.7] overflow-x-auto">
+        {lines.map((line) => (
           <div
             key={line.num}
-            className={`flex items-center py-0.5 px-1 rounded-[var(--radius-sm)] transition-colors ${
-              line.highlight
-                ? "bg-[var(--color-primary)]/10 border-l-2 border-[var(--color-primary)]"
-                : "border-l-2 border-transparent"
+            className={`flex items-center px-2 py-0.5 transition-colors ${
+              line.state === "verified"
+                ? "bg-[var(--lp-signal-bg)] border-l-2 border-[var(--lp-signal)]"
+                : line.state === "fault"
+                  ? "bg-[var(--lp-fault-bg)] border-l-2 border-[var(--lp-fault)]"
+                  : "border-l-2 border-transparent"
             }`}
           >
-            {/* Line Gutter Marker */}
-            <span className="w-4 text-center text-[10px] text-[var(--color-success)] select-none shrink-0 font-bold">
-              {line.highlight ? "✓" : ""}
-            </span>
-
-            {/* Line Number */}
-            <span className="w-6 text-right pr-3 select-none text-[var(--color-text-muted)] text-[11px] shrink-0 font-normal">
+            <span className="w-6 text-right pr-3 select-none text-[var(--lp-ink-muted)] text-[10px] shrink-0">
               {line.num}
             </span>
-
-            {/* Tokens */}
-            <span className="whitespace-pre">
-              {line.tokens.map((tok, i) => (
-                <span key={i} className={getTokenClass(tok.t)}>
-                  {tok.v}
-                </span>
-              ))}
+            <span
+              className={`whitespace-pre ${
+                line.state === "verified"
+                  ? "text-[var(--lp-signal)] font-medium"
+                  : line.state === "fault"
+                    ? "text-[var(--lp-fault-ink)]"
+                    : "text-[var(--lp-ink)]"
+              }`}
+            >
+              {line.code}
             </span>
           </div>
         ))}
       </div>
 
-      {/* Status Bar */}
-      <div className="px-3.5 py-2 bg-[var(--color-surface-secondary)] border-t border-[var(--color-border)] flex items-center justify-between text-[11px]">
-        <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
-          <Terminal className="w-3.5 h-3.5 text-[var(--color-primary)]" />
-          <span>Covered branch: Line 14 (throw new Error)</span>
-        </div>
-        <div className="flex items-center gap-3 font-mono">
-          <span className="text-[var(--color-success)] font-semibold">
-            100% Branch
-          </span>
-          <span className="text-[var(--color-text-muted)]">14ms</span>
-        </div>
+      {/* Status Footer */}
+      <div className="px-4 py-2.5 bg-[var(--lp-surface)] border-t border-[var(--lp-line)] flex items-center justify-between text-[11px]">
+        <span className="text-[var(--lp-ink-secondary)]">
+          {view === "spec"
+            ? "Docker runner: 2 passed (14ms)"
+            : "2 unreached branches detected"}
+        </span>
+        <span
+          className={`font-semibold ${
+            view === "spec" ? "text-[var(--lp-signal)]" : "text-[var(--lp-fault)]"
+          }`}
+        >
+          {view === "spec" ? "100% branch cov" : "50% branch cov"}
+        </span>
       </div>
     </div>
   );

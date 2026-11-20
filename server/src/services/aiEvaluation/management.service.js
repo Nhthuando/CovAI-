@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { getAgentManifest } from '../../agents/registry.js';
 import { AI_MODELS } from '../../../../shared/aiModels.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 import { nextMidnight } from '../../utils/geminiQuota.js';
@@ -812,11 +813,13 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
         ) {
             fail('IDEMPOTENCY_CONFLICT', 'This request key was used with different versions', 409);
         }
+        if (existing.manifest?.targetConfig?.adapter === 'PROJECT_SANDBOX') return existing;
         const { manifest: _omittedManifest, ...existingSummary } = existing;
         return existingSummary;
     }
 
     const profile = await versionFor(db, projectId, data.profileVersionId);
+    if ((await profileFor(db, projectId, profile.profileId)).archivedAt) fail('PROFILE_ARCHIVED', 'Archived benchmarks cannot start new runs');
     if (profile.status !== 'APPROVED') fail('PROFILE_NOT_APPROVED', 'Approve the benchmark before running');
     const target = must(await db.aiEvaluationTargetVersion.findFirst({
         where: { id: data.targetVersionId, target: { projectId, archivedAt: null } },
@@ -906,6 +909,7 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
                         jobId: job.id,
                         manifest: {
                             versions: VERSIONS,
+                            agent: getAgentManifest('chatbot-trustworthiness'),
                             targetConfig: target.config,
                             targetConfigHash: target.configHash,
                             targetVersion: target.version,
@@ -966,7 +970,7 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
                             })),
                         },
                     },
-                    select: RUN_SUMMARY_SELECT,
+                    select: { ...RUN_SUMMARY_SELECT, ...(target.config.adapter === 'PROJECT_SANDBOX' ? { manifest: true } : {}) },
                 });
             });
         } catch (error) {

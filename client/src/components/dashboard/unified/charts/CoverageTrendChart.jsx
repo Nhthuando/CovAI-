@@ -5,13 +5,29 @@ import { fmtPct } from "../../../../services/unifiedDashboard/format.js";
 
 export function CoverageTrendChart({
   trendData,
+  vm = null,
+  loading = false,
   className = "",
 }) {
   const [viewMode, setViewMode] = useState("trend"); // 'trend' | 'before_after'
   const [activeMetric, setActiveMetric] = useState("coverage"); // 'coverage' | 'pass_rate'
   const [hoveredPoint, setHoveredPoint] = useState(null);
 
-  const series = trendData?.series || [];
+  const rawSeries = trendData?.series || [];
+  const series =
+    rawSeries.length > 0
+      ? rawSeries
+      : vm
+      ? [
+          {
+            runLabel: "Current",
+            unitCoverage: Number(vm.coverage?.codePct ?? 0),
+            integrationCoverage: Number(vm.coverage?.apiPct ?? 0),
+            systemCoverage: Number(vm.coverage?.flowPct ?? 0),
+            passRate: Number(vm.execution?.passRate ?? 0),
+          },
+        ]
+      : [];
   const beforeAfter = trendData?.beforeAfter || {
     before: { unit: 0, integration: 0, system: 0, unitPassRate: 0, integrationPassRate: 0, systemPassRate: 0 },
     after: { unit: 0, integration: 0, system: 0, unitPassRate: 0, integrationPassRate: 0, systemPassRate: 0 },
@@ -56,6 +72,17 @@ export function CoverageTrendChart({
   const sysPath = makePath((d) => d.systemCoverage);
   const passPath = makePath((d) => d.passRate);
 
+  const makeAreaPath = (accessor) => {
+    if (series.length < 2) return "";
+    const line = makePath(accessor);
+    const firstX = getX(0, series.length);
+    const lastX = getX(series.length - 1, series.length);
+    const baseY = padTop + chartH;
+    return `${line} L ${lastX} ${baseY} L ${firstX} ${baseY} Z`;
+  };
+  const unitAreaPath = makeAreaPath((d) => d.unitCoverage);
+  const passAreaPath = makeAreaPath((d) => d.passRate);
+
   return (
     <ZonePanel
       id="ud-zone-trend"
@@ -88,7 +115,59 @@ export function CoverageTrendChart({
         </div>
       }
     >
-      {series.length === 0 ? (
+      {loading && series.length === 0 ? (
+        <div className="space-y-3">
+          <div className="relative w-full overflow-hidden">
+            <svg
+              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+              className="w-full h-auto select-none"
+              role="img"
+              aria-label="Loading trend chart"
+            >
+              {[0, 25, 50, 75, 100].map((tick) => {
+                const y = getY(tick);
+                return (
+                  <g key={tick}>
+                    <line
+                      x1={padLeft}
+                      y1={y}
+                      x2={svgWidth - padRight}
+                      y2={y}
+                      stroke="var(--ud-border)"
+                      strokeDasharray="3 3"
+                      strokeWidth="1"
+                    />
+                    <text
+                      x={padLeft - 8}
+                      y={y + 3}
+                      textAnchor="end"
+                      fill="var(--ud-text-muted)"
+                      fontSize="10"
+                      fontFamily="var(--font-mono)"
+                    >
+                      {tick}%
+                    </text>
+                  </g>
+                );
+              })}
+              <text
+                x={padLeft + chartW / 2}
+                y={padTop + chartH / 2}
+                textAnchor="middle"
+                fill="var(--ud-text-muted)"
+                fontSize="11"
+                fontFamily="var(--font-mono)"
+              >
+                Loading trend metrics...
+              </text>
+            </svg>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-[var(--ud-border)] text-[11px] font-mono text-[var(--ud-text-muted)]">
+            <span>Unit · Integration · System E2E</span>
+            <span>--</span>
+          </div>
+        </div>
+      ) : series.length === 0 ? (
         <div className="h-[220px] flex flex-col items-center justify-center text-center p-4 gap-2.5">
           <p className="text-xs font-semibold text-[var(--ud-text)]">
             No Historical Trend Points Recorded Yet
@@ -158,6 +237,14 @@ export function CoverageTrendChart({
               {/* Data Lines */}
               {activeMetric === "coverage" ? (
                 <>
+                  {/* Unit Area Tint (flat translucent) */}
+                  {unitAreaPath && (
+                    <path
+                      d={unitAreaPath}
+                      fill="var(--ud-unit)"
+                      fillOpacity="0.08"
+                    />
+                  )}
                   {/* System (Teal) */}
                   <path
                     d={sysPath}
@@ -246,6 +333,14 @@ export function CoverageTrendChart({
                 </>
               ) : (
                 <>
+                  {/* Pass Rate Area Tint */}
+                  {passAreaPath && (
+                    <path
+                      d={passAreaPath}
+                      fill="var(--ud-pass)"
+                      fillOpacity="0.08"
+                    />
+                  )}
                   {/* Overall Pass Rate Line (Green) */}
                   <path
                     d={passPath}

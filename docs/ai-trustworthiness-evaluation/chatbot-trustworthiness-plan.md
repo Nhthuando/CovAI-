@@ -1,5 +1,7 @@
 # COVAI - Kế hoạch triển khai đánh giá độ tin cậy của chatbot
 
+> **Cập nhật yêu cầu ngày 31/10/2026:** luồng chính đánh giá chatbot ngay trong dự án import, bằng benchmark do COVAI quản lý. Giao diện là **Kiểm tra chạy → Phân tích → Kết quả**. Các phần dưới về đăng ký endpoint và tự duyệt benchmark thuộc thiết kế trước khi yêu cầu này thay đổi. Implementation và hướng dẫn hiện hành nằm trong [imported-chatbot-implementation.md](./imported-chatbot-implementation.md).
+
 Ngày đối chiếu tài liệu và code: **30/10/2026**.
 
 Trạng thái: **kế hoạch triển khai**, không phải xác nhận tính năng đã hoàn thành. Lần cập nhật này chỉ tạo tài liệu; không sửa code ứng dụng, chạy migration hay thay đổi dữ liệu dự án.

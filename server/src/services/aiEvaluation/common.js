@@ -78,7 +78,7 @@ export const canonical = value => value === undefined ? 'null' : value && typeof
     : JSON.stringify(value);
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : canonical(value)).digest('hex');
-export const same = (a, b) => canonical(a) === canonical(b);
+export const same = (a, b) => a === undefined || b === undefined ? a === b : canonical(a) === canonical(b);
 
 export function pointerParts(pointer) {
     if (typeof pointer !== 'string' || (pointer !== '' && !pointer.startsWith('/')) || /~(?![01])/.test(pointer)) fail('INVALID_POINTER', 'Use a valid JSON Pointer');
@@ -120,8 +120,9 @@ export function redact(value, secrets = []) {
 export function isSerializationConflict(error) {
     const message = String(error?.message);
     const adapter = error?.meta?.driverAdapterError;
+    const databaseCode = error?.meta?.code || adapter?.cause?.originalCode;
     return error?.code === 'P2034' || error?.code === '40001'
-        || (error?.code === 'P2010' && (error?.meta?.code === '40001' || message.includes('40001')))
+        || (error?.code === 'P2010' && (['40001', '40P01'].includes(databaseCode) || message.includes('40001')))
         || adapter?.name === 'TransactionWriteConflict'
         || adapter?.cause?.kind === 'TransactionWriteConflict'
         || error?.cause?.kind === 'TransactionWriteConflict'

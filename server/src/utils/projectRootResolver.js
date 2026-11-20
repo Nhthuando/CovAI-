@@ -88,6 +88,9 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
     // Strip any Windows drive letter prefix (e.g. D:\, C:/) on non-Windows platforms
     const normalized = snapshotRoot.replace(/\\/g, '/');
     const strippedDrive = normalized.replace(/^[a-zA-Z]:(?:\/|$)/, '/');
+    const isWindowsContainerPath =
+        process.platform === 'win32' &&
+        /^\/?app\/(?:storage|uploads|\.?covai-temp)\//i.test(strippedDrive);
 
     // Determine current server root directory and potential base roots
     const serverRoot = process.cwd();
@@ -97,23 +100,24 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
             fileServerDir = path.resolve(__dirname, '../..');
         }
     } catch (_) {}
-    const baseCandidates = [serverRoot, path.resolve(serverRoot, 'server'), fileServerDir];
+    const baseCandidates = [fileServerDir, serverRoot, path.resolve(serverRoot, 'server')];
 
     // On non-Windows platforms, always work with strippedDrive
     const cleanRoot = process.platform !== 'win32' ? strippedDrive : snapshotRoot;
 
-    // Try resolving as standard local path if it exists
-    if (process.platform === 'win32' && (cleanRoot.startsWith('/') || cleanRoot.startsWith('\\'))) {
-        // Prevent path.resolve('/app/...') from attaching D:\app on Windows
-        const withoutRoot = strippedDrive.replace(/^\/+/, '');
-        for (const base of baseCandidates) {
-            const cand = path.resolve(base, withoutRoot);
-            if (hasCodeOrConfig(cand) || fs.existsSync(cand)) return cand;
-        }
-    } else {
-        const resolved = path.resolve(cleanRoot);
-        if (hasCodeOrConfig(resolved) || fs.existsSync(resolved)) {
-            return resolved;
+    // Try resolving as standard local path if it contains real code/config (never short-circuit on phantom E:\app\storage\... empty dirs)
+    if (!isWindowsContainerPath) {
+        if (process.platform === 'win32' && (cleanRoot.startsWith('/') || cleanRoot.startsWith('\\'))) {
+            const withoutRoot = strippedDrive.replace(/^\/+/, '');
+            for (const base of baseCandidates) {
+                const cand = path.resolve(base, withoutRoot);
+                if (hasCodeOrConfig(cand) || fs.existsSync(cand)) return cand;
+            }
+        } else {
+            const resolved = path.resolve(cleanRoot);
+            if (hasCodeOrConfig(resolved)) {
+                return resolved;
+            }
         }
     }
 

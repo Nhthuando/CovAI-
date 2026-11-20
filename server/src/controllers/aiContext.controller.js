@@ -5,13 +5,26 @@ import { getContextSettings, saveContextSettings, listProjectMemories, createPro
 import { listContextSessions, createContextSession, loadContextSession, renameContextSession, deleteContextSession, branchContextSession, assembleChatContext, contextPreview } from "../services/chatContext.service.js";
 import { sendContextChat } from "../services/chat.service.js";
 import { getChatRequest } from "../services/chatRequest.service.js";
+import { chatErrorMessage } from '../../../shared/chatMessages.js';
 
 const endpoint = (run, status = 200) => async (req, res) => {
     try { return res.status(status).json({ success: true, data: await run(req) }); }
     catch (error) {
-        if (error instanceof ServiceError) return res.status(error.statusCode).json({ success: false, message: error.message, code:error.code, model:error.model, resetAt:error.resetAt, retryAt:error.retryAt, quotaPeriod:error.quotaPeriod });
+        const isChat = req.route?.path === '/:id/chat';
+        if (error instanceof ServiceError) {
+            return res.status(error.statusCode).json({ success: false, message: isChat ? chatErrorMessage(error, req.body?.message) : error.message, code:error.code, ...(!isChat ? { model: error.model } : {}), resetAt:error.resetAt, retryAt:error.retryAt, quotaPeriod:error.quotaPeriod });
+        }
         // Avoid disclosing Prisma inputs, model prompts or private memory in errors/logs.
-        console.error("[AIContext] Request failed:", error.name);
+        console.error("[AIContext] Request failed:", error.name, error.code || "");
+        if (isChat) {
+            const timeoutCodes = new Set(["P2028", "P2024", "P1008"]);
+            const chatCode = timeoutCodes.has(error.code) ? "AI_REQUEST_TIMEOUT" : "AI_PROVIDER_UNAVAILABLE";
+            return res.status(timeoutCodes.has(error.code) ? 504 : 500).json({
+                success: false,
+                code: chatCode,
+                message: chatErrorMessage({ code: chatCode }, req.body?.message),
+            });
+        }
         return res.status(error.code === "P2002" ? 409 : 500).json({ success: false, message: error.code === "P2002" ? "This memory already exists. Reload the list." : "Could not update AI context. Please try again." });
     }
 };

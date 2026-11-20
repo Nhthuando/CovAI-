@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link2, ArrowRight, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Link2, ArrowRight, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import RepoList from "./RepoList";
 import {
   createProjectApi,
@@ -8,7 +8,7 @@ import {
   deleteProjectApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
-import Button from "../../common/Button";
+import { getGithubOAuthUrl } from "../../../services/auth.service";
 
 function GithubIcon({ size = 16, className = "" }) {
   return (
@@ -96,28 +96,26 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
   };
 
   return (
-    <div className="flex flex-col h-full gap-5">
-      {/* ── Import via URL Section ───────────────────────────── */}
+    <div className="flex flex-col h-full gap-4">
+      {/* ── URL Bar Section ────────────────────────────────────── */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <label
             htmlFor="github-url-input"
-            className="text-xs font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-1.5"
+            className="text-xs font-semibold text-[var(--ps-ink)]"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)]" />
-            Import via GitHub URL
+            GitHub repository URL
           </label>
-          <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
-            Public or Private repos
+          <span className="text-[11px] text-[var(--ps-ink-muted)] ps-mono">
+            Public or connected private
           </span>
         </div>
 
-        {/* URL Input Row */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center flex-1 rounded-[var(--radius-md)] px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] focus-within:border-[var(--color-primary)] focus-within:ring-1 focus-within:ring-[var(--color-primary)] transition-all">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center flex-1 h-9 rounded-lg px-3 bg-[var(--ps-inset)] border border-[var(--ps-line)] focus-within:border-[var(--ps-cobalt)] transition-colors">
             <Link2
-              size={15}
-              className="mr-2 text-[var(--color-text-muted)] shrink-0"
+              size={14}
+              className="mr-2 text-[var(--ps-ink-muted)] shrink-0"
             />
             <input
               type="text"
@@ -125,79 +123,105 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
               placeholder="https://github.com/organization/repository"
               value={urlValue}
               onChange={(e) => setUrlValue(e.target.value)}
-              className="w-full bg-transparent outline-none text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] font-mono"
+              className="w-full bg-transparent outline-none text-xs text-[var(--ps-ink)] placeholder:text-[var(--ps-ink-muted)] ps-mono"
             />
             {urlValue && (
               <div className="ml-2 flex items-center shrink-0">
                 {isValidUrl ? (
                   <CheckCircle2
-                    size={15}
-                    className="text-[var(--color-success)]"
+                    size={14}
+                    style={{ color: "var(--ps-emerald)" }}
                   />
                 ) : (
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span
+                    className="w-2 h-2 rounded-full"
+                    style={{ backgroundColor: "var(--ps-amber)" }}
+                  />
                 )}
               </div>
             )}
           </div>
 
-          <Button
+          <button
             type="button"
-            variant="primary"
-            size="md"
             onClick={handleImportUrl}
             disabled={uploading || !isValidUrl}
-            loading={uploading}
-            icon={ArrowRight}
             id="url-import-btn"
+            className="h-9 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
           >
-            Import
-          </Button>
+            {uploading ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <ArrowRight size={13} />
+            )}
+            <span>Import</span>
+          </button>
         </div>
 
         {errorMsg && (
-          <div className="rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/25 p-2.5 text-xs text-[var(--color-danger)] flex items-center gap-2">
+          <div
+            className="rounded-lg p-2.5 text-xs flex items-center gap-2 border"
+            style={{
+              backgroundColor: "color-mix(in srgb, var(--ps-rose) 8%, transparent)",
+              borderColor: "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
+              color: "var(--ps-rose)",
+            }}
+          >
             <AlertCircle size={14} className="shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
       </div>
 
-      {/* ── Divider ─────────────────────────────────────────── */}
+      {/* ── Hairline Divider ──────────────────────────────────── */}
       <div className="flex items-center gap-3">
-        <div className="flex-1 h-px bg-[var(--color-border)]" />
-        <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider font-mono">
-          Or Select From Account
+        <div className="flex-1 h-px bg-[var(--ps-line)]" />
+        <span className="text-[11px] text-[var(--ps-ink-muted)]">
+          or select from GitHub
         </span>
-        <div className="flex-1 h-px bg-[var(--color-border)]" />
+        <div className="flex-1 h-px bg-[var(--ps-line)]" />
       </div>
 
-      {/* ── Repository Browser ─────────────────────────────── */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      {/* ── Repository Browser ────────────────────────────────── */}
+      <div className="flex-1 min-h-0 flex flex-col">
         {hasGithub === false ? (
-          <div className="h-full flex flex-col items-center justify-center p-6 text-center rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] border-dashed gap-3">
-            <div className="w-10 h-10 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text)]">
-              <GithubIcon size={20} />
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-3">
+            <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-ink)]">
+              <GithubIcon size={18} />
             </div>
             <div>
-              <h4 className="text-xs font-bold text-[var(--color-text)] tracking-tight">
-                Connect GitHub Account
+              <h4 className="text-xs font-semibold text-[var(--ps-ink)]">
+                Connect your GitHub account
               </h4>
-              <p className="text-[11px] text-[var(--color-text-secondary)] mt-1 max-w-xs leading-relaxed">
-                Link your GitHub account to import private repositories and
-                browse your repository list directly.
+              <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 max-w-xs leading-relaxed">
+                Authorize read access to browse and import your public or private repositories in one click.
               </p>
             </div>
-            <a
-              href={`https://github.com/login/oauth/authorize?client_id=${
-                import.meta.env.VITE_GITHUB_CLIENT_ID || ""
-              }&scope=repo,user:email`}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer shadow-xs"
+            <button
+              type="button"
+              onClick={() => {
+                const oauthUrl = getGithubOAuthUrl("connect");
+                if (!oauthUrl) {
+                  showToast({
+                    type: "error",
+                    title: "GitHub OAuth Unavailable",
+                    message: "VITE_GITHUB_CLIENT_ID is not configured.",
+                  });
+                  return;
+                }
+                sessionStorage.setItem("covai.githubOAuthMode", "connect");
+                sessionStorage.setItem(
+                  "covai.githubConnectReturn",
+                  `${window.location.pathname}${window.location.search}`,
+                );
+                window.location.href = oauthUrl;
+              }}
+              className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer"
               id="connect-github-import-btn"
             >
               <GithubIcon size={13} />
-              <span>Connect with GitHub</span>
-            </a>
+              <span>Connect GitHub</span>
+            </button>
           </div>
         ) : (
           <RepoList

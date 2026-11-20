@@ -83,11 +83,17 @@ export const processSingleSupertestTest = (rawTest, { projectId, snapshotId }) =
     const requests = testBlocks.map(block => ({
         scenarioId: crypto.randomUUID(),
         testName: block.testName,
+        suiteName: block.suiteName || "",
         enabled: true,
         userEdited: false,
         origin: "AI_GENERATED",
         method: block.method,
         path: block.path,
+        ...(block.expectedStatus != null ? { expectedStatus: block.expectedStatus } : {}),
+        ...(Array.isArray(block.expectedStatuses) && block.expectedStatuses.length > 0
+            ? { expectedStatuses: block.expectedStatuses }
+            : {}),
+        line: block.line || 1,
         createdAt: new Date().toISOString()
     }));
 
@@ -137,41 +143,68 @@ export const processSupertestTests = (responseText, context) => {
         }
     }
 
+    const moduleType = context?.moduleType === "commonjs" || context?.moduleType === "esm"
+        ? context.moduleType
+        : null;
+
     for (const rawTest of parsedData.tests) {
         const processed = processSingleSupertestTest(rawTest, context);
         if (processed) {
             let fileContent = processed.content;
-            
-            // Ensure test files use import if needed (hotfix for Gemini hallucinating require in ESM)
-            if (fileContent.includes("require('supertest')")) {
-                fileContent = fileContent.replace(/const (\w+) = require\('supertest'\);?/g, "import $1 from 'supertest';");
-            }
-            if (fileContent.includes("require(")) {
-                fileContent = fileContent.replace(/const (\w+) = require\((['"])([^'"]+)(['"])\);?/g, "import $1 from $2$3$4;");
-            }
 
-            // ESM compatibility: jest global is not available in ESM mode.
-            // Add `import { jest } from '@jest/globals'` if jest.mock/jest.fn/etc is used without importing jest.
-            if (fileContent.match(/\bjest\.(mock|fn|spyOn|clearAllMocks|resetAllMocks|restoreAllMocks)\b/) &&
-                !fileContent.includes("from '@jest/globals'") &&
-                !fileContent.includes('from "@jest/globals"')) {
-                // Find the position after the last import statement to insert the jest import
-                const lines = fileContent.split('\n');
-                let lastImportIndex = -1;
-                for (let i = 0; i < lines.length; i++) {
-                    if (lines[i].trimStart().startsWith('import ')) {
-                        lastImportIndex = i;
+            if (moduleType === "commonjs") {
+                // Target project uses CommonJS Jest: convert any ES module imports emitted by AI to require()
+                fileContent = fileContent.replace(
+                    /^\s*import\s+\{\s*jest[^}]*\}\s+from\s+['"]@jest\/globals['"];?\s*\r?\n?/gm,
+                    ""
+                );
+                fileContent = fileContent.replace(
+                    /^\s*import\s+(\w+)\s+from\s+(['"][^'"]+['"]);?/gm,
+                    "const $1 = require($2);"
+                );
+                fileContent = fileContent.replace(
+                    /^\s*import\s+\*\s+as\s+(\w+)\s+from\s+(['"][^'"]+['"]);?/gm,
+                    "const $1 = require($2);"
+                );
+                fileContent = fileContent.replace(
+                    /^\s*import\s+\{([^}]+)\}\s+from\s+(['"][^'"]+['"]);?/gm,
+                    "const {$1} = require($2);"
+                );
+            } else {
+                // ESM or default: preserve existing import conversion for ESM test runners
+                if (fileContent.includes("require('supertest')")) {
+                    fileContent = fileContent.replace(/const (\w+) = require\('supertest'\);?/g, "import $1 from 'supertest';");
+                }
+                if (moduleType === "esm" && fileContent.includes("require(")) {
+                    fileContent = fileContent.replace(/const (\w+) = require\((['"])([^'"]+)(['"])\);?/g, "import $1 from $2$3$4;");
+                }
+
+                // Add `import { jest } from '@jest/globals'` only when the file uses ESM imports and calls jest.*
+                const usesEsmImport = /^\s*import\s+/m.test(fileContent);
+                if (
+                    usesEsmImport &&
+                    fileContent.match(/\bjest\.(mock|fn|spyOn|clearAllMocks|resetAllMocks|restoreAllMocks)\b/) &&
+                    !fileContent.includes("from '@jest/globals'") &&
+                    !fileContent.includes('from "@jest/globals"')
+                ) {
+                    const lines = fileContent.split('\n');
+                    let lastImportIndex = -1;
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].trimStart().startsWith('import ')) {
+                            lastImportIndex = i;
+                        }
                     }
+                    const jestImport = "import { jest } from '@jest/globals';";
+                    if (lastImportIndex >= 0) {
+                        lines.splice(lastImportIndex + 1, 0, jestImport);
+                    } else {
+                        lines.unshift(jestImport);
+                    }
+                    fileContent = lines.join('\n');
                 }
-                const jestImport = "import { jest } from '@jest/globals';";
-                if (lastImportIndex >= 0) {
-                    lines.splice(lastImportIndex + 1, 0, jestImport);
-                } else {
-                    lines.unshift(jestImport);
-                }
-                fileContent = lines.join('\n');
             }
 
+            // Re-extract requests from finalized file content so stored metadata stays accurate
             processed.content = fileContent;
             allTests.push(processed);
         }

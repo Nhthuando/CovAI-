@@ -1,8 +1,19 @@
 import fs from "fs";
 import path from "path";
+import { isBuiltin } from "node:module";
 import { dockerRunner } from "./dockerRunner.service.js";
-import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { resolveProjectRoot, resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { DEPENDENCY_INSTALL_TIMEOUT_MS } from '../../../shared/unitTestRuntime.js';
+
+export function resolvePackageManagerHostCommand(command, { platform = process.platform, nodeExecutable = process.execPath, exists = fs.existsSync } = {}) {
+  if (platform !== 'win32' || !command.startsWith('npm ')) return command;
+  const npmCli = path.win32.join(path.win32.dirname(nodeExecutable), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  // npm.cmd/npm.ps1 can point at a broken global prefix. Execute the known
+  // bundled CLI directly without changing system settings or global packages.
+  if (!exists(npmCli)) return command;
+  return `"${nodeExecutable}" "${npmCli}" ${command.slice(4)}`;
+}
 
 /**
  * Standard Node.js built-in modules that should never be installed from npm.
@@ -43,7 +54,7 @@ export const NPM_PACKAGE_REGEX = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-
 export const isValidNpmPackageName = (packageName) => {
   if (!packageName || typeof packageName !== "string") return false;
   const trimmed = packageName.trim();
-  if (trimmed.length === 0 || trimmed.length > 214) return false;
+  if (trimmed.length === 0 || trimmed.length > 214 || /^[-~]/.test(trimmed)) return false;
   // Disallow shell metacharacters
   if (/[\s;&|`$><\\!*?(){}[\]\r\n]/.test(trimmed)) return false;
   return NPM_PACKAGE_REGEX.test(trimmed);
@@ -55,83 +66,22 @@ export const isValidNpmPackageName = (packageName) => {
  * @param {string} rawOutput - stdout or stderr from test execution
  * @returns {{ packageName: string, rawSpecifier: string, importedFrom: string | null } | null}
  */
-export const extractMissingDependency = (rawOutput = "") => {
-  if (!rawOutput || typeof rawOutput !== "string") return null;
+export const extractMissingDependency = (rawOutput = "") => extractMissingDependencies(rawOutput)[0] || null;
 
-  const patterns = [
-    // Node.js ESM loader: Cannot find package 'mathjs' imported from '/app/.../evaluator.ts'
-    /Cannot find package ['"]([^'"]+)['"]\s+imported from\s+['"]([^'"]+)['"]/i,
-    // Node.js ESM loader: Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'mathjs'
-    /Error\s*(?:\[[^\]]+\])?:\s*Cannot find package ['"]([^'"]+)['"]/i,
-    // Plain Node ESM: Cannot find package 'mathjs'
-    /Cannot find package ['"]([^'"]+)['"]/i,
-    // Jest resolver: Cannot find module 'mathjs' from 'src/utils/evaluator.ts'
-    /Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
-    // Vitest / Vite resolver: Failed to resolve import "mathjs" from "src/utils/evaluator.ts"
-    /Failed to resolve import ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
-    // Node.js loader: Error: Cannot find module 'mathjs'
-    /Error:\s*Cannot find module ['"]([^'"]+)['"]/i,
-    // Plain Jest/Node message: Cannot find module 'mathjs'
-    /Cannot find module ['"]([^'"]+)['"]/i,
-    // Webpack / bundler resolver: Module not found: Can't resolve 'mathjs' in '...'
-    /Module not found:\s*Can't resolve ['"]([^'"]+)['"]\s+in\s+['"]([^'"]+)['"]/i,
-  ];
-
-  let rawSpecifier = null;
-  let importedFrom = null;
-
-  for (const regex of patterns) {
-    const match = rawOutput.match(regex);
-    if (match) {
-      rawSpecifier = match[1]?.trim();
-      importedFrom = match[2]?.trim() || null;
-      break;
-    }
+export function extractMissingDependencies(rawOutput = "") {
+  if (typeof rawOutput !== "string") return [];
+  const pattern = /(?:Cannot find (?:module|package)|Failed to resolve import|Module not found:\s*Can't resolve)\s+['"]([^'"\r\n]+)['"](?:[ \t]+(?:imported from|from|in)[ \t]+['"]([^'"\r\n]+)['"])?/gi;
+  const dependencies = [];
+  for (const [, specifier, importer] of rawOutput.replace(/\x1b\[[0-9;]*m/g, "").matchAll(pattern)) {
+    const rawSpecifier = specifier.trim();
+    if (/^[./\\#]|^[a-z]:|\\/i.test(rawSpecifier) || isBuiltin(rawSpecifier)) continue;
+    const packageName = rawSpecifier.split("/").slice(0, rawSpecifier.startsWith("@") ? 2 : 1)
+      .join("/").replace(/@[\^~]?[0-9].*$/, "");
+    if (!isValidNpmPackageName(packageName) || NODE_BUILTINS.has(packageName.toLowerCase())) continue;
+    dependencies.push({ packageName, rawSpecifier, importedFrom: importer?.trim() || null });
   }
-
-  if (!rawSpecifier) return null;
-
-  // Disallow relative or absolute file paths (internal project files)
-  if (
-    rawSpecifier.startsWith(".") ||
-    rawSpecifier.startsWith("/") ||
-    rawSpecifier.startsWith("\\")
-  ) {
-    return null;
-  }
-
-  // Extract base package name
-  let packageName = rawSpecifier;
-  if (rawSpecifier.startsWith("@")) {
-    // Scoped package: @org/pkg/subpath -> @org/pkg
-    const parts = rawSpecifier.split("/");
-    if (parts.length >= 2) {
-      packageName = `${parts[0]}/${parts[1]}`;
-    }
-  } else {
-    // Regular package: mathjs/lib/esm -> mathjs
-    packageName = rawSpecifier.split("/")[0];
-  }
-
-  // Strip trailing version tag if any (e.g. mathjs@^12 -> mathjs)
-  packageName = packageName.replace(/@[\^~]?[0-9].*$/, "").trim();
-
-  // Exclude Node.js built-ins
-  if (NODE_BUILTINS.has(packageName.toLowerCase())) {
-    return null;
-  }
-
-  // Validate npm package format
-  if (!isValidNpmPackageName(packageName)) {
-    return null;
-  }
-
-  return {
-    packageName,
-    rawSpecifier,
-    importedFrom,
-  };
-};
+  return dependencies;
+}
 
 /**
  * Lists all candidate package directories in a project (root + monorepo subpackages).
@@ -226,7 +176,7 @@ const declaresPackage = (pkgJsonPath, packageName) => {
  * @returns {string}
  */
 export const findTargetPackageDir = (rootDir, importedFrom = null, packageName = null) => {
-  const resolvedRoot = resolveProjectRoot(rootDir);
+  const resolvedRoot = rootDir ? path.resolve(resolveSnapshotRootDir(rootDir) || rootDir) : null;
   if (!resolvedRoot) return rootDir;
 
   const subpackageDirs = listWorkspacePackageDirs(resolvedRoot).filter(
@@ -272,7 +222,7 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
       let currentDir = path.dirname(resolvedSourceFile);
       while (
         currentDir &&
-        currentDir.startsWith(resolvedRoot) &&
+        !path.relative(resolvedRoot,currentDir).startsWith('..') &&
         currentDir !== path.dirname(resolvedRoot)
       ) {
         const pkgPath = path.join(currentDir, "package.json");
@@ -298,18 +248,6 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
     }
   }
 
-  // If importedFrom didn't exist directly (e.g. a virtual test path) and root package.json has 0 dependencies
-  // while a backend/server subpackage has dependencies, prefer the subpackage.
-  const rootPkgJson = path.join(resolvedRoot, "package.json");
-  if (!hasDeclaredDependencies(rootPkgJson) && subpackageDirs.length > 0) {
-    const subWithDeps = subpackageDirs.find((dir) =>
-      hasDeclaredDependencies(path.join(dir, "package.json"))
-    );
-    if (subWithDeps) {
-      return subWithDeps;
-    }
-  }
-
   // Fallback walk-up if importedFrom was provided even if file doesn't exist yet
   if (importedFrom) {
     const cleanRel = String(importedFrom)
@@ -331,7 +269,7 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
 
     while (
       currentDir &&
-      currentDir.startsWith(resolvedRoot) &&
+      !path.relative(resolvedRoot,currentDir).startsWith('..') &&
       currentDir !== path.dirname(resolvedRoot)
     ) {
       const pkgPath = path.join(currentDir, "package.json");
@@ -344,6 +282,11 @@ export const findTargetPackageDir = (rootDir, importedFrom = null, packageName =
     }
   }
 
+  // Use a package with dependencies only after resolving explicit target hints.
+  if (!hasDeclaredDependencies(path.join(resolvedRoot, 'package.json'))) {
+    const subWithDeps = subpackageDirs.find(dir => hasDeclaredDependencies(path.join(dir, 'package.json')));
+    if (subWithDeps) return subWithDeps;
+  }
   return resolvedRoot;
 };
 
@@ -389,6 +332,89 @@ export const inspectWorkspaceDependency = ({ rootDir, packageName, importedFrom 
   };
 };
 
+export function isWorkspaceMountedPath(root, file) {
+    if (!file) return false;
+    try {
+        // Absolute links can be broken after the snapshot is mounted at /workspace,
+        // even when their current target is somewhere else inside the snapshot.
+        const relative = path.relative(root, file);
+        let current = root;
+        for (const segment of relative.split(path.sep)) {
+            current = path.join(current, segment);
+            if (fs.lstatSync(current).isSymbolicLink() && path.isAbsolute(fs.readlinkSync(current))) return false;
+        }
+        const resolved = path.relative(fs.realpathSync(root), fs.realpathSync(file));
+        return resolved !== '..' && !resolved.startsWith('..' + path.sep) && !path.isAbsolute(resolved);
+    } catch {
+        return false;
+    }
+}
+
+export function collectWorkspaceMissingDependencies(rootDir, messages, fallbackImporter = null) {
+  if (!rootDir) return [];
+  const root = path.resolve(resolveSnapshotRootDir(rootDir) || rootDir);
+  const packages = new Map();
+  for (const message of messages) {
+    const dependencies = extractMissingDependencies(message);
+    for (const [, json] of String(message || "").matchAll(/\[MISSING_DEPENDENCY\]:([^\r\n]+)/g)) {
+      try {
+        const dependency = JSON.parse(json);
+        if (isValidNpmPackageName(dependency?.packageName) && !isBuiltin(dependency.packageName)) dependencies.push(dependency);
+      } catch { /* Older jobs may contain truncated markers. */ }
+    }
+    for (const dependency of dependencies) {
+      const importedFrom = dependency.importedFrom || fallbackImporter;
+      const { packageName } = dependency;
+      const inspection = inspectWorkspaceDependency({ rootDir: root, packageName, importedFrom });
+      const relativeTarget = path.relative(root, inspection.targetDir).replaceAll("\\", "/");
+      const targetPackage = relativeTarget ? `${relativeTarget}/package.json` : "package.json";
+      const key = JSON.stringify([targetPackage, packageName]);
+      if (!packages.has(key)) packages.set(key, { ...dependency, importedFrom, ...inspection, targetPackage });
+    }
+  }
+  return [...packages.values()];
+}
+
+/** Restore declared dependencies inside the workspace that Docker will mount. */
+export async function ensureMountedProjectDependencies({ rootDir, packageDirs, jobId, install = installPackageInWorkspace }) {
+  const root = path.resolve(rootDir);
+  const directories = new Set([root]);
+  for (const packageDir of packageDirs) {
+    const directory = path.resolve(root, packageDir);
+    const relative = path.relative(root, directory);
+    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+      throw new ServiceError("The test package is outside the Docker workspace.", 400);
+    }
+    directories.add(directory);
+  }
+
+  const available = (directory, name) => {
+    for (let current = directory; ; current = path.dirname(current)) {
+      if (isWorkspaceMountedPath(root, path.join(current, "node_modules", name, "package.json"))) return true;
+      if (current === root) return false;
+    }
+  };
+
+  for (const directory of directories) {
+    const manifestPath = path.join(directory, "package.json");
+    if (!fs.existsSync(manifestPath)) continue;
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const required = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })
+      .filter(name => !Object.hasOwn(manifest.optionalDependencies || {}, name));
+    const isPnp = directory === root && isWorkspaceMountedPath(root, path.join(root, ".pnp.cjs"));
+    if (isPnp) continue;
+    const missing = required.find(name => !available(directory, name));
+    if (!missing) continue;
+
+    const importedFrom = path.relative(root, manifestPath).replaceAll("\\", "/");
+    const result = await install({ rootDir: root, importedFrom, packageName: missing, jobId, repairLockfileInWorkspace: true });
+    if (!result.success || (!available(directory, missing) && !isWorkspaceMountedPath(root, path.join(root, ".pnp.cjs")))) {
+      throw new ServiceError(`Unable to prepare dependencies for Jest in the Docker workspace (${importedFrom}, ${missing}). ${result.stderr || ""}`.trim(),
+        409, "JEST_WORKSPACE_DEPENDENCIES_UNAVAILABLE");
+    }
+  }
+}
+
 /**
  * Links existing `node_modules` directories from `originalRootDir` (and its monorepo subpackages)
  * into `preparedRootDir` using OS directory junctions (Windows) or symlinks (Linux/macOS) so
@@ -415,17 +441,91 @@ export const ensureWorkspaceNodeModulesLinked = (originalRootDir, preparedRootDi
     const origNm = path.join(origPkgDir, "node_modules");
     const prepNm = path.join(prepPkgDir, "node_modules");
 
-    if (fs.existsSync(origNm) && fs.existsSync(prepPkgDir) && !fs.existsSync(prepNm)) {
-      try {
-        fs.symlinkSync(
-          origNm,
-          prepNm,
-          process.platform === "win32" ? "junction" : "dir"
-        );
-        createdLinks.push(prepNm);
-      } catch (err) {
-        console.warn(`[ensureWorkspaceNodeModulesLinked] Could not link ${origNm} -> ${prepNm}:`, err.message);
+    if (!fs.existsSync(origNm) || !fs.existsSync(prepPkgDir)) {
+      continue;
+    }
+
+    let prepNmExists = false;
+    let prepNmIsSymlink = false;
+    try {
+      const lstat = fs.lstatSync(prepNm);
+      prepNmExists = true;
+      prepNmIsSymlink = lstat.isSymbolicLink();
+    } catch (_) {
+      prepNmExists = false;
+    }
+
+    if (prepNmExists) {
+      if (prepNmIsSymlink) {
+        try {
+          const target = fs.realpathSync(prepNm);
+          if (path.resolve(target) === path.resolve(origNm)) {
+            continue; // Already correctly linked
+          }
+          fs.unlinkSync(prepNm);
+        } catch (_) {
+          try { fs.unlinkSync(prepNm); } catch { }
+        }
+      } else {
+        // prepNm is a directory. Check if it's empty or only contains transient cache (.vite, .cache, .bin)
+        let entries = [];
+        try { entries = fs.readdirSync(prepNm); } catch { }
+        const isOnlyCacheOrEmpty = entries.length === 0 || entries.every(e => [".vite", ".cache", ".bin"].includes(e));
+        if (isOnlyCacheOrEmpty) {
+          try {
+            fs.rmSync(prepNm, { recursive: true, force: true });
+          } catch (rmErr) {
+            console.warn(`[ensureWorkspaceNodeModulesLinked] Could not remove cache dir ${prepNm}:`, rmErr.message);
+          }
+        } else {
+          // prepNm has real contents; link (or copy in Docker mode) missing individual packages from origNm into prepNm
+          try {
+            const origEntries = fs.readdirSync(origNm, { withFileTypes: true });
+            for (const oe of origEntries) {
+              const origItem = path.join(origNm, oe.name);
+              const prepItem = path.join(prepNm, oe.name);
+              if (!fs.existsSync(prepItem)) {
+                try {
+                  if (dockerRunner.containerEnabled) {
+                    fs.cpSync(origItem, prepItem, { recursive: true, dereference: true });
+                  } else {
+                    fs.symlinkSync(
+                      origItem,
+                      prepItem,
+                      process.platform === "win32" ? "junction" : "dir"
+                    );
+                    createdLinks.push(prepItem);
+                  }
+                } catch (_) { }
+              }
+            }
+          } catch (_) { }
+          continue;
+        }
       }
+    }
+
+    // When Docker runner executes in sibling containers, symlinks pointing outside
+    // the mounted workspace are dangling inside the container; copy instead.
+    if (dockerRunner.containerEnabled) {
+      try {
+        fs.cpSync(origNm, prepNm, { recursive: true, dereference: true });
+      } catch (err) {
+        console.warn(`[ensureWorkspaceNodeModulesLinked] Could not copy ${origNm} -> ${prepNm}:`, err.message);
+      }
+      continue;
+    }
+
+    // Create fresh symlink/junction from origNm to prepNm
+    try {
+      fs.symlinkSync(
+        origNm,
+        prepNm,
+        process.platform === "win32" ? "junction" : "dir"
+      );
+      createdLinks.push(prepNm);
+    } catch (err) {
+      console.warn(`[ensureWorkspaceNodeModulesLinked] Could not link ${origNm} -> ${prepNm}:`, err.message);
     }
   }
 
@@ -441,9 +541,13 @@ export const cleanupWorkspaceNodeModulesLinks = (linkPaths = []) => {
   if (!Array.isArray(linkPaths)) return;
   for (const linkPath of linkPaths) {
     try {
-      if (linkPath && fs.existsSync(linkPath)) {
-        const stat = fs.lstatSync(linkPath);
-        if (stat.isSymbolicLink()) {
+      if (linkPath) {
+        let isSym = false;
+        try {
+          const stat = fs.lstatSync(linkPath);
+          isSym = stat.isSymbolicLink();
+        } catch (_) { }
+        if (isSym) {
           fs.unlinkSync(linkPath);
         }
       }
@@ -461,7 +565,8 @@ export const cleanupWorkspaceNodeModulesLinks = (linkPaths = []) => {
  * @param {boolean} [params.isDev=false]
  * @param {string|null} [params.importedFrom=null]
  * @param {string|null} [params.jobId=null]
- * @returns {Promise<{ success: boolean, stdout: string, stderr: string, targetDir: string }>}
+ * @param {boolean} [params.repairLockfileInWorkspace=false] - Allow one retry in a disposable execution workspace
+ * @returns {Promise<{ success: boolean, stdout: string, stderr: string, targetDir: string, timedOut?: boolean }>}
  */
 export const installPackageInWorkspace = async ({
   rootDir,
@@ -469,48 +574,159 @@ export const installPackageInWorkspace = async ({
   isDev = false,
   importedFrom = null,
   jobId = null,
+  cacheDir = null,
+  version = null,
+  repairLockfileInWorkspace = false,
 }) => {
   if (!isValidNpmPackageName(packageName)) {
     throw new ServiceError(`Invalid or unsafe npm package name: '${packageName}'`, 400);
   }
+  packageName = packageName.trim();
+  if (version !== null && !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version)) throw new ServiceError('An exact package version is required for runtime alignment',400);
 
-  const effectiveRootDir = resolveProjectRoot(rootDir);
+  const effectiveRootDir = rootDir ? path.resolve(resolveSnapshotRootDir(rootDir) || rootDir) : null;
   if (!effectiveRootDir || !fs.existsSync(effectiveRootDir)) {
     throw new ServiceError(`Invalid project root directory: ${rootDir}`, 404);
   }
+  const rootRelative = path.relative(path.resolve(rootDir),path.resolve(effectiveRootDir));
+  if (rootRelative.startsWith('..') || path.isAbsolute(rootRelative)) throw new ServiceError('Dependency installation requires a package manifest inside the operation workspace',409);
 
   const targetDir = findTargetPackageDir(effectiveRootDir, importedFrom, packageName);
-  const saveFlag = isDev ? "--save-dev" : "--save";
-  const command = `npm install ${saveFlag} ${packageName} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`;
+  const targetRelative = path.relative(path.resolve(effectiveRootDir),path.resolve(targetDir));
+  if (targetRelative.startsWith('..') || path.isAbsolute(targetRelative)) throw new ServiceError('Dependency target escapes the operation workspace',400);
 
-  const execResult = await dockerRunner.run({
-    snapshotPath: targetDir,
-    command,
-    timeoutMs: 5 * 60 * 1000,
-    jobId,
-  });
-
-  // Guarantee package.json has entry in case npm ran in restricted sandbox
+  // Detect package manager (npm, pnpm, yarn, bun)
+  let pkgManager = "npm";
+  let packageManifest = {};
   const pkgJsonPath = path.join(targetDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) throw new ServiceError('Select a project package directory containing package.json before installing dependencies',409);
+  const realRelative = path.relative(fs.realpathSync(effectiveRootDir),fs.realpathSync(targetDir));
+  if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) throw new ServiceError('Dependency target resolves outside the project workspace',400);
   if (fs.existsSync(pkgJsonPath)) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
-      const section = isDev ? "devDependencies" : "dependencies";
-      pkg[section] = pkg[section] || {};
-      if (!pkg.dependencies?.[packageName] && !pkg.devDependencies?.[packageName]) {
-        pkg[section][packageName] = "^latest";
-        fs.writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2), "utf8");
+      const parsed = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+      packageManifest = parsed;
+      if (typeof parsed.packageManager === "string") {
+        if (parsed.packageManager.startsWith("pnpm")) pkgManager = "pnpm";
+        else if (parsed.packageManager.startsWith("yarn")) pkgManager = "yarn";
+        else if (parsed.packageManager.startsWith("bun")) pkgManager = "bun";
       }
-    } catch (err) {
-      console.warn("[installPackageInWorkspace] Notice updating package.json:", err.message);
+    } catch (_) { }
+  }
+  if (pkgManager === "npm") {
+    if (fs.existsSync(path.join(targetDir, "pnpm-lock.yaml")) || fs.existsSync(path.join(effectiveRootDir, "pnpm-lock.yaml"))) {
+      pkgManager = "pnpm";
+    } else if (fs.existsSync(path.join(targetDir, "yarn.lock")) || fs.existsSync(path.join(effectiveRootDir, "yarn.lock"))) {
+      pkgManager = "yarn";
+    } else if (fs.existsSync(path.join(targetDir, "bun.lockb")) || fs.existsSync(path.join(targetDir, "bun.lock")) || fs.existsSync(path.join(effectiveRootDir, "bun.lockb"))) {
+      pkgManager = "bun";
     }
   }
 
+  let command;
+  let installSpecifier = version ? `${packageName}@${version}` : packageName;
+  if (!version && /^@vitest\/coverage-(?:v8|istanbul)$/.test(packageName)) {
+    try {
+      const runnerVersion = JSON.parse(fs.readFileSync(path.join(targetDir,'node_modules','vitest','package.json'),'utf8')).version;
+      if (/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(runnerVersion)) installSpecifier = `${packageName}@${runnerVersion}`;
+    } catch { /* Restore a declared version when an installed runner is absent. */ }
+  }
+  const declared = !version && Boolean(packageManifest.dependencies?.[packageName] || packageManifest.devDependencies?.[packageName]);
+  const managerRoot = [targetDir,effectiveRootDir].find(directory => ['npm-shrinkwrap.json','package-lock.json','pnpm-lock.yaml','yarn.lock','bun.lock','bun.lockb'].some(file => fs.existsSync(path.join(directory,file)))) || targetDir;
+  const installDirectory = declared ? managerRoot : targetDir;
+  const npmLocks = ['npm-shrinkwrap.json', 'package-lock.json'];
+  const npmCleanInstall = declared && pkgManager === "npm" && npmLocks.some(file => fs.existsSync(path.join(managerRoot, file)));
+  if (declared) {
+    if (pkgManager === 'pnpm') command = 'pnpm install --frozen-lockfile';
+    else if (pkgManager === 'yarn') command = /^yarn@[234]/.test(packageManifest.packageManager || '') ? 'yarn install --immutable' : 'yarn install --frozen-lockfile';
+    else if (pkgManager === 'bun') command = 'bun install --frozen-lockfile';
+    else command = `npm ${npmCleanInstall ? 'ci' : 'install'} --no-audit --no-fund --progress=false`;
+  } else if (pkgManager === "pnpm") {
+    command = `pnpm add ${isDev ? "-D" : ""} ${installSpecifier}${version ? ' --save-exact' : ''}`;
+  } else if (pkgManager === "yarn") {
+    command = `yarn add ${isDev ? "-D" : ""} ${installSpecifier}${version ? ' --exact' : ''}`;
+  } else if (pkgManager === "bun") {
+    command = `bun add ${isDev ? "-d" : ""} ${installSpecifier}${version ? ' --exact' : ''}`;
+  } else {
+    const saveFlag = isDev ? "--save-dev" : "--save";
+    command = `npm install ${saveFlag} ${installSpecifier}${version ? ' --save-exact' : ''} --prefer-offline --prefer-cached --no-audit --no-fund --progress=false --maxsockets=4`;
+  }
+
+  // A prepared workspace may borrow dependencies through directory junctions.
+  // Installation must never write through those junctions into its origin.
+  for (const directory of new Set([effectiveRootDir,targetDir,installDirectory])) {
+    const modules = path.join(directory,'node_modules');
+    if (!fs.existsSync(modules)) continue;
+    if (fs.lstatSync(modules).isSymbolicLink()) { fs.unlinkSync(modules); continue; }
+    for (const entry of fs.readdirSync(modules,{withFileTypes:true})) {
+      const target = path.join(modules,entry.name);
+      if (entry.isSymbolicLink()) fs.unlinkSync(target);
+      else if (entry.name.startsWith('@') && entry.isDirectory()) {
+        for (const child of fs.readdirSync(target,{withFileTypes:true})) if(child.isSymbolicLink())fs.unlinkSync(path.join(target,child.name));
+      }
+    }
+  }
+  const timeoutMs = DEPENDENCY_INSTALL_TIMEOUT_MS;
+
+  const run = command => dockerRunner.run({
+    snapshotPath: installDirectory,
+    command,
+    hostCommand: resolvePackageManagerHostCommand(command),
+    timeoutMs,
+    jobId,
+    inheritEnv: false,
+    loadEnvExamples: false,
+    env: cacheDir ? { NPM_CONFIG_CACHE: cacheDir } : {},
+  });
+  let execResult;
+  try {
+    execResult = await run(command);
+    const output = `${execResult.stderr || ""}\n${execResult.stdout || ""}`;
+    const lockMismatch = /\bEUSAGE\b/i.test(output) &&
+      /(?:package-lock\.json|npm-shrinkwrap\.json).*in sync|(?:Missing|Invalid):[^\r\n]*lock file/i.test(output);
+    if (repairLockfileInWorkspace && npmCleanInstall && !execResult.success && !execResult.timedOut && lockMismatch) {
+      // Allow npm to reconcile the dependency tree locally without staging a lockfile change.
+      const locks = npmLocks.map(name => {
+        const file = path.join(installDirectory, name);
+        return { file, content: fs.existsSync(file) ? fs.readFileSync(file) : null };
+      });
+      try {
+        execResult = await run("npm install --include=dev --prefer-offline --no-audit --no-fund --progress=false");
+      } finally {
+        for (const { file, content } of locks) {
+          if (content) fs.writeFileSync(file, content);
+          else if (fs.existsSync(file)) fs.unlinkSync(file);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[installPackageInWorkspace] Package installation failed for '${packageName}':`, err.message);
+    execResult = {
+      success: false,
+      stdout: "",
+      stderr: err.message || `Timed out after ${Math.round(timeoutMs / 1000)}s`,
+      exitCode: err.statusCode === 408 || /timed?\s*out|ETIMEDOUT/i.test(err.message || '') ? 408 : 1,
+      timedOut: err.statusCode === 408 || /timed?\s*out|ETIMEDOUT/i.test(err.message || ''),
+    };
+  }
+
+  // The caller supplies an isolated workspace. Declared packages retain their
+  // lockfile versions; newly added packages are reviewed with the test batch.
+
+  const installed = [targetDir,installDirectory,effectiveRootDir].some(directory => {
+    try { const pkg=JSON.parse(fs.readFileSync(path.join(directory,'node_modules',packageName,'package.json'),'utf8'));return pkg.name === packageName && (!version || pkg.version === version); }
+    catch { return false; }
+  }) || (pkgManager === 'yarn' && fs.existsSync(path.join(installDirectory,'.pnp.cjs')));
+  const verified = Boolean(execResult.success && installed);
   return {
-    success: execResult.success,
+    success: verified,
     stdout: execResult.stdout || "",
-    stderr: execResult.stderr || "",
+    stderr: execResult.stderr || (execResult.success && !installed ? `The package manager exited successfully, but '${packageName}' was not found in the target workspace.` : ""),
     targetDir,
     exitCode: execResult.exitCode,
+    timedOut: Boolean(execResult.timedOut),
+    timeoutMs,
+    packageManager: pkgManager,
+    verified,
   };
 };

@@ -5,11 +5,15 @@
   "main": "index.js",
   "scripts": {
     "dev": "prisma generate && nodemon index.js",
-    "dev:docker": "prisma generate && nodemon index.js",
+    "dev:docker": "prisma generate && nodemon -L index.js",
     "db:push": "prisma db push",
     "start": "prisma generate && node index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:evaluation": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/tests/aiEvaluation"
+    "test:evaluation": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/tests/aiEvaluation",
+    "test:evaluation:project": "node --test src/tests/aiEvaluation.integration.test.mjs src/tests/aiEvaluation.contract.test.mjs src/tests/aiEvaluation.projectDiscovery.test.mjs src/tests/aiEvaluation.platformBenchmark.test.mjs src/tests/aiEvaluation.projectRuntime.test.mjs src/tests/aiEvaluation.projectWorkflow.test.mjs src/tests/aiEvaluation.projectSettings.test.mjs src/tests/aiEvaluation.projectSourceScope.test.mjs src/tests/aiEvaluation.chainlitTransport.test.mjs src/tests/aiEvaluation.projectProtocols.test.mjs src/tests/aiEvaluation.pythonRuntime.test.mjs",
+    "test:evaluation:ui": "node --test src/tests/aiEvaluation.projectBrowser.test.mjs",
+    "test:evaluation:docker": "node --test --test-concurrency=1 src/tests/aiEvaluation.sandboxDocker.test.mjs src/tests/aiEvaluation.chainlitDocker.test.mjs src/tests/aiEvaluation.streamingDocker.test.mjs",
+    "test:agents": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/tests/aiAgentProfiles.test.js src/tests/aiPromptBuilder.test.js src/tests/unitTestGenerator.service.test.js src/tests/integrationAiTestGenerator.test.js src/tests/cypressPromptBuilder.test.js src/tests/verifiedSystemGeneration.test.js src/tests/systemTestPromptBudget.test.js --runInBand && node --test src/tests/aiAgentApi.test.mjs src/tests/aiEvaluation.contract.test.mjs src/tests/aiEvaluation.integration.test.mjs"
   },
   "keywords": [],
   "author": "",
@@ -24,7 +28,6 @@
     "@playwright/test": "^1.63.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
-    "@vitest/coverage-v8": "^3.2.7",
     "adm-zip": "^0.5.17",
     "ajv": "^8.20.0",
     "bcryptjs": "^3.0.3",
@@ -45,7 +48,8 @@
     "istanbul-lib-source-maps": "4.0.1",
     "jsonrepair": "^3.14.1",
     "jsonwebtoken": "^9.0.3",
-    "lib0": "^0.2.119",
+    "lib0": "0.2.119",
+    "minimatch": "10.2.5",
     "morgan": "^1.11.0",
     "multer": "^2.1.1",
     "node-unrar-js": "^2.0.2",
@@ -58,8 +62,6 @@
     "socket.io": "^4.8.3",
     "tree-kill": "^1.2.2",
     "unzipper": "^0.12.3",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.7",
     "y-protocols": "1.0.7",
     "yaml": "2.9.1",
     "yjs": "13.6.33",
@@ -73,9 +75,12 @@
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.0.0",
+    "@vitest/coverage-v8": "^5.1.1",
     "jest": "^29.7.0",
     "nodemon": "^3.1.14",
     "socket.io-client": "4.8.3",
-    "supertest": "^7.2.2"
+    "supertest": "^7.2.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
   }
 }

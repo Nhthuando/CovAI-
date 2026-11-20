@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, GitBranch, MessageSquare, Plus, Pin, Trash2, Loader2 } from "lucide-react";
 import Button from "../common/Button";
+import "./portfolio/portfolio.css";
 import { getAiContext, saveAiContext, getAiMemories, addAiMemory, editAiMemory, forgetAiMemory, clearAiMemories, previewAiContext, branchAiConversation } from "../../services/aiContext.service";
 import { getChatSessionsApi } from "../../services/project.service";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
@@ -108,16 +109,16 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
   return createPortal(
     <dialog ref={dialogRef} aria-labelledby="ai-context-title" onKeyDown={trapFocus} onCancel={event => { event.preventDefault(); dismiss(); }}
       onClick={event => { if (event.target === event.currentTarget) dismiss(); }}
-      className="m-auto w-[calc(100%-24px)] max-w-[680px] max-h-[calc(100dvh-32px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] p-0 shadow-xl backdrop:bg-black/60">
+      className="portfolio-studio m-auto w-[calc(100%-24px)] max-w-[680px] max-h-[calc(100dvh-32px)] overflow-y-auto rounded-[12px] border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] text-[var(--ps-ink)] p-0 shadow-2xl backdrop:bg-black/65">
       <div className="p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3">
-          <div><h2 id="ai-context-title" className="text-lg font-semibold">What AI knows</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">Chat history and AI memory are shared with all project members.</p></div>
-          <Button variant="ghost" size="sm" onClick={dismiss} aria-label="Close context dialog" disabled={busy}><X size={17} /></Button>
+          <div><h2 id="ai-context-title" className="ps-display text-base font-semibold text-[var(--ps-ink)]">What AI knows</h2><p className="mt-1 text-xs text-[var(--ps-ink-muted)]">Chat history and AI memory are shared with all project members.</p></div>
+          <Button variant="ghost" size="sm" onClick={dismiss} aria-label="Close context dialog" disabled={busy}><X size={16} /></Button>
         </div>
-        <div role="tablist" aria-label="Context sections" className="flex gap-4 mt-5 border-b border-[var(--color-border)]">
+        <div role="tablist" aria-label="Context sections" className="flex gap-5 mt-5 border-b border-[var(--ps-line)]">
           {[['context', 'Current context'], ['conversations', 'Chat history'], ['memory', 'Memory (optional)']].map(([id, label]) => (
             <button key={id} type="button" role="tab" aria-selected={tab === id} aria-controls={`context-panel-${id}`} id={`context-tab-${id}`} onClick={() => setTab(id)}
-              className={`pb-3 text-xs font-medium cursor-pointer border-b-2 ${tab === id ? 'border-[var(--color-primary)] text-[var(--color-primary)]' : 'border-transparent text-[var(--color-text-muted)]'}`}>{label}</button>
+              className={`pb-2.5 text-xs font-medium cursor-pointer border-b-2 transition-colors ${tab === id ? 'border-[var(--ps-ink)] text-[var(--ps-ink)]' : 'border-transparent text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink-secondary)]'}`}>{label}</button>
           ))}
         </div>
         {error && <div role="alert" className="mt-4 text-sm text-[var(--color-danger)]">{error}<button type="button" className="underline ml-2" disabled={busy} onClick={() => { setError(""); setLoading(true); setReload(value => value + 1); }}>Reload</button></div>}
@@ -126,7 +127,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
             <div className="rounded-lg border border-[var(--color-border)] p-4">
               <h3 className="text-sm font-semibold">Start a new chat</h3>
               <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">AI still knows your project and current screen. Previous chats stay in your history.</p>
-              <Button size="sm" icon={Plus} className="mt-3" disabled={busy || !access.can("chat.write")} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory); onClose(); }}>New chat</Button>
+              <Button size="sm" icon={Plus} className="mt-3 ps-btn-contrast border-0" disabled={busy || !access.can("chat.write")} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory); onClose(); }}>New chat</Button>
             </div>
             <label className="block text-xs font-medium">Find a previous chat<input aria-label="Find a previous chat" value={search} onChange={event => setSearch(event.target.value)} className={`${inputClass} mt-2`} placeholder="Search chat titles or messages" /></label>
             {!sessions.length && <p className="text-sm text-[var(--color-text-muted)]">No previous chats yet. Send your first question to get started.</p>}
@@ -180,7 +181,8 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
               <p className="text-sm">{screenContext?.activity === "projects-portfolio" || screenContext?.testType === "portfolio" ? "Projects Portfolio Overview" : screenContext?.activity === "overview" || screenContext?.testType === "overview" ? "Unified Quality Overview" : ({ unit: "Unit Test", integration: "Integration Test", system: "System Test", portfolio: "Projects Portfolio Overview" })[screenContext?.testType] || ({ "projects-portfolio": "Projects Portfolio Overview", overview: "Unified Quality Overview", explorer: "Code", jobs: "Run history", architecture: "Architecture", settings: "Settings" })[screenContext?.activity] || "Project"}</p>
               <p className="text-xs text-[var(--color-text-muted)]">Switch tabs to update the context for your next question. Your conversation history is kept.</p>
               {screenContext?.testType && screenContext?.testType !== "overview" && <p className="text-xs">{preview?.testResults ? `Latest run: ${preview.testResults.passedTests}/${preview.testResults.totalTests} tests passed, ${preview.testResults.failedTests} failed.` : 'No saved test results for this screen yet. Run tests so AI has results to analyze.'}</p>}
-              {screenContext?.filePath && <p className="text-xs break-all">Open file: {screenContext.filePath}. Attach the file if you want AI to read its contents.</p>}
+              {screenContext?.filePath && <p className="text-xs break-all">Open file: {screenContext.filePath}. Saved content is included automatically when available. Unsaved editor changes are not included.</p>}
+              {preview?.sources?.map(source => <p key={source.path} className="text-xs break-all">Source: {source.path} · {source.status}{source.truncated ? ' · truncated' : ''}{source.contentHash ? ` · ${source.contentHash.slice(0, 12)}` : ''}</p>)}
             </div>
             <p className="text-xs text-[var(--color-text-muted)]">The information below is sent with your question. Long-term memory is optional; AI knows your current screen even when memory is off.</p>
             <details className="text-xs"><summary className="cursor-pointer text-[var(--color-text-muted)]">View details sent to AI</summary>

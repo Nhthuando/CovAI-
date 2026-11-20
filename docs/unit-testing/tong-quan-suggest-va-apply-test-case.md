@@ -1,4 +1,7 @@
 # TỔNG QUAN CƠ CHẾ SUGGEST & APPLY TEST CASE TRONG CovAI-
+> **Implementation update 2026-11-07:** [Suggest/Apply target validation and performance](suggest-apply-targets-and-performance-implementation.md) documents the shared file policy, batch verification, bounded queues, regression checks and local benchmark results. The [original plan](suggest-apply-targets-and-performance-plan.md) remains available for context.
+> **Kế hoạch cập nhật ngày 06/11/2026:** Xem [Kế hoạch Unit Test v2](ke-hoach-unit-test-v2.md) cho yêu cầu mới về dependency, coverage thực đo, Apply Full, Active Version và phát lại Test/Code đồng bộ. Đây là kế hoạch triển khai; các cam kết tuyệt đối trong tài liệu tổng quan bên dưới cần được đối chiếu với các giới hạn và điều kiện kiểm chứng ở bản v2.
+
 > **Tài liệu hướng dẫn thuyết trình, báo cáo nghiên cứu và giải thích kỹ thuật**  
 > *Dành cho việc trình bày đồ án, giải thích cho giảng viên, hội đồng khoa học hoặc đồng nghiệp một cách trực quan, dễ hiểu nhất.*
 

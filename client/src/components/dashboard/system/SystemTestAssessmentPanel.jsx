@@ -3,7 +3,7 @@ import SystemRequirementReview from './SystemRequirementReview.jsx';
 import { useEffect, useState, useId } from 'react';
 import {
   Loader2,
-  Sparkles,
+  FileCode2,
   Download,
   ChevronDown,
   ChevronUp,
@@ -188,19 +188,19 @@ export default function SystemTestAssessmentPanel({
   }
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-all">
+    <section className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]">
       {/* Panel Main Header */}
-      <div className={`px-6 py-4 flex flex-wrap items-center justify-between gap-4 bg-[var(--color-surface-secondary)]/50 ${expanded ? 'border-b border-[var(--color-border)]' : ''}`}>
-        <div className="flex items-center gap-3.5">
-          <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/10 border border-indigo-500/30 text-indigo-500 dark:text-indigo-400">
-            <BarChart3 size={20} />
+      <div className={`px-5 py-3.5 flex flex-wrap items-center justify-between gap-4 bg-[var(--color-surface)] ${expanded ? 'border-b border-[var(--color-border)]' : ''}`}>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-primary)]">
+            <BarChart3 size={17} />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-bold text-base text-[var(--color-text)] tracking-tight">
+              <h3 className="font-semibold text-sm text-[var(--color-text)] tracking-tight">
                 System Coverage &amp; Test Quality
               </h3>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+              <span className="text-[10.5px] font-mono px-2 py-0.5 rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                 Playwright Engine
               </span>
             </div>
@@ -212,7 +212,7 @@ export default function SystemTestAssessmentPanel({
 
         <div className="flex items-center gap-3">
           {running && (
-            <span role="status" className="flex items-center gap-2 text-xs font-mono text-indigo-500 dark:text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-3 py-1.5 rounded-lg">
+            <span role="status" className="flex items-center gap-2 text-xs font-mono text-[var(--color-primary)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] px-2.5 py-1 rounded-md">
               <Loader2 size={13} className="animate-spin" />
               Measuring multi-tier execution...
             </span>
@@ -223,7 +223,7 @@ export default function SystemTestAssessmentPanel({
             aria-expanded={expanded}
             aria-controls={contentId}
             onClick={() => setExpanded(value => !value)}
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors focus-visible:outline-2 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors duration-150 focus-visible:outline-2 cursor-pointer"
           >
             {expanded ? 'Collapse' : 'Expand'}
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -231,10 +231,10 @@ export default function SystemTestAssessmentPanel({
         </div>
       </div>
 
-      <div id={contentId} hidden={!expanded} className="p-5 sm:p-6 space-y-6">
+      <div id={contentId} hidden={!expanded} className="p-5 space-y-5">
         <SystemRequirementReview canApprove={access.can('evidence.approve')} snapshotId={snapshotId} filePath={filePath} revisions={revisions} onError={setError} onRefresh={async () => {setRevisions(await systemEvidenceRequest(snapshotId,'requirements'));onChanged?.();}} />
         {!!assessment?.reportJson?.input?.excludedTests?.length && (
-          <details className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)]/50 p-3 rounded-lg border border-[var(--color-border)]">
+          <details className="text-xs text-[var(--color-text-secondary)] bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
             <summary className="cursor-pointer font-medium hover:text-[var(--color-text)]">
               {assessment.reportJson.input.testFiles.length} files selected for Full Stack; {assessment.reportJson.input.excludedTests.length} mocked files belong to Frontend mode
             </summary>
@@ -247,14 +247,14 @@ export default function SystemTestAssessmentPanel({
         )}
 
         {error && (
-          <div className="p-3.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-500 dark:text-rose-300 text-xs flex items-center justify-between">
+          <div className="p-3 rounded-md bg-rose-500/[0.06] border border-[var(--color-border)] border-l-2 border-l-rose-400/75 text-rose-300/90 text-xs flex items-center justify-between">
             <span>{error}</span>
-            <button type="button" onClick={() => setError('')} className="underline text-xs">Dismiss</button>
+            <button type="button" onClick={() => setError('')} className="underline text-xs cursor-pointer">Dismiss</button>
           </div>
         )}
 
         {assessment?.reportJson?.error && (
-          <div className="p-3.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-500 dark:text-rose-300 text-xs">
+          <div className="p-3 rounded-md bg-rose-500/[0.06] border border-[var(--color-border)] border-l-2 border-l-rose-400/75 text-rose-300/90 text-xs">
             {assessment.reportJson.error}
           </div>
         )}
@@ -266,12 +266,12 @@ export default function SystemTestAssessmentPanel({
         ) : (
           <>
             {assessment?.stale && (
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-600 dark:text-amber-300 text-xs flex items-center justify-between">
+              <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-amber-500/70 text-[var(--color-text-secondary)] text-xs flex items-center justify-between">
                 <span>Source or tests changed. Run again to refresh these measurements.</span>
                 <button
                   type="button"
                   onClick={() => onRerun?.()}
-                  className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 font-medium transition-colors"
+                  className="px-2.5 py-1 rounded-md border border-amber-500/35 bg-amber-500/[0.08] text-amber-400 hover:bg-amber-500/15 font-medium transition-colors cursor-pointer"
                 >
                   Run Now
                 </button>
@@ -279,13 +279,13 @@ export default function SystemTestAssessmentPanel({
             )}
 
             {!hasExecuted && (
-              <div className="p-5 rounded-xl bg-[var(--color-surface-secondary)]/70 border border-[var(--color-border)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-                <div className="flex items-start gap-3.5">
-                  <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/25 shrink-0 mt-0.5">
-                    <Play size={20} fill="currentColor" />
+              <div className="p-4 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-primary)] border border-[var(--color-border)] shrink-0 mt-0.5">
+                    <Play size={16} fill="currentColor" />
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-[var(--color-text)]">
+                    <h4 className="text-sm font-semibold text-[var(--color-text)]">
                       System Tests Not Executed Yet
                     </h4>
                     <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed mt-0.5">
@@ -298,7 +298,7 @@ export default function SystemTestAssessmentPanel({
                   size="sm"
                   icon={Play}
                   onClick={() => onRerun?.()}
-                  className="shrink-0 font-semibold shadow-md whitespace-nowrap"
+                  className="shrink-0 font-medium whitespace-nowrap"
                 >
                   Run Test Suite Now
                 </Button>
@@ -312,59 +312,53 @@ export default function SystemTestAssessmentPanel({
               observedApiCalls={observedApiCalls}
             />
 
-            {/* 2. Top-Level Verification & Stability Summary Cards */}
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="p-4 rounded-xl bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] flex items-center justify-between">
+            {/* 2. Unified Verification & Stability Summary Strip */}
+            <div className="grid sm:grid-cols-3 gap-px bg-[var(--color-border)] border border-[var(--color-border)] rounded-lg overflow-hidden">
+              <div className="px-4 py-3.5 bg-[var(--color-bg)] flex items-center justify-between">
                 <div className="space-y-1">
-                  <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  <p className="text-xs font-medium text-[var(--color-text-secondary)] flex items-center gap-1.5">
+                    <ShieldCheck size={13} className="text-[var(--color-text-muted)]" />
                     Independent Runs Passed
                   </p>
-                  <p className="text-2xl font-bold font-mono text-emerald-500 dark:text-emerald-400 tabular-nums">
+                  <p className="text-xl font-bold font-mono text-[var(--color-text)] tabular-nums">
                     {hasExecuted ? `${current?.stability?.passedRuns || 0}/${current?.stability?.runs || 1}` : '-/-'}
                   </p>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                  <span className="text-[11px] text-[var(--color-text-muted)] block">
                     {hasExecuted ? 'Observed results across independent runs' : 'Pending live execution'}
                   </span>
                 </div>
-                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 dark:text-emerald-400">
-                  <ShieldCheck size={20} />
-                </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] flex items-center justify-between">
+              <div className="px-4 py-3.5 bg-[var(--color-bg)] flex items-center justify-between">
                 <div className="space-y-1">
-                  <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  <p className="text-xs font-medium text-[var(--color-text-secondary)] flex items-center gap-1.5">
+                    <CheckCircle2 size={13} className="text-[var(--color-text-muted)]" />
                     Static Assertion Findings
                   </p>
-                  <p className="text-2xl font-bold font-mono text-[var(--color-text)] tabular-nums">
+                  <p className="text-xl font-bold font-mono text-[var(--color-text)] tabular-nums">
                     {findings.length}
                   </p>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">Static findings require review</span>
-                </div>
-                <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-500 dark:text-indigo-400">
-                  <CheckCircle2 size={20} />
+                  <span className="text-[11px] text-[var(--color-text-muted)] block">Static findings require review</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] flex items-center justify-between">
+              <div className="px-4 py-3.5 bg-[var(--color-bg)] flex items-center justify-between">
                 <div className="space-y-1">
-                  <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  <p className="text-xs font-medium text-[var(--color-text-secondary)] flex items-center gap-1.5">
+                    <FileCode2 size={13} className="text-[var(--color-text-muted)]" />
                     Quality Score
                   </p>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold font-mono text-emerald-500 dark:text-emerald-400">
+                    <span className="text-xl font-bold font-mono tabular-nums text-[var(--color-text)]">
                       {hasExecuted ? (current?.qualityScore?.status === 'CALCULATED' ? `${current.qualityScore.value}/100` : 'Not calculated') : '-'}
                     </span>
-                    <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-300 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/25">
+                    <span className="text-[10.5px] font-mono text-[var(--color-text-secondary)] px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
                       {hasExecuted ? (current?.qualityScore?.status === 'CALCULATED' ? 'CALCULATED' : 'UNAVAILABLE') : 'PENDING'}
                     </span>
                   </div>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                  <span className="text-[11px] text-[var(--color-text-muted)] block">
                     {hasExecuted ? 'Reviewed criteria and captured evidence' : 'Awaiting test results'}
                   </span>
-                </div>
-                <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-500 dark:text-purple-400">
-                  <Sparkles size={20} />
                 </div>
               </div>
             </div>
@@ -383,14 +377,14 @@ export default function SystemTestAssessmentPanel({
 
             {/* 4. Gap Navigator for uncovered code */}
             {gaps.length > 0 && (
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/50 p-4">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
                 <SystemTestGapNavigator gaps={gaps} onOpenFile={onOpenFile} />
               </div>
             )}
 
             {/* 5. Bottom Action Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[var(--color-border)] pt-5">
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[var(--color-border)] pt-4">
+              <div className="flex flex-wrap items-center gap-2.5">
                 {files.length > 1 && (
                   <label className="text-xs text-[var(--color-text-secondary)] flex items-center gap-2">
                     <span>Target test:</span>
@@ -398,7 +392,7 @@ export default function SystemTestAssessmentPanel({
                       aria-label="Test to improve"
                       value={filePath}
                       onChange={event => setFileChoice(event.target.value)}
-                      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-indigo-500"
+                      className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]"
                     >
                       {files.map(file => (
                         <option key={file.filePath} value={file.filePath}>
@@ -412,8 +406,7 @@ export default function SystemTestAssessmentPanel({
                 <Button
                   variant="primary"
                   size="sm"
-                  className="!bg-indigo-600 hover:!bg-indigo-500 !text-white !font-medium shadow-md"
-                  icon={Sparkles}
+                  icon={FileCode2}
                   loading={busy}
                   disabled={busy || running || !gaps.length || assessment?.stale || !capabilities?.improvementEnabled || ['QUEUED','DRAFT','VERIFYING'].includes(proposal?.state)}
                   onClick={improve}
@@ -424,7 +417,6 @@ export default function SystemTestAssessmentPanel({
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="!border-[var(--color-border)] !bg-[var(--color-surface)] hover:!bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)]"
                   icon={Download}
                   onClick={() => {
                     const url = URL.createObjectURL(new Blob([JSON.stringify(current, null, 2)], { type: 'application/json' }));
@@ -441,7 +433,6 @@ export default function SystemTestAssessmentPanel({
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="!border-indigo-500/30 !bg-indigo-500/10 hover:!bg-indigo-500/20 text-indigo-600 dark:text-indigo-300"
                   icon={Download}
                   onClick={() => downloadSystemAssessmentPdf(snapshotId, assessment.id).catch(err => setError(err.response?.data?.message || err.message))}
                 >
@@ -450,8 +441,8 @@ export default function SystemTestAssessmentPanel({
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-[var(--color-text-secondary)]">Target Coverage:</span>
-                <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                <span className="text-xs font-mono text-[var(--color-text-muted)]">Target Coverage:</span>
+                <span className="text-xs font-mono font-medium text-[var(--color-text-secondary)] px-2 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
                   95% Target
                 </span>
               </div>

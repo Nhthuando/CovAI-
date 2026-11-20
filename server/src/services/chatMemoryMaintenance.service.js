@@ -6,6 +6,8 @@ import { hasCredential } from "../validators/aiContext.validation.js";
 import { memoryFingerprint } from "./projectMemory.service.js";
 import { boundHistory, messageOrder } from "./chatContext.service.js";
 import { resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import { withGeminiFeature } from "./geminiRouting.service.js";
+import { redactChatSecrets } from "./chatWorkspaceContext.service.js";
 
 const extractionSchema = z.object({ notes: z.array(z.object({ quote: z.string().trim().min(4).max(1000), conflictsWith: z.string().max(128).nullable().optional() }).strict()).max(4) }).strict();
 export const parseMemoryExtraction = (text, userContent) => {
@@ -15,8 +17,7 @@ export const parseMemoryExtraction = (text, userContent) => {
 };
 
 export const processChatContextMaintenance = async (data, dependencies = {}) => {
-    const rawGenerate = dependencies.generate || generateText;
-    const generate = (...args) => withGeminiChannel("CHATBOX", () => rawGenerate(...args));
+    const generate = (...args) => withGeminiFeature('chatbox', () => (dependencies.generate || generateText)(...args.map(value => typeof value === 'string' ? redactChatSecrets(value) : value)));
     const { projectId, userId, sessionId, userMessageId } = data;
     let failed = false;
     try {

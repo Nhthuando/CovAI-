@@ -27,17 +27,23 @@ export function registerLineHistoryHover(monaco, editor, scope, getProvider) {
           if (!request) {
             // Hover cancellation must not abort a request shared with another
             // hover. Bound its lifetime and retain the result for nearby lines.
-            request = getLineHistory(scope.projectId, input, AbortSignal.timeout(5000)).then(result => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            request = getLineHistory(scope.projectId, input, controller.signal).then(result => {
               if (localStorage.getItem('token') !== auth) return result;
               remember(key, result);
               for (const range of result.nearby || []) for (let line = range.start; line <= range.end; line++) {
                 remember(keyFor(line), { ...range, line, contentHash: result.contentHash });
               }
               return result;
-            }).finally(() => pending.delete(key));
+            }).catch(() => null).finally(() => {
+              clearTimeout(timer);
+              pending.delete(key);
+            });
             pending.set(key, request);
           }
           history = await request;
+          if (!history) return null;
         }
         if (token.isCancellationRequested || localStorage.getItem('token') !== auth || model !== editor.getModel() || getProvider() !== provider || provider?.disposed
           || (identity ? provider.revision !== input.revision || provider.identity?.documentId !== input.documentId || provider.identity?.generation !== input.generation : model.getVersionId() !== modelVersion)) return null;

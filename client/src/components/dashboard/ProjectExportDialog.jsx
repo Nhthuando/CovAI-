@@ -88,7 +88,7 @@ export default function ProjectExportDialog({ project, initialSnapshotId, onClos
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
-      className="m-auto w-[calc(100%-32px)] max-w-[560px] max-h-[calc(100dvh-40px)] overflow-y-auto rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] p-0 shadow-xl backdrop:bg-black/50"
+      className="portfolio-studio m-auto w-[calc(100%-32px)] max-w-[560px] max-h-[calc(100dvh-40px)] overflow-y-auto rounded-[var(--radius-xl)] border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] text-[var(--ps-ink)] p-0 shadow-2xl backdrop:bg-black/65"
     >
       <form onSubmit={handleExport} className="p-5 sm:p-7">
         <div className="flex items-start justify-between gap-4">
@@ -140,7 +140,7 @@ export default function ProjectExportDialog({ project, initialSnapshotId, onClos
         </div>
         <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-[var(--color-border)]">
           <Button variant="secondary" size="sm" onClick={onClose}>{exporting ? "Cancel download" : "Cancel"}</Button>
-          <Button type="submit" size="sm" icon={Download} loading={exporting} disabled={loading || !snapshotId}>
+          <Button type="submit" size="sm" className="ps-btn-contrast border-0" icon={Download} loading={exporting} disabled={loading || !snapshotId}>
             Download {format.toUpperCase()}
           </Button>
         </div>

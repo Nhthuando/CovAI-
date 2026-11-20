@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
+import { getAgentManifest } from '../../agents/registry.js';
 import prisma from '../../config/prisma.js';
 import { executeTurn } from './httpJson.adapter.js';
 import { targetCredential, runFor } from './management.service.js';
 import { closeGateway } from './gateway.service.js';
-import { evaluateCase, aggregationInputs, deriveCaseRepetitionVerdicts } from './evaluator.service.js';
+import { evaluateCase, evaluateRule, aggregationInputs, deriveCaseRepetitionVerdicts } from './evaluator.service.js';
 import { aggregateTrustProfile } from './scoring.service.js';
 import { hash, redact, serial, safeError, TERMINAL, requireEnabled, fail, lastLogLines } from './common.js';
 import { extractKnowledge } from './knowledge.service.js';
@@ -98,6 +99,7 @@ export function buildRunSummary(run, status, extraSummary = null) {
         };
     });
     const inlineLatenciesMs = run.evidence
+        .filter(e => !e.kind || e.kind === 'CONVERSATION')
         .map(e => e.payload)
         .filter(p => p && !p._artifact && !p.errorCode && typeof p.latencyMs === 'number' && Number.isFinite(p.latencyMs))
         .map(p => p.latencyMs);
@@ -110,7 +112,7 @@ export function buildRunSummary(run, status, extraSummary = null) {
         .map(c => c.testCase.caseKey);
 
     const baseSummary = aggregateTrustProfile(
-        aggregationInputs(run.cases.flatMap(c => c.criteria)),
+        [...aggregationInputs(run.cases.flatMap(c => c.criteria)), ...(run.manifest.additionalCriteria || [])],
         run.manifest.scoring,
         {
             caseOutcomes,
@@ -136,7 +138,7 @@ export function buildRunSummary(run, status, extraSummary = null) {
     };
 }
 
-export async function finalizeRun(db, runId, status, errorCode = null, leaseToken, extraSummary = null, errorMessage = null) {
+export async function finalizeRun(db, runId, status, errorCode = null, leaseToken, extraSummary = null, errorMessage = null, staleSnapshot) {
     let refsToDestroy = null;
     const finalized = await serial(db, async tx => {
         await tx.$queryRaw`SELECT id FROM "AiEvaluationRun" WHERE id = ${runId} FOR UPDATE`;
@@ -148,11 +150,12 @@ export async function finalizeRun(db, runId, status, errorCode = null, leaseToke
                     include: {
                         testCase: { select: { id: true, caseKey: true, taskType: true, definition: true } },
                         criteria: true,
+                        attempts: { include: { calls: true } },
                     },
                 },
                 evidence: {
-                    where: { kind: 'CONVERSATION' },
-                    select: { id: true, caseResultId: true, payload: true },
+                    where: { kind: { in: ['CONVERSATION', 'GATEWAY_VIOLATION'] } },
+                    select: { id: true, caseResultId: true, attemptId: true, kind: true, payload: true },
                 },
             },
         });
@@ -166,6 +169,23 @@ export async function finalizeRun(db, runId, status, errorCode = null, leaseToke
             return run;
         }
         if (leaseToken && run.leaseToken !== leaseToken) return run;
+        if (staleSnapshot && (run.executionStatus !== staleSnapshot.executionStatus || run.leaseToken !== staleSnapshot.leaseToken || (run.leaseUntil?.getTime() ?? null) !== (staleSnapshot.leaseUntil?.getTime() ?? null))) return run;
+        // An interrupted conversation must not erase a safety violation already observed by the gateway.
+        for (const item of run.cases) {
+            const violations = run.evidence.filter(e => e.kind === 'GATEWAY_VIOLATION' && e.caseResultId === item.id);
+            const observations = item.attempts.map(attempt => ({ responses: [], errorCode: 'INTERRUPTED', gateway: { calls: attempt.calls }, violations: violations.filter(e => e.attemptId === attempt.id).map(e => e.payload) }));
+            for (const criterion of item.criteria) {
+                if (criterion.method !== 'rule' || criterion.status !== 'NOT_EVALUATED' || !criterion.details.blocking || !['confirmation', 'forbiddenActions', 'duplicates'].includes(criterion.details.expected?.type)) continue;
+                const result = evaluateRule(criterion.details.expected, observations);
+                if (result.status !== 'FAILED') continue;
+                const payload = { calls: item.attempts.flatMap(a => a.calls.map(c => ({ id: c.id, callId: c.callId, toolName: c.toolName, status: c.status }))), violations: violations.map(e => e.payload) };
+                const proof = await tx.aiEvaluationEvidence.create({ data: { runId, caseResultId: item.id, kind: 'INTERRUPTED_SAFETY_TRACE', provenance: 'COVAI_OBSERVED', availability: 'AVAILABLE', completeness: 'PARTIAL', payload, contentHash: hash(payload) } });
+                Object.assign(criterion, result);
+                await tx.aiEvaluationCriterionResult.update({ where: { id: criterion.id }, data: { ...result, evidenceRefs: [proof.id] } });
+                await tx.aiEvaluationCaseResult.update({ where: { id: item.id }, data: { verdict: 'FAILED' } });
+                item.verdict = 'FAILED';
+            }
+        }
 
         const job = await tx.job.findUnique({ where: { id: run.jobId }, select: { payloadJson: true } });
         refsToDestroy = parseSecretRefs(job?.payloadJson);
@@ -238,7 +258,10 @@ async function evidence(db, { id: runId, projectId }, caseResultId, attemptId, k
     return { ...row, payload };
 }
 
-export async function processEvaluation(jobId, { db = prisma, transport, provider, onBeforeWorkspaceCleanup } = {}) {
+export async function processEvaluation(jobId, {
+    db = prisma, transport, provider, onBeforeWorkspaceCleanup,
+    turnExecutor = executeTurn, parentSignal, redactionSecrets = [], protectedSecrets = [],
+} = {}) {
     const runStartedAt = performance.now();
     try {
         requireEnabled();
@@ -248,7 +271,7 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
     }
     const found = await db.aiEvaluationRun.findUnique({
         where: { jobId },
-        select: { id: true, projectId: true, executionStatus: true, leaseUntil: true },
+        select: { id: true, projectId: true, executionStatus: true, leaseToken: true, leaseUntil: true },
     });
     if (!found) {
         // "Grade again" jobs reuse the AI_EVALUATION job type (shared JobType enum) and own no run row.
@@ -265,8 +288,7 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
     }
     if (found.executionStatus === 'RUNNING') {
         if (!found.leaseUntil || found.leaseUntil <= new Date()) {
-            await finalizeRun(db, found.id, 'INDETERMINATE', 'WORKER_INTERRUPTED');
-            await destroyJobSecrets(db, jobId);
+            await finalizeRun(db, found.id, 'INDETERMINATE', 'WORKER_INTERRUPTED', undefined, undefined, undefined, found);
         }
         return;
     }
@@ -292,6 +314,9 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
 
     const controller = new AbortController();
     controllers.set(found.id, controller);
+    const abortFromParent = () => controller.abort();
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+    if (parentSignal?.aborted) controller.abort();
     let heartbeatBusy = false;
     let lastLeaseRenewal = Date.now();
     const heartbeat = setInterval(async () => {
@@ -322,7 +347,7 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
 
     let secretRefs = {};
     let managedRuntime = null;
-    let runSecrets = [];
+    const runSecrets = [...redactionSecrets];
     let extraSummary = null;
     let bootProgress = null;
     let cleanupPromise;
@@ -348,11 +373,12 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
         const ownerJob = await db.job.findUnique({ where: { id: jobId }, select: { userId: true, payloadJson: true } });
         secretRefs = parseSecretRefs(ownerJob?.payloadJson);
         const definition = { ...run.profileVersion.definition, sources: run.profileVersion.sourceManifest };
+        if (definition.judge.enabled && run.manifest.agent && run.manifest.agent.benchmarkHash !== getAgentManifest('chatbot-trustworthiness').benchmarkHash) fail('AGENT_BENCHMARK_CHANGED', 'The agent benchmark changed while this run was queued; create a new run with the current benchmark');
         const credential = await targetCredential(db, run.targetVersion, secretRefs.targetTokenRef || null, run.projectId);
         const llmSecretForRedaction = secretRefs.llmKeyRef
             ? readEphemeralSecret(secretRefs.llmKeyRef, { projectId: run.projectId })
             : null;
-        runSecrets = [credential, llmSecretForRedaction].filter(s => typeof s === 'string' && s.length > 0);
+        runSecrets.push(...[credential, llmSecretForRedaction].filter(s => typeof s === 'string' && s.length > 0));
 
         await db.job.updateMany({ where: { id: jobId, status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: new Date() } });
 
@@ -523,6 +549,7 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
                 let conversationId;
                 let errorCode;
                 let errorMessage;
+                let credentialDisclosed = protectedSecrets.length ? false : null;
                 let latencyMs = 0;
                 try {
                     for (const turn of testCase.turns) {
@@ -543,8 +570,9 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
                             try {
                                 response = await withTargetSlot(async () => {
                                     if (signal.aborted) throw new Error('aborted');
+                                    if (run.targetVersion.config.adapter === 'PROJECT_SANDBOX' && turnExecutor === executeTurn) fail('PROJECT_SANDBOX_REQUIRED', 'Imported project runs require their isolated runtime');
                                     const started = performance.now();
-                                    const result = await executeTurn(
+                                    const result = await turnExecutor(
                                         run.targetVersion.config,
                                         { requestId: `${attempt.requestId}-${responses.length}`, messages: run.targetVersion.config.conversationMode === 'session' && conversationId ? [messages.at(-1)] : messages, conversationId, evaluationContext, signal },
                                         { credential, lease: managedRuntime?.loopbackLease || null, transport, timeoutMs: definition.limits.requestMs },
@@ -565,6 +593,7 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
                             }
                         }
                         conversationId = response.conversationId;
+                        if (protectedSecrets.some(secret => response.answer?.includes(secret))) credentialDisclosed = true;
                         responses.push(redact(response, attemptSecrets));
                         messages.push({ role: 'assistant', content: response.answer });
                     }
@@ -582,6 +611,7 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
                         });
                     }
                 }
+                try { await turnExecutor.closeConversation?.(conversationId); } catch { errorCode ||= 'CHATBOT_SESSION_CLEANUP_FAILED'; }
                 const status = errorCode ? 'ERROR' : 'COMPLETED';
                 let closed = null;
                 if (action) {
@@ -592,12 +622,12 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
                 const gateway = closed ? { gatewayState: closed.gatewayState, status: closed.status, state: closed.state, initialState: closed.initialState, calls: closed.calls, grants: closed.grants } : null;
                 const violations = (await db.aiEvaluationEvidence.findMany({ where: { runId: run.id, attemptId: attempt.id, kind: 'GATEWAY_VIOLATION' } })).map(e => e.payload);
                 if (violations.some(v => ['TOOL_LIMIT', 'CONFIRMATION_LIMIT'].includes(v.code))) errorCode ||= 'GATEWAY_LIMIT';
-                const observation = { responses, gateway, violations, latencyMs: Math.round(latencyMs), ...(errorCode ? { errorCode, ...(errorMessage ? { errorMessage } : {}) } : {}) };
+                const observation = { responses, gateway, violations, credentialDisclosed, latencyMs: Math.round(latencyMs), ...(errorCode ? { errorCode, ...(errorMessage ? { errorMessage } : {}) } : {}) };
                 if (!errorCode && Number.isFinite(observation.latencyMs)) {
                     observedLatenciesMs.push(observation.latencyMs);
                 }
                 // Raw credentials, LLM API keys, and gateway context never enter persisted conversation evidence.
-                const repetitionRefs = [await withRunWriteLock(() => evidence(db, run, caseResult.id, attempt.id, 'CONVERSATION', { messages: redact(messages, attemptSecrets), responses, latencyMs: observation.latencyMs, errorCode: errorCode || null, ...(observation.errorMessage ? { errorMessage: observation.errorMessage } : {}) }, errorCode ? 'PARTIAL' : 'COMPLETE'))];
+                const repetitionRefs = [await withRunWriteLock(() => evidence(db, run, caseResult.id, attempt.id, 'CONVERSATION', { messages: redact(messages, attemptSecrets), responses, credentialDisclosed, latencyMs: observation.latencyMs, errorCode: errorCode || null, ...(observation.errorMessage ? { errorMessage: observation.errorMessage } : {}) }, errorCode ? 'PARTIAL' : 'COMPLETE'))];
                 if (gateway) repetitionRefs.push(await withRunWriteLock(() => evidence(db, run, caseResult.id, attempt.id, 'GATEWAY_TRACE', gateway, errorCode ? 'PARTIAL' : 'COMPLETE')));
                 return { observation, refs: repetitionRefs };
             }
@@ -742,6 +772,12 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
         };
         await cleanup();
         const canceled = controller.signal.reason === 'USER_CANCELED';
+        console.error('[AI Evaluation] Runner failed', redact({
+            runId: found.id,
+            code: error?.code || error?.name,
+            databaseCode: error?.meta?.code || error?.meta?.driverAdapterError?.cause?.originalCode,
+            frames: error?.stack?.split('\n').filter(line => /^\s+at /.test(line)).slice(0, 4).join('\n'),
+        }, runSecrets));
         await withRunWriteLock(() => finalizeRun(db, found.id, canceled ? 'CANCELED' : 'ERROR', canceled ? 'USER_CANCELED' : safe.code, leaseToken, failureSummary, redactedMessage));
         try {
             const job = await db.job.findUnique({ where: { id: jobId }, select: { userId: true } });
@@ -754,6 +790,7 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
     } finally {
         clearInterval(heartbeat);
         controllers.delete(found.id);
+        parentSignal?.removeEventListener('abort', abortFromParent);
         await cleanup();
         cleanups.delete(found.id);
         runSecrets.length = 0;
@@ -762,6 +799,8 @@ export async function processEvaluation(jobId, { db = prisma, transport, provide
 
 export async function processEvaluationPrepare(jobId, { db = prisma, provider } = {}) {
     requireEnabled();
+    const pending = await db.job.findUnique({ where: { id: jobId } });
+    if (pending && JSON.parse(pending.payloadJson || '{}').projectEvaluationId) return (await import('./projectEvaluation.service.js')).processProjectEvaluation(jobId, { db, provider });
     const claim = await db.job.updateMany({ where: { id: jobId, type: 'AI_EVALUATION_PREPARE', status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: new Date() } });
     if (!claim.count) return;
     const job = await db.job.findUnique({
@@ -867,6 +906,11 @@ export async function processEvaluationPrepare(jobId, { db = prisma, provider } 
 }
 
 export async function reconcileEvaluations(db = prisma, { startup = false } = {}) {
+    try {
+        await (await import('./projectEvaluation.service.js')).reconcileProjectEvaluations(db);
+    } catch (error) {
+        console.warn('[AI Evaluation] Imported-project reconciliation skipped:', String(error?.message || error).slice(0, 200));
+    }
     const reapAllUnownedRunning = Boolean(startup && process.env.COVAI_WORKER_ENABLED !== 'false');
     const runningFilter = reapAllUnownedRunning
         ? { executionStatus: 'RUNNING' }
@@ -878,22 +922,26 @@ export async function reconcileEvaluations(db = prisma, { startup = false } = {}
                 { executionStatus: 'QUEUED', createdAt: { lt: new Date(Date.now() - 300000) } },
             ],
         },
-        select: { id: true, executionStatus: true, summary: true },
+        select: { id: true, executionStatus: true, leaseToken: true, leaseUntil: true, summary: true },
         take: 100,
     });
     for (const run of stale) {
         if (run.executionStatus === 'RUNNING' && controllers.has(run.id)) {
             continue;
         }
-        if (run.executionStatus === 'RUNNING' && run.summary?._activeRuntime) {
-            await cleanupOrphanedChatbotRuntime(run.summary._activeRuntime);
-        }
-        await finalizeRun(
+        const finalized = await finalizeRun(
             db,
             run.id,
             run.executionStatus === 'RUNNING' ? 'INDETERMINATE' : 'ERROR',
             run.executionStatus === 'RUNNING' ? 'WORKER_INTERRUPTED' : 'QUEUE_DELIVERY_TIMEOUT',
+            undefined,
+            undefined,
+            undefined,
+            run,
         );
+        if (run.executionStatus === 'RUNNING' && finalized?.executionStatus === 'INDETERMINATE' && run.summary?._activeRuntime) {
+            await cleanupOrphanedChatbotRuntime(run.summary._activeRuntime);
+        }
     }
     const prepared = await db.job.findMany({
         where: { type: 'AI_EVALUATION_PREPARE', status: { in: ['QUEUED', 'RUNNING'] }, createdAt: { lt: new Date(Date.now() - 300000) } },
@@ -904,6 +952,7 @@ export async function reconcileEvaluations(db = prisma, { startup = false } = {}
     await reconcileRegradeJobs(db);
     for (const job of prepared) {
         const payload = JSON.parse(job.payloadJson || '{}');
+        if (payload.projectEvaluationId) continue;
         if (payload.sourceId) await db.aiEvaluationKnowledgeSource.updateMany({ where: { id: payload.sourceId, status: 'PROCESSING' }, data: { status: 'ERROR', content: '', provenance: { errorCode: 'PREPARATION_INTERRUPTED' } } });
         await db.job.updateMany({ where: { id: job.id, status: { in: ['QUEUED', 'RUNNING'] } }, data: { status: 'FAILED', errorMessage: 'Preparation interrupted; submit a new preparation request', finishedAt: new Date() } });
     }

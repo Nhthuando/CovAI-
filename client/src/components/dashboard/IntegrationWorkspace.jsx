@@ -1,4 +1,5 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useChatTestContext } from '../../hooks/useChatTestContext';
 import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
 import React, {
   useCallback,
@@ -67,6 +68,7 @@ import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx
 import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal.jsx";
 import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEditorModal.jsx";
 import SourceCodeViewerModal from "./integration/SourceCodeViewerModal.jsx";
+import { getEndpointCaseCoverage } from "./integration/integrationCaseCoverage.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -297,7 +299,10 @@ function IntegrationCockpitSkeleton() {
             <div className="h-3.5 w-24 rounded bg-[var(--color-surface-secondary)] animate-pulse" />
           </div>
           {[1, 2, 3, 4, 5, 6].map((row) => (
-            <div key={row} className="p-3 flex items-center justify-between gap-4">
+            <div
+              key={row}
+              className="p-3 flex items-center justify-between gap-4"
+            >
               <div className="flex items-center gap-3">
                 <div className="h-4 w-12 rounded bg-[var(--color-surface-secondary)] animate-pulse" />
                 <div className="h-4 w-48 rounded bg-[var(--color-surface-secondary)] animate-pulse" />
@@ -315,6 +320,7 @@ function IntegrationCockpitSkeleton() {
 }
 
 export default function IntegrationWorkspace({
+  onChatContextChange,
   projectId,
   snapshotId,
   onGenerate,
@@ -344,7 +350,7 @@ export default function IntegrationWorkspace({
   const [hasScanned, setHasScanned] = useState(
     Boolean(
       initialContext?.cachedWorkspace?.generation?.hasScannedEndpoints ||
-        (initialContext?.cachedWorkspace?.endpoints || []).length > 0,
+      (initialContext?.cachedWorkspace?.endpoints || []).length > 0,
     ),
   );
   const [error, setError] = useState("");
@@ -360,6 +366,11 @@ export default function IntegrationWorkspace({
   const [activeJobId, setActiveJobId] = useState(null);
   const [activeJobType, setActiveJobType] = useState(null);
   const [activeJobStatus, setActiveJobStatus] = useState("RUNNING");
+  const activeJobIdRef = useRef(null);
+  const pendingExecuteJobIdRef = useRef(null);
+  const hasScannedRef = useRef(hasScanned);
+  hasScannedRef.current = hasScanned;
+  activeJobIdRef.current = activeJobId;
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancellationNotice, setCancellationNotice] = useState("");
   const [selectedTestIds, setSelectedTestIds] = useState([]);
@@ -377,6 +388,8 @@ export default function IntegrationWorkspace({
   const [editorModalScenario, setEditorModalScenario] = useState(null);
   const [editorModalEndpoint, setEditorModalEndpoint] = useState(null);
   const [isAddScenarioMode, setIsAddScenarioMode] = useState(false);
+  const [savingScenario, setSavingScenario] = useState(false);
+  const [editorSaveError, setEditorSaveError] = useState("");
   const [sourceViewerOpen, setSourceViewerOpen] = useState(false);
   const [sourceViewerOptions, setSourceViewerOptions] = useState([]);
   const [showLiveLogsDetails, setShowLiveLogsDetails] = useState(false);
@@ -403,7 +416,10 @@ export default function IntegrationWorkspace({
 
   useEffect(() => {
     let interval = null;
-    if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
+    if (
+      activeJobId &&
+      (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")
+    ) {
       setJobElapsedSeconds(0);
       interval = setInterval(() => {
         setJobElapsedSeconds((prev) => prev + 1);
@@ -451,7 +467,7 @@ export default function IntegrationWorkspace({
       setError("");
 
       const shouldScanNow = Boolean(loadOptions.scan);
-      const shouldSkipAutoScan = !shouldScanNow && !hasScanned;
+      const shouldSkipAutoScan = !shouldScanNow && !hasScannedRef.current;
 
       try {
         const [workspaceRes, detectionRes, reportRes] =
@@ -475,13 +491,15 @@ export default function IntegrationWorkspace({
             Boolean(wsData?.generation?.hasScannedEndpoints) ||
             Boolean(wsData?.generation?.hasPriorHistory)
           ) {
+            hasScannedRef.current = true;
             setHasScanned(true);
           } else if (shouldSkipAutoScan) {
+            hasScannedRef.current = false;
             setHasScanned(false);
           }
 
           // Check running background jobs
-          if (!activeJobId) {
+          if (!activeJobIdRef.current) {
             const fetchedJobs = wsData?.jobs || {};
             let runningJobId = null;
             let runningJobType = null;
@@ -554,7 +572,7 @@ export default function IntegrationWorkspace({
         setRefreshing(false);
       }
     },
-    [snapshotId, projectId, activeJobId, hasScanned],
+    [snapshotId, projectId],
   );
 
   // Explicit AST API Endpoint Discovery Triggered from Endpoints Matrix
@@ -608,8 +626,40 @@ export default function IntegrationWorkspace({
     }
   }, [snapshotId, projectId, workspace, onContextChange]);
 
+  const startExecutionTracking = useCallback((response) => {
+    const jobs = response?.data?.jobs || [];
+    const installJob = jobs.find((j) => j?.type === "INSTALL_DEPS" && j?.status !== "SUCCESS");
+    const supertestJob =
+      jobs.find((j) => j?.type === "SUPERTEST_COVERAGE") || response?.data?.job;
+    const supertestJobId =
+      supertestJob?.id || response?.data?.jobId || response?.jobId || null;
+
+    if (installJob?.id && supertestJobId && installJob.id !== supertestJobId) {
+      pendingExecuteJobIdRef.current = supertestJobId;
+      setActiveJobId(installJob.id);
+      setActiveJobType("EXECUTE");
+      setActiveJobStatus("RUNNING");
+      return;
+    }
+
+    pendingExecuteJobIdRef.current = null;
+    if (supertestJobId) {
+      setActiveJobId(supertestJobId);
+      setActiveJobType("EXECUTE");
+      setActiveJobStatus("RUNNING");
+    }
+  }, []);
+
   // Job completion handlers
   const handleJobComplete = useCallback(async () => {
+    if (pendingExecuteJobIdRef.current) {
+      const nextExecuteJobId = pendingExecuteJobIdRef.current;
+      pendingExecuteJobIdRef.current = null;
+      setActiveJobId(nextExecuteJobId);
+      setActiveJobType("EXECUTE");
+      setActiveJobStatus("RUNNING");
+      return;
+    }
     setActiveJobStatus("SUCCESS");
     const completedType = activeJobType;
     try {
@@ -621,7 +671,8 @@ export default function IntegrationWorkspace({
         showToast({
           type: "success",
           title: "Coverage Run Completed",
-          message: "API test suite execution finished. Coverage & diagnostics updated.",
+          message:
+            "API test suite execution finished. Coverage & diagnostics updated.",
         });
       } else if (completedType === "GENERATE") {
         showToast({
@@ -705,6 +756,18 @@ export default function IntegrationWorkspace({
     }
   }, [load, showToast]);
 
+  useEffect(() => {
+    const onIntegrationUpdated = (e) => {
+      const targetSnap = e?.detail?.snapshotId;
+      if (!targetSnap || targetSnap === snapshotId) {
+        load({ scan: false });
+      }
+    };
+    window.addEventListener("covai:integration-updated", onIntegrationUpdated);
+    return () =>
+      window.removeEventListener("covai:integration-updated", onIntegrationUpdated);
+  }, [load, snapshotId]);
+
   const handleCancelActiveJob = useCallback(
     async (targetJobId = null) => {
       const jId = targetJobId || activeJobId;
@@ -712,7 +775,12 @@ export default function IntegrationWorkspace({
       setIsCancelling(true);
       setError("");
       try {
+        const pendingId = pendingExecuteJobIdRef.current;
+        pendingExecuteJobIdRef.current = null;
         await cancelJobApi(jId);
+        if (pendingId && pendingId !== jId) {
+          await cancelJobApi(pendingId).catch(() => {});
+        }
         setActiveJobStatus("CANCELED");
         setCancellationNotice("Task canceled successfully.");
         await load();
@@ -784,7 +852,7 @@ export default function IntegrationWorkspace({
         framework: targetFramework,
         force: true,
       });
-      const jId = res?.data?.jobId || res?.jobId;
+      const jId = res?.data?.job?.id || res?.data?.jobId || res?.job?.id || res?.jobId;
       if (jId) {
         setActiveJobId(jId);
         setActiveJobType("GENERATE");
@@ -838,11 +906,14 @@ export default function IntegrationWorkspace({
       return;
     }
     if (endpoints.length === 0 && !workspace?.generation?.hasAnalysis) {
-      setError("Please run project analysis to discover API endpoints before generating test scenarios.");
+      setError(
+        "Please run project analysis to discover API endpoints before generating test scenarios.",
+      );
       showToast({
         type: "warning",
         title: "Analysis Needed",
-        message: "No API endpoints detected yet. Run analysis first to discover routes.",
+        message:
+          "No API endpoints detected yet. Run analysis first to discover routes.",
       });
       return;
     }
@@ -949,13 +1020,7 @@ export default function IntegrationWorkspace({
         );
       }
       const response = await runCoverageByType(snapshotId, "integration");
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to start integration test run.");
     } finally {
@@ -1049,16 +1114,18 @@ export default function IntegrationWorkspace({
       .map((s) => s.title || s.testName)
       .filter(Boolean);
     if (scenarioIds.length === 0 && targetTestNames.length === 0) {
-      setError(
-        `Endpoint ${epKey} has no test scenarios yet.`,
-      );
+      setError(`Endpoint ${epKey} has no test scenarios yet.`);
       return;
     }
     setError("");
     setPendingAction("RUN_ENDPOINT");
     setRunningTargetKey(epKey);
     try {
-      if (workspace?.aiTests && workspace.aiTests.length > 0 && scenarioIds.length > 0) {
+      if (
+        workspace?.aiTests &&
+        workspace.aiTests.length > 0 &&
+        scenarioIds.length > 0
+      ) {
         try {
           await approveIntegrationTestsApi(snapshotId, scenarioIds);
         } catch (_) {}
@@ -1070,17 +1137,12 @@ export default function IntegrationWorkspace({
         null,
         {
           targetEndpoint: epKey,
+          targetEndpoints: [epKey],
           targetTestNames,
           selectedScenarioIds: scenarioIds,
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to execute tests for this endpoint.");
       setRunningTargetKey(null);
@@ -1092,7 +1154,13 @@ export default function IntegrationWorkspace({
   // Run Coverage for Multiple Selected Endpoints (Targeted Batch Execution)
   const handleRunSelectedEndpoints = async (selectedEps = []) => {
     if (!projectAccess.can("tests.run")) return;
-    if (!snapshotId || pendingAction || !Array.isArray(selectedEps) || selectedEps.length === 0) return;
+    if (
+      !snapshotId ||
+      pendingAction ||
+      !Array.isArray(selectedEps) ||
+      selectedEps.length === 0
+    )
+      return;
 
     const allScenarios = selectedEps.flatMap((ep) => ep.scenarios || []);
     const scenarioIds = allScenarios
@@ -1102,14 +1170,13 @@ export default function IntegrationWorkspace({
       .map((s) => s.title || s.testName)
       .filter(Boolean);
 
-    if (scenarioIds.length === 0 && targetTestNames.length === 0) {
-      setError("Selected endpoints have no test scenarios yet. Generate tests for them first.");
-      return;
-    }
-
+    const targetEndpoints = selectedEps.map(
+      (ep) =>
+        `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
+    );
     const targetLabel =
       selectedEps.length === 1
-        ? `${(selectedEps[0].method || "GET").toUpperCase()} ${selectedEps[0].path || "/"}`
+        ? targetEndpoints[0]
         : `${selectedEps.length} selected endpoints`;
 
     setError("");
@@ -1117,7 +1184,11 @@ export default function IntegrationWorkspace({
     setPendingAction("RUN_ENDPOINT");
     setRunningTargetKey(targetLabel);
     try {
-      if (workspace?.aiTests && workspace.aiTests.length > 0 && scenarioIds.length > 0) {
+      if (
+        workspace?.aiTests &&
+        workspace.aiTests.length > 0 &&
+        scenarioIds.length > 0
+      ) {
         try {
           await approveIntegrationTestsApi(snapshotId, scenarioIds);
         } catch (_) {}
@@ -1129,19 +1200,16 @@ export default function IntegrationWorkspace({
         null,
         {
           targetEndpoint: targetLabel,
+          targetEndpoints,
           targetTestNames,
           selectedScenarioIds: scenarioIds,
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
-      setError(err.message || "Failed to execute tests for selected endpoints.");
+      setError(
+        err.message || "Failed to execute tests for selected endpoints.",
+      );
       setRunningTargetKey(null);
     } finally {
       setPendingAction(null);
@@ -1151,7 +1219,13 @@ export default function IntegrationWorkspace({
   // Run Coverage for Specific Selected Scenarios (Cross-Endpoint Multi-Select)
   const handleRunSelectedScenarios = async (selectedScenarios = []) => {
     if (!projectAccess.can("tests.run")) return;
-    if (!snapshotId || pendingAction || !Array.isArray(selectedScenarios) || selectedScenarios.length === 0) return;
+    if (
+      !snapshotId ||
+      pendingAction ||
+      !Array.isArray(selectedScenarios) ||
+      selectedScenarios.length === 0
+    )
+      return;
 
     const scenarioIds = selectedScenarios
       .map((s) => s.id || `${s.testId}::${s.scenarioId || s.testName}`)
@@ -1162,6 +1236,16 @@ export default function IntegrationWorkspace({
 
     if (scenarioIds.length === 0 && targetTestNames.length === 0) return;
 
+    const targetEndpoints = Array.from(
+      new Set(
+        selectedScenarios
+          .filter((s) => s.method || s.path)
+          .map(
+            (s) =>
+              `${(s.method || "GET").toUpperCase()} ${s.fullPath || s.path || "/"}`,
+          ),
+      ),
+    );
     const targetLabel = `${selectedScenarios.length} selected scenario${selectedScenarios.length > 1 ? "s" : ""}`;
     setError("");
     setCancellationNotice("");
@@ -1175,17 +1259,12 @@ export default function IntegrationWorkspace({
         null,
         {
           targetEndpoint: targetLabel,
+          ...(targetEndpoints.length > 0 ? { targetEndpoints } : {}),
           targetTestNames,
           selectedScenarioIds: scenarioIds,
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to execute selected test scenarios.");
       setRunningTargetKey(null);
@@ -1208,7 +1287,12 @@ export default function IntegrationWorkspace({
     setPendingAction("RETRY_SCENARIO");
     setRunningTargetKey(scId || scTitle);
     try {
-      if (workspace?.aiTests && workspace.aiTests.length > 0 && scId && sc.enabled === false) {
+      if (
+        workspace?.aiTests &&
+        workspace.aiTests.length > 0 &&
+        scId &&
+        sc.enabled === false
+      ) {
         try {
           await approveIntegrationTestsApi(snapshotId, [scId]);
         } catch (_) {}
@@ -1224,13 +1308,7 @@ export default function IntegrationWorkspace({
           selectedScenarioIds: scId ? [scId] : [],
         },
       );
-      const jobId =
-        response.data?.job?.id || response.data?.jobId || response.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
+      startExecutionTracking(response);
     } catch (err) {
       setError(err.message || "Failed to rerun this test scenario.");
       setRunningTargetKey(null);
@@ -1252,9 +1330,15 @@ export default function IntegrationWorkspace({
 
     // Clean container and storage prefixes
     let cleanPath = (rawPath || "").replace(/\\/g, "/").trim();
-    cleanPath = cleanPath.replace(/^(?:\/?app\/)?\.?covai-temp\/collaboration-operations\/[^/]+\//i, "");
+    cleanPath = cleanPath.replace(
+      /^(?:\/?app\/)?\.?covai-temp\/collaboration-operations\/[^/]+\//i,
+      "",
+    );
     cleanPath = cleanPath.replace(/^(?:\/?app\/)?\.?covai-temp\/[^/]+\//i, "");
-    cleanPath = cleanPath.replace(/^(?:\/?app\/)?storage\/projects\/[^/]+\/(?:snapshots\/[^/]+\/)?/i, "");
+    cleanPath = cleanPath.replace(
+      /^(?:\/?app\/)?storage\/projects\/[^/]+\/(?:snapshots\/[^/]+\/)?/i,
+      "",
+    );
     cleanPath = cleanPath.replace(/^(?:\/?app\/)/i, "");
     cleanPath = cleanPath.replace(/^[a-zA-Z]:\//i, "");
     cleanPath = cleanPath.replace(/^\/+/, "");
@@ -1262,8 +1346,13 @@ export default function IntegrationWorkspace({
     // Look for matching in-memory AI test or source test from workspace
     const matchingTest = (workspace?.aiTests || []).find(
       (t) =>
-        (cleanPath && (t.filePath === cleanPath || t.filePath?.endsWith(cleanPath) || cleanPath.endsWith(t.filePath || ""))) ||
-        (sc?.title && (t.content?.includes(sc.title) || (t.requests || []).some((r) => r.testName === sc.title)))
+        (cleanPath &&
+          (t.filePath === cleanPath ||
+            t.filePath?.endsWith(cleanPath) ||
+            cleanPath.endsWith(t.filePath || ""))) ||
+        (sc?.title &&
+          (t.content?.includes(sc.title) ||
+            (t.requests || []).some((r) => r.testName === sc.title))),
     );
 
     const targetPath =
@@ -1274,14 +1363,14 @@ export default function IntegrationWorkspace({
       "tests/integration/cart.test.js";
 
     const codeSnippet =
-      sc?.code ||
-      sc?.sourceCode ||
-      matchingTest?.content ||
-      null;
+      sc?.code || sc?.sourceCode || matchingTest?.content || null;
 
     setSourceViewerOptions([
       {
-        label: sc?.title || sc?.testName || (ep ? `${ep.method} ${ep.path}` : "Test Scenario"),
+        label:
+          sc?.title ||
+          sc?.testName ||
+          (ep ? `${ep.method} ${ep.path}` : "Test Scenario"),
         filePath: targetPath,
         rawFilePath: rawPath,
         line: sc?.line || sc?.startLine || 1,
@@ -1295,63 +1384,165 @@ export default function IntegrationWorkspace({
     setSourceViewerOpen(true);
   };
 
-  // Resolve runtime results to the versioned editable artifact.
+  // Resolve runtime results to the versioned editable artifact or repo test metadata.
   const editableScenario = (sc) => {
+    const filePath = sc?.filePath || sc?.testFile || undefined;
+    const testName = sc?.testName || sc?.title || sc?.name || undefined;
     if (sc?.aiTestId && sc?.scenarioId) {
       return {
         aiTestId: sc.aiTestId,
         scenarioId: sc.scenarioId,
         expectedVersion: sc.version ?? 1,
+        filePath,
+        testName,
+        origin: sc.origin,
       };
     }
     for (const test of workspace?.aiTests || []) {
       const request = (test.requests || []).find(
         (r) =>
-          r.scenarioId === sc?.scenarioId ||
-          r.scenarioId === sc?.id ||
+          (sc?.scenarioId && r.scenarioId === sc.scenarioId) ||
+          (sc?.id && r.scenarioId === sc.id) ||
           test.id + "::" + r.scenarioId === sc?.id ||
-          r.testName === (sc?.testName || sc?.title || sc?.name) ||
-          r.title === (sc?.testName || sc?.title || sc?.name),
+          (testName && (r.testName === testName || r.title === testName)),
       );
       if (request)
         return {
           aiTestId: test.id,
-          scenarioId: request.scenarioId,
-          expectedVersion: test.version,
+          scenarioId: request.scenarioId || sc?.scenarioId || testName || "scenario_1",
+          expectedVersion: test.version ?? 1,
+          filePath: filePath || test.filePath,
+          testName: request.testName || testName,
+          origin: sc?.origin || request.origin,
         };
+    }
+    if (sc?.origin === "PROJECT_EXISTING" || filePath || testName) {
+      return {
+        aiTestId:
+          sc?.aiTestId ||
+          (sc?.origin === "PROJECT_EXISTING"
+            ? "existing_test_lookup"
+            : "workspace_scenario_lookup"),
+        scenarioId: sc?.scenarioId || sc?.id || testName || "scenario_lookup",
+        expectedVersion: 1,
+        filePath,
+        testName,
+        origin: sc?.origin,
+      };
     }
     const fallbackTest = workspace?.aiTests?.[0];
     return {
       aiTestId: fallbackTest?.id || "fallback",
       scenarioId: sc?.scenarioId || sc?.id || "scenario_1",
       expectedVersion: fallbackTest?.version || 1,
+      filePath,
+      testName,
+      origin: sc?.origin,
     };
   };
 
   const handleAIFixScenario = async (scOrEp, maybeEp) => {
-    const sc = scOrEp?.title || scOrEp?.scenarioId ? scOrEp : maybeEp;
+    const sc = scOrEp?.title || scOrEp?.scenarioId || scOrEp?.testName ? scOrEp : maybeEp;
+    const ep = maybeEp && maybeEp !== sc ? maybeEp : null;
     if (!projectAccess.can("ai.use") || !snapshotId || !sc) return;
     setError("");
-    try {
-      const result = await mutateIntegrationScenarioApi({
-        snapshotId,
-        ...editableScenario(sc),
-        action: "REGENERATE",
-      });
-      const jobId =
-        result?.data?.job?.id ||
-        result?.job?.id ||
-        result?.data?.jobId ||
-        result?.jobId;
-      if (jobId) {
-        setActiveJobId(jobId);
-        setActiveJobType("GENERATE");
-        setActiveJobStatus("RUNNING");
+
+    const identity = editableScenario(sc);
+    const isProjectExisting =
+      sc?.origin === "PROJECT_EXISTING" ||
+      String(identity.aiTestId || "").startsWith("existing_test_") ||
+      identity.aiTestId === "existing_test_lookup";
+
+    let scenarioCode = sc?.code || sc?.fullFileCode || "";
+    if (!scenarioCode && !isProjectExisting && identity.aiTestId && identity.aiTestId !== "fallback") {
+      try {
+        const fetched = await getIntegrationScenarioApi(
+          snapshotId,
+          identity.aiTestId,
+          identity.scenarioId,
+        );
+        scenarioCode = fetched?.code || "";
+        if (fetched?.version) {
+          identity.expectedVersion = fetched.version;
+        }
+      } catch (err) {
+        console.warn("[IntegrationWorkspace] Could not prefetch scenario code for AI Fix:", err?.message);
       }
-      await load({ scan: true });
-    } catch (err) {
-      setError(err.message || "Failed to fix scenario with AI.");
     }
+
+    const endpointMethod = (ep?.method || sc?.method || "API").toUpperCase();
+    const endpointPath = ep?.fullPath || ep?.path || sc?.path || "/";
+    const endpointLabel = `${endpointMethod} ${endpointPath}`;
+    const testTitle = sc?.title || sc?.testName || sc?.name || "Failing Scenario";
+    const testFilePath = sc?.filePath || sc?.testFile || identity.filePath || "tests/integration/api.test.js";
+    const controllerSnippet = ep?.source?.controllerSnippet || ep?.source?.routeSnippet || "";
+    const statusCodes = ep?.source?.responseStatusCodes || ep?.responseStatusCodes || [];
+    const reqSchema = ep?.source?.requestBodySchema || ep?.requestBodySchema || [];
+    const failureDetails =
+      sc?.executionReason ||
+      (Array.isArray(sc?.failureMessages) && sc.failureMessages.length > 0
+        ? sc.failureMessages.join("\n")
+        : "Assertion or runtime failure occurred.");
+
+    const attachments = [];
+    if (scenarioCode) {
+      attachments.push({
+        id: `fix-test-${identity.scenarioId || Date.now()}`,
+        type: "file",
+        name: testFilePath.split("/").pop() || "integration.test.js",
+        path: testFilePath,
+        content: scenarioCode,
+      });
+    }
+    const handlerFile = ep?.source?.controllerFile || ep?.source?.sourceFile || ep?.sourceFile;
+    if (controllerSnippet && handlerFile) {
+      attachments.push({
+        id: `fix-endpoint-${Date.now()}`,
+        type: "file",
+        name: handlerFile.split("/").pop() || "controller.js",
+        path: handlerFile,
+        content: controllerSnippet,
+      });
+    }
+
+    const promptLines = [
+      `Help me debug and fix this failing integration test scenario for \`${endpointLabel}\`:`,
+      `- **Test Scenario**: ${testTitle}`,
+      `- **Test File**: \`${testFilePath}\``,
+      `- **Failure Layer**: \`${sc?.failureLayer || "ASSERTION_FAILED"}\``,
+      `- **Expected vs Actual Status**: Expected \`${Array.isArray(sc?.expectedStatuses) && sc.expectedStatuses.length > 1 ? sc.expectedStatuses.join("/") : (sc?.expectedStatus ?? "unknown")}\`, Actual \`${sc?.actualStatus ?? sc?.actualStatusFromRuntime ?? "N/A"}\``,
+      ...(statusCodes.length > 0 ? [`- **Controller Status Codes**: ${statusCodes.join(", ")}`] : []),
+      ...(reqSchema.length > 0 ? [`- **Request Body Schema**: ${reqSchema.join(", ")}`] : []),
+      "",
+      "**Failure Diagnostics:**",
+      "```",
+      failureDetails.slice(0, 2500),
+      "```",
+      "",
+      "Please explain the root cause of the failure against the endpoint implementation, and provide the corrected single Jest/Supertest `it(...)` test block in a ```javascript code block so I can apply it.",
+    ];
+
+    window.dispatchEvent(
+      new CustomEvent("covai:prefill-prompt", {
+        detail: {
+          promptText: promptLines.join("\n"),
+          attachments,
+          fixContext: {
+            snapshotId,
+            aiTestId: identity.aiTestId,
+            scenarioId: identity.scenarioId,
+            expectedVersion: identity.expectedVersion ?? 1,
+            testName: testTitle,
+            endpointLabel,
+            filePath: testFilePath,
+            failureLayer: sc?.failureLayer || "ASSERTION_FAILED",
+            expectedStatus: sc?.expectedStatus ?? null,
+            actualStatus: sc?.actualStatus ?? sc?.actualStatusFromRuntime ?? null,
+            isProjectExisting,
+          },
+        },
+      }),
+    );
   };
 
   const handleDeleteScenario = async (sc) => {
@@ -1369,7 +1560,7 @@ export default function IntegrationWorkspace({
         title: "Scenario Deleted",
         message: `Removed "${sc.title || sc.scenarioId}" from test suite.`,
       });
-      await load({ scan: true });
+      await load({ scan: false });
     } catch (err) {
       setError(err.message || "Failed to delete scenario.");
     }
@@ -1386,13 +1577,16 @@ export default function IntegrationWorkspace({
         action: "TOGGLE",
         enable: Boolean(enableState),
       });
-      await load({ scan: true });
+      await load({ scan: false });
     } catch (err) {
       setError(err.message || "Failed to toggle scenario state.");
     }
   };
 
-  const handleOpenApplyModal = (targetIds = null, initialScenarioKeys = null) => {
+  const handleOpenApplyModal = (
+    targetIds = null,
+    initialScenarioKeys = null,
+  ) => {
     if (!projectAccess.can("files.write")) return;
     const resolvedAiTestIds =
       Array.isArray(targetIds) && targetIds.length > 0
@@ -1407,10 +1601,11 @@ export default function IntegrationWorkspace({
 
   const handleOpenEditScenario = async (sc, ep = null) => {
     if (!projectAccess.can("files.write")) return;
+    setEditorSaveError("");
     const identity = editableScenario(sc);
-    const inMemoryCode = sc?.code || sc?.fullFileCode || "";
+    const inMemoryCode = sc?.code || "";
 
-    // Open immediately if code is already in memory to avoid UI lag
+    // Open immediately if individual scenario code is already in memory to avoid UI lag
     if (inMemoryCode) {
       setEditorModalScenario({
         ...sc,
@@ -1421,16 +1616,33 @@ export default function IntegrationWorkspace({
       setIsAddScenarioMode(false);
       setEditorModalOpen(true);
 
-      // Sync latest version silently in background if missing
-      if (identity.aiTestId && identity.aiTestId !== "fallback" && !identity.expectedVersion) {
-        getIntegrationScenarioApi(snapshotId, identity.aiTestId, identity.scenarioId)
+      // Sync latest version silently in background if missing real 64-char artifact hash
+      if (
+        identity.aiTestId &&
+        identity.aiTestId !== "fallback" &&
+        typeof identity.expectedVersion !== "string"
+      ) {
+        getIntegrationScenarioApi(
+          snapshotId,
+          identity.aiTestId,
+          identity.scenarioId,
+          {
+            filePath: identity.filePath,
+            testName: identity.testName,
+            origin: identity.origin,
+          },
+        )
           .then((result) => {
             if (result) {
               setEditorModalScenario((prev) =>
                 prev
                   ? {
                       ...prev,
-                      expectedVersion: result.version || result.aiTest?.version || prev.expectedVersion,
+                      aiTestId: result.aiTest?.id || prev.aiTestId,
+                      expectedVersion:
+                        result.version ||
+                        result.aiTest?.version ||
+                        prev.expectedVersion,
                     }
                   : prev,
               );
@@ -1442,18 +1654,26 @@ export default function IntegrationWorkspace({
     }
 
     try {
-      if (identity.aiTestId && identity.aiTestId !== "fallback") {
+      if (identity.aiTestId) {
         const result = await getIntegrationScenarioApi(
           snapshotId,
           identity.aiTestId,
           identity.scenarioId,
+          {
+            filePath: identity.filePath,
+            testName: identity.testName,
+            origin: identity.origin,
+          },
         );
         setEditorModalScenario({
           ...sc,
           ...identity,
+          aiTestId: result?.aiTest?.id || identity.aiTestId,
           expectedVersion:
-            result.version || result.aiTest?.version || identity.expectedVersion,
-          code: result.code || "",
+            result?.version ||
+            result?.aiTest?.version ||
+            identity.expectedVersion,
+          code: result?.code || "",
         });
       } else {
         setEditorModalScenario({
@@ -1472,23 +1692,17 @@ export default function IntegrationWorkspace({
 
   const handleOpenAddScenario = (ep) => {
     if (!projectAccess.can("files.write")) return;
+    setEditorSaveError("");
     const tests = workspace?.aiTests || [];
     const test =
       tests.find((t) =>
-        t.requests?.some(
-          (r) => r.method === ep?.method && r.path === ep?.path,
-        ),
+        t.requests?.some((r) => r.method === ep?.method && r.path === ep?.path),
       ) || tests[0];
-    if (!test) {
-      setSetupAutoRun(false);
-      setSetupModalOpen(true);
-      return;
-    }
     setEditorModalScenario({
-      aiTestId: test.id,
-      expectedVersion: test.version,
+      aiTestId: test?.id || "default",
+      expectedVersion: test?.version || null,
     });
-    setEditorModalEndpoint(ep);
+    setEditorModalEndpoint(ep || endpoints?.[0] || null);
     setIsAddScenarioMode(true);
     setEditorModalOpen(true);
   };
@@ -1496,22 +1710,38 @@ export default function IntegrationWorkspace({
   const handleSaveScenario = async (savedData) => {
     if (!projectAccess.can("files.write") || !snapshotId) return false;
     setError("");
+    setEditorSaveError("");
+    setSavingScenario(true);
     try {
       await mutateIntegrationScenarioApi({
         snapshotId,
-        aiTestId: editorModalScenario.aiTestId,
+        aiTestId: editorModalScenario.aiTestId || "default",
         scenarioId: editorModalScenario.scenarioId,
         expectedVersion: editorModalScenario.expectedVersion,
         action: isAddScenarioMode ? "ADD" : "UPDATE",
         code: typeof savedData === "string" ? savedData : savedData.code,
         endpoint: editorModalEndpoint,
+        filePath: editorModalScenario.filePath,
+        testName: editorModalScenario.testName,
+        origin: editorModalScenario.origin,
       });
       setEditorModalOpen(false);
+      showToast({
+        type: "success",
+        title: isAddScenarioMode ? "Scenario Added" : "Scenario Updated",
+        message: isAddScenarioMode
+          ? "New integration test scenario added to workspace."
+          : "Integration test scenario changes saved.",
+      });
       await load({ scan: false });
       return true;
     } catch (err) {
-      setError(err.message || "Failed to save scenario.");
+      const msg = err.message || "Failed to save scenario.";
+      setEditorSaveError(msg);
+      setError(msg);
       return false;
+    } finally {
+      setSavingScenario(false);
     }
   };
 
@@ -1613,7 +1843,9 @@ export default function IntegrationWorkspace({
     const statusByTitle = new Map();
     for (const ep of endpoints || []) {
       for (const sc of ep.scenarios || []) {
-        const key = String(sc.title || sc.name || "").trim().toLowerCase();
+        const key = String(sc.title || sc.name || "")
+          .trim()
+          .toLowerCase();
         if (key && sc.status) statusByTitle.set(key, sc.status);
       }
     }
@@ -1689,6 +1921,8 @@ export default function IntegrationWorkspace({
     const totalApis = endpoints.length;
     let testedApis = 0;
     let passedApis = 0;
+    let partialApis = 0;
+    let executedOnlyApis = 0;
     let failedApis = 0;
 
     const hasExecuted =
@@ -1716,8 +1950,12 @@ export default function IntegrationWorkspace({
 
       for (const ep of endpoints) {
         if ((ep.method || "").toUpperCase() !== reqMethod) continue;
-        const cleanRoute = (ep.path || ep.route || ep.fullPath || "").replace(/\/+$/, "") || "/";
-        const regexStr = "^" + cleanRoute.replace(/\./g, "\\.").replace(/:[a-zA-Z0-9_]+/g, "[^/]+") + "$";
+        const cleanRoute =
+          (ep.path || ep.route || ep.fullPath || "").replace(/\/+$/, "") || "/";
+        const regexStr =
+          "^" +
+          cleanRoute.replace(/\./g, "\\.").replace(/:[a-zA-Z0-9_]+/g, "[^/]+") +
+          "$";
         if (new RegExp(regexStr, "i").test(cleanReq)) {
           return ep;
         }
@@ -1728,17 +1966,19 @@ export default function IntegrationWorkspace({
     // Group and deduplicate scenarios across endpoints and workspace.aiTests
     const scenariosByEndpointMap = {};
 
-    // 1. Ingest scenarios from AI tests / workspace.aiTests
+    // 1. Ingest scenarios from AI tests / workspace.aiTests (exclude un-executed synthetic repo file wrappers)
     (workspace?.aiTests || []).forEach((t) => {
-      if (!t) return;
+      if (!t || String(t.id || "").startsWith("existing_test_")) return;
       (t.requests || []).forEach((r, idx) => {
-        if (!r) return;
+        if (!r || r.origin === "PROJECT_EXISTING") return;
         const rMethod = (r.method || "GET").toUpperCase();
         const rPath = r.path || "";
         const matchedEp = findMatchingEndpoint(rMethod, rPath);
-        const epMethod = matchedEp ? (matchedEp.method || "GET").toUpperCase() : rMethod;
+        const epMethod = matchedEp
+          ? (matchedEp.method || "GET").toUpperCase()
+          : rMethod;
         const epPath = matchedEp
-          ? (matchedEp.path || matchedEp.route || matchedEp.fullPath || "/")
+          ? matchedEp.path || matchedEp.route || matchedEp.fullPath || "/"
           : rPath.split("?")[0] || "/";
         const epKey = `${epMethod} ${epPath}`;
 
@@ -1760,6 +2000,7 @@ export default function IntegrationWorkspace({
       const epPath = ep.path || ep.route || ep.fullPath || "/";
       const epKey = `${epMethod} ${epPath}`;
       const epScenarios = ep.scenarios || [];
+      const epCaseCov = ep.caseCoverage || getEndpointCaseCoverage(ep, epScenarios);
 
       const scFailed = epScenarios.filter(
         (s) =>
@@ -1780,9 +2021,12 @@ export default function IntegrationWorkspace({
       if (hasExecuted) {
         if (epFailed > 0) {
           failedApis++;
-        } else if (epPassed > 0) {
+        } else if (epPassed > 0 && epCaseCov.isFullyVerified) {
           passedApis++;
           testedApis++;
+        } else if (epPassed > 0) {
+          partialApis++;
+          executedOnlyApis++;
         }
       }
 
@@ -1791,12 +2035,26 @@ export default function IntegrationWorkspace({
       }
 
       epScenarios.forEach((s, idx) => {
+        const scStatusUpper = String(s.status || "").toUpperCase();
+        const isExecuted =
+          scStatusUpper === "PASSED" ||
+          scStatusUpper === "PASS" ||
+          scStatusUpper === "FAILED" ||
+          scStatusUpper === "FAIL";
+        const isRepoTest =
+          !s.aiTestId ||
+          String(s.aiTestId).startsWith("existing_test_") ||
+          s.origin === "PROJECT_EXISTING";
+        const isUnrunRepoTest = isRepoTest && !isExecuted;
+        if (isUnrunRepoTest) return;
+
         const scenarioId = s.id || `${epKey}::scenario_${idx}`;
         const sTitle = s.title || s.testName || `Scenario ${idx + 1}`;
         const existingIdx = scenariosByEndpointMap[epKey].findIndex(
           (ex) =>
             ex.id === scenarioId ||
-            (ex.testName && (ex.testName === sTitle || ex.testName === s.testName))
+            (ex.testName &&
+              (ex.testName === sTitle || ex.testName === s.testName)),
         );
 
         if (existingIdx === -1) {
@@ -1812,17 +2070,23 @@ export default function IntegrationWorkspace({
             existing.status = s.status;
           }
           if (s.rawJestStatus) existing.rawJestStatus = s.rawJestStatus;
-          if (s.executionVerdict) existing.executionVerdict = s.executionVerdict;
-          if (s.actualStatus !== undefined) existing.actualStatus = s.actualStatus;
-          if (s.failureDiagnostics) existing.failureDiagnostics = s.failureDiagnostics;
+          if (s.executionVerdict)
+            existing.executionVerdict = s.executionVerdict;
+          if (s.actualStatus !== undefined)
+            existing.actualStatus = s.actualStatus;
+          if (s.failureDiagnostics)
+            existing.failureDiagnostics = s.failureDiagnostics;
         }
       });
     });
 
     const uncoveredApis = Math.max(0, totalApis - testedApis);
-    const executedApisCount = passedApis + failedApis;
+    const notFullyCoveredApis = Math.max(0, totalApis - testedApis - partialApis);
+    const executedApisCount = passedApis + partialApis + failedApis;
     const apiPassRate =
-      executedApisCount > 0 ? Math.round((passedApis / executedApisCount) * 100) : 0;
+      executedApisCount > 0
+        ? Math.round((passedApis / executedApisCount) * 100)
+        : 0;
     const apiCoverageRate =
       totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
 
@@ -1849,14 +2113,10 @@ export default function IntegrationWorkspace({
           : generation?.generatedScenarios || 0;
 
     const passedScenariosCount =
-      dedupedScenarios.length > 0
-        ? dedupPassed
-        : execution?.passedTests || 0;
+      dedupedScenarios.length > 0 ? dedupPassed : execution?.passedTests || 0;
 
     const failedScenariosCount =
-      dedupedScenarios.length > 0
-        ? dedupFailed
-        : execution?.failedTests || 0;
+      dedupedScenarios.length > 0 ? dedupFailed : execution?.failedTests || 0;
 
     const totalExecutedScenarios = passedScenariosCount + failedScenariosCount;
     const scenarioPassRate =
@@ -1883,8 +2143,11 @@ export default function IntegrationWorkspace({
       totalApis,
       testedApis,
       passedApis,
+      partialApis,
+      executedOnlyApis,
       failedApis,
       uncoveredApis,
+      notFullyCoveredApis,
       apiPassRate,
       apiCoverageRate,
       totalScenariosCount,
@@ -1895,17 +2158,56 @@ export default function IntegrationWorkspace({
     };
   }, [endpoints, execution, generation, workspace]);
 
-  const apiFiles = new Set(endpoints.map(endpoint => endpoint.source?.sourceFile).filter(Boolean));
-  const apiFileCoverage = (summary?.fileCoverages || []).filter(file => apiFiles.has(file.filePath));
+  useChatTestContext(activeTab === "report" ? undefined : onChatContextChange, {
+    projectId, snapshotId, testType: "integration", testRunId: execution?.testRunId,
+    displayedMetrics: {
+      kind: "integration", tab: activeTab,
+      state: loading && !workspace ? "loading" : error && !workspace ? "unavailable" : overallStats.hasExecuted ? "ready" : "not-run",
+      counts: workspace ? {
+        endpoints: overallStats.totalApis, testedEndpoints: overallStats.testedApis,
+        passedEndpoints: overallStats.passedApis, failedEndpoints: overallStats.failedApis,
+        scenarios: overallStats.totalScenariosCount, passedScenarios: overallStats.passedScenariosCount,
+        failedScenarios: overallStats.failedScenariosCount,
+        apiCoveragePct: overallStats.apiCoverageRate, scenarioPassRate: overallStats.scenarioPassRate,
+      } : undefined,
+    },
+  });
+
+  const normalizeCoveragePath = (p) =>
+    String(p || "")
+      .replace(/\\/g, "/")
+      .trim()
+      .replace(/^\.\/+/, "")
+      .replace(/^\/+/, "");
+
+  const apiFiles = Array.from(
+    new Set(
+      endpoints.map((endpoint) => endpoint.source?.sourceFile).filter(Boolean),
+    ),
+  );
+  const allFileCoverages = summary?.fileCoverages || [];
+  const apiFileCoverage = apiFiles
+    .map((sourceFile) => {
+      const normSrc = normalizeCoveragePath(sourceFile);
+      const lowerSrc = normSrc.toLowerCase();
+      return (
+        allFileCoverages.find((file) => normalizeCoveragePath(file.filePath) === normSrc) ||
+        allFileCoverages.find((file) => normalizeCoveragePath(file.filePath).toLowerCase() === lowerSrc) ||
+        allFileCoverages.find((file) => {
+          const lowerCov = normalizeCoveragePath(file.filePath).toLowerCase();
+          return (
+            lowerCov.endsWith(`/${lowerSrc}`) ||
+            lowerSrc.endsWith(`/${lowerCov}`)
+          );
+        })
+      );
+    })
+    .filter(Boolean);
   const averageCoverage = apiFileCoverage.length
-    ? apiFileCoverage.reduce((sum, file) => sum + (file.line ?? 0), 0) / apiFileCoverage.length
+    ? apiFileCoverage.reduce((sum, file) => sum + (file.line ?? 0), 0) /
+      apiFileCoverage.length
     : null;
-  const coverageMetrics = [
-    ["API files", apiFiles.size],
-    ["Covered API files", apiFileCoverage.filter(file => file.line > 0).length],
-    ["Average coverage", averageCoverage == null ? "—" : averageCoverage.toFixed(1) + "%"],
-    ["Critical APIs", apiFileCoverage.filter(file => file.line != null && file.line < 60).length],
-  ];
+  const coveredApiFilesCount = apiFileCoverage.filter((file) => file.line > 0).length;
 
   // Loading State with Authentic Skeleton
   if (loading && !workspace) {
@@ -1921,7 +2223,8 @@ export default function IntegrationWorkspace({
           No Project Snapshot Selected
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-4 leading-relaxed">
-          Please select a valid snapshot from the project list before using API Integration Testing features.
+          Please select a valid snapshot from the project list before using API
+          Integration Testing features.
         </p>
       </div>
     );
@@ -1946,8 +2249,8 @@ export default function IntegrationWorkspace({
             : null,
       badgeColor:
         failedScenariosList.length > 0
-          ? "bg-rose-500/10 text-rose-400 border border-rose-500/25 font-semibold"
-          : "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold",
+          ? "bg-rose-500/[0.06] text-rose-300/85 border border-rose-500/20 font-medium"
+          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] font-medium",
     },
   ];
 
@@ -1964,84 +2267,86 @@ export default function IntegrationWorkspace({
         <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3">
           {/* Left: Title & Live State Badge */}
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-primary)] flex items-center justify-center">
+            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-center justify-center">
               <Network size={15} />
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-sm font-semibold text-[var(--color-text)] tracking-tight m-0">
-                Integration Test Coverage
-              </h1>
-              <span className="text-xs text-[var(--color-text-secondary)]">Playwright · Supertest</span>
-              {hasScanned && detectionInfo?.targetFramework && (
-                <span className="px-2 py-0.5 rounded font-mono text-[10px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-                  {detectionInfo.targetFramework.toUpperCase()}
-                </span>
-              )}
-              {/* Dynamic Health Badge */}
-              {isJobActive ? (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-sky-500/10 text-sky-400 border border-sky-500/25">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500" />
-                  </span>
-                  Running...
-                </span>
-              ) : failedScenariosList.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("report")}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/25 cursor-pointer hover:bg-rose-500/20 transition-colors"
-                >
-                  <AlertTriangle size={10} />
-                  {failedScenariosList.length} failed
-                </button>
-              ) : overallStats.passedScenariosCount > 0 ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
-                  <CheckCircle2 size={10} />
-                  {overallStats.passedScenariosCount} passed
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
-                  {hasScanned
-                    ? `${overallStats.totalApis} ${overallStats.totalApis === 1 ? "route" : "routes"} discovered`
-                    : "Not scanned yet"}
-                </span>
-              )}
-            </div>
+            <h1 className="text-sm font-semibold text-[var(--color-text)] tracking-tight m-0">
+              Integration Test Coverage
+            </h1>
           </div>
 
           {/* Right: Header Utilities (Initial Scan, Framework Setup, History) */}
           <div className="flex items-center gap-2 flex-wrap">
-            {onOpenJobQueue && <CoverageJobQueueButton onClick={onOpenJobQueue} running={isJobActive} />}
+            {onOpenJobQueue && (
+              <CoverageJobQueueButton
+                onClick={onOpenJobQueue}
+                running={isJobActive}
+              />
+            )}
             {!hasScanned ? (
               <button
                 type="button"
                 onClick={handleScanEndpoints}
                 disabled={isScanningEndpoints || isJobActive}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                 title="Scan Express/Node AST to discover API routes and controllers"
               >
                 <RefreshCw
                   size={12}
-                  className={isScanningEndpoints ? "animate-spin" : "text-white"}
+                  className={
+                    isScanningEndpoints ? "animate-spin" : ""
+                  }
                 />
-                <span>{isScanningEndpoints ? "Scanning APIs..." : "Scan APIs"}</span>
+                <span>
+                  {isScanningEndpoints ? "Scanning APIs..." : "Scan APIs"}
+                </span>
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setCancellationNotice("");
-                  setSetupAutoRun(false);
-                  setSetupModalOpen(true);
-                }}
-                disabled={!projectAccess.can("ai.use") || isJobActive}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
-                title="Configure test framework (Supertest / Playwright API) and dependencies"
-              >
-                <SlidersHorizontal size={13} className="text-[var(--color-primary)]" />
-                <span>Test Setup</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCancellationNotice("");
+                    setSetupAutoRun(false);
+                    setSetupModalOpen(true);
+                  }}
+                  disabled={!projectAccess.can("ai.use") || isJobActive}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  title="Configure test framework (Supertest / Playwright API) and dependencies"
+                >
+                  <SlidersHorizontal
+                    size={13}
+                    className="text-[var(--color-text-muted)]"
+                  />
+                  <span>Test Setup</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleRunApprovedTests(false)}
+                  disabled={
+                    !projectAccess.can("tests.run") ||
+                    isJobActive ||
+                    pendingAction === "RUN"
+                  }
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  title="Run existing project integration tests & approved scenarios to measure coverage"
+                >
+                  {pendingAction === "RUN" ||
+                  (isJobActive && activeJobType === "EXECUTE") ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Play size={12} fill="currentColor" />
+                  )}
+                  <span>
+                    {pendingAction === "RUN"
+                      ? "Starting..."
+                      : isJobActive && activeJobType === "EXECUTE"
+                        ? "Running Coverage..."
+                        : "Run Coverage"}
+                  </span>
+                </button>
+              </>
             )}
 
             {/* Version History & Diff Drawer Button */}
@@ -2061,129 +2366,151 @@ export default function IntegrationWorkspace({
           </div>
         </div>
 
-        {/* ── 2. UNIFIED TELEMETRY STRIP (Displayed only after APIs have been scanned) ── */}
+        {/* ── 2. UNIFIED TELEMETRY STRIP (Asymmetric Hierarchy) ── */}
         {hasScanned && (
-          <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/50">
-            <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-[var(--color-border)] overflow-hidden">
-              {/* Cell 1: Endpoint Coverage (Hero Metric) */}
-              <div className="px-4 py-3 flex flex-col justify-between gap-1.5">
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
+          <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60">
+            <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
+              {/* Primary Anchor: Endpoint Coverage */}
+              <div className="lg:col-span-5 px-4 py-3 flex flex-col justify-between gap-2">
+                <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
                   <span>Endpoint coverage</span>
                   <span className="font-mono tabular-nums text-[var(--color-text-muted)]">
-                    {overallStats.testedApis}/{overallStats.totalApis}
+                    {overallStats.testedApis}/{overallStats.totalApis}{" "}
+                    {overallStats.totalApis === 1 ? "route" : "routes"}
+                    {averageCoverage != null && (
+                      <span className="ml-2 text-[var(--color-text-secondary)]">
+                        · {averageCoverage.toFixed(1)}% line cov
+                      </span>
+                    )}
                   </span>
                 </div>
-                <div className="flex items-baseline gap-2 font-mono tabular-nums">
-                  <span
-                    className={`text-xl font-bold tracking-tight ${
-                      overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
-                        ? "text-emerald-400"
-                        : "text-[var(--color-primary)]"
-                    }`}
-                  >
-                    {overallStats.apiCoverageRate}%
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">
-                    routes covered
-                  </span>
-                </div>
-                <div className="w-full bg-[var(--color-surface-secondary)] h-1 rounded-sm overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      overallStats.apiCoverageRate === 100 && overallStats.totalApis > 0
-                        ? "bg-emerald-400"
-                        : "bg-[var(--color-primary)]"
-                    }`}
-                    style={{ width: `${overallStats.apiCoverageRate}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Cell 2: Discovered APIs */}
-              <div className="px-4 py-3 flex flex-col justify-between gap-1">
-                <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
-                  Discovered routes
-                </span>
-                <div className="flex items-baseline gap-2 font-mono tabular-nums">
-                  <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
-                    {overallStats.totalApis}
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">
-                    {overallStats.uncoveredApis > 0
-                      ? `${overallStats.uncoveredApis} uncovered`
-                      : "all covered"}
-                  </span>
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="flex items-baseline gap-2 font-mono tabular-nums">
+                    <span className="text-2xl font-bold tracking-tight text-[var(--color-text)]">
+                      {overallStats.apiCoverageRate}%
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      verified
+                    </span>
+                  </div>
+                  <div className="flex-1 max-w-[160px] bg-[var(--color-surface-secondary)] h-1.5 rounded-sm overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        overallStats.apiCoverageRate === 100 &&
+                        overallStats.totalApis > 0
+                          ? "bg-emerald-500/65"
+                          : "bg-[var(--color-primary)]/70"
+                      }`}
+                      style={{ width: `${overallStats.apiCoverageRate}%` }}
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Cell 3: Test Scenarios */}
-              <div className="px-4 py-3 flex flex-col justify-between gap-1">
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
-                  <span>Test scenarios</span>
-                  {overallStats.totalScenariosCount > 0 && (
-                    <span
-                      className={`font-mono tabular-nums ${
-                        overallStats.scenarioPassRate === 100
-                          ? "text-emerald-400"
-                          : overallStats.failedScenariosCount > 0
-                            ? "text-rose-400"
+              {/* Supporting Metrics Strip */}
+              <div className="lg:col-span-7 grid grid-cols-3 divide-x divide-[var(--color-border)]">
+                {/* Discovered Routes */}
+                <div className="px-4 py-3 flex flex-col justify-between gap-1">
+                  <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
+                    <span>Discovered</span>
+                    {overallStats.totalApis > 0 && (
+                      <span className="font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]">
+                        {overallStats.uncoveredApis === 0
+                          ? "All covered"
+                          : overallStats.partialApis > 0
+                            ? `${overallStats.partialApis} partial · ${overallStats.notFullyCoveredApis} uncovered`
+                            : `${overallStats.uncoveredApis} uncovered`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
+                        {overallStats.totalApis}
+                      </span>
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                        {overallStats.totalApis === 1 ? "route" : "routes"}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      {coveredApiFilesCount}/{apiFiles.length} {apiFiles.length === 1 ? "file" : "files"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Test Scenarios */}
+                <div className="px-4 py-3 flex flex-col justify-between gap-1">
+                  <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
+                    <span>Scenarios</span>
+                    {overallStats.totalScenariosCount > 0 && (
+                      <span
+                        className={`font-mono text-[11px] tabular-nums ${
+                          overallStats.failedScenariosCount > 0
+                            ? "text-rose-300/85"
                             : "text-[var(--color-text-muted)]"
+                        }`}
+                      >
+                        {overallStats.scenarioPassRate}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1 font-mono tabular-nums">
+                    <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
+                      {overallStats.passedScenariosCount}
+                    </span>
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      / {overallStats.totalScenariosCount} passed
+                    </span>
+                  </div>
+                </div>
+
+                {/* Execution Health */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("report")}
+                  className="px-4 py-3 flex flex-col justify-between gap-1 text-left hover:bg-[var(--color-surface-secondary)]/50 transition-colors cursor-pointer"
+                  title="Open Executive Report & diagnostics"
+                >
+                  <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
+                    <span>Health</span>
+                    <span className="font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]">
+                      {((execution?.durationMs || 0) / 1000).toFixed(1)}s
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 font-mono tabular-nums">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        overallStats.passedScenariosCount +
+                          overallStats.failedScenariosCount ===
+                        0
+                          ? "bg-[var(--color-text-muted)]"
+                          : failedScenariosList.length === 0
+                            ? "bg-emerald-500/65"
+                            : "bg-rose-400/75"
+                      }`}
+                    />
+                    <span
+                      className={`text-sm font-medium truncate ${
+                        overallStats.passedScenariosCount +
+                          overallStats.failedScenariosCount ===
+                        0
+                          ? "text-[var(--color-text-secondary)]"
+                          : failedScenariosList.length === 0
+                            ? "text-[var(--color-text-secondary)]"
+                            : "text-rose-300/85"
                       }`}
                     >
-                      {overallStats.scenarioPassRate}% pass
+                      {overallStats.passedScenariosCount +
+                        overallStats.failedScenariosCount ===
+                      0
+                        ? "Not run yet"
+                        : failedScenariosList.length === 0
+                          ? "All healthy"
+                          : `${failedScenariosList.length} failed`}
                     </span>
-                  )}
-                </div>
-                <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
-                  <span className="text-xl font-bold tracking-tight text-[var(--color-text)]">
-                    {overallStats.passedScenariosCount}
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">
-                    / {overallStats.totalScenariosCount} passed
-                  </span>
-                </div>
+                  </div>
+                </button>
               </div>
-
-              {/* Cell 4: Execution Health */}
-              <button
-                type="button"
-                onClick={() => setActiveTab("report")}
-                className="px-4 py-3 flex flex-col justify-between gap-1 text-left hover:bg-[var(--color-surface-secondary)]/50 transition-colors cursor-pointer"
-                title="Open Executive Report & 5-layer diagnostics"
-              >
-                <div className="flex items-center justify-between text-[11px] font-medium text-[var(--color-text-secondary)]">
-                  <span>Execution health</span>
-                  <span className="font-mono tabular-nums text-[var(--color-text-muted)]">
-                    {((execution?.durationMs || 0) / 1000).toFixed(1)}s
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 font-mono tabular-nums">
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
-                        ? "bg-[var(--color-text-muted)]"
-                        : failedScenariosList.length === 0
-                          ? "bg-emerald-400"
-                          : "bg-rose-400"
-                    }`}
-                  />
-                  <span
-                    className={`text-sm font-semibold ${
-                      overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
-                        ? "text-[var(--color-text-secondary)]"
-                        : failedScenariosList.length === 0
-                          ? "text-emerald-400"
-                          : "text-rose-400"
-                    }`}
-                  >
-                    {overallStats.passedScenariosCount + overallStats.failedScenariosCount === 0
-                      ? "Not run yet"
-                      : failedScenariosList.length === 0
-                        ? "All healthy"
-                        : `${failedScenariosList.length} failed`}
-                  </span>
-                </div>
-              </button>
             </div>
           </div>
         )}
@@ -2242,14 +2569,6 @@ export default function IntegrationWorkspace({
             )}
           </div>
         </div>
-        <dl className="grid grid-cols-2 gap-2 px-5 pb-3 sm:grid-cols-4">
-          {coverageMetrics.map(([label, value]) => (
-            <div key={label} className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
-              <dt className="text-xs text-[var(--color-text-secondary)]">{label}</dt>
-              <dd className="font-mono text-sm font-semibold tabular-nums">{value}</dd>
-            </div>
-          ))}
-        </dl>
       </header>
 
       {/* Cancellation Notice Banner */}
@@ -2426,8 +2745,8 @@ export default function IntegrationWorkspace({
                 hasScanned={hasScanned}
                 hasAnalyzedCoverage={Boolean(
                   workspace?.generation?.hasAnalyzedCoverage ||
-                    overallStats.totalScenariosCount > 0 ||
-                    (workspace?.execution?.totalTests || 0) > 0,
+                  overallStats.totalScenariosCount > 0 ||
+                  (workspace?.execution?.totalTests || 0) > 0,
                 )}
                 isScanning={isScanningEndpoints}
                 onScanEndpoints={handleScanEndpoints}
@@ -2437,14 +2756,14 @@ export default function IntegrationWorkspace({
                 }}
                 onGenerateTest={(ep) =>
                   handleGenerateClick([
-                    `${(ep.method || "GET").toUpperCase()} ${ep.path}`,
+                    `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
                   ])
                 }
                 onGenerateSelected={(selectedEps) =>
                   handleGenerateClick(
                     selectedEps.map(
                       (ep) =>
-                        `${(ep.method || "GET").toUpperCase()} ${ep.path || ep.fullPath || "/"}`,
+                        `${(ep.method || "GET").toUpperCase()} ${ep.fullPath || ep.path || ep.route || "/"}`,
                     ),
                   )
                 }
@@ -2471,14 +2790,10 @@ export default function IntegrationWorkspace({
                 }
                 onOpenEditScenario={handleOpenEditScenario}
                 onDeleteScenario={
-                  projectAccess.can("files.write")
-                    ? handleDeleteScenario
-                    : null
+                  projectAccess.can("files.write") ? handleDeleteScenario : null
                 }
                 onToggleScenario={
-                  projectAccess.can("files.write")
-                    ? handleToggleScenario
-                    : null
+                  projectAccess.can("files.write") ? handleToggleScenario : null
                 }
                 onAIFixScenario={
                   projectAccess.can("ai.use") ? handleAIFixScenario : null
@@ -2504,14 +2819,17 @@ export default function IntegrationWorkspace({
             <IntegrationReportEmbed
               projectId={projectId}
               snapshotId={snapshotId}
-              report={reportData}
+              report={reportData?.overview?.snapshotId === snapshotId ? reportData : null}
               workspace={workspace}
               endpoints={endpoints}
+              onChatContextChange={onChatContextChange}
               hasScanned={hasScanned}
               hasExecutedCoverage={
                 Boolean(reportData?.apiCoverage?.hasExecutedCoverage) ||
                 (execution?.totalTests || 0) > 0 ||
-                overallStats.passedScenariosCount + overallStats.failedScenariosCount > 0
+                overallStats.passedScenariosCount +
+                  overallStats.failedScenariosCount >
+                  0
               }
               onScanApis={() => {
                 setActiveTab("routes");
@@ -2750,19 +3068,19 @@ export default function IntegrationWorkspace({
                   </span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-[10px] font-mono">
-                  <span className="px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     2xx Happy Path
                   </span>
-                  <span className="px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     400 Validation
                   </span>
-                  <span className="px-2 py-1 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     401/403 Auth
                   </span>
-                  <span className="px-2 py-1 rounded bg-zinc-500/10 text-zinc-300 border border-zinc-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     404 Not Found
                   </span>
-                  <span className="px-2 py-1 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-center">
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-center">
                     500 Resiliency
                   </span>
                 </div>
@@ -2820,7 +3138,7 @@ export default function IntegrationWorkspace({
                     })
                   }
                   disabled={isRunningSetupFlow}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {isRunningSetupFlow ? (
                     <>
@@ -2871,8 +3189,15 @@ export default function IntegrationWorkspace({
 
       <IntegrationScenarioEditorModal
         isOpen={editorModalOpen}
-        onClose={() => setEditorModalOpen(false)}
+        onClose={() => {
+          if (!savingScenario) {
+            setEditorSaveError("");
+            setEditorModalOpen(false);
+          }
+        }}
         onSave={handleSaveScenario}
+        loading={savingScenario}
+        saveError={editorSaveError}
         initialCode={editorModalScenario?.code || ""}
         title={
           editorModalScenario?.title ||
@@ -2882,6 +3207,10 @@ export default function IntegrationWorkspace({
         }
         targetEndpoint={editorModalEndpoint}
         availableEndpoints={endpoints}
+        onSelectTargetEndpoint={setEditorModalEndpoint}
+        existingScenarioTitles={(editorModalEndpoint?.scenarios || [])
+          .map((s) => s.title || s.name || "")
+          .filter(Boolean)}
         isAddMode={isAddScenarioMode}
       />
     </div>

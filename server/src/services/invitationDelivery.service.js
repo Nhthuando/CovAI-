@@ -43,7 +43,7 @@ export function startInvitationDeliveryWorker() {
         try { await dispatchInvitationDeliveries(); } catch { console.error('[invitation-delivery] Dispatch unavailable; retrying'); }
         finally { active = false; }
     };
-    const timer = setInterval(run, 2000);
+    const timer = setInterval(run, 15000);
     timer.unref();
     void run();
     return () => clearInterval(timer);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Mail,
@@ -6,12 +6,15 @@ import {
   Eye,
   EyeOff,
   User,
-  ArrowRight,
   AlertCircle,
   CheckCircle2,
   Loader2,
 } from "lucide-react";
-import { loginApi, registerApi } from "../../services/auth.service";
+import {
+  loginApi,
+  registerApi,
+  getGithubOAuthUrl,
+} from "../../services/auth.service";
 import { consumeAuthReturn } from "../../lib/authReturn";
 import { queryClient } from "../../lib/queryClient";
 
@@ -43,22 +46,8 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
   const [errors, setErrors] = useState({});
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [status, setStatus] = useState("idle"); // idle | loading | success | error
+  const [status, setStatus] = useState("idle");
   const [serverMessage, setServerMessage] = useState("");
-
-  useEffect(() => {
-    setFormData({
-      name: "",
-      email: "",
-      password: "",
-      confirm: "",
-    });
-    setErrors({});
-    setShowPass(false);
-    setShowConfirm(false);
-    setStatus("idle");
-    setServerMessage("");
-  }, [mode]);
 
   const update = (field) => (e) => {
     setFormData((d) => ({ ...d, [field]: e.target.value }));
@@ -123,6 +112,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         localStorage.setItem("userName", data.userName);
         localStorage.setItem("userEmail", data.userEmail);
       }
+      window.dispatchEvent(new Event("covai:auth-change"));
       setStatus("success");
       setTimeout(() => {
         window.location.href = consumeAuthReturn();
@@ -133,76 +123,73 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         setErrors(err.errors);
       } else {
         setServerMessage(
-          err.message || "Authentication failed. Please verify credentials.",
+          err.message || "Authentication failed. Please verify credentials."
         );
       }
     }
   }
 
   const handleGithubOAuth = () => {
-    const clientId =
-      import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQ1Hyb1oaqmSTXi";
-    const redirectUri = `${window.location.origin}/auth/github/callback`;
-    window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=user:email repo&redirect_uri=${redirectUri}`;
+    const oauthUrl = getGithubOAuthUrl("login");
+    if (!oauthUrl) {
+      setServerMessage("GitHub OAuth is not configured.");
+      return;
+    }
+    sessionStorage.setItem("covai.githubOAuthMode", "login");
+    window.location.href = oauthUrl;
   };
 
   return (
-    <div className="w-full max-w-[380px] mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--color-text)] mb-1.5">
-          {isLogin ? "Sign in to CovAI" : "Create developer account"}
+    <div className="w-full">
+      <div className="mb-5">
+        <h1 className="lp-display text-2xl font-bold tracking-tight text-[var(--lp-ink)] mb-1">
+          {isLogin ? "Sign in" : "Create account"}
         </h1>
-        <p className="text-xs sm:text-sm text-[var(--color-text-secondary)] leading-relaxed">
+        <p className="text-xs text-[var(--lp-ink-secondary)]">
           {isLogin
-            ? "Enter your credentials to access your projects and test dashboards."
-            : "Automate test generation and branch coverage in minutes."}
+            ? "Access your repositories and coverage runs."
+            : "Start analyzing branches in minutes."}
         </p>
       </div>
 
-      {/* Success banner */}
       {status === "success" && (
-        <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-success)]/10 border border-[var(--color-success)]/30 text-center mb-6">
-          <CheckCircle2 className="w-7 h-7 text-[var(--color-success)] mx-auto mb-2" />
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">
-            {isLogin ? "Sign in successful" : "Account created successfully"}
+        <div className="p-5 rounded-xl bg-[var(--lp-signal-bg)] border border-[var(--lp-signal-border)] text-center mb-6">
+          <CheckCircle2 className="w-7 h-7 text-[var(--lp-signal)] mx-auto mb-2" />
+          <h2 className="text-sm font-semibold text-[var(--lp-ink)]">
+            {isLogin ? "Sign in successful" : "Account created"}
           </h2>
-          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Redirecting to projects...
+          <p className="text-xs text-[var(--lp-ink-secondary)] mt-0.5 lp-mono">
+            Opening workspace...
           </p>
         </div>
       )}
 
       {status !== "success" && (
         <>
-          {/* GitHub OAuth Button */}
           <button
             type="button"
             id="auth-github-btn"
             onClick={handleGithubOAuth}
-            className="w-full h-10 px-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] text-sm font-medium transition-colors flex items-center justify-center gap-2.5 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] mb-4"
+            className="w-full h-10 px-4 rounded-lg lp-btn-secondary text-xs sm:text-sm font-medium flex items-center justify-center gap-2.5 cursor-pointer mb-4"
           >
             <GithubIcon size={16} />
             <span>Continue with GitHub</span>
           </button>
 
-          {/* Divider */}
           <div className="relative flex items-center justify-center my-5">
-            <div className="border-t border-[var(--color-border)] w-full" />
-            <span className="bg-[var(--color-bg)] px-3 text-[11px] font-normal text-[var(--color-text-muted)] absolute">
-              or continue with email
+            <div className="border-t border-[var(--lp-line)] w-full" />
+            <span className="bg-[var(--lp-surface)] px-3 text-[11px] lp-mono text-[var(--lp-ink-muted)] absolute">
+              or with email
             </span>
           </div>
 
-          {/* Server Error Message */}
           {serverMessage && (
-            <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 flex items-start gap-2 mb-4 text-xs text-[var(--color-danger)]">
+            <div className="p-3 rounded-lg bg-[var(--lp-fault-bg)] border border-[var(--lp-fault-border)] flex items-start gap-2 mb-4 text-xs text-[var(--lp-fault)]">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{serverMessage}</span>
             </div>
           )}
 
-          {/* Form */}
           <form
             id={`auth-${mode}-form`}
             onSubmit={handleSubmit}
@@ -213,28 +200,27 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
               <div>
                 <label
                   htmlFor="auth-name"
-                  className="block text-xs font-medium text-[var(--color-text)] mb-1.5"
+                  className="block text-xs font-medium text-[var(--lp-ink-secondary)] mb-1.5"
                 >
-                  Full name{" "}
-                  <span className="text-[var(--color-danger)]">*</span>
+                  Full name <span className="text-[var(--lp-fault)]">*</span>
                 </label>
                 <div className="relative flex items-center">
-                  <User className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 pointer-events-none" />
+                  <User className="w-4 h-4 text-[var(--lp-ink-muted)] absolute left-3.5 pointer-events-none" />
                   <input
                     id="auth-name"
                     type="text"
                     placeholder="Alex Developer"
                     value={formData.name}
                     onChange={update("name")}
-                    className={`w-full h-10 pl-10 pr-3.5 rounded-[var(--radius-md)] border bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-text-muted)] transition-colors focus:outline-none ${
+                    className={`w-full h-10 pl-10 pr-3.5 rounded-lg border bg-[var(--lp-inset)] text-[var(--lp-ink)] text-sm placeholder:text-[var(--lp-ink-muted)] transition-colors focus:outline-none ${
                       errors.name
-                        ? "border-[var(--color-danger)] focus:border-[var(--color-danger)] focus:ring-1 focus:ring-[var(--color-danger)]"
-                        : "border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+                        ? "border-[var(--lp-fault)] focus:border-[var(--lp-fault)]"
+                        : "border-[var(--lp-line-strong)] focus:border-[var(--lp-signal)]"
                     }`}
                   />
                 </div>
                 {errors.name && (
-                  <p className="mt-1 text-xs text-[var(--color-danger)] flex items-center gap-1">
+                  <p className="mt-1.5 text-xs text-[var(--lp-fault)] flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />
                     <span>{errors.name}</span>
                   </p>
@@ -245,28 +231,27 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             <div>
               <label
                 htmlFor="auth-email"
-                className="block text-xs font-medium text-[var(--color-text)] mb-1.5"
+                className="block text-xs font-medium text-[var(--lp-ink-secondary)] mb-1.5"
               >
-                Email address{" "}
-                <span className="text-[var(--color-danger)]">*</span>
+                Email address <span className="text-[var(--lp-fault)]">*</span>
               </label>
               <div className="relative flex items-center">
-                <Mail className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 pointer-events-none" />
+                <Mail className="w-4 h-4 text-[var(--lp-ink-muted)] absolute left-3.5 pointer-events-none" />
                 <input
                   id="auth-email"
                   type="email"
                   placeholder="alex@company.com"
                   value={formData.email}
                   onChange={update("email")}
-                  className={`w-full h-10 pl-10 pr-3.5 rounded-[var(--radius-md)] border bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-text-muted)] transition-colors focus:outline-none ${
+                  className={`w-full h-10 pl-10 pr-3.5 rounded-lg border bg-[var(--lp-inset)] text-[var(--lp-ink)] text-sm placeholder:text-[var(--lp-ink-muted)] transition-colors focus:outline-none ${
                     errors.email
-                      ? "border-[var(--color-danger)] focus:border-[var(--color-danger)] focus:ring-1 focus:ring-[var(--color-danger)]"
-                      : "border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+                      ? "border-[var(--lp-fault)] focus:border-[var(--lp-fault)]"
+                      : "border-[var(--lp-line-strong)] focus:border-[var(--lp-signal)]"
                   }`}
                 />
               </div>
               {errors.email && (
-                <p className="mt-1 text-xs text-[var(--color-danger)] flex items-center gap-1">
+                <p className="mt-1.5 text-xs text-[var(--lp-fault)] flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />
                   <span>{errors.email}</span>
                 </p>
@@ -277,38 +262,38 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
               <div className="flex items-center justify-between mb-1.5">
                 <label
                   htmlFor="auth-password"
-                  className="block text-xs font-medium text-[var(--color-text)]"
+                  className="block text-xs font-medium text-[var(--lp-ink-secondary)]"
                 >
-                  Password <span className="text-[var(--color-danger)]">*</span>
+                  Password <span className="text-[var(--lp-fault)]">*</span>
                 </label>
                 {isLogin && (
                   <button
                     type="button"
                     onClick={() => setMode("forgot_password")}
-                    className="text-xs text-[var(--color-primary)] hover:underline cursor-pointer"
+                    className="text-xs text-[var(--lp-signal)] hover:underline cursor-pointer"
                   >
                     Forgot password?
                   </button>
                 )}
               </div>
               <div className="relative flex items-center">
-                <Lock className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 pointer-events-none" />
+                <Lock className="w-4 h-4 text-[var(--lp-ink-muted)] absolute left-3.5 pointer-events-none" />
                 <input
                   id="auth-password"
                   type={showPass ? "text" : "password"}
                   placeholder={isLogin ? "••••••••" : "Minimum 8 characters"}
                   value={formData.password}
                   onChange={update("password")}
-                  className={`w-full h-10 pl-10 pr-10 rounded-[var(--radius-md)] border bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-text-muted)] transition-colors focus:outline-none ${
+                  className={`w-full h-10 pl-10 pr-10 rounded-lg border bg-[var(--lp-inset)] text-[var(--lp-ink)] text-sm placeholder:text-[var(--lp-ink-muted)] transition-colors focus:outline-none ${
                     errors.password
-                      ? "border-[var(--color-danger)] focus:border-[var(--color-danger)] focus:ring-1 focus:ring-[var(--color-danger)]"
-                      : "border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+                      ? "border-[var(--lp-fault)] focus:border-[var(--lp-fault)]"
+                      : "border-[var(--lp-line-strong)] focus:border-[var(--lp-signal)]"
                   }`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPass((v) => !v)}
-                  className="absolute right-3 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                  className="absolute right-3 p-1 text-[var(--lp-ink-muted)] hover:text-[var(--lp-ink)] cursor-pointer"
                   aria-label={showPass ? "Hide password" : "Show password"}
                 >
                   {showPass ? (
@@ -319,7 +304,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 </button>
               </div>
               {errors.password && (
-                <p className="mt-1 text-xs text-[var(--color-danger)] flex items-center gap-1">
+                <p className="mt-1.5 text-xs text-[var(--lp-fault)] flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />
                   <span>{errors.password}</span>
                 </p>
@@ -330,29 +315,28 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
               <div>
                 <label
                   htmlFor="auth-confirm"
-                  className="block text-xs font-medium text-[var(--color-text)] mb-1.5"
+                  className="block text-xs font-medium text-[var(--lp-ink-secondary)] mb-1.5"
                 >
-                  Confirm password{" "}
-                  <span className="text-[var(--color-danger)]">*</span>
+                  Confirm password <span className="text-[var(--lp-fault)]">*</span>
                 </label>
                 <div className="relative flex items-center">
-                  <Lock className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 pointer-events-none" />
+                  <Lock className="w-4 h-4 text-[var(--lp-ink-muted)] absolute left-3.5 pointer-events-none" />
                   <input
                     id="auth-confirm"
                     type={showConfirm ? "text" : "password"}
                     placeholder="Re-enter password"
                     value={formData.confirm}
                     onChange={update("confirm")}
-                    className={`w-full h-10 pl-10 pr-10 rounded-[var(--radius-md)] border bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-text-muted)] transition-colors focus:outline-none ${
+                    className={`w-full h-10 pl-10 pr-10 rounded-lg border bg-[var(--lp-inset)] text-[var(--lp-ink)] text-sm placeholder:text-[var(--lp-ink-muted)] transition-colors focus:outline-none ${
                       errors.confirm
-                        ? "border-[var(--color-danger)] focus:border-[var(--color-danger)] focus:ring-1 focus:ring-[var(--color-danger)]"
-                        : "border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+                        ? "border-[var(--lp-fault)] focus:border-[var(--lp-fault)]"
+                        : "border-[var(--lp-line-strong)] focus:border-[var(--lp-signal)]"
                     }`}
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirm((v) => !v)}
-                    className="absolute right-3 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                    className="absolute right-3 p-1 text-[var(--lp-ink-muted)] hover:text-[var(--lp-ink)] cursor-pointer"
                     aria-label={showConfirm ? "Hide password" : "Show password"}
                   >
                     {showConfirm ? (
@@ -363,7 +347,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                   </button>
                 </div>
                 {errors.confirm && (
-                  <p className="mt-1 text-xs text-[var(--color-danger)] flex items-center gap-1">
+                  <p className="mt-1.5 text-xs text-[var(--lp-fault)] flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />
                     <span>{errors.confirm}</span>
                   </p>
@@ -375,7 +359,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
               type="submit"
               id="auth-submit-btn"
               disabled={status === "loading"}
-              className="w-full h-10 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] active:bg-[var(--color-primary-active)] text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2"
+              className="w-full h-10 rounded-lg lp-btn-primary text-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-2"
             >
               {status === "loading" ? (
                 <>
@@ -385,24 +369,20 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                   </span>
                 </>
               ) : (
-                <>
-                  <span>{isLogin ? "Sign in" : "Create account"}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
+                <span>{isLogin ? "Sign in" : "Create account"}</span>
               )}
             </button>
           </form>
 
-          {/* Mode Switcher */}
-          <div className="mt-5 text-center text-xs text-[var(--color-text-secondary)]">
+          <div className="mt-5 text-center text-xs text-[var(--lp-ink-secondary)]">
             {isLogin ? (
               <>
-                Don&apos;t have an account?{" "}
+                New to CovAI?{" "}
                 <Link
                   to="/register"
                   id="auth-toggle-to-register"
                   onClick={onToggleMode}
-                  className="font-semibold text-[var(--color-primary)] hover:underline cursor-pointer"
+                  className="font-semibold text-[var(--lp-ink)] hover:text-[var(--lp-signal)] transition-colors cursor-pointer"
                 >
                   Create account
                 </Link>
@@ -414,7 +394,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                   to="/login"
                   id="auth-toggle-to-login"
                   onClick={onToggleMode}
-                  className="font-semibold text-[var(--color-primary)] hover:underline cursor-pointer"
+                  className="font-semibold text-[var(--lp-ink)] hover:text-[var(--lp-signal)] transition-colors cursor-pointer"
                 >
                   Sign in
                 </Link>

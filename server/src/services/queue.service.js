@@ -22,6 +22,7 @@ import { processSecurityAnalysisJob } from './securityScanJob.service.js';
 import { processRunVitestJob } from "./runVitestJob.service.js";
 import { processSystemTestAnalysisJob } from "./systemTestAnalysisJob.service.js";
 import { processVitestCoverageJob } from './vitestCoverageJob.service.js';
+import { processUnitTestSuggestJob, processUnitTestApplyJob } from './unitTestQueueJob.service.js';
 import {
   getJobById,
   markJobRunning,
@@ -37,6 +38,8 @@ import { normalizeDiskPath } from '../utils/snapshotWorkspace.js';
 
 let isRedisConnected = false;
 export const QUEUE_NAME = process.env.QUEUE_NAME || 'covai-jobs-main';
+const activeExecutionJobIds = new Set();
+export const isJobActivelyExecuting = (jobId) => Boolean(jobId && activeExecutionJobIds.has(jobId));
 const durableOperationTypes = new Set(['RUN_TESTS', 'ANALYSIS', 'AI_TESTS', 'AI_SUGGEST',
   'SUPERTEST_COVERAGE', 'INSTALL_DEPS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'BUILD_CFG', 'PERFORMANCE_ANALYSIS', 'CODE_HYGIENE', 'QUALITY_ANALYSIS', 'SECURITY_ANALYSIS', 'COVERAGE', 'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT',
   'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION', 'AI_EVALUATION', 'AI_EVALUATION_PREPARE']);
@@ -114,8 +117,19 @@ if (typeof flowProducer?.on === 'function') {
 }
 
 export const executeJobDirectly = async (type, jobId, customData = {}) => {
-  if (['RUN_TESTS','ANALYSIS','SUPERTEST_COVERAGE','INSTALL_DEPS','RUN_VITEST_TESTS','VITEST_COVERAGE','BUILD_CFG','PERFORMANCE_ANALYSIS','CODE_HYGIENE','QUALITY_ANALYSIS','SECURITY_ANALYSIS','COVERAGE'].includes(type)) return runJobInOperationWorkspace(jobId,()=>executeUnscopedJob(type,jobId,customData));
-  return executeUnscopedJob(type,jobId,customData);
+  if (jobId && activeExecutionJobIds.has(jobId)) {
+    console.log(`[DirectExecutor] Skipping duplicate in-flight execution: type=${type}, jobId=${jobId}`);
+    return;
+  }
+  if (jobId) activeExecutionJobIds.add(jobId);
+  try {
+    if (['RUN_TESTS','ANALYSIS','SUPERTEST_COVERAGE','INSTALL_DEPS','RUN_VITEST_TESTS','VITEST_COVERAGE','BUILD_CFG','PERFORMANCE_ANALYSIS','CODE_HYGIENE','QUALITY_ANALYSIS','SECURITY_ANALYSIS','COVERAGE'].includes(type)) {
+      return await runJobInOperationWorkspace(jobId, () => executeUnscopedJob(type, jobId, customData));
+    }
+    return await executeUnscopedJob(type, jobId, customData);
+  } finally {
+    if (jobId) activeExecutionJobIds.delete(jobId);
+  }
 };
 
 const executeUnscopedJob = async (type, jobId, customData = {}) => {
@@ -132,7 +146,7 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
         await processChatContextMaintenance(customData);
         break;
       case 'RUN_TESTS':
-        await processRunTestsJob(jobId);
+        await processRunTestsJob(jobId, customData);
         break;
       case 'SUPERTEST_COVERAGE':
         await processSupertestCoverageJob(jobId);
@@ -200,6 +214,12 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
         break;
       case 'AI_SUGGEST':
         await processAiSuggestJob(jobId);
+        break;
+      case 'UNIT_TEST_SUGGEST':
+        await processUnitTestSuggestJob(jobId);
+        break;
+      case 'UNIT_TEST_APPLY':
+        await processUnitTestApplyJob(jobId);
         break;
       case 'BUILD_CFG': {
         const dbJob = await getJobById(jobId);
@@ -319,7 +339,11 @@ const worker = workerConfig.enabled ? new Worker(
       await executeJobDirectly(type, jobId, customData);
       console.log(`[Queue] Completed Job ${jobId} (Type: ${type})`);
     } catch (error) {
-      console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
+      if (error.code === 'OPERATION_STALE') {
+        console.warn(`[Queue] Job ${jobId} (Type: ${type}) was superseded by a newer workspace revision (${error.code}: ${error.message}).`);
+      } else {
+        console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
+      }
       // Fallback to mark job failed if the handler didn't do it itself
       try {
         const dbJob = await getJobById(jobId);

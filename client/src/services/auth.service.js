@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getAccessToken, isAuthEndpoint, installAxiosAuthRefresh, redirectToLogin, refreshAccessToken } from "../lib/authSession.js";
+import { getAccessToken, isAuthEndpoint, installAxiosAuthRefresh, redirectToLogin, refreshAccessTokenWithStatus } from "../lib/authSession.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -15,7 +15,7 @@ async function fetchWithAuth(input, init = {}) {
   let response = await fetch(input, { ...init, headers, credentials: "include" });
 
   if (response.status === 401 && !init._retry && !isAuthEndpoint(input)) {
-    const accessToken = await refreshAccessToken();
+    const { token: accessToken, invalidSession } = await refreshAccessTokenWithStatus();
     if (accessToken) {
       response = await fetch(input, {
         ...init,
@@ -23,7 +23,7 @@ async function fetchWithAuth(input, init = {}) {
         credentials: "include",
         _retry: true,
       });
-    } else {
+    } else if (invalidSession) {
       redirectToLogin();
     }
   }
@@ -96,15 +96,53 @@ export async function loginApi({ email, password }) {
 }
 
 /**
+ * Build GitHub OAuth authorize URL for login or linking an existing account.
+ * @param {"login"|"connect"} mode
+ */
+export function getGithubOAuthUrl(mode = "login") {
+  const clientId =
+    import.meta.env.VITE_GITHUB_CLIENT_ID ||
+    (mode === "login" ? "Ov23liQyAORXbj6NeqAB" : "");
+  if (!clientId) return null;
+
+  const redirectUri = `${window.location.origin}/auth/github/callback`;
+  const scope = mode === "connect" ? "repo,user:email" : "user:email repo";
+  const params = new URLSearchParams({
+    client_id: clientId,
+    scope,
+    redirect_uri: redirectUri,
+    state: mode,
+  });
+  return `https://github.com/login/oauth/authorize?${params.toString()}`;
+}
+
+/**
  * GET /api/auth/github/callback?code=...
  */
 export async function oAuthGithubApi(code) {
   const res = await fetchWithAuth(
-    `${BASE_URL}/auth/github/callback?code=${code}`,
+    `${BASE_URL}/auth/github/callback?code=${encodeURIComponent(code)}`,
   );
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.message || "GitHub login error");
+  }
+  return data;
+}
+
+/**
+ * POST /api/auth/github/connect
+ * Links GitHub account to the currently authenticated CovAI user.
+ */
+export async function connectGithubApi(code) {
+  const res = await fetchWithAuth(`${BASE_URL}/auth/github/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.message || "GitHub connection error");
   }
   return data;
 }

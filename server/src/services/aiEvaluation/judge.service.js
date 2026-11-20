@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { GEMINI_MODEL_IDS } from '../../../../shared/aiModels.js';
 import { runGeminiRequest } from '../geminiRequestPolicy.service.js';
 import { reserveAiQuota, consumeAiQuota } from '../aiQuota.service.js';
-import { getGeminiApiKey } from '../gemini.service.js';
+import { buildAgentInstruction, getAgentManifest } from '../../agents/registry.js';
+import { geminiConfiguration } from '../geminiRouting.service.js';
 import { recordGeminiTokenUsage } from '../geminiTokenTracker.service.js';
 import {
     CANONICAL_CRITERIA_KEYS,

@@ -25,30 +25,30 @@ function StatusBadge({ status }) {
   const norm = String(status || "").toUpperCase();
   if (norm === "PASSED") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-success)]/10 text-[var(--color-success)] border border-[var(--color-success)]/30">
-        <CheckCircle2 size={12} />
+      <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+        <CheckCircle2 size={11} className="text-emerald-500/80" />
         <span>PASSED</span>
       </span>
     );
   }
   if (norm === "FAILED") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 text-[var(--color-danger)] border border-[var(--color-danger)]/30">
-        <XCircle size={12} />
+      <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-rose-500/[0.07] text-rose-300/90 border border-rose-500/25">
+        <XCircle size={11} />
         <span>FAILED</span>
       </span>
     );
   }
   if (norm === "FLAKY") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/30">
-        <AlertTriangle size={12} />
+      <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-amber-500/[0.08] text-amber-400 border border-amber-500/25">
+        <AlertTriangle size={11} />
         <span>FLAKY</span>
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+    <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
       <span>{norm || "UNKNOWN"}</span>
     </span>
   );
@@ -120,9 +120,9 @@ export default function SystemTestScenarioList({
                 key={filter}
                 type="button"
                 onClick={() => setStatusFilter(filter)}
-                className={`text-[11px] font-medium px-2.5 py-1 rounded-[var(--radius-sm)] border cursor-pointer transition-colors ${
+                className={`text-[11px] font-medium px-2.5 py-1 rounded-md border cursor-pointer transition-colors duration-150 ${
                   active
-                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
+                    ? "bg-[var(--color-primary)]/90 text-[var(--color-primary-foreground)] border-[var(--color-primary)]"
                     : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
                 }`}
               >
@@ -211,7 +211,7 @@ export default function SystemTestScenarioList({
                     {!scenarios.length && <p className="px-4 py-3 text-xs text-[var(--color-text-muted)]">No executed scenarios for this file in the selected results. Open Edit Test to run this file directly.</p>}
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-[var(--color-border)] text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface)] uppercase tracking-wider">
+                        <tr className="border-b border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg)]">
                           <th className="py-2 px-4 font-medium">Scenario Title</th>
                           <th className="py-2 px-4 font-medium w-28">Status</th>
                           <th className="py-2 px-4 font-medium w-24">Duration</th>

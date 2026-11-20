@@ -1,128 +1,149 @@
-import { Terminal } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import CovaiLogo from "./common/CovaiLogo";
 
 const FOOTER_COLS = [
   {
-    heading: "Product",
-    links: [
-      { label: "Features", href: "#features" },
-      { label: "IDE & Coverage", href: "#ide-preview" },
-      { label: "Pipeline", href: "#workflow" },
-      { label: "Pricing", href: "#pricing" },
-    ],
-  },
-  {
     heading: "Platform",
     links: [
-      { label: "Jest Integration", href: "#feature-test-synthesis" },
-      { label: "Vitest Engine", href: "#feature-test-synthesis" },
-      { label: "CFG Analyzer", href: "#feature-cfg-analysis" },
-      { label: "Istanbul Metrics", href: "#feature-coverage-metrics" },
-      { label: "API Reference", href: "https://github.com/Nhthuando/CovAI-/tree/develop/docs/specs" },
+      { label: "Branch synthesis sandbox", href: "#ide-preview" },
+      { label: "3D test architecture", href: "#bento-pyramid" },
+      { label: "Core subsystems", href: "#features" },
+      { label: "Verification pipeline", href: "#workflow" },
+      { label: "Pricing & estimator", href: "#pricing" },
     ],
   },
   {
-    heading: "Security & Legal",
+    heading: "Subsystems",
     links: [
-      { label: "Privacy Policy", href: "/privacy" },
-      { label: "Terms of Service", href: "/terms" },
-      { label: "Sandbox Security", href: "#feature-sandbox-execution" },
-      { label: "Data Telemetry", href: "/telemetry" },
+      { label: "Babel AST & CFG solver", href: "#feature-cfg-analysis" },
+      { label: "Vitest & Jest synthesis", href: "#feature-test-synthesis" },
+      { label: "Mutation fault guard", href: "#feature-coverage-metrics" },
+      { label: "Docker container runner", href: "#feature-sandbox-execution" },
+      {
+        label: "Technical specifications",
+        href: "https://github.com/Nhthuando/CovAI-/tree/develop/docs/specs",
+      },
+    ],
+  },
+  {
+    heading: "Governance",
+    links: [
+      { label: "Privacy policy", href: "/privacy" },
+      { label: "Terms of service", href: "/terms" },
+      { label: "Data telemetry", href: "/telemetry" },
+      { label: "Container isolation", href: "#feature-sandbox-execution" },
     ],
   },
 ];
 
-function GithubIcon(props) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="currentColor"
-      {...props}
-    >
-      <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
-    </svg>
-  );
-}
-
-function TwitterIcon(props) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="currentColor"
-      {...props}
-    >
-      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-    </svg>
-  );
-}
-
-function LinkedinIcon(props) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="currentColor"
-      {...props}
-    >
-      <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z" />
-    </svg>
-  );
-}
-
 export default function Footer() {
+  const [magOffset, setMagOffset] = useState({ x: 0, y: 0 });
+
+  const handleMagneticMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    setMagOffset({
+      x: (e.clientX - centerX) * 0.16,
+      y: (e.clientY - centerY) * 0.2,
+    });
+  };
+
+  const resetMagnetic = () => setMagOffset({ x: 0, y: 0 });
+
   return (
     <footer
       id="footer"
-      className="bg-[var(--color-surface)] border-t border-[var(--color-border)] pt-16 pb-12 text-[var(--color-text-secondary)] text-xs"
+      className="relative bg-[var(--lp-bg)] pt-20 pb-12 overflow-hidden text-[var(--lp-ink-secondary)]"
     >
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-8 mb-12">
-          {/* Brand info (2 cols on md) */}
+      <div className="relative max-w-[1280px] mx-auto px-4 sm:px-6">
+        {/* Architectural Finale CTA Box */}
+        <div className="relative rounded-2xl lp-machined p-8 sm:p-14 mb-20 overflow-hidden">
+          <div
+            className="pointer-events-none absolute -top-32 right-0 w-[520px] h-[320px] rounded-full blur-[120px] opacity-20"
+            style={{
+              background: "radial-gradient(circle, var(--lp-signal) 0%, transparent 70%)",
+            }}
+          />
+
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+            <div className="max-w-xl space-y-3">
+              <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight leading-[1.12]">
+                Inspect your repository&apos;s Control Flow Graph today.
+              </h2>
+              <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)] leading-relaxed">
+                Import a repository from GitHub or upload an archive to locate
+                untested branch predicates and run container-verified test
+                synthesis.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
+              <div
+                onMouseMove={handleMagneticMove}
+                onMouseLeave={resetMagnetic}
+                className="inline-block"
+              >
+                <Link
+                  to="/register"
+                  style={{
+                    transform: `translate3d(${magOffset.x}px, ${magOffset.y}px, 0)`,
+                  }}
+                  className="lp-btn-primary px-6 py-3.5 rounded-lg text-sm inline-block transition-transform duration-150"
+                >
+                  Create workspace
+                </Link>
+              </div>
+
+              <Link
+                to="/login"
+                className="lp-btn-secondary px-5 py-3.5 rounded-lg text-sm inline-block"
+              >
+                Sign in
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer Columns */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-10 pb-14 border-b border-[var(--lp-line)]">
           <div className="md:col-span-2 space-y-4">
             <a
               href="/"
               id="footer-logo"
-              className="inline-flex items-center gap-2 text-decoration-none group"
+              className="inline-flex items-center gap-2.5"
             >
-              <div className="w-7 h-7 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs select-none shrink-0">
-                <Terminal className="w-3.5 h-3.5 stroke-[2.5]" />
-              </div>
-              <span className="font-bold text-sm tracking-tight text-[var(--color-text)]">
-                CovAI Platform
+              <CovaiLogo size={24} />
+              <span className="lp-display font-bold text-base text-[var(--lp-ink)]">
+                CovAI
               </span>
             </a>
 
-            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed max-w-sm">
-              Deterministic test generation, Control Flow Graph analysis, and
-              multi-vector coverage diagnostics for modern software engineering
+            <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] leading-relaxed max-w-sm">
+              Static Control Flow Graph analysis, multi-tier test generation,
+              and isolated Docker runner verification for software engineering
               teams.
             </p>
 
-            {/* Operational status badge */}
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[11px] font-mono text-[var(--color-text-muted)]">
-              <span className="w-2 h-2 rounded-full bg-[var(--color-success)]" />
-              <span>Sandbox Engine: Operational</span>
+            <div className="inline-flex items-center gap-2 text-xs lp-mono text-[var(--lp-ink-secondary)]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--lp-signal)]" />
+              <span>AST workers &amp; Docker runners operational</span>
             </div>
           </div>
 
-          {/* Nav columns */}
           {FOOTER_COLS.map((col) => (
             <div key={col.heading} className="space-y-3">
-              <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text)]">
+              <h4 className="text-xs font-semibold text-[var(--lp-ink)]">
                 {col.heading}
               </h4>
-              <ul className="space-y-2 list-none p-0 m-0">
+              <ul className="space-y-2.5 list-none p-0 m-0 text-xs">
                 {col.links.map((link) => (
                   <li key={link.label}>
                     {link.href.startsWith("/") ? (
                       <Link
                         to={link.href}
-                        className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
+                        className="text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors"
                       >
                         {link.label}
                       </Link>
@@ -131,14 +152,14 @@ export default function Footer() {
                         href={link.href}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
+                        className="text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors"
                       >
                         {link.label}
                       </a>
                     ) : (
                       <a
                         href={link.href}
-                        className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
+                        className="text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors"
                       >
                         {link.label}
                       </a>
@@ -150,39 +171,30 @@ export default function Footer() {
           ))}
         </div>
 
-        {/* Bottom bar */}
-        <div className="pt-8 border-t border-[var(--color-border)] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--color-text-muted)]">
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--lp-ink-muted)]">
           <div>© {new Date().getFullYear()} CovAI. All rights reserved.</div>
+          <div className="flex items-center gap-5">
+            <Link to="/privacy" className="hover:text-[var(--lp-ink)] transition-colors">
+              Privacy
+            </Link>
+            <Link to="/terms" className="hover:text-[var(--lp-ink)] transition-colors">
+              Terms
+            </Link>
+            <Link to="/telemetry" className="hover:text-[var(--lp-ink)] transition-colors">
+              Telemetry
+            </Link>
+          </div>
+        </div>
 
-          {/* Social Links */}
-          <div className="flex items-center gap-3">
-            <a
-              href="https://github.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="GitHub repository"
-              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
-            >
-              <GithubIcon className="w-4 h-4" />
-            </a>
-            <a
-              href="https://twitter.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Twitter account"
-              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
-            >
-              <TwitterIcon className="w-4 h-4" />
-            </a>
-            <a
-              href="https://linkedin.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="LinkedIn account"
-              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
-            >
-              <LinkedinIcon className="w-4 h-4" />
-            </a>
+        {/* Architectural Watermark */}
+        <div
+          aria-hidden="true"
+          className="mt-8 select-none pointer-events-none text-center overflow-hidden"
+        >
+          <div
+            className="lp-display font-bold tracking-tighter leading-none text-[18vw] sm:text-[15vw] text-[var(--lp-ink)] opacity-[0.04]"
+          >
+            COVAI
           </div>
         </div>
       </div>

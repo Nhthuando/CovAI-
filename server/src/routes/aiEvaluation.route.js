@@ -4,6 +4,8 @@ import prisma from '../config/prisma.js';
 import { authMiddleware } from '../middlewares/auth.middleware.js';
 import { requireEnabled, safeError } from '../services/aiEvaluation/common.js';
 import * as service from '../services/aiEvaluation/management.service.js';
+import * as projectEvaluation from '../services/aiEvaluation/projectEvaluation.service.js';
+import { getProjectSettings, saveProjectSettings } from '../services/aiEvaluation/projectSettings.service.js';
 import { createEvaluationController } from '../controllers/aiEvaluation.controller.js';
 
 export function createEvaluationRouter({ db = prisma, auth = authMiddleware, enqueue = service.enqueueStrict, transport } = {}) {
@@ -56,6 +58,32 @@ export function createEvaluationRouter({ db = prisma, auth = authMiddleware, enq
         }
         return next();
     });
+
+    const requireOwner = async (req, _res, next) => {
+        try {
+            await service.ownerAccess(db, req.params.projectId, req.user.id);
+            next();
+        } catch (error) {
+            next(error);
+        }
+    };
+    const projectAction = (handler, status = 200) => async (req, res, next) => {
+        try {
+            const data = await handler(req);
+            if (!res.headersSent) {
+                res.status(status).json({ success: true, data });
+            }
+        } catch (error) {
+            next(error);
+        }
+    };
+    router.get('/project-runs', requireOwner, projectAction(req => projectEvaluation.listProjectEvaluations(db, req.params.projectId)));
+    router.get('/project-settings', requireOwner, projectAction(req => getProjectSettings(db, req.params.projectId)));
+    router.put('/project-settings', requireOwner, projectAction(req => saveProjectSettings(db, req.params.projectId, req.body)));
+    router.post('/project-runs', requireOwner, projectAction(req => projectEvaluation.startProjectEvaluation(db, req.params.projectId, req.user.id, req.body, { enqueue }), 202));
+    router.get('/project-runs/:id', requireOwner, projectAction(req => projectEvaluation.getProjectEvaluation(db, req.params.projectId, req.params.id)));
+    router.post('/project-runs/:id/cancel', requireOwner, projectAction(req => projectEvaluation.cancelProjectEvaluation(db, req.params.projectId, req.params.id)));
+    router.delete('/project-runs/:id', requireOwner, projectAction(req => projectEvaluation.deleteProjectEvaluation(db, req.params.projectId, req.params.id)));
 
     // Read-only endpoints (OWNER, EDITOR, VIEWER)
     router.get('/', requireRead, controller.getWorkspace);

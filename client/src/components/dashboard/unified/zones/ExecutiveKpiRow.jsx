@@ -44,7 +44,15 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
         label="Quality Health Score"
         icon={Activity}
         loading={loading}
-        delta={<DeltaIndicator delta={health.delta} hasBaseline={hasBaseline} />}
+        delta={
+          loading ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-mono text-[var(--ud-text-muted)]">
+              --
+            </span>
+          ) : (
+            <DeltaIndicator delta={health.delta} hasBaseline={hasBaseline} />
+          )
+        }
         supporting={
           <div
             className="flex items-center justify-center pt-1"
@@ -55,6 +63,7 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
               max={100}
               grade={health.grade || "--"}
               hasBaseline={hasBaseline}
+              loading={loading}
               size={120}
               title="Quality Health Score"
             />
@@ -64,7 +73,9 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
           <>
             <span>Health Standard</span>
             <span className="font-mono text-xs font-semibold text-[var(--ud-text)]">
-              {!hasBaseline
+              {loading
+                ? "--"
+                : !hasBaseline
                 ? "No Baseline"
                 : (vm?.qualityGate?.status === "WARNING" || vm?.qualityGate?.status === "FAILED" || (execution.failed || 0) > 0) && health.score >= 80
                 ? "At Risk (Gate Warning)"
@@ -90,7 +101,8 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
             <DonutChart
               segments={execSegments}
               size={68}
-              centerLabel={fmtCount(execution.total || 0)}
+              loading={loading}
+              centerLabel={loading ? "--" : fmtCount(execution.total || 0)}
               centerSub="tests"
               showLegend={true}
               ariaLabel="Test execution breakdown"
@@ -100,7 +112,11 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
         footer={
           <>
             <span>Pass Rate</span>
-            {totalExecuted > 0 ? (
+            {loading ? (
+              <span className="font-mono text-xs font-semibold text-[var(--ud-text-muted)]">
+                --%
+              </span>
+            ) : totalExecuted > 0 ? (
               <span className="font-mono text-xs font-semibold text-[var(--ud-pass)]">
                 {execution.passRate ?? 0}%
               </span>
@@ -118,7 +134,7 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
         id="ud-kpi-coverage"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="Unified Coverage Index"
-        value={fmtPct(coverage.overall)}
+        value={loading ? "--%" : fmtPct(coverage.overall)}
         icon={ShieldCheck}
         loading={loading}
         supporting={
@@ -127,18 +143,21 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
               pct={coverage.codePct || 0}
               label="Code"
               tone="unit"
+              loading={loading}
               size={42}
             />
             <ProgressRing
               pct={coverage.apiPct || 0}
               label="API"
               tone="integration"
+              loading={loading}
               size={42}
             />
             <ProgressRing
               pct={coverage.flowPct || 0}
               label="Flow"
               tone="system"
+              loading={loading}
               size={42}
             />
           </div>
@@ -147,7 +166,7 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
           <>
             <span>Multi-Layer Target</span>
             <span className="font-mono text-xs font-semibold text-[var(--ud-text)]">
-              {coverage.overall >= 80 ? "Target Met" : "Target: 80%+"}
+              {!loading && coverage.overall >= 80 ? "Target Met" : "Target: 80%+"}
             </span>
           </>
         }
@@ -158,19 +177,23 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
         id="ud-kpi-ai"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="Prioritized Actions"
-        value={fmtCount(actionsCount)}
-        unit={actionsCount === 1 ? "action" : "actions"}
+        value={loading ? "--" : fmtCount(actionsCount)}
+        unit={loading ? null : actionsCount === 1 ? "action" : "actions"}
         icon={Sparkles}
         loading={loading}
         supporting={
           <div className="mt-2 space-y-1.5 text-xs text-[var(--ud-text-muted)] font-mono">
             <div className="flex items-center justify-between">
               <span>AI Generated:</span>
-              <span className="text-[var(--ud-text)] font-semibold">{ai.aiGenerated || 0} tests</span>
+              <span className="text-[var(--ud-text)] font-semibold">
+                {loading ? "--" : `${ai.aiGenerated || 0} tests`}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span>AI Repaired:</span>
-              <span className="text-[var(--ud-text)] font-semibold">{ai.aiRepaired || 0} tests</span>
+              <span className="text-[var(--ud-text)] font-semibold">
+                {loading ? "--" : `${ai.aiRepaired || 0} tests`}
+              </span>
             </div>
           </div>
         }

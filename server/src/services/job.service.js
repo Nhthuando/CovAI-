@@ -38,6 +38,8 @@ const JOB_TYPES = Object.freeze([
   "PERFORMANCE_ANALYSIS",
   "AI_SUGGEST",
   "AI_TESTS",
+  "UNIT_TEST_SUGGEST",
+  "UNIT_TEST_APPLY",
   "ANALYSIS",
   "QUALITY_ANALYSIS",
   "SECURITY_ANALYSIS",
@@ -100,6 +102,8 @@ const INACTIVE_HEARTBEAT_TIMEOUT_MS = 6 * 60 * 1000; // 6 minutes of zero logs/a
 
 const LONG_RUNNING_JOB_TYPES = [
   "AI_TESTS",
+  "UNIT_TEST_SUGGEST",
+  "UNIT_TEST_APPLY",
   "RUN_TESTS",
   "VITEST_COVERAGE",
   "RUN_VITEST_TESTS",
@@ -286,13 +290,34 @@ const createTypedJob =
 
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
-export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL", testType, requestId, chainBuildCfg = false }) =>
+export const createRunTestsJob = ({
+  projectId,
+  snapshotId,
+  userId,
+  mode = "FULL",
+  testType,
+  requestId,
+  chainBuildCfg = false,
+  useHermeticMock = true,
+  verifyPublishedUnitTests = false,
+  targetFiles = [],
+  targetTestNames = [],
+}) =>
   createSnapshotJob({
     projectId,
     snapshotId,
     userId,
     type: "RUN_TESTS",
-    payloadJson: { snapshotId, mode, ...(testType ? { testType } : {}), ...(chainBuildCfg ? { chainBuildCfg: true } : {}) },
+    payloadJson: {
+      snapshotId,
+      mode,
+      ...(testType ? { testType } : {}),
+      ...(chainBuildCfg ? { chainBuildCfg: true } : {}),
+      ...(verifyPublishedUnitTests ? { verifyPublishedUnitTests: true } : {}),
+      ...(Array.isArray(targetFiles) && targetFiles.length > 0 ? { targetFiles } : {}),
+      ...(Array.isArray(targetTestNames) && targetTestNames.length > 0 ? { targetTestNames } : {}),
+      useHermeticMock: useHermeticMock !== false,
+    },
     requestId,
   });
 
@@ -356,7 +381,7 @@ export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "
     snapshotId,
     userId,
     type: "AI_TESTS",
-    payloadJson: { snapshotId, mode, executionMode, targetEndpoints, model:model || process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    payloadJson: { snapshotId, mode, executionMode, targetEndpoints, model:model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
       ...(aiTestId ? { aiTestId } : {}), ...(scenarioId ? { scenarioId } : {}), ...(expectedVersion ? { expectedVersion } : {}) },
     ...(requestId ? { requestId } : {}),
   });
@@ -474,7 +499,7 @@ export const createIngestJobForSnapshot = async ({
 const TEST_AND_AI_JOB_TYPES = new Set([
   'RUN_TESTS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'SUPERTEST_COVERAGE',
   'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT', 'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION',
-  'AI_TESTS', 'AI_SUGGEST', 'AI_INTEGRATION_RUN', 'AI_SYSTEM_GENERATE', 'SYSTEM_COLD_START_GENERATE',
+  'AI_TESTS', 'AI_SUGGEST', 'UNIT_TEST_SUGGEST', 'UNIT_TEST_APPLY', 'AI_INTEGRATION_RUN', 'AI_SYSTEM_GENERATE', 'SYSTEM_COLD_START_GENERATE',
   'CYPRESS_SYSTEM_TEST', 'CYPRESS_SYSTEM_COVERAGE', 'PLAYWRIGHT_SYSTEM_TEST', 'PLAYWRIGHT_SYSTEM_COVERAGE'
 ]);
 
@@ -545,7 +570,7 @@ export const createSnapshotJob = async ({
     const admitted = await admitProjectOperation({projectId,snapshotId,userId,type,input:payloadJson || {},requestId});
     return {...admitted.job,reused:admitted.reused,operationId:admitted.operationId};
   }
-  await resolveProjectAccess({projectId,userId,capability:type.startsWith('AI_') ? 'ai.use' : 'tests.run'});
+  await resolveProjectAccess({projectId,userId,capability:(type.startsWith('AI_') || type === 'UNIT_TEST_SUGGEST') ? 'ai.use' : 'tests.run'});
 
   const [snapshot, user] = await Promise.all([
     prisma.projectSnapshot.findUnique({
@@ -882,6 +907,13 @@ export const cancelJob = async (jobId) => {
   if (currentJob.type === 'AI_EVALUATION') {
     await (await import('./aiEvaluation/runner.service.js')).cancelEvaluationJob(jobId);
     return prisma.job.findUnique({ where: { id: jobId } });
+  }
+  if (currentJob.type === 'AI_EVALUATION_PREPARE') {
+    const evaluation = await prisma.aiEvaluationProjectRun.findUnique({ where: { jobId } });
+    if (evaluation) {
+      await (await import('./aiEvaluation/projectEvaluation.service.js')).cancelProjectEvaluation(prisma, evaluation.projectId, evaluation.id);
+      return prisma.job.findUnique({ where: { id: jobId } });
+    }
   }
 
   // Idempotent: repeated cancel requests return the canceled job safely

@@ -1,11 +1,13 @@
+import { normalizeChatScreenContext } from './chatScreenContext';
+import { authAwareFetch, getAccessToken } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 async function contextRequest(projectId, suffix = "", method = "GET", body) {
   if (!projectId || projectId === "undefined" || projectId === "null") {
     return suffix.includes("memories") ? [] : {};
   }
-  const token = localStorage.getItem("token");
-  const response = await fetch(`${BASE_URL}/projects/${encodeURIComponent(projectId)}${suffix}`, {
+  const token = getAccessToken();
+  const response = await authAwareFetch(fetch, `${BASE_URL}/projects/${encodeURIComponent(projectId)}${suffix}`, {
     method, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
@@ -20,15 +22,5 @@ export const addAiMemory = (projectId, input) => contextRequest(projectId, "/ai-
 export const editAiMemory = (projectId, id, input) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "PATCH", input);
 export const forgetAiMemory = (projectId, id) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "DELETE");
 export const clearAiMemories = projectId => contextRequest(projectId, "/ai-context/memories", "DELETE");
-export function chatScreenContext(screen) {
-  if (!screen) return undefined;
-  return {
-    activity: screen.activity,
-    testType: ["unit", "integration", "system"].includes(screen.testType) ? screen.testType : undefined,
-    filePath: screen.filePath,
-  };
-}
-export const previewAiContext = (projectId, input) => contextRequest(projectId, "/ai-context/preview", "POST", {
-  ...input, screenContext: chatScreenContext(input.screenContext),
-});
+export const previewAiContext = (projectId, input) => contextRequest(projectId, "/ai-context/preview", "POST", { ...input, screenContext: normalizeChatScreenContext(input.screenContext) });
 export const branchAiConversation = (projectId, sessionId, input) => contextRequest(projectId, `/chat/sessions/${encodeURIComponent(sessionId)}/branch`, "POST", input);

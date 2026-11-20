@@ -26,9 +26,15 @@ export const normalizeDiskPath = (rawPath) => {
     // On Linux/Docker, always use strippedDrive to prevent any Windows drive letter leak
     const effectivePath = process.platform !== "win32" ? strippedDrive : rawPath;
 
-    // Direct check if effectivePath or strippedDrive already exists on this machine
-    if (fs.existsSync(effectivePath)) return path.resolve(effectivePath);
-    if (fs.existsSync(strippedDrive)) return path.resolve(strippedDrive);
+    // Direct check if effectivePath or strippedDrive already exists on this machine.
+    // On Windows, ignore container-style "/app/..." paths on the local drive root (e.g. E:\app\storage\...)
+    // when they match CovAI's storage/uploads structure, so host resolution resolves to server/storage/...
+    const isWindowsContainerPath =
+        process.platform === "win32" && /^\/?app\/(?:storage|uploads|\.?covai-temp)\//i.test(strippedDrive);
+    if (!isWindowsContainerPath) {
+        if (fs.existsSync(effectivePath)) return path.resolve(effectivePath);
+        if (fs.existsSync(strippedDrive)) return path.resolve(strippedDrive);
+    }
 
     // Match standard CovAI storage/upload paths
     const match = strippedDrive.match(/(?:^|\/)((?:uploads\/snapshots|storage\/projects)\/[^/]+.*)$/);
@@ -88,6 +94,8 @@ export const normalizeDiskPath = (rawPath) => {
 
     return path.resolve(rawPath);
 };
+
+export const resolveSnapshotRootDir = normalizeDiskPath;
 
 // rootDir remains the package used by analysis runners. The workspace root
 // is the full repository / project tree (including client, server, configs, etc.).

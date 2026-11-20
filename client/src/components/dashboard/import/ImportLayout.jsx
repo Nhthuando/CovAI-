@@ -1,38 +1,16 @@
 import { createPortal } from "react-dom";
 import { useState, useEffect } from "react";
-import {
-  X,
-  CheckCircle2,
-  FolderGit2,
-  Shield,
-  HelpCircle,
-  Zap,
-} from "lucide-react";
+import { X, CheckCircle2, ShieldCheck, Layers } from "lucide-react";
 import LocalUpload from "./LocalUpload";
 import GitHubImport from "./GitHubImport";
 import { ToastProvider } from "../ToastContext";
 import { getUserProfileApi } from "../../../services/project.service";
-import Button from "../../common/Button";
-import Badge from "../../common/Badge";
-
-/* ── GitHub SVG Icon ──────────────────────────────────────── */
-function GithubIcon({ size = 16, className = "" }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      className={className}
-    >
-      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
-    </svg>
-  );
-}
+import CovaiLogo from "../../common/CovaiLogo";
+import "../portfolio/portfolio.css";
 
 export default function ImportLayout({ onClose, onSuccess }) {
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
-  const [hasGithub, setHasGithub] = useState(null); // null = loading, true/false = resolved
+  const [hasGithub, setHasGithub] = useState(null);
 
   useEffect(() => {
     getUserProfileApi()
@@ -46,7 +24,6 @@ export default function ImportLayout({ onClose, onSuccess }) {
       });
   }, []);
 
-  // Keyboard shortcut: Esc to close
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === "Escape") {
@@ -70,98 +47,74 @@ export default function ImportLayout({ onClose, onSuccess }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-modal-title"
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-xs"
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-[2px]"
         onClick={onClose}
       >
         <div
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-5xl max-h-[90vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-xl)] shadow-xl flex flex-col overflow-hidden text-[var(--color-text)] font-sans relative"
+          className="portfolio-studio w-full max-w-[960px] max-h-[90vh] bg-[var(--ps-surface)] border border-[var(--ps-line-strong)] rounded-[12px] shadow-2xl flex flex-col overflow-hidden text-[var(--ps-ink)] relative"
         >
-          {/* ── Modal Header ────────────────────────────────────────── */}
-          <div className="h-14 px-6 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center shrink-0">
-                <FolderGit2 size={16} />
-              </div>
-              <div className="flex items-center gap-2">
+          {/* ── Top Sheet Header ────────────────────────────────────── */}
+          <div className="px-6 py-4 border-b border-[var(--ps-line)] bg-[var(--ps-surface)] flex items-center justify-between gap-4 shrink-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <CovaiLogo size={26} />
+              <div className="min-w-0">
                 <h2
                   id="import-modal-title"
-                  className="font-bold text-sm tracking-tight text-[var(--color-text)]"
+                  className="ps-display text-[15px] font-semibold text-[var(--ps-ink)] leading-tight"
                 >
-                  Import Project
+                  Add repository
                 </h2>
-                <Badge variant="primary" size="sm">
-                  Hub
-                </Badge>
+                <p className="text-xs text-[var(--ps-ink-muted)] mt-0.5 truncate">
+                  Import a local archive or connect a GitHub repository for AST and test synthesis
+                </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="hidden sm:inline-block text-[11px] font-mono text-[var(--color-text-muted)] border border-[var(--color-border)] rounded-[var(--radius-sm)] px-1.5 py-0.5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface-2)]/60 hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer shrink-0"
+              title="Close (Esc)"
+              aria-label="Close"
+              id="import-cancel-btn"
+            >
+              <span className="hidden sm:inline text-[11px] ps-mono text-[var(--ps-ink-muted)]">
                 Esc
               </span>
-              <button
-                type="button"
-                onClick={onClose}
-                className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
-                title="Close"
-                aria-label="Close"
-                id="import-cancel-btn"
-              >
-                <X size={16} />
-              </button>
-            </div>
+              <X size={14} />
+            </button>
           </div>
 
-          {/* ── Modal Body: 2 Column Layout ─────────────────────────── */}
-          <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 min-h-[500px]">
-            {/* Left Column: Local Archive Upload (5 cols) */}
-            <div className="lg:col-span-5 p-6 border-b lg:border-b-0 lg:border-r border-[var(--color-border)] flex flex-col justify-between bg-[var(--color-surface)]">
-              <div className="flex flex-col gap-4">
+          {/* ── Two-Pane Workspace ──────────────────────────────────── */}
+          <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 min-h-[480px]">
+            {/* Left Pane: Archive Upload (5 cols, subtle recessed tray) */}
+            <div className="lg:col-span-5 p-5 sm:p-6 bg-[var(--ps-inset)] border-b lg:border-b-0 lg:border-r border-[var(--ps-line)] flex flex-col justify-between gap-4">
+              <div className="flex flex-col gap-3.5 flex-1">
                 <div>
-                  <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-primary)] uppercase tracking-wider mb-2">
-                    <Zap size={13} />
-                    Local Ingest
-                  </div>
-                  <h3 className="text-base font-bold text-[var(--color-text)] tracking-tight">
-                    Upload Codebase Archive
+                  <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
+                    Codebase archive
                   </h3>
-                  <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                    Upload a compressed archive (
-                    <code className="text-[var(--color-text)] font-mono">
-                      .zip
-                    </code>{" "}
-                    or{" "}
-                    <code className="text-[var(--color-text)] font-mono">
-                      .rar
-                    </code>
-                    ). AST and cyclomatic complexity graphs are synthesized
-                    automatically.
+                  <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 leading-relaxed">
+                    Upload a compressed project bundle (<span className="ps-mono text-[var(--ps-ink)]">.zip</span>, <span className="ps-mono text-[var(--ps-ink)]">.rar</span>, or <span className="ps-mono text-[var(--ps-ink)]">.tar.gz</span>) to generate call graphs and test suites.
                   </p>
                 </div>
 
-                {/* Local Upload Component */}
-                <LocalUpload
-                  onClose={onClose}
-                  onSuccess={handleImportSuccess}
-                />
+                <LocalUpload onClose={onClose} onSuccess={handleImportSuccess} />
               </div>
 
-              {/* Left footer note */}
-              <div className="pt-4 mt-4 border-t border-[var(--color-border)] flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-                <Shield
-                  size={13}
-                  className="text-[var(--color-success)] shrink-0"
+              <div className="pt-3 border-t border-[var(--ps-line)] flex items-center gap-2 text-[11px] text-[var(--ps-ink-muted)]">
+                <ShieldCheck
+                  size={14}
+                  style={{ color: "var(--ps-emerald)" }}
+                  className="shrink-0"
                 />
-                <span>
-                  Safe upload: archives are scanned and cleaned of secrets
-                  locally.
-                </span>
+                <span>Secrets and credential files are filtered before indexing.</span>
               </div>
             </div>
 
-            {/* Right Column: GitHub Integration (7 cols) */}
-            <div className="lg:col-span-7 p-6 flex flex-col relative bg-[var(--color-surface)]">
+            {/* Right Pane: GitHub Source (7 cols) */}
+            <div className="lg:col-span-7 p-5 sm:p-6 bg-[var(--ps-surface)] flex flex-col relative min-h-[380px]">
               <GitHubImport
                 onClose={onClose}
                 onSuccess={handleImportSuccess}
@@ -170,35 +123,40 @@ export default function ImportLayout({ onClose, onSuccess }) {
             </div>
           </div>
 
-          {/* ── Modal Footer ────────────────────────────────────────── */}
-          <div className="h-11 px-6 border-t border-[var(--color-border)] bg-[var(--color-surface-secondary)] flex items-center justify-between text-xs text-[var(--color-text-muted)] shrink-0">
-            <div className="flex items-center gap-1.5">
-              <HelpCircle size={13} />
-              <span>Need help? Check our workspace import guide.</span>
+          {/* ── Minimal Footer ──────────────────────────────────────── */}
+          <div className="h-12 px-6 border-t border-[var(--ps-line)] bg-[var(--ps-inset)] flex items-center justify-between text-xs shrink-0">
+            <div className="flex items-center gap-2 text-[11px] text-[var(--ps-ink-muted)]">
+              <Layers size={13} className="shrink-0" />
+              <span>Supports JavaScript &amp; TypeScript workspaces (Node, React, Express)</span>
             </div>
-            <Button
+            <button
               type="button"
-              variant="secondary"
-              size="sm"
               onClick={onClose}
+              className="h-7 px-3 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer"
             >
               Cancel
-            </Button>
+            </button>
           </div>
 
           {/* ── Success Overlay ─────────────────────────────────────── */}
           {showSuccessOverlay && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-              <div className="flex flex-col items-center justify-center rounded-[var(--radius-xl)] p-6 bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xl max-w-sm text-center">
-                <div className="w-12 h-12 rounded-[var(--radius-md)] bg-[var(--color-success)]/10 border border-[var(--color-success)]/25 flex items-center justify-center mb-3 text-[var(--color-success)]">
-                  <CheckCircle2 size={24} strokeWidth={2.5} />
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-[2px] p-4">
+              <div className="flex flex-col items-center justify-center rounded-xl p-6 bg-[var(--ps-surface)] border border-[var(--ps-line-strong)] shadow-2xl max-w-xs w-full text-center">
+                <div
+                  className="w-11 h-11 rounded-lg flex items-center justify-center mb-3 border"
+                  style={{
+                    backgroundColor: "color-mix(in srgb, var(--ps-emerald) 12%, transparent)",
+                    borderColor: "color-mix(in srgb, var(--ps-emerald) 30%, transparent)",
+                    color: "var(--ps-emerald)",
+                  }}
+                >
+                  <CheckCircle2 size={22} strokeWidth={2.2} />
                 </div>
-                <h3 className="text-base font-bold text-[var(--color-text)] tracking-tight">
-                  Import Initialized!
+                <h3 className="ps-display text-sm font-semibold text-[var(--ps-ink)]">
+                  Import queued
                 </h3>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                  Your project package has been queued. Redirecting to
-                  workspace...
+                <p className="text-xs text-[var(--ps-ink-secondary)] mt-1 leading-relaxed">
+                  Indexing codebase structure and redirecting to your workspace...
                 </p>
               </div>
             </div>

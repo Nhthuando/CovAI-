@@ -1,34 +1,19 @@
 import { getAIModelHeaders } from './aiModel.service.js';
-import { handleUnauthorizedResponse } from "../lib/authSession.js";
+import { authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
 /* eslint-disable no-useless-assignment */
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
-function clearAuthState() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  localStorage.removeItem("userName");
-  localStorage.removeItem("userEmail");
-}
-
-/**
- * ASYNC: Retry for token a few times to avoid race condition after login (REMOVE AFTER FIX VALIDATED)
- */
 async function getAuthHeaders() {
   let tries = 0;
   let token = null;
-  let userToken;
   while (tries < 20) {
-    // wait up to 2s total
-    const user = localStorage.getItem("user");
-    userToken = user ? JSON.parse(user).token : null;
-    token = localStorage.getItem("token") || userToken;
+    token = getAccessToken();
     if (token) break;
     await new Promise((res) => setTimeout(res, 100));
     tries++;
   }
   if (!token) {
-    clearAuthState();
-    return { "Content-Type": "application/json" };
+    return { "Content-Type": "application/json", ...getAIModelHeaders() };
   }
   return {
     "Content-Type": "application/json",
@@ -60,7 +45,7 @@ async function handleResponse(res) {
 async function fetchWithRetry(url, options = {}, retries = 1, delayMs = 400) {
   for (let i = 0; i <= retries; i++) {
     try {
-      const res = await fetch(url, options);
+      const res = await authAwareFetch(fetch, url, options);
       if (res.status >= 500 && i < retries) {
         await new Promise((r) => setTimeout(r, delayMs));
         continue;
@@ -116,10 +101,15 @@ export async function getUserJobsApi() {
  * GET /api/job/:jobId
  * Returns { message, job }
  */
-export async function getJobDetailApi(jobId) {
+export async function getJobDetailApi(jobId, options = {}) {
   try {
     const headers = await getAuthHeaders();
-    return await fetchWithRetry(`${BASE_URL}/job/${jobId}`, { headers });
+    const params = new URLSearchParams();
+    if (options?.summary) params.set("summary", "1");
+    if (options?.includeLogs) params.set("includeLogs", "1");
+    const qs = params.toString();
+    const url = qs ? `${BASE_URL}/job/${jobId}?${qs}` : `${BASE_URL}/job/${jobId}`;
+    return await fetchWithRetry(url, { headers });
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(

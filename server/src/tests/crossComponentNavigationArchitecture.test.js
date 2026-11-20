@@ -1,6 +1,6 @@
 /**
  * Verification Test Suite for Section 2: Cross-Component Navigation Architecture
- * KIẾN TRÚC ĐIỀU HƯỚNG LIÊN PHÂN HỆ (CROSS-COMPONENT NAVIGATION ARCHITECTURE)
+ * CROSS-COMPONENT NAVIGATION ARCHITECTURE
  *
  * Verifies Section 2.1 (Data Flow), Section 2.2 (View CFG Sequence),
  * and Section 2.3 (Open Code Sequence) from:
@@ -86,7 +86,7 @@ const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) => {
   return fileCfgs[0].functionName;
 };
 
-describe("## 2. KIẾN TRÚC ĐIỀU HƯỚNG LIÊN PHÂN HỆ (CROSS-COMPONENT NAVIGATION ARCHITECTURE)", () => {
+describe("## 2. CROSS-COMPONENT NAVIGATION ARCHITECTURE", () => {
   const sampleProjectFiles = [
     "backend/src/services/sentence.service.js",
     "backend/src/services/auth.service.js",
@@ -125,7 +125,7 @@ describe("## 2. KIẾN TRÚC ĐIỀU HƯỚNG LIÊN PHÂN HỆ (CROSS-COMPONENT 
     },
   ];
 
-  describe("2.1 Sơ Đồ Khối Luồng Dữ Liệu & Sự Kiện (Event & Data Flow State Machine)", () => {
+  describe("2.1 Event & Data Flow State Machine", () => {
     it("Tier 1 -> Tier 2: Dispatches events from Card to Central Dispatcher without data loss", () => {
       // Tier 1: Function Execution Card
       const card = {
@@ -191,7 +191,7 @@ describe("## 2. KIẾN TRÚC ĐIỀU HƯỚNG LIÊN PHÂN HỆ (CROSS-COMPONENT 
     });
   });
 
-  describe("2.2 Sơ Đồ Tuần Tự (Sequence Diagram): Luồng Bấm 'View CFG'", () => {
+  describe("2.2 Sequence Diagram: 'View CFG' Flow", () => {
     it("Verifies full 12-step sequence execution from card click to code pane scroll", () => {
       // Step 1: User clicks "View CFG" on toSingleSentence() @ L192
       const targetFunction = {
@@ -253,7 +253,7 @@ describe("## 2. KIẾN TRÚC ĐIỀU HƯỚNG LIÊN PHÂN HỆ (CROSS-COMPONENT 
     });
   });
 
-  describe("2.3 Sơ Đồ Tuần Tự (Sequence Diagram): Luồng Bấm 'Open code'", () => {
+  describe("2.3 Sequence Diagram: 'Open code' Flow", () => {
     it("Verifies full 11-step sequence execution from card click to Monaco line jump & glow", () => {
       // Step 1: User clicks "Open code" on lines() @ L156
       const targetFunction = {
@@ -339,7 +339,7 @@ describe("## 2. KIẾN TRÚC ĐIỀU HƯỚNG LIÊN PHÂN HỆ (CROSS-COMPONENT 
     });
   });
 
-  describe("2.4 Khả Năng Chịu Lỗi & Cạnh Tranh (Resilience & Edge Case Handling)", () => {
+  describe("2.4 Resilience & Edge Case Handling", () => {
     it("Clamps target line safely if requested line exceeds total lines in editor model", () => {
       const modelLineCount = 100; // File only has 100 lines
       const requestedLine = 156;

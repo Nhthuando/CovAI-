@@ -1,3 +1,6 @@
+import dns from 'node:dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import projectEditorRoutes from './src/routes/projectEditor.route.js';
 let attachProjectEditorGateway;
 try {
@@ -25,6 +28,7 @@ import userRoute from "./src/routes/user.route.js";
 import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
 import aiEvaluationRoutes from './src/routes/aiEvaluation.route.js';
+import aiAgentRoutes from './src/routes/aiAgent.route.js';
 import aiEvaluationGatewayRoutes from './src/routes/aiEvaluationGateway.route.js';
 import { reconcileEvaluations } from './src/services/aiEvaluation/runner.service.js';
 import projectMemberRoutes from './src/routes/projectMember.route.js';
@@ -97,6 +101,19 @@ app.use(
 
 app.use(cookieParser());
 
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (res.statusCode >= 400) {
+      console.error(`[HTTP ${res.statusCode}] ${req.method} ${req.originalUrl} (${duration}ms)`);
+    } else {
+      console.log(`[HTTP ${res.statusCode}] ${req.method} ${req.originalUrl} (${duration}ms)`);
+    }
+  });
+  next();
+});
+
 app.use('/api/ai-evaluation-gateway', aiEvaluationGatewayRoutes);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -108,6 +125,7 @@ app.use(globalLimiter);
 app.use("/api/auth", authRoute);
 app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
+app.use('/api/ai-agents', aiAgentRoutes);
 app.use('/api/projects', projectEditorRoutes);
 app.use('/api/projects', projectMemberRoutes);
 app.use('/api/projects', projectEventRoutes);
@@ -156,6 +174,18 @@ app.use("/api/settings/ai-quotas", aiQuotaSettingsRoute);
 app.use("/api/reports", reportRoute);
 app.use("/webhook", webhookRoute);
 
+// Centralized API Error Handler
+app.use((err, req, res, next) => {
+  console.error(`[EXPRESS UNHANDLED ERROR] ${req.method} ${req.originalUrl}:`, err);
+  if (res.headersSent) return next(err);
+  const status = err.statusCode || err.status || 500;
+  res.status(status).json({
+    success: false,
+    message: err.message || "Internal server error",
+    code: err.code,
+  });
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -191,7 +221,7 @@ async function startServer() {
     await prisma.$connect();
     startInvitationDeliveryWorker();
     const recover = () => recoverQueuedProjectOperations().catch(() => console.error('[operations] Queue recovery unavailable; retrying'));
-    const recoveryTimer = setInterval(recover, 10000);
+    const recoveryTimer = setInterval(recover, 30000);
     recoveryTimer.unref();
     void recover();
     console.log("Database connected successfully.");

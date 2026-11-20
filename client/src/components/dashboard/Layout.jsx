@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useLocation } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
-import CoveragePanel from "./CoveragePanel";
 import Editor from "./Editor";
 import RetainedPanel from '../common/RetainedPanel';
 import GitPanel from "./GitPanel";
@@ -53,7 +52,6 @@ import {
   Menu,
   X,
   MoreHorizontal,
-  Terminal,
   LogOut,
   Download,
   FlaskConical,
@@ -61,6 +59,8 @@ import {
   Layers,
   FileText,
 } from "lucide-react";
+import CovaiLogo from "../common/CovaiLogo";
+import "./portfolio/portfolio.css";
 
 import { useAuth } from "../../hooks/useAuth";
 import { NotificationCenter } from "../NotificationCenter";
@@ -265,15 +265,12 @@ function LayoutInner() {
   const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
   const [unifiedSummary, setUnifiedSummary] = useState(null);
-  const screenContext = useMemo(
-    () => ({
-      activity: activeActivity,
-      testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
-      filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
-      unifiedSummary: activeActivity === "overview" ? unifiedSummary : undefined,
-    }),
-    [activeActivity, coverageType, activeTabId, unifiedSummary]
-  );
+  const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
+  const [aiPanelOwner, setAiPanelOwner] = useState(null);
+  const [chatTestContext, setChatTestContext] = useState({});
+  const updateChatTestContext = useCallback(detail => {
+    setChatTestContext(previous => JSON.stringify(previous[detail.testType]) === JSON.stringify(detail) ? previous : { ...previous, [detail.testType]: detail });
+  }, []);
   const isFullWidthWorkspace = [
     "architecture",
     "overview",
@@ -282,6 +279,7 @@ function LayoutInner() {
     "git",
     "jobs",
     "activity",
+    "coverage",
   ].includes(activeActivity);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
@@ -330,7 +328,6 @@ function LayoutInner() {
   const [showMissingTestFilesModal, setShowMissingTestFilesModal] =
     useState(false);
   const [currentProjectName, setCurrentProjectName] = useState(null);
-  const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
   const handleSuggestTestcase = (filePath, options = {}) => {
@@ -357,7 +354,12 @@ function LayoutInner() {
       const text = e.detail?.promptText;
       if (text) {
         setAiPanelOpen(true);
-        setPendingAiSuggestion({ promptText: text, timestamp: Date.now() });
+        setPendingAiSuggestion({
+          promptText: text,
+          attachments: e.detail?.attachments || [],
+          fixContext: e.detail?.fixContext || null,
+          timestamp: Date.now(),
+        });
       }
     };
     window.addEventListener("covai:prefill-prompt", onPrefillEvent);
@@ -408,6 +410,63 @@ function LayoutInner() {
     return null;
   });
   const projectAccess = useProjectAccess(project?.id);
+  const chatSnapshotId = searchParams.get("snapshotId") || project?.activeSnapshotId ||
+    project?.latestSnapshotId || project?.snapshots?.[0]?.id ||
+    (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId;
+  const aiPanelScope = `${user?.id}:${project?.id}`;
+  const isAiPanelVisible = aiPanelOpen && aiPanelOwner === aiPanelScope;
+  const selectedChatTest = chatTestContext[coverageType];
+  const activeChatTest = project?.id && chatSnapshotId && activeActivity === 'coverage' && selectedChatTest?.projectId === project.id &&
+    selectedChatTest?.snapshotId === chatSnapshotId ? selectedChatTest : null;
+  const activeOverviewSummary = activeActivity === "overview" && unifiedSummary?.projectId === project?.id &&
+    unifiedSummary?.snapshotId === chatSnapshotId ? unifiedSummary : null;
+  const screenContext = useMemo(
+    () => ({
+      activity: activeActivity,
+      testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
+      filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
+      unifiedSummary: activeOverviewSummary || undefined,
+      testRunId: activeChatTest?.testRunId,
+      scenarioId: activeChatTest?.scenarioId,
+      displayedMetrics: activeOverviewSummary && project?.id && chatSnapshotId ? {
+        kind: "overview", projectId: project.id, snapshotId: chatSnapshotId,
+        state: activeOverviewSummary.state || "ready",
+        healthScore: activeOverviewSummary.healthScore,
+        healthGrade: activeOverviewSummary.healthGrade,
+        qualityGate: activeOverviewSummary.qualityGateLabel,
+        totalTests: activeOverviewSummary.totalExecutedTests,
+        passedTests: activeOverviewSummary.passedTests,
+        failedTests: activeOverviewSummary.failedTests,
+        overallCoveragePct: activeOverviewSummary.overallCoveragePct,
+        unitLinesPct: activeOverviewSummary.unitLinesPct,
+        unitBranchesPct: activeOverviewSummary.unitBranchesPct,
+        apiCoveragePct: activeOverviewSummary.apiCoveragePct,
+        systemFlowPct: activeOverviewSummary.systemFlowPct,
+      } : activeChatTest?.displayedMetrics,
+    }),
+    [activeActivity, coverageType, activeTabId, activeOverviewSummary, activeChatTest, project?.id, chatSnapshotId]
+  );
+  useEffect(() => {
+    setAiPanelOpen(false);
+    setAiPanelOwner(`${user?.id}:${project?.id}`);
+    setPendingAiSuggestion(null);
+  }, [project?.id, user?.id]);
+  useEffect(() => {
+    if (!isAiPanelVisible) return;
+    const frame = requestAnimationFrame(() => document.querySelector('#covai-chatbot textarea')?.focus());
+    const onKey = event => {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        setAiPanelOpen(false);
+        document.getElementById('covai-chatbot-toggle')?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener('keydown', onKey); };
+  }, [isAiPanelVisible]);
+  const closeChatbot = () => {
+    setAiPanelOpen(false);
+    document.getElementById('covai-chatbot-toggle')?.focus();
+  };
   const [fileTree, setFileTree] = useState([]);
   const [treeVersion, setTreeVersion] = useState(null);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
@@ -587,9 +646,9 @@ function LayoutInner() {
                   Array.isArray(tree)
                     ? null
                     : {
-                        snapshotId: tree.snapshotId,
-                        expectedWorkspaceRevision: tree.workspaceRevision,
-                      }
+                      snapshotId: tree.snapshotId,
+                      expectedWorkspaceRevision: tree.workspaceRevision,
+                    }
                 );
                 setFileTree(sourceTree || []);
                 if (sourceTree && sourceTree.length > 0) {
@@ -646,7 +705,7 @@ function LayoutInner() {
 
           if (activeActivity === "overview") {
             window.setTimeout(() => {
-              loadProjectFileTree().catch(() => {});
+              loadProjectFileTree().catch(() => { });
             }, 600);
           } else {
             await loadProjectFileTree();
@@ -808,8 +867,8 @@ function LayoutInner() {
       setProjects((prev) =>
         Array.isArray(prev)
           ? prev.map((p) =>
-              p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
-            )
+            p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
+          )
           : prev
       );
       queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
@@ -1044,8 +1103,8 @@ function LayoutInner() {
         tab.id === normOld
           ? { ...tab, id: normNew, name: normNew.split("/").pop() }
           : tab.id.startsWith(`${normOld}/`)
-          ? { ...tab, id: `${normNew}${tab.id.slice(normOld.length)}` }
-          : tab,
+            ? { ...tab, id: `${normNew}${tab.id.slice(normOld.length)}` }
+            : tab,
       ),
     );
     if (activeTabId === normOld) setActiveTabId(normNew);
@@ -1157,10 +1216,10 @@ function LayoutInner() {
 
   return (
     <div
-      className="ide-root"
-      style={{ background: "var(--ide-bg)", color: "var(--text-primary)" }}
+      className="portfolio-studio ide-root"
+      style={{ background: "var(--ps-bg)", color: "var(--ps-ink)" }}
     >
-      <div className="flex items-center justify-between flex-shrink-0 h-11 px-3 sm:px-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-text)] font-sans relative z-40 select-none">
+      <div className="flex items-center justify-between flex-shrink-0 h-11 px-3 sm:px-4 bg-[var(--ps-surface)] border-b border-[var(--ps-line)] text-[var(--ps-ink)] font-sans relative z-40 select-none">
         <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2 overflow-hidden">
           {isMobile ? (
             <button
@@ -1173,9 +1232,7 @@ function LayoutInner() {
             </button>
           ) : (
             <div className="flex items-center gap-2 flex-shrink-0">
-              <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs shrink-0">
-                <Terminal size={13} strokeWidth={2.5} />
-              </div>
+              <CovaiLogo size={24} />
               <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
                 CovAI
               </span>
@@ -1209,8 +1266,8 @@ function LayoutInner() {
                     (project.lifecycleStatus && project.lifecycleStatus !== "NOT_STARTED"
                       ? project.lifecycleStatus
                       : unifiedSummary?.projectId === project.id && unifiedSummary?.lifecycleStatus
-                      ? unifiedSummary.lifecycleStatus
-                      : project.lifecycleStatus) || "NOT_STARTED"
+                        ? unifiedSummary.lifecycleStatus
+                        : project.lifecycleStatus) || "NOT_STARTED"
                   }
                   onStatusChange={(newStatus) => {
                     setProject((prev) =>
@@ -1248,8 +1305,8 @@ function LayoutInner() {
                     <span className="flex-shrink-0 select-none">/</span>
                     <span
                       className={`truncate max-w-[100px] md:max-w-[180px] ${isLast
-                          ? "text-[var(--color-text)] font-semibold"
-                          : "text-[var(--color-text-secondary)] font-medium"
+                        ? "text-[var(--color-text)] font-semibold"
+                        : "text-[var(--color-text-secondary)] font-medium"
                         }`}
                       title={cleanFilePath}
                     >
@@ -1267,7 +1324,7 @@ function LayoutInner() {
           <nav
             role="tablist"
             aria-label="Coverage Test Levels"
-            className="inline-flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] shadow-xs"
+            className="inline-flex items-center p-0.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]"
           >
             {COVERAGE_TEST_TABS.map((tab) => {
               const Icon = tab.icon;
@@ -1292,25 +1349,24 @@ function LayoutInner() {
                       navigate(`${location.pathname}?${params.toString()}`);
                     }
                   }}
-                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${
-                    isActive
-                      ? "text-[var(--color-primary)] font-semibold"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
-                  }`}
+                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[5px] text-xs font-medium transition-colors duration-150 cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--ps-cobalt)] ${isActive
+                    ? "text-[var(--ps-ink)] font-semibold"
+                    : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
+                    }`}
                   title={`${tab.label} Suite`}
                 >
                   {isActive && (
                     <motion.div
                       layoutId="active-test-tab-pill"
-                      className="absolute inset-0 rounded-[var(--radius-sm)] bg-[var(--color-bg)] border border-[var(--color-border)] shadow-xs"
+                      className="absolute inset-0 rounded-[5px] bg-[var(--ps-surface-2)] border border-[var(--ps-line-strong)]"
                       transition={{ type: "spring", stiffness: 450, damping: 32 }}
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-1.5">
                     <Icon
                       size={13}
-                      strokeWidth={isActive ? 2.2 : 1.8}
-                      className={isActive ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}
+                      strokeWidth={isActive ? 2 : 1.75}
+                      className={isActive ? "text-[var(--ps-cobalt)]" : "text-[var(--ps-ink-muted)]"}
                     />
                     <span className="hidden sm:inline">{tab.label}</span>
                     <span className="sm:hidden">{tab.shortLabel}</span>
@@ -1338,7 +1394,7 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => navigate("/projects")}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer"
               title="Return to Projects Workspace"
             >
               <FolderPlus size={12} />
@@ -1351,20 +1407,20 @@ function LayoutInner() {
               type="button"
               onClick={() => setShowExport(true)}
               aria-label="Export project and analysis"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-focus)]"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--ps-cobalt)]"
             >
               <Download size={13} />
               {!isMobile && <span>Export</span>}
             </button>
           )}
 
-          <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] p-0.5 gap-0.5">
+          <div className="flex items-center rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)] p-0.5 gap-0.5">
             <button
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${sidebarOpen
-                  ? "text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              className={`p-1 rounded-[5px] transition-colors cursor-pointer ${sidebarOpen
+                ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
+                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
                 }`}
               title={
                 sidebarOpen
@@ -1382,24 +1438,29 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => setAiPanelOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${aiPanelOpen
-                  ? "text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              id="covai-chatbot-toggle"
+              aria-label="AI Chatbot"
+              aria-expanded={isAiPanelVisible}
+              aria-controls="covai-chatbot"
+              className={`px-1.5 py-1 rounded-[5px] transition-colors cursor-pointer flex items-center gap-1 ${isAiPanelVisible
+                ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
+                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
                 }`}
               title={
-                aiPanelOpen
-                  ? "Collapse Assistant (Right)"
-                  : "Expand Assistant (Right)"
+                isAiPanelVisible
+                  ? "Close AI Chatbot"
+                  : "Open AI Chatbot"
               }
             >
-              {aiPanelOpen ? (
+              {isAiPanelVisible ? (
                 <PanelRightClose size={14} />
               ) : (
                 <PanelRightOpen size={14} />
               )}
+              <span className="hidden sm:inline text-[11px]">AI Chatbot</span>
             </button>
 
-            <NotificationCenter userId={user?.id} size={14} />
+            <NotificationCenter userId={user?.id} size={14} variant="compact" />
           </div>
         </div>
       </div>
@@ -1466,12 +1527,6 @@ function LayoutInner() {
                     setActiveSetting(s);
                     if (isMobile) setSidebarOpen(false);
                   }}
-                />
-              ) : activeActivity === "coverage" ? (
-                <CoveragePanel
-                  sidebarWidth={sidebarWidth}
-                  coverageType={coverageType}
-                  setCoverageType={handleSelectCoverageType}
                 />
               ) : (
                 <Sidebar
@@ -1550,6 +1605,7 @@ function LayoutInner() {
           {(activeActivity === "architecture" || visitedPanels.has("architecture")) && (
             <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
               <ProjectArchitecturePanel
+                key={project?.id || "none"}
                 projectId={project?.id}
                 initialFile={archInitialContext?.initialFile}
               />
@@ -1570,8 +1626,8 @@ function LayoutInner() {
                   project?.snapshots?.[0]?.id ||
                   (project?.id || initialProjectId
                     ? localStorage.getItem(
-                        `latestSnapshot_${project?.id || initialProjectId}`
-                      )
+                      `latestSnapshot_${project?.id || initialProjectId}`
+                    )
                     : null) ||
                   testPromptSnapshotId
                 }
@@ -1588,58 +1644,10 @@ function LayoutInner() {
           {(activeActivity === "coverage" || visitedPanels.has("coverage")) && (
             <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
               {(coverageType === "unit" || visitedPanels.has("coverage:unit")) && (
-                <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
-                  <UnitTestDashboard
-                    snapshotId={
-                      searchParams.get("snapshotId") ||
-                      project?.activeSnapshotId ||
-                      project?.latestSnapshotId ||
-                      project?.snapshots?.[0]?.id ||
-                      (project?.id
-                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                        : null) ||
-                      testPromptSnapshotId
-                    }
-                    projectId={project?.id}
-                    treeVersion={treeVersion}
-                    focusFile={searchParams.get("focusFile")}
-                    onOpenFile={handleOpenFileByPath}
-                    onSuggestTestcase={handleSuggestTestcase}
-                    onOpenCFG={handleOpenCFG}
-                    runTrigger={coverageRunTrigger}
-                  />
-                </div>
-              )}
-              {(coverageType === "integration" || visitedPanels.has("coverage:integration")) && (
-                <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
-                  <IntegrationTestDashboard
-                    snapshotId={
-                      searchParams.get("snapshotId") ||
-                      project?.activeSnapshotId ||
-                      project?.latestSnapshotId ||
-                      project?.snapshots?.[0]?.id ||
-                      (project?.id
-                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                        : null) ||
-                      testPromptSnapshotId
-                    }
-                    projectId={project?.id}
-                    onOpenFile={handleOpenFileByPath}
-                    onOpenCFG={handleOpenCFG}
-                    onSuggestTestcase={handleSuggestTestcase}
-                    onOpenArchitecture={handleOpenArchitecture}
-                    onOpenJobQueue={() => setCoverageJobsOpen(true)}
-                    initialContext={integrationInitialContext}
-                    onContextChange={setIntegrationInitialContext}
-                  />
-                </div>
-              )}
-              {(coverageType === "system" || visitedPanels.has("coverage:system")) && (
-                <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
-                  {/* The dashboard is keyed by project and snapshot; mount it once the
-                      project is known so it does not load twice under a placeholder key. */}
-                  {project?.id ? (
-                    <SystemTestDashboard
+                <div className={coverageType === "unit" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
+                  <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'unit'}>
+                    <UnitTestDashboard
+                      onChatContextChange={updateChatTestContext}
                       snapshotId={
                         searchParams.get("snapshotId") ||
                         project?.activeSnapshotId ||
@@ -1651,13 +1659,69 @@ function LayoutInner() {
                         testPromptSnapshotId
                       }
                       projectId={project?.id}
-                      onOpenJobQueue={() => setCoverageJobsOpen(true)}
-                      focusScenario={searchParams.get("focusScenario")}
+                      treeVersion={treeVersion}
+                      focusFile={searchParams.get("focusFile")}
                       onOpenFile={handleOpenFileByPath}
+                      onSuggestTestcase={handleSuggestTestcase}
+                      onOpenCFG={handleOpenCFG}
+                      onOpenJobQueue={() => setCoverageJobsOpen(true)}
+                      runTrigger={coverageRunTrigger}
                     />
-                  ) : (
-                    <div className="flex min-h-[400px] items-center justify-center text-sm text-[var(--color-text-secondary)]" aria-busy="true">Loading project...</div>
-                  )}
+                  </RetainedPanel>
+                </div>
+              )}
+              {(coverageType === "integration" || visitedPanels.has("coverage:integration")) && (
+                <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
+                  <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'integration'}>
+                    <IntegrationTestDashboard
+                      onChatContextChange={updateChatTestContext}
+                      snapshotId={
+                        searchParams.get("snapshotId") ||
+                        project?.activeSnapshotId ||
+                        project?.latestSnapshotId ||
+                        project?.snapshots?.[0]?.id ||
+                        (project?.id
+                          ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                          : null) ||
+                        testPromptSnapshotId
+                      }
+                      projectId={project?.id}
+                      onOpenFile={handleOpenFileByPath}
+                      onOpenCFG={handleOpenCFG}
+                      onSuggestTestcase={handleSuggestTestcase}
+                      onOpenArchitecture={handleOpenArchitecture}
+                      onOpenJobQueue={() => setCoverageJobsOpen(true)}
+                      initialContext={integrationInitialContext}
+                      onContextChange={setIntegrationInitialContext}
+                    />
+                  </RetainedPanel>
+                </div>
+              )}
+              {(coverageType === "system" || visitedPanels.has("coverage:system")) && (
+                <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
+                  <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'system'}>
+                    {project?.id ? (
+                      <SystemTestDashboard
+                        onChatContextChange={updateChatTestContext}
+                        snapshotId={
+                          searchParams.get("snapshotId") ||
+                          project?.activeSnapshotId ||
+                          project?.snapshots?.[0]?.id ||
+                          project?.latestSnapshotId ||
+                          (project?.id
+                            ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                            : null) ||
+                          testPromptSnapshotId
+                        }
+                        projectId={project?.id}
+                        onOpenJobQueue={() => setCoverageJobsOpen(true)}
+                        focusScenario={searchParams.get("focusScenario")}
+                        onOpenFile={handleOpenFileByPath}
+                      />
+                    ) : (
+                      <div className="flex min-h-[400px] items-center justify-center text-sm text-[var(--color-text-secondary)]" aria-busy="true">Loading project...</div>
+                    )}
+                  </RetainedPanel>
                 </div>
               )}
             </div>
@@ -1665,135 +1729,129 @@ function LayoutInner() {
 
           {(!isFullWidthWorkspace || visitedPanels.has("editor") || visitedPanels.has("explorer")) && (
             <div className={!isFullWidthWorkspace && activeActivity !== "settings" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
-                  <Editor
-                    key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
-                    tabs={tabs}
-                    activeTabId={activeTabId}
-                    onSelectTab={(tabId) => {
-                      setActiveTabId(tabId);
-                      setActiveFileId(tabId);
-                    }}
-                    onCloseTab={handleCloseTab}
-                    onReorderTabs={setTabs}
-                    fileTree={fileTree}
-                    isLoadingTree={isLoadingTree}
-                    projectId={project?.id}
-                    snapshotId={
-                      searchParams.get("snapshotId") ||
-                      project?.activeSnapshotId ||
-                      project?.latestSnapshotId ||
-                      project?.snapshots?.[0]?.id ||
-                      (project?.id
-                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                        : null) ||
-                      testPromptSnapshotId
-                    }
-                    coverageType={coverageType}
-                    onOpenFile={handleOpenFileByPath}
-                    onRunAnalysis={handleTriggerRunAnalysis}
-                    onSuggestTestcase={handleSuggestTestcase}
-                    refreshTrigger={editorRefreshTrigger}
-                    jumpTarget={editorJumpTarget}
-                  />
-                </div>
+              <Editor
+                key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onSelectTab={(tabId) => {
+                  setActiveTabId(tabId);
+                  setActiveFileId(tabId);
+                }}
+                onCloseTab={handleCloseTab}
+                onReorderTabs={setTabs}
+                fileTree={fileTree}
+                isLoadingTree={isLoadingTree}
+                projectId={project?.id}
+                snapshotId={
+                  searchParams.get("snapshotId") ||
+                  project?.activeSnapshotId ||
+                  project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                coverageType={coverageType}
+                onOpenFile={handleOpenFileByPath}
+                onRunAnalysis={handleTriggerRunAnalysis}
+                onSuggestTestcase={handleSuggestTestcase}
+                refreshTrigger={editorRefreshTrigger}
+                jumpTarget={editorJumpTarget}
+              />
+            </div>
           )}
         </motion.div>
-        <AnimatePresence initial={false}>
-          {aiPanelOpen && (
-            <>
-              {!isMobile && (
-                <PanelResizer
-                  onMouseDown={handleAiPanelResize}
-                  isDragging={isDraggingAiPanel}
-                  onDoubleClick={handleResetAiPanelWidth}
-                  currentWidth={aiPanelWidth}
-                  defaultWidth={DEFAULT_AI_PANEL_WIDTH}
-                  side="right"
-                  label="COV Assistant"
-                />
-              )}
-              <motion.div
-                key="ai-panel"
-                initial={
-                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
-                }
-                animate={
-                  isMobile
-                    ? { x: 0, opacity: 1 }
-                    : { width: aiPanelWidth, opacity: 1 }
-                }
-                exit={
-                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
-                }
-                transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-                style={
-                  isMobile
-                    ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      right: 0,
-                      width: "100%",
-                      maxWidth: 360,
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                    }
-                    : { overflow: "hidden", flexShrink: 0 }
-                }
-              >
-                <AIPanel
-                  key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || ""}`}
-                  screenContext={screenContext}
-                  projectId={project?.id}
-                  snapshotId={
-                    searchParams.get("snapshotId") ||
-                    project?.activeSnapshotId ||
-                    project?.latestSnapshotId ||
-                    project?.snapshots?.[0]?.id ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  fileTree={fileTree}
-                  pendingAiSuggestion={pendingAiSuggestion}
-                  onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
-                  onOpenFile={handleOpenFileByPath}
-                  onRunAnalysis={handleTriggerRunAnalysis}
-                />
-              </motion.div>
-            </>
+        <>
+          {isAiPanelVisible && !isMobile && (
+            <PanelResizer
+              onMouseDown={handleAiPanelResize}
+              isDragging={isDraggingAiPanel}
+              onDoubleClick={handleResetAiPanelWidth}
+              currentWidth={aiPanelWidth}
+              defaultWidth={DEFAULT_AI_PANEL_WIDTH}
+              side="right"
+              label="COV Assistant"
+            />
           )}
-        </AnimatePresence>
+          <motion.div
+            id="covai-chatbot"
+            aria-label="AI Chatbot"
+            role="complementary"
+            key={`ai-panel:${user?.id}:${project?.id}`}
+            initial={
+              isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+            }
+            animate={
+              isMobile
+                ? { x: 0, opacity: 1 }
+                : { width: aiPanelWidth, opacity: 1 }
+            }
+            exit={
+              isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+            }
+            transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+            style={
+              isMobile
+                ? {
+                  position: "fixed",
+                  top: 42,
+                  bottom: 26,
+                  right: 0,
+                  width: "100%",
+                  maxWidth: 360,
+                  display: isAiPanelVisible ? undefined : "none",
+                  overflow: "hidden",
+                  zIndex: 35,
+                  boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                }
+                : { overflow: "hidden", flexShrink: 0, display: isAiPanelVisible ? undefined : "none" }
+            }
+          >
+            <RetainedPanel key={`${user?.id}:${project?.id}`} active={isAiPanelVisible}>
+              <AIPanel
+                onClose={closeChatbot}
+                key={`${user?.id}:${project?.id}`}
+                screenContext={screenContext}
+                projectId={project?.id}
+                snapshotId={chatSnapshotId}
+                fileTree={fileTree}
+                pendingAiSuggestion={pendingAiSuggestion}
+                onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
+                onOpenFile={handleOpenFileByPath}
+                onRunAnalysis={handleTriggerRunAnalysis}
+              />
+            </RetainedPanel>
+          </motion.div>
+        </>
       </motion.div>
-      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--color-surface)] border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] font-mono whitespace-nowrap overflow-x-auto select-none">
+      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--ps-surface)] border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-muted)] ps-mono whitespace-nowrap overflow-x-auto select-none">
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-            <GitBranch size={11} className="text-[var(--color-primary)]" />
+          <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)]">
+            <GitBranch size={11} className="text-[var(--ps-ink-muted)]" />
             {!isMobile && <span>main</span>}
           </div>
           {!isMobile && (
             <>
-              <div className="w-px h-3 bg-[var(--color-border)]" />
-              <div className="flex items-center gap-1.5 text-[var(--color-success)]">
+              <div className="w-px h-3 bg-[var(--ps-line)]" />
+              <div className="flex items-center gap-1.5 text-[var(--ps-emerald)]">
                 <CheckCircle2 size={11} />
                 <span>Engine Ready</span>
               </div>
-              <div className="flex items-center gap-1.5 text-[var(--color-text-muted)] font-sans">
+              <div className="flex items-center gap-1.5 text-[var(--ps-ink-muted)] font-sans">
                 <span>{project?.name || "Workspace"}</span>
               </div>
             </>
           )}
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-            <BarChart3 size={11} className="text-[var(--color-primary)]" />
+          <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)]">
+            <BarChart3 size={11} className="text-[var(--ps-ink-muted)]" />
             <span>Target: 80%+</span>
           </div>
           {!isMobile && (
             <>
-              <div className="w-px h-3 bg-[var(--color-border)]" />
+              <div className="w-px h-3 bg-[var(--ps-line)]" />
               <span>UTF-8</span>
             </>
           )}
@@ -1824,8 +1882,16 @@ function LayoutInner() {
         {showCFG && (
           <CFGCalculator
             project={project}
+            snapshotId={
+              searchParams.get("snapshotId") ||
+              project?.latestSnapshotId ||
+              project?.snapshots?.[0]?.id ||
+              (project?.id
+                ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                : null) ||
+              testPromptSnapshotId
+            }
             onClose={handleCloseCFG}
-            snapshotId={searchParams.get("snapshotId") || undefined}
             initialFile={cfgInitialContext?.initialFile}
             initialFunc={cfgInitialContext?.initialFunc}
             initialLine={cfgInitialContext?.initialLine}

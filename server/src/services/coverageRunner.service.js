@@ -13,6 +13,8 @@ import { appendJobOutput, saveJobOutput } from "./jobOutput.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
+import { detectTestingFrameworks } from "../utils/testingFrameworkDetector.js";
+import { terminateProcessTree, trackProcessTree } from "./processTree.service.js";
 
 const RUN_TESTS_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -77,66 +79,146 @@ export const processCoverageJob = async (jobId) => {
     // Initialize output
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
     await updateJobProgress(jobId, 10);
-    await addJobLog(jobId, "INFO", `Starting jest --coverage at: ${rootDir}`);
 
-    // ── SCRUM-107: Spawn jest --coverage ──────────────────────────────────
-    const jestArgs = [
-        "--coverage",
-        "--coverageReporters=json-summary",
-        "--coverageReporters=json",
-        "--coverageReporters=lcov",
-        "--forceExit",
-        "--testTimeout=30000",
-    ];
+    // Detect framework
+    let primaryFramework = null;
+    try {
+        const detection = detectTestingFrameworks(rootDir);
+        primaryFramework = detection?.primaryFramework || null;
+    } catch (detectErr) {
+        console.warn(`[CoverageRunner ${jobId}] Framework detection warning:`, detectErr.message);
+    }
+    const isVitest = job.type === "VITEST_COVERAGE" || primaryFramework === "vitest" || (Boolean(job.snapshot?.vitestCommand) && !job.snapshot?.jestCommand);
+    const runnerName = isVitest ? "vitest" : "jest";
 
-    // If snapshot has jestConfigPath, pass it in
-    if (job.snapshot.jestConfigPath) {
-        jestArgs.push(`--config=${job.snapshot.jestConfigPath}`);
+    await addJobLog(jobId, "INFO", `Starting ${runnerName} --coverage at: ${rootDir}`);
+
+    let runnerArgs = [];
+    if (isVitest) {
+        runnerArgs = [
+            "run",
+            "--coverage",
+            "--coverage.enabled=true",
+            "--coverage.reporter=json-summary",
+            "--coverage.reporter=json",
+            "--coverage.reporter=lcov",
+            "--coverage.reportOnFailure=true",
+            "--reporter=default",
+            "--reporter=json",
+            `--outputFile=${path.join(coverageDir, "vitest-results.json").replace(/\\/g, "/")}`,
+            "--passWithNoTests",
+            "--testTimeout=30000",
+        ];
+        if (job.snapshot?.vitestConfigPath) {
+            runnerArgs.push(`--config=${job.snapshot.vitestConfigPath}`);
+        }
+    } else {
+        runnerArgs = [
+            "--coverage",
+            "--coverageReporters=json-summary",
+            "--coverageReporters=json",
+            "--coverageReporters=lcov",
+            "--forceExit",
+            "--testTimeout=30000",
+        ];
+        if (job.snapshot?.jestConfigPath) {
+            runnerArgs.push(`--config=${job.snapshot.jestConfigPath}`);
+        }
+
+        // Pre-flight setup files and options injection (SCRUM / M2)
+        const setupFileCandidates = [
+            job.snapshot?.setupFilePath,
+            job.snapshot?.jestSetupPath,
+            path.join(rootDir, "covai-jest-setup.cjs"),
+            path.join(rootDir, ".covai-temp", "covai.supertest.setup.js"),
+            path.join(rootDir, "src", "tests", "helpers", "databaseSafetySetup.js")
+        ];
+
+        let primarySetup = null;
+        for (const candidate of setupFileCandidates) {
+            if (candidate && fs.existsSync(candidate)) {
+                primarySetup = path.isAbsolute(candidate)
+                    ? (candidate.startsWith(rootDir) ? `./${path.relative(rootDir, candidate).replace(/\\/g, "/")}` : candidate)
+                    : candidate;
+                break;
+            }
+        }
+
+        if (primarySetup) {
+            runnerArgs.push(`--setupFiles=${primarySetup}`);
+        }
+
+        if (job.snapshot?.setupFiles) {
+            const extraSetups = Array.isArray(job.snapshot.setupFiles) ? job.snapshot.setupFiles : [job.snapshot.setupFiles];
+            for (const setup of extraSetups) {
+                if (setup && typeof setup === "string") {
+                    runnerArgs.push(`--setupFiles=${setup.replace(/\\/g, "/")}`);
+                }
+            }
+        }
+
+        const afterEnvCandidate = path.join(rootDir, "covai-jest-setup-after-env.cjs");
+        if (job.snapshot?.setupFilesAfterEnv) {
+            const extraAfterEnv = Array.isArray(job.snapshot.setupFilesAfterEnv) ? job.snapshot.setupFilesAfterEnv : [job.snapshot.setupFilesAfterEnv];
+            for (const setup of extraAfterEnv) {
+                if (setup && typeof setup === "string") {
+                    runnerArgs.push(`--setupFilesAfterEnv=${setup.replace(/\\/g, "/")}`);
+                }
+            }
+        } else if (fs.existsSync(afterEnvCandidate)) {
+            runnerArgs.push(`--setupFilesAfterEnv=./covai-jest-setup-after-env.cjs`);
+        }
     }
 
     return new Promise((resolve) => {
         let timedOut = false;
 
-        const child = spawn("npx", ["jest", ...jestArgs], {
+        const child = spawn("npx", [runnerName, ...runnerArgs], {
             cwd: rootDir,
             shell: true,
             env: { ...process.env, CI: "true", FORCE_COLOR: "0" },
         });
 
-        // SCRUM-112: Timeout handler
+        trackProcessTree(child);
+
+        // Timeout handler
         const timer = setTimeout(async () => {
             timedOut = true;
-            child.kill("SIGKILL");
-            const msg = `jest --coverage exceeded timeout ${RUN_TESTS_TIMEOUT_MS / 1000}s`;
+            try {
+                terminateProcessTree(child);
+            } catch (_) {
+                try { child.kill("SIGKILL"); } catch { }
+            }
+            const msg = `${runnerName} --coverage exceeded timeout ${RUN_TESTS_TIMEOUT_MS / 1000}s`;
             console.error(`[CoverageRunner ${jobId}] ${msg}`);
             await addJobLog(jobId, "ERROR", msg);
             await markJobFailed(jobId, new Error(msg)).catch(() => { });
             resolve();
         }, RUN_TESTS_TIMEOUT_MS);
 
-        // SCRUM-111: Capture stdout line-by-line
+        // Capture stdout line-by-line
         child.stdout.on("data", async (chunk) => {
             const text = chunk.toString();
-            process.stdout.write(`[Jest ${jobId}] ${text}`);
+            process.stdout.write(`[${runnerName} ${jobId}] ${text}`);
             await appendJobOutput(jobId, { stdout: text }).catch(() => { });
         });
 
-        // SCRUM-111: Capture stderr
+        // Capture stderr
         child.stderr.on("data", async (chunk) => {
             const text = chunk.toString();
-            process.stderr.write(`[Jest ${jobId}] ${text}`);
+            process.stderr.write(`[${runnerName} ${jobId}] ${text}`);
             await appendJobOutput(jobId, { stderr: text }).catch(() => { });
         });
 
-        // When jest exits
+        // When runner exits
         child.on("close", async (code) => {
             clearTimeout(timer);
             if (timedOut) return;
 
-            // Jest exits with code 1 when tests fail, but coverage is still generated.
+            // Runner exits with code 1 when tests fail, but coverage is still generated.
             // Only treat as an error if exit code >= 2 (configuration/execution error)
             if (code !== null && code >= 2) {
-                const msg = `jest exited with code ${code} (fatal error)`;
+                const msg = `${runnerName} exited with code ${code} (fatal error)`;
                 await addJobLog(jobId, "ERROR", msg);
                 await markJobFailed(jobId, new Error(msg));
                 console.error(`[CoverageRunner ${jobId}] ${msg}`);
@@ -144,7 +226,7 @@ export const processCoverageJob = async (jobId) => {
             }
 
             await updateJobProgress(jobId, 70);
-            await addJobLog(jobId, "INFO", `jest finished (exit ${code}), parsing coverage...`);
+            await addJobLog(jobId, "INFO", `${runnerName} finished (exit ${code}), parsing coverage...`);
 
             try {
                 // SCRUM-85: Parse coverage-summary.json → DB (lines/branches/functions/statements)
@@ -179,6 +261,8 @@ export const processCoverageJob = async (jobId) => {
 
                 await markJobSuccess(jobId, {
                     jestExitCode: code,
+                    exitCode: code,
+                    runner: runnerName,
                     coverage: {
                         lines: total.lines.pct,
                         branches: total.branches.pct,

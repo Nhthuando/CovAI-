@@ -291,8 +291,8 @@ function getJobVisual(job) {
 }
 
 /* ── Polling intervals (ms) ───────────────────────────── */
-const POLL_FAST = 3000;
-const POLL_SLOW = 12000;
+const POLL_FAST = 8000;
+const POLL_SLOW = 30000;
 
 /* ── Component ─────────────────────────────────────────────── */
 export default function JobQueue({ projectId, onSync }) {

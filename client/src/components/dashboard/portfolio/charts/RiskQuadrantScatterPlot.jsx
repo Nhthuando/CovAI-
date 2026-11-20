@@ -216,7 +216,7 @@ export function RiskQuadrantScatterPlot({
             width={width - padRight - cutoffX}
             height={cutoffY - padTop}
             fill="var(--ud-pass)"
-            fillOpacity="0.04"
+            fillOpacity="0.025"
           />
           {/* Top-Left: Blind Spot / Low Coverage */}
           <rect
@@ -225,7 +225,7 @@ export function RiskQuadrantScatterPlot({
             width={cutoffX - padLeft}
             height={cutoffY - padTop}
             fill="var(--ud-warn)"
-            fillOpacity="0.04"
+            fillOpacity="0.025"
           />
           {/* Bottom-Right: Active Regressions */}
           <rect
@@ -233,8 +233,8 @@ export function RiskQuadrantScatterPlot({
             y={cutoffY}
             width={width - padRight - cutoffX}
             height={height - padBottom - cutoffY}
-            fill="#fb8500"
-            fillOpacity="0.04"
+            fill="var(--ud-warn)"
+            fillOpacity="0.025"
           />
           {/* Bottom-Left: Critical Risk */}
           <rect
@@ -243,15 +243,15 @@ export function RiskQuadrantScatterPlot({
             width={cutoffX - padLeft}
             height={height - padBottom - cutoffY}
             fill="var(--ud-fail)"
-            fillOpacity="0.04"
+            fillOpacity="0.025"
           />
 
-          {/* Subtle Quadrant Watermarks — positioned in safe zones away from (0%,0%) and (100%,100%) data points */}
+          {/* Subtle Quadrant Watermarks */}
           <text
             x={width - padRight - 6}
             y={cutoffY - 5}
             textAnchor="end"
-            className="text-[8px] font-mono fill-[var(--ud-pass)] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ★ Healthy Stars
           </text>
@@ -259,7 +259,7 @@ export function RiskQuadrantScatterPlot({
             x={padLeft + 8}
             y={padTop + 13}
             textAnchor="start"
-            className="text-[8px] font-mono fill-[var(--ud-warn)] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ▲ Blind Spot / Low Coverage
           </text>
@@ -267,7 +267,7 @@ export function RiskQuadrantScatterPlot({
             x={width - padRight - 6}
             y={height - padBottom - 8}
             textAnchor="end"
-            className="text-[8px] font-mono fill-[#fb8500] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ▼ Active Regressions
           </text>
@@ -275,7 +275,7 @@ export function RiskQuadrantScatterPlot({
             x={padLeft + 8}
             y={cutoffY + 14}
             textAnchor="start"
-            className="text-[8px] font-mono fill-[var(--ud-fail)] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ✖ Critical Risk
           </text>
@@ -481,21 +481,8 @@ export function RiskQuadrantScatterPlot({
             className="absolute bottom-3 right-3 p-2.5 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] text-[var(--ud-text)] shadow-lg z-20 font-mono text-[11px] tabular-nums pointer-events-none min-w-[205px]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-bold text-xs font-sans text-[var(--ud-text)] truncate max-w-[130px]">
+              <span className="font-bold text-xs font-sans text-[var(--ud-text)] truncate max-w-[180px]">
                 {hoveredNode.name}
-              </span>
-              <span
-                className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${
-                  hoveredNode.gateStatus === "PASSED"
-                    ? "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)] border-[var(--ud-pass)]/30"
-                    : hoveredNode.gateStatus === "BLOCKED"
-                    ? "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)] border-[var(--ud-fail)]/30"
-                    : hoveredNode.gateStatus === "UNTESTED"
-                    ? "bg-[var(--ud-neutral)]/15 text-[var(--ud-neutral)] border-[var(--ud-neutral)]/30"
-                    : "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border-[var(--ud-warn)]/30"
-                }`}
-              >
-                {hoveredNode.gateLabel || hoveredNode.gateStatus}
               </span>
             </div>
             <div className="mt-1 text-[10px] text-[var(--ud-text-muted)]">

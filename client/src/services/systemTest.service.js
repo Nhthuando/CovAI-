@@ -1,15 +1,15 @@
 import { getAIModelHeaders } from './aiModel.service.js';
 import axiosLibrary from "axios";
 import { prepareEditorRequest } from './editorAwareRequest';
+import { getAccessToken, installAxiosAuthRefresh } from '../lib/authSession.js';
 const axios = axiosLibrary.create();
 axios.interceptors.request.use(async config => { await prepareEditorRequest(config.url, {method: config.method}); return config; });
+installAxiosAuthRefresh(axios);
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 const getAuthHeaders = () => {
-  const user = localStorage.getItem("user");
-  const userToken = user ? JSON.parse(user).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = getAccessToken();
   return { ...getAIModelHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 };
 

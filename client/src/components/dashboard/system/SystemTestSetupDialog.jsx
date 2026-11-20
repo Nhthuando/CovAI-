@@ -191,7 +191,7 @@ export default function SystemTestSetupDialog({
     report?.docker.status === 'AVAILABLE'
       ? 'Available'
       : report?.docker.status === 'NOT_REQUIRED'
-      ? 'Not required'
+      ? 'Schema-aware Mock DB (No Docker required)'
       : report?.docker.status === 'UNAVAILABLE'
       ? 'Start Docker Desktop on the server'
       : 'Not checked';
@@ -204,7 +204,7 @@ export default function SystemTestSetupDialog({
         event.preventDefault();
         if (!saving) onClose();
       }}
-      className="m-auto max-h-[90vh] w-[min(920px,94vw)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-0 text-[var(--color-text)] shadow-2xl backdrop:bg-black/65 font-sans"
+      className="m-auto max-h-[90vh] w-[min(920px,94vw)] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0 text-[var(--color-text)] backdrop:bg-black/65 font-sans"
     >
       <div className="flex max-h-[90vh] flex-col">
         {/* Header */}
@@ -398,14 +398,14 @@ export default function SystemTestSetupDialog({
                           <p className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                             <span
                               className={`h-1.5 w-1.5 rounded-full ${
-                                report.docker.status === 'AVAILABLE'
+                                report.docker.status === 'AVAILABLE' || report.docker.status === 'NOT_REQUIRED'
                                   ? 'bg-emerald-500'
                                   : report.docker.status === 'UNAVAILABLE'
                                   ? 'bg-amber-500'
                                   : 'bg-slate-400'
                               }`}
                             />
-                            <span>Docker: {dockerStatusLabel}</span>
+                            <span>Runtime: {dockerStatusLabel}</span>
                           </p>
                         </div>
                       </dl>

@@ -3,7 +3,13 @@
  * Builds AI prompts specifically for generating Supertest integration tests.
  */
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
+import { withAgentContext } from '../agents/registry.js';
+import {
+    detectIntegrationLanguage,
+    getEndpointRequiredCases,
+} from "../../../shared/integrationCaseCoverage.js";
 import { extractDatabaseSchemaConstraints } from "./integrationAiTestGenerator.service.js";
+import { parsePrismaSchemaModels, generatePrismaSeeds } from "./databaseMockTemplate.service.js";
 
 
 /**
@@ -69,17 +75,29 @@ export const includeContractContext = (sourceCode = [], testFiles = []) => {
         });
     }
 
-    // 2. Existing Tests (Established Response Schemas & Status Contracts)
-    const existingTests = (testFiles || []).filter(f =>
-        !f.path.includes("node_modules") && (f.path.includes("integration") || f.path.includes("unit") || f.path.includes("api.test"))
-    );
+    // 2. Existing Tests (Established Response Schemas, Status Contracts, and Naming Language/Style)
+    const existingTests = (testFiles || []).filter(f => {
+        const filePath = String(f?.path || "");
+        const content = String(f?.content || "");
+        if (filePath.includes("node_modules") || filePath.includes(".covai-temp")) return false;
+        return (
+            filePath.includes("integration") ||
+            filePath.includes("unit") ||
+            filePath.includes("api.test") ||
+            /supertest|request\s*\(|superagent/i.test(content)
+        );
+    }).sort((a, b) => {
+        const aUser = String(a?.content || "").includes("[AI GENERATED]") ? 1 : 0;
+        const bUser = String(b?.content || "").includes("[AI GENERATED]") ? 1 : 0;
+        return aUser - bUser;
+    });
 
     if (existingTests.length > 0) {
         hasContent = true;
-        segment += "#### Existing Test Suites (Established Request & Response Contracts)\n";
+        segment += "#### Existing Test Suites (Established Contracts, Setup & Naming Language)\n";
         existingTests.slice(0, 4).forEach(f => {
             segment += `##### File: \`${f.path}\`\n\`\`\`javascript\n`;
-            segment += f.content.split("\n").slice(0, 100).join("\n") + "\n```\n\n";
+            segment += f.content.split("\n").slice(0, 120).join("\n") + "\n```\n\n";
         });
     }
 
@@ -100,6 +118,29 @@ export const includeDatabaseSchemaContext = (sourceCode = []) => {
         hasSchema = true;
         segment += `#### Prisma Schema File (\`${file.path}\`)\n`;
         segment += "```prisma\n" + file.content + "\n```\n\n";
+        try {
+            const parsedModels = parsePrismaSchemaModels(file.content);
+            const seeds = generatePrismaSeeds(parsedModels);
+            const seedPreview = {};
+            for (const [mKey, rows] of Object.entries(seeds)) {
+                if (Array.isArray(rows) && rows.length > 0) seedPreview[mKey] = rows.slice(0, 2);
+            }
+            if (Object.keys(seedPreview).length > 0) {
+                segment += "#### Pre-Seeded Mock Database Records (Available in In-Memory Prisma Store at Test Start)\n";
+                segment += "```json\n" + JSON.stringify(seedPreview, null, 2) + "\n```\n\n";
+            }
+        } catch (_) {}
+    }
+
+    const mongooseFiles = (sourceCode || []).filter(
+        f => /mongoose\.model|new\s+(?:mongoose\.)?Schema/i.test(f.content || "")
+    );
+    if (mongooseFiles.length > 0) {
+        hasSchema = true;
+        segment += "#### Mongoose Model Definitions (In-Memory Mock Active — Pre-Seeded `_id`: `'507f191e810c19729de860ea'`)\n";
+        mongooseFiles.slice(0, 5).forEach(f => {
+            segment += `##### File: \`${f.path}\`\n\`\`\`javascript\n${(f.content || "").split("\n").slice(0, 80).join("\n")}\n\`\`\`\n\n`;
+        });
     }
 
     if (hasSchema) {
@@ -124,10 +165,11 @@ export const includeDatabaseSchemaContext = (sourceCode = []) => {
  * @param {Array<{path: string, content: string}>} sourceCode
  * @returns {string}
  */
-export const includeRouteContext = (sourceCode, targetEndpoints = null) => {
+export const includeRouteContext = (sourceCode, targetEndpoints = null, options = {}) => {
     if (!sourceCode || sourceCode.length === 0) return "";
 
     const endpoints = targetEndpoints || extractValidEndpoints(sourceCode);
+    const language = options?.language === "vi" ? "vi" : "en";
 
     let segment = "### VALID API ENDPOINTS (Extracted from Source Code)\n\n";
 
@@ -135,16 +177,44 @@ export const includeRouteContext = (sourceCode, targetEndpoints = null) => {
         segment += "**YOU MUST ONLY USE THESE ENDPOINTS. DO NOT INVENT ANY OTHER ENDPOINTS.**\n\n";
         segment += "| Method | Path | Controller | Middleware | Payload Schema | DB Models | Source File | Required Coverage Focus |\n";
         segment += "|--------|------|------------|------------|----------------|-----------|-------------|-------------------------|\n";
+        const endpointsWithExisting = [];
         for (const ep of endpoints) {
             const controller = ep.controllerMethod || "-";
             const middleware = ep.middleware ? ep.middleware.join(", ") : "-";
             const payload = ep.requestBodySchema ? ep.requestBodySchema.join(", ") : "-";
             const db = ep.databaseModels ? ep.databaseModels.join(", ") : "-";
-            const missing = ep.missingCoverageRequested && ep.missingCoverageRequested.length > 0 ? ep.missingCoverageRequested.join(" AND ") : "Happy Path (200/201) AND Error Edge Case (400/404/500)";
+            const requiredHints =
+                Array.isArray(ep.missingCoverageRequested) && ep.missingCoverageRequested.length > 0
+                    ? ep.missingCoverageRequested
+                    : getEndpointRequiredCases(ep).map((c) => c.promptHint);
+            const missing = requiredHints.join(" AND ");
             segment += `| ${ep.method} | ${ep.fullPath} | ${controller} | ${middleware} | ${payload} | ${db} | ${ep.sourceFile} | ${missing} |\n`;
+            if (Array.isArray(ep.existingScenarios) && ep.existingScenarios.length > 0) {
+                endpointsWithExisting.push(ep);
+            }
         }
         segment += "\n";
-        segment += "**CRITICAL INSTRUCTION:** For each endpoint listed above, you MUST write the scenarios explicitly requested in the 'Required Coverage Focus' column. If 'Happy Path (200/201)' is requested, you MUST name the test containing 'happy' or '200'. If 'Error Edge Case (400/404/500)' is requested, you MUST name the test containing 'error' or '404'. Do NOT invent any endpoints not in this table!\n\n";
+        if (endpointsWithExisting.length > 0) {
+            segment += "#### Already Covered Existing Scenarios (STRICTLY DO NOT DUPLICATE)\n";
+            for (const ep of endpointsWithExisting) {
+                segment += `- **${ep.method} ${ep.fullPath}**:\n`;
+                for (const ex of ep.existingScenarios) {
+                    const statusText = ex.expectedStatus ? `Expected ${ex.expectedStatus}` : "Status asserted";
+                    const caseText = ex.caseLabel || ex.caseKey || "Covered";
+                    segment += `  * \`${ex.testName}\` (${caseText}, ${statusText}) — ALREADY EXISTS, DO NOT regenerate or duplicate this case!\n`;
+                }
+            }
+            segment += "\n";
+        }
+
+        segment += "**CRITICAL INSTRUCTION:** For each endpoint listed above, you MUST write **EXACTLY ONE dedicated `it(...)` test block for EACH individual item** in 'Required Coverage Focus' (do NOT merge two error types such as 400 and 404 into a single test, and do **NOT** generate extra tests for cases already listed under 'Already Covered Existing Scenarios').\n";
+        segment += "**STRICT STATUS ASSERTION RULE:** Inspect the controller implementation and assert a **SINGLE exact HTTP status code** per test (`expect(res.status).toBe(200)`, `expect(res.status).toBe(400)`, `expect(res.status).toBe(404)`). **NEVER** use `expect([...]).toContain(res.status)` with multiple unrelated codes like `[200, 201, 404]` or `[400, 422, 404, 500]`.\n";
+        if (language === "vi") {
+            segment += "**LANGUAGE RULE (MANDATORY — VIETNAMESE):** The existing tests and/or API messages in this repository are in **Vietnamese**. You MUST write ALL `describe(...)` and `it(...)` test descriptions, inline comments, and `suggestions[].message` in **natural Vietnamese** matching the project's existing test style (e.g., `'Thành công (200): Xóa lớp học hợp lệ'`, `'Lỗi dữ liệu (400): Mã lớp học không hợp lệ'`, `'Không tìm thấy (404): Lớp học không tồn tại'`). Do NOT write English test titles!\n";
+        } else {
+            segment += "**LANGUAGE RULE (ENGLISH):** Name each `it(...)` test clearly in English matching its case ('happy path: ...', 'validation 400: ...', '401/403 unauthorized: ...', '404 not found: ...', or '500 edge case: ...').\n";
+        }
+        segment += "Do NOT invent any endpoints not in this table!\n\n";
         segment += "**STRICT SCOPE RESTRICTION (CRITICAL):** The user has SELECTIVELY picked only the endpoints listed in the table above. Even if the provided source code files contain other route definitions (e.g. other endpoints in the same route or controller file), you are STRICTLY FORBIDDEN from generating any `describe()`, `it()`, or `test()` blocks for any endpoint NOT present in the table. Generating tests for unselected routes will cause an immediate rejection.\n\n";
     } else {
         segment += "No specific route definitions were detected. Analyze the source code carefully to identify endpoints.\n\n";
@@ -201,15 +271,22 @@ const detectAppImportPath = (sourceCode) => {
     return "../../server/index.js";
 };
 
-export const includeSupertestInstructions = (sourceCode) => {
+export const includeSupertestInstructions = (sourceCode, options = {}) => {
     const appImportPath = detectAppImportPath(sourceCode);
+    const moduleType = options?.moduleType || "auto";
 
     let segment = "### Integration Test Generation Rules\n\n";
     segment += "You MUST generate **Supertest + Jest** integration tests to verify the complete API processing flow (Client -> Route -> Controller -> Service -> Database -> Response).\n\n";
     
     segment += "#### 1. API Flow & Application Startup\n";
     segment += `- **CRITICAL: Import the app from \`${appImportPath}\`** (the Express app module that exports the app WITHOUT calling \`app.listen()\`). DO NOT import from \`server.js\` because it starts the HTTP server on a port.\n`;
-    segment += "- If the source code uses ES modules (`import`/`export`), you MUST use `import` syntax. If it uses CommonJS (`require`), use `require`.\n";
+    if (moduleType === "commonjs") {
+        segment += "- **MODULE SYNTAX (MANDATORY — COMMONJS):** This project runs Jest in **CommonJS** mode. You MUST use `const request = require('supertest');` and `const app = require('...');`. Do NOT use ES module `import` / `export` syntax.\n";
+    } else if (moduleType === "esm") {
+        segment += "- **MODULE SYNTAX (MANDATORY — ES MODULES):** This project runs Jest in **ES Module** mode. You MUST use `import request from 'supertest';` and `import app from '...';`.\n";
+    } else {
+        segment += "- If the source code uses ES modules (`import`/`export`), you MUST use `import` syntax. If it uses CommonJS (`require`), use `require`.\n";
+    }
     segment += "- **AST PARSER COMPATIBILITY (CRITICAL):** You MUST write tests using inline Supertest chains exactly like: `await request(app).get('/api/users')`. DO NOT assign `request(app)` to a variable first. DO NOT abstract it into a helper function. The `request(app)` call MUST be inline inside the `it()` or `test()` block or else the tests will be silently ignored.\n";
     segment += "- DO NOT start the Express server on a port (do not call `app.listen()`).\n";
     segment += "- Send realistic request bodies, query params, and path params.\n";
@@ -243,7 +320,11 @@ export const includeSupertestInstructions = (sourceCode) => {
     return segment;
 };
 
-export const includeSupertestOutputFormat = () => {
+export const includeSupertestOutputFormat = (options = {}) => {
+    const isCjs = options?.moduleType === "commonjs";
+    const sampleContent = isCjs
+        ? `"const request = require(\\'supertest\\');\\nconst app = require(\\'../../src/app.js\\');\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`
+        : `"import request from \\'supertest\\';\\nimport app from \\'../../src/app.js\\';\\n\\ndescribe(\\'User API\\', () => { it(\\'happy path: should return 200\\', async () => { const res = await request(app).get(\\'/api/users\\'); expect(res.status).toBe(200); }); });"`;
     let segment = "### Required Output Format\n\n";
     segment += "You MUST output a **JSON object** wrapped in a markdown code block (```json ... ```).\n";
     segment += "The JSON must have TWO keys: `suggestions` (for test planning / chain of thought) and `tests` (for code generation):\n\n";
@@ -260,7 +341,7 @@ export const includeSupertestOutputFormat = () => {
     segment += '  "tests": [\n';
     segment += "    {\n";
     segment += '      "filePath": "tests/integration/users.test.js",\n';
-    segment += '      "content": "import request from \\\'supertest\\\';\\nimport app from \\\'../../src/app.js\\\';\\n\\ndescribe(\\\'User API\\\', () => { it(\\\'happy path: should return 200\\\', async () => { const res = await request(app).get(\\\'/api/users\\\'); expect(res.status).toBe(200); }); });"\n';
+    segment += `      "content": ${sampleContent}\n`;
     segment += "    }\n";
     segment += "  ]\n";
     segment += "}\n";
@@ -344,8 +425,22 @@ export const includePathConstraints = (pathConstraints = []) => {
  * @param {Array} pathConstraints - Optional array of backward path slicing constraints
  * @returns {string} The complete prompt string
  */
-export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstraints = []) => {
+export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstraints = [], options = {}) => {
+    const existingScenarios = Array.isArray(targetEndpoints)
+        ? targetEndpoints.flatMap((ep) => (Array.isArray(ep?.existingScenarios) ? ep.existingScenarios : []))
+        : [];
+    const language = detectIntegrationLanguage({
+        existingScenarios,
+        testFiles: payload?.testFiles || [],
+        sourceCode: payload?.sourceCode || [],
+    });
+    const moduleType = options?.moduleType || payload?.moduleType || "auto";
+
     let prompt = "You are an expert Backend QA Engineer. Your task is to analyze the provided source code, API contracts, existing test suites, and client consumers to generate comprehensive Supertest integration test files for the API endpoints.\n\n";
+
+    if (language === "vi") {
+        prompt += "**OUTPUT LANGUAGE REQUIREMENT:** Existing tests and/or controller messages in this codebase use **Vietnamese**. You MUST write all `describe(...)`, `it(...)` test titles, comments, and `suggestions[].message` in natural **Vietnamese**, while keeping valid JavaScript/Supertest code and matching existing test style.\n\n";
+    }
 
     prompt += "---\n\n";
 
@@ -353,7 +448,7 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstr
         prompt += includeSourceCode(payload.sourceCode);
         prompt += includeDatabaseSchemaContext(payload.sourceCode);
         prompt += includeContractContext(payload.sourceCode, payload.testFiles);
-        prompt += includeRouteContext(payload.sourceCode, targetEndpoints);
+        prompt += includeRouteContext(payload.sourceCode, targetEndpoints, { language });
     }
 
     const effectiveConstraints = (Array.isArray(pathConstraints) && pathConstraints.length > 0)
@@ -364,11 +459,11 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstr
         prompt += includePathConstraints(effectiveConstraints);
     }
 
-    prompt += includeSupertestInstructions(payload.sourceCode);
-    prompt += includeSupertestOutputFormat();
+    prompt += includeSupertestInstructions(payload.sourceCode, { moduleType });
+    prompt += includeSupertestOutputFormat({ moduleType });
 
     prompt += "---\n\n";
     prompt += "Now analyze the source code and contracts above and generate the Supertest integration test files in the exact JSON format specified. Output ONLY the JSON object inside a markdown code block. Do NOT add any explanations before or after the JSON block.";
 
-    return prompt;
+    return withAgentContext(prompt, 'integration-test');
 };

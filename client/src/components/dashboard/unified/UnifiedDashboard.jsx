@@ -6,13 +6,14 @@ import { useDashboardSocket } from "../../../hooks/useDashboardSocket.js";
 import { buildWorkspaceUrl } from "../../../services/unifiedDashboard/workspaceNavigation.js";
 
 import { ZoneErrorBoundary } from "./primitives/ZoneErrorBoundary.jsx";
-import { UnifiedDashboardSkeleton } from "./skeletons/UnifiedDashboardSkeleton.jsx";
 import { GlobalCommandHeader } from "./zones/GlobalCommandHeader.jsx";
 import { ExecutiveKpiRow } from "./zones/ExecutiveKpiRow.jsx";
+import { QualityChartsRow } from "./zones/QualityChartsRow.jsx";
 import { PyramidAndPillarsZone } from "./zones/PyramidAndPillarsZone.jsx";
 import { AnalysisTabsZone } from "./zones/AnalysisTabsZone.jsx";
 import { SlideOverInspectorDrawer } from "./inspector/SlideOverInspectorDrawer.jsx";
 import { AlertTriangle, RefreshCw } from "lucide-react";
+import "../portfolio/portfolio.css";
 
 const EMPTY_PROJECTS = [];
 const EMPTY_SNAPSHOTS = [];
@@ -66,7 +67,17 @@ export function UnifiedDashboard({
   // Publish live unified quality summary to parent / COV AI Agent context (guarded against duplicate emissions)
   const lastSummaryJsonRef = useRef("");
   useEffect(() => {
-    if (!vm) return;
+    if (!vm) {
+      if (effectiveProjectId && effectiveSnapshotId) {
+        onSummaryChange?.({
+          projectId: effectiveProjectId,
+          snapshotId: effectiveSnapshotId,
+          state: isError ? "unavailable" : "loading",
+        });
+      }
+      lastSummaryJsonRef.current = "";
+      return;
+    }
     const summaryPayload = {
       projectId: vm.context?.projectId,
       projectName: vm.context?.projectName,
@@ -125,7 +136,7 @@ export function UnifiedDashboard({
         new CustomEvent("covai:unified-summary-updated", { detail: summaryPayload })
       );
     }
-  }, [vm, onSummaryChange]);
+  }, [vm, onSummaryChange, effectiveProjectId, effectiveSnapshotId, isError]);
 
   // 2. Multi-Suite Sequential Run (reuses activeSuiteRun from unified-dashboard payload — 0 extra HTTP requests on mount)
   const runAllState = useRunAllSuites({
@@ -172,25 +183,15 @@ export function UnifiedDashboard({
     }
   }, []);
 
-  // Immediately render Skeleton from t=0ms when project or active snapshot is loading (no empty dashboard flash)
+  // Keep full dashboard chrome visible from t=0ms; only metric values hydrate once loaded
   const isInitialWaiting = (!projectId && !project) || !effectiveSnapshotId;
   const isDashboardLoading = isInitialWaiting || (!vm && (isLoading || isFetching));
 
-  if (isDashboardLoading) {
-    return (
-      <div className="unified-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full p-4 sm:p-6">
-        <div className="max-w-[1440px] mx-auto">
-          <UnifiedDashboardSkeleton />
-        </div>
-      </div>
-    );
-  }
-
   if (isError && !vm) {
     return (
-      <div className="unified-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full p-4 sm:p-6 flex items-center justify-center">
+      <div className="portfolio-studio unified-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full p-4 sm:p-6 flex items-center justify-center">
         <div className="rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-8 max-w-md w-full text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-[var(--ud-fail)]/10 text-[var(--ud-fail)] flex items-center justify-center mx-auto">
+          <div className="w-12 h-12 rounded-lg bg-[var(--ud-fail)]/10 text-[var(--ud-fail)] flex items-center justify-center mx-auto">
             <AlertTriangle size={24} />
           </div>
           <div className="space-y-1">
@@ -204,7 +205,7 @@ export function UnifiedDashboard({
           <button
             type="button"
             onClick={() => refetch()}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity cursor-pointer mx-auto"
+            className="ps-btn-contrast inline-flex items-center gap-1.5 px-4 py-2 text-xs rounded-[var(--radius-md)] cursor-pointer mx-auto"
           >
             <RefreshCw size={13} />
             <span>Reload Overview</span>
@@ -216,18 +217,22 @@ export function UnifiedDashboard({
 
   return (
     <div
-      className={`unified-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
+      className={`portfolio-studio unified-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
     >
       <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6">
         {/* ZONE 1: Global Context & Command Header */}
         <ZoneErrorBoundary zoneTitle="Command Header" onRetry={refetch}>
           <GlobalCommandHeader
             vm={vm}
+            loading={isDashboardLoading}
+            fallbackProject={project}
+            fallbackSnapshotId={effectiveSnapshotId}
             projects={projects}
             onSelectProject={onSelectProject}
             onSelectSnapshot={handleSelectSnapshot}
             runAllState={runAllState}
             onNavigateWorkspace={handleNavigate}
+            onAskAi={onAskAi}
             isSyncing={isFetching}
             onForceRefresh={forceRefresh}
             liveRuns={liveRuns}
@@ -237,13 +242,23 @@ export function UnifiedDashboard({
 
         {/* ZONE 2: Executive KPI Cards (4 x 3 cols) */}
         <ZoneErrorBoundary zoneTitle="Executive KPIs" onRetry={refetch}>
-          <ExecutiveKpiRow vm={vm} loading={isLoading} />
+          <ExecutiveKpiRow vm={vm} loading={isDashboardLoading} />
+        </ZoneErrorBoundary>
+
+        {/* ZONE 2.5: Multi-Tier Bar Chart & Coverage Trend Chart */}
+        <ZoneErrorBoundary zoneTitle="Quality Charts" onRetry={refetch}>
+          <QualityChartsRow
+            vm={vm}
+            loading={isDashboardLoading}
+            onNavigateWorkspace={handleNavigate}
+          />
         </ZoneErrorBoundary>
 
         {/* ZONE 3: Test Pyramid & 3 Pillar Cards (4 cols + 8 cols) */}
         <ZoneErrorBoundary zoneTitle="Pyramid & Pillars" onRetry={refetch}>
           <PyramidAndPillarsZone
             vm={vm}
+            loading={isDashboardLoading}
             onNavigateWorkspace={handleNavigate}
             activeCrossFilter={activeCrossFilter}
             onSelectCrossFilter={handleSelectCrossFilter}
@@ -254,6 +269,7 @@ export function UnifiedDashboard({
         <ZoneErrorBoundary zoneTitle="Deep Quality Analysis" onRetry={refetch}>
           <AnalysisTabsZone
             vm={vm}
+            loading={isDashboardLoading}
             onNavigateWorkspace={handleNavigate}
             onInspectItem={setInspectedItem}
             onAskAi={onAskAi}

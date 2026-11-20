@@ -5,6 +5,7 @@ import { fmtDuration, fmtCount } from "../../../../services/unifiedDashboard/for
 
 export function TestPyramidVisualizer({
   pyramid,
+  loading = false,
   activeCrossFilter = null,
   onSelectCrossFilter = null,
   className = "",
@@ -112,29 +113,31 @@ export function TestPyramidVisualizer({
     });
   };
 
-  const resolvedTitle =
-    badgeTitle ||
-    (shape === "pyramid"
-      ? "Balanced Pyramid"
-      : shape === "missing-unit"
-      ? "Unbalanced Pyramid — Missing Unit Test Foundation"
-      : shape === "ice-cream-cone"
-      ? "Inverted Pyramid (Ice-Cream Cone Anti-Pattern)"
-      : shape === "hourglass"
-      ? "Hourglass Distribution"
-      : shape === "insufficient"
-      ? "No Tests Executed — Run suites to establish baseline"
-      : "Unbalanced Pyramid");
+  const resolvedTitle = loading
+    ? "Loading test pyramid balance..."
+    : badgeTitle ||
+      (shape === "pyramid"
+        ? "Balanced Pyramid"
+        : shape === "missing-unit"
+        ? "Unbalanced Pyramid — Missing Unit Test Foundation"
+        : shape === "ice-cream-cone"
+        ? "Inverted Pyramid (Ice-Cream Cone Anti-Pattern)"
+        : shape === "hourglass"
+        ? "Hourglass Distribution"
+        : shape === "insufficient"
+        ? "No Tests Executed — Run suites to establish baseline"
+        : "Unbalanced Pyramid");
 
-  const resolvedTone =
-    tone ||
-    (shape === "pyramid"
-      ? "pass"
-      : shape === "insufficient"
-      ? "neutral"
-      : shape === "ice-cream-cone"
-      ? "fail"
-      : "warn");
+  const resolvedTone = loading
+    ? "neutral"
+    : tone ||
+      (shape === "pyramid"
+        ? "pass"
+        : shape === "insufficient"
+        ? "neutral"
+        : shape === "ice-cream-cone"
+        ? "fail"
+        : "warn");
 
   const bannerStyles = {
     pass: "border-[var(--ud-pass)]/30 bg-[var(--ud-pass)]/10 text-[var(--ud-pass)]",
@@ -200,11 +203,11 @@ export function TestPyramidVisualizer({
               fontFamily="var(--font-mono)"
               fontWeight="bold"
             >
-              E2E ({metricMode === "duration" ? fmtDuration(systemLayer.durationMs) : systemLayer.count})
+              E2E ({loading ? "--" : metricMode === "duration" ? fmtDuration(systemLayer.durationMs) : systemLayer.count})
             </text>
           </g>
 
-          {/* Middle Tier: Integration (Purple) */}
+          {/* Middle Tier: Integration */}
           <g
             onClick={() => handleTierClick("integration", "Integration")}
             className="cursor-pointer group"
@@ -234,11 +237,11 @@ export function TestPyramidVisualizer({
               fontFamily="var(--font-mono)"
               fontWeight="bold"
             >
-              Integration ({metricMode === "duration" ? fmtDuration(intLayer.durationMs) : intLayer.count})
+              Integration ({loading ? "--" : metricMode === "duration" ? fmtDuration(intLayer.durationMs) : intLayer.count})
             </text>
           </g>
 
-          {/* Base Tier: Unit Tests (Blue) */}
+          {/* Base Tier: Unit Tests */}
           <g
             onClick={() => handleTierClick("unit", "Unit Tests")}
             className="cursor-pointer group"
@@ -268,7 +271,7 @@ export function TestPyramidVisualizer({
               fontFamily="var(--font-mono)"
               fontWeight="bold"
             >
-              Unit Tests ({metricMode === "duration" ? fmtDuration(unitLayer.durationMs) : unitLayer.count})
+              Unit Tests ({loading ? "--" : metricMode === "duration" ? fmtDuration(unitLayer.durationMs) : unitLayer.count})
             </text>
           </g>
         </svg>
@@ -315,7 +318,9 @@ export function TestPyramidVisualizer({
                 <span>{row.title}</span>
               </span>
               <span className="tabular-nums font-semibold text-[var(--ud-text)]">
-                {fmtCount(row.layer.count)} tests • {fmtDuration(row.layer.durationMs)}
+                {loading
+                  ? "-- tests • --"
+                  : `${fmtCount(row.layer.count)} tests • ${fmtDuration(row.layer.durationMs)}`}
               </span>
             </button>
           );
@@ -338,10 +343,12 @@ export function TestPyramidVisualizer({
         <div className="space-y-0.5 font-sans leading-relaxed">
           <span className="font-semibold block">{resolvedTitle}</span>
           <p className="text-[11px] opacity-90">
-            {warning ||
-              (totalCount > 0 || totalDuration > 0
-                ? "Fast unit foundation with targeted integration and reliable system tests."
-                : "Execute test suites or switch to Demo Showcase to inspect multi-tier balance.")}
+            {loading
+              ? "Fetching multi-tier test execution counts and durations..."
+              : warning ||
+                (totalCount > 0 || totalDuration > 0
+                  ? "Fast unit foundation with targeted integration and reliable system tests."
+                  : "Execute test suites or switch to Demo Showcase to inspect multi-tier balance.")}
           </p>
         </div>
       </div>

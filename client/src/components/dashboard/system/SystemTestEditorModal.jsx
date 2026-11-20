@@ -5,7 +5,6 @@ import {
   X,
   Save,
   Play,
-  Sparkles,
   Wrench,
   Check,
   AlertCircle,
@@ -210,8 +209,8 @@ export default function SystemTestEditorModal({
   const isDirty = content !== originalContent;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/75 backdrop-blur-xs font-sans">
-      <div className="w-full max-w-6xl h-[92vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-2xl flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/70 font-sans">
+      <div className="w-full max-w-6xl h-[92vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg flex flex-col overflow-hidden">
         {/* Top Header Bar */}
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-secondary)]/60">
           <div className="flex items-center gap-2.5 overflow-hidden">
@@ -290,7 +289,7 @@ export default function SystemTestEditorModal({
             <Button
               variant="secondary"
               size="sm"
-              icon={Sparkles}
+              icon={FileCode2}
               disabled={loading || optimizing || runningSingle || isDirty}
               onClick={() => handleOptimize("BOOST_COVERAGE")}
               className="text-xs h-7 px-2.5"
@@ -339,11 +338,11 @@ export default function SystemTestEditorModal({
 
           {/* AI Suggestion Banner */}
           {suggestedContent && (
-            <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 flex items-start justify-between gap-3 text-xs">
+            <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-[var(--color-primary)] flex items-start justify-between gap-3 text-xs">
               <div>
-                <div className="font-semibold text-[var(--color-primary)] flex items-center gap-1.5 mb-0.5">
-                  <Sparkles size={14} />
-                  <span>AI Proposal ? Not Verified</span>
+                <div className="font-semibold text-[var(--color-text)] flex items-center gap-1.5 mb-0.5">
+                  <FileCode2 size={14} className="text-[var(--color-primary)]" />
+                  <span>AI Proposal · Not Verified</span>
                 </div>
                 <p className="text-[var(--color-text-secondary)] text-[11px] leading-relaxed m-0">
                   {aiExplanation}

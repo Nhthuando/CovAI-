@@ -14,7 +14,6 @@ import {
   Plus,
   Edit3,
   Trash2,
-  Sparkles,
   Radar,
   Code2,
   AlertTriangle,
@@ -31,17 +30,25 @@ import {
   CATEGORY_LABELS,
   classifyScenario,
   getEndpointCaseCoverage,
+  summarizeIntegrationFailure,
 } from "./integrationCaseCoverage.js";
 
 export const METHOD_STYLES = {
-  GET: "bg-sky-500/10 text-sky-400 border-sky-500/25",
-  POST: "bg-indigo-500/10 text-indigo-400 border-indigo-500/25",
-  PUT: "bg-amber-500/10 text-amber-400 border-amber-500/25",
-  PATCH: "bg-purple-500/10 text-purple-400 border-purple-500/25",
-  DELETE: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+  GET: "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  POST: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]",
+  PUT: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
+  PATCH: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  DELETE: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
   DEFAULT:
     "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
 };
+
+function isBoilerplateDescription(description) {
+  if (!description || typeof description !== "string") return true;
+  return /^(Fetches|Creates or processes|Updates|Deletes|Handles|Processes)\s+requests?\s+at\s+/i.test(
+    description.trim(),
+  );
+}
 
 const HTTP_METHODS = ["ALL", "GET", "POST", "PUT", "PATCH", "DELETE"];
 
@@ -118,139 +125,197 @@ export default function IntegrationRouteMatrixTable({
   const [copiedKey, setCopiedKey] = useState(null);
 
   // Merge endpoint scenarios + aiTests requests so 100% of scenarios (AI, Repo, Custom) live inside the matrix
-  const { enrichedEndpoints, unmappedScenarios, totalScenarioCount } = useMemo(() => {
-    const allAiRequests = [];
-    for (const testFile of aiTests || []) {
-      const requests = Array.isArray(testFile.requests) ? testFile.requests : [];
-      for (const req of requests) {
-        const resolvedTitle = req.title || req.testName || req.name || "";
-        allAiRequests.push({
-          ...req,
-          title: resolvedTitle,
-          aiTestId: req.aiTestId || testFile.id,
-          scenarioId: req.scenarioId || req.id,
-          version: testFile.version ?? req.version ?? 1,
-          filePath: req.filePath || testFile.filePath,
-          fullFileCode: testFile.code || "",
-          origin: req.origin || testFile.origin || "AI",
-          enabled: req.enabled !== false,
-          userEdited: Boolean(req.userEdited),
-        });
+  const { enrichedEndpoints, unmappedScenarios, totalScenarioCount } =
+    useMemo(() => {
+      const allAiRequests = [];
+      for (const testFile of aiTests || []) {
+        if (String(testFile.id || "").startsWith("existing_test_")) continue;
+        const requests = Array.isArray(testFile.requests)
+          ? testFile.requests
+          : [];
+        for (const req of requests) {
+          if (req.origin === "PROJECT_EXISTING") continue;
+          const resolvedTitle = req.title || req.testName || req.name || "";
+          allAiRequests.push({
+            ...req,
+            title: resolvedTitle,
+            aiTestId: req.aiTestId || testFile.id,
+            scenarioId: req.scenarioId || req.id,
+            version: testFile.version ?? req.version ?? 1,
+            filePath: req.filePath || testFile.filePath,
+            fullFileCode: testFile.code || "",
+            origin: req.origin || testFile.origin || "AI",
+            enabled: req.enabled !== false,
+            userEdited: Boolean(req.userEdited),
+          });
+        }
       }
-    }
 
-    const usedAiRequestKeys = new Set();
-    let scenarioCounter = 0;
+      const usedAiRequestKeys = new Set();
+      let scenarioCounter = 0;
 
-    const mappedEndpoints = (endpoints || []).map((ep) => {
-      const epMethod = (ep.method || "GET").toUpperCase();
-      const epPath = ep.path || "/";
-      const baseScenarios = Array.isArray(ep.scenarios) ? ep.scenarios : [];
+      const mappedEndpoints = (endpoints || []).map((ep) => {
+        const epMethod = (ep.method || "GET").toUpperCase();
+        const epPath = ep.path || "/";
+        const baseScenarios = Array.isArray(ep.scenarios) ? ep.scenarios : [];
 
-      // Match AI/Repo test requests targeting this endpoint
-      const matchingAiReqs = allAiRequests.filter((req) => {
-        const reqMethod = (req.method || "GET").toUpperCase();
-        if (reqMethod !== epMethod) return false;
-        return doesRouteMatch(epPath, req.path || "/");
-      });
+        // Match AI/Repo test requests targeting this endpoint
+        const matchingAiReqs = allAiRequests.filter((req) => {
+          const reqMethod = (req.method || "GET").toUpperCase();
+          if (reqMethod !== epMethod) return false;
+          return doesRouteMatch(epPath, req.path || "/");
+        });
 
-      const merged = [];
-      const seenScenarioIds = new Set();
-      const seenTitles = new Set();
+        const merged = [];
+        const seenScenarioIds = new Set();
+        const seenTitles = new Set();
 
-      // 1. Merge base scenarios from endpoint with metadata from matchingAiReqs
-      for (const sc of baseScenarios) {
-        const scTitleNorm = String(sc.title || sc.name || "")
-          .trim()
-          .toLowerCase();
-        const matchedReq = matchingAiReqs.find((r) => {
-          if (sc.scenarioId && r.scenarioId && sc.scenarioId === r.scenarioId) {
-            return true;
+        // 1. Merge base scenarios from endpoint with metadata from matchingAiReqs
+        for (const sc of baseScenarios) {
+          const scStatusUpper = String(sc.status || "").toUpperCase();
+          const isExecuted =
+            scStatusUpper === "PASSED" ||
+            scStatusUpper === "PASS" ||
+            scStatusUpper === "FAILED" ||
+            scStatusUpper === "FAIL";
+          const isRepoTest =
+            !sc.aiTestId ||
+            String(sc.aiTestId).startsWith("existing_test_") ||
+            sc.origin === "PROJECT_EXISTING";
+          if (!hasAnalyzedCoverage && isRepoTest && !isExecuted) {
+            continue;
           }
-          const rTitleNorm = String(r.title || r.testName || r.name || "")
+          const scTitleNorm = String(sc.title || sc.name || "")
             .trim()
             .toLowerCase();
-          return scTitleNorm && rTitleNorm === scTitleNorm;
-        });
+          const matchedReq = matchingAiReqs.find((r) => {
+            if (
+              sc.scenarioId &&
+              r.scenarioId &&
+              sc.scenarioId === r.scenarioId
+            ) {
+              return true;
+            }
+            const rTitleNorm = String(r.title || r.testName || r.name || "")
+              .trim()
+              .toLowerCase();
+            return scTitleNorm && rTitleNorm === scTitleNorm;
+          });
 
-        if (matchedReq) {
-          usedAiRequestKeys.add(`${matchedReq.aiTestId}::${matchedReq.scenarioId || matchedReq.title}`);
+          if (matchedReq) {
+            usedAiRequestKeys.add(
+              `${matchedReq.aiTestId}::${matchedReq.scenarioId || matchedReq.title}`,
+            );
+          }
+
+          const mergedSc = {
+            ...matchedReq,
+            ...sc,
+            title:
+              sc.title ||
+              sc.name ||
+              matchedReq?.title ||
+              `${epMethod} ${epPath} scenario`,
+            aiTestId: sc.aiTestId || matchedReq?.aiTestId || null,
+            scenarioId: sc.scenarioId || matchedReq?.scenarioId || null,
+            version: sc.version ?? matchedReq?.version ?? 1,
+            code: sc.code || matchedReq?.code || "",
+            fullFileCode: sc.fullFileCode || matchedReq?.fullFileCode || "",
+            filePath:
+              sc.filePath || sc.testFile || matchedReq?.filePath || null,
+            origin: sc.origin || matchedReq?.origin || "AI",
+            enabled:
+              sc.enabled !== undefined
+                ? sc.enabled !== false
+                : matchedReq?.enabled !== false,
+            userEdited: Boolean(sc.userEdited || matchedReq?.userEdited),
+            expectedStatus:
+              sc.expectedStatus ?? matchedReq?.expectedStatus ?? null,
+            expectedStatuses:
+              sc.expectedStatuses ?? matchedReq?.expectedStatuses ?? null,
+            method: epMethod,
+            path: epPath,
+          };
+
+          const idKey = mergedSc.scenarioId
+            ? `${mergedSc.aiTestId || "ep"}::${mergedSc.scenarioId}`
+            : null;
+          const titleKey = scTitleNorm
+            ? `${epMethod}::${epPath}::${scTitleNorm}`
+            : null;
+
+          if (
+            (idKey && seenScenarioIds.has(idKey)) ||
+            (titleKey && seenTitles.has(titleKey))
+          ) {
+            continue;
+          }
+          if (idKey) seenScenarioIds.add(idKey);
+          if (titleKey) seenTitles.add(titleKey);
+          merged.push(mergedSc);
         }
 
-        const mergedSc = {
-          ...matchedReq,
-          ...sc,
-          title: sc.title || sc.name || matchedReq?.title || `${epMethod} ${epPath} scenario`,
-          aiTestId: sc.aiTestId || matchedReq?.aiTestId || null,
-          scenarioId: sc.scenarioId || matchedReq?.scenarioId || null,
-          version: sc.version ?? matchedReq?.version ?? 1,
-          code: sc.code || matchedReq?.code || "",
-          fullFileCode: sc.fullFileCode || matchedReq?.fullFileCode || "",
-          filePath: sc.filePath || sc.testFile || matchedReq?.filePath || null,
-          origin: sc.origin || matchedReq?.origin || "AI",
-          enabled: sc.enabled !== undefined ? sc.enabled !== false : matchedReq?.enabled !== false,
-          userEdited: Boolean(sc.userEdited || matchedReq?.userEdited),
-          expectedStatus: sc.expectedStatus ?? matchedReq?.expectedStatus ?? 200,
-          method: epMethod,
-          path: epPath,
-        };
+        // 2. Append any remaining matchingAiReqs not yet in baseScenarios
+        for (const req of matchingAiReqs) {
+          const reqKey = `${req.aiTestId}::${req.scenarioId || req.title}`;
+          const reqTitleNorm = String(
+            req.title || req.testName || req.name || "",
+          )
+            .trim()
+            .toLowerCase();
+          const idKey = req.scenarioId
+            ? `${req.aiTestId}::${req.scenarioId}`
+            : null;
+          const titleKey = reqTitleNorm
+            ? `${epMethod}::${epPath}::${reqTitleNorm}`
+            : null;
 
-        const idKey = mergedSc.scenarioId ? `${mergedSc.aiTestId || "ep"}::${mergedSc.scenarioId}` : null;
-        const titleKey = scTitleNorm ? `${epMethod}::${epPath}::${scTitleNorm}` : null;
-
-        if ((idKey && seenScenarioIds.has(idKey)) || (titleKey && seenTitles.has(titleKey))) {
-          continue;
-        }
-        if (idKey) seenScenarioIds.add(idKey);
-        if (titleKey) seenTitles.add(titleKey);
-        merged.push(mergedSc);
-      }
-
-      // 2. Append any remaining matchingAiReqs not yet in baseScenarios
-      for (const req of matchingAiReqs) {
-        const reqKey = `${req.aiTestId}::${req.scenarioId || req.title}`;
-        const reqTitleNorm = String(req.title || req.testName || req.name || "")
-          .trim()
-          .toLowerCase();
-        const idKey = req.scenarioId ? `${req.aiTestId}::${req.scenarioId}` : null;
-        const titleKey = reqTitleNorm ? `${epMethod}::${epPath}::${reqTitleNorm}` : null;
-
-        if ((idKey && seenScenarioIds.has(idKey)) || (titleKey && seenTitles.has(titleKey))) {
+          if (
+            (idKey && seenScenarioIds.has(idKey)) ||
+            (titleKey && seenTitles.has(titleKey))
+          ) {
+            usedAiRequestKeys.add(reqKey);
+            continue;
+          }
+          if (idKey) seenScenarioIds.add(idKey);
+          if (titleKey) seenTitles.add(titleKey);
           usedAiRequestKeys.add(reqKey);
-          continue;
+          merged.push({
+            ...req,
+            title:
+              req.title ||
+              req.testName ||
+              req.name ||
+              `${epMethod} ${epPath} scenario`,
+            status: req.status || "READY",
+            method: epMethod,
+            path: epPath,
+          });
         }
-        if (idKey) seenScenarioIds.add(idKey);
-        if (titleKey) seenTitles.add(titleKey);
-        usedAiRequestKeys.add(reqKey);
-        merged.push({
-          ...req,
-          title: req.title || req.testName || req.name || `${epMethod} ${epPath} scenario`,
-          status: req.status || "READY",
-          method: epMethod,
-          path: epPath,
-        });
-      }
 
-      scenarioCounter += merged.length;
+        scenarioCounter += merged.length;
+
+        return {
+          ...ep,
+          scenarios: merged,
+          scenarioCount: merged.length,
+        };
+      });
+
+      const leftover = allAiRequests.filter(
+        (req) =>
+          !usedAiRequestKeys.has(
+            `${req.aiTestId}::${req.scenarioId || req.title}`,
+          ),
+      );
+      scenarioCounter += leftover.length;
 
       return {
-        ...ep,
-        scenarios: merged,
-        scenarioCount: Math.max(ep.scenarioCount || 0, merged.length),
+        enrichedEndpoints: mappedEndpoints,
+        unmappedScenarios: leftover,
+        totalScenarioCount: scenarioCounter,
       };
-    });
-
-    const leftover = allAiRequests.filter(
-      (req) => !usedAiRequestKeys.has(`${req.aiTestId}::${req.scenarioId || req.title}`),
-    );
-    scenarioCounter += leftover.length;
-
-    return {
-      enrichedEndpoints: mappedEndpoints,
-      unmappedScenarios: leftover,
-      totalScenarioCount: scenarioCounter,
-    };
-  }, [endpoints, aiTests]);
+    }, [endpoints, aiTests]);
 
   const modules = useMemo(() => {
     const set = new Set();
@@ -274,6 +339,7 @@ export default function IntegrationRouteMatrixTable({
 
     const hasPassed =
       raw === "COVERED" ||
+      raw === "PARTIAL" ||
       raw === "PASS" ||
       raw === "PASSED" ||
       ep.covered === true ||
@@ -281,10 +347,18 @@ export default function IntegrationRouteMatrixTable({
         const st = (s.status || "").toUpperCase();
         return st === "PASSED" || st === "PASS";
       });
-    if (hasPassed) return "PASS";
+    if (hasPassed) {
+      const cov = getEndpointCaseCoverage(ep, scenarios);
+      if (raw === "PARTIAL" || !cov.isFullyVerified) {
+        return "PARTIAL";
+      }
+      return "PASS";
+    }
 
-    if (scenarios.length > 0) return "READY";
-    return "UNCOVERED";
+    if (ep.wasAnalyzed || raw === "UNCOVERED" || scenarios.length > 0) {
+      return "UNCOVERED";
+    }
+    return "DISCOVERED";
   };
 
   const filteredEndpoints = useMemo(() => {
@@ -295,10 +369,12 @@ export default function IntegrationRouteMatrixTable({
 
       const status = getEndpointStatus(ep);
       if (statusFilter === "PASS" && status !== "PASS") return false;
+      if (statusFilter === "PARTIAL" && status !== "PARTIAL") return false;
       if (statusFilter === "FAIL" && status !== "FAIL") return false;
       if (
         statusFilter === "UNCOVERED" &&
         status !== "UNCOVERED" &&
+        status !== "DISCOVERED" &&
         status !== "READY"
       )
         return false;
@@ -321,7 +397,13 @@ export default function IntegrationRouteMatrixTable({
 
       return true;
     });
-  }, [enrichedEndpoints, methodFilter, statusFilter, moduleFilter, searchQuery]);
+  }, [
+    enrichedEndpoints,
+    methodFilter,
+    statusFilter,
+    moduleFilter,
+    searchQuery,
+  ]);
 
   const stats = useMemo(() => {
     const total = enrichedEndpoints.length;
@@ -385,7 +467,9 @@ export default function IntegrationRouteMatrixTable({
 
   const toggleSelectEndpoint = (epKey) => {
     const isCurrentlySelected = selectedEndpointKeys.has(epKey);
-    const targetEp = enrichedEndpoints.find((ep) => getEpIdentityKey(ep) === epKey);
+    const targetEp = enrichedEndpoints.find(
+      (ep) => getEpIdentityKey(ep) === epKey,
+    );
     const childKeys = (targetEp?.scenarios || []).map((sc) =>
       getScenarioIdentityKey(sc, epKey),
     );
@@ -416,7 +500,9 @@ export default function IntegrationRouteMatrixTable({
       filteredKeys.every((k) => selectedEndpointKeys.has(k));
     const allChildKeys = filteredEndpoints.flatMap((ep) => {
       const epKey = getEpIdentityKey(ep);
-      return (ep.scenarios || []).map((sc) => getScenarioIdentityKey(sc, epKey));
+      return (ep.scenarios || []).map((sc) =>
+        getScenarioIdentityKey(sc, epKey),
+      );
     });
 
     if (allSelected) {
@@ -494,7 +580,9 @@ export default function IntegrationRouteMatrixTable({
               Map your API routes before running coverage
             </h4>
             <p className="text-xs text-[var(--color-text-secondary)] max-w-md mx-auto leading-relaxed">
-              Scan your Express/Node router AST to inspect route handlers, purpose, and logic, then run existing tests or generate a 100% Supertest suite.
+              Scan your Express/Node router AST to inspect route handlers,
+              purpose, and logic, then run existing tests or generate a 100%
+              Supertest suite.
             </p>
           </div>
 
@@ -505,16 +593,18 @@ export default function IntegrationRouteMatrixTable({
                 <span>1. Scan API routes</span>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">
-                Extracts HTTP methods, paths, controller names, and source handler code without executing tests.
+                Extracts HTTP methods, paths, controller names, and source
+                handler code without executing tests.
               </p>
             </div>
             <div className="p-3.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
               <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)] mb-1">
-                <Sparkles className="w-3.5 h-3.5 text-[var(--color-primary)]" />
+                <Zap className="w-3.5 h-3.5 text-[var(--color-primary)]" />
                 <span>2. Run or generate tests</span>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">
-                Measure Supertest coverage per endpoint, generate missing scenarios, and apply passing tests to your repo.
+                Measure Supertest coverage per endpoint, generate missing
+                scenarios, and apply passing tests to your repo.
               </p>
             </div>
           </div>
@@ -524,7 +614,7 @@ export default function IntegrationRouteMatrixTable({
               type="button"
               onClick={onScanEndpoints}
               disabled={isScanning}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
             >
               {isScanning ? (
                 <>
@@ -585,6 +675,7 @@ export default function IntegrationRouteMatrixTable({
               {[
                 { id: "ALL", label: "All" },
                 { id: "PASS", label: "Pass" },
+                { id: "PARTIAL", label: "Partial" },
                 { id: "FAIL", label: "Fail" },
                 { id: "UNCOVERED", label: "Uncovered" },
               ].map((s) => (
@@ -669,7 +760,8 @@ export default function IntegrationRouteMatrixTable({
       </div>
 
       {/* Unified Selection Action Bar (Endpoints & Scenarios) */}
-      {(selectedEndpointsList.length > 0 || selectedScenariosList.length > 0) && (
+      {(selectedEndpointsList.length > 0 ||
+        selectedScenariosList.length > 0) && (
         <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-primary)]/5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text)] tabular-nums">
             {selectedEndpointsList.length > 0 && (
@@ -680,9 +772,10 @@ export default function IntegrationRouteMatrixTable({
                 {selectedEndpointsList.length === 1 ? "endpoint" : "endpoints"}
               </span>
             )}
-            {selectedEndpointsList.length > 0 && selectedScenariosList.length > 0 && (
-              <span className="text-[var(--color-text-muted)]">·</span>
-            )}
+            {selectedEndpointsList.length > 0 &&
+              selectedScenariosList.length > 0 && (
+                <span className="text-[var(--color-text-muted)]">·</span>
+              )}
             {selectedScenariosList.length > 0 && (
               <span>
                 <span className="font-semibold text-emerald-400">
@@ -700,9 +793,9 @@ export default function IntegrationRouteMatrixTable({
                 type="button"
                 onClick={() => onGenerateSelected(selectedEndpointsList)}
                 disabled={isGenerating || isRunning}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-primary)] border border-[var(--color-primary)]/40 transition-colors disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50 cursor-pointer"
               >
-                <Sparkles className="w-3 h-3" />
+                <Zap className="w-3 h-3 text-[var(--color-primary)]" />
                 <span className="tabular-nums">
                   Generate Tests ({selectedEndpointsList.length})
                 </span>
@@ -711,7 +804,7 @@ export default function IntegrationRouteMatrixTable({
 
             {(selectedScenariosList.length > 0
               ? onRunSelectedScenarios
-              : onRunSelected && selectedHasScenarios) && (
+              : onRunSelected && selectedEndpointsList.length > 0) && (
               <button
                 type="button"
                 onClick={() =>
@@ -720,7 +813,7 @@ export default function IntegrationRouteMatrixTable({
                     : onRunSelected(selectedEndpointsList)
                 }
                 disabled={isRunning || isGenerating}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <Play className="w-3 h-3" fill="currentColor" />
                 <span className="tabular-nums">
@@ -734,7 +827,9 @@ export default function IntegrationRouteMatrixTable({
             )}
 
             {onApplyScenario &&
-              selectedScenariosList.some((sc) => sc.aiTestId && sc.scenarioId) && (
+              selectedScenariosList.some(
+                (sc) => sc.aiTestId && sc.scenarioId,
+              ) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -788,7 +883,7 @@ export default function IntegrationRouteMatrixTable({
               <th className="py-2.5 px-3 w-52">Handler</th>
               <th className="py-2.5 px-3 w-28">Status</th>
               <th className="py-2.5 px-3 w-24 text-right">Scenarios</th>
-              <th className="py-2.5 pl-3 pr-4 w-48 text-right">Actions</th>
+              <th className="py-2.5 pl-3 pr-4 w-24 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)] text-xs">
@@ -816,7 +911,9 @@ export default function IntegrationRouteMatrixTable({
                 const isThisGenerating =
                   isGenerating && generatingKey === epActionKey;
                 const isThisRunning = isRunning && runningKey === epActionKey;
-                const sourceFile = ep.file || ep.sourceFile || "express-router";
+                const sourceFile =
+                  ep.file || ep.sourceFile || ep.source?.sourceFile || "express-router";
+                const epCaseCov = getEndpointCaseCoverage(ep, scenarios);
                 const sourceLine = ep.source?.sourceLine || ep.line || null;
                 const hasLogicSnippet = Boolean(
                   ep.source?.controllerSnippet || ep.source?.routeSnippet,
@@ -864,28 +961,28 @@ export default function IntegrationRouteMatrixTable({
                       </td>
 
                       {/* Endpoint (Method + Path + Description) */}
-                      <td className="py-3.5 px-3 align-top">
+                      <td className="py-3 px-3 align-top">
                         <div className="flex items-center gap-2.5">
                           <span
-                            className={`inline-flex items-center justify-center w-14 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0 ${
+                            className={`inline-flex items-center justify-center w-14 py-0.5 rounded text-[10px] font-mono font-semibold border shrink-0 ${
                               METHOD_STYLES[method] || METHOD_STYLES.DEFAULT
                             }`}
                           >
                             {method}
                           </span>
-                          <span className="font-mono text-[13px] font-semibold text-[var(--color-text)] tracking-tight">
+                          <span className="font-mono text-[13px] font-medium text-[var(--color-text)] tracking-tight">
                             {ep.path}
                           </span>
                           {ep.authRequired && (
                             <span
                               title="Authentication Middleware Detected"
-                              className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                              className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-[var(--color-bg)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
                             >
-                              Auth
+                              auth
                             </span>
                           )}
                         </div>
-                        {ep.description && (
+                        {ep.description && !isBoilerplateDescription(ep.description) && (
                           <p className="text-[11px] text-[var(--color-text-muted)] mt-1 pl-[66px] line-clamp-1 font-sans">
                             {ep.description}
                           </p>
@@ -927,29 +1024,32 @@ export default function IntegrationRouteMatrixTable({
                       {/* Clean Status Indicator */}
                       <td className="py-3.5 px-3 align-top">
                         <div className="pt-0.5">
-                          {!hasAnalyzedCoverage && scenarioCount === 0 ? (
+                          {status === "DISCOVERED" ? (
                             <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" />
                               Discovered
                             </span>
                           ) : status === "PASS" ? (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/65" />
                               Covered
                             </span>
+                          ) : status === "PARTIAL" ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] font-mono tabular-nums"
+                              title={`Missing required cases (${epCaseCov.passedCasesCount}/${epCaseCov.totalRequired} verified)`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500/60" />
+                              Partial ({epCaseCov.passedCasesCount}/{epCaseCov.totalRequired})
+                            </span>
                           ) : status === "FAIL" ? (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-300/85">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400/75" />
                               Failed
                             </span>
-                          ) : status === "READY" ? (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-sky-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
-                              Ready
-                            </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" />
                               Uncovered
                             </span>
                           )}
@@ -959,8 +1059,10 @@ export default function IntegrationRouteMatrixTable({
                       {/* Scenarios Count */}
                       <td className="py-3.5 px-3 text-right font-mono tabular-nums text-[11px] align-top">
                         <div className="pt-0.5">
-                          {!hasAnalyzedCoverage && scenarioCount === 0 ? (
-                            <span className="text-[var(--color-text-muted)]">—</span>
+                          {status === "DISCOVERED" && scenarioCount === 0 ? (
+                            <span className="text-[var(--color-text-muted)]">
+                              —
+                            </span>
                           ) : (
                             <span className="text-[var(--color-text-secondary)]">
                               {scenarioCount}{" "}
@@ -988,63 +1090,69 @@ export default function IntegrationRouteMatrixTable({
                               <span>Add</span>
                             </button>
                           )}
-
-                          {onGenerateTest && (
-                            <button
-                              type="button"
-                              onClick={() => onGenerateTest(ep)}
-                              disabled={isGenerating || isRunning}
-                              title="Generate AI multi-scenario suite for this endpoint"
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-colors disabled:opacity-50 cursor-pointer"
-                            >
-                              {isThisGenerating ? (
-                                <RefreshCw className="w-3 h-3 animate-spin" />
-                              ) : (
-                                <Zap className="w-3 h-3" />
-                              )}
-                              <span>AI Gen</span>
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
 
                     {/* Expanded API Details, Logic Code & Scenarios */}
                     {isExpanded && (
-                      <tr className="bg-[#0D1219]">
+                      <tr className="bg-[var(--color-bg)]">
                         <td colSpan={6} className="p-0">
                           <div className="px-6 py-4 border-l-2 border-[var(--color-primary)] space-y-3.5">
                             {/* Compact Contract Metadata + Handler Code Toggle */}
                             <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-[var(--color-text-muted)] pb-2.5 border-b border-[var(--color-border)]/70">
                               <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                                {(ep.source?.behaviorEvidence?.bodyParams || []).length > 0 && (
+                                {(ep.source?.behaviorEvidence?.bodyParams || [])
+                                  .length > 0 && (
                                   <span>
                                     Body:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {ep.source.behaviorEvidence.bodyParams.join(", ")}
+                                      {ep.source.behaviorEvidence.bodyParams.join(
+                                        ", ",
+                                      )}
                                     </span>
                                   </span>
                                 )}
-                                {(ep.source?.behaviorEvidence?.pathParams || ep.source?.params || []).length > 0 && (
+                                {(
+                                  ep.source?.behaviorEvidence?.pathParams ||
+                                  ep.source?.params ||
+                                  []
+                                ).length > 0 && (
                                   <span>
                                     Params:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {(ep.source?.behaviorEvidence?.pathParams || ep.source?.params).join(", ")}
+                                      {(
+                                        ep.source?.behaviorEvidence
+                                          ?.pathParams || ep.source?.params
+                                      ).join(", ")}
                                     </span>
                                   </span>
                                 )}
-                                {(ep.source?.behaviorEvidence?.queryParams || ep.source?.queryParams || []).length > 0 && (
+                                {(
+                                  ep.source?.behaviorEvidence?.queryParams ||
+                                  ep.source?.queryParams ||
+                                  []
+                                ).length > 0 && (
                                   <span>
                                     Query:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {(ep.source?.behaviorEvidence?.queryParams || ep.source?.queryParams).join(", ")}
+                                      {(
+                                        ep.source?.behaviorEvidence
+                                          ?.queryParams ||
+                                        ep.source?.queryParams
+                                      ).join(", ")}
                                     </span>
                                   </span>
                                 )}
                                 <span>
                                   Status:{" "}
                                   <span className="text-[var(--color-text-secondary)]">
-                                    {(ep.source?.behaviorEvidence?.responseStatusCodes || ep.source?.responseStatusCodes || []).join(", ") || "200"}
+                                    {(
+                                      ep.source?.behaviorEvidence
+                                        ?.responseStatusCodes ||
+                                      ep.source?.responseStatusCodes ||
+                                      []
+                                    ).join(", ") || "200"}
                                   </span>
                                 </span>
                                 {ep.source?.controllerFile && (
@@ -1060,8 +1168,12 @@ export default function IntegrationRouteMatrixTable({
                                   >
                                     <FileCode className="w-3 h-3" />
                                     <span>
-                                      {ep.source.controllerFile.split(/[\\/]/).pop()}
-                                      {ep.source.controllerLine ? `:${ep.source.controllerLine}` : ""}
+                                      {ep.source.controllerFile
+                                        .split(/[\\/]/)
+                                        .pop()}
+                                      {ep.source.controllerLine
+                                        ? `:${ep.source.controllerLine}`
+                                        : ""}
                                     </span>
                                   </button>
                                 )}
@@ -1074,22 +1186,27 @@ export default function IntegrationRouteMatrixTable({
                                   className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] cursor-pointer transition-colors"
                                 >
                                   <Code2 className="w-3 h-3 text-[var(--color-primary)]" />
-                                  <span>{showLogic ? "Hide Handler Code" : "Handler Code"}</span>
+                                  <span>
+                                    {showLogic
+                                      ? "Hide Handler Code"
+                                      : "Handler Code"}
+                                  </span>
                                 </button>
                               )}
                             </div>
 
                             {/* Collapsible Handler Logic Code */}
                             {showLogic && (
-                              <div className="rounded-md border border-[var(--color-border)] bg-[#090D12] overflow-hidden">
-                                <div className="px-3 py-1.5 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex items-center justify-between text-[11px] font-mono text-[var(--color-text-muted)]">
+                              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+                                <div className="px-3 py-1.5 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between text-[11px] font-mono text-[var(--color-text-muted)]">
                                   <span>Handler Logic</span>
                                   <button
                                     type="button"
                                     onClick={() =>
                                       handleCopyCode(
                                         `logic-${rowKey}`,
-                                        ep.source?.controllerSnippet || ep.source?.routeSnippet,
+                                        ep.source?.controllerSnippet ||
+                                          ep.source?.routeSnippet,
                                       )
                                     }
                                     className="inline-flex items-center gap-1 text-[10px] hover:text-[var(--color-text)] cursor-pointer"
@@ -1107,77 +1224,100 @@ export default function IntegrationRouteMatrixTable({
                                     )}
                                   </button>
                                 </div>
-                                <pre className="p-3 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-48 custom-scrollbar leading-relaxed">
-                                  {ep.source?.controllerSnippet || ep.source?.routeSnippet}
+                                <pre className="p-3 text-[11px] font-mono text-[var(--color-text-secondary)] overflow-x-auto max-h-48 custom-scrollbar leading-relaxed">
+                                  {ep.source?.controllerSnippet ||
+                                    ep.source?.routeSnippet}
                                 </pre>
                               </div>
                             )}
 
                             {/* Case Coverage & Execution Readiness Strip */}
-                            {(() => {
-                              const cov = getEndpointCaseCoverage(ep, scenarios);
-                              return (
-                                <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-[var(--color-border)]/80 bg-[var(--color-surface)]/70 text-[11px] font-mono">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-[var(--color-text-muted)]">
-                                      Case coverage ({cov.coveredCount}/{cov.totalRequired}):
+                            <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px] font-mono">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[var(--color-text-muted)]">
+                                  Cases ({epCaseCov.coveredCount}/
+                                  {epCaseCov.totalRequired}):
+                                </span>
+                                {epCaseCov.cases.map((c) => (
+                                  <span
+                                    key={c.key}
+                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+                                      c.covered
+                                        ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                                        : "bg-transparent text-[var(--color-text-muted)] border-[var(--color-border)] border-dashed"
+                                    }`}
+                                  >
+                                    <span className={c.covered ? "text-emerald-500/75" : "text-[var(--color-text-muted)]"}>
+                                      {c.covered ? "✓" : "○"}
                                     </span>
-                                    {cov.cases.map((c) => (
-                                      <span
-                                        key={c.key}
-                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
-                                          c.covered
-                                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                                            : "bg-amber-500/10 text-amber-400 border-amber-500/25"
-                                        }`}
-                                      >
-                                        <span>{c.covered ? "✓" : "○"}</span>
-                                        <span>{c.label}</span>
-                                      </span>
-                                    ))}
-                                  </div>
-                                  <div className="flex items-center gap-2 text-[var(--color-text-secondary)] tabular-nums">
-                                    {scenarios.length === 0 ? (
-                                      <span className="text-[var(--color-text-muted)]">No scenarios</span>
-                                    ) : cov.passedCount + cov.failedCount === 0 ? (
-                                      <span className="text-[var(--color-text-muted)]">
-                                        {scenarios.length} ready • not run yet
-                                      </span>
-                                    ) : (
-                                      <span>
-                                        <span className="text-emerald-400">{cov.passedCount} passed</span>
-                                        {cov.failedCount > 0 && (
-                                          <span className="text-rose-400"> • {cov.failedCount} failed</span>
-                                        )}
-                                        {cov.notRunCount > 0 && (
-                                          <span className="text-[var(--color-text-muted)]"> • {cov.notRunCount} pending</span>
-                                        )}
+                                    <span>{c.label}</span>
+                                  </span>
+                                ))}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 text-[var(--color-text-secondary)] tabular-nums">
+                                {scenarios.length === 0 ? (
+                                  <span className="text-[var(--color-text-muted)]">
+                                    No scenarios
+                                  </span>
+                                ) : epCaseCov.passedCount + epCaseCov.failedCount ===
+                                  0 ? (
+                                  <span className="text-[var(--color-text-muted)]">
+                                    {scenarios.length} ready • not run yet
+                                  </span>
+                                ) : (
+                                  <span>
+                                    <span className="text-[var(--color-text-secondary)]">
+                                      {epCaseCov.passedCount} passed
+                                    </span>
+                                    {epCaseCov.failedCount > 0 && (
+                                      <span className="text-rose-300/85">
+                                        {" "}
+                                        · {epCaseCov.failedCount} failed
                                       </span>
                                     )}
-                                  </div>
-                                </div>
-                              );
-                            })()}
+                                    {epCaseCov.notRunCount > 0 && (
+                                      <span className="text-[var(--color-text-muted)]">
+                                        {" "}
+                                        · {epCaseCov.notRunCount} pending
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                                {epCaseCov.redundantCount > 0 && (
+                                  <span
+                                    title="Multiple scenarios cover the same required case — duplicates can be removed."
+                                    className="px-1.5 py-0.2 rounded border border-amber-500/25 bg-amber-500/10 text-amber-300/90 text-[10px]"
+                                  >
+                                    {epCaseCov.redundantCount} duplicate
+                                  </span>
+                                )}
+                                {epCaseCov.extraCount > 0 && (
+                                  <span
+                                    title="Supplementary scenarios outside the endpoint's required Cases list."
+                                    className="px-1.5 py-0.2 rounded border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] text-[10px]"
+                                  >
+                                    {epCaseCov.extraCount} optional
+                                  </span>
+                                )}
+                              </div>
+                            </div>
 
                             {/* Test Scenarios Section (Shown after Run Coverage or if scenarios already exist) */}
                             {!hasAnalyzedCoverage && scenarios.length === 0 ? (
                               <div className="px-4 py-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
                                 <span>
-                                  Test scenarios have not been scanned yet. Click{" "}
-                                  <span className="font-semibold text-[var(--color-text)]">Run Coverage</span>{" "}
-                                  above to scan project tests and measure coverage, or generate 100% tests for this API.
+                                  Test scenarios have not been scanned yet.
+                                  Click{" "}
+                                  <span className="font-semibold text-[var(--color-text)]">
+                                    Run Coverage
+                                  </span>{" "}
+                                  above to scan existing tests, or select the
+                                  checkbox on this row and click{" "}
+                                  <span className="font-semibold text-[var(--color-text)]">
+                                    Generate Tests
+                                  </span>
+                                  .
                                 </span>
-                                {onGenerateTest && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onGenerateTest(ep)}
-                                    disabled={isGenerating || isRunning}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-primary)] border border-[var(--color-primary)]/30 cursor-pointer"
-                                  >
-                                    <Sparkles className="w-3 h-3" />
-                                    <span>Generate 100% Tests</span>
-                                  </button>
-                                )}
                               </div>
                             ) : scenarios.length > 0 ? (
                               <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]/70 overflow-hidden">
@@ -1186,15 +1326,32 @@ export default function IntegrationRouteMatrixTable({
                                     sc.status || "READY"
                                   ).toUpperCase();
                                   const scPassed =
-                                    scStatus === "PASSED" || scStatus === "PASS";
+                                    scStatus === "PASSED" ||
+                                    scStatus === "PASS";
                                   const scFailed =
-                                    scStatus === "FAILED" || scStatus === "FAIL";
+                                    scStatus === "FAILED" ||
+                                    scStatus === "FAIL";
                                   const catInfo = classifyScenario(sc);
+                                  const caseAnnot =
+                                    epCaseCov.scenarioAnnotations?.[sIdx] || null;
                                   const scKey = `${rowKey}-sc-${sc.scenarioId || sIdx}`;
                                   const isCodeOpen =
                                     expandedScenarioCodeKey === scKey;
                                   const canMutate = Boolean(
-                                    sc.aiTestId && sc.scenarioId,
+                                    sc.aiTestId ||
+                                    sc.scenarioId ||
+                                    sc.title ||
+                                    sc.testName,
+                                  );
+                                  const canDelete = Boolean(
+                                    onDeleteScenario &&
+                                    (canMutate ||
+                                      sc.aiTestId ||
+                                      sc.scenarioId ||
+                                      sc.title ||
+                                      sc.testName ||
+                                      sc.filePath ||
+                                      sc.testFile),
                                   );
                                   const isEnabled = sc.enabled !== false;
 
@@ -1202,9 +1359,8 @@ export default function IntegrationRouteMatrixTable({
                                     sc,
                                     getEpIdentityKey(ep),
                                   );
-                                  const isSelectedSc = selectedScenarioKeys.has(
-                                    scIdentityKey,
-                                  );
+                                  const isSelectedSc =
+                                    selectedScenarioKeys.has(scIdentityKey);
 
                                   return (
                                     <div
@@ -1226,7 +1382,9 @@ export default function IntegrationRouteMatrixTable({
                                             type="checkbox"
                                             checked={isSelectedSc}
                                             onChange={() =>
-                                              toggleSelectScenario(scIdentityKey)
+                                              toggleSelectScenario(
+                                                scIdentityKey,
+                                              )
                                             }
                                             aria-label={`Select scenario ${sc.title || sIdx + 1}`}
                                             className="mt-1 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-emerald-500 focus:ring-0 cursor-pointer shrink-0"
@@ -1234,9 +1392,9 @@ export default function IntegrationRouteMatrixTable({
 
                                           {/* Pass/Fail Status Icon */}
                                           {scPassed ? (
-                                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/75 shrink-0 mt-0.5" />
                                           ) : scFailed ? (
-                                            <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                                            <XCircle className="w-3.5 h-3.5 text-rose-400/80 shrink-0 mt-0.5" />
                                           ) : null}
 
                                           <div className="min-w-0 flex-1">
@@ -1246,33 +1404,113 @@ export default function IntegrationRouteMatrixTable({
                                                 `Scenario #${sIdx + 1}`}
                                             </div>
                                             <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] font-mono text-[var(--color-text-muted)]">
+                                              {caseAnnot && (
+                                                <span
+                                                  title={
+                                                    caseAnnot.role === "DUPLICATE"
+                                                      ? `Another scenario already covers "${caseAnnot.caseLabel}" — safe to remove if redundant.`
+                                                      : caseAnnot.role === "OPTIONAL_EXTRA"
+                                                        ? `Supplementary scenario outside the endpoint's required Cases (${epCaseCov.totalRequired}).`
+                                                        : `Assigned to cover required case "${caseAnnot.caseLabel}".`
+                                                  }
+                                                  className={`px-1.5 py-0.2 rounded border font-medium ${
+                                                    caseAnnot.role === "MATCHED_PASS"
+                                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                                      : caseAnnot.role === "MATCHED_FAIL"
+                                                        ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                                                        : caseAnnot.role === "MATCHED_PENDING"
+                                                          ? "border-[var(--color-primary)]/35 bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                                                          : caseAnnot.role === "DUPLICATE"
+                                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                                            : "border-dashed border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)]"
+                                                  }`}
+                                                >
+                                                  {caseAnnot.role === "MATCHED_PASS"
+                                                    ? `✓ Case: ${caseAnnot.caseLabel}`
+                                                    : caseAnnot.role === "MATCHED_FAIL"
+                                                      ? `! Case: ${caseAnnot.caseLabel}`
+                                                      : caseAnnot.role === "MATCHED_PENDING"
+                                                        ? `○ Case: ${caseAnnot.caseLabel}`
+                                                        : caseAnnot.role === "DUPLICATE"
+                                                          ? `Duplicate · ${caseAnnot.caseLabel}`
+                                                          : "Optional · Extra"}
+                                                </span>
+                                              )}
                                               <span
-                                                className={`px-1.5 py-0.2 rounded border font-semibold ${catInfo.color}`}
+                                                className="px-1.5 py-0.2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] font-medium"
                                               >
                                                 {catInfo.label}
+                                              </span>
+                                              <span
+                                                className={`px-1.5 py-0.2 rounded border font-medium ${
+                                                  scPassed
+                                                    ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                                                    : scFailed
+                                                      ? "bg-rose-500/[0.06] text-rose-300/85 border-rose-500/20"
+                                                      : "bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)]"
+                                                }`}
+                                              >
+                                                {scPassed
+                                                  ? "Executed · Pass"
+                                                  : scFailed
+                                                    ? "Executed · Fail"
+                                                    : "Not run"}
                                               </span>
                                               <span className="px-1.5 py-0.2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                                                 {sc.userEdited
                                                   ? "Edited"
-                                                  : sc.origin === "AI_GENERATED" || sc.origin === "AI"
+                                                  : sc.origin ===
+                                                        "AI_GENERATED" ||
+                                                      sc.origin === "AI"
                                                     ? "AI"
                                                     : sc.origin || "AI"}
                                               </span>
-                                              {sc.expectedStatus && (
+                                              {(sc.expectedStatus ||
+                                                (Array.isArray(
+                                                  sc.expectedStatuses,
+                                                ) &&
+                                                  sc.expectedStatuses.length >
+                                                    0)) && (
                                                 <span className="tabular-nums">
                                                   Expected{" "}
                                                   <strong className="text-[var(--color-text-secondary)]">
-                                                    {sc.expectedStatus}
+                                                    {Array.isArray(
+                                                      sc.expectedStatuses,
+                                                    ) &&
+                                                    sc.expectedStatuses.length >
+                                                      1
+                                                      ? sc.expectedStatuses.join(
+                                                          "/",
+                                                        )
+                                                      : sc.expectedStatus}
                                                   </strong>
                                                 </span>
                                               )}
                                               {sc.actualStatus && (
                                                 <span
                                                   className={`tabular-nums ${
-                                                    Number(sc.actualStatus) ===
-                                                    Number(sc.expectedStatus)
+                                                    (
+                                                      Array.isArray(
+                                                        sc.expectedStatuses,
+                                                      ) &&
+                                                      sc.expectedStatuses
+                                                        .length > 0
+                                                        ? sc.expectedStatuses
+                                                            .map(Number)
+                                                            .includes(
+                                                              Number(
+                                                                sc.actualStatus,
+                                                              ),
+                                                            )
+                                                        : Number(
+                                                            sc.actualStatus,
+                                                          ) ===
+                                                          Number(
+                                                            sc.expectedStatus,
+                                                          )
+                                                    )
                                                       ? "text-emerald-400"
-                                                      : "text-rose-400 font-semibold"
+                                                      : "text-rose-300/85 font-medium"
                                                   }`}
                                                 >
                                                   Actual {sc.actualStatus}
@@ -1296,7 +1534,6 @@ export default function IntegrationRouteMatrixTable({
                                         {/* Quiet Ghost Scenario Actions */}
                                         <div className="flex items-center gap-0.5 shrink-0 opacity-75 group-hover/sc:opacity-100 transition-opacity">
                                           {scFailed &&
-                                            canMutate &&
                                             onAIFixScenario && (
                                               <button
                                                 type="button"
@@ -1304,8 +1541,8 @@ export default function IntegrationRouteMatrixTable({
                                                   onAIFixScenario(sc, ep)
                                                 }
                                                 disabled={isRunning}
-                                                title="Auto-repair this failed scenario using AI diagnostics"
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer"
+                                                title="Load failed test & endpoint context into AI Assistant"
+                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
                                               >
                                                 <Wrench className="w-2.5 h-2.5" />
                                                 <span>AI Fix</span>
@@ -1351,7 +1588,7 @@ export default function IntegrationRouteMatrixTable({
                                             </span>
                                           </button>
 
-                                          {canMutate && onDeleteScenario && (
+                                          {canDelete && (
                                             <>
                                               {confirmDeleteKey === scKey ? (
                                                 <div className="inline-flex items-center gap-1">
@@ -1395,25 +1632,50 @@ export default function IntegrationRouteMatrixTable({
                                       {/* Inline Preview & Failure Diagnostics Drawer */}
                                       {isCodeOpen && (
                                         <div className="px-3.5 pb-3 pt-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] space-y-2">
-                                          {(sc.executionReason ||
+                                          {(sc.failureSummary ||
+                                            sc.executionReason ||
                                             (sc.failureMessages &&
                                               sc.failureMessages.length >
-                                                0)) && (
-                                            <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] font-mono text-rose-300 space-y-1">
-                                              <div className="flex items-center gap-1.5 font-semibold text-rose-400">
-                                                <AlertTriangle className="w-3.5 h-3.5" />
-                                                <span>
-                                                  Execution Diagnostics
-                                                </span>
-                                              </div>
-                                              <pre className="whitespace-pre-wrap break-words text-[10px] max-h-40 overflow-y-auto">
-                                                {sc.executionReason ||
-                                                  sc.failureMessages?.join(
-                                                    "\n",
+                                                0)) && (() => {
+                                            const rawDiag = (
+                                              sc.failureMessages?.join("\n") ||
+                                              sc.executionReason ||
+                                              ""
+                                            )
+                                              .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+                                              .replace(/\u001b/g, "");
+                                            const summaryDiag =
+                                              sc.failureSummary ||
+                                              summarizeIntegrationFailure(
+                                                sc.executionReason ||
+                                                  sc.failureMessages,
+                                              );
+                                            return (
+                                              <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-200 space-y-1.5">
+                                                <div className="flex items-center gap-1.5 font-semibold text-rose-400">
+                                                  <AlertTriangle className="w-3.5 h-3.5" />
+                                                  <span>
+                                                    Failure Summary
+                                                  </span>
+                                                </div>
+                                                <p className="text-xs leading-relaxed text-[var(--color-text)] m-0">
+                                                  {summaryDiag}
+                                                </p>
+                                                {rawDiag &&
+                                                  rawDiag.trim() !==
+                                                    summaryDiag.trim() && (
+                                                    <details className="pt-0.5">
+                                                      <summary className="text-[10px] font-mono text-rose-300/80 hover:text-rose-200 cursor-pointer select-none">
+                                                        Technical details
+                                                      </summary>
+                                                      <pre className="mt-1 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words font-mono text-[10px] text-[var(--color-text-muted)] max-h-40 overflow-y-auto custom-scrollbar">
+                                                        {rawDiag}
+                                                      </pre>
+                                                    </details>
                                                   )}
-                                              </pre>
-                                            </div>
-                                          )}
+                                              </div>
+                                            );
+                                          })()}
 
                                           {sc.code ? (
                                             <div className="rounded border border-[var(--color-border)] overflow-hidden">
@@ -1454,8 +1716,8 @@ export default function IntegrationRouteMatrixTable({
                                           ) : (
                                             <div className="text-[11px] font-mono text-[var(--color-text-muted)] py-2">
                                               No inline snippet available. Click{" "}
-                                              <strong>Edit Code</strong> to
-                                              open the test file in Monaco.
+                                              <strong>Edit Code</strong> to open
+                                              the test file in Monaco.
                                             </div>
                                           )}
                                         </div>
@@ -1488,17 +1750,6 @@ export default function IntegrationRouteMatrixTable({
                                       <span>Add Custom Scenario</span>
                                     </button>
                                   )}
-                                  {onGenerateTest && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onGenerateTest(ep)}
-                                      disabled={isGenerating || isRunning}
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white transition-colors disabled:opacity-50 cursor-pointer"
-                                    >
-                                      <Sparkles className="w-3.5 h-3.5" />
-                                      <span>Generate AI Scenarios</span>
-                                    </button>
-                                  )}
                                 </div>
                               </div>
                             )}
@@ -1523,9 +1774,11 @@ export default function IntegrationRouteMatrixTable({
             </div>
           </div>
           <div className="space-y-1.5">
-            {unmappedScenarios.map((sc, idx) => (
+            {unmappedScenarios.map((sc, idx) => {
+              const unmappedKey = `unmapped-${sc.scenarioId || idx}`;
+              return (
               <div
-                key={`unmapped-${sc.scenarioId || idx}`}
+                key={unmappedKey}
                 className="px-3 py-2 rounded bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-between gap-3 text-xs"
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -1560,9 +1813,42 @@ export default function IntegrationRouteMatrixTable({
                       <span>Edit Code</span>
                     </button>
                   )}
+                  {onDeleteScenario && (
+                    confirmDeleteKey === unmappedKey ? (
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteScenario(sc);
+                            setConfirmDeleteKey(null);
+                          }}
+                          className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-500 text-white hover:bg-rose-600 transition-colors cursor-pointer"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteKey(null)}
+                          className="px-1.5 py-1 rounded text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteKey(unmappedKey)}
+                        title="Delete this scenario"
+                        className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

@@ -1,7 +1,7 @@
 import { jest } from "@jest/globals";
 import { fileURLToPath } from "node:url";
 export const db = {};
-for (const name of ["project", "projectMember", "projectSnapshot", "chatSession", "chatMessage", "chatRequest", "projectEvent", "aiContextSettings", "projectMemory", "coverageSummary", "coverageFile", "testRun"])
+for (const name of ["project", "projectMember", "projectSnapshot", "projectStructureAnalysis", "chatSession", "chatMessage", "chatRequest", "projectEvent", "aiContextSettings", "projectMemory", "coverageSummary", "coverageFile", "testRun"])
     db[name] = Object.fromEntries(["findFirst", "findUnique", "findMany", "create", "createMany", "upsert", "update", "updateMany", "deleteMany", "count"].map(method => [method, jest.fn()]));
 db.$transaction = jest.fn(async action => typeof action === "function" ? action(db) : Promise.all(action));
 db.$executeRaw = jest.fn(async () => 1);

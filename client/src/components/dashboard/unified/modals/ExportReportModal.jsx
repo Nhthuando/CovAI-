@@ -1,6 +1,14 @@
 import { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { X, FileText, Code2, Printer, CheckSquare, Square, Download } from "lucide-react";
+import {
+  X,
+  FileText,
+  Code2,
+  Printer,
+  CheckSquare,
+  Square,
+  Download,
+} from "lucide-react";
 import { Button } from "../../../common/Button.jsx";
 import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import {
@@ -8,6 +16,7 @@ import {
   generateMarkdownReport,
   buildFilteredJsonPayload,
   exportUnifiedDashboardReport,
+  exportUnifiedDashboardPdf,
 } from "../../../../services/unifiedDashboard/unifiedDashboard.export.js";
 import { useToast } from "../../ToastContext.jsx";
 
@@ -15,12 +24,14 @@ const SECTION_CONFIGS = [
   {
     key: "executive",
     title: "Executive KPIs & Quality Gate Checklist",
-    description: "Health score, pass rate totals, multi-layer coverage index, and 4 gate prerequisites",
+    description:
+      "Health score, pass rate totals, multi-layer coverage index, and 4 gate prerequisites",
   },
   {
     key: "pyramidPillars",
     title: "Testing Pyramid & Three-Pillar Breakdown",
-    description: "Architecture distribution and Unit / Integration / System metrics",
+    description:
+      "Architecture distribution and Unit / Integration / System metrics",
   },
   {
     key: "traceMatrix",
@@ -88,10 +99,21 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
   };
 
   const handlePrint = () => {
-    onClose();
-    setTimeout(() => {
-      window.print();
-    }, 120);
+    try {
+      exportUnifiedDashboardPdf(vm, sections);
+      addToast({
+        title: "PDF Print Ready",
+        message: `Prepared formatted A4 report (${selectedCount} sections).`,
+        type: "success",
+      });
+      onClose();
+    } catch (err) {
+      addToast({
+        title: "PDF Export Failed",
+        message: err.message || "Could not prepare PDF report.",
+        type: "error",
+      });
+    }
   };
 
   return createPortal(
@@ -99,7 +121,7 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="ud-export-modal-title"
-      className="unified-dashboard fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-[1px]"
+      className="portfolio-studio unified-dashboard fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-[1px]"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -110,11 +132,15 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
           <div className="flex items-center gap-2.5">
             <Download size={16} className="text-[var(--ud-unit)]" />
             <div>
-              <h2 id="ud-export-modal-title" className="text-sm font-bold text-[var(--ud-text)]">
+              <h2
+                id="ud-export-modal-title"
+                className="text-sm font-bold text-[var(--ud-text)]"
+              >
                 Export Unified Quality Report
               </h2>
               <p className="text-[11px] text-[var(--ud-text-muted)] font-mono">
-                Project: {vm?.context?.projectName || "CovAI"} • Snapshot: {(vm?.context?.snapshotId || "N/A").slice(0, 8)}
+                Project: {vm?.context?.projectName || "CovAI"} • Snapshot:{" "}
+                {(vm?.context?.snapshotId || "N/A").slice(0, 8)}
               </p>
             </div>
           </div>
@@ -150,7 +176,9 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
                 }}
                 className="text-[11px] font-mono text-[var(--ud-unit)] hover:underline cursor-pointer"
               >
-                {selectedCount === SECTION_CONFIGS.length ? "Deselect All" : "Select All"}
+                {selectedCount === SECTION_CONFIGS.length
+                  ? "Deselect All"
+                  : "Select All"}
               </button>
             </div>
 
@@ -169,9 +197,15 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
                     }`}
                   >
                     {checked ? (
-                      <CheckSquare size={15} className="shrink-0 mt-0.5 text-[var(--ud-unit)]" />
+                      <CheckSquare
+                        size={15}
+                        className="shrink-0 mt-0.5 text-[var(--ud-unit)]"
+                      />
                     ) : (
-                      <Square size={15} className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]" />
+                      <Square
+                        size={15}
+                        className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]"
+                      />
                     )}
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-[var(--ud-text)]">
@@ -244,6 +278,7 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
               type="button"
               variant="primary"
               size="sm"
+              className="ps-btn-contrast border-0"
               icon={FileText}
               disabled={selectedCount === 0}
               onClick={() => handleDownload("markdown")}
@@ -254,9 +289,8 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
         </div>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 export default ExportReportModal;
-

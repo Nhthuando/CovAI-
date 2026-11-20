@@ -1,21 +1,17 @@
 import { useState } from "react";
-import {
-  BarChart3,
-  ScatterChart,
-  AlertCircle,
-  ChevronDown,
-  ChevronUp,
-  X,
-  Zap,
-} from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronUp, X } from "lucide-react";
 import { MultiProjectCoverageChart } from "../charts/MultiProjectCoverageChart.jsx";
 import { RiskQuadrantScatterPlot } from "../charts/RiskQuadrantScatterPlot.jsx";
 import TimeSavedRoiChart from "../charts/TimeSavedRoiChart.jsx";
+import { PortfolioRadarChart } from "../charts/PortfolioRadarChart.jsx";
+import { GateDistributionDonut } from "../charts/GateDistributionDonut.jsx";
 import { PillarBadge } from "../../unified/primitives/PillarBadge.jsx";
 
-const VISIBLE_ATTENTION_LIMIT = 3;
+const VISIBLE_ATTENTION_LIMIT = 4;
 
 export function PortfolioBenchmarkAndRiskZone({
+  kpis = {},
+  lifecycleCounts = null,
   analytics = {},
   attentionQueue = [],
   projects = [],
@@ -26,12 +22,15 @@ export function PortfolioBenchmarkAndRiskZone({
   onAskAiDiagnose,
   className = "",
 }) {
-  const [activeTab, setActiveTab] = useState("quadrant"); // "quadrant" | "benchmark" | "time-roi"
+  const [barChartView, setBarChartView] = useState("coverage");
   const [attentionCategory, setAttentionCategory] = useState("all");
   const [isAttentionExpanded, setIsAttentionExpanded] = useState(false);
 
   const benchmarkItems = analytics.benchmarkItems || [];
   const quadrantNodes = analytics.quadrantNodes || [];
+  const selectedProjectObj = (projects || []).find(
+    (p) => p.id === selectedProjectId
+  );
 
   const filteredAttention =
     attentionCategory === "all"
@@ -44,179 +43,150 @@ export function PortfolioBenchmarkAndRiskZone({
 
   const hasMoreAttention = filteredAttention.length > VISIBLE_ATTENTION_LIMIT;
 
-  const selectedProjectObj = benchmarkItems.find(
-    (b) => b.projectId === selectedProjectId
-  );
-
   return (
     <section
       id="portfolio-benchmark-and-risk-zone"
-      aria-label="Portfolio Analytics Benchmark & Cross-Project Risk Radar"
-      className={`grid grid-cols-12 gap-4 items-start ${className}`}
+      aria-label="Portfolio Visual Analytics"
+      className={`space-y-4 ${className}`}
     >
-      {/* ── Left Panel (7 Columns): Multi-Project Benchmark Visualizer ── */}
-      <div className="col-span-12 lg:col-span-7 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 shadow-xs transition-colors flex flex-col justify-between">
-        <div>
-          {/* Header & Switchable Tabs */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[var(--ud-border)]">
-            <div>
-              <h2 className="text-sm font-bold text-[var(--ud-text)] tracking-tight">
-                Cross-Project Quality Benchmark
-              </h2>
-              <p className="text-xs text-[var(--ud-text-muted)] mt-0.5">
-                Analyze release risk distribution, 3-layer balance and QA time ROI
-              </p>
-            </div>
+      <div className="flex items-baseline justify-between">
+        <h2 className="ps-display text-base font-bold text-[var(--ps-ink)]">
+          Analytics
+        </h2>
+        {selectedProjectId && (
+          <button
+            type="button"
+            onClick={() => onSelectProject?.(null)}
+            className="px-2.5 py-1 rounded-md bg-[var(--ps-cobalt)]/12 border border-[var(--ps-cobalt)]/35 text-xs ps-mono text-[var(--ps-cobalt)] inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <span>Focused: {selectedProjectObj?.name || selectedProjectId}</span>
+            <X size={12} />
+          </button>
+        )}
+      </div>
 
-            {/* Tab Switcher (Default: Risk Quadrant) */}
-            <div className="flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--ud-surface-2)] border border-[var(--ud-border)] self-start sm:self-auto shrink-0 font-mono text-xs">
-              <button
-                type="button"
-                onClick={() => setActiveTab("quadrant")}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                  activeTab === "quadrant"
-                    ? "bg-[var(--ud-surface)] text-[var(--ud-text)] font-semibold shadow-xs"
-                    : "text-[var(--ud-text-muted)] hover:text-[var(--ud-text)]"
-                }`}
-              >
-                <ScatterChart size={12} />
-                <span>Risk Quadrant</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("benchmark")}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                  activeTab === "benchmark"
-                    ? "bg-[var(--ud-surface)] text-[var(--ud-text)] font-semibold shadow-xs"
-                    : "text-[var(--ud-text-muted)] hover:text-[var(--ud-text)]"
-                }`}
-              >
-                <BarChart3 size={12} />
-                <span>3-Layer Bars</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("time-roi")}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                  activeTab === "time-roi"
-                    ? "bg-[var(--ud-surface)] text-[var(--ud-text)] font-semibold shadow-xs"
-                    : "text-[var(--ud-text-muted)] hover:text-[var(--ud-text)]"
-                }`}
-              >
-                <Zap size={12} className="text-[var(--ud-unit)]" />
-                <span>Time & ROI</span>
-              </button>
-            </div>
+      {/* ── Row 1: 3 Core Diagrams Side-by-Side ──────────────────────── */}
+      <div className="grid grid-cols-12 gap-4 items-stretch">
+        <div className="col-span-12 lg:col-span-6 ps-panel p-4 sm:p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-[var(--ps-line)]">
+            <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
+              Risk Quadrant
+            </h3>
+            <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+              Coverage vs Pass Rate
+            </span>
           </div>
-
-          {/* Active Cross-Filter Banner if a project is selected */}
-          {selectedProjectId && (
-            <div className="mt-3 px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 flex items-center justify-between text-xs font-mono">
-              <span className="text-[var(--color-primary)] font-medium truncate">
-                Focused:{" "}
-                <span className="font-bold">
-                  {selectedProjectObj?.name || selectedProjectId}
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={() => onSelectProject?.(null)}
-                className="flex items-center gap-1 text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] cursor-pointer"
-              >
-                <X size={12} />
-                <span>Clear Focus</span>
-              </button>
-            </div>
-          )}
-
-          {/* Tab Content */}
-          <div className="mt-4">
-            {activeTab === "quadrant" ? (
-              <RiskQuadrantScatterPlot
-                quadrantNodes={quadrantNodes}
-                coverageCutoff={analytics.coverageCutoff}
-                passRateCutoff={analytics.passRateCutoff}
-                selectedProjectId={selectedProjectId}
-                onSelectProject={onSelectProject}
-              />
-            ) : activeTab === "benchmark" ? (
-              <MultiProjectCoverageChart
-                benchmarkItems={benchmarkItems}
-                selectedProjectId={selectedProjectId}
-                onSelectProject={onSelectProject}
-              />
-            ) : (
-              <TimeSavedRoiChart
-                projects={projects}
-                timeRoiAnalytics={timeRoiAnalytics}
-                onHighlightProject={onSelectProject}
-              />
-            )}
-          </div>
+          <RiskQuadrantScatterPlot
+            quadrantNodes={quadrantNodes}
+            coverageCutoff={analytics.coverageCutoff}
+            passRateCutoff={analytics.passRateCutoff}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={onSelectProject}
+          />
         </div>
 
-        {/* Footer Hint */}
-        <div className="mt-4 pt-2.5 border-t border-[var(--ud-border)] text-[11px] text-[var(--ud-text-muted)] font-mono flex items-center justify-between">
-          <span>
-            Click any quadrant node or bar to highlight the project card above ↑
-          </span>
-          <span className="text-[var(--ud-text)] font-medium tabular-nums">
-            {benchmarkItems.length} Projects Plotted
-          </span>
+        <div className="col-span-12 sm:col-span-6 lg:col-span-3 ps-panel p-4 sm:p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-[var(--ps-line)]">
+            <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
+              Quality Radar
+            </h3>
+            <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+              5 Axes
+            </span>
+          </div>
+          <PortfolioRadarChart
+            kpis={kpis}
+            selectedProject={selectedProjectObj}
+            className="my-auto"
+          />
+        </div>
+
+        <div className="col-span-12 sm:col-span-6 lg:col-span-3 ps-panel p-4 sm:p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-[var(--ps-line)]">
+            <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
+              Lifecycle Split
+            </h3>
+            <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+              Projects
+            </span>
+          </div>
+          <GateDistributionDonut
+            lifecycleCounts={lifecycleCounts}
+            projects={projects}
+            className="my-auto"
+          />
         </div>
       </div>
 
-      {/* ── Right Panel (5 Columns): Cross-Project Attention Queue ──── */}
-      <div
-        id="portfolio-attention-queue"
-        className="col-span-12 lg:col-span-5 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 shadow-xs transition-colors flex flex-col justify-between"
-      >
-        <div>
-          {/* Header & Filter Pills */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[var(--ud-border)]">
+      {/* ── Row 2: Project Coverage/ROI Bars (7 cols) + Attention Queue (5 cols) ── */}
+      <div className="grid grid-cols-12 gap-4 items-start">
+        <div className="col-span-12 lg:col-span-7 ps-panel p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-[var(--ps-line)]">
+            <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
+              Project Comparison
+            </h3>
+
+            <select
+              aria-label="Select comparison bar chart"
+              value={barChartView}
+              onChange={(e) => setBarChartView(e.target.value)}
+              className="ps-select !h-7"
+            >
+              <option value="coverage">3-Layer Coverage Bars</option>
+              <option value="roi">QA Time &amp; Speedup ROI</option>
+            </select>
+          </div>
+
+          {barChartView === "coverage" ? (
+            <MultiProjectCoverageChart
+              benchmarkItems={benchmarkItems}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={onSelectProject}
+            />
+          ) : (
+            <TimeSavedRoiChart
+              projects={projects}
+              timeRoiAnalytics={timeRoiAnalytics}
+              onHighlightProject={onSelectProject}
+            />
+          )}
+        </div>
+
+        <div
+          id="portfolio-attention-queue"
+          className="col-span-12 lg:col-span-5 ps-panel p-4 sm:p-5"
+        >
+          <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-[var(--ps-line)]">
             <div className="flex items-center gap-2">
-              <AlertCircle size={15} className="text-[var(--ud-warn)]" />
-              <h2 className="text-sm font-bold text-[var(--ud-text)] tracking-tight">
-                Cross-Project Attention Queue
-              </h2>
+              <AlertCircle size={14} className="text-[var(--ps-amber)]" />
+              <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
+                Attention Queue
+              </h3>
+              <span className="text-xs ps-mono text-[var(--ps-ink-muted)]">
+                ({filteredAttention.length})
+              </span>
             </div>
-            <span className="text-xs font-mono tabular-nums text-[var(--ud-text-muted)]">
-              {filteredAttention.length} Action Item
-              {filteredAttention.length !== 1 ? "s" : ""}
-            </span>
+
+            <select
+              aria-label="Filter attention queue"
+              value={attentionCategory}
+              onChange={(e) => {
+                setAttentionCategory(e.target.value);
+                setIsAttentionExpanded(false);
+              }}
+              className="ps-select !h-7"
+            >
+              <option value="all">All Issues</option>
+              <option value="failures">Severe Failures</option>
+              <option value="missing-deps">Missing Deps</option>
+              <option value="zero-test">Zero-Test Gaps</option>
+            </select>
           </div>
 
-          {/* Category Filter Pills */}
-          <div className="flex flex-wrap items-center gap-1.5 my-3 font-mono text-[11px]">
-            {[
-              { id: "all", label: "All Issues" },
-              { id: "failures", label: "Severe Failures" },
-              { id: "missing-deps", label: "Missing Deps" },
-              { id: "zero-test", label: "Zero-Test Gaps" },
-            ].map((cat) => (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => {
-                  setAttentionCategory(cat.id);
-                  setIsAttentionExpanded(false);
-                }}
-                className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                  attentionCategory === cat.id
-                    ? "bg-[var(--ud-text)] text-[var(--ud-bg)] font-semibold"
-                    : "bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] border border-[var(--ud-border)]"
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Attention Items Feed (Top 3 by default, zero vertical clipping) */}
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {displayedAttention.length === 0 ? (
-              <div className="py-10 text-center text-xs text-[var(--ud-text-muted)] font-mono border border-dashed border-[var(--ud-border)] rounded-[var(--radius-md)]">
-                ✓ No active high-severity bottlenecks found in this category.
+              <div className="py-10 text-center text-xs text-[var(--ps-ink-muted)] ps-mono border border-dashed border-[var(--ps-line)] rounded-lg">
+                No active blockers
               </div>
             ) : (
               displayedAttention.map((item) => {
@@ -224,90 +194,78 @@ export function PortfolioBenchmarkAndRiskZone({
                 const isHigh = item.severity === "HIGH";
 
                 const sevColor = isCrit
-                  ? "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)] border-[var(--ud-fail)]/30"
+                  ? "bg-[var(--ps-rose)]/12 text-[var(--ps-rose)] border-[var(--ps-rose)]/30"
                   : isHigh
-                  ? "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border-[var(--ud-warn)]/30"
-                  : "bg-[var(--ud-surface)] text-[var(--ud-text-muted)] border-[var(--ud-border)]";
+                    ? "bg-[var(--ps-amber)]/12 text-[var(--ps-amber)] border-[var(--ps-amber)]/30"
+                    : "bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] border-[var(--ps-line)]";
 
                 return (
                   <div
                     key={item.id}
-                    className="p-3 rounded-[var(--radius-md)] bg-[var(--ud-surface-2)]/60 border border-[var(--ud-border)] hover:border-[var(--ud-border-strong)] transition-all space-y-2"
+                    className="p-2.5 rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] space-y-1.5"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border uppercase shrink-0 ${sevColor}`}
+                          className={`px-1.5 py-0.5 rounded text-[9px] ps-mono font-bold border uppercase shrink-0 ${sevColor}`}
                         >
                           {item.severity}
                         </span>
-                        <span
-                          className="text-xs font-mono font-semibold text-[var(--ud-text)] truncate max-w-[170px]"
-                          title={item.projectName}
-                        >
+                        <span className="text-xs ps-mono font-semibold text-[var(--ps-ink)] truncate">
                           {item.projectName}
                         </span>
                       </div>
 
-                      {item.pillar && (
-                        <PillarBadge pillar={item.pillar} size="sm" />
-                      )}
+                      {item.pillar && <PillarBadge pillar={item.pillar} size="sm" />}
                     </div>
 
-                    <div className="text-xs font-medium text-[var(--ud-text)] leading-snug">
-                      {item.title}
-                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-[var(--ps-ink-secondary)] truncate">
+                        {item.title}
+                      </span>
 
-                    <div className="text-[11px] text-[var(--ud-text-muted)] leading-relaxed">
-                      {item.description}
-                    </div>
-
-                    {/* Action Deep Link CTA */}
-                    <div className="flex items-center justify-between pt-1">
-                      <button
-                        type="button"
-                        onClick={() => onAskAiDiagnose?.(item)}
-                        className="text-[11px] font-mono text-[var(--ud-text-muted)] hover:text-[var(--color-primary)] cursor-pointer underline"
-                      >
-                        Ask COV AI
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onNavigateProjectWorkspace?.(
-                            item.projectId,
-                            item.targetPillar,
-                            item.targetFocus
-                          )
-                        }
-                        className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-[var(--color-primary)] hover:opacity-80 transition-opacity cursor-pointer"
-                      >
-                        <span>{item.ctaLabel || "Open & Fix ↗"}</span>
-                      </button>
+                      <div className="flex items-center gap-2.5 shrink-0 ps-mono text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => onAskAiDiagnose?.(item)}
+                          className="text-[var(--ps-ink-muted)] hover:text-[var(--ps-cobalt)] cursor-pointer"
+                        >
+                          AI
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onNavigateProjectWorkspace?.(
+                              item.projectId,
+                              item.targetPillar,
+                              item.targetFocus
+                            )
+                          }
+                          className="font-semibold text-[var(--ps-cobalt)] hover:underline cursor-pointer"
+                        >
+                          Fix →
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
               })
             )}
 
-            {/* Expand / Collapse Footer Button */}
             {hasMoreAttention && (
               <button
                 type="button"
                 onClick={() => setIsAttentionExpanded((prev) => !prev)}
-                className="w-full py-2 px-3 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60 hover:bg-[var(--ud-surface-2)] text-xs font-mono font-semibold text-[var(--ud-text)] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                className="w-full py-1.5 px-3 rounded-lg border border-[var(--ps-line)] bg-[var(--ps-inset)] hover:bg-[var(--ps-surface-2)] text-xs ps-mono text-[var(--ps-ink)] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
               >
                 {isAttentionExpanded ? (
                   <>
-                    <span>Show less</span>
+                    <span>Collapse</span>
                     <ChevronUp size={13} />
                   </>
                 ) : (
                   <>
-                    <span>
-                      Show all ({filteredAttention.length} action items)
-                    </span>
+                    <span>Show all ({filteredAttention.length})</span>
                     <ChevronDown size={13} />
                   </>
                 )}
@@ -315,14 +273,9 @@ export function PortfolioBenchmarkAndRiskZone({
             )}
           </div>
         </div>
-
-        <div className="mt-4 pt-2.5 border-t border-[var(--ud-border)] text-[11px] text-[var(--ud-text-muted)] font-mono">
-          Ranked by severity: Critical blockers trigger immediate release gate blocks.
-        </div>
       </div>
     </section>
   );
 }
 
 export default PortfolioBenchmarkAndRiskZone;
-

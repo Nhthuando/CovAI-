@@ -6,6 +6,7 @@ import { fmtPct } from "../../../../services/unifiedDashboard/format.js";
 
 export function UnitPillarCard({
   pillarData,
+  loading = false,
   onNavigateWorkspace,
   activeCrossFilter = null,
   onSelectCrossFilter = null,
@@ -15,19 +16,21 @@ export function UnitPillarCard({
   const totalTests = Number(p.totalTests || 0);
   const passedTests = Number(p.passedTests || 0);
   const failedTests = Number(p.failedTests || 0);
-  const state = p.state || (totalTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
+  const state = loading
+    ? "LOADING"
+    : p.state || (totalTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
 
-  const status = failedTests > 0 ? "fail" : totalTests > 0 ? "pass" : "untested";
-  const statusLabel = totalTests > 0 ? `${passedTests}/${totalTests} Passed` : "Not Run";
+  const status = loading ? "untested" : failedTests > 0 ? "fail" : totalTests > 0 ? "pass" : "untested";
+  const statusLabel = loading ? "--" : totalTests > 0 ? `${passedTests}/${totalTests} Passed` : "Not Run";
 
   const lowBranches = Array.isArray(p.lowCoverageItems) ? p.lowCoverageItems : [];
 
   // 4 Proportional coverage bars replacing 2x2 boxes
   const coverageBars = [
-    { key: "lines", label: "Lines", value: cov.lines, tone: "unit" },
-    { key: "branches", label: "Branches", value: cov.branches, tone: "unit" },
-    { key: "functions", label: "Functions", value: cov.functions, tone: "unit" },
-    { key: "statements", label: "Statements", value: cov.statements, tone: "unit" },
+    { key: "lines", label: "Lines", value: loading ? 0 : cov.lines, valueText: loading ? "--%" : undefined, tone: "unit" },
+    { key: "branches", label: "Branches", value: loading ? 0 : cov.branches, valueText: loading ? "--%" : undefined, tone: "unit" },
+    { key: "functions", label: "Functions", value: loading ? 0 : cov.functions, valueText: loading ? "--%" : undefined, tone: "unit" },
+    { key: "statements", label: "Statements", value: loading ? 0 : cov.statements, valueText: loading ? "--%" : undefined, tone: "unit" },
   ];
 
   return (
@@ -66,7 +69,7 @@ export function UnitPillarCard({
         </div>
       )}
 
-      {/* Code Coverage Metrics via HorizontalBarList (Only when tests ran) */}
+      {/* Code Coverage Metrics via HorizontalBarList (Shown while loading or when tests ran) */}
       {state !== "NOT_RUN" && (
         <div>
           <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider block mb-1.5">
@@ -76,8 +79,12 @@ export function UnitPillarCard({
         </div>
       )}
 
-      {/* Lowest Branch Coverage Highlights (Hidden on NOT_RUN to eliminate empty repetition) */}
-      {state !== "NOT_RUN" && (
+      {/* Lowest Branch Coverage Highlights */}
+      {state === "LOADING" ? (
+        <div className="mt-auto text-[11px] font-mono text-[var(--ud-text-muted)] p-2 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)]/50 text-center">
+          Loading branch coverage metrics...
+        </div>
+      ) : state !== "NOT_RUN" && (
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider">

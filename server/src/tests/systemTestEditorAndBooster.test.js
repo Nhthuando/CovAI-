@@ -106,6 +106,7 @@ jest.unstable_mockModule('../services/fileCoverage.service.js', () => ({
     getFileCoverageDetails: jest.fn(),
     normalizePath: (p) => (p ? p.replace(/\\/g, '/') : p),
     findAssociatedTestFile: jest.fn(),
+    findAllAssociatedTestFiles: jest.fn(() => ({ primaryTestFile: { found: false }, linkedTestFiles: [] })),
     cleanRelativePath: (p) => p,
     matchesFilePath: jest.fn(),
 }));
@@ -115,6 +116,7 @@ jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     computeRelativeImportPath: jest.fn(),
     generateFallbackUnitTests: jest.fn(),
     extractAstMetadata: jest.fn(() => ({ exportedSymbols: [], unexportedFunctions: [], decisionPoints: [] })),
+    classifyFeasibleCoverage: jest.fn(() => ({ isFeasibleLogicCovered: false, actionableLines: [], actionableBranches: [], infeasibleBranches: [] })),
 }));
 
 jest.unstable_mockModule('../services/applyTestSuggestion.service.js', () => ({

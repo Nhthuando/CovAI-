@@ -82,4 +82,54 @@ describe('supertestRunner.service', () => {
         dockerRunner.run = jest.fn().mockRejectedValue(new Error('Execution timed out after 300000ms'));
         await expect(runSupertest('job1', tempDir, null, [path.join(tempDir, 'src', 'api.test.js')])).rejects.toThrow('timed out');
     });
+
+    test('does not leak host process.env.DATABASE_URL into project runner env when no DB is provisioned', async () => {
+        const origDbUrl = process.env.DATABASE_URL;
+        process.env.DATABASE_URL = 'postgresql://prod:secret@railway.internal:5432/covai';
+        dockerRunner.run = jest.fn().mockResolvedValue({ success: true, exitCode: 0, stdout: '', stderr: '' });
+        try {
+            await runSupertest('job1', tempDir, null, [path.join(tempDir, 'src', 'api.test.js')]);
+            const runOptions = dockerRunner.run.mock.calls[0][0];
+            expect(runOptions.env.DATABASE_URL).toBeUndefined();
+        } finally {
+            if (origDbUrl === undefined) delete process.env.DATABASE_URL;
+            else process.env.DATABASE_URL = origDbUrl;
+        }
+    });
+
+    test('supports monorepo ESM subpackages (server/) with cross-directory tests, modulePaths, and cleans ESM markers', async () => {
+        fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify({ name: 'mono-root' }));
+        fs.mkdirSync(path.join(tempDir, 'server', 'node_modules', 'jest', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(tempDir, 'server', 'node_modules', 'jest', 'bin', 'jest.js'), '// mock jest');
+        fs.writeFileSync(path.join(tempDir, 'server', 'package.json'), JSON.stringify({ type: 'module' }));
+        fs.writeFileSync(path.join(tempDir, 'server', 'jest.config.js'), 'export default { testEnvironment: "node" };');
+        fs.mkdirSync(path.join(tempDir, 'server', 'tests', 'integration'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tempDir, 'server', 'tests', 'integration', 'events.test.js'),
+            "import request from 'supertest';",
+        );
+        fs.mkdirSync(path.join(tempDir, 'tests', 'integration'), { recursive: true });
+        const rootAiTest = path.join(tempDir, 'tests', 'integration', 'ai.test.js');
+        fs.writeFileSync(rootAiTest, "import request from 'supertest';");
+
+        let markerExistedDuringRun = false;
+        dockerRunner.run = jest.fn().mockImplementation(async () => {
+            markerExistedDuringRun = fs.existsSync(path.join(tempDir, 'tests', 'integration', 'package.json'));
+            return { success: true, exitCode: 0, stdout: '', stderr: '' };
+        });
+
+        await runSupertest('job-mono', tempDir, null, [
+            rootAiTest,
+            path.join(tempDir, 'server', 'tests', 'integration', 'events.test.js'),
+        ]);
+
+        const runOptions = dockerRunner.run.mock.calls[0][0];
+        expect(runOptions.env.NODE_OPTIONS).toContain('--experimental-vm-modules');
+        expect(runOptions.command).toContain('--experimental-vm-modules server/node_modules/jest/bin/jest.js');
+        expect(runOptions.command).toContain('--config=server/jest.config.js');
+        expect(runOptions.command).toContain('--roots=');
+        expect(runOptions.command).toContain('--modulePaths=');
+        expect(markerExistedDuringRun).toBe(true);
+        expect(fs.existsSync(path.join(tempDir, 'tests', 'integration', 'package.json'))).toBe(false);
+    });
 });

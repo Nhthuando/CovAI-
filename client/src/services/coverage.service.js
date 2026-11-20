@@ -1,7 +1,8 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
-import { handleUnauthorizedResponse } from "../lib/authSession.js";
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS } from '../../../shared/unitTestRuntime.js';
+import { authAwareFetch, handleUnauthorizedResponse } from "../lib/authSession.js";
+const BASE_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "http://localhost:5000/api";
 
 function getAuthHeaders() {
     const user = localStorage.getItem("user");
@@ -117,11 +118,19 @@ export async function getCoverageFrameworks(snapshotId) {
 export async function runCoverageByType(snapshotId, coverageType, framework, executionMode, options = {}) {
     const headers = getAuthHeaders();
     const isRestart = Boolean(options?.restart);
+    const useHermeticMock = Boolean(options?.useHermeticMock);
     const bodyPayload = {
         ...(framework ? { framework } : {}),
         ...(executionMode ? { executionMode } : {}),
         ...(isRestart ? { restart: true } : {}),
+        ...(useHermeticMock ? { useHermeticMock: true } : {}),
         ...(options?.targetEndpoint ? { targetEndpoint: options.targetEndpoint } : {}),
+        ...(Array.isArray(options?.targetFiles) && options.targetFiles.length > 0
+            ? { targetFiles: options.targetFiles }
+            : {}),
+        ...(Array.isArray(options?.targetEndpoints) && options.targetEndpoints.length > 0
+            ? { targetEndpoints: options.targetEndpoints }
+            : {}),
         ...(Array.isArray(options?.targetTestNames) && options.targetTestNames.length > 0
             ? { targetTestNames: options.targetTestNames }
             : {}),
@@ -148,12 +157,47 @@ export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
 }
 
 export async function installMissingDependency(snapshotId, packageName, isDev = false, rerunTests = true, importedFrom = null) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ packageName, isDev, rerunTests, ...(importedFrom ? { importedFrom } : {}) }),
-    });
-    return handleResponse(res);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS);
+    try {
+        const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
+            method: "POST",
+            headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({ packageName, isDev, rerunTests, ...(importedFrom ? { importedFrom } : {}) }),
+            signal: controller.signal,
+        });
+        return await handleResponse(res);
+    } catch (err) {
+        if (err.name === "AbortError") {
+            const timeoutError = new Error(`The installation request for '${packageName}' timed out. The server may still be finishing the installation. Check the project status before retrying.`, { cause: err });
+            timeoutError.name = "DependencyInstallRequestTimeout";
+            throw timeoutError;
+        }
+        throw err;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+export async function installMissingDependencies(snapshotId, dependencies) {
+    const installed = [];
+    const failed = [];
+    let newJobId = null;
+    for (const [index, dependency] of dependencies.entries()) {
+        const { packageName, isDev, targetPackage, importedFrom } = dependency;
+        try {
+            const rerunTests = index === dependencies.length - 1 && failed.length === 0;
+            const result = await installMissingDependency(snapshotId, packageName, isDev, rerunTests, targetPackage || importedFrom);
+            if (!result.success) throw new Error(result.message || "Installation failed.");
+            installed.push({ ...dependency, installResult: result.installResult });
+            newJobId = result.newJobId || null;
+        } catch (error) {
+            failed.push({ ...dependency, message: error.message });
+            // A timed-out request may still be modifying the package manifest.
+            if (error.name === "DependencyInstallRequestTimeout") break;
+        }
+    }
+    return { installed, failed, newJobId };
 }
 
 export async function getFileCoverage(snapshotId, filePath) {
@@ -166,14 +210,24 @@ export async function getFileCoverage(snapshotId, filePath) {
     return handleResponse(res);
 }
 
-export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null) {
+export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null, validationMode = 'fast', asyncMode = false) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ filePath, projectId, ...(framework ? { framework } : {}) }),
+        body: JSON.stringify({ filePath, projectId, validationMode, ...(asyncMode ? { async: true } : {}), ...(framework ? { framework } : {}) }),
     });
     return handleResponse(res);
 }
+
+export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null, validationMode = 'full', async: asyncMode = true } = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase-all`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ filePaths, projectId, validationMode, async: Boolean(asyncMode), ...(framework ? { framework } : {}) }),
+    });
+    return handleResponse(res);
+}
+
 
 export async function getCoverageFunctions(
     snapshotId,
@@ -231,14 +285,24 @@ export async function getIntegrationWorkspace(snapshotId, options = {}) {
     return handleResponse(res);
 }
 
-export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob } = {}) {
-    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob, requireCoverageGoal, requestId, dryRun, async: asyncMode = false } = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-test-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
+        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), requireCoverageGoal, requestId, ...(dryRun ? { dryRun: true } : {}), ...(asyncMode ? { async: true } : {}) }),
     });
     return handleResponse(res);
 }
+
+export async function applyAllUnitTestSuggestions(snapshotId, { suggestions = [], projectId, skipBackgroundJob, async: asyncMode = true } = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/apply-all-test-suggestions`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob), async: Boolean(asyncMode) }),
+    });
+    return handleResponse(res);
+}
+
 
 export async function saveAiSystemTest(snapshotId, options = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/system/save-ai-test`, {
@@ -346,11 +410,11 @@ export async function updateIntegrationScenario(snapshotId, scenarioId, updateDa
     return handleResponse(res);
 }
 
-export async function applyIntegrationTests(snapshotId, { testIds = [], targetFilePath = "", fileName = "" } = {}) {
+export async function applyIntegrationTests(snapshotId, { testIds = [], selectedScenarios = [], targetFilePath = "", fileName = "" } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/apply-tests`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ testIds, targetFilePath, fileName }),
+        body: JSON.stringify({ testIds, selectedScenarios, targetFilePath, fileName }),
     });
     return handleResponse(res);
 }
@@ -367,7 +431,8 @@ export async function getUnifiedQualityDashboard(snapshotId, options = {}) {
 }
 
 export async function getUnifiedTestRunInspection(snapshotId, runId) {
-    const res = await fetch(
+    const res = await authAwareFetch(
+        fetch,
         `${BASE_URL}/coverage/${snapshotId}/unified-dashboard/runs/${encodeURIComponent(runId)}`,
         {
             headers: getAuthHeaders(),
@@ -377,14 +442,14 @@ export async function getUnifiedTestRunInspection(snapshotId, runId) {
 }
 
 export async function getSuitesReadiness(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suites-readiness`, {
+    const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/suites-readiness`, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
 }
 
 export async function approveIntegrationScenarios(snapshotId, { approvedTestIds = [], approveAll = false } = {}) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/approve`, {
+    const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/integration/approve`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ approvedTestIds, approveAll }),
@@ -393,9 +458,122 @@ export async function approveIntegrationScenarios(snapshotId, { approvedTestIds 
 }
 
 export async function confirmBatchSystemScenarios(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/confirm-batch`, {
+    const res = await authAwareFetch(fetch, `${BASE_URL}/coverage/${snapshotId}/system/scenarios/confirm-batch`, {
         method: "POST",
         headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getUnitTestVersions(snapshotId, filePath = null) {
+    const query = filePath ? `?filePath=${encodeURIComponent(filePath)}` : "";
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unit-test-versions${query}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function switchUnitTestVersion(snapshotId, {
+    projectId,
+    filePath,
+    targetVersion,
+    targetVersionId,
+    allFiles = false,
+    targetVersionType = null,
+    runTests = true
+} = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unit-test-versions/switch`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+            projectId,
+            filePath,
+            targetVersion,
+            targetVersionId,
+            allFiles,
+            targetVersionType,
+            runTests
+        }),
+    });
+    return handleResponse(res);
+}
+
+export async function saveUnitTestVersions(snapshotId, payload = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unit-test-versions/save`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function getUnitTestSimulationSources(snapshotId, options = {}) {
+    const params = new URLSearchParams();
+    if (options && typeof options === "object") {
+        for (const [key, value] of Object.entries(options)) {
+            if (value !== undefined && value !== null) {
+                params.set(key, String(value));
+            }
+        }
+    }
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/simulation/sources${queryString}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getUnitTestSimulationTrace(snapshotId, payload = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/simulation/trace`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function getUnitTestCaseDetail(snapshotId, { testFile, testName } = {}) {
+    const params = new URLSearchParams();
+    if (testFile) params.set("testFile", testFile);
+    if (testName) params.set("testName", testName);
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case?${params}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function addUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function updateUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case`, {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function deleteUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
+export async function aiFixUnitTestCaseApi(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/unit/test-case/ai-fix`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
     });
     return handleResponse(res);
 }

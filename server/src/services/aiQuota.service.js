@@ -5,13 +5,17 @@ import { nextMidnight } from '../utils/geminiQuota.js';
 
 const MAX_QUOTA = process.env.AI_DAILY_QUOTA ? parseInt(process.env.AI_DAILY_QUOTA) : 50;
 
+const TX_OPTIONS = { maxWait: 30000, timeout: 60000 };
+
 export const reserveAiQuota = async ({ userId, requestKey, now = new Date() }, db = prisma) => {
   if (!userId || !requestKey) throw new ServiceError("AI quota identity is required", 400);
   return db.$transaction(async tx => {
   await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
-  const user = await tx.user.findUnique({ where: { id: userId } });
+  const [user, existing] = await Promise.all([
+    tx.user.findUnique({ where: { id: userId }, select: { id: true, aiUsageDate: true, aiUsageCount: true } }),
+    tx.aiQuotaReservation.findUnique({ where: { userId_requestKey: { userId, requestKey } } }),
+  ]);
   if (!user) throw new ServiceError("User not found", 404);
-  const existing = await tx.aiQuotaReservation.findUnique({ where: { userId_requestKey: { userId, requestKey } } });
   if (existing) return existing;
 
   // Get current date string in YYYY-MM-DD format (local timezone approximation)
@@ -41,7 +45,7 @@ export const reserveAiQuota = async ({ userId, requestKey, now = new Date() }, d
     });
   }
   return tx.aiQuotaReservation.create({ data: { userId, requestKey, usageDate: today, status: "RESERVED" } });
-  });
+  }, TX_OPTIONS);
 };
 
 export const consumeAiQuota = async (reservationId, db = prisma) => {
@@ -54,7 +58,7 @@ export const releaseAiQuota = async (reservationId, db = prisma) => db.$transact
   await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${reservation.userId} FOR UPDATE`;
   const released = await tx.aiQuotaReservation.updateMany({ where: { id: reservationId, status: "RESERVED" }, data: { status: "RELEASED" } });
   if (released.count) await tx.user.updateMany({ where: { id: reservation.userId, aiUsageDate: reservation.usageDate, aiUsageCount: { gt: 0 } }, data: { aiUsageCount: { decrement: 1 } } });
-});
+}, TX_OPTIONS);
 export const checkAndIncrementQuota = async userId => {
   const reservation = await reserveAiQuota({ userId, requestKey: `legacy:${randomUUID()}` });
   await consumeAiQuota(reservation.id);

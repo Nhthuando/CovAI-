@@ -62,7 +62,14 @@ export const inspectProjectTestEnvironment = ({rootDir,source,config}) => {
 };
 
 const checkDocker = async required => {
-    if (!required) return {status:'NOT_REQUIRED',required:false,message:'No container service is required by this setup.'};
+    if (!required || process.env.COVAI_USE_DOCKER_DB !== 'true') {
+        return {
+            status: 'NOT_REQUIRED',
+            required: false,
+            mode: 'MOCK_DB',
+            message: 'Schema-aware Mock DB is active; no container service is required by this setup.',
+        };
+    }
     try {await exec('docker',['version','--format','{{.Server.Version}}'],{timeout:4000,windowsHide:true,maxBuffer:4096});return {status:'AVAILABLE',required:true,message:'Docker engine is responding.'};}
     catch {return {status:'UNAVAILABLE',required:true,message:'Start Docker Desktop on the CovAI server, wait for the engine, then check again.'};}
 };

@@ -1,0 +1,22 @@
+{
+  "id":"integration-test", "name":"Integration Test Agent", "version":"1.0.1", "benchmarkId":"covai-integration-test-quality",
+  "scope":"Test real interactions across routes, middleware, services and persistence in the imported project.",
+  "instructions":[
+    "Resolve the real mounted route, method, request/response schema, application export and middleware before generating requests. Do not invent endpoints or business rules.",
+    "Use the project's actual Supertest/integration framework and deterministic fixtures in an isolated test database. Never connect tests to production or reuse real user credentials.",
+    "Cover authorized success, validation failure, unauthenticated access and cross-owner isolation where applicable. Assert response content and observable state transitions, not status alone.",
+    "Keep the internal layers being integrated real. Stub only declared external boundaries using the existing test harness; do not mock away authentication or the behavior being claimed as integrated.",
+    "Make setup/cleanup deterministic and preserve transaction boundaries. Respect actual uniqueness, foreign keys and async completion; do not hide errors with arbitrary waits.",
+    "Repairs must preserve the scenario and its assertions. Distinguish missing test infrastructure from a product defect and never claim execution without a real report."
+  ],
+  "criteria":[
+    {"key":"route-contract","weight":3,"blocking":true,"evidence":"Mounted routes and schemas","description":"Requests exercise endpoints that exist with valid payloads."},
+    {"key":"layer-interaction","weight":2,"blocking":true,"evidence":"Real middleware/service/persistence effects","description":"The claimed integration boundaries are actually exercised."},
+    {"key":"authorization-isolation","weight":3,"blocking":true,"evidence":"Separate owner fixtures and observed HTTP/state results","description":"Tests detect unauthorized and cross-project access."},
+    {"key":"fixture-cleanup","weight":2,"blocking":true,"evidence":"Isolated test data and teardown","description":"Tests are repeatable and cannot modify production data."}
+  ],
+  "examples":[
+    {"id":"owned-resource","input":"Synthetic GET /api/orders/:id requires authentication and ownership.","expectedBehavior":"Create two test owners; assert owner access, missing auth denial and foreign owner denial using real middleware.","antiPattern":"Mock the auth middleware to always admit requests and claim access control coverage.","rationale":"Authorization must be exercised, not replaced."},
+    {"id":"create-order","input":"Synthetic POST /api/orders validates quantity and persists an order.","expectedBehavior":"Assert successful payload and persisted fields; invalid quantity leaves database unchanged; tear down fixtures.","antiPattern":"Assert only HTTP 200 while stubbing the entire order service.","rationale":"Integration evidence includes observable downstream state."}
+  ]
+}

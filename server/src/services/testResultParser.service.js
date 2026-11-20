@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { canonicalizeFilePath, cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import { canonicalizeFilePath, cleanStoragePath, cleanStorageText, stripAnsi } from "../utils/pathSanitizer.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
+import { summarizeUnitFailure } from "../../../shared/unitTestCaseCoverage.js";
 
 /**
  * Helper to extract real duration from test execution results JSON
@@ -70,7 +71,35 @@ export const parseJestResults = (coverageDir, options = {}) => {
         return null;
     }
     try {
-        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        let raw;
+        try {
+            raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        } catch (jsonErr) {
+            console.warn(`[TEST-RESULT] Partial or malformed Jest JSON in ${resultsPath}, attempting recovery:`, jsonErr.message);
+            try {
+                const content = fs.readFileSync(resultsPath, "utf8");
+                const match = content.match(/(\{[\s\S]*\})/);
+                if (match) raw = JSON.parse(match[1]);
+            } catch (_) {}
+            if (!raw) {
+                return {
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 1,
+                    skippedTests: 0,
+                    durationMs: 0,
+                    status: "FAILED",
+                    scenarios: [{
+                        title: "Test Execution Output Unreadable",
+                        suiteName: path.basename(resultsPath),
+                        status: "failed",
+                        duration: 0,
+                        failureMessages: [`Failed to parse runner output: ${jsonErr.message}`],
+                        testFile: null
+                    }]
+                };
+            }
+        }
 
         // Calculate duration
         const duration = extractExecutionDurationMs(raw, options.runnerElapsedMs);
@@ -82,18 +111,20 @@ export const parseJestResults = (coverageDir, options = {}) => {
                 const cleanedSuiteFile = canonicalizeFilePath(suiteFile, options.rootDir) || cleanStoragePath(suiteFile);
                 if (suite.assertionResults && suite.assertionResults.length > 0) {
                     suite.assertionResults.forEach(assertion => {
+                        const cleanedMsgs = (assertion.failureMessages || []).map(m => stripAnsi(cleanStorageText(m)));
                         scenarios.push({
                             title: assertion.title,
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status, // "passed", "failed", "pending"
                             duration: assertion.duration || 0,
-                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            failureMessages: cleanedMsgs,
+                            ...(assertion.status === "failed" && cleanedMsgs.length > 0 ? { failureSummary: summarizeUnitFailure(cleanedMsgs) } : {}),
                             testFile: cleanedSuiteFile
                         });
                     });
                 } else if (suite.status === "failed" || suite.message || suite.failureMessage || suite.testExecError) {
                     // Test suite failed at module load or syntax phase
-                    const suiteFailMsg = cleanStorageText(suite.failureMessage || suite.message || suite.testExecError?.stack || suite.testExecError?.message || "Test suite failed to run");
+                    const suiteFailMsg = stripAnsi(cleanStorageText(suite.failureMessage || suite.message || suite.testExecError?.stack || suite.testExecError?.message || "Test suite failed to run"));
                     
                     // Recover registered scenarios for this test file
                     let registeredScenarios = [];
@@ -208,7 +239,22 @@ export const parseJestResults = (coverageDir, options = {}) => {
         return results;
     } catch (err) {
         console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
-        throw new Error(`Jest execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+        return {
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 1,
+            skippedTests: 0,
+            durationMs: 0,
+            status: "FAILED",
+            scenarios: [{
+                title: "Test Result Parse Error",
+                suiteName: path.basename(resultsPath || "Jest"),
+                status: "failed",
+                duration: 0,
+                failureMessages: [err.message],
+                testFile: null
+            }]
+        };
     }
 };
 
@@ -260,6 +306,9 @@ export const formatScenariosForPrisma = (scenarios) => {
 /**
  * Parse Vitest JSON output file
  * @param {string} coverageDir
+ * @param {Object} [options]
+ * @param {Array} [options.aiTests] List of AiTest records with filePath and metaJson
+ * @param {string} [options.rootDir] Root directory of project snapshot
  * @return {Object|null}
  */
 export const parseVitestResults = (coverageDir, options = {}) => {
@@ -271,7 +320,35 @@ export const parseVitestResults = (coverageDir, options = {}) => {
         return null;
     }
     try {
-        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        let raw;
+        try {
+            raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        } catch (jsonErr) {
+            console.warn(`[TEST-RESULT] Partial or malformed Vitest JSON in ${resultsPath}, attempting recovery:`, jsonErr.message);
+            try {
+                const content = fs.readFileSync(resultsPath, "utf8");
+                const match = content.match(/(\{[\s\S]*\})/);
+                if (match) raw = JSON.parse(match[1]);
+            } catch (_) {}
+            if (!raw) {
+                return {
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 1,
+                    skippedTests: 0,
+                    durationMs: 0,
+                    status: "FAILED",
+                    scenarios: [{
+                        title: "Vitest Execution Output Unreadable",
+                        suiteName: path.basename(resultsPath),
+                        status: "failed",
+                        duration: 0,
+                        failureMessages: [`Failed to parse Vitest output: ${jsonErr.message}`],
+                        testFile: null
+                    }]
+                };
+            }
+        }
 
         // Vitest JSON output format is highly compatible with Jest
         const duration = extractExecutionDurationMs(raw, options.runnerElapsedMs);
@@ -282,42 +359,152 @@ export const parseVitestResults = (coverageDir, options = {}) => {
                 const cleanedSuiteFile = canonicalizeFilePath(suite.name, options.rootDir);
                 if (suite.assertionResults?.length) {
                     suite.assertionResults.forEach(assertion => {
+                        const cleanedMsgs = (assertion.failureMessages || []).map(m => stripAnsi(cleanStorageText(m)));
                         scenarios.push({
                             title: assertion.title,
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status,
                             duration: assertion.duration || 0,
-                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            failureMessages: cleanedMsgs,
+                            ...(assertion.status === "failed" && cleanedMsgs.length > 0 ? { failureSummary: summarizeUnitFailure(cleanedMsgs) } : {}),
                             testFile: cleanedSuiteFile
                         });
                     });
-                } else if (suite.status === "failed") {
-                    scenarios.push({
-                        title: path.basename(cleanedSuiteFile || "Test suite"),
-                        status: "failed",
-                        failureMessages: [cleanStorageText(suite.message || suite.failureMessage || "Test suite failed to run")],
-                        testFile: cleanedSuiteFile,
-                        isSuiteLevelFailure: true,
-                    });
+                } else if (suite.status === "failed" || suite.message) {
+                    // Test suite failed at module load or syntax phase
+                    const suiteFailMsg = suite.message ? stripAnsi(cleanStorageText(suite.message)) : "Test suite failed to run";
+
+                    // Recover registered scenarios for this test file
+                    let registeredScenarios = [];
+
+                    // 1. Match against options.aiTests if available
+                    if (Array.isArray(options.aiTests)) {
+                        const matchedAiTest = options.aiTests.find(t => {
+                            if (!t.filePath) return false;
+                            const normT = t.filePath.replace(/\\/g, '/');
+                            const normSuite = (cleanedSuiteFile || "").replace(/\\/g, '/');
+                            return normSuite.endsWith(normT) || normT.endsWith(normSuite);
+                        });
+
+                        if (matchedAiTest) {
+                            if (matchedAiTest.metaJson) {
+                                try {
+                                    const meta = typeof matchedAiTest.metaJson === 'string' ? JSON.parse(matchedAiTest.metaJson) : matchedAiTest.metaJson;
+                                    if (Array.isArray(meta.requests) && meta.requests.length > 0) {
+                                        registeredScenarios = meta.requests.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+
+                            if (registeredScenarios.length === 0 && matchedAiTest.content) {
+                                try {
+                                    const reqs = extractTestRequests(matchedAiTest.content, cleanedSuiteFile);
+                                    if (Array.isArray(reqs) && reqs.length > 0) {
+                                        registeredScenarios = reqs.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId || null,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+                        }
+                    }
+
+                    // 2. Fallback: Parse test file directly from disk if not yet recovered
+                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                        try {
+                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            if (Array.isArray(reqs) && reqs.length > 0) {
+                                registeredScenarios = reqs.map(r => ({
+                                    title: r.testName,
+                                    suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                    scenarioId: r.scenarioId || null,
+                                    testId: null
+                                }));
+                            }
+                        } catch (_) {}
+                    }
+
+                    // 3. Emit registered scenarios with TEST_SCRIPT_ERROR failure details
+                    if (registeredScenarios.length > 0) {
+                        for (const sc of registeredScenarios) {
+                            scenarios.push({
+                                title: sc.title,
+                                suiteName: sc.suiteName,
+                                status: "failed",
+                                duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                                failureMessages: [suiteFailMsg],
+                                testFile: cleanedSuiteFile || null,
+                                scenarioId: sc.scenarioId || null,
+                                testId: sc.testId || null,
+                                isSuiteLevelFailure: true
+                            });
+                        }
+                    } else {
+                        // Fallback: suite-level placeholder only if no scenarios could be identified
+                        scenarios.push({
+                            title: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            suiteName: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            status: "failed",
+                            duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                            failureMessages: [suiteFailMsg],
+                            testFile: cleanedSuiteFile || null,
+                            isSuiteLevelFailure: true
+                        });
+                    }
                 }
             });
         }
 
+        const totalTests = Math.max(raw.numTotalTests || 0, scenarios.length);
+        const failedTests = Math.max(raw.numFailedTests || 0, scenarios.filter(s => s.status === 'failed').length);
+        const passedTests = raw.numPassedTests || scenarios.filter(s => s.status === 'passed').length;
+        const skippedTests = raw.numPendingTests || scenarios.filter(s => s.status === 'pending').length;
+
         const results = {
-            totalTests: raw.numTotalTests || 0,
-            passedTests: raw.numPassedTests || 0,
-            failedTests: raw.numFailedTests || 0,
-            skippedTests: raw.numPendingTests || 0,
+            totalTests,
+            passedTests,
+            failedTests,
+            skippedTests,
             durationMs: duration,
-            status: raw.success ? "PASSED" : "FAILED",
+            status: (raw.success && failedTests === 0) ? "PASSED" : "FAILED",
             scenarios
         };
+
+        try {
+            const targetDir = fs.existsSync(coverageDir) && fs.statSync(coverageDir).isDirectory() ? coverageDir : path.dirname(resultsPath);
+            const scenariosPath = path.join(targetDir, "integration-scenarios.json");
+            fs.writeFileSync(scenariosPath, JSON.stringify(scenarios, null, 2), "utf8");
+        } catch (_) {}
 
         console.log(`[TEST-RESULT] parsed:`, results);
         return results;
     } catch (err) {
         console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
-        throw new Error(`Vitest execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+        return {
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 1,
+            skippedTests: 0,
+            durationMs: 0,
+            status: "FAILED",
+            scenarios: [{
+                title: "Vitest Result Parse Error",
+                suiteName: path.basename(resultsPath || "Vitest"),
+                status: "failed",
+                duration: 0,
+                failureMessages: [err.message],
+                testFile: null
+            }]
+        };
     }
 };
 

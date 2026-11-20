@@ -2,7 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import { renderAnalysisPdf } from "../services/analysisPdf.service.js";
 
 const report = () => ({
-    project: { name: "Dự án kiểm thử chuyên nghiệp", description: "Báo cáo chất lượng phần mềm" },
+    project: { name: "Professional Testing Project", description: "Software Quality Report" },
     snapshot: { id: "snapshot-1", source: "ZIP", createdAt: "2026-10-01T00:00:00Z" },
     exportedAt: "2026-10-09T00:00:00Z", warnings: [],
     analysis: { coverage: { summary: null, files: [], functions: [] }, quality: null, complexity: [], structure: null, testRuns: [], suggestions: [], vulnerabilities: [] },

@@ -1,19 +1,18 @@
 import { useState } from "react";
 import {
   Mail,
-  ArrowRight,
   ArrowLeft,
   AlertCircle,
   CheckCircle2,
+  Loader2,
 } from "lucide-react";
 import { forgotPasswordApi } from "../../services/auth.service";
-import Button from "../common/Button";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function ForgotPasswordForm({ setMode }) {
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | loading | success | error
+  const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   const handleSubmit = async (e) => {
@@ -42,64 +41,56 @@ export default function ForgotPasswordForm({ setMode }) {
   };
 
   return (
-    <div className="w-full max-w-[380px] mx-auto">
+    <div className="w-full">
       {status === "success" ? (
-        <div className="p-6 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center">
-          <CheckCircle2 className="w-10 h-10 text-[var(--color-success)] mx-auto mb-3" />
-          <h2 className="text-lg font-bold text-[var(--color-text)] mb-2">
-            Reset Link Dispatched
+        <div className="p-6 rounded-xl bg-[var(--lp-inset)] border border-[var(--lp-line)] text-center">
+          <CheckCircle2 className="w-9 h-9 text-[var(--lp-signal)] mx-auto mb-3" />
+          <h2 className="lp-display text-lg font-bold text-[var(--lp-ink)] mb-2">
+            Reset link dispatched
           </h2>
-          <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed mb-6">
+          <p className="text-xs text-[var(--lp-ink-secondary)] leading-relaxed mb-6">
             If an account exists for{" "}
-            <span className="font-semibold text-[var(--color-text)]">
-              {email}
-            </span>
-            , you will receive password reset instructions shortly.
+            <span className="font-semibold text-[var(--lp-ink)] lp-mono">{email}</span>,
+            you will receive password reset instructions shortly.
           </p>
-          <Button
+          <button
             type="button"
-            variant="secondary"
-            size="md"
-            className="w-full"
             onClick={() => setMode("login")}
-            icon={ArrowLeft}
+            className="w-full h-10 rounded-lg lp-btn-secondary text-xs font-medium inline-flex items-center justify-center gap-2 cursor-pointer"
           >
-            Return to Sign In
-          </Button>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Return to sign in</span>
+          </button>
         </div>
       ) : (
         <div>
-          {/* Header */}
           <div className="mb-6">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--color-text)] mb-1.5">
+            <h1 className="lp-display text-2xl font-bold tracking-tight text-[var(--lp-ink)] mb-1.5">
               Reset your password
             </h1>
-            <p className="text-xs sm:text-sm text-[var(--color-text-secondary)] leading-relaxed">
-              Enter your email address and we&apos;ll send you a link to reset
-              your credentials.
+            <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] leading-relaxed">
+              Enter your email address and we will send a link to reset your
+              password.
             </p>
           </div>
 
-          {/* Error Message */}
           {errorMsg && (
-            <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 flex items-start gap-2 mb-4 text-xs text-[var(--color-danger)]">
+            <div className="p-3 rounded-lg bg-[var(--lp-fault-bg)] border border-[var(--lp-fault-border)] flex items-start gap-2 mb-4 text-xs text-[var(--lp-fault)]">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
 
-          {/* Form */}
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
             <div>
               <label
                 htmlFor="forgot-email"
-                className="block text-xs font-medium text-[var(--color-text)] mb-1.5"
+                className="block text-xs font-medium text-[var(--lp-ink-secondary)] mb-1.5"
               >
-                Email address{" "}
-                <span className="text-[var(--color-danger)]">*</span>
+                Email address <span className="text-[var(--lp-fault)]">*</span>
               </label>
               <div className="relative flex items-center">
-                <Mail className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3.5 pointer-events-none" />
+                <Mail className="w-4 h-4 text-[var(--lp-ink-muted)] absolute left-3.5 pointer-events-none" />
                 <input
                   id="forgot-email"
                   type="email"
@@ -109,33 +100,35 @@ export default function ForgotPasswordForm({ setMode }) {
                     setErrorMsg("");
                   }}
                   placeholder="engineer@company.com"
-                  className="w-full h-10 pl-10 pr-3.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm placeholder:text-[var(--color-text-muted)] transition-colors focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
+                  className="w-full h-10 pl-10 pr-3.5 rounded-lg border border-[var(--lp-line-strong)] bg-[var(--lp-inset)] text-[var(--lp-ink)] text-sm placeholder:text-[var(--lp-ink-muted)] transition-colors focus:outline-none focus:border-[var(--lp-signal)]"
                 />
               </div>
             </div>
 
-            <Button
+            <button
               type="submit"
-              variant="primary"
-              size="md"
-              loading={status === "loading"}
-              className="w-full font-semibold"
-              icon={ArrowRight}
-              iconPosition="right"
+              disabled={status === "loading"}
+              className="w-full h-10 rounded-lg lp-btn-primary text-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
-              Send Reset Link
-            </Button>
+              {status === "loading" ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Sending link...</span>
+                </>
+              ) : (
+                <span>Send reset link</span>
+              )}
+            </button>
           </form>
 
-          {/* Back to login */}
           <div className="mt-6 text-center">
             <button
               type="button"
               onClick={() => setMode("login")}
-              className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-xs text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back to Sign In</span>
+              <span>Back to sign in</span>
             </button>
           </div>
         </div>
