@@ -20,24 +20,34 @@ test("getPassRate returns accurate percentages and handles 0 or null", () => {
   assert.equal(getPassRate(null, null), null);
 });
 
-test("computeHealth computes weighted score and grade across all 3 layers", () => {
-  const pillars = {
+test("computeHealth computes weighted score, failure penalty, and grade across all 3 layers", () => {
+  const pillarsWithFailures = {
     unit: { passedTests: 90, failedTests: 10, coverageMetrics: { lines: 80 } }, // 0.5*90 + 0.5*80 = 85
     integration: { passedTests: 100, failedTests: 0, coverageMetrics: { apiEndpoint: 100 } }, // 100
     system: { passedTests: 80, failedTests: 20, coverageMetrics: { flow: 60 } }, // 0.5*80 + 0.5*60 = 70
   };
-  const health = computeHealth(pillars);
-  assert.equal(health.score, 87);
+  // Weighted = 85*0.5 + 100*0.3 + 70*0.2 = 86.5 -> minus capped 15pt failure penalty = 71.5 -> 72 (B)
+  const health = computeHealth(pillarsWithFailures);
+  assert.equal(health.score, 72);
   assert.equal(health.grade, "B");
+
+  const passingPillars = {
+    unit: { passedTests: 100, failedTests: 0, coverageMetrics: { lines: 70 } }, // 85
+    integration: { passedTests: 20, failedTests: 0, coverageMetrics: { apiEndpoint: 100 } }, // 100
+    system: { passedTests: 5, failedTests: 0, coverageMetrics: { flow: 40 } }, // 70
+  };
+  const passingHealth = computeHealth(passingPillars);
+  assert.equal(passingHealth.score, 87);
+  assert.equal(passingHealth.grade, "A");
 });
 
-test("computeHealth re-normalizes weights when a layer has no data", () => {
+test("computeHealth counts unexecuted layers as 0 in fixed 50/30/20 denominator to prevent inflation", () => {
   const pillars = {
     unit: { passedTests: 100, failedTests: 0, coverageMetrics: { lines: 100 } },
     integration: { passedTests: 100, failedTests: 0, coverageMetrics: { apiEndpoint: 100 } },
   };
   const health = computeHealth(pillars);
-  assert.equal(health.score, 100);
+  assert.equal(health.score, 80);
   assert.equal(health.grade, "A");
 });
 
@@ -132,17 +142,27 @@ test("computeExecutionTotals separates uncoveredApis from failed tests", () => {
   assert.equal(totals.passRate, 95.6);
 });
 
-test("computeCoverageIndex averages available metrics", () => {
-  const pillars = {
+test("computeCoverageIndex computes 50/30/20 weighted metrics when tests ran and 0 when unexecuted", () => {
+  const zeroExec = computeCoverageIndex({
     unit: { coverageMetrics: { lines: 80.0 } },
     integration: { coverageMetrics: { apiEndpoint: 70.0 } },
     system: { coverageMetrics: { flow: 60.0 } },
+  });
+  assert.equal(zeroExec.overall, 0);
+  assert.equal(zeroExec.codePct, 0);
+  assert.equal(zeroExec.apiPct, 0);
+  assert.equal(zeroExec.flowPct, 0);
+
+  const pillars = {
+    unit: { totalTests: 10, coverageMetrics: { lines: 80.0 } },
+    integration: { totalTests: 5, coverageMetrics: { apiEndpoint: 70.0, totalApis: 5 } },
+    system: { totalTests: 2, coverageMetrics: { flow: 60.0 } },
   };
   const cov = computeCoverageIndex(pillars);
   assert.equal(cov.codePct, 80.0);
   assert.equal(cov.apiPct, 70.0);
   assert.equal(cov.flowPct, 60.0);
-  assert.equal(cov.overall, 70.0);
+  assert.equal(cov.overall, 73.0);
 });
 
 test("computePyramid identifies pyramid, missing-unit, ice-cream-cone, hourglass, and insufficient patterns", () => {
@@ -202,7 +222,7 @@ test("computePyramid identifies pyramid, missing-unit, ice-cream-cone, hourglass
 test("computeQualityGate returns UNVERIFIED when zero tests have been executed across all pillars", () => {
   const gate = computeQualityGate({});
   assert.equal(gate.status, "UNVERIFIED");
-  assert.equal(gate.label, "UNVERIFIED");
+  assert.equal(gate.label, "UNVERIFIED • NOT RUN");
   assert.equal(gate.checklist.length, 4);
 });
 
@@ -336,5 +356,16 @@ test("adaptUnifiedDashboard ensures 0 split-brain contradictions and 100% mathem
     fullVm.pillars.integration.failureDistribution
   ).reduce((acc, count) => acc + count, 0);
   assert.equal(intBreakdownSum, fullVm.pillars.integration.failedTests);
+
+  // Branch & snapshot label propagation check
+  const contextVm = adaptUnifiedDashboard({
+    context: {
+      snapshotId: "snap-branch-check",
+      branch: "develop",
+      snapshots: [{ id: "snap-branch-check", label: "#3 (abc1234) — Active" }],
+    },
+  });
+  assert.equal(contextVm.context.branch, "develop");
+  assert.equal(contextVm.context.snapshotLabel, "#3 (abc1234)");
 });
 

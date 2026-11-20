@@ -348,7 +348,7 @@ export function TestPyramidVisualizer({
               : warning ||
                 (totalCount > 0 || totalDuration > 0
                   ? "Fast unit foundation with targeted integration and reliable system tests."
-                  : "Execute test suites or switch to Demo Showcase to inspect multi-tier balance.")}
+                  : "Execute test suites to inspect multi-tier balance.")}
           </p>
         </div>
       </div>

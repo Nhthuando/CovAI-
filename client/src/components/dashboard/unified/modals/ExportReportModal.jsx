@@ -254,6 +254,7 @@ export function ExportReportModal({ isOpen, onClose, vm }) {
             variant="outline"
             size="sm"
             icon={Printer}
+            disabled={selectedCount === 0}
             onClick={handlePrint}
             title="Print clean technical report via browser print dialog"
           >

@@ -7,7 +7,6 @@ export function TraceChain({
   unitStatus = "neutral",       // 'pass' | 'fail' | 'warn' | 'neutral'
   integrationStatus = "neutral",
   systemStatus = "neutral",
-  size = "md",
   className = "",
 }) {
   const getStatusColor = (status) => {

@@ -1,16 +1,12 @@
 import { useMemo, useRef, useCallback } from "react";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { fetchCoverageDashboardData } from "./useCoverageQuery.js";
 import {
   getUnifiedQualityDashboard,
   getIntegrationWorkspace,
-  getCoverageSummary,
   getBeforeAfterComparison,
 } from "../services/coverage.service.js";
-import {
-  getSystemTestSummary,
-  getSystemTestScenarios,
-} from "../services/systemTest.service.js";
+import { getSystemTestSummary } from "../services/systemTest.service.js";
 import { adaptUnifiedDashboard } from "../services/unifiedDashboard/unifiedDashboard.adapter.js";
 
 /**
@@ -48,7 +44,7 @@ export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = f
   }
 
   // FALLBACK PATH: If unified aggregation endpoint is unavailable, fan out to legacy individual endpoints
-  const [unitRes, intWorkspaceRes, , sysSummaryRes, , comparisonRes] =
+  const [unitRes, intWorkspaceRes, sysSummaryRes, comparisonRes] =
     await Promise.all([
       // 1. Unit Test Layer (re-uses shared cached queryFn)
       fetchCoverageDashboardData({ snapshotId, type: "unit", projectId }).catch((err) => {
@@ -64,11 +60,6 @@ export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = f
           return null;
         }),
 
-      // 2b. Integration Coverage Summary
-      getCoverageSummary(snapshotId, "integration")
-        .then((res) => res?.data || null)
-        .catch(() => null),
-
       // 3. System Test Summary
       getSystemTestSummary(snapshotId)
         .then((res) => res?.data || null)
@@ -76,11 +67,6 @@ export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = f
           errorsByLayer.system = err.message || "Failed to load system test summary";
           return null;
         }),
-
-      // 3b. System Test Scenarios
-      getSystemTestScenarios(snapshotId)
-        .then((res) => res?.data || [])
-        .catch(() => []),
 
       // 4. Baseline Before/After Comparison (for deltas & trends)
       projectId
@@ -109,6 +95,7 @@ export function useUnifiedDashboard({
   snapshotId,
   projectId,
   projectName = "",
+  branch = "",
   snapshots = EMPTY_SNAPSHOTS,
 }) {
   const effectiveSnapshotId = snapshotId || snapshots[0]?.id || "";
@@ -159,13 +146,14 @@ export function useUnifiedDashboard({
       context: {
         projectId,
         projectName,
+        branch,
         snapshotId: effectiveSnapshotId,
         snapshots,
       },
     });
 
     if (adapted && adapted.context) {
-      const latestSyncTime = query.dataUpdatedAt || adapted.context.updatedAt || Date.now();
+      const latestSyncTime = query.dataUpdatedAt || adapted.context.updatedAt || null;
       adapted.context.updatedAt = latestSyncTime;
     }
 
@@ -173,9 +161,11 @@ export function useUnifiedDashboard({
   }, [
     query.data,
     query.dataUpdatedAt,
+    query.isFetching,
     query.isLoading,
     projectId,
     projectName,
+    branch,
     effectiveSnapshotId,
     snapshots,
   ]);

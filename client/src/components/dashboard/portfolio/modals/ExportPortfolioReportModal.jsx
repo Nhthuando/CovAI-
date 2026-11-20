@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { X, FileDown, FileText, Layers, CheckSquare } from "lucide-react";
+import PORTFOLIO_CONFIG from "../../../../services/portfolioDashboard/portfolioDashboard.config.js";
 import "../portfolio.css";
 
 const LIFECYCLE_LABELS = {
@@ -130,8 +131,8 @@ function buildScatterSvg(analytics, projects) {
         healthScore: p.healthScore ?? 0,
       }));
 
-  const cutoffX = analytics?.coverageCutoff ?? 50;
-  const cutoffY = analytics?.passRateCutoff ?? 80;
+  const cutoffX = analytics?.coverageCutoff ?? PORTFOLIO_CONFIG.riskQuadrants.coverageCutoff;
+  const cutoffY = analytics?.passRateCutoff ?? PORTFOLIO_CONFIG.riskQuadrants.passRateCutoff;
 
   const padL = 34;
   const padR = 16;
@@ -292,6 +293,13 @@ function buildPrintableHtml({ vm, sections }) {
   };
 
   const totalRepos = projects.length;
+  const isFiltered = Boolean(metadata.isFiltered);
+  const totalPortfolioRepos = metadata.totalProjectsCount ?? totalRepos;
+  const covCutoff = analytics?.coverageCutoff ?? PORTFOLIO_CONFIG.riskQuadrants.coverageCutoff;
+  const passCutoff = analytics?.passRateCutoff ?? PORTFOLIO_CONFIG.riskQuadrants.passRateCutoff;
+  const wUnitPct = Math.round(PORTFOLIO_CONFIG.weights.unit * 100);
+  const wIntPct = Math.round(PORTFOLIO_CONFIG.weights.integration * 100);
+  const wSysPct = Math.round(PORTFOLIO_CONFIG.weights.system * 100);
   const activeCount = c1.totalProjects ?? lc.DOING ?? 0;
   const doingCount = lc.DOING || 0;
   const completedCount = lc.COMPLETED || 0;
@@ -743,7 +751,7 @@ function buildPrintableHtml({ vm, sections }) {
     </div>
     <div class="meta mono">
       <div>Generated: ${escapeHtml(generatedDate)}</div>
-      <div>Portfolio: ${totalRepos} Repositories · ${activeCount} Active · ${metadata.totalSnapshotsCount ?? 0} Snapshots</div>
+      <div>Portfolio: ${isFiltered ? `${totalRepos} / ${totalPortfolioRepos} Filtered` : `${totalRepos} Repositories · ${activeCount} Active`} · ${metadata.totalSnapshotsCount ?? 0} Snapshots</div>
       <div class="grade-pill">Portfolio Grade ${escapeHtml(c1.grade || "—")} · ${c1.avgHealthScore ?? 0}/100</div>
     </div>
   </div>
@@ -755,19 +763,19 @@ function buildPrintableHtml({ vm, sections }) {
   <div class="chapter">
     <div class="chapter-head">
       <div class="chapter-title">1. Executive Summary &amp; Governance Posture</div>
-      <div class="chapter-sub mono">Active Scope: ${activeCount} / ${totalRepos} Repositories</div>
+      <div class="chapter-sub mono">${isFiltered ? `Filtered Scope: ${totalRepos} / ${totalPortfolioRepos}` : `Active Scope: ${activeCount} / ${totalRepos}`} Repositories</div>
     </div>
 
     <div class="kpi-grid-3">
       <div class="kpi-card">
         <div class="kpi-label">Portfolio Health Index</div>
         <div class="kpi-val mono">${c1.avgHealthScore ?? 0}<span style="font-size:12px;font-weight:600;color:#64748b">/100</span></div>
-        <div class="kpi-sub mono">Grade ${escapeHtml(c1.grade || "—")} · ${activeCount} active in scope</div>
+        <div class="kpi-sub mono">Grade ${escapeHtml(c1.grade || "—")} · ${isFiltered ? `${totalRepos} in filtered scope` : `${activeCount} active in scope`}</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Unified Weighted Coverage</div>
         <div class="kpi-val mono" style="color:#3b6e9c">${unifiedCov}%</div>
-        <div class="kpi-sub mono">35% Unit · 40% API · 25% E2E (Target 80%)</div>
+        <div class="kpi-sub mono">${wUnitPct}% Unit · ${wIntPct}% Integration · ${wSysPct}% System (Target 80%)</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Executed Test Specs</div>
@@ -837,7 +845,11 @@ function buildPrintableHtml({ vm, sections }) {
     </div>
 
     <div class="narrative-box" style="margin-top:11px">
-      <strong>Executive Synthesis:</strong> Across <strong>${totalRepos} imported repositories</strong> (${doingCount} currently active in KPI calculations), CovAI recorded <strong>${c3.totalExecutedTests ?? 0} total test executions</strong> with an overall pass rate of <strong>${c3.overallPassRatePct ?? 0}%</strong> and a weighted unified coverage of <strong>${unifiedCov}%</strong>. Automated synthesis produced <strong>${c4.totalAiTests ?? 0} specs</strong>, conserving approximately <strong>+${totalSavedHours.toFixed(1)} manual QA hours</strong>.${
+      <strong>Executive Synthesis:</strong> ${
+        isFiltered
+          ? `Across <strong>${totalRepos} filtered repositories</strong> (of ${totalPortfolioRepos} total in portfolio, all included in filtered KPI calculations)`
+          : `Across <strong>${totalRepos} imported repositories</strong> (${doingCount} currently active in KPI calculations)`
+      }, CovAI recorded <strong>${c3.totalExecutedTests ?? 0} total test executions</strong> with an overall pass rate of <strong>${c3.overallPassRatePct ?? 0}%</strong> and a weighted unified coverage of <strong>${unifiedCov}%</strong>. Automated synthesis produced <strong>${c4.totalAiTests ?? 0} specs</strong>, conserving approximately <strong>+${totalSavedHours.toFixed(1)} manual QA hours</strong>.${
         topProject
           ? ` Highest benchmarked repository is <strong>${escapeHtml(topProject.name)}</strong> (${topProject.healthScore ?? 0}/100 health, ${topProject.unifiedCoveragePct ?? 0}% coverage).`
           : ""
@@ -873,7 +885,7 @@ function buildPrintableHtml({ vm, sections }) {
       <div class="box">
         <div class="box-title">
           <span>Coverage × Pass Rate Quadrant Plot</span>
-          <span class="box-caption mono">Cutoffs: 50% Cov · 80% Pass</span>
+          <span class="box-caption mono">Cutoffs: ${covCutoff}% Cov · ${passCutoff}% Pass</span>
         </div>
         ${scatterSvg}
         ${scatterLegendHtml ? `<div class="legend-chips">${scatterLegendHtml}</div>` : ""}
@@ -1060,11 +1072,11 @@ function buildPrintableHtml({ vm, sections }) {
     <div class="method-grid">
       <div class="method-card">
         <strong>Weighted Coverage Formula</strong>
-        <span class="mono">0.35 × Unit Lines + 0.40 × API Endpoints + 0.25 × System E2E Flows</span>. Prioritizes API contract verification alongside unit isolation.
+        <span class="mono">${PORTFOLIO_CONFIG.weights.unit.toFixed(2)} × Unit Lines + ${PORTFOLIO_CONFIG.weights.integration.toFixed(2)} × API Endpoints + ${PORTFOLIO_CONFIG.weights.system.toFixed(2)} × System E2E Flows</span>. Balances foundational unit isolation with API and user journey verification.
       </div>
       <div class="method-card">
         <strong>Health Score &amp; Grading</strong>
-        <span class="mono">0.50 × Pass Rate + 0.50 × Unified Coverage</span>. Graded: <span class="mono">A ≥ 85</span>, <span class="mono">B ≥ 70</span>, <span class="mono">C ≥ 50</span>, <span class="mono">D &lt; 50</span>.
+        Weighted 3-layer (<span class="mono">0.50 × Pass Rate + 0.50 × Coverage</span>) minus failure penalty (up to −15 pts). Graded: <span class="mono">A ≥ ${PORTFOLIO_CONFIG.grades.A}</span>, <span class="mono">B ≥ ${PORTFOLIO_CONFIG.grades.B}</span>, <span class="mono">C ≥ ${PORTFOLIO_CONFIG.grades.C}</span>, <span class="mono">D &lt; ${PORTFOLIO_CONFIG.grades.C}</span>.
       </div>
       <div class="method-card">
         <strong>QA Time ROI Model</strong>

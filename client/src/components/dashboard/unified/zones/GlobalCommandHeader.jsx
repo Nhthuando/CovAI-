@@ -1,7 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
-  Play,
   Sparkles,
   Download,
   FileText,
@@ -9,18 +7,13 @@ import {
   GitBranch,
   Clock,
   RefreshCw,
-  CheckCircle2,
-  AlertTriangle,
-  ExternalLink,
   X,
-  ShieldCheck,
 } from "lucide-react";
 import { useToast } from "../../ToastContext.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
 import { ExportReportModal } from "../modals/ExportReportModal.jsx";
 import { Button } from "../../../common/Button.jsx";
-import ConfirmDialog from "../../../common/ConfirmDialog.jsx";
 import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
 import {
   buildDashboardAiAnalysisPrompt,
@@ -36,29 +29,21 @@ export function GlobalCommandHeader({
   fallbackSnapshotId = "",
   onSelectSnapshot,
   runAllState,
-  onNavigateWorkspace,
   onAskAi = null,
   isSyncing = false,
   onForceRefresh = null,
   liveRuns = {},
   className = "",
 }) {
-  const navigate = useNavigate();
   const { addToast } = useToast?.() || {};
-  const [showConfirmRun, setShowConfirmRun] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
 
   const {
-    runAll,
     isRunning,
     activeStep,
     stepStates,
     stepProgress,
     overallPercent = 0,
-    readinessGate,
-    resolveHitlAction,
-    runReadySuitesOnly,
-    closeReadinessGate,
     cancelRemaining,
   } = runAllState || {};
 
@@ -157,11 +142,6 @@ export function GlobalCommandHeader({
     branch: fallbackProject?.branch || "main",
     updatedAt: null,
   };
-
-  const isGateOpen = Boolean(readinessGate?.isOpen);
-  const gateData = readinessGate?.data;
-  const suites = gateData?.suites || {};
-  const loadingAction = readinessGate?.loadingAction;
 
   return (
     <header
@@ -372,7 +352,7 @@ export function GlobalCommandHeader({
           {/* Master Progress Bar */}
           <div className="w-full bg-[var(--ud-border)] h-2 rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-[var(--color-primary)] via-sky-500 to-emerald-500 transition-all duration-300 ease-out"
+              className="h-full bg-[var(--ud-unit)] transition-all duration-300 ease-out"
               style={{ width: `${overallPercent}%` }}
             />
           </div>
@@ -512,343 +492,6 @@ export function GlobalCommandHeader({
           </div>
         </div>
       )}
-
-      {/* Pre-flight Human-in-the-Loop Readiness Gate Panel */}
-      {isGateOpen && (
-        <div className="mt-4 pt-3 border-t border-[var(--ud-border)] flex flex-col gap-4 bg-[var(--ud-surface-2)]/90 p-4 rounded-[var(--radius-lg)] border border-amber-500/40 shadow-md animate-in slide-in-from-top duration-200">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-[var(--ud-border)] pb-2.5">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="text-amber-500" size={18} />
-              <div>
-                <h3 className="text-sm font-bold text-[var(--ud-text)] flex items-center gap-2">
-                  Pre-flight Readiness & Human-in-the-Loop Gate
-                  <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
-                    {gateData?.readyCount || 0}/3 Suites Ready
-                  </span>
-                </h3>
-                <p className="text-xs text-[var(--ud-text-muted)]">
-                  Resolve missing dependencies or review pending scenarios
-                  before executing all suites.
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={closeReadinessGate}
-              className="p-1 rounded text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:bg-[var(--ud-surface)] transition-colors cursor-pointer"
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          {/* 3 Suites Checklist */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Unit Suite Item */}
-            <div
-              className={`p-3 rounded-[var(--radius-md)] border text-xs flex flex-col justify-between gap-2.5 ${
-                suites.unit?.readyForExecution
-                  ? "bg-[var(--ud-surface)] border-[var(--ud-pass)]/30"
-                  : "bg-[var(--ud-surface)] border-[var(--ud-warn)]/30"
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <PillarBadge pillar="unit" size="sm" />
-                {suites.unit?.readyForExecution ? (
-                  <span className="inline-flex items-center gap-1 font-semibold text-[var(--ud-pass)]">
-                    <CheckCircle2 size={13} />
-                    <span>Ready ({suites.unit.testFilesCount || 0} files)</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 font-semibold text-[var(--ud-warn)]">
-                    <AlertTriangle size={13} />
-                    <span>Action Required</span>
-                  </span>
-                )}
-              </div>
-
-              <div className="text-[11px] text-[var(--ud-text-muted)]">
-                {suites.unit?.readyForExecution ? (
-                  <span>
-                    Discovered {suites.unit.testFilesCount} unit test file(s)
-                    with {suites.unit.framework} runner.
-                  </span>
-                ) : (
-                  <span className="text-[var(--ud-warn)]">
-                    {suites.unit?.blockers?.[0]?.message ||
-                      "No unit test files discovered."}
-                  </span>
-                )}
-              </div>
-
-              {!suites.unit?.readyForExecution && (
-                <div className="pt-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full text-xs justify-center"
-                    icon={ExternalLink}
-                    onClick={() => {
-                      closeReadinessGate?.();
-                      if (onNavigateWorkspace) onNavigateWorkspace("unit");
-                      else
-                        navigate(
-                          `/project/${context.projectId || ""}?tab=unit`,
-                        );
-                    }}
-                  >
-                    Open Unit Workspace ↗
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            {/* Integration Suite Item */}
-            <div
-              className={`p-3 rounded-[var(--radius-md)] border text-xs flex flex-col justify-between gap-2.5 ${
-                suites.integration?.readyForExecution
-                  ? "bg-[var(--ud-surface)] border-[var(--ud-pass)]/30"
-                  : "bg-[var(--ud-surface)] border-[var(--ud-warn)]/30"
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <PillarBadge pillar="integration" size="sm" />
-                {suites.integration?.readyForExecution ? (
-                  <span className="inline-flex items-center gap-1 font-semibold text-[var(--ud-pass)]">
-                    <CheckCircle2 size={13} />
-                    <span>
-                      Ready (
-                      {suites.integration.approvedScenariosCount ||
-                        suites.integration.testFilesCount ||
-                        0}{" "}
-                      tests)
-                    </span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 font-semibold text-[var(--ud-warn)]">
-                    <AlertTriangle size={13} />
-                    <span>
-                      {suites.integration?.status === "NEEDS_DEPENDENCY"
-                        ? "Missing supertest"
-                        : "Review Required"}
-                    </span>
-                  </span>
-                )}
-              </div>
-
-              <div className="text-[11px] text-[var(--ud-text-muted)]">
-                {suites.integration?.readyForExecution ? (
-                  <span>
-                    Supertest dependencies verified.{" "}
-                    {suites.integration.approvedScenariosCount} approved
-                    scenario(s) ready.
-                  </span>
-                ) : (
-                  <span className="text-[var(--ud-warn)]">
-                    {suites.integration?.blockers?.[0]?.message ||
-                      "Missing Supertest in project package.json."}
-                  </span>
-                )}
-              </div>
-
-              {!suites.integration?.readyForExecution && (
-                <div className="pt-1 flex flex-col gap-1.5">
-                  {suites.integration?.status === "NEEDS_DEPENDENCY" ? (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      className="w-full text-xs justify-center ps-btn-contrast border-0"
-                      loading={loadingAction === "INSTALL_INTEGRATION_DEPS"}
-                      disabled={Boolean(loadingAction)}
-                      onClick={() =>
-                        resolveHitlAction?.({
-                          actionType: "INSTALL_INTEGRATION_DEPS",
-                        })
-                      }
-                    >
-                      Install supertest & jest
-                    </Button>
-                  ) : suites.integration?.status === "NEEDS_SCENARIO_REVIEW" ? (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      className="w-full text-xs justify-center ps-btn-contrast border-0"
-                      loading={
-                        loadingAction === "APPROVE_INTEGRATION_SCENARIOS"
-                      }
-                      disabled={Boolean(loadingAction)}
-                      onClick={() =>
-                        resolveHitlAction?.({
-                          actionType: "APPROVE_INTEGRATION_SCENARIOS",
-                        })
-                      }
-                    >
-                      Approve {suites.integration.draftScenariosCount || 1}{" "}
-                      Pending Scenario(s)
-                    </Button>
-                  ) : null}
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeReadinessGate?.();
-                      if (onNavigateWorkspace)
-                        onNavigateWorkspace("integration");
-                      else
-                        navigate(
-                          `/project/${context.projectId || ""}?tab=integration`,
-                        );
-                    }}
-                    className="text-[11px] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:underline text-center"
-                  >
-                    Review in Integration Workspace ↗
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* System Suite Item */}
-            <div
-              className={`p-3 rounded-[var(--radius-md)] border text-xs flex flex-col justify-between gap-2.5 ${
-                suites.system?.readyForExecution
-                  ? "bg-[var(--ud-surface)] border-[var(--ud-pass)]/30"
-                  : "bg-[var(--ud-surface)] border-[var(--ud-warn)]/30"
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <PillarBadge pillar="system" size="sm" />
-                {suites.system?.readyForExecution ? (
-                  <span className="inline-flex items-center gap-1 font-semibold text-[var(--ud-pass)]">
-                    <CheckCircle2 size={13} />
-                    <span>
-                      Ready (
-                      {suites.system.readyScenarios ||
-                        suites.system.totalScenarios ||
-                        0}{" "}
-                      scenarios)
-                    </span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 font-semibold text-[var(--ud-warn)]">
-                    <AlertTriangle size={13} />
-                    <span>
-                      {suites.system?.status === "NEEDS_SCENARIO_REVIEW"
-                        ? "Outcome Confirmation"
-                        : "No Tests"}
-                    </span>
-                  </span>
-                )}
-              </div>
-
-              <div className="text-[11px] text-[var(--ud-text-muted)]">
-                {suites.system?.readyForExecution ? (
-                  <span>
-                    All {suites.system.totalScenarios} system scenario(s) have
-                    confirmed expected outcomes.
-                  </span>
-                ) : (
-                  <span className="text-[var(--ud-warn)]">
-                    {suites.system?.blockers?.[0]?.message ||
-                      "System scenarios require expected outcome confirmation."}
-                  </span>
-                )}
-              </div>
-
-              {!suites.system?.readyForExecution && (
-                <div className="pt-1 flex flex-col gap-1.5">
-                  {suites.system?.status === "NEEDS_SCENARIO_REVIEW" ? (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      className="w-full text-xs justify-center ps-btn-contrast border-0"
-                      loading={loadingAction === "CONFIRM_SYSTEM_OUTCOMES"}
-                      disabled={Boolean(loadingAction)}
-                      onClick={() =>
-                        resolveHitlAction?.({
-                          actionType: "CONFIRM_SYSTEM_OUTCOMES",
-                        })
-                      }
-                    >
-                      Confirm All Expected Outcomes
-                    </Button>
-                  ) : null}
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeReadinessGate?.();
-                      if (onNavigateWorkspace) onNavigateWorkspace("system");
-                      else
-                        navigate(
-                          `/project/${context.projectId || ""}?tab=system`,
-                        );
-                    }}
-                    className="text-[11px] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:underline text-center"
-                  >
-                    Open System Workspace ↗
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Action Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--ud-border)]">
-            <span className="text-xs text-[var(--ud-text-muted)]">
-              Choose an execution path:
-            </span>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" onClick={closeReadinessGate}>
-                Cancel
-              </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-[var(--ud-warn)] border-[var(--ud-warn)]/40 hover:bg-[var(--ud-warn)]/10"
-                onClick={runReadySuitesOnly}
-                disabled={Boolean(gateData?.readyCount === 0)}
-              >
-                Run Ready Suites Only ({gateData?.readyCount || 0}/3)
-              </Button>
-
-              <Button
-                variant="primary"
-                size="sm"
-                className="ps-btn-contrast border-0"
-                icon={Play}
-                disabled={!gateData?.allReady}
-                onClick={async () => {
-                  closeReadinessGate?.();
-                  await runAllState?.executePipeline([
-                    "unit",
-                    "integration",
-                    "system",
-                  ]);
-                }}
-              >
-                Run All 3 Suites
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Confirmation Dialog before triggering full execution */}
-      <ConfirmDialog
-        isOpen={showConfirmRun}
-        onClose={() => setShowConfirmRun(false)}
-        onConfirm={() => {
-          setShowConfirmRun(false);
-          runAll?.();
-        }}
-        title="Execute All Testing Suites?"
-        message="This will initiate sequential execution across Unit, Integration, and System testing suites. Live results and coverage metrics will be streamed directly to this dashboard."
-        confirmText="Run Suites"
-        cancelText="Cancel"
-      />
 
       {/* Export Report Modal */}
       {showExportModal && (

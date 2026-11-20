@@ -2904,7 +2904,13 @@ export default function AIPanel({
     } else if (filePath) {
       handleSuggestForFile(filePath);
     } else if (promptText) {
-      handleSend(promptText, Array.isArray(pendingAttachments) ? pendingAttachments : [], null, fixContext || null);
+      handleSend(
+        typeof promptText === "string" ? promptText : String(promptText),
+        Array.isArray(pendingAttachments) ? pendingAttachments : [],
+        null,
+        null,
+        fixContext || null,
+      );
     }
   }, [pendingAiSuggestion, isRestoring, isLoadingSession, isTyping]);
 
@@ -3260,7 +3266,7 @@ export default function AIPanel({
   );
 
   const handleSend = (text, attachments = [], retryContext = null, replaceFailedMessageId = null, activeFixCtx = integrationFixContext) => {
-    if (!text.trim() || sendRef.current || revisionRef.current || isRestoring || isLoadingSession || isTyping) return;
+    if (typeof text !== "string" || !text.trim() || sendRef.current || revisionRef.current || isRestoring || isLoadingSession || isTyping) return;
     if (!projectId) {
       showToast({
         type: "warning",

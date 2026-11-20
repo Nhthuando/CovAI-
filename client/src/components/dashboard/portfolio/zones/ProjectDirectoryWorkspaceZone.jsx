@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, memo } from "react";
+import { useState, useMemo, memo } from "react";
 import {
   Search,
   X,
@@ -10,101 +10,151 @@ import {
   FolderGit2,
 } from "lucide-react";
 import { ProjectQualityCard } from "../cards/ProjectQualityCard.jsx";
-import { filterAndSortPortfolioProjects } from "../../../../services/portfolioDashboard/portfolioDashboard.selectors.js";
+import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
+import {
+  computePortfolioLifecycleCounts,
+  filterAndSortPortfolioProjects,
+  filterProjectsByLifecycle,
+} from "../../../../services/portfolioDashboard/portfolioDashboard.selectors.js";
 import { PORTFOLIO_CONFIG } from "../../../../services/portfolioDashboard/portfolioDashboard.config.js";
-
-const LIFECYCLE_LABELS = {
-  DOING: { label: "Doing", dot: "bg-[var(--ps-cobalt)]" },
-  NOT_STARTED: { label: "Not Started", dot: "bg-[var(--ps-neutral)]" },
-  COMPLETED: { label: "Completed", dot: "bg-[var(--ps-emerald)]" },
-  PAUSED: { label: "Paused", dot: "bg-[var(--ps-amber)]" },
-  CANCELLED: { label: "Cancelled", dot: "bg-[var(--ps-rose)]" },
-};
 
 function ProjectDirectoryWorkspaceZoneComponent({
   projects = [],
+  allProjects = null,
+  allLifecycleCounts = null,
+  lifecycleFilteredCount = null,
+  pinnedCount: controlledPinnedCount = null,
   favorites = [],
   highlightedProjectId = null,
   onClearHighlight,
+  searchQuery: controlledSearchQuery,
+  onSearchQueryChange,
+  lifecycleTab: controlledLifecycleTab,
+  onLifecycleTabChange,
   statusFilter = "all",
   onStatusFilterChange,
+  layerDeficit: controlledLayerDeficit,
+  onLayerDeficitChange,
+  sortBy: controlledSortBy,
+  onSortByChange,
+  isFiltered: controlledIsFiltered,
+  onResetFilters,
   onTogglePin,
   onOpenOverview,
   onNavigateWorkspace,
   onDeleteProject,
   onAskAiAboutProject,
+  onLifecycleStatusChange = null,
+  onLifecycleStatusCommitted = null,
   onAddProject,
   className = "",
 }) {
-  const [immediateSearch, setImmediateSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [lifecycleTab, setLifecycleTab] = useState("active");
-  const [layerDeficit, setLayerDeficit] = useState("all");
-  const [sortBy, setSortBy] = useState("health-desc");
+  const isControlled =
+    typeof onSearchQueryChange === "function" &&
+    typeof onLifecycleTabChange === "function";
+
+  const [localSearch, setLocalSearch] = useState("");
+  const [localLifecycleTab, setLocalLifecycleTab] = useState("active");
+  const [localLayerDeficit, setLocalLayerDeficit] = useState("all");
+  const [localSortBy, setLocalSortBy] = useState("health-desc");
   const [viewMode, setViewMode] = useState("grid");
 
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(immediateSearch);
-    }, 200);
-    return () => clearTimeout(handler);
-  }, [immediateSearch]);
+  const searchQuery =
+    controlledSearchQuery !== undefined ? controlledSearchQuery : localSearch;
+  const lifecycleTab =
+    controlledLifecycleTab !== undefined
+      ? controlledLifecycleTab
+      : localLifecycleTab;
+  const layerDeficit =
+    controlledLayerDeficit !== undefined
+      ? controlledLayerDeficit
+      : localLayerDeficit;
+  const sortBy =
+    controlledSortBy !== undefined ? controlledSortBy : localSortBy;
 
+  const handleSearchChange = (val) => {
+    if (onSearchQueryChange) onSearchQueryChange(val);
+    else setLocalSearch(val);
+  };
+
+  const handleLifecycleChange = (val) => {
+    if (onLifecycleTabChange) onLifecycleTabChange(val);
+    else setLocalLifecycleTab(val);
+  };
+
+  const handleLayerDeficitChange = (val) => {
+    if (onLayerDeficitChange) onLayerDeficitChange(val);
+    else setLocalLayerDeficit(val);
+  };
+
+  const handleSortByChange = (val) => {
+    if (onSortByChange) onSortByChange(val);
+    else setLocalSortBy(val);
+  };
+
+  const countsSourceProjects = allProjects || projects;
   const lifecycleCounts = useMemo(() => {
-    const counts = {
-      active: 0,
-      DOING: 0,
-      NOT_STARTED: 0,
-      COMPLETED: 0,
-      PAUSED: 0,
-      CANCELLED: 0,
-      all: projects.length,
-    };
-    for (const p of projects) {
-      const status = p.lifecycleStatus || "NOT_STARTED";
-      if (counts[status] !== undefined) counts[status]++;
-      if (status === "DOING" || status === "NOT_STARTED") counts.active++;
-    }
-    return counts;
-  }, [projects]);
+    if (allLifecycleCounts) return allLifecycleCounts;
+    return computePortfolioLifecycleCounts(countsSourceProjects);
+  }, [allLifecycleCounts, countsSourceProjects]);
 
-  const lifecycleFilteredProjects = useMemo(() => {
-    if (lifecycleTab === "active") {
-      return projects.filter(
-        (p) =>
-          p.lifecycleStatus === "DOING" ||
-          p.lifecycleStatus === "NOT_STARTED" ||
-          !p.lifecycleStatus
-      );
-    }
-    if (lifecycleTab === "all") return projects;
-    return projects.filter(
-      (p) => (p.lifecycleStatus || "NOT_STARTED") === lifecycleTab
-    );
-  }, [projects, lifecycleTab]);
+  const fallbackLifecycleFiltered = useMemo(() => {
+    if (isControlled) return projects;
+    return filterProjectsByLifecycle(projects, lifecycleTab);
+  }, [isControlled, projects, lifecycleTab]);
 
   const filteredProjects = useMemo(() => {
-    return filterAndSortPortfolioProjects(lifecycleFilteredProjects, {
-      searchQuery: debouncedSearch,
+    if (isControlled) return projects;
+    return filterAndSortPortfolioProjects(fallbackLifecycleFiltered, {
+      searchQuery,
       statusFilter,
       layerDeficit,
       sortBy,
       favorites,
     });
   }, [
-    lifecycleFilteredProjects,
-    debouncedSearch,
+    isControlled,
+    projects,
+    fallbackLifecycleFiltered,
+    searchQuery,
     statusFilter,
     layerDeficit,
     sortBy,
     favorites,
   ]);
 
+  const totalInScopeCount =
+    lifecycleFilteredCount ?? fallbackLifecycleFiltered.length;
+
   const pinnedCount = useMemo(() => {
-    return lifecycleFilteredProjects.filter(
+    if (controlledPinnedCount !== null && controlledPinnedCount !== undefined) {
+      return controlledPinnedCount;
+    }
+    return fallbackLifecycleFiltered.filter(
       (p) => favorites.includes(p.id) || p.isPinned
     ).length;
-  }, [lifecycleFilteredProjects, favorites]);
+  }, [controlledPinnedCount, fallbackLifecycleFiltered, favorites]);
+
+  const isFiltered =
+    controlledIsFiltered !== undefined
+      ? controlledIsFiltered
+      : Boolean(
+          searchQuery.trim() ||
+            statusFilter !== "all" ||
+            layerDeficit !== "all" ||
+            lifecycleTab !== "active"
+        );
+
+  const handleReset = () => {
+    if (onResetFilters) {
+      onResetFilters();
+    } else {
+      handleSearchChange("");
+      handleLifecycleChange("active");
+      onStatusFilterChange?.("all");
+      handleLayerDeficitChange("all");
+    }
+  };
 
   return (
     <section
@@ -118,7 +168,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
           <h2 className="ps-display text-base font-bold text-[var(--ps-ink)]">
             Projects
           </h2>
-          <span className="text-xs ps-mono text-[var(--ps-ink-muted)]">
+          <span className="text-xs ps-mono text-[var(--ps-ink-muted)] tabular-nums">
             {filteredProjects.length} shown
           </span>
         </div>
@@ -132,15 +182,15 @@ function ProjectDirectoryWorkspaceZoneComponent({
             />
             <input
               type="text"
-              value={immediateSearch}
-              onChange={(e) => setImmediateSearch(e.target.value)}
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
               placeholder="Search projects..."
               className="w-full h-8 pl-8 pr-7 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] text-xs text-[var(--ps-ink)] placeholder:text-[var(--ps-ink-muted)] outline-none focus:border-[var(--ps-cobalt)] ps-mono transition-colors"
             />
-            {immediateSearch && (
+            {searchQuery && (
               <button
                 type="button"
-                onClick={() => setImmediateSearch("")}
+                onClick={() => handleSearchChange("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] cursor-pointer"
                 aria-label="Clear search"
               >
@@ -153,7 +203,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
           <select
             aria-label="Filter by lifecycle state"
             value={lifecycleTab}
-            onChange={(e) => setLifecycleTab(e.target.value)}
+            onChange={(e) => handleLifecycleChange(e.target.value)}
             className="ps-select"
           >
             <option value="active">Active ({lifecycleCounts.active})</option>
@@ -178,7 +228,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
             onChange={(e) => onStatusFilterChange?.(e.target.value)}
             className="ps-select"
           >
-            <option value="all">All ({lifecycleFilteredProjects.length})</option>
+            <option value="all">All ({totalInScopeCount})</option>
             <option value="pinned">★ Pinned ({pinnedCount})</option>
           </select>
 
@@ -186,7 +236,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
           <select
             aria-label="Filter by coverage layer deficit"
             value={layerDeficit}
-            onChange={(e) => setLayerDeficit(e.target.value)}
+            onChange={(e) => handleLayerDeficitChange(e.target.value)}
             className="ps-select"
           >
             {PORTFOLIO_CONFIG.layerDeficitOptions.map((opt) => (
@@ -200,7 +250,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
           <select
             aria-label="Sort projects"
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
+            onChange={(e) => handleSortByChange(e.target.value)}
             className="ps-select"
           >
             {PORTFOLIO_CONFIG.sortOptions.map((opt) => (
@@ -217,8 +267,8 @@ function ProjectDirectoryWorkspaceZoneComponent({
               className="h-8 px-2.5 rounded-lg bg-[var(--ps-cobalt)]/12 border border-[var(--ps-cobalt)]/35 text-[11px] text-[var(--ps-cobalt)] ps-mono font-semibold inline-flex items-center gap-1 cursor-pointer"
             >
               <span>
-                {projects.find((p) => p.id === highlightedProjectId)?.name ||
-                  "Focused"}
+                {filteredProjects.find((p) => p.id === highlightedProjectId)
+                  ?.name || "Focused"}
               </span>
               <X size={11} />
             </button>
@@ -266,19 +316,10 @@ function ProjectDirectoryWorkspaceZoneComponent({
             No projects found
           </h3>
           <div className="flex items-center gap-2 mt-4">
-            {(debouncedSearch ||
-              statusFilter !== "all" ||
-              layerDeficit !== "all" ||
-              lifecycleTab !== "active") && (
+            {isFiltered && (
               <button
                 type="button"
-                onClick={() => {
-                  setImmediateSearch("");
-                  setDebouncedSearch("");
-                  setLifecycleTab("active");
-                  onStatusFilterChange?.("all");
-                  setLayerDeficit("all");
-                }}
+                onClick={handleReset}
                 className="px-3 py-1.5 rounded-lg border border-[var(--ps-line)] text-xs ps-mono hover:bg-[var(--ps-surface-2)] cursor-pointer text-[var(--ps-ink)]"
               >
                 Reset filters
@@ -306,6 +347,8 @@ function ProjectDirectoryWorkspaceZoneComponent({
               onNavigateWorkspace={onNavigateWorkspace}
               onDeleteProject={onDeleteProject}
               onAskAiAboutProject={onAskAiAboutProject}
+              onLifecycleStatusChange={onLifecycleStatusChange}
+              onLifecycleStatusCommitted={onLifecycleStatusCommitted}
             />
           ))}
         </div>
@@ -329,9 +372,6 @@ function ProjectDirectoryWorkspaceZoneComponent({
             <tbody className="divide-y divide-[var(--ps-line)]">
               {filteredProjects.map((p) => {
                 const isFav = favorites.includes(p.id) || p.isPinned;
-                const lifecycleMeta =
-                  LIFECYCLE_LABELS[p.lifecycleStatus || "NOT_STARTED"] ||
-                  LIFECYCLE_LABELS.NOT_STARTED;
                 const unitTests = p.pillars?.unit?.totalTests ?? 0;
                 const intTests = p.pillars?.integration?.totalTests ?? 0;
                 const sysTests = p.pillars?.system?.totalTests ?? 0;
@@ -383,12 +423,16 @@ function ProjectDirectoryWorkspaceZoneComponent({
                     </td>
 
                     <td className="py-2.5 px-3 text-center font-sans">
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border border-[var(--ps-line)] bg-[var(--ps-inset)] text-[var(--ps-ink-secondary)]">
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${lifecycleMeta.dot}`}
-                        />
-                        <span>{lifecycleMeta.label}</span>
-                      </span>
+                      <LifecycleStatusSelect
+                        projectId={p.id}
+                        currentStatus={p.lifecycleStatus || "NOT_STARTED"}
+                        onStatusChange={(newStatus) =>
+                          onLifecycleStatusChange?.(p.id, newStatus)
+                        }
+                        onStatusCommitted={(newStatus) =>
+                          onLifecycleStatusCommitted?.(p.id, newStatus)
+                        }
+                      />
                     </td>
 
                     <td className="py-2.5 px-3 text-center">

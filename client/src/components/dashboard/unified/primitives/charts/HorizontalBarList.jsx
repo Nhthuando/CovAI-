@@ -1,4 +1,3 @@
-import React from "react";
 
 /**
  * HorizontalBarList - Pure SVG / CSS horizontal proportional bars for metrics & failure breakdown.

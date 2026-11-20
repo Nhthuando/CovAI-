@@ -1,4 +1,3 @@
-import React from "react";
 import { CheckCircle2, Zap } from "lucide-react";
 import { PillarCardShell } from "./PillarCardShell.jsx";
 import { StackedBar } from "../primitives/StackedBar.jsx";
@@ -25,10 +24,23 @@ export function IntegrationPillarCard({
 
   const passedTests = Number(p.passedTests || 0);
   const failedTests = Number(p.failedTests || 0);
+  const totalTests = Number(p.totalTests ?? passedTests + failedTests);
   const uncoveredApis = Number(cov.uncoveredApis || 0);
-  const totalApis = Number(
-    cov.totalApis ?? (passedTests + failedTests + uncoveredApis || p.totalTests || 0)
-  );
+  const totalApis = Number(cov.totalApis ?? 0);
+  const coveredApis =
+    cov.coveredApis !== undefined
+      ? Math.min(totalApis, Number(cov.coveredApis))
+      : totalApis > 0
+        ? Math.max(0, totalApis - uncoveredApis)
+        : 0;
+  const failedApis =
+    cov.failedApis !== undefined
+      ? Math.min(Math.max(0, totalApis - coveredApis), Number(cov.failedApis))
+      : failedTests > 0 && totalApis > 0
+        ? Math.min(Math.max(0, totalApis - coveredApis), failedTests)
+        : 0;
+  const notTestedApis = Math.max(0, totalApis - coveredApis - failedApis);
+
   const state = loading
     ? "LOADING"
     : p.state || (passedTests + failedTests === 0 ? "NOT_RUN" : failedTests > 0 ? "HAS_FAILURES" : "ALL_PASSING");
@@ -36,7 +48,7 @@ export function IntegrationPillarCard({
   // Status computation
   let status = "untested";
   if (!loading) {
-    if (failedTests > 0) {
+    if (failedTests > 0 || failedApis > 0) {
       status = "fail";
     } else if (passedTests === 0 && uncoveredApis > 0) {
       status = "warn";
@@ -47,11 +59,17 @@ export function IntegrationPillarCard({
     }
   }
 
-  const statusLabel = loading ? "--" : `${passedTests}/${totalApis} Covered`;
+  const statusLabel = loading
+    ? "--"
+    : totalApis > 0
+      ? `${coveredApis}/${totalApis} Covered`
+      : totalTests > 0
+        ? `${passedTests}/${totalTests} Passed`
+        : "0/0 Covered";
 
   const dist = p.failureDistribution || {};
   const activeFailureLayers = Object.entries(dist)
-    .filter(([_, count]) => Number(count) > 0)
+    .filter(([, count]) => Number(count) > 0)
     .map(([key, count]) => ({
       key,
       label: FAILURE_LAYER_LABELS[key] || key,
@@ -60,11 +78,18 @@ export function IntegrationPillarCard({
       tone: "fail",
     }));
 
-  const endpointSegments = [
-    { key: "passed", value: loading ? 0 : passedTests, displayValue: loading ? "--" : passedTests, tone: "pass", label: "Covered" },
-    { key: "failed", value: loading ? 0 : failedTests, displayValue: loading ? "--" : failedTests, tone: "fail", label: "Failed" },
-    { key: "uncovered", value: loading ? 0 : uncoveredApis, displayValue: loading ? "--" : uncoveredApis, tone: "warn", label: "Uncovered" },
-  ];
+  const barTotal = loading ? 0 : totalApis > 0 ? totalApis : totalTests;
+  const endpointSegments =
+    totalApis > 0 || totalTests === 0
+      ? [
+          { key: "passed", value: loading ? 0 : coveredApis, displayValue: loading ? "--" : coveredApis, tone: "pass", label: "Covered" },
+          { key: "failed", value: loading ? 0 : failedApis, displayValue: loading ? "--" : failedApis, tone: "fail", label: "Failed" },
+          { key: "uncovered", value: loading ? 0 : notTestedApis, displayValue: loading ? "--" : notTestedApis, tone: "warn", label: "Uncovered" },
+        ]
+      : [
+          { key: "passed", value: loading ? 0 : passedTests, displayValue: loading ? "--" : passedTests, tone: "pass", label: "Passed" },
+          { key: "failed", value: loading ? 0 : failedTests, displayValue: loading ? "--" : failedTests, tone: "fail", label: "Failed" },
+        ];
 
   return (
     <PillarCardShell
@@ -83,7 +108,7 @@ export function IntegrationPillarCard({
         </span>
         <StackedBar
           segments={endpointSegments}
-          total={loading ? 0 : totalApis}
+          total={barTotal}
           height={6}
           showLegend={true}
         />
@@ -110,7 +135,11 @@ export function IntegrationPillarCard({
       {state === "ALL_PASSING" && (
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-sm)] border border-[var(--ud-pass)]/30 bg-[var(--ud-pass)]/10 text-[var(--ud-pass)] text-xs font-semibold">
           <CheckCircle2 size={13} className="shrink-0" />
-          <span>All {passedTests} tested endpoints passing — 0 failures</span>
+          <span>
+            {totalApis > 0
+              ? `All ${coveredApis} covered endpoint(s) passing (${passedTests} tests) — 0 failures`
+              : `All ${passedTests} integration tests passing — 0 failures`}
+          </span>
         </div>
       )}
 

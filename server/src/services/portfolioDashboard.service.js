@@ -378,9 +378,15 @@ async function executeBuildPortfolioOverview({ userId, bypassCache = false }) {
     // 2j. Integration Workspaces per snapshot (for exact discovered/covered APIs)
     Promise.all(
       snapshotIds.map((sid) =>
-        buildIntegrationWorkspace(sid, null, { skipAutoScan: true })
+        buildIntegrationWorkspace(sid, { skipAutoScan: true })
           .then((ws) => ({ snapshotId: sid, ws }))
-          .catch(() => ({ snapshotId: sid, ws: null }))
+          .catch((err) => {
+            console.warn(
+              `[PortfolioDashboard] buildIntegrationWorkspace failed for snapshot ${sid}:`,
+              err?.message
+            );
+            return { snapshotId: sid, ws: null };
+          })
       )
     ),
   ]);
@@ -483,6 +489,7 @@ async function executeBuildPortfolioOverview({ userId, bypassCache = false }) {
       unitTotal > 0 ? toFixedNum(cov?.branchesPct ?? unitRun?.coverageBranchesPct ?? 0) : 0;
 
     // 3b. Integration Pillar Metrics (Synchronized with buildIntegrationWorkspace)
+    const hasIntegrationWs = Boolean(integrationWs);
     const wsSummary = integrationWs?.summary || {};
     const endpoints = Array.isArray(integrationWs?.endpoints) ? integrationWs.endpoints : [];
     const coveredEpCount = endpoints.filter((e) => e.status === "Covered").length;
@@ -491,10 +498,15 @@ async function executeBuildPortfolioOverview({ userId, bypassCache = false }) {
     ).length;
 
     const intPassed = Number(
-      wsSummary.passedTests ?? wsSummary.testedApis ?? coveredEpCount ?? intRun?.passedTests ?? 0
+      wsSummary.passedTests ??
+        wsSummary.testedApis ??
+        (hasIntegrationWs ? coveredEpCount : intRun?.passedTests) ??
+        0
     );
     const intFailed = Number(
-      wsSummary.failedTests ?? failedEpCount ?? intRun?.failedTests ?? 0
+      wsSummary.failedTests ??
+        (hasIntegrationWs ? failedEpCount : intRun?.failedTests) ??
+        0
     );
     const intSkipped = Number(wsSummary.skippedTests ?? intRun?.skippedTests ?? 0);
     const intTotal = Number(
@@ -504,13 +516,18 @@ async function executeBuildPortfolioOverview({ userId, bypassCache = false }) {
         intPassed + intFailed + intSkipped
     );
     const totalApis = Number(
-      wsSummary.totalApis ?? wsSummary.discoveredApis ?? (endpoints.length || intTotal)
+      wsSummary.totalApis ??
+        wsSummary.discoveredApis ??
+        (hasIntegrationWs ? endpoints.length : intTotal)
     );
     const coveredApis =
       intTotal > 0 && totalApis > 0
-        ? Number(
-            wsSummary.endpointCoverageMetrics?.coveredEndpoints ??
-              (coveredEpCount > 0 ? coveredEpCount : intPassed)
+        ? Math.min(
+            totalApis,
+            Number(
+              wsSummary.endpointCoverageMetrics?.coveredEndpoints ??
+                (coveredEpCount > 0 ? coveredEpCount : intPassed)
+            )
           )
         : 0;
     const uncoveredApis = Math.max(0, totalApis - coveredApis);

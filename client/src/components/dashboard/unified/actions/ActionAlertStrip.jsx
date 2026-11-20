@@ -1,6 +1,13 @@
-import React from "react";
 import { AlertTriangle, Sparkles, ArrowRight } from "lucide-react";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
+
+function buildActionPrompt(action) {
+  return (
+    action?.aiPrompt ||
+    action?.diagnostics?.aiPrompt ||
+    `Diagnose ${action?.priority || "MEDIUM"} priority ${action?.pillar || "unit"} issue "${action?.title || "Quality Alert"}"${action?.targetName ? ` on target ${action.targetName}` : ""}: ${action?.description || "Review this testing gap and recommend a concrete fix."}`
+  );
+}
 
 /**
  * ActionAlertStrip - Compact single-line horizontal alert strip for top priority quality blockers.
@@ -9,7 +16,6 @@ import { PillarBadge } from "../primitives/PillarBadge.jsx";
 export function ActionAlertStrip({
   actions = [],
   onNavigateWorkspace,
-  onInspectItem,
   onAskAi,
   className = "",
 }) {
@@ -83,7 +89,7 @@ export function ActionAlertStrip({
                 {onAskAi && (
                   <button
                     type="button"
-                    onClick={() => onAskAi(action)}
+                    onClick={() => onAskAi(buildActionPrompt(action))}
                     className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] transition-colors cursor-pointer"
                     title="Ask AI to analyze this action"
                   >
