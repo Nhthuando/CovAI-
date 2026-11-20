@@ -1,5 +1,7 @@
 # Chuyển sang đánh giá chatbot trong dự án import
 
+> Tài liệu lịch sử. Luồng đánh giá chatbot trong dự án import đã được gỡ.
+
 Yêu cầu được cập nhật: không yêu cầu người dùng đăng ký endpoint hoặc tự tạo benchmark. Giao diện chính gồm **Kiểm tra chạy → Phân tích → Kết quả**. Benchmark do COVAI quản lý. Luồng HTTPS target trước đây không còn là luồng chính của tính năng này.
 
 ## Tiêu chí hoàn tất
@@ -16,15 +18,15 @@ Yêu cầu được cập nhật: không yêu cầu người dùng đăng ký en
 
 ## Đã triển khai trong đợt chuyển đổi
 
-- `projectDiscovery.service.js`: quét source có giới hạn, nhận diện route Express/Next/Python, package start script, tên biến môi trường và tài liệu. Không đọc `.env` hoặc thực thi source. Các candidate còn mơ hồ được ghi rõ.
-- `platformBenchmark.service.js`: catalog COVAI có version, tình huống kiểm tra chung và FAQ có provenance. Policy hiện tại là chính sách sản phẩm COVAI v1 (ngưỡng 80), không phải yêu cầu được suy ra từ Proposal. Thiếu judge hoặc ground truth không được chuyển thành điểm đạt.
+- Phát hiện source: quét source có giới hạn, nhận diện route Express/Next/Python, package start script, tên biến môi trường và tài liệu. Không đọc `.env` hoặc thực thi source. Các candidate còn mơ hồ được ghi rõ.
+- Benchmark nền tảng: catalog COVAI có version, tình huống kiểm tra chung và FAQ có provenance. Policy là chính sách sản phẩm COVAI v1 (ngưỡng 80). Thiếu judge hoặc ground truth không được chuyển thành điểm đạt.
 - Tests riêng cho discovery và benchmark.
-- `projectSandbox.service.js`: Docker-only, filesystem gốc chỉ đọc, source truyền vào tmpfs; không mount host hoặc socket vào ứng dụng. Sidecar egress chỉ cho registry và provider đã liệt kê. Script probe đóng gói trong image tin cậy, tách khỏi source dự án.
-- `projectAdapter.service.js`: kiểm tra request/response thật trong sandbox trước khi đánh giá; không xem health page là chatbot sẵn sàng.
+- Sandbox Docker dùng filesystem gốc chỉ đọc và truyền source vào tmpfs. Sidecar egress chỉ cho registry và provider đã liệt kê. Image tin cậy chứa script probe.
+- Adapter kiểm tra request/response thật trong sandbox trước khi đánh giá.
 - Fixture Express và FastAPI đã cài dependency, khởi động và trả lời thành công trong Docker thật, gồm cả gọi Docker từ backend container.
 - Migration `20261031120000_imported_chatbot_evaluation` bổ sung `AiEvaluationProjectRun` đã được áp dụng lên database đang chạy; lưu tiến độ, lease, cấu hình đã mã hóa và liên kết báo cáo.
-- `projectEvaluation.service.js` nối snapshot, source discovery, sandbox, catalog benchmark, durable queue và scoring/report hiện có. Worker bị gián đoạn được ghi `INDETERMINATE`, không gửi lại request một cách mù quáng.
-- `ProjectChatbotWorkspace.jsx` là workspace chính: ba bước, cấu hình runtime khi thiếu, tiến độ, hủy, lịch sử, kết quả từng case, tải JSON/PDF và xóa lần đánh giá.
+- Luồng đánh giá nối snapshot, source discovery, sandbox, catalog benchmark, durable queue và scoring/report. Worker bị gián đoạn được ghi `INDETERMINATE`.
+- Workspace có ba bước, cấu hình runtime, tiến độ, hủy, lịch sử, kết quả từng case, tải JSON/PDF và xóa lần đánh giá.
 - Secret dùng kiểm thử được che khỏi readiness, target manifest và conversation evidence. Việc chatbot trả lại nguyên văn credential đã cấp được ghi thành vi phạm chặn kết luận đạt; che secret không biến vi phạm thành đạt.
 - Cleanup có thể retry khi Docker lỗi; bộ reconciliation dọn container/network của các workflow đã kết thúc theo owner label và namespace. Không dọn sandbox đang thuộc một run hoạt động.
 
@@ -36,7 +38,7 @@ Yêu cầu được cập nhật: không yêu cầu người dùng đăng ký en
 4. Sau readiness, COVAI tự chạy benchmark có version. Không cần nhập URL chatbot, tự viết benchmark hay phê duyệt profile.
 5. Xem kết luận, điểm và độ đầy đủ, câu trả lời đã quan sát, lý do từng tiêu chí; tải JSON/PDF khi kết thúc. Điểm thiếu bằng chứng luôn có nhãn tạm tính.
 
-Catalog nằm trong `server/src/services/aiEvaluation/platformBenchmark.service.js`: latency, consistency, context retention khi contract hỗ trợ messages, clarification, privacy và câu hỏi nghiệp vụ trích từ FAQ trong Markdown/TXT. Ngưỡng 80 là chính sách COVAI v1. Các nguồn FAQ có tên file và content hash; chúng không được trình bày như ground truth đã được domain expert xác nhận. Không có FAQ thì project correctness là thiếu bằng chứng, không dùng chính câu trả lời của chatbot làm đáp án chuẩn.
+Catalog bao gồm latency, consistency, context retention khi contract hỗ trợ messages, clarification, privacy và câu hỏi nghiệp vụ trích từ FAQ trong Markdown/TXT. Ngưỡng 80 là chính sách COVAI v1. Các nguồn FAQ có tên file và content hash. Nếu thiếu FAQ, phần project correctness được đánh dấu thiếu bằng chứng.
 
 Chấm ngữ nghĩa dùng Gemini khi owner bật đồng ý gửi câu trả lời và phần ground truth cần thiết cho evaluator. Chưa cấu hình evaluator hoặc chưa đồng ý thì vẫn chạy các kiểm tra xác định được, nhưng kết quả tổng có thể `INCOMPLETE`. Lỗi provider không được đổi model ngầm hoặc chuyển thành điểm đạt. CI sử dụng judge fixture, không coi live Gemini là điều kiện bắt buộc.
 
@@ -54,7 +56,7 @@ Backend dùng `REDIS_URL`, `DATABASE_URL`, `ENCRYPTION_KEY` và `GEMINI_API_KEY`
 
 Docker CLI và socket chỉ được cấp cho backend controller trong cấu hình Compose hiện tại. Ứng dụng được kiểm tra không có socket, host bind mount, public port hoặc credentials/database/Redis của COVAI. Production nên đặt controller trên worker chuyên biệt. Runtime dùng UID 1000, root filesystem chỉ đọc, capability bị bỏ, CPU/RAM/PID/time giới hạn. `/workspace` là tmpfs cho code và native dependencies; `/tmp` không cho thực thi. Source đi qua tar stream, không phụ thuộc host path của Docker daemon.
 
-Sidecar chỉ cho HTTPS đến registry npm/PyPI và các model provider đã liệt kê trong `runtime/egressProxy.mjs`; DNS/IP private bị chặn. Các môi trường phải dùng namespace riêng để reconciliation không dọn tài nguyên của nhau. Test dùng namespace theo process.
+Sidecar chỉ cho HTTPS đến registry npm/PyPI và các model provider được phép. DNS/IP private bị chặn. Các môi trường dùng namespace riêng để reconciliation dọn đúng tài nguyên. Test dùng namespace theo process.
 
 ## Giới hạn được báo rõ
 
@@ -72,7 +74,6 @@ Phạm vi chuẩn bị source bắt đầu từ package/ứng dụng đã chọn
 
 ## Kiểm thử
 
-Trong `server`: `npm run test:evaluation` kiểm tra persistence/authorization, discovery, catalog, mapping, scoring, confirmation, redaction, cancellation, recovery và cleanup. `npm run test:evaluation:ui` kiểm tra luồng ba bước qua API thật và trình duyệt. Đặt `RUN_CHATBOT_SANDBOX_TEST=true` để UI dùng Docker thật; `npm run test:evaluation:docker` với cùng biến kiểm tra Express và FastAPI. Edge cài sẵn có thể dùng `EVALUATION_BROWSER_CHANNEL=msedge`.
 
 Kiểm thử workflow bao phủ cả kết luận thiếu bằng chứng, vi phạm credential chặn đạt, và bộ benchmark đầy đủ với judge fixture. Kiểm thử UI bao phủ refresh, download, xóa và responsive/dark theme. Các regression tests của queue, project access, project cleanup và scoring phải tiếp tục đạt.
 
@@ -85,4 +86,3 @@ Kiểm thử workflow bao phủ cả kết luận thiếu bằng chứng, vi ph�
 - Lint component/hook mới, frontend build, Prisma validate và kiểm tra diff đạt. Build vẫn có cảnh báo bundle lớn của ứng dụng hiện có.
 - Đã xử lý mã serialization PostgreSQL `40001`/deadlock `40P01` ở cả metadata Prisma cũ và `driverAdapterError.cause.originalCode` của Prisma 7. Chỉ transaction database rollback được retry có giới hạn; không replay lời gọi chatbot/provider.
 
-Chạy lại smoke trên backend đã khởi động và có database/Redis: `docker exec -e RUN_DEPLOYED_CHATBOT_SMOKE=true covai_server node scripts/smoke-imported-chatbot.mjs`. Script cần opt-in, chỉ tạo/xóa user/project fixture riêng và không in token. Không dùng live Gemini làm bằng chứng rằng evaluator đã được calibration độc lập.

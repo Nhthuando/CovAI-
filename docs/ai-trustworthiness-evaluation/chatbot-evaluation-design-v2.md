@@ -223,7 +223,6 @@ Trước khi chạy toàn bộ kịch bản (tốn hàng chục lượt gọi AP
 | `server/src/routes/aiEvaluation.route.js` & `controllers/aiEvaluation.controller.js` | **SỬA & THÊM MỚI** | Tách chuẩn 3 tầng `Route ➔ Controller ➔ Service`. |
 | `server/src/tests/aiEvaluation.*.test.js` | **CHUYỂN ĐỔI AN TOÀN & MỞ RỘNG** | **Không xóa ngay** `aiEvaluation.integration.test.mjs`; chuyển toàn bộ các ca kiểm thử của nó sang file **Jest ESM (`@jest/globals`)** trước, chạy Jest pass 100% rồi mới gỡ bỏ file `.mjs` cũ và cập nhật `server/package.json`. Bổ sung Jest test quét đệ quy toàn bộ workspace tạm chứng minh không file nào trên đĩa chứa giá trị khóa LLM. |
 | `client/src/services/trustworthiness.service.js` & `hooks/useTrustworthinessQuery.js` | **SỬA LỚN** | Dùng `editorAwareFetch` + `authSession.js` (tự refresh token sau 15 phút) và nhận tiến độ qua **Socket.IO** thay vì polling 2 giây. |
-| `client/src/components/dashboard/trustworthiness/trustworthiness.css` | **BỎ** | Xóa CSS thuần, chuyển sang Tailwind CSS v4 chuẩn dự án. |
 | `client/src/components/dashboard/trustworthiness/TrustworthinessWorkspace.jsx` | **LÀM LẠI** | Giao diện tiếng Anh chuẩn *Sleek Industrial* (`covai-ui-components`), hỗ trợ mượt luồng Auto-Start chỉ nhập LLM Key, cảnh báo Knowledge Probe, hộp hướng dẫn `cloudflared`/`ngrok`, báo cáo lỗi và chấm mù Cohen's $\kappa$. |
 
 ---

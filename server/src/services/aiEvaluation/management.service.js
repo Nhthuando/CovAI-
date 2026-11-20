@@ -813,7 +813,6 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
         ) {
             fail('IDEMPOTENCY_CONFLICT', 'This request key was used with different versions', 409);
         }
-        if (existing.manifest?.targetConfig?.adapter === 'PROJECT_SANDBOX') return existing;
         const { manifest: _omittedManifest, ...existingSummary } = existing;
         return existingSummary;
     }
@@ -970,7 +969,7 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
                             })),
                         },
                     },
-                    select: { ...RUN_SUMMARY_SELECT, ...(target.config.adapter === 'PROJECT_SANDBOX' ? { manifest: true } : {}) },
+                    select: RUN_SUMMARY_SELECT,
                 });
             });
         } catch (error) {

@@ -1472,21 +1472,12 @@ export const deleteProject = async (projectId, userId) => {
   const evaluations = await prisma.aiEvaluationProjectRun.findMany({ where: { projectId }, select: { id: true } });
   await cleanupProjectStorageAsync(projectId, snapshots, { evaluationIds: evaluations.map(row => row.id) });
 
-  // Docker runner and chatbot sandbox cleanup
+  // Docker runner cleanup
   try {
     const { cleanupProjectRunnerContainers } = await import("./dockerRunner.service.js");
     await cleanupProjectRunnerContainers(projectId);
   } catch (err) {
     console.warn(`[DeleteProject] Warning cleaning up runner containers for ${projectId}:`, err?.message);
-  }
-
-  for (const ev of evaluations) {
-    try {
-      const { cleanupProjectSandbox } = await import("./aiEvaluation/projectSandbox.service.js");
-      await cleanupProjectSandbox(ev.id);
-    } catch (err) {
-      console.warn(`[DeleteProject] Warning cleaning up sandbox for evaluation ${ev.id}:`, err?.message);
-    }
   }
 
   // Invalidate in-memory manifest cache for deleted snapshots

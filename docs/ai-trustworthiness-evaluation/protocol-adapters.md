@@ -46,20 +46,13 @@ Manifest lưu adapter/discovery version, source manifest, business analysis, ben
 
 ## Mở rộng
 
-Thêm adapter trong `projectAdapterRegistry.service.js` với `id`, `version`, `protocols`, `matches(candidate)`, `probe(runtime, candidate, options)` và `executor(runtime, contract)`. Executor có thể cung cấp `closeConversation(id)` cho giao thức có phiên.
+Registry cũ dùng các trường `id`, `version`, `protocols`, `matches(candidate)`, `probe(runtime, candidate, options)` và `executor(runtime, contract)`. Executor có thể cung cấp `closeConversation(id)` cho giao thức có phiên.
 
 Adapter phải có kiểm thử contract và fixture ứng dụng độc lập, kiểm tra lỗi/timeout/cancel, dữ liệu trả lời có provenance và không replay mù quáng. Tăng version khi contract thay đổi. Discovery thêm bằng chứng giao thức; orchestrator tiếp tục gọi cùng interface, không thêm nhánh theo repository hay project ID.
 
 Chưa hỗ trợ tự động mọi dạng WebSocket/SSE tùy chỉnh, Gradio, Streamlit, LangGraph SDK streaming, OAuth tương tác hoặc mọi dịch vụ/model tự host. Các trường hợp này cần thêm adapter/runtime tương ứng. Evaluation hiện chấm câu trả lời quan sát được, không chứng nhận tool/action nội bộ.
 
 ## Kiểm tra
-
-```powershell
-cd server
-npm run test:evaluation
-$env:RUN_CHATBOT_SANDBOX_TEST = 'true'
-npm run test:evaluation:docker
-```
 
 Fixture Docker bao gồm ứng dụng độc lập HTTP JSON Node/Python, Chainlit CLI/FastAPI với cookie path khác nhau, SSE Node và NDJSON Python. Không cần live Gemini/OpenAI để kiểm tra giao thức.
 

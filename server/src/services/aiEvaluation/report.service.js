@@ -137,17 +137,9 @@ export async function getRunReport(db, projectId, runId) {
             ? [`${unverifiedReferenceCount} scenario(s) had unverified source quotes cleared (referenceUnverified: true) because the generated excerpt was not found in the loaded knowledge documents.`]
             : []),
         EVALUATION_DISCLAIMER,
-        ...(report.manifest?.evidenceScope === 'IMPORTED_PROJECT_SANDBOX'
-            ? [
-                'Results apply to the recorded source manifest, COVAI benchmark and responses observed in the isolated imported-project runtime.',
-                'Project-document FAQ references are automatically extracted, not independently validated business ground truth.',
-                'Tool actions, retrieval, model identity and cost are not certified by this response benchmark. Missing required evidence prevents a complete passing verdict.',
-            ]
-            : [
-                'Results apply to the frozen benchmark and observed target responses.',
-                'Tool evidence covers COVAI gateway calls only; off-gateway target actions cannot be certified absent.',
-                'Target model/version and usage metadata are target-reported when available.',
-            ]),
+        'Results apply to the frozen benchmark and observed target responses.',
+        'Tool evidence covers COVAI gateway calls only; off-gateway target actions cannot be certified absent.',
+        'Target model/version and usage metadata are target-reported when available.',
     ];
     // Cross-check: the AI judge's faithfulness verdict vs the rule-based key-fact oracle, per case.
     const oraclePairs = report.cases.flatMap(c => {

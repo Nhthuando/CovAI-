@@ -1,7 +1,5 @@
 # Đánh giá chatbot trong dự án người dùng
 
-> **Tài liệu adapter HTTPS cũ.** Luồng chính đã chuyển sang tự chạy chatbot trong dự án import và benchmark COVAI, không cần đăng ký endpoint. Xem [hướng dẫn hiện hành](./imported-chatbot-implementation.md). Phần bên dưới mô tả API target/profile được giữ lại cho tích hợp đã có.
-
 Tính năng triển khai theo `chatbot-trustworthiness-plan.md`. COVAI gửi các tình huống của benchmark đã duyệt tới **chatbot của ứng dụng người dùng**, thu câu trả lời và bằng chứng rồi chấm theo quy tắc hoặc rubric. Import source code không tự tạo một chatbot đang chạy: người dùng cần cung cấp endpoint của môi trường kiểm thử và đáp án nghiệp vụ đúng.
 
 ## Bật tính năng
@@ -12,7 +10,7 @@ Tính năng triển khai theo `chatbot-trustworthiness-plan.md`. COVAI gửi cá
 4. Đặt `AI_EVALUATION_ENABLED=true`, khởi động lại backend. Queue dùng Redis; lỗi Redis trả lỗi enqueue, không chạy thay trong web request. Worker được đăng ký trong queue service của backend hiện tại.
 5. Mở workspace của dự án với `tab=trustworthiness`. Chỉ owner được truy cập dữ liệu đánh giá.
 
-Tham khảo cấu hình trong [hướng dẫn hiện hành](./imported-chatbot-implementation.md). Gemini không bắt buộc cho chấm bằng quy tắc. Trong API profile cũ, đề xuất benchmark và chấm ngữ nghĩa có hai mục đồng ý chia sẻ dữ liệu riêng. Các lời gọi dùng quota AI hiện có; không tự đổi model khi provider lỗi.
+Gemini không bắt buộc cho chấm bằng quy tắc. Trong API profile, đề xuất benchmark và chấm ngữ nghĩa có hai mục đồng ý chia sẻ dữ liệu riêng. Các lời gọi dùng quota AI hiện có; không tự đổi model khi provider lỗi.
 
 ## Giao diện ba bước
 
@@ -114,9 +112,6 @@ Chạy trong `server`:
 ```text
 npm run test:evaluation
 npm test -- --runInBand src/tests/aiEvaluation.scoring.test.js
-npm run test:evaluation:ui
 ```
-
-Browser suite cần dependencies của client và Chromium của Playwright (`npx playwright install chromium`), hoặc đặt `EVALUATION_BROWSER_CHANNEL=msedge` để dùng Edge đã cài. Suite chạy component thật, API thật, database PGlite dùng riêng và transport/queue giả lập; không sửa database ứng dụng và không gọi Gemini thật. Bao phủ Q&A, Guidance, Action có/thiếu confirmation, replay, cancellation, ownership, migration, artifact cleanup và thao tác trình duyệt.
 
 Trước rollout cần chạy smoke test trên PostgreSQL + Redis của môi trường staging với endpoint chatbot test thật; PGlite không thay thế kiểm chứng vận hành đa worker trên PostgreSQL. Chưa có endpoint chatbot thật của người dùng trong phiên triển khai này. PDF scan không có text chưa hỗ trợ OCR. Tắt feature flag để dừng tiếp nhận run mới; không chạy destructive down migration để rollback.

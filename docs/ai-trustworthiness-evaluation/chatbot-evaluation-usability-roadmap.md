@@ -1,5 +1,7 @@
 # Kế hoạch đưa đánh giá chatbot trong dự án import vào sử dụng
 
+> Tài liệu lịch sử. Luồng đánh giá chatbot trong dự án import đã được gỡ.
+
 Ngày: 02/11/2026. Trạng thái: đề xuất triển khai; tài liệu này không khởi tạo môi trường, tải model hoặc thay đổi code.
 
 ## 1. Hướng sản phẩm
@@ -18,14 +20,14 @@ Giữ luồng giao diện này; bổ sung năng lực bên dưới thay vì thê
 
 | Thành phần | Đã có | Phần cần làm tiếp |
 |---|---|---|
-| `projectDiscovery.service.js` | Phát hiện ứng dụng và chatbot từ source | Tạo execution plan có bằng chứng; phân biệt route chat với contact/init/history |
-| `projectAdapterRegistry.service.js` | Adapter HTTP JSON/SSE/NDJSON và Chainlit | Capability/session contract thống nhất; thêm giao thức theo thứ tự ưu tiên |
-| `projectSandbox.service.js` | Docker cô lập, giới hạn tài nguyên, cleanup | Runtime profile, dependency/model cache và dịch vụ kiểm thử tùy nhu cầu |
-| `pythonRuntime.service.js` | Chọn Python, nhận diện một số lỗi dependency | Preflight tương thích rộng hơn, chẩn đoán theo từng giai đoạn |
-| `projectSettings.service.js` | Lưu cấu hình mã hóa theo project | Chỉ hỏi các biến cần cho chatbot; làm rõ trạng thái cấu hình |
-| `platformBenchmark.service.js` | Case nền tảng, FAQ/policy/guide có nguồn | Knowledge manifest, benchmark nghiệp vụ rộng hơn và kiểm tra chất lượng case |
-| `projectEvaluation.service.js` | Queue, readiness, benchmark và report | Tích hợp preparation plan, capability gates và recovery tương ứng |
-| `ProjectChatbotWorkspace.jsx` | Ba bước, lịch sử, cấu hình và kết quả | Hiển thị blocker cụ thể và hành động khắc phục tại đúng bước |
+| Phát hiện source | Phát hiện ứng dụng và chatbot từ source | Tạo execution plan có bằng chứng; phân biệt route chat với contact/init/history |
+| Adapter | Adapter HTTP JSON/SSE/NDJSON và Chainlit | Capability/session contract thống nhất; thêm giao thức theo thứ tự ưu tiên |
+| Sandbox | Docker cô lập, giới hạn tài nguyên, cleanup | Runtime profile, dependency/model cache và dịch vụ kiểm thử tùy nhu cầu |
+| Runtime Python | Chọn Python, nhận diện một số lỗi dependency | Preflight tương thích rộng hơn, chẩn đoán theo từng giai đoạn |
+| Cấu hình dự án | Lưu cấu hình mã hóa theo project | Chỉ hỏi các biến cần cho chatbot; làm rõ trạng thái cấu hình |
+| Benchmark nền tảng | Case nền tảng, FAQ/policy/guide có nguồn | Knowledge manifest, benchmark nghiệp vụ rộng hơn và kiểm tra chất lượng case |
+| Điều phối đánh giá | Queue, readiness, benchmark và report | Tích hợp preparation plan, capability gates và recovery tương ứng |
+| Workspace chatbot | Ba bước, lịch sử, cấu hình và kết quả | Hiển thị blocker cụ thể và hành động khắc phục tại đúng bước |
 
 Không viết lại runner, scoring hoặc persistence đã có nếu có thể mở rộng bằng contract rõ ràng. Các bộ test hiện có cần được chạy lại để xác nhận baseline trước khi triển khai; tài liệu cũ ghi đã kiểm thử không thay thế việc kiểm tra code hiện tại.
 
@@ -125,7 +127,7 @@ Chỉ sau khi bước này thành công mới chạy benchmark. Khởi động l
 
 ### 4.6. Benchmark và chấm điểm
 
-Mở rộng `platformBenchmark.service.js`; thêm `projectKnowledge.service.js` và `benchmarkValidation.service.js`:
+Mở rộng benchmark nền tảng và bổ sung chức năng quản lý nguồn tri thức, kiểm tra benchmark:
 
 - Catalog nền tảng do COVAI sở hữu, có version và chính sách điểm được công bố.
 - Trích nghiệp vụ từ FAQ, tài liệu sử dụng/chính sách, KB và fixture có nguồn rõ ràng. Code giúp tìm chức năng; không tự động trở thành đáp án đúng.

@@ -570,7 +570,6 @@ export async function processEvaluation(jobId, {
                             try {
                                 response = await withTargetSlot(async () => {
                                     if (signal.aborted) throw new Error('aborted');
-                                    if (run.targetVersion.config.adapter === 'PROJECT_SANDBOX' && turnExecutor === executeTurn) fail('PROJECT_SANDBOX_REQUIRED', 'Imported project runs require their isolated runtime');
                                     const started = performance.now();
                                     const result = await turnExecutor(
                                         run.targetVersion.config,
@@ -799,8 +798,6 @@ export async function processEvaluation(jobId, {
 
 export async function processEvaluationPrepare(jobId, { db = prisma, provider } = {}) {
     requireEnabled();
-    const pending = await db.job.findUnique({ where: { id: jobId } });
-    if (pending && JSON.parse(pending.payloadJson || '{}').projectEvaluationId) return (await import('./projectEvaluation.service.js')).processProjectEvaluation(jobId, { db, provider });
     const claim = await db.job.updateMany({ where: { id: jobId, type: 'AI_EVALUATION_PREPARE', status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: new Date() } });
     if (!claim.count) return;
     const job = await db.job.findUnique({
@@ -906,11 +903,6 @@ export async function processEvaluationPrepare(jobId, { db = prisma, provider } 
 }
 
 export async function reconcileEvaluations(db = prisma, { startup = false } = {}) {
-    try {
-        await (await import('./projectEvaluation.service.js')).reconcileProjectEvaluations(db);
-    } catch (error) {
-        console.warn('[AI Evaluation] Imported-project reconciliation skipped:', String(error?.message || error).slice(0, 200));
-    }
     const reapAllUnownedRunning = Boolean(startup && process.env.COVAI_WORKER_ENABLED !== 'false');
     const runningFilter = reapAllUnownedRunning
         ? { executionStatus: 'RUNNING' }
@@ -952,7 +944,6 @@ export async function reconcileEvaluations(db = prisma, { startup = false } = {}
     await reconcileRegradeJobs(db);
     for (const job of prepared) {
         const payload = JSON.parse(job.payloadJson || '{}');
-        if (payload.projectEvaluationId) continue;
         if (payload.sourceId) await db.aiEvaluationKnowledgeSource.updateMany({ where: { id: payload.sourceId, status: 'PROCESSING' }, data: { status: 'ERROR', content: '', provenance: { errorCode: 'PREPARATION_INTERRUPTED' } } });
         await db.job.updateMany({ where: { id: job.id, status: { in: ['QUEUED', 'RUNNING'] } }, data: { status: 'FAILED', errorMessage: 'Preparation interrupted; submit a new preparation request', finishedAt: new Date() } });
     }

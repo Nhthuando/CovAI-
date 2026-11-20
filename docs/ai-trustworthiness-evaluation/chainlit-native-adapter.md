@@ -28,12 +28,4 @@ Adapter chứng minh câu trả lời và phiên hội thoại quan sát đượ
 
 ## Kiểm thử
 
-Trong thư mục `server`:
-
-```powershell
-npm run test:evaluation
-$env:RUN_CHATBOT_SANDBOX_TEST = 'true'
-npm run test:evaluation:docker
-```
-
 Các fixture Chainlit thật kiểm tra CLI, FastAPI mount có cookie, streaming, lưu ngữ cảnh giữa turn, tách phiên giữa case và lỗi runtime không bị chấm như câu trả lời thành công. Fixture dùng callback xác định, không gọi mô hình thật và không chứng minh chất lượng một LLM.
