@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Layers,
   BarChart2,
+  PlugZap,
 } from "lucide-react";
 
 /**
@@ -25,6 +26,8 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
   const total = summary?.totalTests || 0;
   const passed = summary?.passedTests || 0;
   const failed = summary?.failedTests || 0;
+  const blockedByExternal = summary?.blockedByExternal || 0;
+  const externalServiceLabels = summary?.externalServices?.map(service => service.label).filter(Boolean).join(', ');
   const flaky = summary?.flakyTests || 0;
   const skipped = summary?.skippedTests || 0;
   const durationMs = summary?.durationMs || 0;
@@ -98,6 +101,12 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
             <span>{failed}</span>
             <span className="font-normal text-[var(--color-text-muted)]">failed</span>
           </span>
+          {blockedByExternal > 0 && (
+            <span title={externalServiceLabels || 'External services'} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <PlugZap size={12} aria-hidden="true" />
+              <span className="font-mono tabular-nums">{blockedByExternal}</span> need keys
+            </span>
+          )}
           {flaky > 0 && (
             <span className="inline-flex items-center gap-1 text-amber-400 font-semibold">
               <AlertTriangle size={13} />

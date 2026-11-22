@@ -3,6 +3,7 @@ import { digest } from './systemTestStaticAnalysis.service.js';
 export const deriveScenarioVerdict = ({ scenario, runs, requirements }) => {
     const attempts = runs.map(run => ({ runIndex: run.index, result: run.testRun.scenarios.find(item => item.testFile === scenario.filePath && item.title === scenario.title) })).filter(item => item.result);
     const statuses = attempts.map(item => item.result.status);
+    const externalDependency = attempts.find(({result}) => result.executionDetails?.externalDependency)?.result.executionDetails.externalDependency ?? null;
     const executionStatus = !attempts.length ? 'BLOCKED' : statuses.includes('failed') && !statuses.includes('passed') ? 'FAIL' : statuses.includes('flaky') || statuses.includes('failed') || statuses.includes('skipped') || attempts.length !== runs.length ? 'WEAK' : statuses.every(status => status === 'passed') ? 'PASS' : 'BLOCKED';
     const criteriaVerified = scenario.criterionIds?.length && scenario.criterionIds.every(id => requirements.criteria?.find(item => item.id === id)?.verified);
     const qualityStatus = executionStatus === 'WEAK' ? 'FLAKY' : scenario.reviewState !== 'REVIEWED' ? 'UNREVIEWED' : criteriaVerified ? 'STRONG' : 'UNVERIFIED';
@@ -11,7 +12,7 @@ export const deriveScenarioVerdict = ({ scenario, runs, requirements }) => {
     if (statuses.includes('flaky') || new Set(statuses).size > 1) reasons.push('INCONSISTENT_REPEAT');
     if (scenario.reviewState !== 'REVIEWED') reasons.push('SCENARIO_REVIEW_REQUIRED');
     if (!criteriaVerified) reasons.push('EXPECTED_OUTCOME_NOT_VERIFIED');
-    return { scenarioKey: scenario.scenarioKey, filePath: scenario.filePath, title: scenario.title, executionStatus, qualityStatus, attempts: attempts.map(({ runIndex, result }) => ({ runIndex, status: result.status, durationMs: result.durationMs })), reasons };
+    return { scenarioKey: scenario.scenarioKey, filePath: scenario.filePath, title: scenario.title, executionStatus, qualityStatus, externalDependency, attempts: attempts.map(({ runIndex, result }) => ({ runIndex, status: result.status, durationMs: result.durationMs })), reasons };
 };
 
 export const buildSystemGaps = ({ report, verdicts }) => {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { buildSystemReportProjection, projectSystemAssessment } from '../services/systemReportProjection.service.js';
+import { deriveScenarioVerdict } from '../services/systemScenarioVerdict.service.js';
 const result = status => ({ index: 1, testRun: { scenarios: [{ testFile: 'auth.spec.js', title: 'Sign in', status }] } });
 describe('saved System Test report facts', () => {
     it('does not fabricate API coverage, requirements or a quality score', () => {
@@ -17,6 +18,29 @@ describe('saved System Test report facts', () => {
         const report = buildSystemReportProjection({ report: { runs: [first, second] } });
         expect(report.execution).toMatchObject({ selected: 2, flaky: 1, passed: 1 });
         expect(report.stability).toMatchObject({ status: 'INCONSISTENT', inconsistent: 1, consistent: 1 });
+    });
+    it('surfaces external dependency evidence from a later run in saved and new results', () => {
+        const externalDependency = {
+            services: [{ id: 'stripe', label: 'Stripe' }],
+            variables: ['STRIPE_SECRET_KEY'],
+            reason: 'EXTERNAL_CALL_FAILED',
+        };
+        const runs = [result('passed'), { ...result('failed'), index: 2 }, { ...result('failed'), index: 3 }];
+        for (const run of runs.slice(1)) run.testRun.scenarios[0].executionDetails = { externalDependency };
+        const scenario = { scenarioKey: 'auth', filePath: 'auth.spec.js', title: 'Sign in' };
+        const reportJson = { runs, scenarioSnapshot: [scenario], scenarioVerdicts: [scenario] };
+        expect(deriveScenarioVerdict({scenario,runs,requirements:{}}).externalDependency).toEqual(externalDependency);
+
+        const summary = {
+            execution: { blockedByExternal: 1 },
+            externalServices: [{ id: 'stripe', label: 'Stripe', scenarioCount: 1, variables: ['STRIPE_SECRET_KEY'] }],
+            scenarios: [{ externalDependency }],
+        };
+        expect(buildSystemReportProjection({report:reportJson})).toMatchObject(summary);
+        reportJson.presentation = { identity: {}, execution: { flaky: 1 }, scenarios: [{ ...scenario, artifacts: [] }] };
+        const projected = projectSystemAssessment({reportJson});
+        expect(projected.reportJson.scenarioVerdicts[0].externalDependency).toEqual(externalDependency);
+        expect(projected.presentation).toMatchObject(summary);
     });
 });
 

@@ -41,7 +41,7 @@ export const computeRetryDelayMs = (error, attempt, baseMs = 1000, random = Math
 };
 
 export const runGeminiRequest = async (request, options = {}) => {
-    const { requestTimeoutMs = 120000, totalTimeoutMs = 300000, maxAttempts = 4, onRetry, onWait, retryBaseDelayMs = 1000 } = options;
+    const { requestTimeoutMs = 120000, totalTimeoutMs = 300000, maxAttempts = 4, onRetry, onWait, retryBaseDelayMs = 1000, getFallbackRequest } = options;
     const deadline = Date.now() + totalTimeoutMs;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         const remaining = deadline - Date.now();
@@ -65,7 +65,12 @@ export const runGeminiRequest = async (request, options = {}) => {
             const message = String(error.message || 'Unknown provider error');
             const status = error.status;
             const transient = error.code === 'AI_REQUEST_TIMEOUT' || status === 429 || status >= 500 || /429|503|fetch failed/.test(message);
-            if (!transient || attempt === maxAttempts) throw error;
+            if (!transient || attempt === maxAttempts) {
+                const remainingMs = deadline - Date.now();
+                const fallback = !controller.signal.aborted && remainingMs > 0 && getFallbackRequest?.(error);
+                if (fallback) return runGeminiRequest(fallback, { requestTimeoutMs, totalTimeoutMs: remainingMs, maxAttempts: 1, onWait });
+                throw error;
+            }
             if (isDailyQuotaError(error)) {
                 // A daily quota cannot recover within this request; retrying only burns another quota unit.
                 console.warn('[Gemini API] daily quota exhausted; not retrying');

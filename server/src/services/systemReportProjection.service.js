@@ -1,7 +1,37 @@
+import { collectExternalRequirements } from './externalDependencyClassifier.service.js';
+
 const list = value => Array.isArray(value) ? value : [];
 const key = row => `${row.filePath || row.testFile || ''}\0${row.title || ''}`;
 const unknownCoverage = () => ({ status: 'NOT_MEASURED', counters: null, reasonCodes: ['NO_RUN_INSTRUMENTATION'] });
 const observation = items => ({ status: items.length ? 'OBSERVED' : 'NOT_CAPTURED', items, observed: items.length, total: null, pct: null });
+
+const withExternalDependencies = (presentation, runs) => {
+    const dependenciesByScenario = new Map();
+    for (const run of runs) for (const row of list(run.testRun?.scenarios)) {
+        const dependency = row.executionDetails?.externalDependency;
+        if (!dependency) continue;
+        const identity = key(row);
+        if (!dependenciesByScenario.has(identity)) dependenciesByScenario.set(identity, []);
+        dependenciesByScenario.get(identity).push(dependency);
+    }
+    const entries = [];
+    let blockedByExternal = 0;
+    const scenarios = presentation.scenarios.map(row => {
+        const dependencies = dependenciesByScenario.get(key(row)) ??
+            list(row.attempts).map(attempt => attempt.executionDetails?.externalDependency).filter(Boolean);
+        const externalDependency = dependencies[0] ?? row.externalDependency ?? null;
+        if (externalDependency) {
+            blockedByExternal++;
+            for (const dependency of dependencies.length ? dependencies : [externalDependency]) {
+                entries.push([row.scenarioKey || key(row), dependency]);
+            }
+        }
+        return {...row,externalDependency};
+    });
+    const externalServices = collectExternalRequirements(entries)
+        .map(({scenarios,...service}) => ({...service,scenarioCount:new Set(scenarios).size}));
+    return {...presentation,scenarios,execution:{...presentation.execution,blockedByExternal},externalServices};
+};
 
 // Project saved facts only. Never consult today's catalog to explain an old run.
 export const buildSystemReportProjection = ({ assessment = {}, report = assessment.reportJson || {}, artifacts = [], scenarioSnapshot = report.scenarioSnapshot } = {}) => {
@@ -44,7 +74,7 @@ export const buildSystemReportProjection = ({ assessment = {}, report = assessme
         if (call.method && call.path) calls.set(`${call.method} ${call.path}`, { method: call.method, path: call.path });
     }
     const requirements = report.requirements || { status: 'NOT_MEASURED', total: null, designed: null, verified: null, criteria: [] };
-    return {
+    return withExternalDependencies({
         schemaVersion: 2,
         identity: { assessmentId: assessment.id || null, snapshotId: assessment.snapshotId || null, suiteVersionId: assessment.suiteVersionId || report.suiteVersionId || null, sourceHash: report.sourceHash || assessment.sourceHash || null, testHash: report.testHash || assessment.testHash || null, requirementRevisionId: assessment.requirementRevisionId || report.requirementRevisionId || null, runner: report.runner || assessment.runner || null, executionMode: report.executionMode || assessment.executionMode || null, createdAt: assessment.createdAt || null },
         execution: counts,
@@ -55,13 +85,24 @@ export const buildSystemReportProjection = ({ assessment = {}, report = assessme
         qualityScore: report.qualityScore?.status === 'CALCULATED' ? report.qualityScore : { status: 'NOT_CALCULATED', value: null, reason: report.qualityScore?.reason || 'REVIEWED_REQUIREMENTS_AND_COMPLETE_EVIDENCE_REQUIRED' },
         comparison:report.comparison || null,
         scenarios:scenarios.sort((a,b)=>({failed:0,flaky:1,blocked:2,canceled:3,notRun:4,skipped:5,passed:6}[a.executionStatus]-{failed:0,flaky:1,blocked:2,canceled:3,notRun:4,skipped:5,passed:6}[b.executionStatus])), gaps: list(report.workflowGaps || report.gaps), limitations: [...list(report.limitations), ...(artifacts.some(item=>!item.runIndex) ? ['Some legacy artifacts have no independent run identity and do not count as complete repeat evidence.'] : []), ...(!catalog.length ? ['Legacy scenario review metadata is unavailable.'] : [])], generatedWith: report.generation || (report.aiUsage ? {usage:report.aiUsage} : null),
-    };
+    }, runs);
 };
 
 export const projectSystemAssessment = (assessment,{artifacts=[]}={}) => {
     if(!assessment)return null;
-    const presentation=assessment.reportJson?.presentation || buildSystemReportProjection({assessment,artifacts});
+    let {reportJson}=assessment;
+    const savedPresentation=reportJson?.presentation;
+    const presentation=savedPresentation
+        ? (savedPresentation.externalServices ? savedPresentation : withExternalDependencies(savedPresentation,list(reportJson.runs)))
+        : buildSystemReportProjection({assessment,artifacts});
     const currentArtifacts=new Map(artifacts.map(item=>[item.id,item]));
     const scenarios=presentation.scenarios.map(row=>({...row,artifacts:row.artifacts.map(item=>currentArtifacts.has(item.id)?{...item,...currentArtifacts.get(item.id)}:item)}));
-    return {...assessment,presentation:{...presentation,scenarios,identity:{...presentation.identity,assessmentId:assessment.id,snapshotId:assessment.snapshotId,createdAt:assessment.createdAt}}};
+    if (Array.isArray(reportJson?.scenarioVerdicts)) {
+        const scenariosByKey=new Map(scenarios.map(row=>[row.scenarioKey || key(row),row]));
+        const scenarioVerdicts=reportJson.scenarioVerdicts.map(verdict=>({
+            ...verdict,externalDependency:verdict.externalDependency ?? scenariosByKey.get(verdict.scenarioKey || key(verdict))?.externalDependency ?? null,
+        }));
+        reportJson={...reportJson,scenarioVerdicts};
+    }
+    return {...assessment,reportJson,presentation:{...presentation,scenarios,identity:{...presentation.identity,assessmentId:assessment.id,snapshotId:assessment.snapshotId,createdAt:assessment.createdAt}}};
 };

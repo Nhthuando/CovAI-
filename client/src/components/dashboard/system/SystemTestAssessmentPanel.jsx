@@ -18,6 +18,7 @@ import { systemEvidenceRequest, downloadSystemAssessmentPdf } from '../../../ser
 import SystemTestImprovementReview from './SystemTestImprovementReview.jsx';
 import SystemTestDimensionsTable from './SystemTestDimensionsTable.jsx';
 import SystemTestScenarioLibrary from './SystemTestScenarioLibrary.jsx';
+import { stripAnsi } from '../../../utils/stripAnsi.js';
 import SystemTestGapNavigator from './SystemTestGapNavigator.jsx';
 
 const selectImprovementGaps = gaps => {
@@ -46,6 +47,7 @@ export default function SystemTestAssessmentPanel({
   onChanged,
   onOpenFile,
   onRerun,
+  onOpenSetup,
 }) {
   const access = useProjectAccess(projectId);
   const [expanded, setExpanded] = useState(true);
@@ -248,14 +250,14 @@ export default function SystemTestAssessmentPanel({
 
         {error && (
           <div className="p-3 rounded-md bg-rose-500/[0.06] border border-[var(--color-border)] border-l-2 border-l-rose-400/75 text-rose-300/90 text-xs flex items-center justify-between">
-            <span>{error}</span>
+          <span>{stripAnsi(error)}</span>
             <button type="button" onClick={() => setError('')} className="underline text-xs cursor-pointer">Dismiss</button>
           </div>
         )}
 
         {assessment?.reportJson?.error && (
           <div className="p-3 rounded-md bg-rose-500/[0.06] border border-[var(--color-border)] border-l-2 border-l-rose-400/75 text-rose-300/90 text-xs">
-            {assessment.reportJson.error}
+          {stripAnsi(assessment.reportJson.error)}
           </div>
         )}
 
@@ -372,6 +374,7 @@ export default function SystemTestAssessmentPanel({
               presentation={assessment?.presentation}
               onRunScenario={onRerun}
               onOpenFile={onOpenFile}
+              onOpenSetup={onOpenSetup}
               onEditScenario={active => onOpenFile?.(active.filePath)}
             />
 

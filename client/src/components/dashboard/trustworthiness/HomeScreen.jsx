@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Code2, FileStack, ListChecks, Play, Plug, ScanSearch } from 'lucide-react';
+import { ArrowRight, BotOff, Check, Code2, FileStack, KeyRound, ListChecks, MessageSquare, Play, Plug, ScanSearch } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { ProgressCircle } from '../../ui/tremor';
@@ -29,6 +29,34 @@ function ToolCard({ icon: Icon, title, description, meta, action, onClick }) {
 }
 
 export default function HomeScreen({ data, capabilities, navigateView }) {
+  const audit = data.designAudit;
+  if (audit?.status === 'READY' && audit.detected === false) {
+    return (
+      <section className="space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <div className="grid size-10 place-items-center rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
+          <BotOff className="size-5" aria-hidden="true" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold text-[var(--color-text)]">No chatbot found in this project</h2>
+          <p className="max-w-prose text-sm text-[var(--color-text-muted)]">CovAI scanned the code and found no AI SDK or chat endpoint. Chatbot evaluation tests apps that answer questions with an AI model, so there is nothing to test here.</p>
+        </div>
+        <div className="space-y-2 text-sm">
+          <h3 className="font-medium text-[var(--color-text)]">What CovAI looked for</h3>
+          <ul className="space-y-2 text-[var(--color-text-secondary)]">
+            <li className="flex items-start gap-2"><Code2 className="mt-0.5 size-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />AI SDKs such as OpenAI, Gemini or Anthropic</li>
+            <li className="flex items-start gap-2"><MessageSquare className="mt-0.5 size-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />A chat API route that sends messages to a model</li>
+            <li className="flex items-start gap-2"><KeyRound className="mt-0.5 size-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" /><span>An LLM API key read from <code>process.env</code></span></li>
+          </ul>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => navigateView('connect', { mode: 'external' })}>My chatbot runs elsewhere</Button>
+          <Button variant="ghost" onClick={() => navigateView('audit')}>Scan again</Button>
+        </div>
+        <p className="text-xs text-[var(--color-text-muted)]">Testing a normal web app? Use System Test instead.</p>
+      </section>
+    );
+  }
+
   const status = getStepStatus(data);
   const next = nextStep(status);
   const quota = capabilities?.quota;
@@ -49,7 +77,6 @@ export default function HomeScreen({ data, capabilities, navigateView }) {
         : "Some checks couldn't be graded, so there's no final verdict.";
   const latency = result?.summary?.latency?.avgMs;
   const score = result?.summary?.score;
-  const audit = data.designAudit;
   const doneCount = steps.filter(step => status[step.key].done).length;
   return (
     <div className="space-y-5">

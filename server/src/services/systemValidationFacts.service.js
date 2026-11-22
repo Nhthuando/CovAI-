@@ -135,7 +135,7 @@ export const extractValidationFacts = ({ files = [], maxFacts = 80 } = {}) => {
         .filter(file => !skippedPath(file.path)).map(file => {
             registerTextFields(file.content, register);
             let ast;
-            if (!/\.html?$/i.test(file.path)) {
+            if (/\.(?:[cm]?[jt]sx?)$/i.test(file.path)) {
                 try {
                     ast = parse(file.content, { sourceType: 'unambiguous', plugins: ['jsx', 'typescript'] });
                 } catch (error) {

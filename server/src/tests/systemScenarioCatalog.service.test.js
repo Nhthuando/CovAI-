@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, jest } from '@jest/globals';
-import { syncSystemScenarioCatalog, evaluateRunReadiness, reviewScenario, updateScenarioDraft, confirmScenarioExpected } from '../services/systemScenarioCatalog.service.js';
+import { describe, it, test, expect, jest } from '@jest/globals';
+import { discoverExecutionScenarios, syncSystemScenarioCatalog, evaluateRunReadiness, reviewScenario, updateScenarioDraft, confirmScenarioExpected } from '../services/systemScenarioCatalog.service.js';
 
 const createFixture = () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-catalog-'));
@@ -25,6 +25,60 @@ const createFixture = () => {
 };
 
 describe('system scenario catalog', () => {
+    test('discovers Playwright scenarios in mixed CommonJS and ESM specs', () => {
+        const { rootDir, filePath } = createFixture();
+        try {
+            const commonJsPath = 'tests/faq.spec.cjs';
+            const esmPath = 'tests/checkout.spec.mjs';
+            const homeTitle = 'READ - Home page loads with correct title and controls';
+            fs.renameSync(path.join(rootDir, filePath), path.join(rootDir, esmPath));
+            fs.writeFileSync(path.join(rootDir, commonJsPath), `
+                const { test, expect } = require('@playwright/test');
+                test.describe('AI FAQ Bot E2E Tests', () => {
+                    test.beforeEach(async ({ page }) => { await page.goto('/'); });
+                    test('${homeTitle}', async ({ page }) => {
+                        await test.step('Action: READ - load home page', async () => {
+                            await expect(page).toHaveTitle('AI FAQ Bot');
+                        });
+                    });
+                    test('READ - FAQ is visible', async ({ page }) => {
+                        await expect(page.getByText('FAQ')).toBeVisible();
+                    });
+                });
+            `);
+            const scenarios = discoverExecutionScenarios({ rootDir, testFiles: [commonJsPath, esmPath] });
+            expect(scenarios.map(({ title, filePath }) => ({ title, filePath }))).toEqual([
+                { title: homeTitle, filePath: commonJsPath },
+                { title: 'READ - FAQ is visible', filePath: commonJsPath },
+                { title: 'checkout', filePath: esmPath },
+            ]);
+            expect(scenarios[0].assertionHashes).toHaveLength(1);
+            expect(scenarios[1].assertionHashes).toHaveLength(1);
+        } finally { fs.rmSync(rootDir, { recursive: true, force: true }); }
+    });
+
+    test.each([
+        ['renamed', "const { test: pwTest } = require('@playwright/test'); pwTest('X', async () => {});"],
+        ['member', "const test = require('@playwright/test').test; test('X', async () => {});"],
+        ['namespace', "const pw = require('@playwright/test'); pw.test('X', async () => {});"],
+    ])('discovers a %s CommonJS Playwright test binding', (_binding, content) => {
+        const { rootDir } = createFixture();
+        try {
+            const filePath = 'tests/binding.spec.cjs';
+            fs.writeFileSync(path.join(rootDir, filePath), content);
+            expect(discoverExecutionScenarios({ rootDir, testFiles: [filePath] }).map(scenario => scenario.title)).toEqual(['X']);
+        } finally { fs.rmSync(rootDir, { recursive: true, force: true }); }
+    });
+
+    test('discovers no scenarios from a non-Playwright require', () => {
+        const { rootDir } = createFixture();
+        try {
+            const filePath = 'tests/helpers.spec.cjs';
+            fs.writeFileSync(path.join(rootDir, filePath), "const { test } = require('./helpers'); test('X', async () => {});");
+            expect(discoverExecutionScenarios({ rootDir, testFiles: [filePath] })).toEqual([]);
+        } finally { fs.rmSync(rootDir, { recursive: true, force: true }); }
+    });
+
     it('executes an imported draft without confirming its business expectations',async()=>{
         const fixture=createFixture();
         try {

@@ -9,6 +9,7 @@ import { suggestUnitTestcases } from '../services/unitTestSuggestion.service.js'
 import { suggestUnitTestcase, applySuggestion, suggestUnitTestcaseAll } from '../controllers/coverage.controller.js';
 import { applyUnitTestSuggestion } from '../services/applyTestSuggestion.service.js';
 import { withPreparedProjectWorkspace } from '../services/projectWorkspacePreparation.service.js';
+import { stagePreparedPublication } from '../services/projectOperationWorkspace.service.js';
 import { validateUnitTestDraft } from '../services/unitTestDraftValidation.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import jwt from 'jsonwebtoken';
@@ -651,6 +652,44 @@ describe('Adversarial Empirical Challenge: Milestone 2 (Transaction Aborts, Malf
             expect(mockDb.coverageFile.upsert).not.toHaveBeenCalled();
             expect(mockDb.coverageSummary.upsert).not.toHaveBeenCalled();
             expect(mockDb.projectSnapshot.update).not.toHaveBeenCalled();
+        });
+
+        test('flushes staged publications once in the transaction with publish disabled', async () => {
+            const project = { id: 'proj-staged', ownerId: 'user-staged', workspaceRevision: 1 };
+            const snapshot = { id: 'snap-staged', projectId: project.id, rootDir: tempDir, project };
+            const operation = {
+                id: 'op-staged-' + Date.now(), status: 'QUEUED', capturedWorkspaceRevision: 1,
+                projectId: project.id, snapshotId: snapshot.id, actorId: project.ownerId, capability: 'ai.use'
+            };
+            const tx = {
+                projectSnapshot: { findUnique: async () => snapshot, findFirst: async () => snapshot },
+                project: {
+                    findUnique: async () => project, findFirst: async () => project,
+                    update: async () => ({ eventSequence: 1 })
+                },
+                projectEvent: { create: async ({ data }) => ({ id: 'evt-staged', ...data }) },
+                projectOperation: {
+                    create: async ({ data }) => ({ ...operation, ...data }),
+                    update: async () => ({ ...operation, status: 'SUCCESS' }),
+                    updateMany: async () => ({ count: 1 }),
+                    findFirst: async () => null,
+                    findUnique: async () => operation
+                },
+                $transaction: async (callback) => typeof callback === 'function' ? callback(tx) : Promise.all(callback),
+                $executeRaw: jest.fn()
+            };
+            setPrismaClient(tx);
+            const called = jest.fn();
+
+            await withPreparedProjectWorkspace({
+                projectId: project.id, snapshotId: snapshot.id, userId: project.ownerId,
+                capability: 'ai.use', expectedWorkspaceRevision: 1, publish: false
+            }, async () => {
+                await stagePreparedPublication(async (transaction) => { called(transaction); });
+            });
+
+            expect(called).toHaveBeenCalledTimes(1);
+            expect(called.mock.calls[0][0]).toBeTruthy();
         });
 
         test('validateUnitTestDraft sets capability to ai.use and publish to false', async () => {

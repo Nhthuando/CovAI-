@@ -1,5 +1,7 @@
 import { attachSocketAuthRecovery, socketAuth } from "../../lib/authSession.js";
 import SystemTestSetupDialog from './system/SystemTestSetupDialog.jsx';
+import { ExternalServicesBanner } from './system/ExternalTestKeyNotices.jsx';
+import { stripAnsi } from '../../utils/stripAnsi.js';
 import { systemTestEntryState } from './system/systemTestEntryModel.js';
 import SystemTestVersionHistory from './system/SystemTestVersionHistory.jsx';
 import useSystemTestWorkspace from '../../hooks/useSystemTestWorkspace.js';
@@ -47,6 +49,21 @@ import {
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
+const countFrameworkSpecs = (list, name) => list
+  .filter(f => String(f?.name || '').toLowerCase().includes(name))
+  .reduce((sum, f) => sum + (Number(f?.testFileCount) || 0), 0);
+
+const pickDefaultSystemFramework = (list = [], current = 'playwright') => {
+  const has = name => list.some(f => String(f?.name || '').toLowerCase().includes(name));
+  const pw = countFrameworkSpecs(list, 'playwright');
+  const cy = countFrameworkSpecs(list, 'cypress');
+  if (pw > 0 && cy === 0) return 'playwright';
+  if (cy > 0 && pw === 0) return 'cypress';
+  if (pw > 0 && cy > 0) return ['playwright', 'cypress'].includes(current) ? current : 'playwright';
+  if (has('cypress') && !has('playwright')) return 'cypress';
+  return 'playwright';
+};
+
 export default function SystemTestDashboard(props) {
   return <SystemTestDashboardWorkspace key={`${props.projectId}:${props.snapshotId}`} {...props} />;
 }
@@ -72,6 +89,10 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
 
   // Data states
   const [frameworksData, setFrameworksData] = useState(null);
+  const frameworkOptions = [
+    { value: 'playwright', label: 'Playwright' },
+    { value: 'cypress', label: 'Cypress' },
+  ].map(option => ({ ...option, count: countFrameworkSpecs(frameworksData?.frameworks || [], option.value) }));
   const [discoveryError, setDiscoveryError] = useState(null);
   const [results, setResults] = useState(null);
   const selectionKey = [snapshotId, activeFramework, executionMode].join(':');
@@ -99,18 +120,22 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
   const [isGeneratorOpen, setIsGeneratorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [focusServiceId, setFocusServiceId] = useState();
   const [setupReport, setSetupReport] = useState(null);
   const [checkingSetup, setCheckingSetup] = useState(false);
   const runRequestRef = useRef(false);
   const pendingRunRef = useRef(null);
   const [inspectedScenario, setInspectedScenario] = useState(null);
-  const assessmentExecution = workspace.assessment?.presentation?.execution;
+  const assessmentPresentation = workspace.assessment?.presentation;
+  const assessmentExecution = assessmentPresentation?.execution;
   const metricsSummary = assessmentExecution ? {
     ...summary,
     hasRun: true,
     totalTests: assessmentExecution.selected,
     passedTests: assessmentExecution.passed,
     failedTests: assessmentExecution.failed,
+    blockedByExternal: assessmentExecution.blockedByExternal ?? summary?.blockedByExternal,
+    externalServices: assessmentPresentation.externalServices ?? summary?.externalServices,
     flakyTests: assessmentExecution.flaky,
     skippedTests: assessmentExecution.skipped,
     durationMs: assessmentExecution.elapsedMs,
@@ -170,7 +195,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       const discoveryKey = `${projectId}:${snapshotId}`;
       if (frameworkDiscoveryRef.current !== discoveryKey) {
         frameworkDiscoveryRef.current = discoveryKey;
-        if (list.some(f => f.name?.toLowerCase().includes('cypress')) && !list.some(f => f.name?.toLowerCase().includes('playwright'))) setActiveFramework('cypress');
+        setActiveFramework(prev => pickDefaultSystemFramework(list, prev));
       }
     }).catch(err => {
       if (ignore) return;
@@ -421,7 +446,13 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       );
     } finally { runRequestRef.current = false; }
   };
-  const setupDialog = setupOpen ? <SystemTestSetupDialog projectId={projectId} snapshotId={snapshotId} onClose={() => {pendingRunRef.current=null;setSetupOpen(false);}} onChanged={refreshData} onStatus={setSetupReport} onReady={() => {const pending=pendingRunRef.current;if(pending){pendingRunRef.current=null;setSetupOpen(false);void handleRunTests(pending.onlyScenario,pending.selectedScenarios);}}} runtimeMessage={error} onGenerate={() => {pendingRunRef.current=null;setSetupOpen(false);setIsGeneratorOpen(true);}} /> : null;
+  function openExternalSetup(serviceId) {
+    setFocusServiceId(serviceId);
+    setSetupOpen(true);
+  }
+
+  const externalBanner = <ExternalServicesBanner snapshotId={snapshotId} setup={setupReport} summary={summary} onOpenSetup={openExternalSetup} />;
+  const setupDialog = setupOpen ? <SystemTestSetupDialog focusServiceId={focusServiceId} projectId={projectId} snapshotId={snapshotId} onClose={() => {pendingRunRef.current=null;setFocusServiceId(undefined);setSetupOpen(false);}} onChanged={refreshData} onStatus={setSetupReport} onReady={() => {const pending=pendingRunRef.current;if(pending){pendingRunRef.current=null;setFocusServiceId(undefined);setSetupOpen(false);void handleRunTests(pending.onlyScenario,pending.selectedScenarios);}}} runtimeMessage={error} onGenerate={() => {pendingRunRef.current=null;setFocusServiceId(undefined);setSetupOpen(false);setIsGeneratorOpen(true);}} /> : null;
 
   const entryState = systemTestEntryState({discovery:frameworksData,error:discoveryError,activeJob:runningTests || !!activeJobId});
   const hasNoTests = entryState === 'empty';
@@ -465,6 +496,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
         {isGeneratorOpen && (
           <SystemTestGeneratorModal
             isOpen={isGeneratorOpen}
+            onOpenSetup={openExternalSetup}
             onClose={() => {
               setIsGeneratorOpen(false);
               refreshData();
@@ -485,13 +517,15 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
 
   // If in Report View mode, render SystemTestReportView
   if (currentView === "report") {
-    return (
+    return (<>
       <SystemTestReportView
         assessment={workspace.assessment}
         snapshotId={snapshotId}
         onBack={() => setCurrentView("dashboard")}
+        onOpenSetup={openExternalSetup}
       />
-    );
+      {setupDialog}
+    </>);
   }
 
   return (
@@ -505,7 +539,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
         </div>
       </div>
       <label className="flex flex-wrap items-center gap-3 text-xs">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} ? {row.runner}</option>)}</select></label>
-      {workspace.error && <p role="alert" className="text-sm text-rose-600">{workspace.error}</p>}
+      {workspace.error && <p role="alert" className="text-sm text-rose-600">{stripAnsi(workspace.error)}</p>}
       {workspace.nextCursor && <button type="button" className="text-xs underline" onClick={workspace.loadMore}>Load older assessments</button>}
       <SystemTestMetricsCards summary={metricsSummary} />
 
@@ -513,14 +547,35 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       <button type="button" className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs" onClick={() => setHistoryOpen(true)}>Version history</button>
       {setupDialog}
       {setupReport && !setupReport.ready && <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">Startup setup needs attention.<button type="button" onClick={() => setSetupOpen(true)} className="font-medium underline">Review setup</button></p>}
+      {externalBanner}
       {/* Top Action Bar */}
       <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         {/* Engine Badge */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border border-indigo-500/20 text-xs font-semibold">
             <ShieldCheck size={14} />
             {activeFramework === 'cypress' ? 'Cypress' : 'Playwright'} / {modeLabel}
           </span>
+          {frameworkOptions.every(({ count }) => count > 0) && (
+            <div role="group" aria-label="System test framework" className="inline-flex gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
+              {frameworkOptions.map(({ value, label, count }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={activeFramework === value}
+                  disabled={runningTests || checkingSetup}
+                  onClick={() => setActiveFramework(value)}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors duration-150 disabled:opacity-50 ${
+                    activeFramework === value
+                      ? 'bg-[var(--color-surface-secondary)] text-[var(--color-text)]'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                  }`}
+                >
+                  {label} <span className="font-mono tabular-nums">{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {onOpenJobQueue && <CoverageJobQueueButton onClick={onOpenJobQueue} running={runningTests} />}
@@ -540,8 +595,6 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       </div>
 
       {historyOpen && <SystemTestVersionHistory projectId={projectId} snapshotId={snapshotId} executionMode={executionMode} onClose={() => setHistoryOpen(false)} onChanged={refreshData} onCheck={data => { activeJobRef.current=data.jobId; setActiveJobId(data.jobId); setActiveAssessmentId(data.assessmentId); setRunningTests(true); setActiveSubTab('live'); }} />}
-      {setupDialog}
-
       {/* Toolbar: which result is shown, and secondary actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -610,9 +663,9 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
         </div>
       </div>
 
-      {workspace.error && <SystemTestErrorNotice message={workspace.error} />}
+      {workspace.error && <SystemTestErrorNotice message={stripAnsi(workspace.error)} />}
       {setupReport && !setupReport.ready && <p className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] border-l-2 border-l-amber-500/70 bg-[var(--color-surface)] px-3.5 py-2.5 text-xs text-[var(--color-text-secondary)]"><span>Startup setup needs attention.</span><button type="button" onClick={() => setSetupOpen(true)} className="font-medium text-[var(--color-text)] underline cursor-pointer">Review setup</button></p>}
-      <SystemTestMetricsCards coverageTiers={workspace.assessment?.coverage?.tiers || summary?.coverage?.tiers} summary={workspace.assessment?.presentation ? {...summary,hasRun:true,totalTests:workspace.assessment.presentation.execution.selected,passedTests:workspace.assessment.presentation.execution.passed,failedTests:workspace.assessment.presentation.execution.failed,flakyTests:workspace.assessment.presentation.execution.flaky,skippedTests:workspace.assessment.presentation.execution.skipped,durationMs:workspace.assessment.presentation.execution.elapsedMs,runner:workspace.assessment.runner} : summary} />
+      <SystemTestMetricsCards coverageTiers={workspace.assessment?.coverage?.tiers || summary?.coverage?.tiers} summary={metricsSummary} />
 
       {/* Real-time Progress Banner if running */}
       {runningTests && jobProgress && (
@@ -652,7 +705,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       )}
 
       {/* Global Error Banner */}
-      <SystemTestErrorNotice message={error} onDismiss={() => setError(null)} onOpenLogs={onOpenJobQueue} onOpenSetup={() => setSetupOpen(true)} />
+        <SystemTestErrorNotice message={stripAnsi(error)} onDismiss={() => setError(null)} onOpenLogs={onOpenJobQueue} onOpenSetup={() => setSetupOpen(true)} />
 
       {/* Sub-Tab Navigation Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)]">
@@ -733,6 +786,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
             refreshKey={refreshKey}
             onOpenFile={onOpenFile}
             onRerun={handleRunTests}
+            onOpenSetup={openExternalSetup}
             runner={activeFramework}
             executionMode={executionMode}
             onChanged={() => setRefreshKey(value => value + 1)}
@@ -846,9 +900,9 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
               {/* Metric Summary Cards */}
               <style>{`@media (prefers-reduced-motion: reduce) { .system-test-workspace *, .system-test-workspace *::before { animation: none!important; transition: none!important; scroll-behavior: auto!important; } }`}</style>
       <label className="flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-secondary)]">Assessment<select aria-label="Selected assessment" value={workspace.assessment?.id || ''} onChange={event => workspace.selectAssessment(event.target.value)} className="max-w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs text-[var(--color-text)]"><option value="">Latest completed assessment</option>{workspace.history.filter(row => row.status === 'COMPLETED').map(row => <option key={row.id} value={row.id}>{new Date(row.createdAt).toLocaleString('en-GB')} · {row.runner}</option>)}</select></label>
-      {workspace.error && <p role="alert" className="text-xs text-rose-400">{workspace.error}</p>}
+      {workspace.error && <p role="alert" className="text-xs text-rose-400">{stripAnsi(workspace.error)}</p>}
       {workspace.nextCursor && <button type="button" className="text-xs underline cursor-pointer" onClick={workspace.loadMore}>Load older assessments</button>}
-      <SystemTestMetricsCards summary={workspace.assessment?.presentation ? {...summary,hasRun:true,totalTests:workspace.assessment.presentation.execution.selected,passedTests:workspace.assessment.presentation.execution.passed,failedTests:workspace.assessment.presentation.execution.failed,flakyTests:workspace.assessment.presentation.execution.flaky,skippedTests:workspace.assessment.presentation.execution.skipped,durationMs:workspace.assessment.presentation.execution.elapsedMs,runner:workspace.assessment.runner} : summary} />
+      <SystemTestMetricsCards summary={metricsSummary} />
 
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
                 <p className="font-medium text-[var(--color-text)]">Executed Spec Files in this run:</p>
@@ -884,6 +938,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
                   testFiles={testFiles}
                   snapshotId={snapshotId}
                   onInspect={setInspectedScenario}
+                  onOpenSetup={openExternalSetup}
                   onOpenEditor={target => {
                     onOpenFile?.(target.filePath);
                     setEditorTarget(target);
@@ -907,6 +962,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
                     snapshotId={snapshotId}
                     testFiles={testFiles}
                     onInspectBreakpoint={(scenario) => setInspectedScenario(scenario)}
+                    onOpenSetup={openExternalSetup}
                     onOpenEditor={({ filePath, scenarioId, initialMode }) => {
                       onOpenFile?.(filePath);
                       setEditorTarget({
@@ -945,6 +1001,7 @@ function SystemTestDashboardWorkspace({ projectId, snapshotId, focusScenario = n
       {isGeneratorOpen && (
         <SystemTestGeneratorModal
           isOpen={isGeneratorOpen}
+          onOpenSetup={openExternalSetup}
           onClose={() => setIsGeneratorOpen(false)}
           snapshotId={snapshotId}
           projectId={projectId}

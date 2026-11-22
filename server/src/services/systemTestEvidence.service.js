@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { parse } from '@babel/parser';
+import traverseModule from '@babel/traverse';
 import { pathToFileURL } from 'node:url';
 import { containedPath } from './fullSystemLifecycle.service.js';
 import { ServiceError } from '../utils/serviceError.js';
@@ -11,16 +12,54 @@ import { relocateSystemTestNavigation } from '../utils/systemTestNavigation.js';
 import { currentProjectOperation } from './projectOperationWorkspace.service.js';
 import { resolveSystemRepositoryRoot } from './fullSystemConfig.service.js';
 
+const traverse = traverseModule.default || traverseModule;
+const playwrightTestMethods = new Set([
+  'step', 'info', 'describe', 'beforeEach', 'afterEach', 'beforeAll', 'afterAll',
+  'skip', 'fixme', 'fail', 'slow', 'setTimeout', 'use', 'extend', 'only', 'expect',
+]);
+const memberName = node => node?.computed ? node.property?.value : node?.property?.name;
+const requiresPlaywright = node => node?.type === 'CallExpression' && node.callee?.name === 'require' &&
+  node.arguments[0]?.value === '@playwright/test';
+
+const isPlaywrightTestBinding = (scope, receiver) => {
+  if (receiver?.type !== 'Identifier') return false;
+  const binding = scope.getBinding(receiver.name)?.path;
+  if (binding?.isImportSpecifier()) {
+    return (binding.node.imported.name || binding.node.imported.value) === 'test' &&
+      binding.parent.source.value === '@playwright/test';
+  }
+  if (!binding?.isVariableDeclarator() || binding.scope.getBinding('require')) return false;
+  const { id, init } = binding.node;
+  if (id.type === 'Identifier') return memberName(init) === 'test' && requiresPlaywright(init.object);
+  return id.type === 'ObjectPattern' && requiresPlaywright(init) && id.properties.some(property =>
+    property.type === 'ObjectProperty' && (property.key.name || property.key.value) === 'test' &&
+    property.value.name === receiver.name);
+};
+
 export const validateFullSystemTest = (code) => {
   const ast=parse(code,{sourceType:'module',plugins:['typescript','jsx']});
-  const visit=node => {
-    if (!node || typeof node !== 'object') return;
-    if (node.type === 'CallExpression' && ['fulfill','abort','routeFromHAR','route','addInitScript','intercept'].includes(node.callee?.property?.name || node.callee?.property?.value)) {
-      throw new ServiceError('Full-system tests must call the real backend. API mocks, request routes, HAR replay and init-script replacements are not allowed; regenerate tests in full-system mode.',422);
-    }
-    for(const value of Object.values(node)) {if(Array.isArray(value)) value.forEach(visit); else if(value?.type) visit(value);}
-  };
-  visit(ast);
+  traverse(ast, {
+    'CallExpression|OptionalCallExpression'(call) {
+      const { callee } = call.node;
+      const method = memberName(callee);
+      if (method && !playwrightTestMethods.has(method) && isPlaywrightTestBinding(call.scope, callee.object)) {
+        throw new ServiceError(`Use page.${method}() instead of test.${method}() in Playwright tests`,422);
+      }
+      if (call.isCallExpression() && callee.type === 'MemberExpression' && method === 'step' &&
+          callee.object.type === 'Identifier' && callee.object.name === 'test') {
+        const callback = call.node.arguments.slice(1).find(argument =>
+          argument.type === 'FunctionExpression' || argument.type === 'ArrowFunctionExpression');
+        if (callback?.params[0]?.type === 'ObjectPattern') {
+          throw new ServiceError('test.step callbacks do not receive fixtures such as page or request. Destructure fixtures in the test function, e.g. test(title, async ({ page, request }) => { ... }), and use them inside steps.', 422);
+        }
+      }
+      if (['describe', 'step'].includes(memberName(callee?.object)) &&
+          isPlaywrightTestBinding(call.scope, callee.object.object)) return;
+      if (call.isCallExpression() && ['fulfill','abort','routeFromHAR','route','addInitScript','intercept'].includes(callee?.property?.name || callee?.property?.value)) {
+        throw new ServiceError('Full-system tests must call the real backend. API mocks, request routes, HAR replay and init-script replacements are not allowed; regenerate tests in full-system mode.',422);
+      }
+    },
+  });
 };
 
 // Playwright transpiles import syntax to require() in CommonJS packages.
@@ -194,6 +233,13 @@ const test=base.extend({
     for (const method of ['get','post','put','patch','delete','head','fetch']) {
       const original=request[method].bind(request);
       request[method]=async (...args) => {
+        if (typeof args[0] === 'string' && URL.canParse(args[0])) {
+          const target = new URL(args[0]);
+          const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
+          if (['http:', 'https:'].includes(target.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname) && port !== Number(${JSON.stringify(frontendPort)})) {
+            args[0] = backend + target.pathname + target.search;
+          }
+        }
         const response=await original(...args);
         ${measurementPreparation ? `if(response.headers()['x-covai-measurement-id'] !== ${JSON.stringify(measurementPreparation.manifest.measurementId)}) throw new Error('Backend response does not belong to this AUT measurement');` : ''}
         if(response.status() >= 400) testInfo.annotations.push({type:'api-failure',description:method.toUpperCase()+' '+new URL(response.url()).pathname+': HTTP '+response.status()});

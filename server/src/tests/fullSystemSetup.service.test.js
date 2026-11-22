@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { jest, describe, it, expect, afterEach } from '@jest/globals';
+import { describe, test, expect } from '@jest/globals';
+import { jest, it, afterEach } from '@jest/globals';
 import { ensureFullSystemSetup, validateGeneratedSchema } from '../services/fullSystemSetup.service.js';
 import { readFullSystemConfig, resolveSystemRepositoryRoot } from '../services/fullSystemConfig.service.js';
 
@@ -21,6 +22,70 @@ const generate = value => jest.fn().mockResolvedValue(JSON.stringify(value));
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root,{recursive:true,force:true}); });
 
 describe('automatic Full Stack setup', () => {
+    test('infers a backend-only plan for Express with a server entry and no start script', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-setup-'));
+        roots.push(root);
+        write(root, 'package.json', JSON.stringify({
+            main: 'index.js',
+            scripts: { test: 'echo "Error: no test specified" && exit 1' },
+            dependencies: { cors: '2', express: '5', stripe: '18' },
+        }));
+        write(root, 'app.js', "const app = require('express')(); const stripe = require('stripe')('YOUR_STRIPE_SECRET_KEY');"
+            + "app.get('/api/example', (_req, res) => res.send('ok')); app.listen(4000);");
+
+        const result = await ensureFullSystemSetup({ rootDir: root });
+
+        expect(result.config).toMatchObject({ backendOnly: true, unified: true, database: null, backend: { directory: '.' } });
+    });
+
+    test.each([
+        ['serves plain HTML separately from an API-only Express app', false, false, { frontend: { directory: '.', static: true }, unified: false }],
+        ['preserves a Vite frontend topology', true, false, { frontend: { directory: '.' }, unified: true }],
+        ['preserves a backend that already serves HTML', false, true, { frontend: { directory: '.' }, unified: true, backendOnly: true }],
+    ])('%s', async (_name, vite, servesHtml, expected) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-static-setup-'));
+        roots.push(root);
+        write(root, 'index.html', '<title>FAQ</title>');
+        write(root, 'script.js', 'fetch("/api/faq");');
+        write(root, 'style.css', 'body { margin: 0; }');
+        write(root, 'package.json', JSON.stringify({
+            scripts: { start: 'node server.js', ...(vite ? { dev: 'vite' } : {}) },
+            dependencies: { express: '5', ...(vite ? { vite: '7' } : {}) },
+        }));
+        write(root, 'server.js', "import express from 'express'; const app = express(); app.use('/api/faq', router);"
+            + (servesHtml ? "app.use(express.static('.'));" : ''));
+        const result = await ensureFullSystemSetup({ rootDir: root });
+        expect(result.config).toMatchObject(expected);
+        expect(result.config.frontend).toEqual(expected.frontend);
+        if (!servesHtml) expect(result.config).not.toHaveProperty('backendOnly');
+        expect(readFullSystemConfig(root)).toEqual(result.config);
+    });
+
+    test('upgrades an existing API-only config in memory when the project has a static frontend', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-static-setup-'));
+        roots.push(root);
+        write(root, 'index.html', '<title>FAQ</title>');
+        write(root, 'server.js', "import express from 'express'; const app = express(); app.use('/api/faq', express.Router());");
+        write(root, 'package.json', JSON.stringify({
+            scripts: { start: 'node server.js' },
+            dependencies: { express: '5' },
+        }));
+        const configPath = '.covai/system-test.json';
+        const existing = JSON.stringify({
+            frontend: { directory: '.' },
+            backend: { directory: '.', healthPath: '/', readiness: 'http' },
+            database: null,
+            backendOnly: true,
+            unified: true,
+        });
+        write(root, configPath, existing);
+
+        const result = await ensureFullSystemSetup({ rootDir: root });
+
+        expect(result).toMatchObject({ generated: false, config: { frontend: { static: true }, unified: false } });
+        expect(fs.readFileSync(path.join(root, configPath), 'utf8')).toBe(existing);
+    });
+
     it('automatically prepares an API-only SQL runtime and reuses a supplied generated schema',async()=>{
         const root=fs.mkdtempSync(path.join(os.tmpdir(),'covai-api-sql-'));roots.push(root);
         write(root,'package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5',pg:'8'}}));

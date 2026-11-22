@@ -54,6 +54,9 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
         generatedTests=await (dependencies.prepareMissing || prepareMissingSystemTests)({rootDir,jobId,model:input.model,signal,onProgress:(progress,message)=>onProgress(message,progress)});
         resolved=discover();
     }
+    for (const { filePath, reason } of resolved.excludedTests ?? []) {
+        await checkpoint(29, `Skipped ${filePath}: ${reason}`);
+    }
     const executionOnly=input.autoDiscover && !input.prepareOnly;
     const catalog=executionOnly?discoverExecutionScenarios({rootDir,testFiles:resolved.testFiles}):undefined;
     return {rootDir, input: parseRequest(assessmentRequest, {...resolved,...(input.headed!==undefined?{headed:input.headed}:{}),...(executionOnly?{reviewMode:'execution',scenarioIds:catalog.map(row=>row.id)}:{})}),catalog,generatedTests,aiUsage:currentAiJobBudget()?.snapshot()};

@@ -62,6 +62,48 @@ describe("resolveSystemTestExecution", () => {
     expect(result.command).toContain("--retries=1");
   });
 
+  it("does not guess a runner when both are dependencies and there is no stronger evidence", () => {
+    const rootDir = fixture({
+      "package.json": JSON.stringify({ dependencies: { "@playwright/test": "^1.0.0", cypress: "^13.0.0" } }),
+    });
+    expect(() => resolveSystemTestExecution({ rootDir })).toThrow("No executable Playwright or Cypress configuration");
+  });
+
+  it("selects Cypress files over a Playwright dependency", () => {
+    const rootDir = fixture({
+      "package.json": JSON.stringify({ devDependencies: { "@playwright/test": "^1.0.0" } }),
+      "cypress/e2e/a.cy.js": "it('opens', () => cy.visit('/'));",
+    });
+    expect(resolveSystemTestExecution({ rootDir }).runner).toBe("cypress");
+  });
+
+  it("prefers the Cypress E2E wrapper script over its runner script", () => {
+    const rootDir = fixture({
+      "package.json": JSON.stringify({
+        devDependencies: { cypress: "^13.0.0" },
+        scripts: {
+          "test:e2e": "start-server-and-test start http://localhost:3000 cy:run",
+          "cy:run": "cypress run",
+        },
+      }),
+    });
+    const result = resolveSystemTestExecution({ rootDir });
+    expect(result.runner).toBe("cypress");
+    expect(result.command).toContain("npm run --silent test:e2e");
+  });
+
+  it("uses the Playwright dependency when the preferred script only runs Cypress", () => {
+    const rootDir = fixture({
+      "package.json": JSON.stringify({
+        devDependencies: { "@playwright/test": "^1.0.0" },
+        scripts: { "test:e2e": "cypress run" },
+      }),
+    });
+    const result = resolveSystemTestExecution({ rootDir, runner: "playwright" });
+    expect(result.runner).toBe("playwright");
+    expect(result.command).not.toContain("test:e2e");
+  });
+
   it("runs Playwright config with npx playwright test when config is present", () => {
     const rootDir = fixture({
       "package.json": JSON.stringify({ devDependencies: { "@playwright/test": "^1.0.0" } }),

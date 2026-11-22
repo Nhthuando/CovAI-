@@ -9,6 +9,7 @@ import { requestedAiModel } from '../utils/selectedAiModel.js';
 import { scheduleUnitTestPostApplyAnalysis } from '../services/unitTestPostApplyAnalysis.service.js';
 import { resolveSystemScreenshot } from '../services/systemScreenshotPath.service.js';
 import { coverageSummaryFor } from '../services/systemAssessmentContract.service.js';
+import { collectExternalRequirements } from '../services/externalDependencyClassifier.service.js';
 import { deriveRunStatusNotices } from '../services/testResultParser.service.js';
 import { parseSystemTestResultQuery } from '../validators/systemTestResultQuery.validator.js';
 import fs from "fs";
@@ -4678,7 +4679,7 @@ export const getSystemTestSummary = async (req, res) => {
       },
       orderBy: { createdAt: "desc" },
       include: {
-        // Execution payloads are fetched only for the pinned scenario run.
+        // Execution payloads are fetched separately for failed scenarios in the latest run.
         scenarios: { omit: { executionDetails: true } },
         testFiles: true,
       },
@@ -4728,6 +4729,8 @@ export const getSystemTestSummary = async (req, res) => {
           passedTests: 0,
           failed: 0,
           failedTests: 0,
+          blockedByExternal: 0,
+          externalServices: [],
           flaky: 0,
           flakyTests: 0,
           durationMs: 0,
@@ -4749,6 +4752,17 @@ export const getSystemTestSummary = async (req, res) => {
     const totalTests = latestRun.totalTests || 0;
     const passedTests = latestRun.passedTests || 0;
     const failedTests = latestRun.failedTests || 0;
+    const failedScenarios = latestRun.scenarios.some(scenario => scenario.status === "failed")
+      ? await prisma.testScenario.findMany({
+          where: { testRun: { id: latestRun.id }, status: "failed" },
+          select: { title: true, executionDetails: true },
+        })
+      : [];
+    const blockedScenarios = failedScenarios
+      .filter(scenario => scenario.executionDetails?.externalDependency)
+      .map(scenario => [scenario.title, scenario.executionDetails.externalDependency]);
+    const externalServices = collectExternalRequirements(blockedScenarios)
+      .map(({ scenarios, ...service }) => ({ ...service, scenarioCount: scenarios.length }));
     const flakyTests = latestRun.flakyTests || 0;
     const durationMs = latestRun.durationMs || 0;
     const passRatePct =
@@ -4876,6 +4890,8 @@ export const getSystemTestSummary = async (req, res) => {
         passedTests,
         failed: failedTests,
         failedTests,
+        blockedByExternal: blockedScenarios.length,
+        externalServices,
         flaky: flakyTests,
         flakyTests,
         skippedTests: latestRun.skippedTests || 0,
@@ -5009,6 +5025,7 @@ export const getSystemTestScenarios = async (req, res) => {
       status: s.status,
       durationMs: s.durationMs ?? null,
       executionDetails: s.executionDetails || null,
+      externalDependency: s.executionDetails?.externalDependency || null,
       failureMessages: s.failureMessages || [],
       testFile: s.testFile || "unknown",
       failureBreakpoint: {
@@ -5315,13 +5332,31 @@ export const generateColdStartSystemTestsController = async (req, res) => {
       message: "Draft generated. Review the tests before applying.",
     });
   } catch (error) {
-    return res.status(error.statusCode || 500).json({
+    if (!error.statusCode || error.statusCode >= 500) {
+      console.error("[generateColdStartSystemTests] Generation failed:", error);
+    }
+    const providerBusy = !error.statusCode &&
+      (error?.status === 503 || error?.status === 429 ||
+        /\b(503|429)\b|high demand|overloaded|Service Unavailable/i.test(String(error?.message || "")));
+    if (providerBusy) {
+      return res.status(503).json({
+        success: false,
+        code: "AI_PROVIDER_BUSY",
+        details: error.details,
+        message: "The AI model is busy right now. Retry in a minute or choose another model.",
+      });
+    }
+    const timedOut = !error.statusCode &&
+      (error?.name === "TimeoutError" || error?.name === "AbortError");
+    return res.status(error.statusCode || (timedOut ? 504 : 500)).json({
       success: false,
       code: error.code,
       details: error.details,
       message: error.statusCode
         ? error.message
-        : "System Test generation failed. Check the job log and try again.",
+        : timedOut
+          ? "System Test generation timed out. Retry with fewer target routes."
+          : "System Test generation failed because of an unexpected server error. Retry; if it repeats, check the server log.",
     });
   } finally {
     req.off?.("aborted", onAbort);

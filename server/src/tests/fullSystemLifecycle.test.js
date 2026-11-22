@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {jest,it,expect,beforeEach,afterEach} from '@jest/globals';
+import { fileURLToPath } from 'node:url';
+import { describe, test, expect, jest, it, beforeEach, afterEach } from '@jest/globals';
 
 const prepare=jest.fn(),environment=jest.fn(),setup=jest.fn(),inspect=jest.fn();
 const provision=jest.fn(),reserve=jest.fn(),start=jest.fn(),stop=jest.fn(),seed=jest.fn();
+const spawn=jest.fn();
+await jest.unstable_mockModule('node:child_process',()=>({...jest.requireActual('node:child_process'),spawn}));
 await jest.unstable_mockModule('../services/fullSystemRuntime.service.js',()=>({prepareFullSystemPackage:prepare,readAssessmentTestEnvironment:environment}));
 await jest.unstable_mockModule('../services/fullSystemSetup.service.js',()=>({ensureFullSystemSetup:setup,inspectSystemPackageSource:inspect}));
 await jest.unstable_mockModule('../services/systemRuntimeResources.service.js',()=>({provisionSystemResources:provision}));
@@ -25,6 +28,53 @@ beforeEach(()=>{
     start.mockResolvedValue({started:true,pid:123,port:43123});
 });
 afterEach(()=>fs.rmSync(root,{recursive:true,force:true}));
+
+test('returns 422 when the backend has no startup script or server entry file', async () => {
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ main: 'index.js' }));
+    inspect.mockReturnValue({ packages: [{ directory: '.', scripts: {} }], files: [] });
+    start.mockResolvedValue({ started: false });
+
+    await expect(startFullSystem({ rootDir: root })).rejects.toMatchObject({
+        statusCode: 422,
+        message: expect.stringContaining('No application start script or server entry file (server.js, app.js, index.js) was found.'),
+    });
+});
+
+describe('backend NODE_OPTIONS ignores imported project options', () => {
+    test.each([
+        ['keeps the resource mock before the port preload and IPv4 option', '--require=/mock.cjs', '--require=/mock.cjs ', ' --dns-result-order=ipv4first'],
+        ['uses the port preload and IPv4 option when resource options are undefined', undefined, '', ' --dns-result-order=ipv4first'],
+        ['keeps the existing IPv4 option once', '--dns-result-order=ipv4first', '--dns-result-order=ipv4first ', ''],
+    ])('%s', async (_name, resourceNodeOptions, expectedPrefix, expectedSuffix) => {
+        environment.mockReturnValue({ NODE_OPTIONS: '--require=/project.cjs' });
+        provision.mockResolvedValue({ environment: { NODE_OPTIONS: resourceNodeOptions }, cleanup });
+        const preload = fileURLToPath(new URL('../utils/autPortOverride.cjs', import.meta.url)).replaceAll('\\', '/');
+        const recorder = fileURLToPath(new URL('../utils/externalCallRecorder.cjs', import.meta.url)).replaceAll('\\', '/');
+
+        const runtime = await startFullSystem({ rootDir: root });
+        await runtime.cleanup();
+
+        expect(start.mock.calls[0][0].env.NODE_OPTIONS).toBe(`${expectedPrefix}--require="${preload}" --require="${recorder}"${expectedSuffix}`);
+    });
+});
+
+test('skips Docker exec for PostgreSQL init SQL in mock mode', async () => {
+    const initSql = '.covai/generated-schema.sql';
+    config.database = { engine: 'postgres', initSql };
+    fs.mkdirSync(path.join(root, '.covai'));
+    fs.writeFileSync(path.join(root, initSql), 'CREATE TABLE todos (id INTEGER);');
+    provision.mockResolvedValue({ mode: 'mock', environment: {}, sqlContainer: null, cleanup });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+        const runtime = await startFullSystem({ rootDir: root });
+        expect(spawn.mock.calls.some(([command, args]) => command === 'docker' && args[0] === 'exec')).toBe(false);
+        expect(warn).toHaveBeenCalledWith('[fullSystemLifecycle] Skipping init SQL for the in-memory database mock:', initSql);
+        await runtime.cleanup();
+    } finally {
+        warn.mockRestore();
+    }
+});
 
 it('provides owned URLs before validating startup and always releases the owned runtime',async()=>{
     const runtime=await startFullSystem({rootDir:root});

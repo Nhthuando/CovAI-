@@ -2,17 +2,68 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {ServiceError} from '../utils/serviceError.js';
 import {operationAbortReason} from './systemOperationError.service.js';
 import {ensureSystemDatabaseMockPreload} from './databaseMockTemplate.service.js';
 const exec=promisify(execFile);
+const dockerExec = (args, options = {}) =>
+    exec('docker', args, {timeout:120000, windowsHide:true, maxBuffer:2*1024*1024, ...options});
+const instanceHost = os.hostname();
+const instanceUuid = crypto.randomUUID();
+export const SYSTEM_RUNTIME_INSTANCE_ID = `${instanceHost}:${process.pid}:${instanceUuid}`;
+
+const isProcessAlive = pid => {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return error.code === 'EPERM';
+    }
+};
+
+export const sweepOrphanedSystemContainers = async ({
+    docker = dockerExec, isOwnerAlive = isProcessAlive,
+} = {}) => {
+    try {
+        const {stdout} = await docker([
+            'ps', '-a', '--filter', 'label=covai.system-test=true',
+            '--format', '{{.ID}} {{.Label "covai.owner"}}',
+        ], {timeout:10000});
+        const removed = [];
+        for (const row of stdout.split(/\r?\n/)) {
+            const [id, owner] = row.trim().split(/\s+/, 2);
+            if (!id) continue;
+            if (!owner) {
+                removed.push(id);
+                continue;
+            }
+            const [host, pidText, uuid, ...extra] = owner.split(':');
+            if (host !== instanceHost || !uuid || extra.length || !/^[1-9]\d*$/.test(pidText)) continue;
+            const pid = Number(pidText);
+            if (!Number.isSafeInteger(pid)) continue;
+            if ((pid === process.pid && uuid !== instanceUuid) || !isOwnerAlive(pid)) removed.push(id);
+        }
+        if (removed.length) await docker(['rm', '-f', '-v', ...removed], {timeout:10000});
+        return {removed};
+    } catch (error) {
+        console.warn('[System Test] Orphan sweep failed:', error.message);
+        return {removed:[], skipped:true};
+    }
+};
 
 const CONTAINER_MEMORY_LIMIT = process.env.COVAI_EPHEMERAL_DB_MEMORY || '512m';
 const CONTAINER_CPU_LIMIT = process.env.COVAI_EPHEMERAL_DB_CPUS || '1';
 const CONTAINER_PIDS_LIMIT = process.env.COVAI_EPHEMERAL_DB_PIDS || '256';
 const POSTGRES_TMPFS_SIZE = process.env.COVAI_EPHEMERAL_POSTGRES_TMPFS || '512m';
+
+const isLocalPortFree = port => new Promise(resolve => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.listen({host:'127.0.0.1',port}, () => server.close(error => resolve(!error)));
+});
 
 export const isOwnedIsolatedDatabaseHost = (hostname = '') =>
     ['127.0.0.1', 'localhost', '[::1]'].includes(hostname) ||
@@ -35,7 +86,8 @@ const resolveDockerNetworkMode = async (docker, dependencies = {}) => {
 };
 
 export const provisionSystemResources = async ({rootDir,database,services,signal,dependencies={}}) => {
-    const docker=dependencies.docker || ((args,options={})=>exec('docker',args,{timeout:120000,windowsHide:true,maxBuffer:2*1024*1024,...options}));
+    const docker=dependencies.docker || dockerExec;
+    const isPortFree=dependencies.isPortFree || isLocalPortFree;
     const owned=[],environment={},secrets=[];
     const now=dependencies.now || Date.now;
     const wait=dependencies.wait || (ms=>new Promise(resolve=>setTimeout(resolve,ms)));
@@ -111,23 +163,39 @@ export const provisionSystemResources = async ({rootDir,database,services,signal
     }
     const start=async({kind,port,image,env=[],command=[],tmpfs=null,probe,initialize})=>{
         check();
+        const useFixedPort=resolvedNetworkMode===null && await isPortFree(port);
+        check();
         const name=`covai-system-${kind}-${crypto.randomUUID()}`;
         owned.push(name);
-        const runArgs=[
+        const randomBinding=`127.0.0.1::${port}`;
+        const run=binding=>docker([
             'run','-d',
             '--name',name,
             '--label','covai.system-test=true',
+            '--label',`covai.owner=${SYSTEM_RUNTIME_INSTANCE_ID}`,
+            '--label',`covai.started-at=${Date.now()}`,
             '--memory',CONTAINER_MEMORY_LIMIT,
             '--cpus',CONTAINER_CPU_LIMIT,
             '--pids-limit',CONTAINER_PIDS_LIMIT,
             ...(tmpfs ? ['--tmpfs', tmpfs] : []),
             ...(resolvedNetworkMode ? ['--network', resolvedNetworkMode] : []),
-            '-p',`127.0.0.1::${port}`,
+            '-p',binding,
             ...env,
             image,
             ...command,
-        ];
-        try{await docker(runArgs,{signal});}
+        ],{signal});
+        try {
+            try{await run(useFixedPort ? `127.0.0.1:${port}:${port}` : randomBinding);}
+            catch(cause){
+                check();
+                if(!useFixedPort || !/port is already allocated|address already in use/i.test(`${cause.stderr || ''} ${cause.message || ''}`))throw cause;
+                await docker(['rm','-f','-v',name]);
+                owned.pop();
+                check();
+                owned.push(name);
+                await run(randomBinding);
+            }
+        }
         catch(cause){check();const error=new ServiceError(`Could not start the isolated ${kind} service.`,503);error.code='SYSTEM_RUNTIME_SERVICE_START_FAILED';error.details={service:kind,output:redact(cause.stderr || cause.message)};throw error;}
         let connectHost='127.0.0.1';
         let connectPort;

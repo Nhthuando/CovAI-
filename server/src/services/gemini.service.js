@@ -1,4 +1,4 @@
-import { GEMINI_MODEL_IDS, normalizeModelId } from '../../../shared/aiModels.js';
+import { AI_MODELS, GEMINI_MODEL_IDS, normalizeModelId } from '../../../shared/aiModels.js';
 import { geminiQuotaError } from '../utils/geminiQuota.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -146,25 +146,30 @@ export function markModelExhausted(modelName, error = { message: 'daily quota' }
   if (modelName) exhaustedModels.set(`${configuration.credentialId}:${modelName}`, geminiQuotaError(error, modelName));
 }
 
+function getModelQuotaError(modelName, configuration) {
+  const quotaKey = `${configuration?.credentialId || 'default'}:${modelName}`;
+  const blocked = exhaustedModels.get(quotaKey);
+  if (blocked?.resetAt && Date.parse(blocked.resetAt) > Date.now()) return blocked;
+  exhaustedModels.delete(quotaKey);
+}
+
 /**
  * Normalizes model names, replacing deprecated or quota-exhausted models
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel, configuration) {
-  const preferred = (requestedModel && requestedModel.trim()) || configuration?.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const preferred = (requestedModel && requestedModel.trim()) || configuration?.model || process.env.GEMINI_MODEL || AI_MODELS[0].id;
   const normalized = normalizeModelId(preferred);
   if (!VALID_MODELS.includes(normalized)) {
-    const fallback = normalizeModelId(configuration?.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite');
+    const fallback = normalizeModelId(configuration?.model || process.env.GEMINI_MODEL || AI_MODELS[0].id);
     if (VALID_MODELS.includes(fallback)) {
       console.warn(`[Gemini API] Model '${preferred}' is not in catalog. Falling back to '${fallback}'.`);
       return fallback;
     }
     throw new ServiceError('Select one of the supported Gemini models.', 400);
   }
-  const quotaKey = `${configuration?.credentialId || 'default'}:${normalized}`;
-  const blocked = exhaustedModels.get(quotaKey);
-  if (blocked?.resetAt && Date.parse(blocked.resetAt) > Date.now()) throw blocked;
-  exhaustedModels.delete(quotaKey);
+  const blocked = getModelQuotaError(normalized, configuration);
+  if (blocked) throw blocked;
   return normalized;
 }
 
@@ -348,7 +353,7 @@ export const generateMultimodalText = async (
     returnTelemetry: _returnTelemetry,
     userId: _userId,
     model: _model,
-    signal: _signal,
+    signal: callerSignal,
     timeout: _timeout,
     ...providerConfig
   } = generationConfig;
@@ -360,7 +365,9 @@ export const generateMultimodalText = async (
     }
   }
 
-  let primaryModelName = resolveModelName(modelName, configuration);
+  const primaryModelName = resolveModelName(modelName, configuration);
+  const budget = currentAiJobBudget();
+  const callerSignals = [callerSignal, budget?.signal].filter(Boolean);
 
   const createModelInstance = (mName) => {
     const modelOptions = { model: mName };
@@ -390,28 +397,28 @@ export const generateMultimodalText = async (
 
   parts.push({ text: prompt });
 
-  const apiCall = async ({ signal }) => {
-    primaryModelName = resolveModelName(modelName, configuration);
-    const budget = currentAiJobBudget();
+  const apiCall = async ({ signal }, activeModel = primaryModelName) => {
+    const requestSignal = callerSignals.length ? AbortSignal.any([signal, ...callerSignals]) : signal;
+    requestSignal.throwIfAborted();
+    const blocked = getModelQuotaError(activeModel, configuration);
+    if (blocked) throw blocked;
     await budget?.beforeRequest();
-    const requestSignal = budget?.signal
-      ? AbortSignal.any([signal, budget.signal])
-      : signal;
+    requestSignal.throwIfAborted();
     try {
-      const model = createModelInstance(primaryModelName);
+      const model = createModelInstance(activeModel);
       const callStartTime = Date.now();
       const result = await model.generateContent({
         contents: [{ role: "user", parts }],
         generationConfig: {
           maxOutputTokens: 65536,
           ...cleanProviderConfig,
-          ...(configuration.feature === 'chatbox' && chatThinkingConfig(primaryModelName) ? { thinkingConfig: chatThinkingConfig(primaryModelName) } : {}),
+          ...(configuration.feature === 'chatbox' && chatThinkingConfig(activeModel) ? { thinkingConfig: chatThinkingConfig(activeModel) } : {}),
         },
       }, { signal: requestSignal });
       if (requestSignal.aborted) throw requestSignal.reason || new Error('AI request canceled');
       const durationMs = Date.now() - callStartTime;
       await budget?.record(result.response?.usageMetadata);
-      console.log(`[Gemini API] feature=${configuration.feature} credential=${configuration.keyEnv} model=${primaryModelName} (${durationMs}ms)`);
+      console.log(`[Gemini API] feature=${configuration.feature} credential=${configuration.keyEnv} model=${activeModel} (${durationMs}ms)`);
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
       }
@@ -439,7 +446,7 @@ export const generateMultimodalText = async (
         recordGeminiTokenUsage({
           taskType,
           apiKey: resolvedApiKey,
-          modelName: primaryModelName,
+          modelName: activeModel,
           usageMetadata: result.response?.usageMetadata,
           promptText: prompt,
           responseText: rawText,
@@ -459,7 +466,7 @@ export const generateMultimodalText = async (
           completion: completionTokens,
           total: totalTokens,
         },
-        model: primaryModelName,
+        model: activeModel,
       };
 
       if (generationConfig?.userId) {
@@ -481,13 +488,13 @@ export const generateMultimodalText = async (
 
       return rawText;
     } catch (primaryErr) {
-      if (signal.aborted) throw primaryErr;
+      if (requestSignal.aborted) throw primaryErr;
       if (primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
         try {
           recordGeminiRateLimit({
             taskType,
             apiKey: resolvedApiKey,
-            modelName: primaryModelName,
+            modelName: activeModel,
             error: primaryErr,
           });
         } catch (rateLimitErr) {
@@ -496,12 +503,25 @@ export const generateMultimodalText = async (
             rateLimitErr.message,
           );
         }
-        if (isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName, primaryErr, configuration);
-        throw geminiQuotaError(primaryErr, primaryModelName);
+        if (isDailyQuotaError(primaryErr)) markModelExhausted(activeModel, primaryErr, configuration);
+        throw geminiQuotaError(primaryErr, activeModel);
       }
       throw primaryErr;
     }
   };
 
-  return runGeminiRequest(apiCall, { requestTimeoutMs, totalTimeoutMs, maxAttempts, onRetry, onWait, retryBaseDelayMs });
+  const getFallbackRequest = error => {
+    if (modelName || error.name === 'AbortError' || callerSignals.some(signal => signal.aborted)) return;
+    const status = Number(error.status ?? error.statusCode);
+    const message = String(error.message || '');
+    if ((status >= 400 && status < 500) || /(?:^|\[|\bHTTP\s+|\bstatus(?:\s+code)?\s*[:=]?\s*)4\d{2}\b/i.test(message)) return;
+    if (status !== 503 && !/503|Service Unavailable|high demand|overloaded|UNAVAILABLE/i.test(message)) return;
+
+    const fallback = AI_MODELS.find(({ id }) => id !== primaryModelName && !getModelQuotaError(id, configuration));
+    if (!fallback) return;
+    console.warn(`[Gemini API] ${primaryModelName} is overloaded; retrying once with ${fallback.id}`);
+    return options => apiCall(options, fallback.id);
+  };
+
+  return runGeminiRequest(apiCall, { requestTimeoutMs, totalTimeoutMs, maxAttempts, onRetry, onWait, retryBaseDelayMs, getFallbackRequest });
 };

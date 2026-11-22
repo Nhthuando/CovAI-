@@ -1,5 +1,7 @@
 import SystemTestEvidencePreview from "./SystemTestEvidencePreview.jsx";
 import SystemTestProgress from "./SystemTestProgress.jsx";
+import { ExternalDependencyBadge, ExternalDependencyNotice } from "./ExternalTestKeyNotices.jsx";
+import { stripAnsi } from "../../../utils/stripAnsi.js";
 import { Fragment, useState, useMemo } from "react";
 import {
   FileCode2,
@@ -58,6 +60,7 @@ export default function SystemTestScenarioList({
   testFiles = [],
   snapshotId,
   onInspectBreakpoint,
+  onOpenSetup,
   onOpenEditor,
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState({});
@@ -232,19 +235,23 @@ export default function SystemTestScenarioList({
                             <Fragment key={sc.id || sc.title}>
                             <tr
                               className={`hover:bg-[var(--color-surface-secondary)]/40 transition-colors ${
-                                isFailed ? "bg-[var(--color-danger)]/5" : ""
+                                sc.externalDependency ? "bg-amber-500/5" : isFailed ? "bg-[var(--color-danger)]/5" : ""
                               }`}
                             >
                               <td className="py-2.5 px-4 font-medium text-[var(--color-text)] max-w-md truncate">
                                 <div>{sc.title}</div>
-                                {isFailed && sc.errorMessage && (
+                                {sc.externalDependency ? (
+                                  <ExternalDependencyNotice dependency={sc.externalDependency} onOpenSetup={onOpenSetup}>
+                          {sc.errorMessage && <pre className="whitespace-pre-wrap break-words">{stripAnsi(sc.errorMessage)}</pre>}
+                                  </ExternalDependencyNotice>
+                                ) : isFailed && sc.errorMessage && (
                                   <div className="text-[11px] text-[var(--color-danger)] truncate font-mono mt-0.5 max-w-sm">
-                                    {sc.errorMessage}
+                            {stripAnsi(sc.errorMessage)}
                                   </div>
                                 )}
                               </td>
                               <td className="py-2.5 px-4">
-                                <StatusBadge status={sc.status} />
+                                {sc.externalDependency ? <ExternalDependencyBadge dependency={sc.externalDependency} /> : <StatusBadge status={sc.status} />}
                               </td>
                               <td className="py-2.5 px-4 text-[var(--color-text-secondary)] font-mono text-[11px]">
                                 <div>{formatMs(sc.executionTimeMs || sc.durationMs)}</div>
@@ -294,7 +301,7 @@ export default function SystemTestScenarioList({
                             </tr>
                             <tr>
                               <td colSpan={5}>
-                                {isFailed && <div className="px-4 py-3"><SystemTestProgress scenario={sc} showErrors /></div>}
+                                {isFailed && <div className="px-4 py-3"><SystemTestProgress scenario={sc} showErrors={!sc.externalDependency} /></div>}
                                 <SystemTestEvidencePreview
                                   key={`${snapshotId}:${sc.id}`}
                                   snapshotId={snapshotId}

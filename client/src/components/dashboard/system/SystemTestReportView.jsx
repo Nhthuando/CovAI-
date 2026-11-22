@@ -7,7 +7,7 @@ import SystemTestScenarioLibrary from './SystemTestScenarioLibrary.jsx';
 import { formatReportDate } from './systemReportModel.js';
 import SystemTestCoverageComparison from './SystemTestCoverageComparison.jsx';
 
-export default function SystemTestReportView({ assessment, snapshotId, onBack }) {
+export default function SystemTestReportView({ assessment, snapshotId, onBack, onOpenSetup }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const report = assessment?.presentation;
@@ -70,7 +70,7 @@ export default function SystemTestReportView({ assessment, snapshotId, onBack })
       <SystemTestReportCharts report={report} />
       <SystemTestDimensionsTable assessment={{ presentation: report }} />
       {report.comparison?.comparable && <SystemTestCoverageComparison changes={report.comparison.coverageChanges} />}
-      <section><h2 className="mb-3 text-sm font-semibold text-[var(--color-text)]">Scenario evidence</h2><SystemTestScenarioLibrary presentation={report} /></section>
+      <section><h2 className="mb-3 text-sm font-semibold text-[var(--color-text)]">Scenario evidence</h2><SystemTestScenarioLibrary presentation={report} onOpenSetup={onOpenSetup} /></section>
       <section><h2 className="mb-3 text-sm font-semibold text-[var(--color-text)]">Next actions</h2>{report.gaps.length ? <ul className="space-y-2.5 text-xs">{report.gaps.map((gap, index) => <li key={gap.id || index} className="border-l-2 border-amber-500/70 pl-3 py-0.5"><p className="text-[var(--color-text)]">{gap.description}</p><p className="mt-1 font-mono text-[11px] text-[var(--color-text-muted)]">{gap.nextAction || gap.filePath || gap.criterionId}</p></li>)}</ul> : <p className="text-xs text-[var(--color-text-muted)]">No findings recorded. This does not prove complete business coverage.</p>}</section>
       <footer className="border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-text-muted)]">{report.limitations.map((item, index) => <p key={index} className="mt-1">{item}</p>)}</footer>
     </>}

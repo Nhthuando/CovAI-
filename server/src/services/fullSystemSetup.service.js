@@ -11,6 +11,7 @@ import { extractValidEndpoints } from './apiEndpointParser.service.js';
 import { discoverReadinessPaths } from './fullSystemReadiness.service.js';
 import {inferFullSystemPlan,systemPackageFiles} from './fullSystemPlan.service.js';
 import {scanRuntimePackages,runtimeIgnoredDirectories} from './projectRuntimePlan.service.js';
+import {inferNodeEntryFile} from '../utils/autStartupCommand.js';
 
 const pending = new Map();
 const setupResponseSchema = {
@@ -84,7 +85,10 @@ export const inspectSystemSetupSource = root => {
     const files = [];
     // Package topology must not depend on which source files consume the AI
     // context budget first. Discover metadata separately and deterministically.
-    const packages = scanRuntimePackages(root).map(({relative,pkg})=>({directory:relative,scripts:pkg.scripts || {},dependencies:{...pkg.dependencies,...pkg.devDependencies}}));
+    const packages = scanRuntimePackages(root).map(({relative,pkg})=>{
+        const entryFile=inferNodeEntryFile(path.join(root,relative),pkg);
+        return {directory:relative,scripts:pkg.scripts || {},dependencies:{...pkg.dependencies,...pkg.devDependencies},...(entryFile?{entryFile}:{})};
+    });
     let remaining = 120000;
     let visited = 0;
     let truncated = false;
@@ -223,11 +227,31 @@ export const deriveDeterministicSqlSchema = (backendFiles, engine) => {
     try { return validateGeneratedSchema(statements.join('\n\n')); } catch { return null; }
 };
 
+const configureStaticFrontend = (rootDir, source, config) => {
+    if (!config?.unified || !config.backendOnly) return config;
+    const { directory } = config.frontend;
+    const index = containedPath(rootDir, path.join(directory, 'index.html'));
+    if (!fs.existsSync(index) || !fs.statSync(index).isFile()) return config;
+    const frontend = source.packages.find(pkg => pkg.directory === directory);
+    const frontendServers = ['vite','next','react-scripts','webpack-dev-server','parcel','http-server','serve','live-server'];
+    const frontendCommands = /(?:^|[\s"'&|/\\])(?:vite|next|react-scripts|webpack-dev-server|parcel|http-server|serve|live-server)(?:\.cmd)?(?=$|[\s"'&|])/i;
+    if (frontendServers.some(name => frontend.dependencies[name]) || Object.values(frontend.scripts).some(script => frontendCommands.test(script))) return config;
+    const backend = source.packages.find(pkg => pkg.directory === config.backend.directory);
+    const servesHtml = /\b(?:express\s*\.\s*static|sendFile|res\s*\.\s*render|serveStatic|fastify-static)\b/;
+    if (systemPackageFiles(source, backend).some(file => servesHtml.test(file.content))) return config;
+    const { backendOnly, ...stack } = config;
+    return { ...stack, frontend: { directory, static: true }, unified: false };
+};
+
 const prepare = async ({ rootDir, model, onProgress = async () => {}, dependencies = {} }) => {
     const configPath = containedPath(rootDir, '.covai/system-test.json');
     if (fs.existsSync(configPath)) {
         const existing = readFullSystemConfig(rootDir);
         if (existing.database?.initSql !== '.covai/generated-schema.sql' || fs.existsSync(containedPath(rootDir, existing.database.initSql))) {
+            if (existing.unified === true && existing.backendOnly === true) {
+                const upgraded = configureStaticFrontend(rootDir, inspectSystemSetupSource(rootDir), existing);
+                return { rootDir, config: upgraded, generated: false };
+            }
             return { rootDir, config: existing, generated: false };
         }
     }
@@ -236,22 +260,23 @@ const prepare = async ({ rootDir, model, onProgress = async () => {}, dependenci
     const automatic=inferFullSystemPlan(source);
     if(automatic) {
         await onProgress(24,'Resolved application services from source; preparing automatic test configuration');
-        return publishSetup({rootDir,config:automatic,onProgress});
+        return publishSetup({rootDir,config:configureStaticFrontend(rootDir,source,automatic),onProgress});
     }
     const apiPlan=inferFullSystemPlan(source,{allowSchemaDraft:true});
     if((apiPlan?.backendOnly || !dependencies.generate) && apiPlan?.database?.initSql==='.covai/generated-schema.sql') {
         const schemaPath=containedPath(rootDir,apiPlan.database.initSql);
-        if(fs.existsSync(schemaPath))return publishSetup({rootDir,config:apiPlan,onProgress});
+        const config=configureStaticFrontend(rootDir,source,apiPlan);
+        if(fs.existsSync(schemaPath))return publishSetup({rootDir,config,onProgress});
         const backend=source.packages.find(pkg=>pkg.directory===apiPlan.backend.directory);
         const schema=deriveDeterministicSqlSchema(systemPackageFiles(source,backend),apiPlan.database.engine);
         if(schema) {
             await onProgress(24, 'Derived SQL schema and readiness route directly from source; no AI setup needed');
-            return publishSetup({rootDir,config:apiPlan,schema,schemaPath,onProgress});
+            return publishSetup({rootDir,config,schema,schemaPath,onProgress});
         }
     }
     const startup = source.packages.filter(pkg => ['dev', 'preview', 'start', 'serve'].some(key => typeof pkg.scripts[key] === 'string'));
     const rawFrontends = startup.filter(pkg => ['vite','next','nuxt','astro','react-scripts','@vue/cli-service','@sveltejs/kit','@angular/core','parcel','@remix-run/dev','@react-router/dev','webpack-dev-server'].some(key => pkg.dependencies[key]) || /\b(vite|next|react-scripts|vue-cli-service|astro|nuxt|ng serve|parcel|webpack)\b/.test(Object.values(pkg.scripts).join(' ')));
-    const rawBackends = startup.filter(pkg => ['express', 'fastify', '@nestjs/core', 'koa', '@hapi/hapi', 'hono', 'restify', 'polka'].some(key => pkg.dependencies[key]) || systemPackageFiles(source, pkg).some(file => /(?:from\s*|require\s*\()\s*['"](?:node:)?(?:http|https)['"]/.test(file.content)));
+    const rawBackends = source.packages.filter(pkg => pkg.entryFile || startup.includes(pkg) && (['express', 'fastify', '@nestjs/core', 'koa', '@hapi/hapi', 'hono', 'restify', 'polka'].some(key => pkg.dependencies[key]) || systemPackageFiles(source, pkg).some(file => /(?:from\s*|require\s*\()\s*['"](?:node:)?(?:http|https)['"]/.test(file.content))));
     const frontends = rawFrontends.length > 1 && rawFrontends.some(pkg => pkg.directory !== '.') ? rawFrontends.filter(pkg => pkg.directory !== '.' || systemPackageFiles(source, pkg).some(f => !f.path.endsWith('package.json'))) : rawFrontends;
     const backends = rawBackends.length > 1 && rawBackends.some(pkg => pkg.directory !== '.') ? rawBackends.filter(pkg => pkg.directory !== '.' || systemPackageFiles(source, pkg).some(f => !f.path.endsWith('package.json'))) : rawBackends;
     const engines = new Set();
@@ -266,8 +291,8 @@ const prepare = async ({ rootDir, model, onProgress = async () => {}, dependenci
     if (!frontends.length || !backends.length || engines.size !== 1) {
         const missing = [];
         if (!frontends.length) missing.push('a frontend with a start script');
-        if (!backends.length) missing.push('a backend with a start script');
-        if (!engines.size) missing.push('a supported database (MySQL or PostgreSQL)');
+        if (!backends.length) missing.push('a backend with a start script or a server entry file');
+        if (!engines.size) missing.push('a supported database (MySQL, PostgreSQL, MongoDB or SQLite)');
         if (engines.size > 1) missing.push('which database to use (both MySQL and PostgreSQL were detected)');
         throw new ServiceError(`Full Stack testing cannot start because CovAI could not identify ${missing.join('; ')} in the uploaded source. Upload the complete project with its package.json files and database schema, or specify these services in .covai/system-test.json. Adding a .env file alone will not resolve this detection issue. CovAI creates an isolated test database; Docker must be running. Configure the required services before running Full Stack tests.`, 422);
     }

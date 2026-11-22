@@ -3,9 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import {afterEach,describe,it,expect} from '@jest/globals';
+import { describe, test, expect } from '@jest/globals';
+import { afterEach, it } from '@jest/globals';
 import {validateFullSystemTest,storeScenarioScreenshot,prepareSystemPlaywright} from '../services/systemTestEvidence.service.js';
 import {readFullSystemConfig} from '../services/fullSystemLifecycle.service.js';
+import { ServiceError } from '../utils/serviceError.js';
 const roots=[];
 const root=()=>{const directory=fs.mkdtempSync(path.join(os.tmpdir(),'covai-evidence-'));roots.push(directory);return directory;};
 afterEach(()=>{for(const directory of roots.splice(0)) fs.rmSync(directory,{recursive:true,force:true});});
@@ -77,6 +79,72 @@ describe('real system execution and evidence',()=>{
   it('rejects API mocks and accepts real user actions',()=>{
     expect(()=>validateFullSystemTest("await page.route('**/api/**', () => {});")).toThrow(/real backend/);
     expect(()=>validateFullSystemTest("await page.goto('/'); await page.reload();")).not.toThrow();
+  });
+  test.each([
+    "import { test } from '@playwright/test'; await test.goto('/');",
+    "import { test as check } from '@playwright/test'; await check['goto']('/');",
+    "const { test: check } = require('@playwright/test'); await check.goto('/');",
+    "const check = require('@playwright/test').test; await check.goto('/');",
+  ])('rejects invalid calls on the Playwright test binding: %s', code => {
+    expect(() => validateFullSystemTest(code)).toThrow('Use page.goto() instead of test.goto() in Playwright tests');
+  });
+  test('accepts test.step, test.info().attach and test.describe.configure', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test.describe.configure({ mode: 'serial' });
+      test('valid methods', async () => {
+        await test.step('Attach evidence', async () => {
+          await test.info().attach('evidence', { body: 'ok' });
+        });
+      });
+      function unrelated(test) { test.goto('/'); }
+    `)).not.toThrow();
+  });
+  test('rejects fixture destructuring in a test.step callback', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test('toggle todo', async ({ page }) => {
+        await test.step('Create todo', async ({ request }) => {
+          await request.post('/api/todos', { data: { title: 'Todo' } });
+        });
+      });
+    `)).toThrow(expect.objectContaining({
+      ...new ServiceError('', 422),
+      message: expect.stringMatching(/^test\.step callbacks do not receive fixtures/),
+    }));
+  });
+  test('accepts a test.step callback using a fixture from the test', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test('toggle todo', async ({ page, request }) => {
+        await test.step('Create todo', async () => {
+          await request.post('/api/todos', { data: { title: 'Todo' } });
+        });
+      });
+    `)).not.toThrow();
+  });
+  test('accepts an identifier parameter in a test.step callback', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test('toggle todo', async ({ page }) => {
+        await test.step('Open todos', async (step) => {
+          await page.goto('/');
+        });
+      });
+    `)).not.toThrow();
+  });
+  test('rewrites absolute loopback request URLs before forwarding them', () => {
+    const directory = root();
+    const file = path.join(directory, 'request.spec.js');
+    fs.writeFileSync(file, "import { test } from '@playwright/test'; test('request', async ({ request }) => { await request.get('/api/x'); });");
+    const result = prepareSystemPlaywright({
+      rootDir: directory, execution: { selectedFiles: [file] }, executionMode: 'full', backendUrl: 'http://127.0.0.1:4500',
+      frontendPort: 4173, runKey: 'request-routing',
+    });
+    for (const name of ['fixture.mjs', 'fixture.cjs']) {
+      const fixture = fs.readFileSync(path.join(result.directory, name), 'utf8');
+      expect(fixture).toMatch(/URL\.canParse\(args\[0\]\)[\s\S]*?\['http:', 'https:'\]\.includes\(target\.protocol\)[\s\S]*?\['localhost', '127\.0\.0\.1', '\[::1\]'\]\.includes\(target\.hostname\)[\s\S]*?port !== Number\(4173\)[\s\S]*?args\[0\] = backend \+ target\.pathname \+ target\.search;[\s\S]*?await original\(\.\.\.args\)/);
+    }
   });
   it('fails explicitly when full-system configuration is absent',()=>{expect(()=>readFullSystemConfig(root())).toThrow(/Full Stack startup setup is missing|Generate and apply a Full Stack test draft/);});
   it('persists PNG evidence and rejects files outside the snapshot',()=>{

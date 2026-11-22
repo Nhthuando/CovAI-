@@ -313,7 +313,7 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
         ].filter((p) => fs.existsSync(p)).join(path.delimiter);
         await onReady?.();
         const result=await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,isolatedEnv:true,signal,env:{...browserEnv,NODE_PATH:nodePath,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}}));
-        return {...result,reportPath:managed.reportPath,autPort:stack.frontendPort,executionMode};
+        return {...result,reportPath:managed.reportPath,autPort:stack.frontendPort,executionMode,egressLogPath:stack.egressLogPath};
       } finally {await stack.cleanup();}
     } else if (execution.runner === "cypress") {
       const stack = await startFullSystem({rootDir,jobId,onProgress:onPreparing,signal,environmentRoot});
