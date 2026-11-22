@@ -16,6 +16,7 @@ import { analyzeSystemTestFile, digest } from './systemTestStaticAnalysis.servic
 import { buildSystemAssessment } from './systemAssessment.service.js';
 import { runSystemTests } from './systemTestRunner.service.js';
 import { parseSystemTestResult } from './systemTestResultParser.service.js';
+import { classifyExternalDependencies, readEgressLog } from './externalDependencyClassifier.service.js';
 import { containedPath, readFullSystemConfig } from './fullSystemConfig.service.js';
 import { getJobById, markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, addJobLog } from './job.service.js';
 import { ServiceError } from '../utils/serviceError.js';
@@ -67,6 +68,14 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
             const result = await (dependencies.run || runSystemTests)({ rootDir: workspace.rootDir, jobId, execution, executionMode: input.executionMode, measurementPreparation: preparation, assertionBindings: bindings, signal, onEvent: event => onEvent({ runIndex: index + 1, ...event }), onPreparing: (progress, message) => onProgress(`Run ${index + 1}/${input.repeatRuns}: ${message}`, baseProgress + Math.min(25, progress * 0.7)), onReady: () => onProgress(`Run ${index + 1}/${input.repeatRuns}: executing ${input.testFiles.length} test file(s)`, baseProgress + 30) });
             const testRun = parseSystemTestResult({ runner: 'playwright', resultPath: result.reportPath, startedAt, finishedAt: new Date(), rootDir: workspace.rootDir, stderr: result.stderr });
             if (result.exitCode !== 0 && testRun.status === 'PASSED') throw new ServiceError('Runner report and exit code disagree', 422);
+            const rawReport = JSON.parse(fs.readFileSync(result.reportPath, 'utf8'));
+            const externalDependencies = classifyExternalDependencies({ report: rawReport, egressEvents: readEgressLog(result.egressLogPath) });
+            for (const scenario of testRun.scenarios) {
+                if (scenario.status !== 'failed') continue;
+                const key = scenario.testFile ? `${scenario.testFile}::${scenario.title}` : scenario.title;
+                const externalDependency = externalDependencies.get(key);
+                if (externalDependency) scenario.executionDetails = { ...scenario.executionDetails, externalDependency };
+            }
             const mapping = JSON.parse(fs.readFileSync(path.join(path.dirname(result.reportPath), 'source-map.json'), 'utf8'));
             testRun.scenarios = testRun.scenarios.map(s => ({ ...s, testFile: mapping[path.basename(s.testFile || '')] || s.testFile, screenshotPath: storeScenarioScreenshot({ rootDir:environmentRoot, source: typeof s.screenshotSource === 'string' && fs.existsSync(s.screenshotSource) ? {body: fs.readFileSync(containedPath(workspace.rootDir, path.relative(workspace.rootDir, s.screenshotSource))).toString('base64')} : s.screenshotSource, runKey: measurementId }), screenshotSource: undefined }));
             for (const scenario of testRun.scenarios) if (scenario.screenshotPath) evidenceArtifacts.push({ runIndex: index + 1, filePath: scenario.testFile, title: scenario.title, kind: 'SCREENSHOT', relativePath: scenario.screenshotPath });
@@ -85,7 +94,6 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
             fs.mkdirSync(evidenceRoot, { recursive: true });
             fs.copyFileSync(result.reportPath, path.join(evidenceRoot, 'results.json'));
             fs.writeFileSync(path.join(evidenceRoot, 'measurement.json'), JSON.stringify({ manifest: { ...preparation.manifest, directory: undefined }, zeroMaps: Object.fromEntries(Object.entries(preparation.tiers).map(([tier, value]) => [tier, value.zeroMaps])), artifacts: raw, events }), 'utf8');
-            const rawReport = JSON.parse(fs.readFileSync(result.reportPath, 'utf8'));
             const visitSuite = suite => {
                 const filePath = mapping[path.basename(suite.file || '')] || null;
                 for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const attempt of test.results || []) for (const attachment of attempt.attachments || []) {

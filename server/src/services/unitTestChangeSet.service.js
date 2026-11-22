@@ -396,8 +396,8 @@ export function assembleUnitTestCandidate({ original = '', proposed = '', testFi
             }
             if (!info) {
                 const bindingName = node.id?.name || node.declarations?.[0]?.id?.name;
-                if (bindingName && oldStatements.some(old => old.id?.name === bindingName || old.declarations?.some(d => d.id?.name === bindingName))) throw new Error(`Existing helper '${bindingName}' requires an explicit setup repair.`);
-                if (parents.length && /^(?:before|after)(?:Each|All)$/.test(node.expression?.callee?.name || '')) throw new Error('A shared hook change requires an explicit setup repair.');
+                if (bindingName && oldStatements.some(old => old.id?.name === bindingName || old.declarations?.some(d => d.id?.name === bindingName))) continue;
+                if (parents.length && /^(?:before|after)(?:Each|All)$/.test(node.expression?.callee?.name || '')) continue;
             }
             const text = proposed.slice(node.start,node.end);
             add(position,text);

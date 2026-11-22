@@ -400,7 +400,10 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
     astFunctions,
   );
   const requiredCaseSummary = requiredUnitCases
-    .map((c, idx) => `   ${idx + 1}. ${c.label}: ${c.description}`)
+    .map(
+      (c, idx) =>
+        `   ${idx + 1}. "[${c.label}] <concise scenario title>" (caseKey: ${c.key}) — ${c.description}`,
+    )
     .join("\n");
   const decisionGuidanceStr =
     unitTestContext?.coverageGaps?.guidanceSummary ||
@@ -516,8 +519,9 @@ ${unexportedWarning}
    - Re-use the exact same mocks, fixtures, and beforeEach configurations already established.
 4. MANDATORY COMPLETE CASE SUITE — MANDATORY TEST MATRIX (DECISION TABLE) | EXACT CASE BUDGET = ${requiredUnitCases.length} TEST(S) | CC = ${cyclomaticComplexity}:
    - Always preserve existing user tests without deleting or modifying them; generated tests will be merged cleanly alongside any existing test blocks.
-   - REQUIRED UNIT CASES FOR THIS FILE (Generate EXACTLY ${requiredUnitCases.length} dedicated \`it(...)\` / \`test(...)\` block(s) — 1 per case below, NEVER generate 8–12 redundant mini-tests!):
+   - Regardless of how many existing tests the project currently has, you MUST generate a complete set of EXACTLY ${requiredUnitCases.length} dedicated \`it(...)\` / \`test(...)\` block(s) — 1 test block for each required case below (NEVER generate more than ${requiredUnitCases.length} new test blocks and NEVER generate 2 blocks for the same required case!):
 ${requiredCaseSummary}
+   - MANDATORY TITLE PREFIX CONTRACT: Every generated \`it(...)\` / \`test(...)\` title MUST start with the exact bracketed case label from the list above (e.g. \`"[Happy Path] ..."\`, \`"[Boundary / Edge] ..."\`, \`"[Branch Paths] ..."\`, \`"[Error Handling] ..."\`). Never use multi-code titles like \`TC-BRANCH-04/05/06\`.
    - Branch/Logic Reference Matrix (combine related branch/assertion checks inside the ${requiredUnitCases.length} focused case tests above):
 ${fullCasePlanMarkdown}
    - You MUST include test cases addressing all applicable testing categories:
@@ -630,8 +634,9 @@ ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - If test code exists, re-use existing mock patterns and assertions.
 4. MANDATORY COMPLETE CASE SUITE — MANDATORY TEST MATRIX (DECISION TABLE) | EXACT CASE BUDGET = ${requiredUnitCases.length} TEST(S) | CC = ${cyclomaticComplexity}:
-   - Generate EXACTLY ${requiredUnitCases.length} dedicated \`it(...)\` / \`test(...)\` block(s) — 1 focused test for each required Unit case below (combine multi-item/branch assertions cleanly into these ${requiredUnitCases.length} tests to save tokens; NEVER emit 8–12 redundant scenarios!):
+   - Generate EXACTLY ${requiredUnitCases.length} dedicated \`it(...)\` / \`test(...)\` block(s) — 1 focused test for each required Unit case below (combine multi-item/branch assertions cleanly into these ${requiredUnitCases.length} tests to save tokens; NEVER emit more than ${requiredUnitCases.length} tests and NEVER generate 2 tests for the same case!):
 ${requiredCaseSummary}
+   - MANDATORY TITLE PREFIX CONTRACT: Every generated \`it(...)\` / \`test(...)\` title MUST start with the exact bracketed case label from the list above (e.g. \`"[Happy Path] ..."\`, \`"[Boundary / Edge] ..."\`, \`"[Branch Paths] ..."\`, \`"[Error Handling] ..."\`). Never use multi-code titles like \`TC-BRANCH-04/05/06\`.
    - Branch/Logic Reference Decision Table:
 ${fullCasePlanMarkdown || deltaDecisionTableMarkdown || decisionTableMarkdown}
    - You MUST include test cases addressing all 4 essential business logic testing categories:
@@ -1534,6 +1539,17 @@ export const generateAiUnitTestSuite = async ({
     });
   }
 
+  const stripLeadingCaseNoise = (rawTitle = "") =>
+    String(rawTitle || "")
+      .trim()
+      .replace(/^\[[^\]]+\]\s*[:\-]?\s*/i, "")
+      .replace(/^TC-[A-Z0-9_/&\-\s]+:\s*/i, "")
+      .replace(
+        /^(?:Category\s+[A-D]\s*[:\-]?\s*)?(?:Happy\s+Path|Boundary(?:\s*\/\s*Edge|\s+Values?)?|Branch(?:\s+Paths?|\s+Toggling|\s+Coverage)?|Error(?:\s+Handling|\s*&\s*Exception)?)\s*[:\-]\s*/i,
+        "",
+      )
+      .trim();
+
   const capGeneratedUnitTestsToRequiredCases = (
     code,
     reqCases = [],
@@ -1543,7 +1559,7 @@ export const generateAiUnitTestSuite = async ({
     if (!code || !Array.isArray(reqCases) || reqCases.length === 0) return code;
     try {
       const blocks = extractUnitTestBlocks(code);
-      if (!blocks || blocks.length <= reqCases.length) return code;
+      if (!blocks || blocks.length === 0) return code;
 
       const existingTitles = new Set(
         extractUnitTestBlocks(originalCode || "").map((b) =>
@@ -1552,7 +1568,7 @@ export const generateAiUnitTestSuite = async ({
             .toLowerCase(),
         ),
       );
-      const newBlocks = blocks.filter(
+      const rawNewBlocks = blocks.filter(
         (b) =>
           !existingTitles.has(
             String(b.title || "")
@@ -1560,48 +1576,101 @@ export const generateAiUnitTestSuite = async ({
               .toLowerCase(),
           ),
       );
-      if (newBlocks.length <= reqCases.length) return code;
+      if (rawNewBlocks.length === 0) return code;
 
-      const reqKeys = reqCases.map((c) => c.key);
-      const pickedByKey = new Map();
-      const unpicked = [];
-      for (const b of newBlocks) {
-        const caseKey = classifyUnitTestCase({ title: b.title }).key;
-        if (reqKeys.includes(caseKey) && !pickedByKey.has(caseKey)) {
-          pickedByKey.set(caseKey, b);
+      // Deduplicate identical new AI test blocks by normalized title
+      const seenNewTitles = new Set();
+      const newBlocks = [];
+      const duplicateBlocks = [];
+      for (const b of rawNewBlocks) {
+        const normT = stripLeadingCaseNoise(b.title).toLowerCase() || String(b.title || "").trim().toLowerCase();
+        if (seenNewTitles.has(normT)) {
+          duplicateBlocks.push(b);
         } else {
-          unpicked.push(b);
+          seenNewTitles.add(normT);
+          newBlocks.push(b);
         }
       }
-      const keptSet = new Set(pickedByKey.values());
-      for (const b of unpicked) {
-        if (keptSet.size >= reqCases.length) break;
-        keptSet.add(b);
+
+      // Pass 1: Match each required case to the first unused block that classifies into that case key
+      const assignedByBlock = new Map();
+      const matchedCaseKeys = new Set();
+      const unusedBlocks = [];
+
+      for (const b of newBlocks) {
+        const caseKey = classifyUnitTestCase({ title: b.title }).key;
+        const matchingReq = reqCases.find(
+          (rc) => rc.key === caseKey && !matchedCaseKeys.has(rc.key),
+        );
+        if (matchingReq) {
+          matchedCaseKeys.add(matchingReq.key);
+          assignedByBlock.set(b, matchingReq);
+        } else {
+          unusedBlocks.push(b);
+        }
       }
 
-      const toRemove = newBlocks
-        .filter((b) => !keptSet.has(b))
-        .sort((a, b) => b.start - a.start);
-      if (toRemove.length === 0) return code;
+      // Pass 2: Assign remaining unmatched required cases to unused blocks (so 4 TC-BRANCH tests become 1 per required case)
+      for (const rc of reqCases) {
+        if (matchedCaseKeys.has(rc.key)) continue;
+        const nextUnused = unusedBlocks.shift();
+        if (!nextUnused) break;
+        matchedCaseKeys.add(rc.key);
+        assignedByBlock.set(nextUnused, rc);
+      }
 
-      let updated = code;
+      // Any remaining unused blocks + exact duplicates exceed the required case budget and must be removed
+      const toRemove = [...unusedBlocks, ...duplicateBlocks];
+
+      // Build descending byte-offset edits (both block removals and title normalizations)
+      const edits = [];
       for (const rem of toRemove) {
         let start = rem.start;
         let end = rem.end;
         while (
           start > 0 &&
-          (updated[start - 1] === " " || updated[start - 1] === "\t")
+          (code[start - 1] === " " || code[start - 1] === "\t")
         ) {
           start--;
         }
         while (
-          end < updated.length &&
-          (updated[end] === "\r" || updated[end] === "\n")
+          end < code.length &&
+          (code[end] === "\r" || code[end] === "\n")
         ) {
           end++;
-          if (updated[end - 1] === "\n") break;
+          if (code[end - 1] === "\n") break;
         }
-        updated = updated.slice(0, start) + updated.slice(end);
+        edits.push({ start, end, replacement: "" });
+      }
+
+      for (const [blk, reqCase] of assignedByBlock.entries()) {
+        if (
+          Number.isInteger(blk.titleStart) &&
+          Number.isInteger(blk.titleEnd) &&
+          blk.titleEnd > blk.titleStart
+        ) {
+          const coreTitle =
+            stripLeadingCaseNoise(blk.title) || reqCase.description;
+          const normalizedTitle = `[${reqCase.label}] ${coreTitle}`;
+          if (blk.title !== normalizedTitle) {
+            edits.push({
+              start: blk.titleStart,
+              end: blk.titleEnd,
+              replacement: JSON.stringify(normalizedTitle),
+            });
+          }
+        }
+      }
+
+      if (edits.length === 0) return code;
+      edits.sort((a, b) => b.start - a.start);
+
+      let updated = code;
+      for (const edit of edits) {
+        updated =
+          updated.slice(0, edit.start) +
+          edit.replacement +
+          updated.slice(edit.end);
       }
       return parseJavaScriptCode(updated, { filePath }).success
         ? updated
@@ -1670,13 +1739,27 @@ export const generateAiUnitTestSuite = async ({
         targetSourceFile: cleanSource,
       });
     }
+    if (!parseJavaScriptCode(rebasedProposed, { filePath: testFile }).success) {
+      rebasedProposed = autoHealAstSyntax(rebasedProposed, {
+        framework,
+        filePath: testFile,
+        sourceCode,
+      });
+    }
     const changeSet = assembleUnitTestCandidate({
       original: testFileInfo.content || "",
       proposed: rebasedProposed,
       testFile,
     });
-    aiParsedResult.fullUpdatedContent = changeSet.content;
-    aiParsedResult.suggestedTestCode = changeSet.content;
+    const cappedFinalContent = capGeneratedUnitTestsToRequiredCases(
+      changeSet.content,
+      requiredCases,
+      testFileInfo.content || "",
+      testFile,
+    );
+    changeSet.content = cappedFinalContent;
+    aiParsedResult.fullUpdatedContent = cappedFinalContent;
+    aiParsedResult.suggestedTestCode = cappedFinalContent;
     aiParsedResult.changeSet = changeSet;
     if (changeSet.content === testFileInfo.content)
       aiParsedResult.explanation =
@@ -1685,17 +1768,29 @@ export const generateAiUnitTestSuite = async ({
   try {
     assembleCandidate();
   } catch (error) {
-    if (!testFileInfo.content) throw error;
-    aiParsedResult = {
-      explanation: error.message,
-      suggestedTestCode: testFileInfo.content,
-      fullUpdatedContent: testFileInfo.content,
-      changeSet: {
-        needsReview: [{ reason: error.message }],
-        additions: [],
-        repairs: [],
-      },
-    };
+    try {
+      aiParsedResult = generateFallbackUnitTests(
+        cleanSource,
+        sourceCode,
+        coverageDetails,
+        framework,
+        testFileInfo.relativePath,
+        unitTestContext,
+      );
+      assembleCandidate();
+    } catch (fallbackError) {
+      if (!testFileInfo.content) throw fallbackError;
+      aiParsedResult = {
+        explanation: fallbackError.message,
+        suggestedTestCode: testFileInfo.content,
+        fullUpdatedContent: testFileInfo.content,
+        changeSet: {
+          needsReview: [{ reason: fallbackError.message }],
+          additions: [],
+          repairs: [],
+        },
+      };
+    }
   }
 
   const inspectCandidate = () =>
@@ -1852,6 +1947,39 @@ export const generateAiUnitTestSuite = async ({
     aiParsedResult.suggestedTestCode || aiParsedResult.fullUpdatedContent || "";
   const scenarioMatrix = unitTestContext?.decisionTable?.matrixEntries || [];
 
+  // Extract ONLY the newly generated AI test cases (excluding pre-existing user tests in testFileInfo.content)
+  const existingUserTitles = new Set(
+    extractUnitTestBlocks(testFileInfo.content || "").map((b) =>
+      String(b.title || "")
+        .trim()
+        .toLowerCase(),
+    ),
+  );
+  const generatedTestCases = extractUnitTestBlocks(
+    aiParsedResult.fullUpdatedContent || resolvedTestCode || "",
+  )
+    .filter(
+      (b) =>
+        !existingUserTitles.has(
+          String(b.title || "")
+            .trim()
+            .toLowerCase(),
+        ),
+    )
+    .map((b) => {
+      const def = classifyUnitTestCase({ title: b.title });
+      return {
+        title: b.title,
+        caseKey: def.key,
+        caseLabel: def.label,
+        category: def.category,
+        code: b.code,
+        startLine: b.startLine,
+        endLine: b.endLine,
+        origin: "AI_DRAFT",
+      };
+    });
+
   const primarySuggestion = {
     targetPolicy,
     targetCandidates: testFileInfo.targetCandidates,
@@ -1876,6 +2004,7 @@ export const generateAiUnitTestSuite = async ({
     testCode: resolvedTestCode,
     originalCode: testFileInfo.content || "",
     fullUpdatedContent: aiParsedResult.fullUpdatedContent,
+    testCases: generatedTestCases,
     changeSet: aiParsedResult.changeSet,
     qualityGate: {
       ...qualityGate,

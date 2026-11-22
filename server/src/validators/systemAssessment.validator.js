@@ -6,6 +6,11 @@ export const setupEnvironmentRequest = z.object({
     expectedWorkspaceRevision:z.number().int().nonnegative(),
     variables:z.array(z.object({envFile:relativePath,name:z.string().regex(/^[A-Za-z_]\w*$/).max(128),value:z.string().min(1).max(8192).refine(value=>!!value.trim()&&!value.includes('\0'),'Enter a test value')}).strict()).min(1).max(30),
 }).strict();
+export const setupEnvironmentImportRequest = z.object({
+    expectedWorkspaceRevision:z.number().int().nonnegative(),
+    content:z.string().max(65536),
+    dryRun:z.boolean(),
+}).strict();
 const scope = z.object({ root: relativePath, sourceDirectory: relativePath }).strict();
 export const automaticAssessmentRequest = z.object({ autoDiscover: z.literal(true), runner: z.enum(['playwright', 'cypress']).default('playwright'), executionMode: z.enum(['full', 'frontend']).default('full'), model: z.string().optional(), allowGenerate: z.boolean().default(false), headed: z.boolean().optional(), selectedFiles: z.array(relativePath).min(1).max(20).optional(), selectedTitles: z.array(z.string().trim().min(1).max(300)).min(1).max(100).optional(), repeatRuns: z.union([z.literal(1), z.literal(2)]).optional() }).strict();
 export const assessmentRequest = z.object({ testFiles: z.array(relativePath).min(1).max(20), excludedTests: z.array(z.object({filePath:relativePath,reason:z.string()}).strict()).optional(), selectedTitles: z.array(z.string().trim().min(1).max(300)).min(1).max(100).optional(), runner: z.enum(['playwright', 'cypress']).default('playwright'), executionMode: z.enum(['full', 'frontend']).default('full'), requirementRevisionId: z.string().optional(), reviewMode: z.enum(['legacy', 'scenario','execution']).default('legacy'), scenarioIds: z.array(z.string().min(1)).max(100).default([]), coverageScope: z.object({ frontend: scope.optional(), backend: scope.optional() }).strict(), repeatRuns: z.union([z.literal(1), z.literal(2)]).default(2), headed: z.boolean().optional() }).strict();

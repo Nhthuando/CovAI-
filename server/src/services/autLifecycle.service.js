@@ -14,7 +14,7 @@ import { selectFrontendPackage } from './projectRuntimePlan.service.js';
 import { prepareProjectDependencies, redactRuntimeOutput } from './projectDependencies.service.js';
 import { dockerRunner } from './dockerRunner.service.js';
 import { ServiceError } from '../utils/serviceError.js';
-import { autStartupCommand } from "../utils/autStartupCommand.js";
+import { autStartupCommand, inferNodeEntryFile } from "../utils/autStartupCommand.js";
 import { isolatedProcessEnvironment } from '../utils/isolatedProcessEnvironment.js';
 import { isOwnedIsolatedDatabaseHost } from './systemRuntimeResources.service.js';
 
@@ -312,13 +312,13 @@ export const autRuntimeCompatibilityHint = (output = "") => {
   return "";
 };
 
-export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false, allowHttpClientError = false }) => {
+export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, allowNodeEntry = preferStart, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false, allowHttpClientError = false }) => {
   if (signal?.aborted) throw new ServiceError('AUT startup canceled',409);
   const selected = !preferStart ? selectFrontendPackage({rootDir:snapshotDir}) : null;
   const candidateDirs = selected ? [path.relative(snapshotDir,selected)] : ["", "client", "frontend", "web", "ui", "app"];
   let chosenScript, chosenMetadata;
   let chosenDir = null;
-  let command = null;
+  let entryFallback;
 
   for (const cand of candidateDirs) {
     const targetDir = cand ? path.join(snapshotDir, cand) : snapshotDir;
@@ -336,17 +336,24 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     const names=preferStart ? ['start','dev','serve','preview'] : ['dev','serve','start','preview'];
     const name=names.find(value=>typeof scripts[value]==='string');
     if (name) {chosenDir=targetDir;chosenScript=name;chosenMetadata=pkg;break;}
+    if (allowNodeEntry && !entryFallback) {
+      const entry=inferNodeEntryFile(targetDir,pkg);
+      if (entry) entryFallback={directory:targetDir,entry};
+    }
   }
 
+  const entry=chosenScript?null:entryFallback?.entry;
+  if (entry) chosenDir=entryFallback.directory;
   if (!chosenDir) {
-    await safeAddJobLog(jobId, "INFO", "[AUT Lifecycle] No web server script found in package.json.");
+    await safeAddJobLog(jobId, "INFO", allowNodeEntry ? "[AUT Lifecycle] No web server script or Node server entry file found." : "[AUT Lifecycle] No web server script found in package.json.");
     return { started: false, port, recentOutput: () => '' };
   }
   const dirLabel = chosenDir === snapshotDir ? "root" : path.relative(snapshotDir, chosenDir).replace(/\\/g, "/");
   const runtime=await (dependencies.prepare || prepareProjectDependencies)({directory:chosenDir,repositoryRoot,jobId,signal,env});
-  command=autStartupCommand(chosenScript,chosenMetadata.scripts[chosenScript],port,runtime);
+  const script=chosenMetadata?.scripts[chosenScript];
+  const command=entry?'node':autStartupCommand(chosenScript,script,port,runtime);
   const startupEnv={...runtime.env,...env};
-  const needsBuild=chosenScript==='preview' || /\bnext\s+start\b|\bnode\s+["']?(?:\.\/)?(?:dist|build)[/\\]/.test(chosenMetadata.scripts[chosenScript]);
+  const needsBuild=chosenScript==='preview' || /\bnext\s+start\b|\bnode\s+["']?(?:\.\/)?(?:dist|build)[/\\]/.test(script);
   if(needsBuild) {
     if(typeof chosenMetadata.scripts.build!=='string')throw new ServiceError('The application starts from build output but has no build script. Include a build script or a development server script.',422);
     await safeAddJobLog(jobId,'INFO','[AUT Lifecycle] Building application before preview/production startup...');
@@ -355,10 +362,12 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
   }
   if(signal?.aborted)throw new ServiceError('AUT startup canceled',409);
 
-  await safeAddJobLog(jobId, "INFO", `[AUT Lifecycle] Starting AUT server (Command: "${command}" in ${dirLabel}) on port ${port}...`);
+  const args=entry?['./'+entry]:[];
+  const commandLabel=[command,...args].join(' ');
+  await safeAddJobLog(jobId, "INFO", `[AUT Lifecycle] Starting AUT server (Command: "${commandLabel}" in ${dirLabel}) on port ${port}...`);
 
-  const child = spawn(command, {
-    shell: true,
+  const child = spawn(command, args, {
+    shell: !entry,
     windowsHide: true,
     cwd: chosenDir,
     env: {

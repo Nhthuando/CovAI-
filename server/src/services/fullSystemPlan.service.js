@@ -19,7 +19,7 @@ const dropOrchestratorRoot = (source, candidates) => {
 export const inferFullSystemPlan = (source,{allowSchemaDraft=false}={}) => {
     const runnable=source.packages.filter(pkg=>['dev','start','serve','preview'].some(key=>typeof pkg.scripts?.[key]==='string'));
     const fronts=dropOrchestratorRoot(source, runnable.filter(pkg=>frontendTools.some(name=>deps(pkg)[name]) || /\b(?:vite|next|nuxt|astro|react-scripts|ng serve|parcel|webpack)\b/.test(Object.values(pkg.scripts).join(' '))));
-    const backs=dropOrchestratorRoot(source, runnable.filter(pkg=>backendTools.some(name=>deps(pkg)[name]) || systemPackageFiles(source,pkg).some(file=>/(?:from\s*|require\s*\()\s*['"](?:node:)?(?:http|https)['"]/.test(file.content))));
+    const backs=dropOrchestratorRoot(source, source.packages.filter(pkg=>pkg.entryFile || runnable.includes(pkg) && (backendTools.some(name=>deps(pkg)[name]) || systemPackageFiles(source,pkg).some(file=>/(?:from\s*|require\s*\()\s*['"](?:node:)?(?:http|https)['"]/.test(file.content)))));
     if(fronts.length>1 || backs.length>1 || (!fronts.length&&!backs.length))return null;
     const frontend=fronts[0] || backs[0],backend=backs[0] || (fronts.length===1?fronts[0]:null);
     const prefix=backend.directory==='.'?'':backend.directory+'/';

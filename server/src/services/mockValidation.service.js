@@ -407,16 +407,46 @@ export function validateAndNormalizeMocks({
 
             let callMutated = false;
 
-            // Rule 2: Virtual flag normalization for Jest relative & uninstalled external mocks
+            // Rule 2: Virtual flag normalization for Jest relative, alias & uninstalled external mocks
             if (!isVitest && rootDir) {
                 let existsOnDisk = true;
                 if (specifier.startsWith(".") && (filePath || sourceFile)) {
                     existsOnDisk = Boolean(resolveRelativeModuleOnDisk(specifier, filePath || sourceFile, rootDir));
+                } else if (/^[@~]{1,2}\//.test(specifier)) {
+                    const subRel = specifier.replace(/^[@~]{1,2}\//, "").replace(/\.[cm]?[jt]sx?$/i, "");
+                    existsOnDisk = ["", "src/", "client/", "client/src/", "server/", "server/src/"].some((pref) =>
+                        MODULE_EXTENSIONS.some((ext) => {
+                            try {
+                                const cand = path.resolve(rootDir, `${pref}${subRel}${ext}`);
+                                return fs.existsSync(cand) && fs.statSync(cand).isFile();
+                            } catch (_) {
+                                return false;
+                            }
+                        }),
+                    );
                 } else if (!specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("node:")) {
                     const pkgName = specifier.startsWith("@")
                         ? specifier.split("/").slice(0, 2).join("/")
                         : specifier.split("/")[0];
-                    existsOnDisk = fs.existsSync(path.join(rootDir, "node_modules", pkgName));
+                    existsOnDisk = false;
+                    const normRoot = path.resolve(rootDir);
+                    const startFile = filePath || sourceFile || "";
+                    let nmCursor = startFile
+                        ? path.dirname(path.isAbsolute(startFile) ? startFile : path.join(normRoot, startFile))
+                        : normRoot;
+                    const checkedDirs = new Set();
+                    while (nmCursor && nmCursor.startsWith(normRoot) && !checkedDirs.has(nmCursor)) {
+                        checkedDirs.add(nmCursor);
+                        if (fs.existsSync(path.join(nmCursor, "node_modules", pkgName))) {
+                            existsOnDisk = true;
+                            break;
+                        }
+                        if (nmCursor === normRoot) break;
+                        nmCursor = path.dirname(nmCursor);
+                    }
+                    if (!existsOnDisk) {
+                        existsOnDisk = fs.existsSync(path.join(normRoot, "node_modules", pkgName));
+                    }
                 }
                 const optsArg = args[2];
 
@@ -439,7 +469,15 @@ export function validateAndNormalizeMocks({
                         }
                     }
                 } else {
-                    if (args.length === 2 && isInlineMockFactory(args[1])) {
+                    if (args.length === 1) {
+                        args.push(t.arrowFunctionExpression([], t.objectExpression([])));
+                        args.push(t.objectExpression([t.objectProperty(t.identifier("virtual"), t.booleanLiteral(true))]));
+                        callMutated = true;
+                        repairs.push({
+                            rule: "VIRTUAL_FLAG_ADDED",
+                            detail: `Added virtual stub factory for non-existent module mock '${specifier}'.`
+                        });
+                    } else if (args.length === 2 && isInlineMockFactory(args[1])) {
                         args.push(t.objectExpression([t.objectProperty(t.identifier("virtual"), t.booleanLiteral(true))]));
                         callMutated = true;
                         repairs.push({

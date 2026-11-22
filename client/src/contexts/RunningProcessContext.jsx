@@ -666,13 +666,27 @@ const sanitizeCachedSuggestions = (sugsMap) => {
   for (const [key, val] of Object.entries(sugsMap)) {
     if (Array.isArray(val)) {
       cleaned[key] = val.map((sug) => {
-        if (sug && sug.status === "APPLYING") {
+        if (!sug || typeof sug !== "object") return sug;
+        const code =
+          sug.fullUpdatedContent ||
+          sug.generatedCode ||
+          sug.suggestedTestCode ||
+          sug.testCode ||
+          "";
+        const hydrated = {
+          ...sug,
+          fullUpdatedContent: code,
+          generatedCode: code,
+          suggestedTestCode: code,
+          testCode: code,
+        };
+        if (hydrated.status === "APPLYING") {
           return {
-            ...sug,
-            status: sug.testRunError ? "FAILED" : "GENERATED",
+            ...hydrated,
+            status: hydrated.testRunError ? "FAILED" : "GENERATED",
           };
         }
-        return sug;
+        return hydrated;
       });
     } else {
       cleaned[key] = val;
@@ -681,43 +695,107 @@ const sanitizeCachedSuggestions = (sugsMap) => {
   return cleaned;
 };
 
-  // Suggestions Cache Management (Persisted in sessionStorage by snapshotId)
+const compactSuggestionsForStorage = (sugsMap) => {
+  if (!sugsMap || typeof sugsMap !== "object") return {};
+  const compacted = {};
+  for (const [key, val] of Object.entries(sugsMap)) {
+    if (!Array.isArray(val)) continue;
+    compacted[key] = val.map((sug) => {
+      if (!sug || typeof sug !== "object") return sug;
+      const code =
+        sug.fullUpdatedContent ||
+        sug.generatedCode ||
+        sug.suggestedTestCode ||
+        sug.testCode ||
+        "";
+      const {
+        generatedCode: _g,
+        suggestedTestCode: _s,
+        testCode: _t,
+        ...rest
+      } = sug;
+      return {
+        ...rest,
+        fullUpdatedContent: code,
+      };
+    });
+  }
+  return compacted;
+};
+
+  // Suggestions Cache Management (Persisted in localStorage by snapshotId so reloads/tabs never lose generated scenarios)
   const getSuggestions = useCallback((snapshotId) => {
     if (!snapshotId) return {};
-    if (suggestionsCacheRef.current[snapshotId]) {
+    if (
+      suggestionsCacheRef.current[snapshotId] &&
+      Object.keys(suggestionsCacheRef.current[snapshotId]).length > 0
+    ) {
       return sanitizeCachedSuggestions(suggestionsCacheRef.current[snapshotId]);
     }
-    try {
-      const raw = sessionStorage.getItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        suggestionsCacheRef.current[snapshotId] = parsed;
-        return sanitizeCachedSuggestions(parsed);
+    const candidateKeys = [
+      `${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`,
+      `${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`,
+      `${SUGGESTIONS_STORAGE_PREFIX}anonymous_${snapshotId}`,
+    ];
+    for (const storage of [localStorage, sessionStorage]) {
+      for (const k of candidateKeys) {
+        try {
+          const raw = storage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+              const hydrated = sanitizeCachedSuggestions(parsed);
+              suggestionsCacheRef.current[snapshotId] = hydrated;
+              return hydrated;
+            }
+          }
+        } catch (_) {}
       }
-    } catch (_) { }
+    }
     return {};
   }, [sessionUserId]);
 
   const saveSuggestions = useCallback((snapshotId, sugsMap) => {
-    if (!snapshotId) return;
-    suggestionsCacheRef.current[snapshotId] = sugsMap;
+    if (!snapshotId || !sugsMap || typeof sugsMap !== "object") return;
+    const keys = Object.keys(sugsMap);
+    // Guard against mount-time empty state `{}` overwriting persisted suggestions
+    if (keys.length === 0) {
+      const existingCached = suggestionsCacheRef.current[snapshotId];
+      if (existingCached && Object.keys(existingCached).length > 0) {
+        return;
+      }
+      try {
+        const existingRaw = localStorage.getItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`);
+        if (existingRaw && existingRaw !== "{}") return;
+      } catch (_) {}
+    }
+    const hydrated = sanitizeCachedSuggestions(sugsMap);
+    suggestionsCacheRef.current[snapshotId] = hydrated;
+    const payload = JSON.stringify(compactSuggestionsForStorage(hydrated));
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(sugsMap));
-    } catch (_) { }
+      localStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, payload);
+    } catch (_) {}
+    try {
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, payload);
+    } catch (_) {}
   }, [sessionUserId]);
 
   const saveFileSuggestions = useCallback((snapshotId, filePath, fileSugs) => {
     if (!snapshotId || !filePath) return;
-    const current = suggestionsCacheRef.current[snapshotId] || {};
-    const updated = {
+    const current = suggestionsCacheRef.current[snapshotId] || getSuggestions(snapshotId) || {};
+    const updated = sanitizeCachedSuggestions({
       ...current,
       [filePath]: fileSugs,
-    };
+    });
     suggestionsCacheRef.current[snapshotId] = updated;
+    const payload = JSON.stringify(compactSuggestionsForStorage(updated));
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
-    } catch (_) { }
-  }, [sessionUserId]);
+      localStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, payload);
+    } catch (_) {}
+    try {
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, payload);
+    } catch (_) {}
+  }, [sessionUserId, getSuggestions]);
 
   const getUnitTestVersionsCache = useCallback((snapshotId) => {
     if (!snapshotId) return {};
@@ -764,36 +842,50 @@ const sanitizeCachedSuggestions = (sugsMap) => {
 
   const updateSingleSuggestionCode = useCallback((snapshotId, filePath, sugId, newCode) => {
     if (!snapshotId || !filePath) return;
-    const current = suggestionsCacheRef.current[snapshotId] || {};
+    const current = suggestionsCacheRef.current[snapshotId] || getSuggestions(snapshotId) || {};
     const fileList = current[filePath] || [];
     const updatedList = fileList.map((s) =>
       (s.suggestionId === sugId || s.id === sugId)
-        ? { ...s, generatedCode: newCode, suggestedTestCode: newCode, status: "EDITED" }
+        ? {
+            ...s,
+            fullUpdatedContent: newCode,
+            generatedCode: newCode,
+            suggestedTestCode: newCode,
+            testCode: newCode,
+            status: "EDITED",
+          }
         : s
     );
-    const updated = { ...current, [filePath]: updatedList };
+    const updated = sanitizeCachedSuggestions({ ...current, [filePath]: updatedList });
     suggestionsCacheRef.current[snapshotId] = updated;
+    const payload = JSON.stringify(compactSuggestionsForStorage(updated));
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
-    } catch (_) { }
-  }, [sessionUserId]);
+      localStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, payload);
+    } catch (_) {}
+    try {
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, payload);
+    } catch (_) {}
+  }, [sessionUserId, getSuggestions]);
 
   const removeFileSuggestions = useCallback((snapshotId, filePath) => {
     if (!snapshotId || !filePath) return;
-    const current = suggestionsCacheRef.current[snapshotId] || {};
-    const updated = { ...current };
-    delete updated[filePath];
-    // Also delete any path variant
+    const current = suggestionsCacheRef.current[snapshotId] || getSuggestions(snapshotId) || {};
+    const updated = { ...current, [filePath]: [] };
+    // Also mark any path variant as empty array so DB hydration knows it was explicitly removed
     Object.keys(updated).forEach((k) => {
-      if (k.endsWith(filePath) || filePath.endsWith(k)) {
-        delete updated[k];
+      if (k !== filePath && (k.endsWith(filePath) || filePath.endsWith(k))) {
+        updated[k] = [];
       }
     });
     suggestionsCacheRef.current[snapshotId] = updated;
+    const payload = JSON.stringify(compactSuggestionsForStorage(updated));
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
-    } catch (_) { }
-  }, [sessionUserId]);
+      localStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, payload);
+    } catch (_) {}
+    try {
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, payload);
+    } catch (_) {}
+  }, [sessionUserId, getSuggestions]);
 
   // Computed summary
   const hasActiveProcess = Boolean(

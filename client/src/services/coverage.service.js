@@ -137,6 +137,9 @@ export async function runCoverageByType(snapshotId, coverageType, framework, exe
         ...(Array.isArray(options?.selectedScenarioIds) && options.selectedScenarioIds.length > 0
             ? { selectedScenarioIds: options.selectedScenarioIds }
             : {}),
+        ...(Array.isArray(options?.draftTests) && options.draftTests.length > 0
+            ? { draftTests: options.draftTests }
+            : {}),
     };
     const hasBody = Object.keys(bodyPayload).length > 0;
     const url = isRestart

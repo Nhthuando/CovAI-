@@ -94,11 +94,14 @@ function extractBlocksInternal(code = "", { supportSystemDescribe = false, logLa
       }
 
       if (isTestCall(baseCallee) && title) {
+        const titleArg = call.arguments?.[0];
         blocks.push({
           title,
           suiteName: suitePath.join(" > "),
           start: node.start,
           end: node.end,
+          titleStart: titleArg?.start ?? null,
+          titleEnd: titleArg?.end ?? null,
           startLine: node.loc?.start?.line ?? 1,
           endLine: node.loc?.end?.line ?? 1,
           code: code.slice(node.start, node.end),

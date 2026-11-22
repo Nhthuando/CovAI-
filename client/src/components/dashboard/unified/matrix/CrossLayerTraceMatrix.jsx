@@ -97,9 +97,22 @@ function matchesCrossFilter(row, cf) {
   if (!cf) return true;
 
   if (cf.file) {
-    const fileName = cf.file.toLowerCase();
+    const rawTarget = cf.file.toLowerCase();
+    const baseTarget = rawTarget.split(/[/\\]/).pop() || rawTarget;
     const unitFile = (row.layerDetails?.unit?.file || row.unit?.path || "").toLowerCase();
-    if (unitFile.includes(fileName)) return true;
+    if (
+      unitFile &&
+      (unitFile.includes(rawTarget) ||
+        rawTarget.includes(unitFile) ||
+        unitFile.split(/[/\\]/).pop() === baseTarget)
+    ) {
+      return true;
+    }
+    const items = Array.isArray(row.items) ? row.items : [];
+    return items.some((it) => {
+      const p = String(it.path || it.name || "").toLowerCase();
+      return p.includes(rawTarget) || p.includes(baseTarget);
+    });
   }
 
   if (cf.category) {
@@ -124,7 +137,8 @@ function matchesCrossFilter(row, cf) {
     const p = cf.pillar;
     if (row.rootCause?.suspectLayer === p) return true;
     if (row[p]?.status === "fail" || row[p]?.status === "warn") return true;
-    return true;
+    if ((row[p]?.total || 0) > 0 && row[p]?.status && row[p]?.status !== "untested") return true;
+    return false;
   }
 
   return true;
@@ -168,9 +182,11 @@ export function CrossLayerTraceMatrix({
         failure++;
       }
       if (
+        r.unit.status === "warn" ||
         r.unit.status === "untested" ||
         r.integration.status === "warn" ||
         r.integration.status === "untested" ||
+        r.system.status === "warn" ||
         r.system.status === "untested"
       ) {
         gap++;
@@ -234,7 +250,7 @@ export function CrossLayerTraceMatrix({
       onAskAi(promptText);
     } else if (typeof window !== "undefined") {
       window.dispatchEvent(
-        new CustomEvent("covai:prefill-prompt", { detail: { prompt: promptText } })
+        new CustomEvent("covai:prefill-prompt", { detail: { promptText } })
       );
     }
   };
@@ -242,37 +258,91 @@ export function CrossLayerTraceMatrix({
   const handleOpenInspector = (row, e) => {
     e.stopPropagation();
     if (!onInspectItem) return;
+    const ld = row.layerDetails || {};
+    const hasFailure =
+      row.unit?.status === "fail" ||
+      row.integration?.status === "fail" ||
+      row.system?.status === "fail";
+    const hasWarn =
+      row.integration?.status === "warn" ||
+      row.unit?.status === "warn" ||
+      row.system?.status === "warn" ||
+      row.unit?.status === "untested" ||
+      row.integration?.status === "untested";
+    const moduleStatus = hasFailure ? "fail" : hasWarn ? "warn" : "pass";
+    const suspectLayer =
+      row.rootCause?.suspectLayer && row.rootCause.suspectLayer !== "none"
+        ? row.rootCause.suspectLayer
+        : row.integration?.endpoint
+          ? "integration"
+          : "unit";
+    const endpoint =
+      row.integration?.endpoint ||
+      (ld.integration?.endpoint
+        ? `${ld.integration.method || "GET"} ${ld.integration.endpoint}`
+        : null);
+    const filePath = row.unit?.path || ld.unit?.file || null;
+    const httpStatus = ld.integration?.httpStatus || null;
+    const failedStep = ld.system?.failedStep || null;
+    const failureCategory =
+      ld.integration?.stuckLayer ||
+      ld.integration?.failureLayer ||
+      ld.system?.failureKind ||
+      row.rootCause?.summary ||
+      "Cross-Layer Diagnostic";
+    const diagnosisText = row.rootCause?.diagnosis || row.description || "";
+    const fallbackStackTrace = [
+      `Module: ${row.moduleName}`,
+      `Unit Layer: ${row.unit?.label || "N/A"}${filePath && filePath !== "N/A" ? ` (${filePath})` : ""}`,
+      `Integration Layer: ${row.integration?.label || "N/A"}${endpoint ? ` [${endpoint}]` : ""}${httpStatus ? ` -> HTTP ${httpStatus}` : ""}`,
+      `System E2E Layer: ${row.system?.label || "N/A"}${failedStep && failedStep !== "None" ? ` (Step: ${failedStep})` : ""}`,
+      `Root Cause: ${row.rootCause?.summary || "N/A"} — ${diagnosisText}`,
+    ].join("\n");
+    const mappedTestCases =
+      Array.isArray(row.diagnostics?.testCases) && row.diagnostics.testCases.length > 0
+        ? row.diagnostics.testCases
+        : (row.items || []).map((it) => ({
+            name: it.name,
+            status: it.status === "pass" || it.status === "fail" ? it.status : "skip",
+            durationMs: 0,
+            step: String(it.type || "layer").toUpperCase(),
+          }));
+
     onInspectItem({
       id: row.id,
       title: `${row.moduleName} — Cross-Layer Diagnostic`,
-      pillar:
-        row.rootCause?.suspectLayer && row.rootCause.suspectLayer !== "none"
-          ? row.rootCause.suspectLayer
-          : "integration",
-      status:
-        row.unit.status === "fail" ||
-        row.integration.status === "fail" ||
-        row.system.status === "fail"
-          ? "fail"
-          : row.integration.status === "warn" || row.unit.status === "untested"
-          ? "warn"
-          : "pass",
-      targetName: row.integration?.endpoint || row.unit?.path || row.moduleName,
-      summary: row.rootCause?.diagnosis || row.description,
-      failureLayer:
-        row.diagnostics?.failureLayer ||
-        row.layerDetails?.integration?.stuckLayer ||
-        "Cross-Layer Trace",
-      httpStatus: row.layerDetails?.integration?.httpStatus,
+      pillar: suspectLayer,
+      status: moduleStatus,
+      priority: moduleStatus === "fail" ? "HIGH" : moduleStatus === "warn" ? "MEDIUM" : null,
+      targetName: endpoint || filePath || row.moduleName,
+      summary: diagnosisText,
+      description: diagnosisText,
+      failureLayer: row.diagnostics?.failureLayer || failureCategory,
+      httpStatus,
       durationMs: row.diagnostics?.durationMs || null,
-      stackTrace: row.diagnostics?.stackTrace || null,
-      testCases: row.diagnostics?.testCases || [],
-      focusParams: row.unit?.path
-        ? { focusFile: row.unit.path }
-        : row.integration?.endpoint
-        ? { focusEndpoint: row.integration.endpoint }
+      stackTrace: row.diagnostics?.stackTrace || fallbackStackTrace,
+      testCases: mappedTestCases,
+      focusParams: filePath
+        ? { focusFile: filePath }
+        : endpoint
+        ? { focusEndpoint: endpoint }
+        : row.system?.scenarioId
+        ? { focusScenario: row.system.scenarioId }
         : {},
       aiPrompt: row.diagnostics?.aiPrompt,
+      diagnostics: {
+        suspectLayer,
+        failureCategory,
+        failureLayer: row.diagnostics?.failureLayer || failureCategory,
+        endpoint: endpoint || "N/A",
+        filePath: filePath || "N/A",
+        httpStatus,
+        failedStep,
+        summary: row.rootCause?.summary || diagnosisText,
+        stackTrace: row.diagnostics?.stackTrace || fallbackStackTrace,
+        testCases: mappedTestCases,
+        aiPrompt: row.diagnostics?.aiPrompt,
+      },
     });
   };
 
@@ -366,7 +436,9 @@ export function CrossLayerTraceMatrix({
           <tbody className="divide-y divide-[var(--ud-border)]">
             {filteredRows.length > 0 ? (
               filteredRows.map((row) => {
-                const isExpanded = expandedRows.has(row.id) || Boolean(activeCrossFilter);
+                const isExpanded =
+                  expandedRows.has(row.id) ||
+                  (Boolean(activeCrossFilter) && filteredRows.length <= 3);
                 const ld = row.layerDetails || {
                   unit: {
                     file: row.unit?.path || "Unmapped service file",

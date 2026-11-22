@@ -40,6 +40,19 @@ describe('verified system generation',()=>{
     expect(()=>validateSystemTestIntent(code+"page.route('**/*',()=>{});")).toThrow(/real backend/);
     expect(validateSystemTestIntent(code)).toEqual(['shows tasks']);
   });
+  it('rejects TypeScript casts with 422 and accepts plain JavaScript', () => {
+    const script = code.replace(
+      "await page.goto('/');",
+      "await page.goto('/'); await page.getByRole('textbox').evaluate((node) => node.checkValidity());",
+    );
+    const withCast = script.replace('node.checkValidity()', '(node as HTMLInputElement).checkValidity()');
+
+    expect(() => validateSystemTestIntent(withCast)).toThrow(expect.objectContaining({
+      statusCode: 422,
+      message: expect.stringMatching(/^Generated tests must be plain JavaScript/),
+    }));
+    expect(validateSystemTestIntent(script)).toEqual(['shows tasks']);
+  });
   it('repairs against real feedback and returns only verified code without saving candidate to suite',async()=>{
     const directory=root();const reportPath=path.join(directory,'report.json');
     const generate=jest.fn().mockResolvedValueOnce(JSON.stringify({content:code})).mockResolvedValue(JSON.stringify({replacements:[{old:"page.goto('/')",new:"page.goto('/tasks')"}]}));
@@ -73,6 +86,20 @@ describe('verified system generation',()=>{
   it('refuses repairs that weaken assertions or change imports',()=>{
     expect(()=>applySystemTestRepair(JSON.stringify({replacements:[{old:"expect(page.getByRole('heading'))",new:'expect(true)'}]}),code)).toThrow(/assertions/);
     expect(()=>applySystemTestRepair(JSON.stringify({replacements:[{old:"import {test,expect}",new:"import {test}"}]}),code)).toThrow(/imports/);
+  });
+  it.each([
+    ['matches across indentation and newlines', "await page.goto('/')", "await\n    page.goto('/')", "await page.goto('/tasks')"],
+    ['matches across quote styles', 'page.goto("/")', "page.goto('/')", 'page.goto("/tasks")'],
+    ['prefers an exact match', "page.goto('/')", "page.goto('/'); page.goto(\"/\")", "page.goto('/tasks'); page.goto(\"/\")"],
+  ])('%s', (_name, previous, candidate, expected) => {
+    const next = previous.replace('/', '/tasks');
+    const repair = JSON.stringify({ replacements: [{ old: previous, new: next }] });
+    expect(applySystemTestRepair(repair, candidate)).toBe(expected);
+  });
+  it('rejects multiple tolerant matches', () => {
+    const repair = JSON.stringify({ replacements: [{ old: 'page.goto("/")', new: 'page.goto("/tasks")' }] });
+    expect(() => applySystemTestRepair(repair, "page.goto('/'); page.goto(`/`)"))
+      .toThrow('Repair must match exactly one candidate fragment.');
   });
   it('does not verify against stale source if the snapshot changes during the run',async()=>{
     const directory=root();const reportPath=path.join(directory,'report.json');

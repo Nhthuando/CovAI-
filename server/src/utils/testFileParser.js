@@ -39,6 +39,46 @@ export function extractSuitesAndScenarios(content, framework = "AUTO") {
   return { suites, scenarios };
 }
 
+function readTestFileContent(fullPath) {
+  if (!fs.existsSync(fullPath)) return null;
+  try {
+    return fs.readFileSync(fullPath, "utf-8");
+  } catch (error) {
+    console.warn(`[testFileParser] Unable to read ${fullPath}: ${error.message}`);
+    return null;
+  }
+}
+
+export function classifySystemTestContent(content) {
+  if (!content) return null;
+  if (
+    /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["'](?:@playwright\/test|playwright)["']/.test(content)
+  ) {
+    return "PLAYWRIGHT";
+  }
+  if (
+    /\bcy\.(visit|get|request|contains|intercept|login|fixture|wait|url|session)\b/.test(content) ||
+    /\/\/\/\s*<reference\s+types=["']cypress["']/.test(content) ||
+    /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']cypress["']/.test(content)
+  ) {
+    return "CYPRESS";
+  }
+  return null;
+}
+
+const isCypressPath = (fileName, relPath) =>
+  /\.cy\.[cm]?[jt]sx?$/i.test(fileName) || /(?:^|\/)cypress\//i.test(relPath);
+
+export function classifySystemTestFile(rootDir, relPath) {
+  const normalizedPath = relPath.replace(/\\/g, "/");
+  const content = readTestFileContent(path.resolve(rootDir, normalizedPath));
+  const framework = classifySystemTestContent(content);
+  if (framework) return framework;
+  if (isCypressPath(path.basename(normalizedPath), normalizedPath)) return "CYPRESS";
+  if (/(?:^|\/)(?:e2e|playwright|system)\//i.test(normalizedPath)) return "PLAYWRIGHT";
+  return null;
+}
+
 /**
  * Parses a single test file and returns structured metadata.
  *
@@ -57,35 +97,20 @@ export function parseTestFileDetails(
     : path.join(rootDir, relativePath);
   const relPath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
   const fileName = path.basename(fullPath);
-
-  let content = "";
-  let lineCount = 0;
-  try {
-    if (fs.existsSync(fullPath)) {
-      content = fs.readFileSync(fullPath, "utf-8");
-      lineCount = content.split("\n").length;
-    }
-  } catch {
-    // Ignore read errors
-  }
-
-  // Determine framework: explicit cypress patterns take precedence
-  let framework = defaultFramework;
-  if (
-    /\.cy\.[cm]?[jt]sx?$/i.test(fileName) ||
-    /(?:^|\/)cypress\//i.test(relPath) ||
-    /\bcy\.\w+/.test(content)
-  ) {
+  const content = readTestFileContent(fullPath);
+  let framework = classifySystemTestContent(content);
+  if (!framework && (isCypressPath(fileName, relPath) || /\bcy\.\w+/.test(content))) {
     framework = "CYPRESS";
-  } else if (
-    /from\s+["']@playwright\/test["']/.test(content) ||
-    /(?:^|\/)(?:e2e|tests\/e2e|tests\/system)\//i.test(relPath)
-  ) {
+  }
+  if (!framework && /(?:^|\/)(?:e2e|tests\/system)\//i.test(relPath)) {
     framework = "PLAYWRIGHT";
   }
+  framework ||= defaultFramework;
+  return buildTestFileDetails(fileName, relPath, framework, content);
+}
 
-  const { suites, scenarios } = extractSuitesAndScenarios(content, framework);
-
+function buildTestFileDetails(fileName, relPath, framework, content) {
+  const { suites, scenarios } = extractSuitesAndScenarios(content ?? "", framework);
   return {
     fileName,
     filePath: relPath,
@@ -95,7 +120,7 @@ export function parseTestFileDetails(
     scenarioCount: scenarios.length,
     suites,
     scenarios,
-    lineCount,
+    lineCount: content === null ? 0 : content.split("\n").length,
     toString() {
       return relPath;
     },
@@ -157,32 +182,17 @@ export function scanSystemTestFiles(rootDir, options = {}) {
       const isTestExt = /\.[cm]?[jt]sx?$/i.test(entry.name);
       if (!isTestExt) continue;
 
-      // Check Cypress test file
-      const isCypress =
-        /\.cy\.[cm]?[jt]sx?$/i.test(entry.name) ||
-        /(?:^|\/)cypress\//i.test(relPath);
+      const cypressPath = isCypressPath(entry.name, relPath);
+      const isSpec = /(?:^|\.)(?:spec|test)\.[cm]?[jt]sx?$/i.test(entry.name);
+      if (!cypressPath && !isSpec) continue;
 
-      // Check Playwright test file (must not be inside cypress directory)
-      const isPlaywright =
-        !isCypress &&
-        /(?:^|\.)(?:spec|test)\.[cm]?[jt]sx?$/i.test(entry.name) &&
-        (/^(?:client\/|frontend\/|web\/)?(?:e2e|tests\/e2e|tests\/system|tests)\//i.test(
-          relPath,
-        ) ||
-          (fs.existsSync(fullPath) &&
-            /from\s+["']@playwright\/test["']/.test(
-              fs.readFileSync(fullPath, "utf-8"),
-            )));
+      const framework = classifySystemTestFile(rootDir, relPath);
+      if (!framework) continue;
 
-      if (isCypress) {
-        const details = parseTestFileDetails(rootDir, relPath, "CYPRESS");
-        cypressFiles.push(details);
-        allFiles.push(details);
-      } else if (isPlaywright) {
-        const details = parseTestFileDetails(rootDir, relPath, "PLAYWRIGHT");
-        playwrightFiles.push(details);
-        allFiles.push(details);
-      }
+      const content = readTestFileContent(fullPath);
+      const details = buildTestFileDetails(entry.name, relPath, framework, content);
+      (framework === "CYPRESS" ? cypressFiles : playwrightFiles).push(details);
+      allFiles.push(details);
     }
   };
 

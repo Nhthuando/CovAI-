@@ -201,6 +201,7 @@ export const parseCoverageFilesForSnapshot = async ({
   coverageReport,
   userId,
   testType: explicitTestType,
+  preserveOtherFiles = false,
 }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
@@ -284,8 +285,8 @@ export const parseCoverageFilesForSnapshot = async ({
   };
 
   const persist = async tx => {
-    if (testType === "INTEGRATION") {
-      // Preserve previously parsed unit-test CoverageFile rows while upserting integration/route files
+    if (testType === "INTEGRATION" || preserveOtherFiles) {
+      // Preserve previously parsed CoverageFile rows while upserting updated files
       for (const row of formattedRows) {
         await tx.coverageFile.upsert({
           where: {

@@ -34,6 +34,7 @@ import { reconcileEvaluations } from './src/services/aiEvaluation/runner.service
 import projectMemberRoutes from './src/routes/projectMember.route.js';
 import projectInvitationRoutes from './src/routes/projectInvitation.route.js';
 import { startInvitationDeliveryWorker } from './src/services/invitationDelivery.service.js';
+import { sweepOrphanedSystemContainers } from './src/services/systemRuntimeResources.service.js';
 import projectEventRoutes from './src/routes/projectEvent.route.js';
 import { attachProjectSubscriptions } from './src/services/projectSubscription.service.js';
 import { isCollaborationLocalTest } from './src/config/collaborationLocal.js';
@@ -219,6 +220,11 @@ async function startServer() {
   try {
     if (process.env.COLLABORATION_E2E_ENABLED === 'true' && !isCollaborationLocalTest()) throw new Error('Collaboration E2E profile requires isolated localhost database and non-production mode');
     await prisma.$connect();
+    if (process.env.COVAI_USE_DOCKER_DB === 'true') {
+      sweepOrphanedSystemContainers()
+        .then(r => r.removed.length && console.log('[System Test] Removed', r.removed.length, 'orphaned test container(s)'))
+        .catch(error => console.warn('[System Test] Orphan sweep failed:', error.message));
+    }
     startInvitationDeliveryWorker();
     const recover = () => recoverQueuedProjectOperations().catch(() => console.error('[operations] Queue recovery unavailable; retrying'));
     const recoveryTimer = setInterval(recover, 30000);

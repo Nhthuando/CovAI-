@@ -586,17 +586,42 @@ export async function cleanupProjectRunnerContainers(projectId, spawnFn = spawnS
     return { success: true, removedCount: 0 };
   }
   try {
+    let stdout = "";
+    let status = 1;
+
+    if (spawnFn === spawnSync) {
+      const { execFile } = await import("node:child_process");
+      const runDockerAsync = (args, timeoutMs) =>
+        new Promise((resolve) => {
+          execFile("docker", args, { encoding: "utf8", timeout: timeoutMs, windowsHide: true }, (err, out) => {
+            resolve({ status: err ? 1 : 0, stdout: out || "" });
+          });
+        });
+      const psRes = await runDockerAsync(
+        ["ps", "-a", "--filter", `label=covai.projectId=${projectId}`, "--format", "{{.ID}}"],
+        4000,
+      );
+      status = psRes.status;
+      stdout = psRes.stdout;
+      if (status === 0 && stdout) {
+        const containerIds = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        await Promise.allSettled(containerIds.map((cid) => runDockerAsync(["rm", "-f", cid], 5000)));
+        return { success: true, removedCount: containerIds.length };
+      }
+      return { success: true, removedCount: 0 };
+    }
+
     const res = spawnFn("docker", [
       "ps", "-a",
       "--filter", `label=covai.projectId=${projectId}`,
       "--format", "{{.ID}}"
-    ], { encoding: "utf8", timeout: 10000, shell: true });
+    ], { encoding: "utf8", timeout: 5000, shell: true });
 
     if (res && res.status === 0 && res.stdout) {
       const containerIds = res.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
       for (const cid of containerIds) {
         try {
-          spawnFn("docker", ["rm", "-f", cid], { timeout: 15000, shell: true });
+          spawnFn("docker", ["rm", "-f", cid], { timeout: 5000, shell: true });
         } catch (_) { }
       }
       return { success: true, removedCount: containerIds.length };

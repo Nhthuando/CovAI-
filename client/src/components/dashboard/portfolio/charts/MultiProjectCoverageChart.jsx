@@ -32,7 +32,12 @@ export function MultiProjectCoverageChart({
 
       {/* Grouped Bars List */}
       <div className="space-y-3.5">
-        {benchmarkItems.map((item) => {
+        {benchmarkItems.length === 0 ? (
+          <div className="py-10 text-center text-xs text-[var(--ud-text-muted)] font-mono border border-dashed border-[var(--ud-border)] rounded-lg">
+            No matching projects to compare
+          </div>
+        ) : (
+          benchmarkItems.map((item) => {
           const isSelected = selectedProjectId === item.projectId;
           const { unitPct, intPct, sysPct, hasImbalance, imbalanceReason } = item;
 
@@ -127,7 +132,8 @@ export function MultiProjectCoverageChart({
               </div>
             </div>
           );
-        })}
+        })
+        )}
       </div>
     </div>
   );

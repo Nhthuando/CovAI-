@@ -54,7 +54,7 @@ export function detectCypress(rootDir) {
     const testFiles = findCypressTestFiles(rootDir);
     const testDirectory = testFiles.length > 0 ? findCommonTestDir(testFiles, rootDir) : null;
 
-    if (!cypressCommand && (detected || !!config)) {
+    if (!cypressCommand && (detected || !!config || testFiles.length > 0)) {
         cypressCommand = "npx cypress run";
     }
 

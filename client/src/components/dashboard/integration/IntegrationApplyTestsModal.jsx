@@ -25,6 +25,7 @@ export default function IntegrationApplyTestsModal({
   scenarios = [],
   initialSelectedKeys = null,
   defaultFilePath = "tests/integration/api.test.js",
+  onBeforeApply,
   onAppliedSuccess,
   onTriggerRerun,
 }) {
@@ -77,6 +78,13 @@ export default function IntegrationApplyTestsModal({
     setError("");
 
     try {
+      if (onBeforeApply) {
+        const ok = await onBeforeApply();
+        if (ok === false) {
+          setIsApplying(false);
+          return;
+        }
+      }
       const fullPath = targetDir ? `${targetDir.replace(/\/+$/, "")}/${fileName}` : fileName;
       const resolvedTestIds =
         chosenScenarios.length > 0

@@ -63,7 +63,11 @@ export function AnalysisTabsZone({
   const historyRunCount = history?.runs?.length ?? 0;
 
   return (
-    <section className={`space-y-4 ${className}`} aria-label="Deep Quality Analysis and History">
+    <section
+      id="ud-analysis-tabs"
+      className={`space-y-4 ${className}`}
+      aria-label="Deep Quality Analysis and History"
+    >
       {/* Tab Switcher Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ud-border)] pb-3">
         <div className="flex items-center gap-2">

@@ -61,6 +61,21 @@ export default function ProjectSelectionPage() {
   const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
   const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
+  const [portfolioProjects, setPortfolioProjects] = useState([]);
+  const [aiTargetProjectId, setAiTargetProjectId] = useState(null);
+
+  const activeAiProject = useMemo(() => {
+    if (!portfolioProjects.length) return null;
+    if (aiTargetProjectId) {
+      const matched = portfolioProjects.find((p) => p.id === aiTargetProjectId);
+      if (matched) return matched;
+    }
+    return (
+      portfolioProjects.find((p) => p.lifecycleStatus === "DOING") ||
+      portfolioProjects[0] ||
+      null
+    );
+  }, [portfolioProjects, aiTargetProjectId]);
 
   // Favorites (Pinned projects)
   const [favorites, setFavorites] = useState(() => {
@@ -105,8 +120,11 @@ export default function ProjectSelectionPage() {
     }
   };
 
-  const handleAskAiPrompt = useCallback((promptText) => {
+  const handleAskAiPrompt = useCallback((promptText, context = {}) => {
     if (!promptText) return;
+    if (context?.projectId) {
+      setAiTargetProjectId(context.projectId);
+    }
     setAiPanelOpen(true);
     setPendingAiSuggestion({ promptText, timestamp: Date.now() });
   }, []);
@@ -272,6 +290,7 @@ export default function ProjectSelectionPage() {
             onDeleteProject={(proj) => setProjectToDelete(proj)}
             onAddProject={() => setShowImport(true)}
             onAskAi={handleAskAiPrompt}
+            onProjectsLoaded={setPortfolioProjects}
           />
         </main>
 
@@ -292,6 +311,7 @@ export default function ProjectSelectionPage() {
               )}
               <motion.div
                 key="portfolio-ai-panel"
+                className="flex flex-col h-full"
                 initial={
                   isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
                 }
@@ -320,20 +340,49 @@ export default function ProjectSelectionPage() {
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >
-                <AIPanel
-                  screenContext={screenContext}
-                  projectId={null}
-                  snapshotId={null}
-                  fileTree={[]}
-                  pendingAiSuggestion={pendingAiSuggestion}
-                  onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
-                  onOpenFile={(filePath) =>
-                    navigate(
-                      `/main-editor?focusFile=${encodeURIComponent(filePath)}`,
-                    )
-                  }
-                  onRunAnalysis={() => {}}
-                />
+                {portfolioProjects.length > 0 && (
+                  <div className="px-3 py-2 border-l border-b border-[var(--ps-line)] bg-[var(--ps-surface)] flex items-center justify-between gap-2 shrink-0">
+                    <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)] shrink-0">
+                      AI Context
+                    </span>
+                    <select
+                      aria-label="Select project for AI Assistant"
+                      value={activeAiProject?.id || ""}
+                      onChange={(e) => setAiTargetProjectId(e.target.value)}
+                      className="ps-select flex-1 min-w-0 h-7 text-[11px]"
+                    >
+                      {portfolioProjects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <AIPanel
+                    key={activeAiProject?.id || "no-project"}
+                    screenContext={screenContext}
+                    projectId={activeAiProject?.id || null}
+                    snapshotId={
+                      activeAiProject?.snapshotId ||
+                      activeAiProject?.activeSnapshotId ||
+                      null
+                    }
+                    fileTree={[]}
+                    pendingAiSuggestion={pendingAiSuggestion}
+                    onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
+                    onOpenFile={(filePath) => {
+                      const pid = activeAiProject?.id
+                        ? `projectId=${encodeURIComponent(activeAiProject.id)}&`
+                        : "";
+                      navigate(
+                        `/main-editor?${pid}focusFile=${encodeURIComponent(filePath)}`,
+                      );
+                    }}
+                    onRunAnalysis={() => {}}
+                  />
+                </div>
               </motion.div>
             </>
           )}

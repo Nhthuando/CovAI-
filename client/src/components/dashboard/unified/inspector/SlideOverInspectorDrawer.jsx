@@ -34,8 +34,10 @@ export function SlideOverInspectorDrawer({
 }) {
   const { addToast } = useToast();
   const [copied, setCopied] = useState(false);
-  const [fetchedRunDetails, setFetchedRunDetails] = useState(null);
-  const [loadingRunDetails, setLoadingRunDetails] = useState(false);
+  const [settledRunDetails, setSettledRunDetails] = useState({
+    key: null,
+    data: null,
+  });
 
   useEffect(() => {
     if (!item) return;
@@ -46,39 +48,50 @@ export function SlideOverInspectorDrawer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [item, onClose]);
 
-  useEffect(() => {
-    setFetchedRunDetails(null);
-    if (!item) return;
-    const isRunItem =
-      item.inspectorType === "run" || Boolean(item.startedAt && item.type);
-    const runId = item.runId || item.id;
-    const targetSnapId = item.snapshotId || snapshotId;
+  const isRunItem = Boolean(
+    item && (item.inspectorType === "run" || (item.startedAt && item.type)),
+  );
+  const runId = item?.runId || item?.id || "";
+  const targetSnapId = item?.snapshotId || snapshotId || "";
+  const isFetchableRun = Boolean(
+    isRunItem && runId && targetSnapId && !String(runId).startsWith("run-"),
+  );
+  const runRequestKey = isFetchableRun ? `${targetSnapId}:${runId}` : null;
 
-    if (
-      isRunItem &&
-      runId &&
-      targetSnapId &&
-      !String(runId).startsWith("run-")
-    ) {
-      let cancelled = false;
-      setLoadingRunDetails(true);
-      getUnifiedTestRunInspection(targetSnapId, runId)
-        .then((res) => {
-          if (!cancelled && res?.data) {
-            setFetchedRunDetails(res.data);
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (!cancelled) setLoadingRunDetails(false);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-  }, [item, snapshotId]);
+  useEffect(() => {
+    if (!runRequestKey || !targetSnapId || !runId) return;
+    let cancelled = false;
+    getUnifiedTestRunInspection(targetSnapId, runId)
+      .then((res) => {
+        if (!cancelled) {
+          setSettledRunDetails({
+            key: runRequestKey,
+            data: res?.data || null,
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn(
+          "[SlideOverInspectorDrawer] Failed to fetch run inspection:",
+          err?.message,
+        );
+        if (!cancelled) {
+          setSettledRunDetails({ key: runRequestKey, data: null });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runRequestKey, targetSnapId, runId]);
 
   if (!item) return null;
+
+  const fetchedRunDetails =
+    runRequestKey && settledRunDetails.key === runRequestKey
+      ? settledRunDetails.data
+      : null;
+  const loadingRunDetails =
+    Boolean(runRequestKey) && settledRunDetails.key !== runRequestKey;
 
   const effectiveItem = fetchedRunDetails
     ? { ...item, ...fetchedRunDetails }
@@ -93,11 +106,12 @@ export function SlideOverInspectorDrawer({
     : effectiveItem.pillar || effectiveItem.diagnostics?.suspectLayer || "unit";
   const status = isRun
     ? effectiveItem.status
-    : effectiveItem.priority === "CRITICAL" || effectiveItem.priority === "HIGH"
-      ? "fail"
-      : effectiveItem.priority === "MEDIUM"
-        ? "warn"
-        : "pass";
+    : effectiveItem.status ||
+      (effectiveItem.priority === "CRITICAL" || effectiveItem.priority === "HIGH"
+        ? "fail"
+        : effectiveItem.priority === "MEDIUM"
+          ? "warn"
+          : "pass");
 
   const title = isRun
     ? `Execution Run ${String(effectiveItem.id || "").slice(0, 10)}`
@@ -110,16 +124,21 @@ export function SlideOverInspectorDrawer({
   const diag = effectiveItem.diagnostics || {};
   const failureLayerLabel = isRun
     ? effectiveItem.failureLayer || "Execution Layer"
-    : `${(diag.suspectLayer || pillar).toUpperCase()} • ${diag.failureCategory || "Defect"}`;
+    : effectiveItem.failureLayer ||
+      `${(diag.suspectLayer || pillar).toUpperCase()} • ${diag.failureCategory || "Defect"}`;
 
   const stackTrace =
-    (isRun ? effectiveItem.stackTrace : diag.stackTrace) ||
+    (isRun
+      ? effectiveItem.stackTrace
+      : diag.stackTrace || effectiveItem.stackTrace) ||
     `// No failure stack trace captured for ${title}`;
 
-  const testCases = (isRun ? effectiveItem.testCases : diag.testCases) || [];
+  const testCases =
+    (isRun ? effectiveItem.testCases : diag.testCases || effectiveItem.testCases) ||
+    [];
 
   const aiPrompt =
-    (isRun ? effectiveItem.aiPrompt : diag.aiPrompt) ||
+    (isRun ? effectiveItem.aiPrompt : diag.aiPrompt || effectiveItem.aiPrompt) ||
     `Please diagnose "${title}" in the ${pillar.toUpperCase()} testing layer:\n${stackTrace}\nSuggest the root cause and code fix.`;
 
   const handleCopyStack = () => {
@@ -131,12 +150,13 @@ export function SlideOverInspectorDrawer({
   const handleTriggerAiDiagnosis = () => {
     if (onAskAi) {
       onAskAi(aiPrompt);
+    } else if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("covai:prefill-prompt", {
+          detail: { promptText: aiPrompt },
+        }),
+      );
     }
-    window.dispatchEvent(
-      new CustomEvent("covai:prefill-prompt", {
-        detail: { promptText: aiPrompt },
-      }),
-    );
     addToast({
       title: "Sent Context to COV AI Agent",
       message: "Diagnostic prompt pre-filled in the right-hand AI Assistant.",
@@ -249,22 +269,39 @@ export function SlideOverInspectorDrawer({
                   <span
                     className="font-mono text-xs font-semibold text-[var(--ud-text)] mt-1 block truncate"
                     title={
-                      diag.endpoint !== "N/A" ? diag.endpoint : diag.filePath
+                      diag.endpoint && diag.endpoint !== "N/A"
+                        ? diag.endpoint
+                        : diag.filePath && diag.filePath !== "N/A"
+                          ? diag.filePath
+                          : effectiveItem.targetName
                     }
                   >
                     {diag.endpoint && diag.endpoint !== "N/A"
                       ? diag.endpoint
-                      : diag.filePath || "N/A"}
+                      : diag.filePath && diag.filePath !== "N/A"
+                        ? diag.filePath
+                        : effectiveItem.targetName || "N/A"}
                   </span>
                 </div>
                 <div className="p-2.5 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/50 col-span-2 sm:col-span-1">
                   <span className="text-[10px] uppercase tracking-wider text-[var(--ud-text-muted)] block">
                     HTTP / Step Status
                   </span>
-                  <span className="font-mono text-xs font-semibold text-[var(--ud-warn)] mt-1 block truncate">
-                    {diag.httpStatus
-                      ? `HTTP ${diag.httpStatus}`
-                      : diag.failedStep || "Needs Fix"}
+                  <span
+                    className={`font-mono text-xs font-semibold mt-1 block truncate ${
+                      diag.httpStatus || effectiveItem.httpStatus
+                        ? (diag.httpStatus || effectiveItem.httpStatus) >= 400
+                          ? "text-[var(--ud-fail)]"
+                          : "text-[var(--ud-pass)]"
+                        : status === "pass"
+                          ? "text-[var(--ud-pass)]"
+                          : "text-[var(--ud-warn)]"
+                    }`}
+                  >
+                    {diag.httpStatus || effectiveItem.httpStatus
+                      ? `HTTP ${diag.httpStatus || effectiveItem.httpStatus}`
+                      : diag.failedStep ||
+                        (status === "pass" ? "Healthy" : "Needs Fix")}
                   </span>
                 </div>
               </>

@@ -95,6 +95,7 @@ describe("Section 4: Data Model & API Contracts Specification Invariant Verifica
             const testsDir = path.join(tempDir, "tests");
             fs.mkdirSync(path.join(testsDir, "unit"), { recursive: true });
             fs.mkdirSync(path.join(testsDir, "integration"), { recursive: true });
+            fs.mkdirSync(path.join(testsDir, "domain"), { recursive: true });
             fs.mkdirSync(path.join(testsDir, "e2e"), { recursive: true });
 
             // Test 1: Unit (Name match + 5 tests)
@@ -117,9 +118,9 @@ describe("Section 4: Data Model & API Contracts Specification Invariant Verifica
                 "utf8"
             );
 
-            // Test 3: E2E (1 test)
+            // Test 3: Secondary domain unit spec (1 test)
             fs.writeFileSync(
-                path.join(testsDir, "e2e", "workflow.spec.ts"),
+                path.join(testsDir, "domain", "workflow.spec.ts"),
                 `
                 const { Invoice } = require('../../src/domain/invoice.entity');
                 it('e1', () => {});
@@ -127,11 +128,22 @@ describe("Section 4: Data Model & API Contracts Specification Invariant Verifica
                 "utf8"
             );
 
+            // System E2E suite (explicitly isolated out of unit test traceability by unitTestFilePolicy)
+            fs.writeFileSync(
+                path.join(testsDir, "e2e", "checkout.spec.ts"),
+                `
+                import { Invoice } from '../../src/domain/invoice.entity';
+                it('e2e1', () => {});
+                `,
+                "utf8"
+            );
+
             multiTestResult = findAllAssociatedTestFiles(tempDir, "src/domain/invoice.entity.ts");
         });
 
-        it("Invariant 1 (Primary Uniqueness): Exactly ONE item has isPrimary === true", () => {
+        it("Invariant 1 (Primary Uniqueness): Exactly ONE item has isPrimary === true and E2E suites stay isolated", () => {
             expect(multiTestResult.linkedTestFiles.length).toBe(3);
+            expect(multiTestResult.linkedTestFiles.some(t => t.filePath.includes("/e2e/"))).toBe(false);
 
             const primaryItems = multiTestResult.linkedTestFiles.filter(t => t.isPrimary === true);
             expect(primaryItems.length).toBe(1);

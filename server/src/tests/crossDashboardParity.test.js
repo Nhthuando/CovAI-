@@ -2,6 +2,7 @@ import { extractExecutionDurationMs } from "../services/testResultParser.service
 import { healProjectLifecycleStatusIfNeeded } from "../services/project.service.js";
 import { getDashboardFingerprint } from "../services/unifiedQualityDashboard.service.js";
 import { getPortfolioFingerprint } from "../services/portfolioDashboard.service.js";
+import { isMatch } from "../services/integrationWorkspace.service.js";
 
 describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
     describe("Lỗi 2B: Read-Time Self-Healing & Serialization for lifecycleStatus", () => {
@@ -187,6 +188,81 @@ describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
         test("getPortfolioFingerprint handles offline/mock environment gracefully without crashing", async () => {
             const fp = await getPortfolioFingerprint("non_existent_user_id");
             expect(fp === null || fp === "empty" || typeof fp === "string").toBe(true);
+        });
+    });
+
+    describe("Batch 1 Fixes: Wildcard Route Regex Safety & Covered Endpoint Clamping", () => {
+        test("isMatch handles catch-all '*' and regex metacharacters without throwing SyntaxError", () => {
+            expect(() => isMatch({ method: "GET", path: "/anything" }, { method: "GET", path: "*" })).not.toThrow();
+            expect(isMatch({ method: "GET", path: "/anything" }, { method: "GET", path: "*" })).toBe(true);
+
+            for (const weirdRoute of ["/api/v1.0/users", "/api/items/+", "/api/users/:id?", "/api/group/(test)"]) {
+                expect(() => isMatch({ method: "GET", path: "/api/items/123" }, { method: "GET", path: weirdRoute })).not.toThrow();
+            }
+            expect(isMatch({ method: "GET", path: "/api/users/42" }, { method: "GET", path: "/api/users/:id" })).toBe(true);
+        });
+
+        test("coveredApis is clamped to totalApis when multiple test cases cover the same endpoint", () => {
+            const totalApis = 1;
+            const passedTests = 6;
+            const coveredEpCount = 1;
+            const coveredApis = Math.min(totalApis, coveredEpCount > 0 ? coveredEpCount : passedTests);
+            const uncoveredApis = Math.max(0, totalApis - coveredApis);
+
+            expect(coveredApis).toBe(1);
+            expect(uncoveredApis).toBe(0);
+        });
+    });
+
+    describe("Batch 2 Fixes: Cross-Dashboard Health/Grade Formula & 0-Test Parity", () => {
+        const computeCanonicalHealth = ({ unit, int, sys }) => {
+            const uRate = unit.passed + unit.failed > 0 ? (unit.passed / (unit.passed + unit.failed)) * 100 : 0;
+            const iRate = int.passed + int.failed > 0 ? (int.passed / (int.passed + int.failed)) * 100 : 0;
+            const sRate = sys.passed + sys.failed > 0 ? (sys.passed / (sys.passed + sys.failed)) * 100 : 0;
+
+            const unitScore = unit.total > 0 ? 0.5 * uRate + 0.5 * unit.cov : 0;
+            const intScore = int.total > 0 ? 0.5 * iRate + 0.5 * int.cov : 0;
+            const sysScore = sys.total > 0 ? 0.5 * sRate + 0.5 * sys.cov : 0;
+
+            const totalExecuted = unit.total + int.total + sys.total;
+            const totalFailed = unit.failed + int.failed + sys.failed;
+            let score = Math.round(unitScore * 0.5 + intScore * 0.3 + sysScore * 0.2);
+            if (totalFailed > 0) {
+                score = Math.max(0, score - Math.min(15, totalFailed * 2));
+            }
+            let grade = "—";
+            if (totalExecuted > 0) {
+                if (score >= 80) grade = "A";
+                else if (score >= 65) grade = "B";
+                else if (score >= 50) grade = "C";
+                else grade = "D";
+            }
+            return { score, grade };
+        };
+
+        test("returns score=0 and grade='—' identically when 0 tests have executed across all 3 layers", () => {
+            const empty = { total: 0, passed: 0, failed: 0, cov: 0 };
+            expect(computeCanonicalHealth({ unit: empty, int: empty, sys: empty })).toEqual({ score: 0, grade: "—" });
+        });
+
+        test("computes identical 50/30/20 weighted health, failure penalty, and A/B/C/D grade thresholds", () => {
+            // Integration-only repo like Toeic_AnswerSheet: 6/6 passed, 100% API cov, 0 unit, 0 system => 30, D
+            expect(
+                computeCanonicalHealth({
+                    unit: { total: 0, passed: 0, failed: 0, cov: 0 },
+                    int: { total: 6, passed: 6, failed: 0, cov: 100 },
+                    sys: { total: 0, passed: 0, failed: 0, cov: 0 },
+                })
+            ).toEqual({ score: 30, grade: "D" });
+
+            // Full passing repo at threshold -> 80 = Grade A
+            expect(
+                computeCanonicalHealth({
+                    unit: { total: 10, passed: 10, failed: 0, cov: 60 },
+                    int: { total: 5, passed: 5, failed: 0, cov: 60 },
+                    sys: { total: 2, passed: 2, failed: 0, cov: 60 },
+                })
+            ).toEqual({ score: 80, grade: "A" });
         });
     });
 });

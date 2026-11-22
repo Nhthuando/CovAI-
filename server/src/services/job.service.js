@@ -302,6 +302,7 @@ export const createRunTestsJob = ({
   verifyPublishedUnitTests = false,
   targetFiles = [],
   targetTestNames = [],
+  draftTests = [],
 }) =>
   createSnapshotJob({
     projectId,
@@ -316,6 +317,7 @@ export const createRunTestsJob = ({
       ...(verifyPublishedUnitTests ? { verifyPublishedUnitTests: true } : {}),
       ...(Array.isArray(targetFiles) && targetFiles.length > 0 ? { targetFiles } : {}),
       ...(Array.isArray(targetTestNames) && targetTestNames.length > 0 ? { targetTestNames } : {}),
+      ...(Array.isArray(draftTests) && draftTests.length > 0 ? { draftTests } : {}),
       useHermeticMock: useHermeticMock !== false,
     },
     requestId,

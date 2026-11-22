@@ -95,6 +95,28 @@ export default function UnitTestCaseEditorModal({
     }
     setSaving(true);
     try {
+      if (!andRun && onSaved) {
+        await onSaved(
+          {
+            staged: true,
+            mode,
+            sourceFile,
+            testFile,
+            testName: title.trim() || undefined,
+            originalTestName: testCase?.title || testCase?.testName || title.trim(),
+            code,
+            framework,
+          },
+          {
+            staged: true,
+            andRun: false,
+            testFile,
+            testName: title.trim() || testCase?.title || "",
+          },
+        );
+        onClose();
+        return;
+      }
       let result;
       if (mode === "add") {
         result = await addUnitTestCaseApi(snapshotId, {

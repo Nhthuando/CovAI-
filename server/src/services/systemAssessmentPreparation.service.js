@@ -62,6 +62,9 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
             resolved=discover();
         }
     }
+    for (const { filePath, reason } of resolved.excludedTests ?? []) {
+        await checkpoint(29, `Skipped ${filePath}: ${reason}`);
+    }
     const executionOnly=input.autoDiscover && !input.prepareOnly;
     if (Array.isArray(input.selectedFiles) && input.selectedFiles.length > 0) {
         const want = new Set(input.selectedFiles.map(f => String(f).replace(/\\/g, '/')));

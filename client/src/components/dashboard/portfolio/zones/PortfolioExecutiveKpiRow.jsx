@@ -4,6 +4,9 @@ import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
 export function PortfolioExecutiveKpiRow({
   kpis = {},
   lifecycleCounts = null,
+  scopeBadge = null,
+  excludedCount = 0,
+  isFiltered = false,
   className = "",
 }) {
   const card1 = kpis.card1Health || {};
@@ -60,6 +63,11 @@ export function PortfolioExecutiveKpiRow({
             <span className="text-xs text-[var(--ps-ink-muted)]">
               Health score
             </span>
+            {scopeBadge && (
+              <div className="text-[10px] ps-mono text-[var(--ps-ink-muted)] tabular-nums mt-0.5">
+                {scopeBadge}
+              </div>
+            )}
             <div className="flex items-baseline gap-1.5 mt-1 ps-mono">
               <span className="text-2xl font-bold text-[var(--ps-ink)]">
                 {card1.avgHealthScore ?? 0}
@@ -96,11 +104,27 @@ export function PortfolioExecutiveKpiRow({
           <div className="grid grid-cols-4 gap-1 text-center ps-mono text-[11px]">
             {[
               { label: "Doing", val: doingCount, dot: "bg-[var(--ps-cobalt)]" },
-              { label: "Done", val: completedCount, dot: "bg-[var(--ps-emerald)]" },
+              {
+                label: "Done",
+                val: completedCount,
+                dot: "bg-[var(--ps-emerald)]",
+                title:
+                  !isFiltered && excludedCount > 0
+                    ? "Excluded from Active KPIs"
+                    : undefined,
+              },
               { label: "New", val: notStartedCount, dot: "bg-[var(--ps-neutral)]" },
-              { label: "Hold", val: pausedOrCancelled, dot: "bg-[var(--ps-amber)]" },
+              {
+                label: "Hold",
+                val: pausedOrCancelled,
+                dot: "bg-[var(--ps-amber)]",
+                title:
+                  !isFiltered && excludedCount > 0
+                    ? "Excluded from Active KPIs"
+                    : undefined,
+              },
             ].map((item) => (
-              <div key={item.label} className="py-0.5">
+              <div key={item.label} title={item.title} className="py-0.5">
                 <div className="font-semibold text-[var(--ps-ink)]">{item.val}</div>
                 <div className="text-[10px] text-[var(--ps-ink-muted)] inline-flex items-center gap-1">
                   <span className={`w-1.5 h-1.5 rounded-full ${item.dot}`} />

@@ -27,6 +27,8 @@ import {
 import {
   applyUnitTestSuggestion,
   aiFixUnitTestCaseApi,
+  addUnitTestCaseApi,
+  updateUnitTestCaseApi,
   deleteUnitTestCaseApi,
   getUnitTestVersions,
   installMissingDependencies,
@@ -34,6 +36,16 @@ import {
   suggestAllUnitTestcases,
   switchUnitTestVersion,
 } from "../../../services/coverage.service.js";
+import {
+  loadStagedOps,
+  saveStagedOps,
+  stageAddOp,
+  stageUpdateOp,
+  stageDeleteOp,
+  countStagedOps,
+  matchesStagedTarget,
+  extractBlockTitle,
+} from "../../../lib/stagedScenarioOps.js";
 import { cancelJobApi, getJobDetailApi, getProjectJobsApi } from "../../../services/job.service.js";
 import {
   applyBatchResultToSuggestionsMap,
@@ -56,7 +68,11 @@ import UnitTestCaseEditorModal from "./UnitTestCaseEditorModal.jsx";
 import UnitFileAnalysisModal from "./UnitFileAnalysisModal.jsx";
 import { cleanDisplayPath } from "../CoverageTypeDashboard.jsx";
 import { extractMissingPackageFromError } from "../UnitTestTraceabilityMatrix.jsx";
-import { classifyUnitTestCase, summarizeUnitFailure } from "./unitTestCaseCoverage.js";
+import {
+  classifyUnitTestCase,
+  getRequiredUnitCasesForFile,
+  summarizeUnitFailure,
+} from "./unitTestCaseCoverage.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -214,6 +230,20 @@ export default function UnitTestWorkspace({
   const [inlineSuggestions, setInlineSuggestions] = useState(() =>
     snapshotId ? getSuggestions(snapshotId) || {} : {},
   );
+  const [pendingUnitOps, setPendingUnitOps] = useState(() =>
+    loadStagedOps("unit", snapshotId),
+  );
+  const [isApplyingPending, setIsApplyingPending] = useState(false);
+
+  useEffect(() => {
+    setPendingUnitOps(loadStagedOps("unit", snapshotId));
+  }, [snapshotId]);
+
+  useEffect(() => {
+    saveStagedOps("unit", snapshotId, pendingUnitOps);
+  }, [snapshotId, pendingUnitOps]);
+
+  const pendingOpsCount = countStagedOps(pendingUnitOps);
   const [unitTestVersions, setUnitTestVersions] = useState({});
   const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
   const [switchingVersionFile, setSwitchingVersionFile] = useState(null);
@@ -230,6 +260,54 @@ export default function UnitTestWorkspace({
   const [simulationTarget, setSimulationTarget] = useState(null);
   const [diffReviewFilePath, setDiffReviewFilePath] = useState(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [selectedZeroTestFramework, setSelectedZeroTestFramework] = useState(null);
+  const [lastScopedAnalysis, setLastScopedAnalysis] = useState(() => {
+    if (!snapshotId) return null;
+    try {
+      const raw = sessionStorage.getItem(`covai_unit_scoped_${snapshotId}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      console.warn("[UnitTestWorkspace] Failed to read scoped analysis:", err);
+      return null;
+    }
+  });
+  const [frameworkPickerModal, setFrameworkPickerModal] = useState({
+    isOpen: false,
+    targetPaths: null,
+  });
+  const [pickerChoice, setPickerChoice] = useState("jest");
+
+  useEffect(() => {
+    setSelectedZeroTestFramework(null);
+    if (!snapshotId) {
+      setLastScopedAnalysis(null);
+    } else {
+      try {
+        const raw = sessionStorage.getItem(`covai_unit_scoped_${snapshotId}`);
+        setLastScopedAnalysis(raw ? JSON.parse(raw) : null);
+      } catch (err) {
+        console.warn("[UnitTestWorkspace] Failed to restore scoped analysis:", err);
+        setLastScopedAnalysis(null);
+      }
+    }
+    setFrameworkPickerModal({ isOpen: false, targetPaths: null });
+  }, [snapshotId]);
+
+  useEffect(() => {
+    if (!snapshotId) return;
+    try {
+      if (lastScopedAnalysis) {
+        sessionStorage.setItem(
+          `covai_unit_scoped_${snapshotId}`,
+          JSON.stringify(lastScopedAnalysis),
+        );
+      } else {
+        sessionStorage.removeItem(`covai_unit_scoped_${snapshotId}`);
+      }
+    } catch (err) {
+      console.warn("[UnitTestWorkspace] Failed to persist scoped analysis:", err);
+    }
+  }, [snapshotId, lastScopedAnalysis]);
 
   // Main Query
   const {
@@ -246,24 +324,58 @@ export default function UnitTestWorkspace({
   const functionsList = dashboardData?.functionsList || [];
   const testSuites = dashboardData?.testSuites || [];
 
+  const unitPermutation = frameworks?.unitPermutation || null;
   const activeFramework = useMemo(() => {
+    if (selectedZeroTestFramework === "vitest" || selectedZeroTestFramework === "jest") {
+      return selectedZeroTestFramework;
+    }
+    const permFw = unitPermutation?.resolvedFramework;
+    if (permFw === "vitest" || permFw === "jest") return permFw;
     const detected = frameworks?.recommended || frameworks?.detected?.[0]?.framework;
     if (detected === "vitest" || detected === "jest") return detected;
     if (executions?.vitest && !executions?.jest) return "vitest";
     return "jest";
-  }, [frameworks, executions]);
+  }, [frameworks, unitPermutation, executions, selectedZeroTestFramework]);
 
   // Restore / persist inline suggestions per snapshot
   const lastSnapshotRef = useRef(snapshotId);
   useEffect(() => {
-    if (snapshotId && snapshotId !== lastSnapshotRef.current) {
+    if (!snapshotId) return;
+    const stored = getSuggestions(snapshotId) || {};
+    if (snapshotId !== lastSnapshotRef.current) {
       lastSnapshotRef.current = snapshotId;
-      setInlineSuggestions(getSuggestions(snapshotId) || {});
+      setInlineSuggestions(stored);
+    } else if (Object.keys(stored).length > 0) {
+      setInlineSuggestions((prev) =>
+        Object.keys(prev || {}).length === 0 ? stored : prev,
+      );
     }
   }, [snapshotId, getSuggestions]);
 
+  // Hydrate generated suggestions persisted in DB (from completed UNIT_TEST_SUGGEST jobs)
+  // so page reloads never lose generated test scenarios until the user explicitly deletes them.
   useEffect(() => {
-    if (snapshotId && inlineSuggestions) {
+    const dbPersisted = executions?.persistedSuggestions;
+    if (!snapshotId || !dbPersisted || typeof dbPersisted !== "object") return;
+    const dbEntries = Object.entries(dbPersisted);
+    if (dbEntries.length === 0) return;
+    setInlineSuggestions((prev) => {
+      let changed = false;
+      const next = { ...(prev || {}) };
+      for (const [rawKey, sugs] of dbEntries) {
+        const key = cleanDisplayPath(rawKey || "");
+        if (!key || !Array.isArray(sugs) || sugs.length === 0) continue;
+        // If user already has local draft or explicitly emptied `[key]: []` via delete, preserve user's state
+        if (Object.prototype.hasOwnProperty.call(next, key)) continue;
+        next[key] = sugs;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [snapshotId, executions?.persistedSuggestions]);
+
+  useEffect(() => {
+    if (snapshotId && inlineSuggestions && Object.keys(inlineSuggestions).length > 0) {
       saveSuggestions(snapshotId, inlineSuggestions);
     }
   }, [snapshotId, inlineSuggestions, saveSuggestions]);
@@ -332,9 +444,14 @@ export default function UnitTestWorkspace({
               for (const s of sugList) {
                 const key = cleanDisplayPath(s.sourceFile || "");
                 if (!key) continue;
-                const existing = next[key] || [];
-                const sid = s.suggestionId || s.id;
-                const filtered = existing.filter((e) => (e.suggestionId || e.id) !== sid);
+                const fw = String(s.framework || activeFramework || "jest").toLowerCase();
+                const existing = Array.isArray(next[key]) ? next[key] : [];
+                // Replace any previous draft for the same sourceFile + framework so drafts never stack
+                const filtered = existing.filter(
+                  (e) =>
+                    e &&
+                    String(e.framework || activeFramework || "jest").toLowerCase() !== fw,
+                );
                 next[key] = [...filtered, s];
               }
               return next;
@@ -368,7 +485,23 @@ export default function UnitTestWorkspace({
           if (summaryRes.errorMessage) setError(summaryRes.errorMessage);
           loadUnitTestVersions();
         } else {
-          setNotice("Unit test coverage analysis completed.");
+          if (completedJobId) {
+            const detail = await getJobDetailApi(completedJobId).catch(() => null);
+            const resultData = parseJobResultPayload(detail);
+            if (resultData?.scopedCoverage?.files?.length > 0) {
+              setLastScopedAnalysis(resultData.scopedCoverage);
+              const lPct = resultData.scopedCoverage.total?.lines?.pct ?? 0;
+              setNotice(
+                `Scoped coverage analysis completed for ${resultData.scopedCoverage.files.length} selected business logic file(s): ${lPct}% lines coverage.`,
+              );
+            } else {
+              setLastScopedAnalysis(null);
+              setNotice("Unit test coverage analysis completed.");
+            }
+          } else {
+            setLastScopedAnalysis(null);
+            setNotice("Unit test coverage analysis completed.");
+          }
         }
       } catch (err) {
         console.warn("[UnitTestWorkspace] Post-job processing warning:", err?.message);
@@ -482,12 +615,46 @@ export default function UnitTestWorkspace({
       .map((f) => {
       const cleanPath = cleanDisplayPath(f.filePath || "");
       const base = baseNameNoTestExt(cleanPath);
-      const matchedExecuted = scenariosByBase.get(base) || [];
+      const fileFunctions = fnMap.get(cleanPath) || [];
+      const requiredCases = getRequiredUnitCasesForFile(f, fileFunctions);
+      const rawMatchedExecuted = scenariosByBase.get(base) || [];
 
       const rawSugs = inlineSuggestions[cleanPath] || inlineSuggestions[f.filePath] || [];
+      // Keep at most 1 latest suggestion per framework for this file to prevent stacked duplicate drafts
+      const latestSugByFw = new Map();
+      for (const s of Array.isArray(rawSugs) ? rawSugs : [rawSugs]) {
+        if (!s || typeof s !== "object") continue;
+        const fw = String(s.framework || activeFramework || "jest").toLowerCase();
+        latestSugByFw.set(fw, s);
+      }
+      const dedupedSugs = Array.from(latestSugByFw.values());
+
+      const stripCasePrefix = (t = "") =>
+        String(t || "")
+          .trim()
+          .replace(/^\[[^\]]+\]\s*[:\-]?\s*/i, "")
+          .replace(/^TC-[A-Z0-9_/&\-\s]+:\s*/i, "")
+          .trim()
+          .toLowerCase();
+
+      const existingDiskTitles = new Set();
+      let hasUnappliedNewTestFileDraft = false;
+      for (const sug of dedupedSugs) {
+        const isApplied = sug.applied === true || ["PASSED", "APPLIED"].includes(sug.status);
+        const origCode = String(sug.originalCode || "");
+        if (origCode.trim()) {
+          for (const b of extractTestCasesFromCode(origCode)) {
+            const norm = String(b.title || "").trim().toLowerCase();
+            if (norm) existingDiskTitles.add(norm);
+          }
+        } else if (!isApplied && sug.isExisting === false) {
+          hasUnappliedNewTestFileDraft = true;
+        }
+      }
+
       const draftCases = [];
-      for (let sIdx = 0; sIdx < rawSugs.length; sIdx++) {
-        const sug = rawSugs[sIdx];
+      for (let sIdx = 0; sIdx < dedupedSugs.length; sIdx++) {
+        const sug = dedupedSugs[sIdx];
         const isApplied = sug.applied === true || ["PASSED", "APPLIED"].includes(sug.status);
         const sugCode =
           sug.fullUpdatedContent ||
@@ -496,34 +663,102 @@ export default function UnitTestWorkspace({
           sug.testCode ||
           sug.code ||
           "";
-        let testCasesMeta = Array.isArray(sug.testCases) && sug.testCases.length > 0 ? sug.testCases : [];
-        if (testCasesMeta.length === 0 && sugCode) {
-          const parsedBlocks = extractTestCasesFromCode(sugCode);
-          if (parsedBlocks.length > 0) {
-            testCasesMeta = parsedBlocks.map((b) => ({
-              title: b.title,
-              code: b.code,
-              category: classifyUnitTestCase({ title: b.title }).category,
-            }));
-          }
-        }
-        if (testCasesMeta.length === 0 && Array.isArray(sug.scenarioMatrix) && sug.scenarioMatrix.length > 0) {
+        const parsedCodeBlocks = sugCode ? extractTestCasesFromCode(sugCode) : [];
+        let testCasesMeta = [];
+        if (Array.isArray(sug.testCases) && sug.testCases.length > 0) {
+          testCasesMeta = sug.testCases.map((tc) => {
+            const matchingBlock = parsedCodeBlocks.find(
+              (b) =>
+                String(b.title || "").trim().toLowerCase() ===
+                String(tc.title || tc.testName || "").trim().toLowerCase(),
+            );
+            return {
+              ...tc,
+              title: tc.title || tc.testName || tc.name,
+              code: tc.code || matchingBlock?.rawBlock || null,
+            };
+          });
+        } else if (parsedCodeBlocks.length > 0) {
+          testCasesMeta = parsedCodeBlocks.map((b) => ({
+            title: b.title,
+            code: b.rawBlock || b.code || null,
+            category: classifyUnitTestCase({ title: b.title }).category,
+          }));
+        } else if (Array.isArray(sug.scenarioMatrix) && sug.scenarioMatrix.length > 0) {
           testCasesMeta = sug.scenarioMatrix.map((m, idx) => ({
             title: m.scenario || m.title || m.description || `Case ${idx + 1}`,
             category: m.category || classifyUnitTestCase({ title: m.scenario || m.title }).category,
           }));
+        } else if (sugCode.trim()) {
+          testCasesMeta = [
+            {
+              title: `[Happy Path] AI unit test suite for ${cleanPath.split("/").pop()}`,
+              category: sug.category || "HAPPY_PATH",
+            },
+          ];
         }
-        if (testCasesMeta.length === 0) {
-          testCasesMeta = [{ title: `AI unit test suite for ${cleanPath.split("/").pop()}`, category: sug.category || "HAPPY_PATH" }];
+
+        // Exclude pre-existing user test blocks that were part of sug.originalCode
+        if (existingDiskTitles.size > 0) {
+          testCasesMeta = testCasesMeta.filter(
+            (tc) =>
+              !existingDiskTitles.has(
+                String(tc.title || tc.testName || "").trim().toLowerCase(),
+              ),
+          );
         }
-        for (let tIdx = 0; tIdx < testCasesMeta.length; tIdx++) {
-          const tc = testCasesMeta[tIdx];
+
+        // Deduplicate & enforce 1 AI test case per required case of this business logic file
+        const seenTitles = new Set();
+        const uniqueMeta = [];
+        for (const tc of testCasesMeta) {
+          const t = String(tc.title || tc.testName || "").trim();
+          const key = stripCasePrefix(t) || t.toLowerCase();
+          if (!key || seenTitles.has(key)) continue;
+          seenTitles.add(key);
+          uniqueMeta.push(tc);
+        }
+
+        const assignedMeta = [];
+        const usedReqKeys = new Set();
+        const remainingMeta = [];
+        for (const tc of uniqueMeta) {
+          const def = classifyUnitTestCase(tc);
+          const matchReq = requiredCases.find(
+            (rc) => rc.key === def.key && !usedReqKeys.has(rc.key),
+          );
+          if (matchReq) {
+            usedReqKeys.add(matchReq.key);
+            assignedMeta.push({
+              ...tc,
+              caseKey: matchReq.key,
+              category: matchReq.category,
+            });
+          } else {
+            remainingMeta.push(tc);
+          }
+        }
+        for (const rc of requiredCases) {
+          if (usedReqKeys.has(rc.key)) continue;
+          const nextTc = remainingMeta.shift();
+          if (!nextTc) break;
+          usedReqKeys.add(rc.key);
+          assignedMeta.push({
+            ...nextTc,
+            caseKey: rc.key,
+            category: rc.category,
+          });
+        }
+
+        for (let tIdx = 0; tIdx < assignedMeta.length; tIdx++) {
+          const tc = assignedMeta[tIdx];
           const title = tc.title || tc.testName || tc.name || `Draft test ${tIdx + 1}`;
-          // Skip draft duplicate if already executed in repo tests with identical title
           if (
             isApplied &&
-            matchedExecuted.some(
-              (ex) => String(ex.title || "").trim().toLowerCase() === String(title).trim().toLowerCase(),
+            rawMatchedExecuted.some(
+              (ex) =>
+                String(ex.title || "").trim().toLowerCase() ===
+                String(title).trim().toLowerCase(),
             )
           ) {
             continue;
@@ -531,22 +766,101 @@ export default function UnitTestWorkspace({
           draftCases.push({
             id: `draft::${cleanPath}::${sug.suggestionId || sug.id || sIdx}::${tIdx}`,
             title,
+            caseKey: tc.caseKey || classifyUnitTestCase({ title, category: tc.category }).key,
             category: tc.category || classifyUnitTestCase({ title }).category,
             status: isApplied ? "applied" : "draft",
             origin: "AI_DRAFT",
             isApplied,
             code: tc.code || null,
-            testFile: cleanDisplayPath(sug.testFile || sug.targetTestFile || suiteMapByBase.get(base) || ""),
+            testFile: cleanDisplayPath(
+              sug.testFile || sug.targetTestFile || suiteMapByBase.get(base) || "",
+            ),
             suggestionObj: sug,
             duration: 0,
           });
         }
       }
 
-      const testCases = [...matchedExecuted, ...draftCases];
+      // Reconcile executed scenarios: if an executed scenario came from running an unapplied
+      // temporary AI draft (not present in existingDiskTitles), attach its run status to the
+      // AI_DRAFT scenario instead of duplicating it as a fake PROJECT_EXISTING scenario.
+      const matchedExecuted = [];
+      for (const ex of rawMatchedExecuted) {
+        const exTitleNorm = String(ex.title || "").trim().toLowerCase();
+        const exTitleStripped = stripCasePrefix(ex.title);
+        const isTrueExistingOnDisk = existingDiskTitles.has(exTitleNorm);
+
+        if (!isTrueExistingOnDisk) {
+          const matchingDraft = draftCases.find(
+            (dc) =>
+              !dc.isApplied &&
+              (String(dc.title || "").trim().toLowerCase() === exTitleNorm ||
+                (exTitleStripped && stripCasePrefix(dc.title) === exTitleStripped)),
+          );
+          if (matchingDraft) {
+            matchingDraft.status = ex.status || matchingDraft.status;
+            matchingDraft.duration = ex.duration || matchingDraft.duration;
+            matchingDraft.failureMessages = ex.failureMessages || [];
+            matchingDraft.failureSummary = ex.failureSummary || "";
+            continue;
+          }
+          // If the test file didn't exist on disk at all prior to this unapplied draft,
+          // any leftover executed scenarios from an earlier temp draft run of this file are not PROJECT_EXISTING.
+          if (hasUnappliedNewTestFileDraft && draftCases.length > 0) {
+            continue;
+          }
+        }
+        matchedExecuted.push(ex);
+      }
+
+      const baseCases = [...matchedExecuted, ...draftCases]
+        .filter((tc) => {
+          const t = {
+            key: tc.id,
+            id: tc.id,
+            testFile: tc.testFile,
+            testName: tc.title || tc.testName,
+          };
+          return !(pendingUnitOps.deletes || []).some((d) => matchesStagedTarget(d, t));
+        })
+        .map((tc) => {
+          const t = {
+            key: tc.id,
+            id: tc.id,
+            testFile: tc.testFile,
+            testName: tc.title || tc.testName,
+          };
+          const upd = (pendingUnitOps.updates || []).find((u) => matchesStagedTarget(u, t));
+          if (!upd) return tc;
+          return {
+            ...tc,
+            title: upd.testName || tc.title,
+            code: upd.code,
+            status: "edited",
+            stagedEdit: true,
+          };
+        });
+
+      const stagedAdds = (pendingUnitOps.adds || [])
+        .filter((a) => !a.sourceFile || cleanDisplayPath(a.sourceFile) === cleanPath)
+        .map((a) => ({
+          id: a.id,
+          title: a.testName || a.title,
+          category: classifyUnitTestCase({ title: a.testName || a.title }).category,
+          status: "draft",
+          origin: "STAGED_ADD",
+          isApplied: false,
+          stagedTemp: true,
+          code: a.code,
+          testFile: cleanDisplayPath(a.testFile || suiteMapByBase.get(base) || ""),
+          duration: 0,
+        }));
+
+      const testCases = [...baseCases, ...stagedAdds];
       const associatedTestFile =
         matchedExecuted[0]?.testFile ||
         draftCases[0]?.testFile ||
+        stagedAdds[0]?.testFile ||
         suiteMapByBase.get(base) ||
         "";
 
@@ -566,7 +880,7 @@ export default function UnitTestWorkspace({
     }
 
     return entries;
-  }, [rawFiles, functionsList, testSuites, allExecutedScenarios, inlineSuggestions, focusFile]);
+  }, [rawFiles, functionsList, testSuites, allExecutedScenarios, inlineSuggestions, pendingUnitOps, focusFile]);
 
   const missingDependencies = useMemo(() => {
     const found = new Map();
@@ -584,6 +898,59 @@ export default function UnitTestWorkspace({
     [inlineSuggestions],
   );
 
+  const buildDraftTestsForRun = useCallback(
+    (targetFiles = []) => {
+      const normalizedTargets = Array.isArray(targetFiles)
+        ? targetFiles
+            .map((t) => String(t || "").replace(/\\/g, "/").replace(/^\/+/, "").trim().toLowerCase())
+            .filter(Boolean)
+        : [];
+      const targetBasenames = new Set(
+        normalizedTargets.map((t) =>
+          t.split("/").pop().replace(/(?:\.(?:partial|redundant))?\.(?:test|spec|unit)\.[cm]?[jt]sx?$/i, "").replace(/\.[cm]?[jt]sx?$/i, ""),
+        ),
+      );
+      const byTestFile = new Map();
+      for (const item of Object.values(inlineSuggestions || {})) {
+        const list = Array.isArray(item) ? item : [item];
+        for (const sug of list) {
+          if (!sug || typeof sug !== "object" || sug.isApplied || sug.isFullyCovered) continue;
+          const testFile = String(sug.targetTestFile || sug.testFile || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+          const sourceFile = String(sug.targetSourceFile || sug.sourceFile || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+          const code = sug.fullUpdatedContent || sug.suggestedTestCode || sug.generatedCode || sug.testCode || "";
+          if (!testFile || !code.trim()) continue;
+          if (normalizedTargets.length > 0) {
+            const normTest = testFile.toLowerCase();
+            const normSrc = sourceFile.toLowerCase();
+            const testBase = normTest.split("/").pop().replace(/(?:\.(?:partial|redundant))?\.(?:test|spec|unit)\.[cm]?[jt]sx?$/i, "");
+            const srcBase = normSrc.split("/").pop().replace(/\.[cm]?[jt]sx?$/i, "");
+            const matched =
+              normalizedTargets.some(
+                (t) =>
+                  normSrc === t ||
+                  normTest === t ||
+                  normSrc.endsWith("/" + t) ||
+                  normTest.endsWith("/" + t) ||
+                  t.endsWith("/" + normSrc) ||
+                  t.endsWith("/" + normTest),
+              ) ||
+              (testBase && targetBasenames.has(testBase)) ||
+              (srcBase && targetBasenames.has(srcBase));
+            if (!matched) continue;
+          }
+          byTestFile.set(testFile.toLowerCase(), {
+            sourceFile,
+            testFile,
+            framework: sug.framework === "vitest" || sug.framework === "jest" ? sug.framework : null,
+            code,
+          });
+        }
+      }
+      return Array.from(byTestFile.values());
+    },
+    [inlineSuggestions],
+  );
+
   // Handlers
   const handleRunCoverage = async ({ targetFiles = [], targetTestNames = [], targetKey = null } = {}) => {
     if (!snapshotId || isJobActive) return;
@@ -592,10 +959,12 @@ export default function UnitTestWorkspace({
     setPendingAction("RUN");
     setRunningTargetKey(targetKey);
     try {
+      const draftTests = buildDraftTestsForRun(targetFiles);
       const res = await runCoverageByType(snapshotId, "unit", activeFramework, "full", {
         restart: targetFiles.length === 0 && targetTestNames.length === 0,
         targetFiles,
         targetTestNames,
+        draftTests,
       });
       const job = res?.data?.job || res?.data?.jobs?.[0] || res?.job;
       if (job?.id) {
@@ -612,7 +981,7 @@ export default function UnitTestWorkspace({
     }
   };
 
-  const handleSuggestFiles = async (targetFilePaths = null) => {
+  const handleSuggestFiles = async (targetFilePaths = null, explicitFramework = null) => {
     if (!snapshotId || isJobActive) return;
     setError("");
     setNotice("");
@@ -626,12 +995,24 @@ export default function UnitTestWorkspace({
       return;
     }
 
+    if (!explicitFramework && unitPermutation?.needsUserSelection && !selectedZeroTestFramework) {
+      setPickerChoice("jest");
+      setFrameworkPickerModal({ isOpen: true, targetPaths: paths });
+      return;
+    }
+
+    const frameworkToSend = explicitFramework
+      ? explicitFramework
+      : unitPermutation?.needsUserSelection
+        ? selectedZeroTestFramework || "jest"
+        : "auto";
+
     setPendingAction("GENERATE");
     try {
       const res = await suggestAllUnitTestcases(snapshotId, {
         filePaths: paths,
         projectId,
-        framework: activeFramework,
+        framework: frameworkToSend,
         validationMode: "fast",
         async: true,
       });
@@ -720,36 +1101,133 @@ export default function UnitTestWorkspace({
     }
   };
 
+  const flushPendingUnitOps = async ({ reload = true } = {}) => {
+    if (!snapshotId || countStagedOps(pendingUnitOps) === 0) return true;
+    setIsApplyingPending(true);
+    setError("");
+    try {
+      for (const d of pendingUnitOps.deletes || []) {
+        await deleteUnitTestCaseApi(snapshotId, {
+          sourceFile: d.sourceFile || "",
+          testFile: d.testFile,
+          testName: d.testName || d.title,
+        });
+      }
+      for (const u of pendingUnitOps.updates || []) {
+        await updateUnitTestCaseApi(snapshotId, {
+          sourceFile: u.sourceFile || "",
+          testFile: u.testFile,
+          testName: u.originalTestName || u.testName,
+          code: u.code,
+        });
+      }
+      for (const a of pendingUnitOps.adds || []) {
+        await addUnitTestCaseApi(snapshotId, {
+          sourceFile: a.sourceFile || "",
+          testFile: a.testFile,
+          testName: a.testName,
+          code: a.code,
+          framework: a.framework || activeFramework,
+        });
+      }
+      const cleared = { deletes: [], updates: [], adds: [] };
+      setPendingUnitOps(cleared);
+      saveStagedOps("unit", snapshotId, cleared);
+      loadUnitTestVersions();
+      invalidateCoverageQueries(snapshotId);
+      if (reload) await refetch();
+      setNotice("Applied all temporary unit test changes to source files.");
+      return true;
+    } catch (err) {
+      setError(err.message || "Failed to apply temporary unit test changes.");
+      return false;
+    } finally {
+      setIsApplyingPending(false);
+    }
+  };
+
   const handleDeleteTestCase = async (tc, entry) => {
     if (!snapshotId) return;
     setError("");
     if (tc.origin === "AI_DRAFT" && !tc.isApplied) {
+      const targetTitleNorm = String(tc.title || tc.testName || "").trim().toLowerCase();
+      const removeSingleBlockFromCode = (codeStr = "") => {
+        if (!codeStr || typeof codeStr !== "string") return codeStr;
+        const blocks = extractTestCasesFromCode(codeStr);
+        const targetBlock = blocks.find(
+          (b) => String(b.title || "").trim().toLowerCase() === targetTitleNorm,
+        );
+        if (!targetBlock) return codeStr;
+        return (
+          codeStr.slice(0, targetBlock.startIndex) +
+          codeStr.slice(targetBlock.endIndex)
+        ).replace(/\n{3,}/g, "\n\n");
+      };
+
       setInlineSuggestions((prev) => {
         const key = cleanDisplayPath(entry?.filePath || "");
-        const list = prev[key] || [];
+        const list = Array.isArray(prev[key]) ? prev[key] : [];
+        const targetSugId = tc.suggestionObj?.suggestionId || tc.suggestionObj?.id;
+        const updatedList = [];
+
+        for (const s of list) {
+          const sid = s?.suggestionId || s?.id;
+          if (sid !== targetSugId) {
+            updatedList.push(s);
+            continue;
+          }
+          const nextFull = removeSingleBlockFromCode(
+            s.fullUpdatedContent || s.suggestedTestCode || s.generatedCode || s.testCode || "",
+          );
+          const nextTestCases = Array.isArray(s.testCases)
+            ? s.testCases.filter(
+                (item) =>
+                  String(item.title || item.testName || "").trim().toLowerCase() !==
+                  targetTitleNorm,
+              )
+            : [];
+          const origTitles = new Set(
+            extractTestCasesFromCode(s.originalCode || "").map((b) =>
+              String(b.title || "").trim().toLowerCase(),
+            ),
+          );
+          const remainingAiBlocks = extractTestCasesFromCode(nextFull).filter(
+            (b) => !origTitles.has(String(b.title || "").trim().toLowerCase()),
+          );
+
+          if (remainingAiBlocks.length === 0 && nextTestCases.length === 0) {
+            continue;
+          }
+          updatedList.push({
+            ...s,
+            fullUpdatedContent: nextFull,
+            suggestedTestCode: nextFull,
+            generatedCode: nextFull,
+            testCode: nextFull,
+            ...(Array.isArray(s.testCases) ? { testCases: nextTestCases } : {}),
+          });
+        }
+
         return {
           ...prev,
-          [key]: list.filter((s) => (s.suggestionId || s.id) !== (tc.suggestionObj?.suggestionId || tc.suggestionObj?.id)),
+          [key]: updatedList,
         };
       });
-      setNotice(`Removed AI draft "${tc.title}".`);
+      setNotice(`Removed AI draft scenario "${tc.title}" (Temp).`);
       return;
     }
 
-    try {
-      await deleteUnitTestCaseApi(snapshotId, {
+    setPendingUnitOps((prev) =>
+      stageDeleteOp(prev, {
+        key: tc.id,
+        id: tc.id,
         sourceFile: entry?.filePath || "",
         testFile: tc.testFile,
         testName: tc.title || tc.testName,
-      });
-      setNotice(`Deleted "${tc.title}" (previous version saved in History). Re-running suite...`);
-      loadUnitTestVersions();
-      await handleRunCoverage({
-        targetFiles: [tc.testFile || entry?.filePath].filter(Boolean),
-      });
-    } catch (err) {
-      setError(err.message || "Failed to delete unit test case.");
-    }
+        title: tc.title || tc.testName,
+      }),
+    );
+    setNotice(`Removed "${tc.title}" in UI (Temp). Click Apply Changes to update source files.`);
   };
 
   const handleSwitchVersion = async (payload) => {
@@ -787,6 +1265,60 @@ export default function UnitTestWorkspace({
     }
   };
 
+  const hasExecuted = testTotals.total > 0 || Boolean(summary?.hasRun);
+  const linesPct = hasExecuted ? Number(summary?.coverage?.lines ?? summary?.linesPct ?? 0) : 0;
+  const branchesPct = hasExecuted ? Number(summary?.coverage?.branches ?? summary?.branchesPct ?? 0) : 0;
+  const funcsPct = hasExecuted ? Number(summary?.coverage?.functions ?? summary?.funcsPct ?? 0) : 0;
+  const stmtsPct = hasExecuted ? Number(summary?.coverage?.statements ?? summary?.stmtsPct ?? 0) : 0;
+  const rawTotals = summary?.rawTotals || null;
+
+  const peakUnitReport = summary?.peakReport || null;
+  const liveCompositeScore = linesPct * 0.4 + branchesPct * 0.25 + funcsPct * 0.2 + stmtsPct * 0.15;
+  const peakCompositeScore = peakUnitReport?.peakMeta
+    ? Number(peakUnitReport.peakMeta.linesPct || 0) * 0.4 +
+      Number(peakUnitReport.peakMeta.branchesPct || 0) * 0.25 +
+      Number(peakUnitReport.peakMeta.funcsPct || 0) * 0.2 +
+      Number(peakUnitReport.peakMeta.stmtsPct || 0) * 0.15
+    : -1;
+  const usePeakUnitReport = Boolean(
+    peakUnitReport && peakCompositeScore > 0 && peakCompositeScore >= liveCompositeScore,
+  );
+  const reportCoverageSummary = usePeakUnitReport
+    ? {
+        lines: Number(peakUnitReport.coverageSummary?.lines ?? peakUnitReport.peakMeta?.linesPct ?? linesPct),
+        branches: Number(peakUnitReport.coverageSummary?.branches ?? peakUnitReport.peakMeta?.branchesPct ?? branchesPct),
+        functions: Number(peakUnitReport.coverageSummary?.functions ?? peakUnitReport.peakMeta?.funcsPct ?? funcsPct),
+        statements: Number(peakUnitReport.coverageSummary?.statements ?? peakUnitReport.peakMeta?.stmtsPct ?? stmtsPct),
+      }
+    : {
+        lines: linesPct,
+        branches: branchesPct,
+        functions: funcsPct,
+        statements: stmtsPct,
+      };
+  const reportRawTotals = usePeakUnitReport && peakUnitReport.rawTotals ? peakUnitReport.rawTotals : rawTotals;
+  const reportFileEntries = useMemo(() => {
+    if (!usePeakUnitReport || !Array.isArray(peakUnitReport?.fileCoverages)) return fileEntries;
+    const peakByPath = new Map(
+      peakUnitReport.fileCoverages.map((pf) => [cleanDisplayPath(pf.filePath), pf]),
+    );
+    return fileEntries.map((entry) => {
+      const hit = peakByPath.get(cleanDisplayPath(entry.filePath));
+      if (!hit) return entry;
+      return {
+        ...entry,
+        linesPct: hit.linesPct,
+        branchesPct: hit.branchesPct,
+        funcsPct: hit.funcsPct,
+        stmtsPct: hit.stmtsPct,
+      };
+    });
+  }, [usePeakUnitReport, peakUnitReport, fileEntries]);
+  const reportTestStats =
+    usePeakUnitReport && peakUnitReport.testStats?.total > 0 && testTotals.total === 0
+      ? peakUnitReport.testStats
+      : testTotals;
+
   useChatTestContext(onChatContextChange, {
     kind: "unit",
     tab: activeTab,
@@ -799,16 +1331,42 @@ export default function UnitTestWorkspace({
     return <UnitCockpitSkeleton />;
   }
 
-  const hasExecuted = testTotals.total > 0 || Boolean(summary?.hasRun);
-  const linesPct = hasExecuted ? Number(summary?.coverage?.lines ?? summary?.linesPct ?? 0) : 0;
-  const branchesPct = hasExecuted ? Number(summary?.coverage?.branches ?? summary?.branchesPct ?? 0) : 0;
-  const funcsPct = hasExecuted ? Number(summary?.coverage?.functions ?? summary?.funcsPct ?? 0) : 0;
-  const stmtsPct = hasExecuted ? Number(summary?.coverage?.statements ?? summary?.stmtsPct ?? 0) : 0;
-  const rawTotals = summary?.rawTotals || null;
-
   const coveredFilesCount = hasExecuted ? fileEntries.filter((f) => Number(f.linesPct ?? 0) > 0).length : 0;
   const totalFilesCount = fileEntries.length;
-  const passRate = testTotals.total > 0 ? Math.round((testTotals.passed / testTotals.total) * 100) : 0;
+
+  // When user runs selected business logic files, the top telemetry strip immediately reflects
+  // the newly measured metrics of those selected business logic files (while Executive Report keeps peak).
+  const isScopedDisplay = Boolean(lastScopedAnalysis?.files?.length);
+  const displayHasExecuted = isScopedDisplay || hasExecuted;
+  const displayLinesPct = isScopedDisplay
+    ? Number(lastScopedAnalysis.total?.lines?.pct ?? 0)
+    : linesPct;
+  const displayBranchesPct = isScopedDisplay
+    ? Number(lastScopedAnalysis.total?.branches?.pct ?? 0)
+    : branchesPct;
+  const displayFuncsPct = isScopedDisplay
+    ? Number(lastScopedAnalysis.total?.functions?.pct ?? 0)
+    : funcsPct;
+  const displayStmtsPct = isScopedDisplay
+    ? Number(lastScopedAnalysis.total?.statements?.pct ?? 0)
+    : stmtsPct;
+  const displayCoveredFilesCount = isScopedDisplay
+    ? Number(
+        lastScopedAnalysis.coveredFilesCount ??
+          lastScopedAnalysis.files.filter((f) => Number(f.linesPct ?? 0) > 0).length,
+      )
+    : coveredFilesCount;
+  const displayTotalFilesCount = isScopedDisplay
+    ? lastScopedAnalysis.files.length
+    : totalFilesCount;
+  const displayTestTotals =
+    isScopedDisplay && lastScopedAnalysis.testStats
+      ? lastScopedAnalysis.testStats
+      : testTotals;
+  const passRate =
+    displayTestTotals.total > 0
+      ? Math.round((displayTestTotals.passed / displayTestTotals.total) * 100)
+      : 0;
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-[var(--color-bg)] text-[var(--color-text)] font-sans select-text overflow-hidden">
@@ -914,29 +1472,46 @@ export default function UnitTestWorkspace({
           <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
             {/* Primary Anchor: Line Coverage + Stmts/Branches/Funcs */}
             <div className="lg:col-span-5 px-4 py-3 flex flex-col justify-between gap-2">
-              <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
-                <span>Unit code coverage</span>
-                <span className="font-mono tabular-nums text-[var(--color-text-muted)] text-[11px]">
-                  S {stmtsPct.toFixed(0)}% · B {branchesPct.toFixed(0)}% · F {funcsPct.toFixed(0)}%
+              <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)] gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span>Unit code coverage</span>
+                  {isScopedDisplay && (
+                    <>
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--color-primary)]/15 border border-[var(--color-primary)]/30 text-[10px] font-mono text-[var(--color-primary)]">
+                        Selected ({displayTotalFilesCount})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setLastScopedAnalysis(null)}
+                        className="text-[10px] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline cursor-pointer"
+                        title="Switch header metrics back to full repository coverage"
+                      >
+                        Full view
+                      </button>
+                    </>
+                  )}
+                </div>
+                <span className="font-mono tabular-nums text-[var(--color-text-muted)] text-[11px] shrink-0">
+                  S {displayStmtsPct.toFixed(0)}% · B {displayBranchesPct.toFixed(0)}% · F {displayFuncsPct.toFixed(0)}%
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-3">
                 <div className="flex items-baseline gap-2 font-mono tabular-nums">
                   <span className="text-2xl font-bold tracking-tight text-[var(--color-text)]">
-                    {linesPct.toFixed(1)}%
+                    {displayLinesPct.toFixed(1)}%
                   </span>
                   <span className="text-xs text-[var(--color-text-muted)]">lines</span>
                 </div>
                 <div className="flex-1 max-w-[160px] bg-[var(--color-surface-secondary)] h-1.5 rounded-sm overflow-hidden">
                   <div
                     className={`h-full transition-all duration-300 ${
-                      linesPct >= 80
+                      displayLinesPct >= 80
                         ? "bg-emerald-500"
-                        : linesPct >= 50
+                        : displayLinesPct >= 50
                           ? "bg-amber-500"
                           : "bg-[var(--color-primary)]"
                     }`}
-                    style={{ width: `${Math.min(100, Math.max(0, linesPct))}%` }}
+                    style={{ width: `${Math.min(100, Math.max(0, displayLinesPct))}%` }}
                   />
                 </div>
               </div>
@@ -945,14 +1520,14 @@ export default function UnitTestWorkspace({
             {/* Source Files & Functions */}
             <div className="lg:col-span-3 px-4 py-3 flex flex-col justify-between gap-1">
               <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
-                <span>Source files</span>
+                <span>{isScopedDisplay ? "Selected files" : "Source files"}</span>
                 <span className="font-mono tabular-nums text-[11px] text-[var(--color-text-muted)]">
                   {functionsList.length} fns · {testSuites.length} suites
                 </span>
               </div>
               <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
                 <span className="text-xl font-bold text-[var(--color-text)]">
-                  {coveredFilesCount}/{totalFilesCount}
+                  {displayCoveredFilesCount}/{displayTotalFilesCount}
                 </span>
                 <span className="text-[11px] text-[var(--color-text-muted)]">covered</span>
               </div>
@@ -962,7 +1537,7 @@ export default function UnitTestWorkspace({
             <div className="lg:col-span-2 px-4 py-3 flex flex-col justify-between gap-1">
               <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
                 <span>Tests</span>
-                {testTotals.total > 0 && (
+                {displayTestTotals.total > 0 && (
                   <span className="font-mono tabular-nums text-[11px] text-[var(--color-text-muted)]">
                     {passRate}%
                   </span>
@@ -970,10 +1545,10 @@ export default function UnitTestWorkspace({
               </div>
               <div className="flex items-baseline gap-1 font-mono tabular-nums">
                 <span className="text-xl font-bold text-[var(--color-text)]">
-                  {testTotals.passed}
+                  {displayTestTotals.passed}
                 </span>
                 <span className="text-[11px] text-[var(--color-text-muted)]">
-                  / {testTotals.total} passed
+                  / {displayTestTotals.total} passed
                 </span>
               </div>
             </div>
@@ -988,29 +1563,31 @@ export default function UnitTestWorkspace({
               <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
                 <span>Health</span>
                 <span className="font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]">
-                  {(testTotals.durationMs / 1000).toFixed(1)}s
+                  {(displayTestTotals.durationMs / 1000).toFixed(1)}s
                 </span>
               </div>
               <div className="flex items-center gap-2 font-mono tabular-nums">
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    !hasExecuted
+                    !displayHasExecuted
                       ? "bg-[var(--color-text-muted)]"
-                      : testTotals.failed === 0
+                      : displayTestTotals.failed === 0
                         ? "bg-emerald-500/75"
                         : "bg-rose-400/80"
                   }`}
                 />
                 <span
                   className={`text-sm font-medium truncate ${
-                    testTotals.failed > 0 ? "text-rose-400" : "text-[var(--color-text-secondary)]"
+                    displayTestTotals.failed > 0 ? "text-rose-400" : "text-[var(--color-text-secondary)]"
                   }`}
                 >
-                  {!hasExecuted
+                  {!displayHasExecuted
                     ? "Not run yet"
-                    : testTotals.failed === 0
-                      ? "All healthy"
-                      : `${testTotals.failed} failed`}
+                    : displayTestTotals.failed === 0
+                      ? isScopedDisplay && displayTestTotals.total === 0
+                        ? "No tests yet"
+                        : "All healthy"
+                      : `${displayTestTotals.failed} failed`}
                 </span>
               </div>
             </button>
@@ -1173,7 +1750,65 @@ export default function UnitTestWorkspace({
 
         {/* TAB 1: FILES & TESTS MATRIX */}
         {activeTab === "files" && (
-          <UnitFileMatrixTable
+          <div className="space-y-4">
+            {lastScopedAnalysis?.files?.length > 0 && (
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded bg-[var(--color-primary)]/15 border border-[var(--color-primary)]/30 text-[10px] font-mono uppercase text-[var(--color-primary)]">
+                      Scoped Analysis
+                    </span>
+                    <span className="text-xs font-semibold text-[var(--color-text)]">
+                      Selected Business Logic Coverage ({lastScopedAnalysis.files.length} file(s))
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 font-mono tabular-nums text-xs">
+                    <span>
+                      Lines: <strong className="text-[var(--color-text)]">{Number(lastScopedAnalysis.total?.lines?.pct ?? 0).toFixed(1)}%</strong>
+                      <span className="text-[var(--color-text-muted)] ml-1">
+                        ({lastScopedAnalysis.total?.lines?.covered ?? 0}/{lastScopedAnalysis.total?.lines?.total ?? 0})
+                      </span>
+                    </span>
+                    <span className="text-[var(--color-text-secondary)]">
+                      B {Number(lastScopedAnalysis.total?.branches?.pct ?? 0).toFixed(1)}% · F {Number(lastScopedAnalysis.total?.functions?.pct ?? 0).toFixed(1)}% · S {Number(lastScopedAnalysis.total?.statements?.pct ?? 0).toFixed(1)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setLastScopedAnalysis(null)}
+                      className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                      title="Dismiss scoped analysis summary"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {lastScopedAnalysis.files.map((sf) => (
+                    <div
+                      key={sf.filePath}
+                      className="px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] flex items-center justify-between gap-2 text-xs font-mono tabular-nums"
+                    >
+                      <span className="truncate text-[var(--color-text-secondary)]" title={sf.filePath}>
+                        {cleanDisplayPath(sf.filePath)}
+                      </span>
+                      <span
+                        className={`shrink-0 font-semibold ${
+                          Number(sf.linesPct || 0) >= 80
+                            ? "text-emerald-400"
+                            : Number(sf.linesPct || 0) > 0
+                              ? "text-amber-400"
+                              : "text-rose-400"
+                        }`}
+                      >
+                        {Number(sf.linesPct ?? 0).toFixed(1)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <UnitFileMatrixTable
             fileEntries={fileEntries}
             hasExecuted={hasExecuted}
             onSuggestSelected={(paths) => handleSuggestFiles(paths)}
@@ -1226,23 +1861,30 @@ export default function UnitTestWorkspace({
             isRunning={pendingAction === "RUN" || (isJobActive && activeJobType === "RUN")}
             fixingTestId={fixingTestId}
             runningTargetKey={runningTargetKey}
+            pendingOpsCount={pendingOpsCount}
+            isApplyingPending={isApplyingPending}
+            onApplyPendingChanges={() => flushPendingUnitOps({ reload: true })}
+            onDiscardPendingChanges={() => {
+              const cleared = { deletes: [], updates: [], adds: [] };
+              setPendingUnitOps(cleared);
+              saveStagedOps("unit", snapshotId, cleared);
+              setNotice("Discarded temporary unit test edits.");
+            }}
           />
+          </div>
         )}
 
         {/* TAB 2: EXECUTIVE REPORT */}
         {activeTab === "report" && (
           <UnitReportEmbed
-            coverageSummary={{
-              lines: linesPct,
-              branches: branchesPct,
-              functions: funcsPct,
-              statements: stmtsPct,
-            }}
-            rawTotals={rawTotals}
-            fileEntries={fileEntries}
+            coverageSummary={reportCoverageSummary}
+            rawTotals={reportRawTotals}
+            fileEntries={reportFileEntries}
             executedScenarios={allExecutedScenarios}
-            testStats={testTotals}
-            hasExecuted={hasExecuted}
+            testStats={reportTestStats}
+            hasExecuted={hasExecuted || usePeakUnitReport}
+            isPeakReport={usePeakUnitReport}
+            peakMeta={peakUnitReport?.peakMeta || null}
             onRunCoverage={() => handleRunCoverage()}
             onOpenExportModal={() => setIsExportModalOpen(true)}
             onAIFixTestCase={handleAIFixTestCase}
@@ -1300,10 +1942,88 @@ export default function UnitTestWorkspace({
         sourceFile={editorModalState.sourceFile}
         testCase={editorModalState.testCase}
         framework={activeFramework}
-        onSaved={async (_data, meta) => {
+        onSaved={async (data, meta) => {
+          if (meta?.staged && data?.staged) {
+            const resolvedTitle = extractBlockTitle(data.code, data.testName || "Unit test case");
+            const editingTc = editorModalState.testCase;
+            if (data.mode !== "add" && editingTc?.origin === "AI_DRAFT" && !editingTc?.isApplied) {
+              const oldTitleNorm = String(data.originalTestName || editingTc.title || "").trim().toLowerCase();
+              const replaceSingleBlockInCode = (codeStr = "") => {
+                if (!codeStr || typeof codeStr !== "string") return codeStr;
+                const blocks = extractTestCasesFromCode(codeStr);
+                const targetBlock = blocks.find(
+                  (b) => String(b.title || "").trim().toLowerCase() === oldTitleNorm,
+                );
+                if (!targetBlock) return codeStr;
+                return (
+                  codeStr.slice(0, targetBlock.startIndex) +
+                  data.code.trim() +
+                  "\n" +
+                  codeStr.slice(targetBlock.endIndex)
+                );
+              };
+              setInlineSuggestions((prev) => {
+                const key = cleanDisplayPath(data.sourceFile || editorModalState.sourceFile || "");
+                const list = Array.isArray(prev[key]) ? prev[key] : [];
+                return {
+                  ...prev,
+                  [key]: list.map((s) => {
+                    const nextFull = replaceSingleBlockInCode(
+                      s.fullUpdatedContent || s.suggestedTestCode || s.generatedCode || s.testCode || "",
+                    );
+                    const nextTestCases = Array.isArray(s.testCases)
+                      ? s.testCases.map((item) =>
+                          String(item.title || item.testName || "").trim().toLowerCase() === oldTitleNorm
+                            ? { ...item, title: resolvedTitle, code: data.code.trim() }
+                            : item,
+                        )
+                      : undefined;
+                    return {
+                      ...s,
+                      fullUpdatedContent: nextFull,
+                      suggestedTestCode: nextFull,
+                      generatedCode: nextFull,
+                      testCode: nextFull,
+                      ...(nextTestCases ? { testCases: nextTestCases } : {}),
+                    };
+                  }),
+                };
+              });
+              setNotice(`Updated AI draft "${resolvedTitle}" in UI (Temp). Click Apply to write to source.`);
+              return;
+            }
+            if (data.mode === "add") {
+              setPendingUnitOps((prev) =>
+                stageAddOp(prev, {
+                  sourceFile: data.sourceFile || editorModalState.sourceFile,
+                  testFile: data.testFile,
+                  testName: resolvedTitle,
+                  title: resolvedTitle,
+                  code: data.code,
+                  framework: data.framework,
+                }),
+              );
+            } else {
+              setPendingUnitOps((prev) =>
+                stageUpdateOp(prev, {
+                  key: editorModalState.testCase?.id,
+                  id: editorModalState.testCase?.id,
+                  sourceFile: data.sourceFile || editorModalState.sourceFile,
+                  testFile: data.testFile,
+                  originalTestName: data.originalTestName || editorModalState.testCase?.title,
+                  testName: resolvedTitle,
+                  title: resolvedTitle,
+                  code: data.code,
+                }),
+              );
+            }
+            setNotice(`Saved "${resolvedTitle}" in UI (Temp). Click Apply Changes to write to source.`);
+            return;
+          }
           loadUnitTestVersions();
           setNotice("Unit test saved cleanly.");
           if (meta?.andRun) {
+            if (pendingOpsCount > 0) await flushPendingUnitOps({ reload: false });
             await handleRunCoverage({
               targetFiles: [meta.testFile || editorModalState.sourceFile].filter(Boolean),
               targetTestNames: meta.testName ? [meta.testName] : [],
@@ -1361,6 +2081,102 @@ export default function UnitTestWorkspace({
           }
           isApplying={pendingAction === "APPLY" || (isJobActive && activeJobType === "APPLY")}
         />
+      )}
+
+      {frameworkPickerModal.isOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
+          onClick={() => setFrameworkPickerModal({ isOpen: false, targetPaths: null })}
+        >
+          <div
+            className="w-full max-w-lg bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text)] m-0">
+                  Choose Unit Testing Framework
+                </h3>
+                <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5">
+                  No unit test library or existing unit test file was detected. Pick 1 of 2 supported runners to generate tests.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFrameworkPickerModal({ isOpen: false, targetPaths: null })}
+                className="p-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {[
+                {
+                  id: "jest",
+                  title: "Jest",
+                  badge: "Node / CJS",
+                  desc: "Standard Node.js runner with built-in mocking (jest.fn / jest.mock) and Istanbul coverage.",
+                },
+                {
+                  id: "vitest",
+                  title: "Vitest",
+                  badge: "ESM / Vite",
+                  desc: "Modern ESM-first runner with vi.mock / vi.fn APIs and fast V8 coverage.",
+                },
+              ].map((fw) => {
+                const selected = pickerChoice === fw.id;
+                return (
+                  <button
+                    key={fw.id}
+                    type="button"
+                    onClick={() => setPickerChoice(fw.id)}
+                    className={`p-3.5 rounded-md border text-left transition-colors duration-150 cursor-pointer ${
+                      selected
+                        ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)] text-[var(--color-text)]"
+                        : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-mono font-bold text-xs text-[var(--color-text)]">{fw.title}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${
+                          selected
+                            ? "bg-[var(--color-primary)] text-white"
+                            : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"
+                        }`}
+                      >
+                        {fw.badge}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">{fw.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="px-5 py-3 bg-[var(--color-surface-secondary)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setFrameworkPickerModal({ isOpen: false, targetPaths: null })}
+                className="px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border)] cursor-pointer transition-colors duration-150"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const chosen = pickerChoice;
+                  const targets = frameworkPickerModal.targetPaths;
+                  setSelectedZeroTestFramework(chosen);
+                  setFrameworkPickerModal({ isOpen: false, targetPaths: null });
+                  handleSuggestFiles(targets, chosen);
+                }}
+                className="px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] text-white hover:opacity-90 cursor-pointer transition-colors duration-150"
+              >
+                Generate with {pickerChoice === "vitest" ? "Vitest" : "Jest"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <ExportUnitTestReportModal

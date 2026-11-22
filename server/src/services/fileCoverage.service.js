@@ -702,15 +702,22 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
         const fullTest = path.join(rootDir, normSource);
         const exists = fs.existsSync(fullTest);
         const testCode = exists ? fs.readFileSync(fullTest, "utf8") : "";
-        const primary = {
+        const testCount = exists ? countTestCases(testCode) : 0;
+        const rawSelf = {
             found: exists,
             filePath: normSource,
             fileName: path.basename(normSource),
             suggestedFilePath: normSource,
             testCode,
+            testCount,
+            confidence: exists ? 1.0 : 0,
             framework: testCode.includes("vitest") ? "vitest" : (framework || "jest"),
             relationType: "SELF",
             isPrimary: true
+        };
+        const primary = {
+            ...rawSelf,
+            score: calculateTraceabilityScore(rawSelf, path.basename(normSource, path.extname(normSource)), path.dirname(normSource))
         };
         return {
             primaryTestFile: primary,
@@ -748,6 +755,20 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     }
 
     const linkedMap = new Map();
+    const isGenericSourceName = ["index", "app", "main", "config", "server", "default", "constants"].includes(baseName.toLowerCase());
+    const isMismatchedSpecificTestStem = (testRelPath = "") => {
+        const stem = path.basename(testRelPath)
+            .replace(/\.[cm]?[jt]sx?$/i, "")
+            .replace(/(?:\.(?:partial|redundant|coverage|vitest|jest|unit|int|integration|e2e|test|spec|steps?))+$/i, "")
+            .toLowerCase();
+        const target = baseName.toLowerCase();
+        if (!stem || !target || isGenericSourceName) return false;
+        if (["index", "app", "main", "unit", "test", "spec", "suite", "vitest", "jest"].includes(stem)) return false;
+        if (stem === target || stem.startsWith(target) || target.startsWith(stem) || stem.includes(target) || target.includes(stem)) {
+            return false;
+        }
+        return true;
+    };
 
     // 1. TIER 1: STATIC AST DEPENDENCY RESOLUTION (DIRECT_IMPORT)
     // Find all test files in the project that actually import or require this source file
@@ -757,6 +778,7 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
             if (!classifyUnitTestPath(rootDir, match.filePath, framework || match.framework).writable) continue;
             if (framework && match.framework && match.framework !== framework) continue;
             if (framework === "vitest" && /\bjest\b|@jest\/globals/i.test(match.testCode || "") && !/\bvitest\b/i.test(match.testCode || "")) continue;
+            if (isMismatchedSpecificTestStem(match.filePath)) continue;
             linkedMap.set(match.filePath, {
                 found: true,
                 filePath: match.filePath,
@@ -773,8 +795,13 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     } catch (_) { }
 
     if (linkedMap.size === 1) {
-        const primary = {...linkedMap.values().next().value,isPrimary:true};
-        return {primaryTestFile:primary,linkedTestFiles:[primary],suggestedNewTestPath:defaultNewTestPath,hasExecutingTests:true};
+        const entry = linkedMap.values().next().value;
+        const primary = {
+            ...entry,
+            score: calculateTraceabilityScore(entry, baseName, dirName),
+            isPrimary: true
+        };
+        return { primaryTestFile: primary, linkedTestFiles: [primary], suggestedNewTestPath: defaultNewTestPath, hasExecutingTests: true };
     }
 
     // 2. TIER 2: SCAN EXISTING TEST FILES (NAMING & TEXT HEURISTICS)
@@ -868,6 +895,9 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
                     testBaseName.includes(baseName);
 
                 if (!hasDirectImport && !isNameMatch) {
+                    continue;
+                }
+                if (!isNameMatch && isMismatchedSpecificTestStem(rel)) {
                     continue;
                 }
 

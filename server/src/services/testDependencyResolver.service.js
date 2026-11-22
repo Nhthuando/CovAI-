@@ -50,24 +50,35 @@ export const extractModuleSpecifiers = (content = "") => {
     if (!content || typeof content !== "string") return [];
 
     const specifiers = new Set();
+    const mockedSpecifiers = new Set();
+
+    // 0. Collect mocked module specifiers: jest.mock('...'), jest.unstable_mockModule('...'), vi.mock('...')
+    // Mocked modules are dependencies of the SUT, not the SUT itself.
+    const mockCallRegex = /\b(?:jest|vi)\.(?:mock|unstable_mockModule|doMock)\s*\(\s*['"]([^'"]+)['"]/g;
+    let m;
+    while ((m = mockCallRegex.exec(content)) !== null) {
+        if (m[1]) mockedSpecifiers.add(m[1].trim());
+    }
 
     // 1. Static imports: import ... from 'specifier' or import 'specifier'
     const staticImportRegex = /(?:^|\n|\r)\s*(?:import\s+(?:[\w*\s{},$]+\s+from\s+)?|export\s+(?:[\w*\s{},$]+\s+from\s+)?)['"]([^'"]+)['"]/g;
-    let m;
     while ((m = staticImportRegex.exec(content)) !== null) {
-        if (m[1]) specifiers.add(m[1].trim());
+        const spec = m[1]?.trim();
+        if (spec && !mockedSpecifiers.has(spec)) specifiers.add(spec);
     }
 
     // 2. Dynamic imports & requires: import('specifier'), require('specifier')
     const dynamicRegex = /\b(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
     while ((m = dynamicRegex.exec(content)) !== null) {
-        if (m[1]) specifiers.add(m[1].trim());
+        const spec = m[1]?.trim();
+        if (spec && !mockedSpecifiers.has(spec)) specifiers.add(spec);
     }
 
-    // 3. Jest mock calls: jest.mock('specifier', ...), jest.unstable_mockModule('specifier', ...)
-    const jestMockRegex = /jest\.(?:mock|unstable_mockModule|doMock|requireActual|requireMock)\s*\(\s*['"]([^'"]+)['"]/g;
-    while ((m = jestMockRegex.exec(content)) !== null) {
-        if (m[1]) specifiers.add(m[1].trim());
+    // 3. Explicit requireActual / importActual calls
+    const jestActualRegex = /\b(?:jest|vi)\.(?:requireActual|importActual)\s*\(\s*['"]([^'"]+)['"]/g;
+    while ((m = jestActualRegex.exec(content)) !== null) {
+        const spec = m[1]?.trim();
+        if (spec) specifiers.add(spec);
     }
 
     return Array.from(specifiers);

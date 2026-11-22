@@ -2967,6 +2967,25 @@ export const runJestCoverage = async (
             babelrcRoots: [".", "./examples/*", "./packages/*"],
           },
         ];
+      } else if (Object.keys(transform).length === 0 && !isEsmProject && babelJestPath && presetEnvPath) {
+        const anyRootFileUsesEsm = (rootFiles || []).some((relF) => {
+          try {
+            const absF = path.join(repoRoot, relF);
+            if (!fs.existsSync(absF)) return false;
+            const c = fs.readFileSync(absF, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+            return /(?:^|\n)\s*(?:import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"]|export\s+(?:default|const|let|var|function|class|\*|\{))/.test(c);
+          } catch {
+            return false;
+          }
+        });
+        if (anyRootFileUsesEsm) {
+          transform["^.+\\.[cm]?jsx?$"] = [
+            babelJestPath,
+            {
+              presets: [[presetEnvPath, { targets: { node: "current" }, modules: "commonjs" }]],
+            },
+          ];
+        }
       }
       return Object.keys(transform).length > 0 ? transform : null;
     };
@@ -3773,8 +3792,10 @@ export const runJestCoverage = async (
         createdHarnessFiles.add(tempSubResolverPath);
       } catch (_) {}
 
-      const subDetectedTransform =
-        detectTransforms(targetDir) || detectedTransform || {};
+      // Never inherit root's CommonJS babel-jest transform into an isolated subpackage (especially ESM subpackages with transform: {}).
+      const subDetectedTransform = isSubEsm
+        ? {}
+        : detectTransforms(targetDir) || {};
       const subMergedTransform = {
         ...subDetectedTransform,
         ...normalizeTransform(cleanPkgJestConfig?.transform),
@@ -4353,6 +4374,7 @@ export const parseFinalCoverageFiles = async (
   projectId,
   userId,
   coverageDir,
+  options = {},
 ) => {
   const { parseCoverageFilesForSnapshot } =
     await import("./coverageFileParser.service.js");
@@ -4373,6 +4395,7 @@ export const parseFinalCoverageFiles = async (
       snapshotId,
       coverageReport,
       userId,
+      preserveOtherFiles: Boolean(options?.preserveOtherFiles),
     });
     await addJobLog(
       jobId,
@@ -4397,6 +4420,7 @@ export const parseFinalCoverageFunctions = async (
   projectId,
   userId,
   coverageDir,
+  options = {},
 ) => {
   const { parseCoverageFunctionsForSnapshot } =
     await import("./coverageFunctionParser.service.js");
@@ -4417,6 +4441,7 @@ export const parseFinalCoverageFunctions = async (
       snapshotId,
       coverageReport,
       userId,
+      preserveOtherFiles: Boolean(options?.preserveOtherFiles),
     });
     await addJobLog(
       jobId,
@@ -5056,6 +5081,152 @@ export const mergeTestResults = (...results) => {
   };
 };
 
+/**
+ * Temporarily write unapplied UI unit test drafts onto disk inside rootDir so Jest/Vitest
+ * can execute and measure coverage before permanent Apply. Records backups for clean rollback.
+ */
+export function materializeDraftTestsForRun(rootDir, draftTests = []) {
+  const tempDraftBackups = [];
+  const tempCreatedDirs = [];
+  const draftSourceByTestRel = new Map();
+  const draftFrameworkByTestRel = new Map();
+
+  if (!rootDir || !Array.isArray(draftTests) || draftTests.length === 0) {
+    return { tempDraftBackups, tempCreatedDirs, draftSourceByTestRel, draftFrameworkByTestRel };
+  }
+
+  const resolvedRoot = path.resolve(rootDir);
+  for (const draft of draftTests) {
+    if (!draft || typeof draft.testFile !== "string" || typeof draft.code !== "string") continue;
+    const relTest = draft.testFile.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    if (!relTest || relTest.includes("..") || !draft.code.trim()) continue;
+    const absTest = path.resolve(resolvedRoot, relTest);
+    if (absTest !== resolvedRoot && !absTest.startsWith(resolvedRoot + path.sep)) continue;
+
+    const dirStack = [];
+    let cursor = path.dirname(absTest);
+    while (cursor && cursor !== resolvedRoot && cursor.startsWith(resolvedRoot + path.sep)) {
+      if (!fs.existsSync(cursor)) dirStack.unshift(cursor);
+      cursor = path.dirname(cursor);
+    }
+    for (const d of dirStack) {
+      fs.mkdirSync(d, { recursive: true });
+      tempCreatedDirs.push(d);
+    }
+
+    const existed = fs.existsSync(absTest);
+    const prevContent = existed ? fs.readFileSync(absTest, "utf8") : null;
+    tempDraftBackups.push({ absPath: absTest, existed, prevContent });
+    fs.writeFileSync(absTest, draft.code, "utf8");
+
+    const normRelTest = relTest.toLowerCase();
+    if (draft.sourceFile) {
+      draftSourceByTestRel.set(
+        normRelTest,
+        String(draft.sourceFile).replace(/\\/g, "/").replace(/^\/+/, "").trim().toLowerCase(),
+      );
+    }
+    if (draft.framework === "vitest" || draft.framework === "jest") {
+      draftFrameworkByTestRel.set(normRelTest, draft.framework);
+    }
+  }
+
+  return { tempDraftBackups, tempCreatedDirs, draftSourceByTestRel, draftFrameworkByTestRel };
+}
+
+/**
+ * Restore pre-existing test files and delete newly created temporary draft files/folders.
+ */
+export function restoreDraftTestsForRun(draftRunState) {
+  if (!draftRunState) return;
+  const { tempDraftBackups = [], tempCreatedDirs = [] } = draftRunState;
+  for (let i = tempDraftBackups.length - 1; i >= 0; i -= 1) {
+    const backup = tempDraftBackups[i];
+    try {
+      if (backup.existed) {
+        fs.writeFileSync(backup.absPath, backup.prevContent ?? "", "utf8");
+      } else if (fs.existsSync(backup.absPath)) {
+        fs.unlinkSync(backup.absPath);
+      }
+    } catch (restoreErr) {
+      console.warn("[processRunTestsJob] Temporary draft restore warning:", restoreErr.message);
+    }
+  }
+  for (let i = tempCreatedDirs.length - 1; i >= 0; i -= 1) {
+    try {
+      const dirPath = tempCreatedDirs[i];
+      if (fs.existsSync(dirPath) && fs.readdirSync(dirPath).length === 0) {
+        fs.rmdirSync(dirPath);
+      }
+    } catch (_) {}
+  }
+}
+
+/**
+ * Filter discovered Jest/Vitest files against user-selected source/test targets,
+ * accounting for direct draft source->test mappings and filename conventions.
+ */
+export function filterDiscoveredUnitFiles({
+  rootDir,
+  jestFiles = [],
+  vitestFiles = [],
+  requestedTargetFiles = [],
+  draftSourceByTestRel = new Map(),
+  draftFrameworkByTestRel = new Map(),
+  findAssociatedSource = null,
+}) {
+  let nextJest = [...jestFiles];
+  let nextVitest = [...vitestFiles];
+
+  if (draftFrameworkByTestRel && draftFrameworkByTestRel.size > 0) {
+    for (const [normDraftTest, draftFw] of draftFrameworkByTestRel.entries()) {
+      const jIdx = nextJest.findIndex((f) => f.replace(/\\/g, "/").toLowerCase() === normDraftTest);
+      const vIdx = nextVitest.findIndex((f) => f.replace(/\\/g, "/").toLowerCase() === normDraftTest);
+      if (draftFw === "vitest" && jIdx !== -1 && vIdx === -1) {
+        const [moved] = nextJest.splice(jIdx, 1);
+        nextVitest.push(moved);
+      } else if (draftFw === "jest" && vIdx !== -1 && jIdx === -1) {
+        const [moved] = nextVitest.splice(vIdx, 1);
+        nextJest.push(moved);
+      }
+    }
+  }
+
+  if (Array.isArray(requestedTargetFiles) && requestedTargetFiles.length > 0) {
+    const matchesTarget = (relTest) => {
+      const normTest = String(relTest || "").replace(/\\/g, "/").toLowerCase();
+      const testBase = path.basename(normTest).replace(/(?:\.(?:partial|redundant))?\.(?:test|spec|unit)\.[cm]?[jt]sx?$/i, "");
+      const draftAssocNorm = draftSourceByTestRel?.get(normTest) || "";
+      let assocNorm = "";
+      if (typeof findAssociatedSource === "function") {
+        try {
+          const assoc = findAssociatedSource(rootDir, relTest);
+          if (assoc) assocNorm = String(assoc).replace(/\\/g, "/").toLowerCase();
+        } catch {}
+      }
+      return requestedTargetFiles.some((rawTarget) => {
+        const t = String(rawTarget || "").replace(/\\/g, "/").replace(/^\/+/, "").trim().toLowerCase();
+        if (!t) return false;
+        if (normTest === t || normTest.endsWith("/" + t) || t.endsWith("/" + normTest)) return true;
+        if (draftAssocNorm && (draftAssocNorm === t || draftAssocNorm.endsWith("/" + t) || t.endsWith("/" + draftAssocNorm))) return true;
+        if (assocNorm && (assocNorm === t || assocNorm.endsWith("/" + t) || t.endsWith("/" + assocNorm))) return true;
+        const tBase = path.basename(t).replace(/\.[cm]?[jt]sx?$/i, "");
+        return Boolean(
+          tBase &&
+            testBase &&
+            (tBase === testBase ||
+              tBase.startsWith(testBase + ".") ||
+              testBase.startsWith(tBase + ".")),
+        );
+      });
+    };
+    nextJest = nextJest.filter(matchesTarget);
+    nextVitest = nextVitest.filter(matchesTarget);
+  }
+
+  return { jestFiles: nextJest, vitestFiles: nextVitest };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Pipeline Orchestrator
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5231,6 +5402,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
   let isolatedDb = null;
   let virtualDbEnv = {};
+  let draftRunState = null;
   if (process.env.COVAI_UNIT_VIRTUAL_DB === "true") {
     try {
       const {
@@ -5283,6 +5455,23 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     }
   }
 
+  const requestedTargetFiles = Array.isArray(payload?.targetFiles)
+    ? payload.targetFiles
+        .map((f) => String(f || "").replace(/\\/g, "/").replace(/^\/+/, "").trim())
+        .filter(Boolean)
+    : [];
+  const isTargetedUnitRun = requestedTargetFiles.length > 0;
+  const scopedWorkCoverageDir = isTargetedUnitRun
+    ? path.join(rootDir, ".covai-temp", `scoped-unit-${jobId}`)
+    : null;
+  const activeCoverageDir = scopedWorkCoverageDir || coverageDir;
+  const activeUnitCoverageDir = scopedWorkCoverageDir || unitCoverageDir;
+  if (scopedWorkCoverageDir && !fs.existsSync(scopedWorkCoverageDir)) {
+    try {
+      fs.mkdirSync(scopedWorkCoverageDir, { recursive: true });
+    } catch {}
+  }
+
   const targetTestNames = Array.isArray(payload?.targetTestNames)
     ? payload.targetTestNames.map((t) => String(t || "").trim()).filter(Boolean)
     : [];
@@ -5293,23 +5482,25 @@ export const processRunTestsJob = async (jobId, options = {}) => {
       : null;
 
   const runnerOptions = {
-    coverageDir: unitCoverageDir,
+    coverageDir: activeUnitCoverageDir,
     allowUninstrumentedFallback: !verifyPublishedUnitTests,
     hermeticMocks,
     useHermeticMock,
     virtualDbEnv,
     virtualDbUrl: isolatedDb?.databaseUrl || null,
     env: { ...virtualDbEnv },
+    ...(isTargetedUnitRun ? { targetSourceFiles: requestedTargetFiles } : {}),
     ...(testNamePattern ? { testNamePattern } : {}),
   };
 
   // Initialize output record
   await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => {});
 
-  // Invalidate stale coverage files from any previous run to ensure fresh and real metrics
-  if (!fs.existsSync(coverageDir)) {
+  // Invalidate stale coverage files from any previous run to ensure fresh and real metrics.
+  // For targeted runs, isolate artifacts in scopedWorkCoverageDir so full-project files stay untouched.
+  if (!fs.existsSync(activeCoverageDir)) {
     try {
-      fs.mkdirSync(coverageDir, { recursive: true });
+      fs.mkdirSync(activeCoverageDir, { recursive: true });
     } catch {}
   }
   const staleCoverageFiles = [
@@ -5326,45 +5517,96 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     "jest-lcov.info",
     "vitest-lcov.info",
   ];
-  // Gather all candidate coverage directories to aggressively wipe stale artifacts
-  const candidateDirs = [
-    coverageDir,
-    unitCoverageDir,
-    path.join(rootDir, "coverage", "integration"),
-    path.join(rootDir, "coverage", "system"),
-    path.join(rootDir, ".nyc_output"),
-  ];
-  try {
-    const subpackages = [
-      "server",
-      "client",
-      "backend",
-      "frontend",
-      "api",
-      "app",
-      "packages",
-    ];
-    for (const sub of subpackages) {
-      const subDir = path.join(rootDir, sub);
-      if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
-        candidateDirs.push(path.join(subDir, "coverage"));
-        candidateDirs.push(path.join(subDir, "coverage", "unit"));
-        candidateDirs.push(path.join(subDir, ".nyc_output"));
-        if (sub === "packages") {
-          try {
-            const pkgs = fs.readdirSync(subDir);
-            for (const pkg of pkgs) {
-              const pDir = path.join(subDir, pkg);
-              if (fs.existsSync(pDir) && fs.statSync(pDir).isDirectory()) {
-                candidateDirs.push(path.join(pDir, "coverage"));
-                candidateDirs.push(path.join(pDir, ".nyc_output"));
+  const candidateDirs = isTargetedUnitRun
+    ? [activeCoverageDir]
+    : [
+        coverageDir,
+        unitCoverageDir,
+        path.join(rootDir, "coverage", "integration"),
+        path.join(rootDir, "coverage", "system"),
+        path.join(rootDir, ".nyc_output"),
+      ];
+  if (!isTargetedUnitRun) {
+    try {
+      const subpackages = [
+        "server",
+        "client",
+        "backend",
+        "frontend",
+        "api",
+        "app",
+        "packages",
+      ];
+      for (const sub of subpackages) {
+        const subDir = path.join(rootDir, sub);
+        if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
+          candidateDirs.push(path.join(subDir, "coverage"));
+          candidateDirs.push(path.join(subDir, "coverage", "unit"));
+          candidateDirs.push(path.join(subDir, ".nyc_output"));
+          if (sub === "packages") {
+            try {
+              const pkgs = fs.readdirSync(subDir);
+              for (const pkg of pkgs) {
+                const pDir = path.join(subDir, pkg);
+                if (fs.existsSync(pDir) && fs.statSync(pDir).isDirectory()) {
+                  candidateDirs.push(path.join(pDir, "coverage"));
+                  candidateDirs.push(path.join(pDir, ".nyc_output"));
+                }
               }
-            }
-          } catch {}
+            } catch {}
+          }
         }
       }
+    } catch {}
+  }
+
+  let previousUnitSummary = {};
+  let previousUnitFinal = {};
+  let existingDbCoverageByPath = new Map();
+  if (isTargetedUnitRun) {
+    for (const prevSumPath of [
+      path.join(unitCoverageDir, "coverage-summary.json"),
+      path.join(coverageDir, "coverage-summary.json"),
+    ]) {
+      if (fs.existsSync(prevSumPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(prevSumPath, "utf8"));
+          if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+            for (const [k, v] of Object.entries(parsed)) {
+              if (k === "total" || !v || typeof v !== "object") continue;
+              const prevEx = previousUnitSummary[k];
+              if (!prevEx || (v.lines?.covered || 0) > (prevEx.lines?.covered || 0)) {
+                previousUnitSummary[k] = v;
+              }
+            }
+          }
+        } catch {}
+      }
     }
-  } catch {}
+    for (const prevFinalPath of [
+      path.join(unitCoverageDir, "coverage-final.json"),
+      path.join(coverageDir, "coverage-final.json"),
+    ]) {
+      if (fs.existsSync(prevFinalPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(prevFinalPath, "utf8"));
+          if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+            previousUnitFinal = { ...parsed, ...previousUnitFinal };
+          }
+        } catch {}
+      }
+    }
+    try {
+      const dbCovRows = await prisma.coverageFile.findMany({
+        where: { snapshotId },
+        select: { filePath: true, linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true },
+      });
+      for (const row of dbCovRows || []) {
+        const canonRow = canonicalizeFilePath(row.filePath, rootDir);
+        if (canonRow) existingDbCoverageByPath.set(canonRow, row);
+      }
+    } catch {}
+  }
 
   const covBackupDir = path.join(rootDir, ".covai-backup-coverage");
   try {
@@ -5483,51 +5725,72 @@ export const processRunTestsJob = async (jobId, options = {}) => {
       "Step 2/4: Scanning and classifying test files (Jest & Vitest)...",
     ).catch(() => {});
 
+    const incomingDraftTests = Array.isArray(payload?.draftTests)
+      ? payload.draftTests
+      : Array.isArray(options?.draftTests)
+        ? options.draftTests
+        : [];
+    if (incomingDraftTests.length > 0) {
+      draftRunState = materializeDraftTestsForRun(rootDir, incomingDraftTests);
+      if (draftRunState.tempDraftBackups.length > 0) {
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[DRAFT_RUN] Materialized ${draftRunState.tempDraftBackups.length} temporary unit test draft(s) for isolated execution.`,
+        ).catch(() => {});
+      }
+    }
+
     const discoveredUnit = findUnitFiles(rootDir);
     let { jestFiles, vitestFiles } = discoveredUnit;
     const { skippedFiles } = discoveredUnit;
-    const requestedTargetFiles = Array.isArray(payload?.targetFiles)
-      ? payload.targetFiles
-          .map((f) => String(f || "").replace(/\\/g, "/").replace(/^\/+/, "").trim())
-          .filter(Boolean)
+    const { findAssociatedSourceFile } = isTargetedUnitRun
+      ? await import("./unitTestSuggestion.service.js")
+      : { findAssociatedSourceFile: null };
+    const filteredUnit = filterDiscoveredUnitFiles({
+      rootDir,
+      jestFiles,
+      vitestFiles,
+      requestedTargetFiles,
+      draftSourceByTestRel: draftRunState?.draftSourceByTestRel,
+      draftFrameworkByTestRel: draftRunState?.draftFrameworkByTestRel,
+      findAssociatedSource: findAssociatedSourceFile,
+    });
+    jestFiles = filteredUnit.jestFiles;
+    vitestFiles = filteredUnit.vitestFiles;
+
+    const allLogicFiles = findLogicSourceFiles(rootDir);
+    const matchesRequestedTarget = (relPath) => {
+      if (!isTargetedUnitRun) return false;
+      const normPath = canonicalizeFilePath(relPath, rootDir).replace(/\\/g, "/").toLowerCase();
+      const basePath = path.basename(normPath).replace(/\.[cm]?[jt]sx?$/i, "");
+      return requestedTargetFiles.some((rawT) => {
+        const t = String(rawT || "").replace(/\\/g, "/").replace(/^\/+/, "").trim().toLowerCase();
+        if (!t) return false;
+        if (normPath === t || normPath.endsWith("/" + t) || t.endsWith("/" + normPath)) return true;
+        const tBase = path.basename(t).replace(/(?:\.(?:partial|redundant))?\.(?:test|spec|unit)\.[cm]?[jt]sx?$/i, "").replace(/\.[cm]?[jt]sx?$/i, "");
+        return Boolean(tBase && basePath && tBase === basePath);
+      });
+    };
+    const scopedLogicFiles = isTargetedUnitRun
+      ? allLogicFiles.filter((lf) => matchesRequestedTarget(lf.relativePath))
       : [];
-    if (requestedTargetFiles.length > 0) {
-      const { findAssociatedSourceFile } = await import("./unitTestSuggestion.service.js");
-      const matchesTarget = (relTest) => {
-        const normTest = String(relTest || "").replace(/\\/g, "/").toLowerCase();
-        const testBase = path.basename(normTest).replace(/(?:\.(?:partial|redundant))?\.(?:test|spec|unit)\.[cm]?[jt]sx?$/i, "");
-        let assocNorm = "";
-        try {
-          const assoc = findAssociatedSourceFile(rootDir, relTest);
-          if (assoc) assocNorm = String(assoc).replace(/\\/g, "/").toLowerCase();
-        } catch {}
-        return requestedTargetFiles.some((rawTarget) => {
-          const t = rawTarget.toLowerCase();
-          if (normTest === t || normTest.endsWith("/" + t) || t.endsWith("/" + normTest)) return true;
-          if (assocNorm && (assocNorm === t || assocNorm.endsWith("/" + t) || t.endsWith("/" + assocNorm))) return true;
-          const tBase = path.basename(t).replace(/\.[cm]?[jt]sx?$/i, "");
-          return Boolean(
-            tBase &&
-              testBase &&
-              (tBase === testBase ||
-                tBase.startsWith(testBase + ".") ||
-                testBase.startsWith(tBase + ".")),
-          );
-        });
-      };
-      jestFiles = jestFiles.filter(matchesTarget);
-      vitestFiles = vitestFiles.filter(matchesTarget);
+    const scopedSourceKeys = new Set(
+      scopedLogicFiles.map((lf) => canonicalizeFilePath(lf.relativePath, rootDir)),
+    );
+
+    if (isTargetedUnitRun) {
       await addJobLog(
         jobId,
         "INFO",
-        `[TARGETED] Filtered unit tests for [${requestedTargetFiles.join(", ")}]${testNamePattern ? ` (testNamePattern)` : ""}: ${jestFiles.length} Jest, ${vitestFiles.length} Vitest.`,
+        `[TARGETED] Filtered unit tests for [${requestedTargetFiles.join(", ")}]${testNamePattern ? ` (testNamePattern)` : ""}: ${jestFiles.length} Jest, ${vitestFiles.length} Vitest (${scopedLogicFiles.length} target business logic file(s)).`,
       ).catch(() => {});
       if (jestFiles.length === 0 && vitestFiles.length === 0) {
-        const { ServiceError } = await import("../utils/serviceError.js");
-        throw new ServiceError(
-          "No existing unit test files found on disk for the selected source file(s). Click Apply Selected Drafts first to write generated tests to disk.",
-          422,
-        );
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[TARGETED] No unit test files found on disk for selected business logic file(s). Analyzing baseline coverage (0%) for ${scopedLogicFiles.length} selected file(s)...`,
+        ).catch(() => {});
       }
     }
     const hasVitest = vitestFiles.length > 0;
@@ -5538,7 +5801,9 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     try {
       const unitFilesToSanitize = [...jestFiles, ...vitestFiles];
       if (!verifyPublishedUnitTests && unitFilesToSanitize.length > 0) {
-        sanitizeAllProjectTestFiles(rootDir, unitFilesToSanitize);
+        sanitizeAllProjectTestFiles(rootDir, unitFilesToSanitize, {
+          sourceFileMap: draftRunState?.draftSourceByTestRel,
+        });
       }
     } catch (sanitizeErr) {
       console.warn(
@@ -5559,14 +5824,20 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     const MAX_DEP_ATTEMPTS = 5;
     let runnerResult = { exitCode: 0 };
     let pendingTestRuns = [];
-    const summaryCandidates = [
-      path.join(unitCoverageDir, "coverage-summary.json"),
-      path.join(coverageDir, "coverage-summary.json"),
-      path.join(unitCoverageDir, "jest-coverage-summary.json"),
-      path.join(coverageDir, "jest-coverage-summary.json"),
-      path.join(unitCoverageDir, "vitest-coverage-summary.json"),
-      path.join(coverageDir, "vitest-coverage-summary.json"),
-    ];
+    const summaryCandidates = isTargetedUnitRun
+      ? [
+          path.join(activeUnitCoverageDir, "coverage-summary.json"),
+          path.join(activeUnitCoverageDir, "jest-coverage-summary.json"),
+          path.join(activeUnitCoverageDir, "vitest-coverage-summary.json"),
+        ]
+      : [
+          path.join(unitCoverageDir, "coverage-summary.json"),
+          path.join(coverageDir, "coverage-summary.json"),
+          path.join(unitCoverageDir, "jest-coverage-summary.json"),
+          path.join(coverageDir, "jest-coverage-summary.json"),
+          path.join(unitCoverageDir, "vitest-coverage-summary.json"),
+          path.join(coverageDir, "vitest-coverage-summary.json"),
+        ];
 
     while (true) {
       runnerResult = { exitCode: 0 };
@@ -5634,7 +5905,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         };
 
         // Step 2c: Merge coverage & test results
-        syncCoverageDirectories(coverageDir, unitCoverageDir);
+        if (!isTargetedUnitRun) syncCoverageDirectories(coverageDir, unitCoverageDir);
         await reportUnitProgress(
           75,
           "Mapping metrics",
@@ -5647,25 +5918,25 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         ).catch(() => {});
 
         const jestFinalPath = fs.existsSync(
-          path.join(coverageDir, "jest-coverage-final.json"),
+          path.join(activeCoverageDir, "jest-coverage-final.json"),
         )
-          ? path.join(coverageDir, "jest-coverage-final.json")
-          : path.join(unitCoverageDir, "jest-coverage-final.json");
+          ? path.join(activeCoverageDir, "jest-coverage-final.json")
+          : path.join(activeUnitCoverageDir, "jest-coverage-final.json");
         const vitestFinalPath = fs.existsSync(
-          path.join(coverageDir, "vitest-coverage-final.json"),
+          path.join(activeCoverageDir, "vitest-coverage-final.json"),
         )
-          ? path.join(coverageDir, "vitest-coverage-final.json")
-          : path.join(unitCoverageDir, "vitest-coverage-final.json");
+          ? path.join(activeCoverageDir, "vitest-coverage-final.json")
+          : path.join(activeUnitCoverageDir, "vitest-coverage-final.json");
         const jestSummaryPath = fs.existsSync(
-          path.join(coverageDir, "jest-coverage-summary.json"),
+          path.join(activeCoverageDir, "jest-coverage-summary.json"),
         )
-          ? path.join(coverageDir, "jest-coverage-summary.json")
-          : path.join(unitCoverageDir, "jest-coverage-summary.json");
+          ? path.join(activeCoverageDir, "jest-coverage-summary.json")
+          : path.join(activeUnitCoverageDir, "jest-coverage-summary.json");
         const vitestSummaryPath = fs.existsSync(
-          path.join(coverageDir, "vitest-coverage-summary.json"),
+          path.join(activeCoverageDir, "vitest-coverage-summary.json"),
         )
-          ? path.join(coverageDir, "vitest-coverage-summary.json")
-          : path.join(unitCoverageDir, "vitest-coverage-summary.json");
+          ? path.join(activeCoverageDir, "vitest-coverage-summary.json")
+          : path.join(activeUnitCoverageDir, "vitest-coverage-summary.json");
 
         // Merge coverage-final.json
         if (fs.existsSync(jestFinalPath) || fs.existsSync(vitestFinalPath)) {
@@ -5681,15 +5952,17 @@ export const processRunTestsJob = async (jobId, options = {}) => {
           } catch {}
           const mergedFinal = mergeCoverageFinal(jf, vf, { rootDir });
           fs.writeFileSync(
-            path.join(coverageDir, "coverage-final.json"),
+            path.join(activeCoverageDir, "coverage-final.json"),
             JSON.stringify(mergedFinal, null, 2),
             "utf8",
           );
-          fs.writeFileSync(
-            path.join(unitCoverageDir, "coverage-final.json"),
-            JSON.stringify(mergedFinal, null, 2),
-            "utf8",
-          );
+          if (!isTargetedUnitRun) {
+            fs.writeFileSync(
+              path.join(unitCoverageDir, "coverage-final.json"),
+              JSON.stringify(mergedFinal, null, 2),
+              "utf8",
+            );
+          }
         }
 
         // Merge coverage-summary.json
@@ -5712,28 +5985,30 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             rootDir,
           });
           fs.writeFileSync(
-            path.join(coverageDir, "coverage-summary.json"),
+            path.join(activeCoverageDir, "coverage-summary.json"),
             JSON.stringify(mergedSummary, null, 2),
             "utf8",
           );
-          fs.writeFileSync(
-            path.join(unitCoverageDir, "coverage-summary.json"),
-            JSON.stringify(mergedSummary, null, 2),
-            "utf8",
-          );
+          if (!isTargetedUnitRun) {
+            fs.writeFileSync(
+              path.join(unitCoverageDir, "coverage-summary.json"),
+              JSON.stringify(mergedSummary, null, 2),
+              "utf8",
+            );
+          }
         }
 
         // Merge test-results.json
         const jestResultsFile = fs.existsSync(
-          path.join(coverageDir, "jest-results.json"),
+          path.join(activeCoverageDir, "jest-results.json"),
         )
-          ? path.join(coverageDir, "jest-results.json")
-          : path.join(unitCoverageDir, "jest-results.json");
+          ? path.join(activeCoverageDir, "jest-results.json")
+          : path.join(activeUnitCoverageDir, "jest-results.json");
         const vitestResultsFile = fs.existsSync(
-          path.join(coverageDir, "vitest-results.json"),
+          path.join(activeCoverageDir, "vitest-results.json"),
         )
-          ? path.join(coverageDir, "vitest-results.json")
-          : path.join(unitCoverageDir, "vitest-results.json");
+          ? path.join(activeCoverageDir, "vitest-results.json")
+          : path.join(activeUnitCoverageDir, "vitest-results.json");
         let parsedJest = null;
         let parsedVitest = null;
         try {
@@ -5749,27 +6024,29 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         if (parsedJest || parsedVitest) {
           const mergedResults = mergeTestResults(parsedJest, parsedVitest);
           fs.writeFileSync(
-            path.join(coverageDir, "test-results.json"),
+            path.join(activeCoverageDir, "test-results.json"),
             JSON.stringify(mergedResults, null, 2),
             "utf8",
           );
-          fs.writeFileSync(
-            path.join(unitCoverageDir, "test-results.json"),
-            JSON.stringify(mergedResults, null, 2),
-            "utf8",
-          );
+          if (!isTargetedUnitRun) {
+            fs.writeFileSync(
+              path.join(unitCoverageDir, "test-results.json"),
+              JSON.stringify(mergedResults, null, 2),
+              "utf8",
+            );
+          }
         }
 
         // Merge lcov.info if available
-        const jestLcov = fs.existsSync(path.join(coverageDir, "jest-lcov.info"))
-          ? path.join(coverageDir, "jest-lcov.info")
-          : path.join(unitCoverageDir, "jest-lcov.info");
+        const jestLcov = fs.existsSync(path.join(activeCoverageDir, "jest-lcov.info"))
+          ? path.join(activeCoverageDir, "jest-lcov.info")
+          : path.join(activeUnitCoverageDir, "jest-lcov.info");
         const vitestLcov = fs.existsSync(
-          path.join(coverageDir, "vitest-lcov.info"),
+          path.join(activeCoverageDir, "vitest-lcov.info"),
         )
-          ? path.join(coverageDir, "vitest-lcov.info")
-          : path.join(unitCoverageDir, "vitest-lcov.info");
-        const rootLcov = path.join(coverageDir, "lcov.info");
+          ? path.join(activeCoverageDir, "vitest-lcov.info")
+          : path.join(activeUnitCoverageDir, "vitest-lcov.info");
+        const rootLcov = path.join(activeCoverageDir, "lcov.info");
         let mergedLcovText = "";
         if (fs.existsSync(jestLcov)) {
           try {
@@ -5787,19 +6064,21 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         ) {
           try {
             fs.writeFileSync(rootLcov, mergedLcovText, "utf8");
-            fs.writeFileSync(
-              path.join(unitCoverageDir, "lcov.info"),
-              mergedLcovText,
-              "utf8",
-            );
+            if (!isTargetedUnitRun) {
+              fs.writeFileSync(
+                path.join(unitCoverageDir, "lcov.info"),
+                mergedLcovText,
+                "utf8",
+              );
+            }
           } catch {}
         }
 
         // Stage TestRun for JEST (committed atomically via stagePreparedPublication)
         try {
           const jestRunData =
-            parseJestResults(unitCoverageDir, { rootDir }) ||
-            parseJestResults(coverageDir, { rootDir });
+            parseJestResults(activeUnitCoverageDir, { rootDir }) ||
+            parseJestResults(activeCoverageDir, { rootDir });
           if (jestRunData) {
             const { scenarios, ...runProps } = jestRunData;
             reportedScenarios.push(...scenarios);
@@ -5829,8 +6108,8 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         // Stage TestRun for VITEST
         try {
           const vitestRunData =
-            parseVitestResults(unitCoverageDir, { rootDir }) ||
-            parseVitestResults(coverageDir, { rootDir });
+            parseVitestResults(activeUnitCoverageDir, { rootDir }) ||
+            parseVitestResults(activeCoverageDir, { rootDir });
           if (vitestRunData) {
             const { scenarios, ...runProps } = vitestRunData;
             reportedScenarios.push(...scenarios);
@@ -5875,7 +6154,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
           vitestFiles,
           runnerOptions,
         );
-        syncCoverageDirectories(coverageDir, unitCoverageDir);
+        if (!isTargetedUnitRun) syncCoverageDirectories(coverageDir, unitCoverageDir);
         await reportUnitProgress(
           70,
           "Parsing coverage",
@@ -5883,8 +6162,8 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         );
 
         const testResults =
-          parseVitestResults(unitCoverageDir, { rootDir }) ||
-          parseVitestResults(coverageDir, { rootDir });
+          parseVitestResults(activeUnitCoverageDir, { rootDir }) ||
+          parseVitestResults(activeCoverageDir, { rootDir });
         if (testResults) {
           const { scenarios, ...testRunData } = testResults;
           reportedScenarios.push(...scenarios);
@@ -5923,7 +6202,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
           job.snapshot?.jestCommand,
           runnerOptions,
         );
-        syncCoverageDirectories(coverageDir, unitCoverageDir);
+        if (!isTargetedUnitRun) syncCoverageDirectories(coverageDir, unitCoverageDir);
         await reportUnitProgress(
           70,
           "Parsing coverage",
@@ -5931,8 +6210,8 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         );
 
         const testResults =
-          parseJestResults(unitCoverageDir, { rootDir }) ||
-          parseJestResults(coverageDir, { rootDir });
+          parseJestResults(activeUnitCoverageDir, { rootDir }) ||
+          parseJestResults(activeCoverageDir, { rootDir });
         if (testResults) {
           const { scenarios, ...testRunData } = testResults;
           reportedScenarios.push(...scenarios);
@@ -5962,35 +6241,43 @@ export const processRunTestsJob = async (jobId, options = {}) => {
           "[RUN_TESTS] No existing unit test files (Jest/Vitest) found. Scanning logic source files...",
         ).catch(() => {});
 
-        const logicFiles = findLogicSourceFiles(rootDir);
+        const logicFilesForBaseline =
+          isTargetedUnitRun && scopedLogicFiles.length > 0
+            ? scopedLogicFiles
+            : findLogicSourceFiles(rootDir);
 
-        if (logicFiles.length > 0) {
+        if (logicFilesForBaseline.length > 0) {
           await addJobLog(
             jobId,
             "INFO",
-            `[RUN_TESTS] Found ${logicFiles.length} code logic files. Generating baseline 0% coverage...`,
+            isTargetedUnitRun
+              ? `[TARGETED] Computing baseline 0% coverage for ${logicFilesForBaseline.length} selected business logic file(s)...`
+              : `[RUN_TESTS] Found ${logicFilesForBaseline.length} code logic files. Generating baseline 0% coverage...`,
           ).catch(() => {});
 
-          generateBaselineCoverage(rootDir, logicFiles, coverageDir);
-          generateBaselineCoverage(rootDir, logicFiles, unitCoverageDir);
-          syncCoverageDirectories(coverageDir, unitCoverageDir);
-
-          pendingTestRuns.push({
-            snapshotId,
-            type: "JEST",
-            totalTests: 0,
-            passedTests: 0,
-            failedTests: 0,
-            skippedTests: 0,
-            durationMs: 0,
-            status: "PASSED",
-            startedAt: new Date(),
-            finishedAt: new Date(),
-          });
+          generateBaselineCoverage(rootDir, logicFilesForBaseline, activeCoverageDir);
+          if (!isTargetedUnitRun) {
+            generateBaselineCoverage(rootDir, logicFilesForBaseline, unitCoverageDir);
+            syncCoverageDirectories(coverageDir, unitCoverageDir);
+            pendingTestRuns.push({
+              snapshotId,
+              type: "JEST",
+              totalTests: 0,
+              passedTests: 0,
+              failedTests: 0,
+              skippedTests: 0,
+              durationMs: 0,
+              status: "PASSED",
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            });
+          }
           await addJobLog(
             jobId,
             "INFO",
-            `[RUN_TESTS] Baseline TestRun prepared. Ready for unit test suggestions.`,
+            isTargetedUnitRun
+              ? `[TARGETED] Baseline metrics calculated without modifying other business logic files.`
+              : `[RUN_TESTS] Baseline TestRun prepared. Ready for unit test suggestions.`,
           ).catch(() => {});
 
           runnerResult = { exitCode: 0 };
@@ -6181,13 +6468,15 @@ export const processRunTestsJob = async (jobId, options = {}) => {
 
         if (
           useHermeticMock &&
-          !hasValidCoverage &&
+          (!hasValidCoverage || Boolean(modResError)) &&
           (missingModMatch || (missingDep && missingDep.packageName)) &&
           attemptedDependencies.size < MAX_DEP_ATTEMPTS
         ) {
           const missingTarget = missingModMatch
             ? missingModMatch[1]
             : missingDep?.packageName || "dependency";
+          const isRelativeMissingTarget =
+            missingTarget.startsWith("./") || missingTarget.startsWith("../");
           const healDepKey = `mock-dep:${missingTarget}`;
           if (!attemptedDependencies.has(healDepKey)) {
             attemptedDependencies.add(healDepKey);
@@ -6204,7 +6493,52 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 ensureAllRelativeJestMocksVirtual,
               } = await import("./testSanitizer.service.js");
               const testFiles = [...(vitestFiles || []), ...(jestFiles || [])];
-              for (const tf of testFiles) {
+
+              // When the missing module is a relative path (e.g. '../../src/services/ai.service.js'),
+              // only heal the specific failing test file(s) so we never inject another package's relative path
+              // into unrelated tests (e.g. root extension tests). Ignore bogus callers like 'package.json'.
+              let targetTestFiles = testFiles;
+              if (isRelativeMissingTarget) {
+                const failingHints = new Set();
+                const addHint = (raw) => {
+                  const norm = String(raw || "")
+                    .trim()
+                    .replace(/\\/g, "/")
+                    .replace(/^['"]|['"]$/g, "");
+                  if (!norm || norm === "package.json" || norm.endsWith("/package.json")) {
+                    return;
+                  }
+                  failingHints.add(norm);
+                };
+                if (missingModMatch?.[2]) addHint(missingModMatch[2]);
+                if (modResError?.testFile) addHint(modResError.testFile);
+                for (const m of fullOutput.matchAll(
+                  /^\s*FAIL\s+([^\s(]+\.(?:test|spec)\.[cm]?[jt]sx?)\b/gm,
+                )) {
+                  addHint(m[1]);
+                }
+                for (const m of fullOutput.matchAll(
+                  /\(\s*([^():\s]+\.(?:test|spec)\.[cm]?[jt]sx?):\d+:\d+\s*\)/g,
+                )) {
+                  addHint(m[1]);
+                }
+
+                targetTestFiles = testFiles.filter((tf) => {
+                  const normTf = String(tf || "").replace(/\\/g, "/");
+                  for (const hint of failingHints) {
+                    if (
+                      normTf === hint ||
+                      normTf.endsWith(`/${hint}`) ||
+                      hint.endsWith(`/${normTf}`)
+                    ) {
+                      return true;
+                    }
+                  }
+                  return false;
+                });
+              }
+
+              for (const tf of targetTestFiles) {
                 const fullTf = path.isAbsolute(tf)
                   ? tf
                   : path.join(rootDir, tf);
@@ -6522,15 +6856,21 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     // Re-compute and normalize coverage-summary.json totals to exclude API and frontend files
     // and ensure ALL project logic files are represented in coverage-summary.json and coverage-final.json
     const logicFiles = findLogicSourceFiles(rootDir);
-    const finalCovPath = path.join(coverageDir, "coverage-final.json");
-    const finalCovCandidates = [
-      path.join(unitCoverageDir, "coverage-final.json"),
-      path.join(coverageDir, "coverage-final.json"),
-      path.join(unitCoverageDir, "jest-coverage-final.json"),
-      path.join(coverageDir, "jest-coverage-final.json"),
-      path.join(unitCoverageDir, "vitest-coverage-final.json"),
-      path.join(coverageDir, "vitest-coverage-final.json"),
-    ];
+    const finalCovPath = path.join(activeCoverageDir, "coverage-final.json");
+    const finalCovCandidates = isTargetedUnitRun
+      ? [
+          path.join(activeUnitCoverageDir, "coverage-final.json"),
+          path.join(activeUnitCoverageDir, "jest-coverage-final.json"),
+          path.join(activeUnitCoverageDir, "vitest-coverage-final.json"),
+        ]
+      : [
+          path.join(unitCoverageDir, "coverage-final.json"),
+          path.join(coverageDir, "coverage-final.json"),
+          path.join(unitCoverageDir, "jest-coverage-final.json"),
+          path.join(coverageDir, "jest-coverage-final.json"),
+          path.join(unitCoverageDir, "vitest-coverage-final.json"),
+          path.join(coverageDir, "vitest-coverage-final.json"),
+        ];
     let rawFinalCov = {};
     for (const fcPath of finalCovCandidates) {
       if (fs.existsSync(fcPath)) {
@@ -6613,6 +6953,68 @@ export const processRunTestsJob = async (jobId, options = {}) => {
               ex[mapName][id] = Math.max(ex[mapName][id] || 0, count || 0);
             }
           }
+        }
+      }
+    }
+
+    // When running a targeted subset of business logic files:
+    // 1. Capture scoped metrics ONLY from the newly executed files.
+    // 2. Keep all unselected business logic files untouched in DB (CoverageFile / CoverageFunction / TestRun).
+    // 3. Preserve/merge non-target metrics from previous disk JSON or DB rows before updating full summary.
+    let scopedCoverageReport = null;
+    const touchedTargetKeys = new Set(scopedSourceKeys);
+    if (isTargetedUnitRun) {
+      for (const [k, entry] of Object.entries(currentSum)) {
+        if ((entry?.lines?.covered || 0) > 0 || (entry?.statements?.covered || 0) > 0 || (entry?.functions?.covered || 0) > 0) {
+          touchedTargetKeys.add(k);
+        }
+      }
+
+      for (const [prevKey, prevVal] of Object.entries(previousUnitSummary)) {
+        if (prevKey === "total" || !prevVal || typeof prevVal !== "object") continue;
+        const canonPrev = canonicalizeFilePath(prevKey, rootDir);
+        if (!isBusinessLogicSourceFile(canonPrev, configExclusions)) continue;
+        if (touchedTargetKeys.has(canonPrev)) continue;
+        const curEntry = currentSum[canonPrev];
+        const curHasHit =
+          curEntry &&
+          ((curEntry.lines?.covered || 0) > 0 ||
+            (curEntry.statements?.covered || 0) > 0 ||
+            (curEntry.functions?.covered || 0) > 0);
+        if (!curEntry || (curEntry._syntheticBaseline && !curHasHit)) {
+          currentSum[canonPrev] = prevVal;
+        }
+      }
+      for (const [canonPrev, dbRow] of existingDbCoverageByPath.entries()) {
+        if (touchedTargetKeys.has(canonPrev)) continue;
+        const curEntry = currentSum[canonPrev];
+        const curHasCov =
+          curEntry &&
+          ((curEntry.lines?.covered || 0) > 0 || (curEntry.statements?.covered || 0) > 0);
+        if (!curHasCov && ((dbRow.linesPct || 0) > 0 || (dbRow.stmtsPct || 0) > 0)) {
+          const matchLf = logicFiles.find(
+            (lf) => canonicalizeFilePath(lf.relativePath, rootDir) === canonPrev,
+          );
+          const ast = matchLf ? getCachedFileAstMetrics(matchLf.absolutePath) : { totalLines: 100, totalFuncs: 5, totalBranches: 5 };
+          const lTot = Math.max(1, ast.totalLines || 100);
+          const fTot = Math.max(1, ast.totalFuncs || 5);
+          const bTot = Math.max(1, ast.totalBranches || 5);
+          currentSum[canonPrev] = {
+            lines: { total: lTot, covered: Math.round((lTot * (dbRow.linesPct || 0)) / 100), skipped: 0, pct: dbRow.linesPct || 0 },
+            statements: { total: lTot, covered: Math.round((lTot * (dbRow.stmtsPct || 0)) / 100), skipped: 0, pct: dbRow.stmtsPct || 0 },
+            functions: { total: fTot, covered: Math.round((fTot * (dbRow.funcsPct || 0)) / 100), skipped: 0, pct: dbRow.funcsPct || 0 },
+            branches: { total: bTot, covered: Math.round((bTot * (dbRow.branchesPct || 0)) / 100), skipped: 0, pct: dbRow.branchesPct || 0 },
+          };
+        }
+      }
+      for (const [prevKey, prevVal] of Object.entries(previousUnitFinal)) {
+        if (!prevVal || typeof prevVal !== "object") continue;
+        const canonPrev = canonicalizeFilePath(prevKey, rootDir);
+        if (!isBusinessLogicSourceFile(canonPrev, configExclusions)) continue;
+        if (touchedTargetKeys.has(canonPrev)) continue;
+        const curFinal = finalCovData[canonPrev];
+        if (!curFinal || curFinal._syntheticBaseline) {
+          finalCovData[canonPrev] = { ...prevVal, path: canonPrev };
         }
       }
     }
@@ -6707,6 +7109,79 @@ export const processRunTestsJob = async (jobId, options = {}) => {
       {},
       { projectJestConfig, rootDir, mergedFinal: finalCovData },
     );
+    // Build scoped coverage metrics exclusively for selected business logic files
+    if (isTargetedUnitRun && scopedSourceKeys.size > 0) {
+      let sLinesCov = 0, sLinesTot = 0;
+      let sStmtsCov = 0, sStmtsTot = 0;
+      let sFuncsCov = 0, sFuncsTot = 0;
+      let sBranchesCov = 0, sBranchesTot = 0;
+      const scopedFilesSummary = [];
+      const pct = (cov, tot) => (tot > 0 ? Number(((cov / tot) * 100).toFixed(1)) : 0);
+
+      for (const sKey of scopedSourceKeys) {
+        const entry = cleanedSum[sKey] || currentSum[sKey];
+        if (!entry) continue;
+        const lCov = entry.lines?.covered || 0;
+        const lTot = entry.lines?.total || 0;
+        const stCov = entry.statements?.covered || 0;
+        const stTot = entry.statements?.total || 0;
+        const fCov = entry.functions?.covered || 0;
+        const fTot = entry.functions?.total || 0;
+        const bCov = entry.branches?.covered || 0;
+        const bTot = entry.branches?.total || 0;
+
+        sLinesCov += lCov; sLinesTot += lTot;
+        sStmtsCov += stCov; sStmtsTot += stTot;
+        sFuncsCov += fCov; sFuncsTot += fTot;
+        sBranchesCov += bCov; sBranchesTot += bTot;
+
+        scopedFilesSummary.push({
+          filePath: sKey,
+          linesPct: entry.lines?.pct ?? pct(lCov, lTot),
+          branchesPct: entry.branches?.pct ?? pct(bCov, bTot),
+          funcsPct: entry.functions?.pct ?? pct(fCov, fTot),
+          stmtsPct: entry.statements?.pct ?? pct(stCov, stTot),
+          lines: { total: lTot, covered: lCov, pct: entry.lines?.pct ?? pct(lCov, lTot) },
+          branches: { total: bTot, covered: bCov, pct: entry.branches?.pct ?? pct(bCov, bTot) },
+          functions: { total: fTot, covered: fCov, pct: entry.functions?.pct ?? pct(fCov, fTot) },
+          statements: { total: stTot, covered: stCov, pct: entry.statements?.pct ?? pct(stCov, stTot) },
+        });
+      }
+
+      const aggScopedTestStats = pendingTestRuns.reduce(
+        (acc, r) => {
+          acc.total += Number(r.totalTests || 0);
+          acc.passed += Number(r.passedTests || 0);
+          acc.failed += Number(r.failedTests || 0);
+          acc.durationMs += Number(r.durationMs || 0);
+          return acc;
+        },
+        { total: 0, passed: 0, failed: 0, durationMs: 0 },
+      );
+
+      scopedCoverageReport = {
+        sourceFiles: Array.from(scopedSourceKeys),
+        files: scopedFilesSummary,
+        coveredFilesCount: scopedFilesSummary.filter(
+          (sf) => Number(sf.linesPct || 0) > 0 || Number(sf.stmtsPct || 0) > 0,
+        ).length,
+        testStats: aggScopedTestStats,
+        total: {
+          lines: { total: sLinesTot, covered: sLinesCov, pct: pct(sLinesCov, sLinesTot) },
+          statements: { total: sStmtsTot, covered: sStmtsCov, pct: pct(sStmtsCov, sStmtsTot) },
+          functions: { total: sFuncsTot, covered: sFuncsCov, pct: pct(sFuncsCov, sFuncsTot) },
+          branches: { total: sBranchesTot, covered: sBranchesCov, pct: pct(sBranchesCov, sBranchesTot) },
+        },
+      };
+      await addJobLog(
+        jobId,
+        "INFO",
+        `[TARGETED] Scoped Business Logic Coverage (${scopedFilesSummary.length} file(s)): ` +
+          `lines=${scopedCoverageReport.total.lines.pct}%, branches=${scopedCoverageReport.total.branches.pct}%, ` +
+          `functions=${scopedCoverageReport.total.functions.pct}%, statements=${scopedCoverageReport.total.statements.pct}%`,
+      ).catch(() => {});
+    }
+
     for (const [canonKey, entry] of Object.entries(finalCovData)) {
       if (entry && typeof entry === "object" && cleanedSum[canonKey]) {
         entry.lines = cleanedSum[canonKey].lines;
@@ -6715,50 +7190,83 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         entry.branches = cleanedSum[canonKey].branches;
       }
     }
-    try {
-      fs.writeFileSync(
-        finalCovPath,
-        JSON.stringify(finalCovData, null, 2),
-        "utf8",
-      );
-    } catch {}
-    try {
-      fs.writeFileSync(
-        path.join(coverageDir, "coverage-summary.json"),
-        JSON.stringify(cleanedSum, null, 2),
-        "utf8",
-      );
-    } catch {}
-    try {
-      fs.writeFileSync(
-        path.join(unitCoverageDir, "coverage-final.json"),
-        JSON.stringify(finalCovData, null, 2),
-        "utf8",
-      );
-    } catch {}
-    try {
-      fs.writeFileSync(
-        path.join(unitCoverageDir, "coverage-summary.json"),
-        JSON.stringify(cleanedSum, null, 2),
-        "utf8",
-      );
-    } catch {}
+    // Mirror results and persist ONLY scoped subset on targeted runs so unselected files stay untouched
+    const scopedOnlyFinalCovData = isTargetedUnitRun
+      ? Object.fromEntries(
+          Object.entries(finalCovData).filter(([k]) => touchedTargetKeys.has(k)),
+        )
+      : finalCovData;
+    const scopedOnlyCoverageDir = isTargetedUnitRun
+      ? path.join(activeCoverageDir, "scoped-patch")
+      : coverageDir;
 
-    // Mirror results and lcov between coverageDir and unitCoverageDir
-    syncCoverageDirectories(coverageDir, unitCoverageDir);
-
-    if (rawOrigRootDir || origRootDir) {
-      const publishArtifacts = () =>
-        syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
-      if (opContext?.preparedPublications)
-        deferPreparedCommit(publishArtifacts);
-      else publishArtifacts();
+    if (isTargetedUnitRun) {
+      try {
+        fs.mkdirSync(scopedOnlyCoverageDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(scopedOnlyCoverageDir, "coverage-final.json"),
+          JSON.stringify(scopedOnlyFinalCovData, null, 2),
+          "utf8",
+        );
+      } catch {}
     }
 
-    // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
+    const shouldUpdateFullProjectArtifacts =
+      !isTargetedUnitRun ||
+      (scopedCoverageReport?.testStats?.total || 0) > 0 ||
+      (cleanedSum?.total?.lines?.pct || 0) > 0;
+
+    if (shouldUpdateFullProjectArtifacts) {
+      try {
+        fs.writeFileSync(
+          path.join(coverageDir, "coverage-final.json"),
+          JSON.stringify(finalCovData, null, 2),
+          "utf8",
+        );
+      } catch {}
+      try {
+        fs.writeFileSync(
+          path.join(coverageDir, "coverage-summary.json"),
+          JSON.stringify(cleanedSum, null, 2),
+          "utf8",
+        );
+      } catch {}
+      try {
+        fs.writeFileSync(
+          path.join(unitCoverageDir, "coverage-final.json"),
+          JSON.stringify(finalCovData, null, 2),
+          "utf8",
+        );
+      } catch {}
+      try {
+        fs.writeFileSync(
+          path.join(unitCoverageDir, "coverage-summary.json"),
+          JSON.stringify(cleanedSum, null, 2),
+          "utf8",
+        );
+      } catch {}
+
+      syncCoverageDirectories(coverageDir, unitCoverageDir);
+
+      if (rawOrigRootDir || origRootDir) {
+        const publishArtifacts = () =>
+          syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
+        if (opContext?.preparedPublications)
+          deferPreparedCommit(publishArtifacts);
+        else publishArtifacts();
+      }
+    }
+
+    // Parse coverage-summary.json → CoverageSummary
     let summaryResult = null;
     try {
-      summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+      if (shouldUpdateFullProjectArtifacts) {
+        summaryResult = await parseCoverageSummary(coverageDir, snapshotId, {
+          skipFileUpsert: isTargetedUnitRun,
+        });
+      } else if (scopedCoverageReport) {
+        summaryResult = { total: cleanedSum?.total || scopedCoverageReport.total, fileCount: scopedCoverageReport.files.length };
+      }
       if (pendingTestRuns.length > 0) {
         try {
           await stagePreparedPublication(async (tx) => {
@@ -6788,7 +7296,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             trErr.message,
           );
         }
-      } else if (summaryResult?.total) {
+      } else if (!isTargetedUnitRun && summaryResult?.total) {
         try {
           await stagePreparedPublication(async (tx) => {
             const latestUnitRun = await tx.testRun.findFirst({
@@ -6814,10 +7322,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
       await addJobLog(
         jobId,
         "INFO",
-        `[SCRUM-141] Summary: lines=${summaryResult.total.lines.pct}%, ` +
-          `branches=${summaryResult.total.branches.pct}%, ` +
-          `functions=${summaryResult.total.functions.pct}%, ` +
-          `statements=${summaryResult.total.statements.pct}% | files=${summaryResult.fileCount}`,
+        `[SCRUM-141] Summary: lines=${summaryResult?.total?.lines?.pct ?? 0}%, ` +
+          `branches=${summaryResult?.total?.branches?.pct ?? 0}%, ` +
+          `functions=${summaryResult?.total?.functions?.pct ?? 0}%, ` +
+          `statements=${summaryResult?.total?.statements?.pct ?? 0}% | files=${summaryResult?.fileCount ?? 0}`,
       ).catch(() => {});
     } catch (parseErr) {
       await addJobLog(
@@ -6827,23 +7335,27 @@ export const processRunTestsJob = async (jobId, options = {}) => {
       ).catch(() => {});
     }
 
-    // Parse coverage-final.json → CoverageFile (per-file detail)
-    await parseFinalCoverageFiles(
-      jobId,
-      snapshotId,
-      projectId,
-      userId,
-      coverageDir,
-    );
+    // Parse coverage-final.json → CoverageFile (per-file detail, preserving unselected files on targeted runs)
+    if (!isTargetedUnitRun || Object.keys(scopedOnlyFinalCovData).length > 0) {
+      await parseFinalCoverageFiles(
+        jobId,
+        snapshotId,
+        projectId,
+        userId,
+        scopedOnlyCoverageDir,
+        { preserveOtherFiles: isTargetedUnitRun },
+      );
 
-    // Parse coverage-final.json → CoverageFunction (per-function detail)
-    await parseFinalCoverageFunctions(
-      jobId,
-      snapshotId,
-      projectId,
-      userId,
-      coverageDir,
-    );
+      // Parse coverage-final.json → CoverageFunction (preserving unselected files on targeted runs)
+      await parseFinalCoverageFunctions(
+        jobId,
+        snapshotId,
+        projectId,
+        userId,
+        scopedOnlyCoverageDir,
+        { preserveOtherFiles: isTargetedUnitRun },
+      );
+    }
 
     // Verify lcov.info
     const lcovPath = path.join(coverageDir, "lcov.info");
@@ -6862,29 +7374,31 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     );
 
     // ── SCRUM-142: Store results to Firebase ──────────────────────────────
-    await addJobLog(
-      jobId,
-      "INFO",
-      "Step 4/4: Saving coverage files to Firebase...",
-    ).catch(() => {});
     let storageResult = {};
-    try {
-      storageResult = await storeCoverageOutputs(
-        snapshotId,
-        projectId,
-        coverageDir,
-      );
+    if (shouldUpdateFullProjectArtifacts) {
       await addJobLog(
         jobId,
         "INFO",
-        `[SCRUM-142] Saved ${storageResult.uploadedCount} files to Firebase.`,
+        "Step 4/4: Saving coverage files to Firebase...",
       ).catch(() => {});
-    } catch (storageErr) {
-      await addJobLog(
-        jobId,
-        "WARN",
-        `[SCRUM-142] Firebase save error: ${storageErr.message}`,
-      ).catch(() => {});
+      try {
+        storageResult = await storeCoverageOutputs(
+          snapshotId,
+          projectId,
+          coverageDir,
+        );
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[SCRUM-142] Saved ${storageResult.uploadedCount} files to Firebase.`,
+        ).catch(() => {});
+      } catch (storageErr) {
+        await addJobLog(
+          jobId,
+          "WARN",
+          `[SCRUM-142] Firebase save error: ${storageErr.message}`,
+        ).catch(() => {});
+      }
     }
 
     // ── SCRUM-144: Progress 100% — completed ──────────────────────────────
@@ -6903,10 +7417,57 @@ export const processRunTestsJob = async (jobId, options = {}) => {
       return;
     }
 
+    // Capture highest unit coverage snapshot for Executive Report (mirrors Integration Peak Report)
+    try {
+      const { capturePeakUnitReportIfHigher } = await import("./unitReport.service.js");
+      const fileCoveragesForPeak = Object.entries(cleanedSum || {})
+        .filter(([k, v]) => k !== "total" && v && typeof v === "object")
+        .map(([filePath, v]) => ({
+          filePath,
+          linesPct: Number(v.lines?.pct ?? 0),
+          branchesPct: Number(v.branches?.pct ?? 0),
+          funcsPct: Number(v.functions?.pct ?? 0),
+          stmtsPct: Number(v.statements?.pct ?? 0),
+        }));
+      const aggStats = pendingTestRuns.reduce(
+        (acc, r) => {
+          acc.total += Number(r.totalTests || 0);
+          acc.passed += Number(r.passedTests || 0);
+          acc.failed += Number(r.failedTests || 0);
+          acc.durationMs += Number(r.durationMs || 0);
+          return acc;
+        },
+        { total: 0, passed: 0, failed: 0, durationMs: 0 },
+      );
+      const failingForPeak = (reportedScenarios || [])
+        .filter((s) => ["failed", "fail"].includes(String(s?.status || "").toLowerCase()))
+        .map((s) => ({
+          id: s.id || `${s.testFile || ""}::${s.title || ""}`,
+          title: s.title,
+          testFile: s.testFile || "",
+          failureMessages: s.failureMessages || [],
+          failureSummary: s.failureSummary || "",
+          status: "failed",
+        }));
+      await capturePeakUnitReportIfHigher(snapshotId, {
+        summaryTotal: summaryResult?.total || cleanedSum?.total || null,
+        fileCoverages: fileCoveragesForPeak,
+        testStats: aggStats,
+        failingTests: failingForPeak,
+        isTargetedRun: isTargetedUnitRun,
+      });
+    } catch (peakErr) {
+      console.warn(
+        `[RunTestsJob ${jobId}] Non-fatal peak unit report capture warning:`,
+        peakErr?.message,
+      );
+    }
+
     // ── SCRUM-143: Transition to SUCCESS ──────────────────────────────────
     const coverageResult = coverageResultFromSummary(summaryResult);
     await markJobSuccess(jobId, {
       coverageResult,
+      ...(scopedCoverageReport ? { scopedCoverage: scopedCoverageReport } : {}),
       hasTestFailures: runnerResult && runnerResult.exitCode !== 0,
       exitCode: runnerResult?.exitCode ?? 0,
     });
@@ -7031,6 +7592,12 @@ export const processRunTestsJob = async (jobId, options = {}) => {
       );
     }
   } finally {
+    if (scopedWorkCoverageDir) {
+      try {
+        fs.rmSync(scopedWorkCoverageDir, { recursive: true, force: true });
+      } catch (_) {}
+    }
+    restoreDraftTestsForRun(draftRunState);
     if (isolatedDb) {
       try {
         const { destroyIsolatedDatabase } =

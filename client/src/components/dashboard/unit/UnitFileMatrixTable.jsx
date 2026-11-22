@@ -94,6 +94,10 @@ export default function UnitFileMatrixTable({
   isRunning = false,
   fixingTestId = null,
   runningTargetKey = null,
+  pendingOpsCount = 0,
+  isApplyingPending = false,
+  onApplyPendingChanges = null,
+  onDiscardPendingChanges = null,
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -172,16 +176,22 @@ export default function UnitFileMatrixTable({
   );
 
   const selectedDraftSuggestions = useMemo(() => {
-    const drafts = [];
+    const byId = new Map();
     for (const entry of enrichedEntries) {
       if (selectedFiles.size > 0 && !selectedFiles.has(entry.filePath)) continue;
       for (const tc of entry.testCases || []) {
         if (tc.origin === "AI_DRAFT" && tc.suggestionObj && !tc.isApplied) {
-          drafts.push(tc.suggestionObj);
+          const key =
+            tc.suggestionObj.suggestionId ||
+            tc.suggestionObj.id ||
+            `${entry.filePath}::${tc.suggestionObj.framework || "jest"}`;
+          if (!byId.has(key)) {
+            byId.set(key, tc.suggestionObj);
+          }
         }
       }
     }
-    return drafts;
+    return Array.from(byId.values());
   }, [enrichedEntries, selectedFiles]);
 
   const totalPendingDrafts = useMemo(() => {
@@ -274,6 +284,30 @@ export default function UnitFileMatrixTable({
                 )}
                 <span>{isGenerating ? "Generating..." : "Generate All"}</span>
               </button>
+            )}
+
+            {pendingOpsCount > 0 && onApplyPendingChanges && (
+              <div className="inline-flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onApplyPendingChanges}
+                  disabled={isApplyingPending || isApplying || isRunning}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                  title="Write temporary unit test additions, edits, and deletions to source files"
+                >
+                  {isApplyingPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                  <span>{isApplyingPending ? "Applying..." : `Apply Changes (${pendingOpsCount})`}</span>
+                </button>
+                {onDiscardPendingChanges && !isApplyingPending && (
+                  <button
+                    type="button"
+                    onClick={onDiscardPendingChanges}
+                    className="px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[11px] font-medium text-[var(--color-text-muted)] cursor-pointer"
+                  >
+                    Discard
+                  </button>
+                )}
+              </div>
             )}
 
             {totalPendingDrafts > 0 && onApplySelected && selectedFileList.length === 0 && (
@@ -831,7 +865,7 @@ export default function UnitFileMatrixTable({
                                               </button>
                                             )}
 
-                                            {!isDraft && onRunTestCase && (
+                                            {onRunTestCase && (
                                               <button
                                                 type="button"
                                                 onClick={() => onRunTestCase(tc, entry)}
@@ -847,13 +881,9 @@ export default function UnitFileMatrixTable({
                                             {onOpenEditTest && (
                                               <button
                                                 type="button"
-                                                onClick={() =>
-                                                  isDraft && tc.suggestionObj && onOpenDiffReview
-                                                    ? onOpenDiffReview(entry.filePath)
-                                                    : onOpenEditTest(tc, entry)
-                                                }
+                                                onClick={() => onOpenEditTest(tc, entry)}
                                                 className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
-                                                title="Edit test code"
+                                                title="Edit test scenario in temporary workspace"
                                               >
                                                 <Edit3 size={11} />
                                                 <span>Edit</span>

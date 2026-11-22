@@ -48,13 +48,6 @@ export function usePortfolioSocket(userId) {
 
     const throttleMap = throttleMapRef.current;
 
-    let token = localStorage.getItem("token");
-    try {
-      token ||= JSON.parse(localStorage.getItem("user") || "null")?.token;
-    } catch {
-      // ignore
-    }
-
     const socket = io(SOCKET_URL, {
       auth: socketAuth,
       transports: ["websocket", "polling"],
@@ -158,24 +151,39 @@ export function usePortfolioSocket(userId) {
     socket.on("portfolio:run_completed", (payload) => {
       const { projectId, newFeedItem } = payload || {};
 
-      // If feed item is provided, optimistically prepend to feed
-      if (newFeedItem) {
+      if (projectId || newFeedItem) {
         queryClient.setQueryData(["projectsPortfolio", "live"], (old) => {
           if (!old) return old;
-          const activityFeed = [newFeedItem, ...(old.activityFeed || [])].slice(0, 30);
-          const updatedProjects = (old.projects || []).map((p) => {
-            if (p.id === projectId) {
-              return {
-                ...p,
-                activeJob: null,
-              };
-            }
-            return p;
-          });
+          const activityFeed = newFeedItem
+            ? [newFeedItem, ...(old.activityFeed || [])].slice(0, 30)
+            : old.activityFeed;
+          const updatedProjects = projectId
+            ? (old.projects || []).map((p) => {
+                if (p.id === projectId) {
+                  return {
+                    ...p,
+                    activeJob: null,
+                  };
+                }
+                return p;
+              })
+            : old.projects;
+          const runnerInfra =
+            old.runnerInfrastructure && projectId
+              ? {
+                  ...old.runnerInfrastructure,
+                  runningJobsCount: Math.max(
+                    0,
+                    (old.runnerInfrastructure.runningJobsCount || 0) - 1,
+                  ),
+                }
+              : old.runnerInfrastructure;
+
           return {
             ...old,
             projects: updatedProjects,
             activityFeed,
+            runnerInfrastructure: runnerInfra,
           };
         });
       }
@@ -197,7 +205,10 @@ export function usePortfolioSocket(userId) {
           if (p.id === projectId) {
             return {
               ...p,
-              ...(lifecycleStatus !== undefined && { lifecycleStatus }),
+              ...(lifecycleStatus !== undefined && {
+                lifecycleStatus,
+                isExcludedFromActiveKpis: lifecycleStatus !== "DOING",
+              }),
               ...(isPinned !== undefined && { isPinned }),
             };
           }
@@ -216,7 +227,10 @@ export function usePortfolioSocket(userId) {
           if (p.id === projectId) {
             return {
               ...p,
-              ...(lifecycleStatus !== undefined && { lifecycleStatus }),
+              ...(lifecycleStatus !== undefined && {
+                lifecycleStatus,
+                isExcludedFromActiveKpis: lifecycleStatus !== "DOING",
+              }),
               ...(isPinned !== undefined && { isPinned }),
             };
           }

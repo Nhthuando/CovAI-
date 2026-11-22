@@ -60,17 +60,39 @@ export const resolvePlaywrightCommand = (rootDir, command) => {
 
 const readRequiredChromiumRevisions = (cliPath, rootDir) => {
   const candidates = [
-    cliPath ? path.resolve(path.dirname(cliPath), "node_modules", "playwright-core", "browsers.json") : null,
-    cliPath ? path.resolve(path.dirname(cliPath), "..", "playwright-core", "browsers.json") : null,
-    rootDir ? path.join(rootDir, "node_modules", "playwright-core", "browsers.json") : null,
+    cliPath
+      ? path.resolve(
+          path.dirname(cliPath),
+          "node_modules",
+          "playwright-core",
+          "browsers.json",
+        )
+      : null,
+    cliPath
+      ? path.resolve(
+          path.dirname(cliPath),
+          "..",
+          "playwright-core",
+          "browsers.json",
+        )
+      : null,
+    rootDir
+      ? path.join(rootDir, "node_modules", "playwright-core", "browsers.json")
+      : null,
   ].filter(Boolean);
   for (const file of candidates) {
     try {
       if (!fs.existsSync(file)) continue;
       const data = JSON.parse(fs.readFileSync(file, "utf8"));
       const revisions = (data?.browsers || [])
-        .filter((b) => b?.name === "chromium" || b?.name === "chromium-headless-shell")
-        .map((b) => `${b.name === "chromium-headless-shell" ? "chromium_headless_shell" : "chromium"}-${b.revision}`)
+        .filter(
+          (b) =>
+            b?.name === "chromium" || b?.name === "chromium-headless-shell",
+        )
+        .map(
+          (b) =>
+            `${b.name === "chromium-headless-shell" ? "chromium_headless_shell" : "chromium"}-${b.revision}`,
+        )
         .filter(Boolean);
       if (revisions.length > 0) return revisions;
     } catch (_) {}
@@ -83,7 +105,9 @@ const hasInstalledChromiumInDir = (browsersDir, requiredFolders = null) => {
   try {
     const entries = fs.readdirSync(browsersDir, { withFileTypes: true });
     if (Array.isArray(requiredFolders) && requiredFolders.length > 0) {
-      const dirNames = new Set(entries.filter((e) => e.isDirectory()).map((e) => e.name.toLowerCase()));
+      const dirNames = new Set(
+        entries.filter((e) => e.isDirectory()).map((e) => e.name.toLowerCase()),
+      );
       return requiredFolders.every((req) => {
         if (!dirNames.has(req.toLowerCase())) return false;
         try {

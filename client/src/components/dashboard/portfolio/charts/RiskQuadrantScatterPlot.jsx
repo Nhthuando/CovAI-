@@ -392,6 +392,17 @@ export function RiskQuadrantScatterPlot({
             Pass Rate % →
           </text>
 
+          {quadrantNodes.length === 0 && (
+            <text
+              x={padLeft + plotWidth / 2}
+              y={padTop + plotHeight / 2}
+              textAnchor="middle"
+              className="text-[11px] font-mono fill-[var(--ud-text-muted)] pointer-events-none"
+            >
+              No matching projects for current filters
+            </text>
+          )}
+
           {/* Project Scatter Nodes & Collision-Free Labels */}
           {quadrantNodes.map((node) => {
             const isHovered = hoveredNode?.projectId === node.projectId;

@@ -30,9 +30,21 @@ import {
   getSystemTestSummary,
   runSystemTest,
   systemEvidenceRequest,
+  addSystemTestCaseApi,
+  updateSystemTestCaseApi,
   deleteSystemTestCaseApi,
   aiFixSystemTestCaseApi,
 } from "../../../services/systemTest.service.js";
+import {
+  loadStagedOps,
+  saveStagedOps,
+  stageAddOp,
+  stageUpdateOp,
+  stageDeleteOp,
+  countStagedOps,
+  matchesStagedTarget,
+  extractBlockTitle,
+} from "../../../lib/stagedScenarioOps.js";
 import { getJobDetailApi } from "../../../services/job.service.js";
 import CoverageJobQueueButton from "../CoverageJobQueueButton.jsx";
 import SystemSpecMatrixTable from "./SystemSpecMatrixTable.jsx";
@@ -110,6 +122,20 @@ export default function SystemTestWorkspace({
   const [applyingDraft, setApplyingDraft] = useState(false);
   const [fixingTarget, setFixingTarget] = useState(null);
   const [deletingTarget, setDeletingTarget] = useState(null);
+  const [pendingSystemOps, setPendingSystemOps] = useState(() =>
+    loadStagedOps("system", snapshotId),
+  );
+  const [isApplyingPending, setIsApplyingPending] = useState(false);
+
+  useEffect(() => {
+    setPendingSystemOps(loadStagedOps("system", snapshotId));
+  }, [snapshotId]);
+
+  useEffect(() => {
+    saveStagedOps("system", snapshotId, pendingSystemOps);
+  }, [snapshotId, pendingSystemOps]);
+
+  const pendingOpsCount = countStagedOps(pendingSystemOps);
 
   const [setupOpen, setSetupOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -181,7 +207,10 @@ export default function SystemTestWorkspace({
         const discoveryKey = `${projectId}:${snapshotId}`;
         if (frameworkDiscoveryRef.current !== discoveryKey) {
           frameworkDiscoveryRef.current = discoveryKey;
-          if (
+          const recFw = response?.data?.recommendedFramework;
+          if (recFw === "cypress" || recFw === "playwright") {
+            setActiveFramework(recFw);
+          } else if (
             list.some((f) => f.name?.toLowerCase().includes("cypress")) &&
             !list.some((f) => f.name?.toLowerCase().includes("playwright"))
           ) {
@@ -471,7 +500,6 @@ export default function SystemTestWorkspace({
       latestDraft &&
       !latestDraft.applied &&
       !latestDraft.appliedAt &&
-      !latestDraft.stale &&
       ["GENERATED", "REVIEWED", "PENDING", "DRAFT"].includes(
         String(latestDraft.state || latestDraft.status || "DRAFT").toUpperCase(),
       );
@@ -509,12 +537,85 @@ export default function SystemTestWorkspace({
       }
     }
 
-    return Array.from(byFile.values()).map((g) => ({
-      ...g,
-      routes: Array.from(g.routes),
-      caseCov: getSystemGroupCaseCoverage(g, g.scenarios),
-    }));
-  }, [frameworksData, activeFramework, executedTestFiles, catalogData, featuresData, latestDraft]);
+    const resultGroups = Array.from(byFile.values()).map((g) => {
+      const stagedBase = (g.scenarios || [])
+        .filter((sc) => {
+          const t = {
+            key: sc.id,
+            id: sc.id,
+            testFile: sc.testFile || g.filePath,
+            testName: sc.title || sc.testName,
+          };
+          return !(pendingSystemOps.deletes || []).some((d) => matchesStagedTarget(d, t));
+        })
+        .map((sc) => {
+          const t = {
+            key: sc.id,
+            id: sc.id,
+            testFile: sc.testFile || g.filePath,
+            testName: sc.title || sc.testName,
+          };
+          const upd = (pendingSystemOps.updates || []).find((u) => matchesStagedTarget(u, t));
+          if (!upd) return sc;
+          return {
+            ...sc,
+            title: upd.testName || sc.title,
+            code: upd.code,
+            stagedEdit: true,
+          };
+        });
+      const stagedAdds = (pendingSystemOps.adds || [])
+        .filter((a) => normalizeSpecPath(a.testFile) === g.filePath)
+        .map((a) => ({
+          id: a.id,
+          title: a.testName || a.title,
+          testFile: g.filePath,
+          code: a.code,
+          status: "NOT_RUN",
+          origin: "STAGED_ADD",
+          stagedTemp: true,
+        }));
+      const scenarios = [...stagedBase, ...stagedAdds];
+      return {
+        ...g,
+        scenarios,
+        routes: Array.from(g.routes),
+        caseCov: getSystemGroupCaseCoverage(g, scenarios),
+      };
+    });
+
+    // Also include staged adds targeting brand new spec files
+    for (const a of pendingSystemOps.adds || []) {
+      const nf = normalizeSpecPath(a.testFile);
+      if (!nf || resultGroups.some((g) => g.filePath === nf)) continue;
+      const scenarios = [
+        {
+          id: a.id,
+          title: a.testName || a.title,
+          testFile: nf,
+          code: a.code,
+          status: "NOT_RUN",
+          origin: "STAGED_ADD",
+          stagedTemp: true,
+        },
+      ];
+      const stub = {
+        key: nf,
+        filePath: nf,
+        featureName: "",
+        routes: [],
+        scenarios,
+        hasDraft: false,
+        hasDraftOnly: false,
+      };
+      resultGroups.push({
+        ...stub,
+        caseCov: getSystemGroupCaseCoverage(stub, scenarios),
+      });
+    }
+
+    return resultGroups;
+  }, [frameworksData, activeFramework, executedTestFiles, catalogData, featuresData, latestDraft, pendingSystemOps]);
 
   // Unified telemetry counters
   const telemetry = useMemo(() => {
@@ -623,6 +724,13 @@ export default function SystemTestWorkspace({
       setNotice(null);
 
       try {
+        if (pendingOpsCount > 0) {
+          const ok = await flushPendingSystemOps({ reload: false });
+          if (!ok) {
+            runRequestRef.current = false;
+            return;
+          }
+        }
         // Preflight environment check (reuses setup dialog when app runtime/DB config missing)
         const setup = await systemEvidenceRequest(snapshotId, "setup").catch(() => null);
         if (setup) {
@@ -790,25 +898,64 @@ export default function SystemTestWorkspace({
     }
   };
 
-  // Delete single test scenario block from spec file
+  const flushPendingSystemOps = async ({ reload = true } = {}) => {
+    if (!snapshotId || countStagedOps(pendingSystemOps) === 0) return true;
+    setIsApplyingPending(true);
+    setError(null);
+    try {
+      for (const d of pendingSystemOps.deletes || []) {
+        await deleteSystemTestCaseApi(snapshotId, {
+          testFile: d.testFile,
+          testName: d.testName || d.title,
+        });
+      }
+      for (const u of pendingSystemOps.updates || []) {
+        await updateSystemTestCaseApi(snapshotId, {
+          testFile: u.testFile,
+          testName: u.originalTestName || u.testName,
+          code: u.code,
+        });
+      }
+      for (const a of pendingSystemOps.adds || []) {
+        await addSystemTestCaseApi(snapshotId, {
+          testFile: a.testFile,
+          testName: a.testName,
+          code: a.code,
+          runner: a.framework || activeFramework,
+        });
+      }
+      const cleared = { deletes: [], updates: [], adds: [] };
+      setPendingSystemOps(cleared);
+      saveStagedOps("system", snapshotId, cleared);
+      if (projectId) invalidateProjectTree(projectId, snapshotId);
+      if (reload) refreshData();
+      setNotice("Applied all temporary system test edits, additions, and deletions to spec files.");
+      return true;
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || "Failed to apply temporary system test changes.");
+      return false;
+    } finally {
+      setIsApplyingPending(false);
+    }
+  };
+
+  // Delete single test scenario instantaneously in temporary UI state until user clicks Apply
   const handleDeleteScenario = async (sc, group) => {
     const testFile = sc.testFile || group?.filePath;
     const testName = sc.title || sc.testName;
     if (!snapshotId || !testFile || !testName) return;
 
-    const key = `${testFile}::${testName}`;
-    setDeletingTarget(key);
     setError(null);
-    try {
-      await deleteSystemTestCaseApi(snapshotId, { testFile, testName });
-      setNotice(`Removed scenario "${testName}" from ${testFile}.`);
-      if (projectId) invalidateProjectTree(projectId, snapshotId);
-      refreshData();
-    } catch (err) {
-      setError(err.response?.data?.message || err.message || "Failed to delete scenario.");
-    } finally {
-      setDeletingTarget(null);
-    }
+    setPendingSystemOps((prev) =>
+      stageDeleteOp(prev, {
+        key: sc.id || `${testFile}::${testName}`,
+        id: sc.id,
+        testFile,
+        testName,
+        title: testName,
+      }),
+    );
+    setNotice(`Removed "${testName}" in UI (Temp). Click Apply Changes to update ${testFile}.`);
   };
 
   // AI Fix single failing scenario
@@ -1218,6 +1365,15 @@ export default function SystemTestWorkspace({
             onAIFixScenario={handleAIFixScenario}
             onInspectScenario={(sc) => setInspectedScenario(sc)}
             onOpenSpecFile={(filePath) => onOpenFile?.(filePath)}
+            pendingOpsCount={pendingOpsCount}
+            isApplyingPending={isApplyingPending}
+            onApplyPendingChanges={() => flushPendingSystemOps({ reload: true })}
+            onDiscardPendingChanges={() => {
+              const cleared = { deletes: [], updates: [], adds: [] };
+              setPendingSystemOps(cleared);
+              saveStagedOps("system", snapshotId, cleared);
+              setNotice("Discarded temporary system test edits.");
+            }}
           />
         )}
 
@@ -1276,7 +1432,36 @@ export default function SystemTestWorkspace({
         defaultTestFile={editorModal.defaultTestFile}
         scenario={editorModal.scenario}
         framework={activeFramework}
-        onSaved={({ testFile, testName, runAfterSave }) => {
+        onSaved={(payload) => {
+          const { testFile, testName, runAfterSave, staged, mode, originalTestName, code, framework: fw } = payload || {};
+          if (staged) {
+            const resolvedTitle = extractBlockTitle(code, testName || "Scenario");
+            if (mode === "add") {
+              setPendingSystemOps((prev) =>
+                stageAddOp(prev, {
+                  testFile,
+                  testName: resolvedTitle,
+                  title: resolvedTitle,
+                  code,
+                  framework: fw,
+                }),
+              );
+            } else {
+              setPendingSystemOps((prev) =>
+                stageUpdateOp(prev, {
+                  key: editorModal.scenario?.id,
+                  id: editorModal.scenario?.id,
+                  testFile,
+                  originalTestName: originalTestName || editorModal.scenario?.title,
+                  testName: resolvedTitle,
+                  title: resolvedTitle,
+                  code,
+                }),
+              );
+            }
+            setNotice(`Saved "${resolvedTitle}" in UI (Temp). Click Apply Changes to write to ${testFile}.`);
+            return;
+          }
           if (projectId) invalidateProjectTree(projectId, snapshotId);
           refreshData();
           if (runAfterSave && testFile) {
@@ -1298,6 +1483,7 @@ export default function SystemTestWorkspace({
           snapshotId={snapshotId}
           projectId={projectId}
           initialFramework={activeFramework}
+          frameworksData={frameworksData}
           executionMode={executionMode}
           onSuccess={() => {
             if (projectId) invalidateProjectTree(projectId, snapshotId);

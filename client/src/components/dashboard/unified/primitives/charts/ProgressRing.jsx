@@ -1,4 +1,3 @@
-import React from "react";
 
 /**
  * ProgressRing - Pure SVG Compact Circular Progress Ring for Layer Coverage (0 - 100%).

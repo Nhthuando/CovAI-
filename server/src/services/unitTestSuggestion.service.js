@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { detectCoverageFrameworks } from "./coverageFramework.service.js";
+import { detectCoverageFrameworks, resolveUnitFrameworkForFile } from "./coverageFramework.service.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
@@ -1881,8 +1881,11 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
         (funcsTotal > 0 ? (fPct != null && fPct >= 100) : (fPct == null || fPct >= 100)) &&
         !hasUncovered && !hasFailed;
 
+    // Always generate the required unit test cases for the selected business logic file
+    // regardless of existing tests or current coverage percentage, so the user can review
+    // duplicates vs existing tests and curate the final suite before clicking Apply.
     let existingCoverageVerification = null;
-    if (is100Coverage && validationMode === 'full') {
+    if (false && is100Coverage && validationMode === 'full') {
         const existing = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, requestedFramework === 'vitest' ? 'vitest' : 'jest');
         if (existing.found && existing.content) existingCoverageVerification = await validateUnitTestDraft({projectId,snapshotId:snapshot.id,userId,
             workspaceRevision:capturedWorkspaceRevision,suggestions:[{sourceFile:sourceFileToInspect,testFile:existing.relativePath,
@@ -1934,6 +1937,10 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
 
     // 3. Determine frameworks to generate suggestions for
     let frameworksToGenerate = [];
+    const normalizedRequestedFramework =
+      requestedFramework && String(requestedFramework).trim().toLowerCase() !== "auto"
+        ? String(requestedFramework).trim().toLowerCase()
+        : null;
     if (isTest) {
         const testContent = fs.existsSync(path.join(snapshot.rootDir, filePath))
             ? fs.readFileSync(path.join(snapshot.rootDir, filePath), "utf8")
@@ -1943,37 +1950,33 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
         } else if (testContent.includes("@jest") || testContent.includes("jest") || filePath.toLowerCase().includes("jest")) {
             frameworksToGenerate = ["jest"];
         } else {
-            frameworksToGenerate = supportedFrameworks.includes("vitest") && !supportedFrameworks.includes("jest")
-                ? ["vitest"]
-                : ["jest"];
+            frameworksToGenerate = [
+                resolveUnitFrameworkForFile(snapshot.rootDir, sourceFileToInspect, {
+                    fallbackFramework: supportedFrameworks.includes("vitest") && !supportedFrameworks.includes("jest") ? "vitest" : "jest",
+                }),
+            ];
         }
     } else {
-        if (requestedFramework && requestedFramework !== "all") {
-            frameworksToGenerate = [requestedFramework.toLowerCase()];
-        } else if (requestedFramework === "all") {
+        if (normalizedRequestedFramework && normalizedRequestedFramework !== "all") {
+            frameworksToGenerate = [normalizedRequestedFramework];
+        } else if (normalizedRequestedFramework === "all") {
             frameworksToGenerate = supportedFrameworks.length > 0 ? [...supportedFrameworks] : ["jest"];
         } else {
-            // Smart single framework detection: check existing test file first
+            // Smart 3-rule per-file resolution:
+            //  1) Linked/existing test syntax for this source file
+            //  2) Owning monorepo package library in package.json
+            //  3) Project-wide detected/inferred framework or fallback
             const existingVitest = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "vitest");
             const existingJest = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "jest");
             if (existingVitest.found && !existingJest.found) {
                 frameworksToGenerate = ["vitest"];
             } else if (existingJest.found && !existingVitest.found) {
                 frameworksToGenerate = ["jest"];
-            } else if (supportedFrameworks.includes("vitest") && !supportedFrameworks.includes("jest")) {
-                frameworksToGenerate = ["vitest"];
-            } else if (supportedFrameworks.includes("jest") && !supportedFrameworks.includes("vitest")) {
-                frameworksToGenerate = ["jest"];
             } else {
-                const hasVitestConfig = fs.existsSync(path.join(snapshot.rootDir, "vitest.config.js")) ||
-                    fs.existsSync(path.join(snapshot.rootDir, "vitest.config.ts")) ||
-                    fs.existsSync(path.join(snapshot.rootDir, "backend", "vitest.config.js")) ||
-                    fs.existsSync(path.join(snapshot.rootDir, "backend", "vitest.config.ts"));
-                if (hasVitestConfig || supportedFrameworks.includes("vitest")) {
-                    frameworksToGenerate = ["vitest"];
-                } else {
-                    frameworksToGenerate = [supportedFrameworks[0] || "jest"];
-                }
+                const resolvedForFile = resolveUnitFrameworkForFile(snapshot.rootDir, sourceFileToInspect, {
+                    fallbackFramework: supportedFrameworks[0] || "jest",
+                });
+                frameworksToGenerate = [resolvedForFile];
             }
         }
     }

@@ -47,6 +47,7 @@ export function UnifiedDashboard({
   const [inspectedItem, setInspectedItem] = useState(null);
 
   const projectName = project?.name || "CovAI Project";
+  const projectBranch = project?.defaultBranch || "";
   const snapshots = project?.snapshots || EMPTY_SNAPSHOTS;
 
   // 1. Fetch & Adapt Real Multi-Tier Data
@@ -54,6 +55,7 @@ export function UnifiedDashboard({
     snapshotId: effectiveSnapshotId,
     projectId,
     projectName,
+    branch: projectBranch,
     snapshots,
   });
 
@@ -172,6 +174,31 @@ export function UnifiedDashboard({
     [onNavigateWorkspace, location, navigate]
   );
 
+  // Jump from Executive KPI Action Items card to Action Alert Strip (switching away from history tab if needed)
+  const handleJumpToActions = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    const wasHistory = params.get("panel") === "history";
+    if (wasHistory) {
+      params.delete("panel");
+      const qs = params.toString();
+      navigate(qs ? `${location.pathname}?${qs}` : location.pathname, { replace: true });
+    }
+    const scrollToTargets = () => {
+      if (typeof document === "undefined") return;
+      const el =
+        document.getElementById("ud-action-alerts") ||
+        document.getElementById("ud-analysis-tabs");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    };
+    if (wasHistory) {
+      setTimeout(scrollToTargets, 60);
+    } else {
+      scrollToTargets();
+    }
+  }, [location, navigate]);
+
   // 5. Cross-Filter Handler (scrolls smoothly to Zone 4 when activated)
   const handleSelectCrossFilter = useCallback((filterPayload) => {
     setActiveCrossFilter(filterPayload);
@@ -231,7 +258,6 @@ export function UnifiedDashboard({
             onSelectProject={onSelectProject}
             onSelectSnapshot={handleSelectSnapshot}
             runAllState={runAllState}
-            onNavigateWorkspace={handleNavigate}
             onAskAi={onAskAi}
             isSyncing={isFetching}
             onForceRefresh={forceRefresh}
@@ -242,7 +268,11 @@ export function UnifiedDashboard({
 
         {/* ZONE 2: Executive KPI Cards (4 x 3 cols) */}
         <ZoneErrorBoundary zoneTitle="Executive KPIs" onRetry={refetch}>
-          <ExecutiveKpiRow vm={vm} loading={isDashboardLoading} />
+          <ExecutiveKpiRow
+            vm={vm}
+            loading={isDashboardLoading}
+            onJumpToActions={handleJumpToActions}
+          />
         </ZoneErrorBoundary>
 
         {/* ZONE 2.5: Multi-Tier Bar Chart & Coverage Trend Chart */}

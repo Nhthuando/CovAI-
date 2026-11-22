@@ -3,7 +3,6 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronRight,
-  Download,
   FileCode2,
   Loader2,
   RotateCcw,
@@ -12,22 +11,7 @@ import {
 } from 'lucide-react';
 import { useProjectAccess } from '../../../hooks/useProjectAccess';
 import { systemEvidenceRequest } from '../../../services/systemTest.service.js';
-
-const statusLabel = {
-  MISSING: 'Required to start',
-  PRESENT: 'Present · not validated',
-  MAY_BE_NEEDED: 'May be needed',
-  MANAGED: 'Managed by CovAI',
-};
-
-const statusBadgeStyle = {
-  MISSING:
-    'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300',
-  PRESENT:
-    'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-  MAY_BE_NEEDED:
-    'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
-};
+import ExternalServicesPanel from './ExternalServicesPanel.jsx';
 
 const databaseEngineLabel = {
   mysql: 'MySQL',
@@ -50,6 +34,7 @@ export default function SystemTestSetupDialog({
   onReady,
   onGenerate,
   runtimeMessage,
+  focusServiceId,
 }) {
   const dialog = useRef(null);
   const request = useRef(null);
@@ -65,7 +50,6 @@ export default function SystemTestSetupDialog({
   const [configEdited, setConfigEdited] = useState(false);
   const [configText, setConfigText] = useState('');
   const [reviewed, setReviewed] = useState(false);
-  const [environmentValues, setEnvironmentValues] = useState({});
 
   const load = useCallback(async () => {
     request.current?.abort();
@@ -166,20 +150,8 @@ export default function SystemTestSetupDialog({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const saveEnvironment = async () => {
-    const variables=report.environment.filter(row=>row.required && row.status!=='MANAGED' && environmentValues[`${row.envFile}:${row.name}`]?.trim()).map(row=>({envFile:row.envFile,name:row.name,value:environmentValues[`${row.envFile}:${row.name}`]}));
-    if(!variables.length)return;
-    setSaving(true);setError('');
-    try {
-      await systemEvidenceRequest(snapshotId,'setup/environment',{method:'POST',data:{expectedWorkspaceRevision:report.workspaceRevision,variables}});
-      setEnvironmentValues({});
-      await load();
-    } catch(err) {setError(failureMessage(err));}
-    finally {setSaving(false);}
-  };
-
-  const external =
-    report?.environment.filter((row) => row.status !== 'MANAGED') || [];
+  const external = report?.environment.filter(row => row.status !== 'MANAGED') ?? [];
+  const otherVariables = external.filter(row => !row.provider);
   const managed =
     report?.environment.filter((row) => row.status === 'MANAGED') || [];
   const showSetupEditor =
@@ -463,125 +435,19 @@ export default function SystemTestSetupDialog({
 
                 {/* Section 2: Test environment */}
                 <section className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
-                        Test environment
-                      </h3>
-                      <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-muted)]">
-                        {external.length
-                          ? `${external.length} external`
-                          : '0 external'}
-                      </span>
-                    </div>
-                    {!!external.length && (
-                      <button
-                        type="button"
-                        onClick={downloadTemplate}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                      >
-                        <Download size={12} />
-                        <span>Download variable template</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <p className="text-xs leading-5 text-[var(--color-text-secondary)]">
-                    Add test or sandbox values to the listed{' '}
-                    <code className="rounded bg-[var(--color-surface-secondary)] px-1 py-0.5 font-mono text-[11px]">
-                      .env.test
-                    </code>{' '}
-                    file in the imported project, or enter required values below.
-                    Saved values are never returned here or sent to setup AI.
-                  </p>
-
-                  <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-                    {external.length ? (
-                      <div className="max-h-72 overflow-auto">
-                        <table className="w-full min-w-[580px] border-collapse text-left text-xs">
-                          <thead className="sticky top-0 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                            <tr>
-                              {[
-                                'Variable / purpose',
-                                'Service',
-                                'Status',
-                                'Where to configure',
-                              ].map((title) => (
-                                <th
-                                  key={title}
-                                  scope="col"
-                                  className="px-4 py-2.5 font-medium"
-                                >
-                                  {title}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[var(--color-border)] bg-[var(--color-bg)]">
-                            {external.map((row) => (
-                              <tr
-                                key={`${row.envFile}:${row.name}`}
-                                className="align-top"
-                              >
-                                <th
-                                  scope="row"
-                                  className="max-w-xs px-4 py-3 font-normal"
-                                >
-                                  <code className="break-all font-mono text-xs font-semibold text-[var(--color-text)]">
-                                    {row.name}
-                                  </code>
-                                  {row.sourceFiles?.length > 0 && (
-                                    <p className="mt-0.5 font-mono text-[10px] text-[var(--color-text-muted)]">
-                                      {row.sourceFiles.join(', ')}
-                                    </p>
-                                  )}
-                                  {row.required && (
-                                    <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">
-                                      {row.purpose}
-                                    </p>
-                                  )}
-                                </th>
-                                <td className="px-4 py-3 text-[var(--color-text-secondary)]">
-                                  {row.service}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <span
-                                    className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium ${
-                                      statusBadgeStyle[row.status] ||
-                                      statusBadgeStyle.MAY_BE_NEEDED
-                                    }`}
-                                  >
-                                    {statusLabel[row.status]}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3">
-                                  <code className="break-all font-mono text-[11px] font-medium text-[var(--color-text)]">
-                                    {row.envFile}
-                                  </code>
-                                  <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-                                    {row.guidance}
-                                  </p>
-                                  {row.required && access.can('evidence.approve') && <input type="password" autoComplete="new-password" aria-label={`Test value for ${row.name} in ${row.envFile}`} value={environmentValues[`${row.envFile}:${row.name}`] || ''} disabled={saving} onChange={event=>setEnvironmentValues(values=>({...values,[`${row.envFile}:${row.name}`]:event.target.value}))} placeholder="Enter test or sandbox value" className="mt-2 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-xs" />}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2.5 px-4 py-3 text-xs text-[var(--color-text-secondary)]">
-                        <CheckCircle2
-                          size={14}
-                          className="shrink-0 text-emerald-600 dark:text-emerald-400"
-                        />
-                        <span>
-                          No external credential requirements were found in the
-                          inspected source.
-                        </span>
-                      </div>
-                    )}
-
-                    {!!managed.length && (
+                  <ExternalServicesPanel
+                    snapshotId={snapshotId}
+                    revision={report.workspaceRevision}
+                    services={report.externalServices ?? []}
+                    otherVariables={otherVariables}
+                    focusServiceId={focusServiceId}
+                    canEdit={access.can('evidence.approve')}
+                    disabled={saving}
+                    onSaved={async () => { onChanged?.(); await load(); }}
+                    onDownloadTemplate={external.length ? downloadTemplate : undefined}
+                  />
+                  {!!managed.length && (
+                    <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
                       <details className="group border-t border-[var(--color-border)] bg-[var(--color-bg)]/50 text-xs">
                         <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] select-none">
                           <span>
@@ -613,9 +479,8 @@ export default function SystemTestSetupDialog({
                           </ul>
                         </div>
                       </details>
-                    )}
-                  </div>
-                  {Object.values(environmentValues).some(value=>value.trim()) && <button type="button" disabled={loading || saving || !access.can('evidence.approve')} onClick={saveEnvironment} className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white disabled:opacity-40">{saving?'Saving test values...':'Save test environment'}</button>}
+                    </div>
+                  )}
                 </section>
 
                 {/* Section 3: Review startup setup */}

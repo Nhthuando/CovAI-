@@ -1,6 +1,7 @@
 import {parseJavaScriptCode} from './babelParser.service.js';
 import _traverse from '@babel/traverse';
 import {ServiceError} from '../utils/serviceError.js';
+import {serviceForPackage} from './externalServiceCatalog.service.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 const traverse=_traverse.default || _traverse;
@@ -25,15 +26,161 @@ const sdks=new Map([
 ]);
 const isEnvironment=node=>node?.type==='MemberExpression' && node.property?.name==='env' && (node.object?.name==='process' || node.object?.type==='MetaProperty' && node.object.meta?.name==='import');
 const envName=node=>node?.type==='MemberExpression' && isEnvironment(node.object) ? (node.computed?node.property.value:node.property.name):null;
+const filePath = name => name.replaceAll('\\', '/');
+const resolveRelativeModule = (modules, importer, request) => {
+    const base = path.posix.normalize(path.posix.join(path.posix.dirname(importer), request));
+    return [base, ...['.js','.cjs','.mjs','.ts','.jsx','.tsx','/index.js','/index.ts'].map(ext => base + ext)]
+        .find(candidate => modules.has(candidate));
+};
+const requireSpecifier = node => node?.type === 'CallExpression' && node.callee.name === 'require' &&
+    node.arguments[0]?.type === 'StringLiteral' ? node.arguments[0].value : undefined;
+
+const routeMethods = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'all']);
+const memberName = node => node.computed ? node.property.value : node.property.name;
+
+const environmentReferenceVisitors = add => {
+    const record = (name, location, target) => {
+        if (typeof name === 'string' && /^[A-Za-z_]\w*$/.test(name)) add(name, location, target);
+    };
+    return {
+        MemberExpression(p) { record(envName(p.node), p); },
+        VariableDeclarator(p) {
+            if (p.node.id.type !== 'ObjectPattern' || !isEnvironment(p.node.init)) return;
+            for (const property of p.get('id.properties')) {
+                const key = property.node.key;
+                record(key?.name || key?.value, p.get('init'), property.get('value'));
+            }
+        },
+    };
+};
+
+const variableTarget = p => {
+    for (let current = p; current.parentPath; current = current.parentPath) {
+        const parent = current.parentPath;
+        if (parent.isFunction()) return undefined;
+        if (current.key === 'init' && parent.isVariableDeclarator()) return parent.get('id');
+        if (current.key === 'right' && parent.isAssignmentExpression()) return parent.get('left');
+    }
+};
+const bindingKey = (scope, name) => scope.getBinding(name) ?? name;
+const targetBindings = target => Object.keys(target?.getBindingIdentifiers() ?? {})
+    .map(name => bindingKey(target.scope, name));
+
+export const environmentFeatureMap = files => {
+    const modules = new Map();
+    const analyses = [];
+    const features = new Map();
+    for (const file of files) {
+        const parsed = parseFile(file);
+        if (!parsed.success) continue;
+        const importer = filePath(file.path);
+        const names = new Set();
+        modules.set(importer, names);
+        const routes = new Map();
+        const imports = [];
+        const environmentByBinding = new Map();
+        const dependencies = new Map();
+        const addBindingValue = (map, binding, value) => {
+            if (!map.has(binding)) map.set(binding, new Set());
+            map.get(binding).add(value);
+        };
+        const addImport = (request, bindings) => {
+            if (request?.startsWith('.') && bindings.length) imports.push({request, bindings});
+        };
+        function* containingHandlers(p) {
+            for (let parent = p.parentPath; parent; parent = parent.parentPath) {
+                const route = routes.get(parent.node);
+                if (route && p.node.start >= route.start && p.node.end <= route.end) yield route;
+            }
+        }
+        traverse(parsed.ast, {
+            ...environmentReferenceVisitors((name, location, target) => {
+                names.add(name);
+                const handler = containingHandlers(location).next().value;
+                if (handler) handler.names.add(name);
+                else if (!location.getFunctionParent()) {
+                    for (const binding of targetBindings(target ?? variableTarget(location))) {
+                        addBindingValue(environmentByBinding, binding, name);
+                    }
+                }
+            }),
+            ReferencedIdentifier(p) {
+                const binding = bindingKey(p.scope, p.node.name);
+                let inHandler = false;
+                for (const handler of containingHandlers(p)) {
+                    handler.identifiers.add(binding);
+                    inHandler = true;
+                }
+                if (!inHandler && !p.getFunctionParent()) {
+                    for (const target of targetBindings(variableTarget(p))) {
+                        addBindingValue(dependencies, target, binding);
+                    }
+                }
+            },
+            ImportDeclaration(p) {
+                addImport(p.node.source.value, p.get('specifiers').flatMap(targetBindings));
+            },
+            CallExpression(p) {
+                const {node} = p;
+                const request = requireSpecifier(node);
+                if (request?.startsWith('.')) addImport(request, targetBindings(variableTarget(p)));
+                const {callee} = node;
+                if (callee.type !== 'MemberExpression') return;
+                const method = memberName(callee);
+                if (!routeMethods.has(method)) return;
+                let routePath = node.arguments[0];
+                let handlerStart = node.arguments[1];
+                let receiver = callee.object;
+                if (receiver.type === 'CallExpression' && receiver.callee.type === 'MemberExpression' && memberName(receiver.callee) === 'route') {
+                    routePath = receiver.arguments[0];
+                    handlerStart = node.arguments[0];
+                    receiver = receiver.callee.object;
+                }
+                if (!handlerStart || receiver.type !== 'Identifier' || routePath?.type !== 'StringLiteral' ||
+                    !(routePath.value.startsWith('/') || routePath.value === '*')) return;
+                routes.set(node, {
+                    start: handlerStart.start,
+                    end: node.arguments.at(-1).end,
+                    identifiers: new Set(),
+                    names: new Set(),
+                    feature: {method:method.toUpperCase(), path:routePath.value, sourceFile:file.path, line:node.loc.start.line},
+                });
+            },
+        });
+        if (routes.size) analyses.push({importer, routes, imports, environmentByBinding, dependencies});
+    }
+    for (const {importer, routes, imports, environmentByBinding, dependencies} of analyses) {
+        const importsByBinding = new Map();
+        for (const {request, bindings} of imports) {
+            const target = resolveRelativeModule(modules, importer, request);
+            if (!target) continue;
+            for (const binding of bindings) importsByBinding.set(binding, modules.get(target));
+        }
+        for (const {identifiers, names, feature} of routes.values()) {
+            for (const binding of identifiers) {
+                for (const name of importsByBinding.get(binding) ?? []) names.add(name);
+                for (const name of environmentByBinding.get(binding) ?? []) names.add(name);
+                for (const dependency of dependencies.get(binding) ?? []) {
+                    for (const name of environmentByBinding.get(dependency) ?? []) names.add(name);
+                }
+            }
+            for (const name of names) {
+                if (!features.has(name)) features.set(name, []);
+                const entries = features.get(name);
+                if (entries.length < 8 && !entries.some(entry => entry.method === feature.method && entry.path === feature.path &&
+                    entry.sourceFile === feature.sourceFile && entry.line === feature.line)) entries.push(feature);
+            }
+        }
+    }
+    return features;
+};
+
 export const referencedEnvironment = files => {
     const rows=new Map();
-    const add=(name,sourceFile)=>{if(typeof name==='string' && /^[A-Za-z_]\w*$/.test(name))rows.set(`${sourceFile}:${name}`,{name,sourceFile});};
     for(const file of files){
         const parsed=parseFile(file);if(!parsed.success)continue;
-        traverse(parsed.ast,{
-            MemberExpression({node}){add(envName(node),file.path);},
-            VariableDeclarator({node}){if(node.id.type==='ObjectPattern' && isEnvironment(node.init))for(const property of node.id.properties)add(property.key?.name||property.key?.value,file.path);}
-        });
+        const sourceFile = file.path;
+        traverse(parsed.ast,environmentReferenceVisitors(name => rows.set(`${sourceFile}:${name}`, {name, sourceFile})));
     }
     return [...rows.values()];
 };
@@ -86,12 +233,12 @@ export const buildAutomaticTestEnvironment = ({files=[],env={},resources={},port
     return result;
 };
 
-export const startupEnvironmentFiles = (files,scripts,{preferStart=true}={}) => {
+export const startupEnvironmentFiles = (files,scripts,{preferStart=true,entryFile}={}) => {
     const name=(preferStart?['start','dev','serve','preview']:['dev','serve','start','preview']).find(name=>typeof scripts?.[name]==='string');
-    const entry=(scripts?.[name] || '').match(/^\s*(?:node|nodemon|tsx|ts-node)\s+["']?([\w./-]+\.[cm]?[jt]s)["']?\s*$/)?.[1];
+    const entry=name?scripts[name].match(/^\s*(?:node|nodemon|tsx|ts-node)\s+["']?([\w./-]+\.[cm]?[jt]s)["']?\s*$/)?.[1]:entryFile;
     // Complex/custom launchers are checked at actual startup, not guessed here.
     if(!entry)return [];
-    const modules=new Map(files.map(file=>[file.path.replaceAll('\\','/'),file]));
+    const modules=new Map(files.map(file=>[filePath(file.path),file]));
     const visited=new Set();
     const walk=name=>{
         if(visited.has(name)||!modules.has(name))return;
@@ -105,13 +252,92 @@ export const startupEnvironmentFiles = (files,scripts,{preferStart=true}={}) => 
             CallExpression(p){if(atStartup(p) && p.node.callee.name==='require' && p.node.arguments[0]?.type==='StringLiteral')imports.push(p.node.arguments[0].value);},
         });
         for(const request of imports.filter(value=>value.startsWith('.'))) {
-            const base=path.posix.normalize(path.posix.join(path.posix.dirname(name),request));
-            const target=[base,...['.js','.cjs','.mjs','.ts','/index.js','/index.ts'].map(ext=>base+ext)].find(value=>modules.has(value));
+            const target=resolveRelativeModule(modules,name,request);
             if(target)walk(target);
         }
     };
     walk(path.posix.normalize(entry));
     return [...visited].map(name=>modules.get(name));
+};
+
+const requiredSdk = node => sdks.get(requireSpecifier(node));
+
+const sdkCredentialArguments = (node, sdk) => sdk.fields
+    ? (node.arguments[0]?.properties || []).filter(property=>sdk.fields.includes(property.key?.name || property.key?.value)).map(property=>property.value)
+    : sdk.positions.map(index=>node.arguments[index]);
+
+const sdkPackageForBinding = (target, scope) => {
+    if (target.type !== 'Identifier') return requireSpecifier(target);
+    const binding = scope.getBinding(target.name)?.path;
+    if (binding?.isImportSpecifier() || binding?.isImportDefaultSpecifier() || binding?.isImportNamespaceSpecifier()) {
+        return binding.parentPath.node.source.value;
+    }
+    return binding?.isVariableDeclarator() ? requireSpecifier(binding.node.init) : undefined;
+};
+
+const positionalCredentialPackages = new Map([
+    ['@stripe/stripe-js', 0], ['@supabase/supabase-js', 1], ['algoliasearch', 1], ['pusher-js', 0],
+]);
+const optionCredentialFields = ['apiKey', 'api_key', 'api_secret', 'authToken', 'clientSecret', 'dsn', 'secretAccessKey', 'accessToken', 'secret'];
+
+export const hardcodedServiceCredentials = files => {
+    const findings = new Map();
+    for (const file of files) {
+        const parsed = parseFile(file);
+        if (!parsed.success) continue;
+        const routes = [];
+        const credentials = [];
+        const inspect = call => {
+            const {node, scope} = call;
+            const {callee} = node;
+            const member = callee.type === 'MemberExpression';
+            const pkg = sdkPackageForBinding(member ? callee.object : callee, scope);
+            const provider = pkg && serviceForPackage(pkg);
+            if (!provider) return;
+            const sdk = sdks.get(pkg);
+            if (sdk?.method ? !member || memberName(callee) !== sdk.method : sdk && member) return;
+            const position = positionalCredentialPackages.get(pkg);
+            const args = sdk ? sdkCredentialArguments(node, sdk)
+                : position !== undefined ? [node.arguments[position]]
+                : sdkCredentialArguments(node, {fields:optionCredentialFields});
+            if (!args.some(argument => argument?.type === 'StringLiteral')) return;
+            const line = node.loc.start.line;
+            const declaration = call.parentPath;
+            const id = declaration.isVariableDeclarator() && declaration.node.init === node && declaration.node.id;
+            const binding = id?.type === 'Identifier' ? scope.getBinding(id.name) : null;
+            credentials.push({provider,line,binding});
+        };
+        traverse(parsed.ast, {
+            CallExpression(call) {
+                inspect(call);
+                const {node} = call;
+                const {callee} = node;
+                if (callee.type !== 'MemberExpression' || !['app','router'].includes(callee.object.name)) return;
+                const method = memberName(callee);
+                const [routePath,...handlers] = call.get('arguments');
+                if (!routeMethods.has(method) || !routePath?.isStringLiteral() || !handlers.length) return;
+                const ranges = handlers.map(handler => {
+                    if (!handler.isIdentifier()) return handler.node;
+                    const declaration = handler.scope.getBinding(handler.node.name)?.path;
+                    return declaration?.isVariableDeclarator() ? declaration.node.init : declaration?.node;
+                }).filter(Boolean);
+                routes.push({feature:{method:method.toUpperCase(),path:routePath.node.value,sourceFile:file.path,line:node.loc.start.line},ranges});
+            },
+            NewExpression:inspect,
+        });
+        for (const {provider,line,binding} of credentials) {
+            const identity = `${provider.id}:${file.path}:${line}`;
+            const finding = findings.get(identity) || {
+                serviceId:provider.id, label:provider.label, sourceFile:file.path, line, envName:provider.primaryEnv, features:[],
+            };
+            for (const {feature,ranges} of routes) {
+                if (binding?.referencePaths.some(({node}) => ranges.some(range => node.start >= range.start && node.end <= range.end)) &&
+                    !finding.features.includes(feature)) finding.features.push(feature);
+            }
+            findings.set(identity,finding);
+        }
+    }
+    return [...findings.values()];
 };
 
 // Only report mandatory SDK credentials passed directly to a module-level
@@ -125,17 +351,19 @@ export const requiredStartupEnvironment = (files,{startupOnly=true}={}) => {
         traverse(parsed.ast,{
             ImportDeclaration({node}) {if(sdks.has(node.source.value))for(const spec of node.specifiers)bindings.set(spec.local.name,sdks.get(node.source.value));},
             VariableDeclarator({node}) {
-                if(node.id.type==='Identifier' && node.init?.type==='CallExpression' && node.init.callee.name==='require' && sdks.has(node.init.arguments[0]?.value))bindings.set(node.id.name,sdks.get(node.init.arguments[0].value));
+                const sdk=requiredSdk(node.init);
+                if(node.id.type==='Identifier' && sdk)bindings.set(node.id.name,sdk);
             },
         });
         const inspect=p=>{
             if(startupOnly && (!atStartup(p) || p.findParent(parent=>['IfStatement','ConditionalExpression','LogicalExpression','TryStatement'].includes(parent.node.type))))return;
             const callee=p.node.callee;
-            const sdk=bindings.get(callee.name || callee.object?.name);if(!sdk)return;
-            if(sdk.method && callee.property?.name!==sdk.method)return;
-            if(!sdk.method && callee.type!=='Identifier')return;
+            const member=callee.type==='MemberExpression';
+            const target=member?callee.object:callee;
+            const sdk=bindings.get(target.name) || requiredSdk(target);if(!sdk)return;
+            if(sdk.method ? !member || (callee.computed?callee.property.value:callee.property.name)!==sdk.method : member)return;
             if(p.node.arguments[1]?.type==='ObjectExpression' && p.node.arguments[1].properties.some(property=>(property.key?.name || property.key?.value)==='authenticator'))return;
-            const argumentsToCheck=sdk.fields ? (p.node.arguments[0]?.properties || []).filter(property=>sdk.fields.includes(property.key?.name || property.key?.value)).map(property=>property.value) : sdk.positions.map(index=>p.node.arguments[index]);
+            const argumentsToCheck=sdkCredentialArguments(p.node,sdk);
             if(sdk.implicit && (!p.node.arguments.length || sdk.fields && p.node.arguments[0]?.type==='ObjectExpression' && !p.node.arguments[0].properties.some(property=>sdk.fields.includes(property.key?.name || property.key?.value))))required.push({name:sdk.implicit,sourceFile:file.path,integration:sdk.label});
             for(const argument of argumentsToCheck) {
                 const name=resolveEnvReference(argument,p.scope);
@@ -152,8 +380,8 @@ export const requiredStartupEnvironment = (files,{startupOnly=true}={}) => {
     return required;
 };
 
-export const validateStartupEnvironment = ({files,env,directory,scripts,managedVariables=[],preferStart=true}) => {
-    const missing=requiredStartupEnvironment(startupEnvironmentFiles(files,scripts,{preferStart})).filter(item=>!env[item.name]?.trim() && !managedVariables.includes(item.name));
+export const validateStartupEnvironment = ({files,env,directory,scripts,entryFile,managedVariables=[],preferStart=true}) => {
+    const missing=requiredStartupEnvironment(startupEnvironmentFiles(files,scripts,{preferStart,entryFile})).filter(item=>!env[item.name]?.trim() && !managedVariables.includes(item.name));
     if(!missing.length)return;
     const envFile=(directory==='.'?'':directory+'/')+'.env.test';
     const failure=new ServiceError(`Full Stack requires test environment configuration: ${[...new Set(missing.map(item=>item.name))].join(', ')}. Set these variables in ${envFile} for the imported project, then retry. ${missing[0].integration} is initialized during backend startup (${missing[0].sourceFile}); CovAI cannot generate third-party credentials. Existing secrets are never sent to setup AI.`,422);

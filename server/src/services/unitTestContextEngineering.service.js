@@ -1347,6 +1347,39 @@ export const buildIsolationMockContracts = ({
     let prismaMockCode = "";
     if (usesPrisma) {
         detectedDependencies.push("prisma-db");
+        const candidatePrismaPaths = [
+            "../lib/prisma", "../lib/prisma.js",
+            "../../lib/prisma", "../../lib/prisma.js",
+            "../src/lib/prisma", "../src/lib/prisma.js",
+            "../../src/lib/prisma", "../../src/lib/prisma.js",
+            "../config/prisma", "../config/prisma.js",
+            "../../config/prisma", "../../config/prisma.js",
+            "../src/config/prisma", "../src/config/prisma.js",
+            "../../src/config/prisma", "../../src/config/prisma.js",
+            "@/lib/prisma", "@/lib/prisma.js",
+            "@/config/prisma", "@/config/prisma.js",
+        ];
+        const normSutPath = sourceFile ? String(sourceFile).replace(/\\/g, "/").replace(/^\/+/, "") : "";
+        const normTestDir = targetTestFile ? path.posix.dirname(String(targetTestFile).replace(/\\/g, "/").replace(/^\/+/, "")) : null;
+        const resolvedPrismaMockPaths = candidatePrismaPaths.filter((p) => {
+            if (codeToInspect.includes(`'${p}'`) || codeToInspect.includes(`"${p}"`)) return true;
+            if (!rootDir) return false;
+            if (p.startsWith("@/")) {
+                const subRel = p.slice(2).replace(/\.[cm]?[jt]sx?$/, "");
+                return ["", "src/", "client/", "client/src/", "server/", "server/src/"].some((pref) =>
+                    [".js", ".ts", ".mjs", ".cjs"].some((ext) => fs.existsSync(path.join(rootDir, `${pref}${subRel}${ext}`))),
+                );
+            }
+            if (normTestDir) {
+                const joined = path.posix.normalize(path.posix.join(normTestDir, p));
+                if (normSutPath && joined.replace(/\.[cm]?[jt]sx?$/, "") === normSutPath.replace(/\.[cm]?[jt]sx?$/, "")) {
+                    return false;
+                }
+                const noExt = joined.replace(/\.[cm]?[jt]sx?$/, "");
+                return ["", ".js", ".ts", ".mjs", ".cjs"].some((ext) => fs.existsSync(path.join(rootDir, `${noExt}${ext}`)));
+            }
+            return false;
+        });
         if (isVitest) {
             prismaMockCode = `// 2. Universal Prisma Proxy Mock (Universal In-Memory Prisma Client Mock for Vitest, Prisma v7 Compatible)\n` +
                 `const { mockPrismaClientInstance } = vi.hoisted(() => {\n` +
@@ -1422,18 +1455,7 @@ export const buildIsolationMockContracts = ({
                 `  PrismaClient: vi.fn(() => mockPrismaClientInstance),\n` +
                 `  default: { PrismaClient: vi.fn(() => mockPrismaClientInstance) }\n` +
                 `}));\n` +
-                [
-                    "../lib/prisma", "../lib/prisma.js",
-                    "../../lib/prisma", "../../lib/prisma.js",
-                    "../src/lib/prisma", "../src/lib/prisma.js",
-                    "../../src/lib/prisma", "../../src/lib/prisma.js",
-                    "../config/prisma", "../config/prisma.js",
-                    "../../config/prisma", "../../config/prisma.js",
-                    "../src/config/prisma", "../src/config/prisma.js",
-                    "../../src/config/prisma", "../../src/config/prisma.js",
-                    "@/lib/prisma", "@/lib/prisma.js",
-                    "@/config/prisma", "@/config/prisma.js"
-                ].map(p => `vi.mock('${p}', () => ({ __esModule: true, prisma: mockPrismaClientInstance, default: mockPrismaClientInstance }));`).join("\n") + "\n\n";
+                resolvedPrismaMockPaths.map(p => `vi.mock('${p}', () => ({ __esModule: true, prisma: mockPrismaClientInstance, default: mockPrismaClientInstance }));`).join("\n") + (resolvedPrismaMockPaths.length > 0 ? "\n\n" : "\n");
         } else {
             prismaMockCode = `// 2. Universal Prisma Proxy Mock (Universal In-Memory Prisma Client Mock for Jest, Prisma v7 Compatible)\n` +
                 `jest.mock('@prisma/client', () => {\n` +
@@ -1509,18 +1531,7 @@ export const buildIsolationMockContracts = ({
                 `    default: { PrismaClient: jest.fn().mockImplementation(() => sharedMock) }\n` +
                 `  };\n` +
                 `}, { virtual: true });\n` +
-                [
-                    "../lib/prisma", "../lib/prisma.js",
-                    "../../lib/prisma", "../../lib/prisma.js",
-                    "../src/lib/prisma", "../src/lib/prisma.js",
-                    "../../src/lib/prisma", "../../src/lib/prisma.js",
-                    "../config/prisma", "../config/prisma.js",
-                    "../../config/prisma", "../../config/prisma.js",
-                    "../src/config/prisma", "../src/config/prisma.js",
-                    "../../src/config/prisma", "../../src/config/prisma.js",
-                    "@/lib/prisma", "@/lib/prisma.js",
-                    "@/config/prisma", "@/config/prisma.js"
-                ].map(p =>
+                resolvedPrismaMockPaths.map(p =>
                     `jest.mock('${p}', () => {\n` +
                     `  const getPrisma = () => {\n` +
                     `    if (typeof globalThis !== 'undefined' && globalThis.__mockPrisma) return globalThis.__mockPrisma;\n` +
@@ -1588,7 +1599,7 @@ export const buildIsolationMockContracts = ({
                     `  });\n` +
                     `  return { __esModule: true, prisma: p, default: p };\n` +
                     `}, { virtual: true });`
-                ).join("\n") + "\n\n";
+                ).join("\n") + (resolvedPrismaMockPaths.length > 0 ? "\n\n" : "\n");
         }
     }
 

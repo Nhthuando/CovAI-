@@ -48,11 +48,23 @@ export async function getProjectsApi() {
 }
 
 export async function deleteProjectApi(projectId) {
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}`, {
-    method: "DELETE",
-    headers: getAuthHeaders(),
-  });
-  return handleResponse(res);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  try {
+    const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}`, {
+      method: "DELETE",
+      headers: getAuthHeaders(),
+      signal: controller.signal,
+    });
+    return handleResponse(res);
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error("Project deletion timed out. Please check the server and try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function getProjectTreeApi(projectId) {
@@ -645,6 +657,7 @@ export async function generateIntegrationTestApi(
   snapshotId,
   force = false,
   targetEndpoints = null,
+  framework = "SUPERTEST",
 ) {
   const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/ai/generate-integration-test`,
@@ -653,7 +666,7 @@ export async function generateIntegrationTestApi(
       headers: getAuthHeaders(),
       body: JSON.stringify({
         snapshotId,
-        framework: "SUPERTEST",
+        framework: framework || "SUPERTEST",
         force,
         targetEndpoints,
       }),

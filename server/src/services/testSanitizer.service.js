@@ -2748,13 +2748,13 @@ export const stripJestMockCall = (code, targetModuleName) => {
       ? targetModuleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       : targetModuleName.source;
   const regex = new RegExp(
-    `(?:^|[\\s])jest\\.(?:mock|doMock|unmock)\\s*\\(\\s*['"]${escaped}['"]`,
+    `(?:^|[\\s])(?:await\\s+)?jest\\.(?:mock|doMock|unmock|unstable_mockModule)\\s*\\(\\s*['"]${escaped}['"]`,
     "g",
   );
   let match;
   let result = code;
   while ((match = regex.exec(result)) !== null) {
-    const startIdx = match.index + (match[0].startsWith("j") ? 0 : 1);
+    const startIdx = match.index + (/^\s/.test(match[0]) ? 1 : 0);
     const parenStart = result.indexOf("(", startIdx);
     if (parenStart === -1) break;
     let depth = 1;
@@ -2889,7 +2889,12 @@ function normalizeJestMockOptions(
       edits.push({ start: target.end, end: lastArgEnd, text: preserved });
       return;
     }
-    if (!shouldVirtualize(specifier) || !isInlineMockFactory(factory)) return;
+    if (
+      method === "unstable_mockModule" ||
+      !shouldVirtualize(specifier) ||
+      !isInlineMockFactory(factory)
+    )
+      return;
     if (!options && lastArgEnd != null) {
       edits.push({
         start: lastArgEnd,
@@ -2945,7 +2950,8 @@ export const ensureAllRelativeJestMocksVirtual = (code) => {
   return normalizeJestMockOptions(
     code,
     (specifier) =>
-      /^\.{1,2}\//.test(specifier) && !isCovaiJestResolver(specifier),
+      (/^\.{1,2}\//.test(specifier) || /^[@~]{1,2}\//.test(specifier)) &&
+      !isCovaiJestResolver(specifier),
     () => true,
   );
 };
@@ -3005,11 +3011,11 @@ export const healMissingDependencyMocks = (
         : ensureAllRelativeJestMocksVirtual(content);
   if (!rawOutput || typeof rawOutput !== "string") return result;
 
-  // 1. Check for missing relative module mocks (e.g. Cannot find module '../lib/prisma.js' from 'tests/services/calculation.service.test.ts')
+  // 1. Check for missing relative or path-alias module mocks (e.g. Cannot find module '../lib/prisma.js' or '@/lib/prisma')
   const relRegexes = [
-    /Cannot find module ['"](\.\.?[^'"]+)['"]/gi,
-    /Could not locate module (\.\.?[^ \n\r]+) mapped as/gi,
-    /Failed to resolve import ['"](\.\.?[^'"]+)['"]/gi,
+    /Cannot find module ['"]((?:\.\.?|[@~]{1,2})\/[^'"]+)['"]/gi,
+    /Could not locate module ((?:\.\.?|[@~]{1,2})\/[^ \n\r]+) mapped as/gi,
+    /Failed to resolve import ['"]((?:\.\.?|[@~]{1,2})\/[^'"]+)['"]/gi,
   ];
   const detectedRelativeModules = new Set();
   for (const rRegex of relRegexes) {
@@ -3022,11 +3028,21 @@ export const healMissingDependencyMocks = (
 
   for (const relMod of detectedRelativeModules) {
     const escapedRel = relMod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const isEsmTest =
+      /\bjest\.unstable_mockModule\s*\(/.test(result) ||
+      (options.rootDir && isProjectEsm(options.rootDir, options.filePath));
+    const isImportedDirectly = new RegExp(
+      `(?:import|require)\\s*[(\\s][^;\\n]*['"]${escapedRel}['"]`,
+    ).test(result);
+    if (!isVitest && isEsmTest && !isImportedDirectly) {
+      result = stripJestMockCall(result, relMod);
+      continue;
+    }
     const alreadyMocked = new RegExp(
       `(?:vi|jest)\\.(?:mock|unstable_mockModule|doMock)\\s*\\(\\s*['"]${escapedRel}['"]`,
     ).test(result);
     if (alreadyMocked) {
-      if (!isVitest) {
+      if (!isVitest && !isEsmTest) {
         result = ensureJestMockVirtualOption(result, relMod);
       }
     } else {
@@ -3711,15 +3727,8 @@ export const cleanAndDeduplicateTestContent = (
   // Ensure async calls to model validate/save in tests do not hang for 10000ms
   cleaned = wrapModelAsyncCallsWithTimeout(cleaned, 200);
 
-  // Heal hanging (done/cb/callback) test and hook callbacks which cause 10000ms Vitest timeouts
-  cleaned = cleaned.replace(
-    /\b((?:test|it)(?:\.(?:only|concurrent|skip))?)\s*\(\s*((?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`|[a-zA-Z0-9_$]+))\s*,\s*(?:async\s*)?(?:(?:\(\s*(?:done|cb|callback)(?:\s*:\s*[^)]+)?\s*\)|(?:done|cb|callback))\s*=>|function\s*\(\s*(?:done|cb|callback)(?:\s*:\s*[^)]+)?\s*\))\s*\{/g,
-    "$1($2, async () => {",
-  );
-  cleaned = cleaned.replace(
-    /\b(beforeEach|beforeAll|afterEach|afterAll)\s*\(\s*(?:async\s*)?(?:(?:\(\s*(?:done|cb|callback)(?:\s*:\s*[^)]+)?\s*\)|(?:done|cb|callback))\s*=>|function\s*\(\s*(?:done|cb|callback)(?:\s*:\s*[^)]+)?\s*\))\s*\{/g,
-    "$1(async () => {",
-  );
+  // Heal hanging (done/cb/callback) test and hook callbacks strictly scoped to blocks whose parameter was stripped
+  cleaned = healScopedAsyncDoneCallbacks(cleaned);
 
   // Heal model.validate(done|cb|callback) / model.save(...) calls so they do not hang or throw ReferenceError
   cleaned = cleaned.replace(
@@ -3727,19 +3736,9 @@ export const cleanAndDeduplicateTestContent = (
     "await Promise.race([$1.$2().catch(e => e), new Promise(res => setTimeout(res, 200))])",
   );
 
-  cleaned = cleaned.replace(
-    /^[ \t]*(?:done|cb|callback)\s*\(\s*\)\s*;?[ \t]*\r?\n?/gm,
-    "",
-  );
-  cleaned = cleaned.replace(/\b(?:done|cb|callback)\s*\(\s*\)\s*;?/g, "");
-  cleaned = cleaned.replace(
-    /\b(?:done|cb|callback)\s*\(\s*(new\s+Error\([^)]*\))\s*\);?/g,
-    "throw $1;",
-  );
-  cleaned = cleaned.replace(
-    /\b(?:done|cb|callback)\s*\(\s*([a-zA-Z0-9_$]+)\s*\);?/g,
-    "if ($1) throw $1;",
-  );
+  // Ensure DOM-referencing tests (e.g. browser extension / popup tests) don't crash with
+  // `ReferenceError: document is not defined` when jsdom is unavailable on the host.
+  cleaned = ensureNodeDomFallback(cleaned);
 
   // Process each test block in isolation to guarantee balanced try/catch pairing without spanning across tests
   const isolatedTestRegex =
@@ -3891,48 +3890,53 @@ export const cleanAndDeduplicateTestContent = (
 
   // 1.2. Remove orphaned object mock property lines cut from broken multi-line mocks
   // e.g. "create: jest.fn(() => ({ post: jest.fn() })) \n }));"
-  // CRITICAL: Must not match across statement boundaries (`;`, `const`, `let`, `var`, `describe`, `};`)
-  const orphanMockRegex =
-    /^[ \t]*[a-zA-Z0-9_$]+\s*:\s*(?:jest|vi)\.fn\b(?:(?!\b(?:const|let|var|function|class|describe|it|test)\b|;|\};)[\s\S])*?\r?\n[ \t]*\}\s*\)\s*\);?[ \t]*\r?\n?/gm;
-  cleaned = cleaned.replace(orphanMockRegex, (match, offset, str) => {
-    const before = str
-      .slice(0, offset)
-      .replace(/\/\/[^\n]*\n/g, "")
-      .trimEnd();
-    if (
-      /(?:jest|vi)\.mock\s*\([^;{]+=>\s*\(\s*\{$/.test(before) ||
-      /=>\s*\(\s*\{$/.test(before) ||
-      before.endsWith("{")
-    ) {
-      return match;
-    }
-    return "";
-  });
-
-  // 1.3b. Remove orphan standalone arrow lines (e.g. `=> mockCreateUniversalStub());`)
-  cleaned = cleaned.replace(/^[ \t]*=>[^\n]*\r?\n?/gm, "");
-
-  // Remove orphan closing brackets like "}));" or "});" that have no matching open brackets
-  cleaned = cleaned.replace(
-    /^[ \t]*(?:\}\s*\)\s*\);|\)\s*\);|\}\s*\);)[ \t]*\r?\n?/gm,
-    (match, offset, str) => {
-      const before = str.slice(0, offset);
-      const strippedBefore = stripCodeCommentsAndStrings(before);
-      let openP = 0;
-      let openB = 0;
-      for (let i = 0; i < strippedBefore.length; i++) {
-        const ch = strippedBefore[i];
-        if (ch === "(") openP++;
-        else if (ch === ")") openP = Math.max(0, openP - 1);
-        else if (ch === "{") openB++;
-        else if (ch === "}") openB = Math.max(0, openB - 1);
+  // CRITICAL: Only run when AST parse fails, and never strip valid object properties following `{` or `,`.
+  if (!parseJavaScriptCode(cleaned).success) {
+    const orphanMockRegex =
+      /^[ \t]*[a-zA-Z0-9_$]+\s*:\s*(?:jest|vi)\.fn\b(?:(?!\b(?:const|let|var|function|class|describe|it|test)\b|;|\};)[\s\S])*?\r?\n[ \t]*\}\s*\)\s*\);?[ \t]*\r?\n?/gm;
+    cleaned = cleaned.replace(orphanMockRegex, (match, offset, str) => {
+      const before = str
+        .slice(0, offset)
+        .replace(/\/\/[^\n]*\n/g, "")
+        .trimEnd();
+      if (
+        /(?:jest|vi)\.(?:mock|unstable_mockModule)\s*\([^;{]+=>\s*\(\s*\{$/.test(
+          before,
+        ) ||
+        /=>\s*\(\s*\{$/.test(before) ||
+        before.endsWith("{") ||
+        before.endsWith(",")
+      ) {
+        return match;
       }
-      if (openP === 0 && openB === 0) {
-        return "";
-      }
-      return match;
-    },
-  );
+      return "";
+    });
+
+    // 1.3b. Remove orphan standalone arrow lines (e.g. `=> mockCreateUniversalStub());`)
+    cleaned = cleaned.replace(/^[ \t]*=>[^\n]*\r?\n?/gm, "");
+
+    // Remove orphan closing brackets like "}));" or "});" that have no matching open brackets
+    cleaned = cleaned.replace(
+      /^[ \t]*(?:\}\s*\)\s*\);|\)\s*\);|\}\s*\);)[ \t]*\r?\n?/gm,
+      (match, offset, str) => {
+        const before = str.slice(0, offset);
+        const strippedBefore = stripCodeCommentsAndStrings(before);
+        let openP = 0;
+        let openB = 0;
+        for (let i = 0; i < strippedBefore.length; i++) {
+          const ch = strippedBefore[i];
+          if (ch === "(") openP++;
+          else if (ch === ")") openP = Math.max(0, openP - 1);
+          else if (ch === "{") openB++;
+          else if (ch === "}") openB = Math.max(0, openB - 1);
+        }
+        if (openP === 0 && openB === 0) {
+          return "";
+        }
+        return match;
+      },
+    );
+  }
 
   // 1.3. Heal stray closing parens after statement terminators or assertion calls
   // e.g. `expect(res.json).toBeDefined(););` -> `expect(res.json).toBeDefined();`
@@ -6142,9 +6146,14 @@ vi.mock('mongoose', () => ({ default: _mockMongooseObject, ..._mockMongooseObjec
 const sanitizedTestFileCache = new Map();
 const MAX_SANITIZED_CACHE_SIZE = 2000;
 
-export const sanitizeAllProjectTestFiles = (rootDir, specificFiles = null) => {
+export const sanitizeAllProjectTestFiles = (
+  rootDir,
+  specificFiles = null,
+  options = {},
+) => {
   if (!rootDir || !fs.existsSync(rootDir)) return;
   if (isDirectStorageDirectory(rootDir)) return; // NEVER touch direct storage
+  const sourceFileMap = options?.sourceFileMap || null;
   const testFiles = [];
   if (Array.isArray(specificFiles) && specificFiles.length > 0) {
     for (const sf of specificFiles) {
@@ -6198,7 +6207,19 @@ export const sanitizeAllProjectTestFiles = (rootDir, specificFiles = null) => {
       }
       const original = fs.readFileSync(tf, "utf8");
       const relFromRoot = normalizePath(path.relative(rootDir, tf));
-      let cleaned = cleanAndDeduplicateTestContent(original, "", tf);
+      const mappedSourceFile =
+        sourceFileMap instanceof Map
+          ? sourceFileMap.get(relFromRoot.toLowerCase()) || ""
+          : sourceFileMap && typeof sourceFileMap === "object"
+            ? sourceFileMap[relFromRoot.toLowerCase()] ||
+              sourceFileMap[relFromRoot] ||
+              ""
+            : "";
+      let cleaned = cleanAndDeduplicateTestContent(original, "", relFromRoot, {
+        rootDir,
+        filePath: relFromRoot,
+        ...(mappedSourceFile ? { sourceFile: mappedSourceFile } : {}),
+      });
       cleaned = healImportPathsInTestCode(cleaned, relFromRoot, rootDir);
       if (cleaned !== original) {
         fs.writeFileSync(tf, cleaned, "utf8");
@@ -6440,3 +6461,315 @@ export const healAxiosMock = (content) => {
   }
   return result;
 };
+
+/**
+ * Find the matching closing brace index for an opening `{` at `openIdx`,
+ * skipping string literals, template literals, and comments.
+ */
+function findBraceBlockEnd(source, openIdx) {
+  let depth = 0;
+  let inStr = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let esc = false;
+  let tplDepth = 0;
+
+  for (let i = openIdx; i < source.length; i++) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (inLineComment) {
+      if (ch === "\n") inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (ch === "*" && next === "/") {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (ch === "\\") {
+      esc = true;
+      continue;
+    }
+    if (inStr) {
+      if (inStr === "`") {
+        if (ch === "$" && next === "{") {
+          tplDepth++;
+          i++;
+          continue;
+        }
+        if (ch === "}" && tplDepth > 0) {
+          tplDepth--;
+          continue;
+        }
+        if (ch === "`" && tplDepth === 0) {
+          inStr = null;
+        }
+      } else if (ch === inStr) {
+        inStr = null;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      inStr = ch;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Rewrite `done`/`cb`/`callback` invocations ONLY inside test/hook blocks whose
+ * async callback parameter was actually stripped, while preserving mock/event
+ * handler callbacks (e.g. `on: jest.fn((event, callback) => callback(mockSocket))`).
+ */
+function healScopedAsyncDoneCallbacks(code) {
+  if (!code || typeof code !== "string") return code;
+
+  const matches = [];
+  const testRe =
+    /\b((?:test|it)(?:\.(?:only|concurrent|skip))?)\s*\(\s*((?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`|[a-zA-Z0-9_$]+))\s*,\s*(?:async\s*)?(?:(?:\(\s*(done|cb|callback)(?:\s*:\s*[^)]+)?\s*\)|(done|cb|callback))\s*=>|function\s*\(\s*(done|cb|callback)(?:\s*:\s*[^)]+)?\s*\))\s*\{/g;
+  const hookRe =
+    /\b(beforeEach|beforeAll|afterEach|afterAll)\s*\(\s*(?:async\s*)?(?:(?:\(\s*(done|cb|callback)(?:\s*:\s*[^)]+)?\s*\)|(done|cb|callback))\s*=>|function\s*\(\s*(done|cb|callback)(?:\s*:\s*[^)]+)?\s*\))\s*\{/g;
+
+  for (let m; (m = testRe.exec(code)) !== null; ) {
+    const paramName = m[3] || m[4] || m[5];
+    if (paramName) {
+      matches.push({
+        index: m.index,
+        length: m[0].length,
+        paramName,
+        replacementHeader: `${m[1]}(${m[2]}, async () => {`,
+      });
+    }
+  }
+  for (let m; (m = hookRe.exec(code)) !== null; ) {
+    const paramName = m[2] || m[3] || m[4];
+    if (paramName) {
+      matches.push({
+        index: m.index,
+        length: m[0].length,
+        paramName,
+        replacementHeader: `${m[1]}(async () => {`,
+      });
+    }
+  }
+
+  if (matches.length === 0) return code;
+
+  // Apply bottom-up so earlier string indices stay valid
+  matches.sort((a, b) => b.index - a.index);
+  let result = code;
+
+  for (const item of matches) {
+    const openBraceIdx = item.index + item.length - 1;
+    const closeBraceIdx = findBraceBlockEnd(result, openBraceIdx);
+    if (closeBraceIdx === -1) continue;
+
+    const body = result.slice(openBraceIdx + 1, closeBraceIdx);
+    const p = item.paramName;
+
+    // Collect inner function/arrow scopes that shadow `paramName`
+    const shadowRe = new RegExp(
+      `(?:function\\s*(?:[a-zA-Z0-9_$]+\\s*)?\\([^)]*\\b${p}\\b[^)]*\\)|\\([^)]*\\b${p}\\b[^)]*\\)\\s*=>|\\b${p}\\s*=>)\\s*\\{`,
+      "g",
+    );
+    const shadowRanges = [];
+    for (let sm; (sm = shadowRe.exec(body)) !== null; ) {
+      const sOpen = sm.index + sm[0].length - 1;
+      const sClose = findBraceBlockEnd(body, sOpen);
+      if (sClose !== -1) {
+        shadowRanges.push([sOpen, sClose]);
+      }
+    }
+
+    const rewriteSegment = (seg) => {
+      let out = seg;
+      out = out.replace(
+        new RegExp(`^[ \\t]*${p}\\s*\\(\\s*\\)\\s*;?[ \\t]*\\r?\\n?`, "gm"),
+        "",
+      );
+      out = out.replace(new RegExp(`\\b${p}\\s*\\(\\s*\\)\\s*;?`, "g"), "");
+      out = out.replace(
+        new RegExp(`\\b${p}\\s*\\(\\s*(new\\s+Error\\([^)]*\\))\\s*\\);?`, "g"),
+        "throw $1;",
+      );
+      out = out.replace(
+        new RegExp(`\\b${p}\\s*\\(\\s*([a-zA-Z0-9_$]+)\\s*\\);?`, "g"),
+        "if ($1) throw $1;",
+      );
+      return out;
+    };
+
+    let rewrittenBody = "";
+    if (shadowRanges.length === 0) {
+      rewrittenBody = rewriteSegment(body);
+    } else {
+      // Merge overlapping shadow ranges and rewrite only unshadowed slices
+      shadowRanges.sort((a, b) => a[0] - b[0]);
+      const merged = [];
+      for (const r of shadowRanges) {
+        if (!merged.length || r[0] > merged[merged.length - 1][1]) {
+          merged.push([...r]);
+        } else {
+          merged[merged.length - 1][1] = Math.max(
+            merged[merged.length - 1][1],
+            r[1],
+          );
+        }
+      }
+      let cursor = 0;
+      for (const [sStart, sEnd] of merged) {
+        if (sStart > cursor) {
+          rewrittenBody += rewriteSegment(body.slice(cursor, sStart));
+        }
+        rewrittenBody += body.slice(sStart, sEnd + 1);
+        cursor = sEnd + 1;
+      }
+      if (cursor < body.length) {
+        rewrittenBody += rewriteSegment(body.slice(cursor));
+      }
+    }
+
+    result =
+      result.slice(0, item.index) +
+      item.replacementHeader +
+      rewrittenBody +
+      result.slice(closeBraceIdx);
+  }
+
+  return result;
+}
+
+/**
+ * Inject a minimal guarded `document` / `alert` fallback into tests that touch
+ * DOM globals when running under Jest's default `node` environment (without jsdom).
+ */
+function ensureNodeDomFallback(code) {
+  if (!code || typeof code !== "string") return code;
+  let working = code;
+  // Heal LLM `text: () => JSON.parse(JSON.stringify(...))` in Gemini response mocks where `.text()` must return a JSON string
+  working = working.replace(
+    /\btext\s*:\s*\(\s*\)\s*=>\s*JSON\.parse\s*\(\s*(JSON\.stringify\s*\([\s\S]*?\))\s*\)/g,
+    "text: () => $1",
+  );
+  if (working.includes("__covaiDomFallbackV2Applied")) return working;
+  // Strip legacy v1 fallback if present so v2 with window/chrome/persistent elements upgrades it cleanly
+  working = working.replace(
+    /\/\*\s*__covaiDomFallbackApplied\s*\*\/[\s\S]*?if\s*\(typeof\s+globalThis\.alert\s*===\s*'undefined'\)\s*\{[^\n]*\}\s*\r?\n?\r?\n?/,
+    "",
+  );
+  if (/^\s*(?:const|let|var)\s+document\b/m.test(working)) return working;
+  const usesDomOrBrowser =
+    /\bjest\.spyOn\s*\(\s*(?:document|window|chrome)\b/.test(working) ||
+    /\bdocument\.(?:getElementById|querySelector|querySelectorAll|createElement|addEventListener|removeEventListener|dispatchEvent|body|cookie|title|documentElement|visibilityState|hidden)\b/.test(
+      working,
+    ) ||
+    /\bwindow\.(?:location|addEventListener|removeEventListener|dispatchEvent|innerHeight|innerWidth|scrollY|pageYOffset|scrollTo)\b/.test(
+      working,
+    ) ||
+    /\b(?:global(?:This)?\.)?chrome\.(?:runtime|alarms|storage|tabs)\b/.test(
+      working,
+    ) ||
+    /extension\/(?:background|content|popup)\b/.test(working);
+  if (!usesDomOrBrowser) return working;
+
+  const fallbackSnippet =
+    `/* __covaiDomFallbackApplied __covaiDomFallbackV2Applied */\n` +
+    `(() => {\n` +
+    `  const __covaiDomFn = (impl) => (typeof jest !== 'undefined' && typeof jest.fn === 'function') ? jest.fn(impl) : (impl || (() => {}));\n` +
+    `  const __covaiEls = new Map();\n` +
+    `  const __covaiListeners = new Map();\n` +
+    `  const __covaiWinListeners = new Map();\n` +
+    `  const __covaiMkEl = () => {\n` +
+    `    const elListeners = new Map();\n` +
+    `    const el = { textContent: '', innerText: '', innerHTML: '', value: '', href: '', id: '', className: '', style: {}, dataset: {}, children: [], classList: { add: __covaiDomFn(), remove: __covaiDomFn(), toggle: __covaiDomFn(), contains: __covaiDomFn(() => false) }, setAttribute: __covaiDomFn((k, v) => { el[k] = v; }), getAttribute: __covaiDomFn((k) => el[k] ?? null), addEventListener: __covaiDomFn((ev, cb) => { if (!elListeners.has(ev)) elListeners.set(ev, []); elListeners.get(ev).push(cb); }), removeEventListener: __covaiDomFn((ev, cb) => { if (elListeners.has(ev)) elListeners.set(ev, elListeners.get(ev).filter((f) => f !== cb)); }), dispatchEvent: __covaiDomFn((evObj) => { const list = elListeners.get(evObj?.type) || []; list.forEach((fn) => fn(evObj)); return true; }), appendChild: __covaiDomFn((c) => { el.children.push(c); return c; }), removeChild: __covaiDomFn(), querySelector: __covaiDomFn(() => __covaiMkEl()), querySelectorAll: __covaiDomFn(() => []), focus: __covaiDomFn(), click: __covaiDomFn(() => { const list = elListeners.get('click') || []; list.forEach((fn) => fn({ type: 'click', target: el, preventDefault: () => {} })); }) };\n` +
+    `    return el;\n` +
+    `  };\n` +
+    `  if (typeof globalThis.Event === 'undefined') {\n` +
+    `    globalThis.Event = class Event { constructor(type, opts = {}) { this.type = type; Object.assign(this, opts); } preventDefault() {} stopPropagation() {} };\n` +
+    `  }\n` +
+    `  if (typeof globalThis.CustomEvent === 'undefined') {\n` +
+    `    globalThis.CustomEvent = class CustomEvent extends globalThis.Event { constructor(type, opts = {}) { super(type, opts); this.detail = opts.detail; } };\n` +
+    `  }\n` +
+    `  if (typeof globalThis.document === 'undefined') {\n` +
+    `    const bodyEl = __covaiMkEl();\n` +
+    `    Object.defineProperty(bodyEl, 'innerHTML', { get() { return this._html || ''; }, set(v) { this._html = String(v || ''); __covaiEls.clear(); }, configurable: true });\n` +
+    `    globalThis.document = {\n` +
+    `      title: 'Test Document',\n` +
+    `      visibilityState: 'visible',\n` +
+    `      hidden: false,\n` +
+    `      readyState: 'complete',\n` +
+    `      documentElement: { scrollTop: 0, scrollHeight: 1000, clientHeight: 500 },\n` +
+    `      body: bodyEl,\n` +
+    `      getElementById: __covaiDomFn((id) => { const k = String(id || ''); if (!__covaiEls.has(k)) { const e = __covaiMkEl(); e.id = k; __covaiEls.set(k, e); } return __covaiEls.get(k); }),\n` +
+    `      querySelector: __covaiDomFn((sel) => { const k = String(sel || ''); if (!__covaiEls.has(k)) __covaiEls.set(k, __covaiMkEl()); return __covaiEls.get(k); }),\n` +
+    `      querySelectorAll: __covaiDomFn(() => [__covaiMkEl()]),\n` +
+    `      createElement: __covaiDomFn((tag) => { const e = __covaiMkEl(); e.tagName = String(tag || 'DIV').toUpperCase(); return e; }),\n` +
+    `      addEventListener: __covaiDomFn((ev, cb) => { if (!__covaiListeners.has(ev)) __covaiListeners.set(ev, []); __covaiListeners.get(ev).push(cb); }),\n` +
+    `      removeEventListener: __covaiDomFn((ev, cb) => { if (__covaiListeners.has(ev)) __covaiListeners.set(ev, __covaiListeners.get(ev).filter((f) => f !== cb)); }),\n` +
+    `      dispatchEvent: __covaiDomFn((evObj) => { const list = __covaiListeners.get(evObj?.type) || []; list.forEach((fn) => fn(evObj)); return true; })\n` +
+    `    };\n` +
+    `  }\n` +
+    `  if (typeof globalThis.window === 'undefined') {\n` +
+    `    globalThis.window = globalThis;\n` +
+    `  }\n` +
+    `  if (!globalThis.window.location) {\n` +
+    `    globalThis.window.location = { href: 'http://localhost/', hostname: 'localhost', pathname: '/', origin: 'http://localhost', assign: __covaiDomFn(), replace: __covaiDomFn(), reload: __covaiDomFn() };\n` +
+    `  }\n` +
+    `  if (typeof globalThis.location === 'undefined') globalThis.location = globalThis.window.location;\n` +
+    `  if (typeof globalThis.window.addEventListener !== 'function') {\n` +
+    `    globalThis.window.addEventListener = __covaiDomFn((ev, cb) => { if (!__covaiWinListeners.has(ev)) __covaiWinListeners.set(ev, []); __covaiWinListeners.get(ev).push(cb); });\n` +
+    `    globalThis.window.removeEventListener = __covaiDomFn((ev, cb) => { if (__covaiWinListeners.has(ev)) __covaiWinListeners.set(ev, __covaiWinListeners.get(ev).filter((f) => f !== cb)); });\n` +
+    `    globalThis.window.dispatchEvent = __covaiDomFn((evObj) => { const list = __covaiWinListeners.get(evObj?.type) || []; list.forEach((fn) => fn(evObj)); return true; });\n` +
+    `  }\n` +
+    `  if (typeof globalThis.window.scrollTo !== 'function') globalThis.window.scrollTo = __covaiDomFn();\n` +
+    `  if (typeof globalThis.window.innerHeight === 'undefined') { globalThis.window.innerHeight = 768; globalThis.window.innerWidth = 1024; globalThis.window.scrollY = 0; globalThis.window.pageYOffset = 0; }\n` +
+    `  if (typeof globalThis.alert === 'undefined') { globalThis.alert = __covaiDomFn(); }\n` +
+    `  if (typeof globalThis.chrome === 'undefined') {\n` +
+    `    globalThis.chrome = {\n` +
+    `      runtime: { onMessage: { addListener: __covaiDomFn() }, onInstalled: { addListener: __covaiDomFn() }, sendMessage: __covaiDomFn((m, cb) => cb && cb({})) },\n` +
+    `      alarms: { create: __covaiDomFn(), clear: __covaiDomFn(), onAlarm: { addListener: __covaiDomFn() } },\n` +
+    `      storage: { local: { get: __covaiDomFn((k, cb) => cb && cb({})), set: __covaiDomFn((v, cb) => cb && cb()), remove: __covaiDomFn((k, cb) => cb && cb()) } },\n` +
+    `      tabs: { query: __covaiDomFn((q, cb) => cb && cb([{ id: 1, url: 'https://example.com' }])), create: __covaiDomFn(), sendMessage: __covaiDomFn((id, m, cb) => cb && cb({})) }\n` +
+    `    };\n` +
+    `  }\n` +
+    `})();\n\n`;
+
+  // Place after top-level static `import ...` statements so ESM syntax stays valid
+  let insertPos = 0;
+  const importRe =
+    /^[ \t]*import\b[\s\S]*?(?:from\s+['"][^'"]+['"]|['"][^'"]+['"])\s*;?[ \t]*\r?\n?/gm;
+  for (let m; (m = importRe.exec(working)) !== null; ) {
+    const gap = working
+      .slice(insertPos, m.index)
+      .replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|\s+/g, "");
+    if (gap.length > 0) break;
+    insertPos = m.index + m[0].length;
+  }
+
+  return (
+    working.slice(0, insertPos) + fallbackSnippet + working.slice(insertPos)
+  );
+}

@@ -1,6 +1,104 @@
-import {it,expect} from '@jest/globals';
-import {validateStartupEnvironment,requiredStartupEnvironment,buildAutomaticTestEnvironment,managedEnvironmentNames} from '../services/fullSystemEnvironment.service.js';
+import { describe, test, expect, it } from '@jest/globals';
+import {validateStartupEnvironment,requiredStartupEnvironment,buildAutomaticTestEnvironment,managedEnvironmentNames,environmentFeatureMap,hardcodedServiceCredentials} from '../services/fullSystemEnvironment.service.js';
 const files=[{path:'index.js',content:`const express=require('express');const payments=require('./routes/payments');`},{path:'routes/payments.js',content:`const Stripe=require('stripe');const stripe=Stripe(process.env.STRIPE_SECRET_KEY);`}];
+describe('external service source evidence', () => {
+    test('maps a Stripe variable to a checkout route in the same file', () => {
+        const entry = {path:'app.js', content:`import Stripe from 'stripe';
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+app.post('/create-checkout-session', () => stripe.checkout.sessions.create({}));`};
+        expect(environmentFeatureMap([entry]).get('STRIPE_SECRET_KEY')).toEqual([
+            {method:'POST',path:'/create-checkout-session',sourceFile:'app.js',line:3},
+        ]);
+    });
+
+    test('maps Stripe routes one relative import hop away', () => {
+        const entries = [
+            {path:'config/stripe.js',content:"export const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);"},
+            {path:'routes/pay.js',content:"import {stripe} from '../config/stripe'; router.route('/pay').post(() => stripe.pay());"},
+            {path:'app.js',content:"require('./routes/pay'); app.get('/unrelated', handler);"},
+        ];
+        expect(environmentFeatureMap(entries).get('STRIPE_SECRET_KEY')).toEqual([
+            {method:'POST',path:'/pay',sourceFile:'routes/pay.js',line:1},
+        ]);
+    });
+
+    test('maps an environment reference inside a handler only to its route', () => {
+        const entry = {path:'app.js', content:`const app = require('express')();
+app.get('/health', (_req, res) => res.send('ok'));
+app.post('/pay', (_req, res) => { const apiKey = process.env.PAYOS_API_KEY; res.sendStatus(apiKey ? 200 : 503); });`};
+        expect(environmentFeatureMap([entry]).get('PAYOS_API_KEY')).toEqual([
+            {method:'POST',path:'/pay',sourceFile:'app.js',line:3},
+        ]);
+    });
+
+    test('maps a module-level credential only to routes using its initialized client', () => {
+        const entry = {path:'app.js', content:`const payos = new PayOS(process.env.PAYOS_CLIENT_ID);
+app.post('/checkout', async (req, res) => { await payos.createPaymentLink({}); });
+app.get('/health', (_req, res) => res.send('ok'));`};
+        expect(environmentFeatureMap([entry]).get('PAYOS_CLIENT_ID')).toEqual([
+            {method:'POST',path:'/checkout',sourceFile:'app.js',line:2},
+        ]);
+    });
+
+    test('does not map a listen port to routes in the same file', () => {
+        const entry = {path:'app.js', content:`app.get('/health', (_req, res) => res.send('ok'));
+app.listen(process.env.PORT);`};
+        expect(environmentFeatureMap([entry]).has('PORT')).toBe(false);
+    });
+
+    test('maps an imported environment reference only to routes using the import binding', () => {
+        const entries = [
+            {path:'app.js', content:`import { createUrl } from './payment.js';
+app.post('/vnpay', (req, res) => createUrl(req));
+app.get('/health', (_req, res) => res.send('ok'));`},
+            {path:'payment.js', content:'export function createUrl(req) { return process.env.VNP_TMN_CODE; }'},
+        ];
+        expect(environmentFeatureMap(entries).get('VNP_TMN_CODE')).toEqual([
+            {method:'POST',path:'/vnpay',sourceFile:'app.js',line:2},
+        ]);
+    });
+
+    test('reports hard-coded Stripe and OpenAI credential locations without literals', () => {
+        const entry = {path:'app.js',content:`import OpenAI from 'openai';
+const stripe = require('stripe')('YOUR_STRIPE_SECRET_KEY');
+const ai = new OpenAI({apiKey:'example-key'});
+app.post('/create-checkout-session', async (req, res) => {
+    const session = await stripe.checkout.sessions.create({});
+    res.json(session);
+});
+app.get('/health', (req, res) => res.send('ok'));
+router.get('/other', (stripe) => stripe.get());`};
+        expect(hardcodedServiceCredentials([entry])).toEqual([
+            {serviceId:'stripe',label:'Stripe',sourceFile:'app.js',line:2,envName:'STRIPE_SECRET_KEY',
+                features:[{method:'POST',path:'/create-checkout-session',sourceFile:'app.js',line:4}]},
+            {serviceId:'openai',label:'OpenAI',sourceFile:'app.js',line:3,envName:'OPENAI_API_KEY',features:[]},
+        ]);
+    });
+});
+describe('chained SDK initialization', () => {
+    test('requires the Stripe variable from a server entry file', () => {
+        const entry = { path: 'app.js', content: "const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);" };
+        expect(requiredStartupEnvironment([entry])).toEqual([
+            { name: 'STRIPE_SECRET_KEY', sourceFile: 'app.js', integration: 'Stripe' },
+        ]);
+        expect(() => validateStartupEnvironment({
+            files: [entry], env: {}, directory: '.', scripts: {}, entryFile: entry.path,
+        })).toThrow('STRIPE_SECRET_KEY');
+    });
+
+    test('leaves literal Stripe keys out of required variables', () => {
+        const entry = { path: 'app.js', content: "const stripe = require('stripe')('literal');" };
+        expect(requiredStartupEnvironment([entry])).toEqual([]);
+    });
+
+    test('recognizes chained calls to a named SDK method', () => {
+        const entry = { path: 'app.js', content: "require('@sendgrid/mail').setApiKey(process.env.SENDGRID_API_KEY);" };
+        expect(requiredStartupEnvironment([entry])).toEqual([
+            { name: 'SENDGRID_API_KEY', sourceFile: 'app.js', integration: 'SendGrid' },
+        ]);
+    });
+});
+
 it('reports mandatory imported SDK credentials before starting a database or installing packages',()=>{
     expect(()=>validateStartupEnvironment({files,env:{},directory:'server',scripts:{start:'node index.js'}})).toThrow('Set these variables in server/.env.test');
     try{validateStartupEnvironment({files,env:{},directory:'server',scripts:{start:'node index.js'}});}catch(error){expect(error.code).toBe('SYSTEM_TEST_ENVIRONMENT_REQUIRED');}

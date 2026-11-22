@@ -14,14 +14,7 @@ import {
 import { ProjectSparkline } from "../primitives/ProjectSparkline.jsx";
 import { PillarMiniProgressRow } from "../primitives/PillarMiniProgressRow.jsx";
 import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
-
-const LIFECYCLE_LABELS = {
-  DOING: { label: "Doing", dot: "bg-[var(--ps-cobalt)]" },
-  NOT_STARTED: { label: "Not Started", dot: "bg-[var(--ps-neutral)]" },
-  COMPLETED: { label: "Completed", dot: "bg-[var(--ps-emerald)]" },
-  PAUSED: { label: "Paused", dot: "bg-[var(--ps-amber)]" },
-  CANCELLED: { label: "Cancelled", dot: "bg-[var(--ps-rose)]" },
-};
+import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
 
 function ProjectQualityCardComponent({
   project,
@@ -32,6 +25,8 @@ function ProjectQualityCardComponent({
   onNavigateWorkspace,
   onDeleteProject,
   onAskAiAboutProject,
+  onLifecycleStatusChange = null,
+  onLifecycleStatusCommitted = null,
   className = "",
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -73,9 +68,6 @@ function ProjectQualityCardComponent({
   const totalFailed =
     (unit.failedTests || 0) + (int.failedTests || 0) + (sys.failedTests || 0);
   const hasRuns = totalTests > 0 || healthScore > 0;
-
-  const lifecycleMeta =
-    LIFECYCLE_LABELS[lifecycleStatus] || LIFECYCLE_LABELS.NOT_STARTED;
 
   const sparklineStroke =
     healthScore >= 80
@@ -159,11 +151,16 @@ function ProjectQualityCardComponent({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* Read-only Lifecycle Status Pill */}
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border border-[var(--ps-line)] bg-[var(--ps-inset)] text-[var(--ps-ink-secondary)] select-none">
-              <span className={`w-1.5 h-1.5 rounded-full ${lifecycleMeta.dot}`} />
-              <span>{lifecycleMeta.label}</span>
-            </span>
+            <LifecycleStatusSelect
+              projectId={id}
+              currentStatus={lifecycleStatus}
+              onStatusChange={(newStatus) =>
+                onLifecycleStatusChange?.(id, newStatus)
+              }
+              onStatusCommitted={(newStatus) =>
+                onLifecycleStatusCommitted?.(id, newStatus)
+              }
+            />
 
             <div className="relative" ref={menuRef}>
               <button
@@ -333,17 +330,53 @@ function ProjectQualityCardComponent({
 export const ProjectQualityCard = memo(
   ProjectQualityCardComponent,
   (prev, next) => {
+    if (
+      prev.isPinned !== next.isPinned ||
+      prev.isHighlighted !== next.isHighlighted ||
+      prev.className !== next.className ||
+      prev.onLifecycleStatusChange !== next.onLifecycleStatusChange ||
+      prev.onLifecycleStatusCommitted !== next.onLifecycleStatusCommitted
+    ) {
+      return false;
+    }
+    const a = prev.project;
+    const b = next.project;
+    if (a === b) return true;
+    if (!a || !b) return false;
     return (
-      prev.isPinned === next.isPinned &&
-      prev.isHighlighted === next.isHighlighted &&
-      prev.project?.id === next.project?.id &&
-      prev.project?.healthScore === next.project?.healthScore &&
-      prev.project?.unifiedCoveragePct === next.project?.unifiedCoveragePct &&
-      prev.project?.lifecycleStatus === next.project?.lifecycleStatus &&
-      prev.project?.activeJob?.progress === next.project?.activeJob?.progress &&
-      prev.project?.activeJob?.status === next.project?.activeJob?.status &&
-      prev.project?.timeRoi?.speedupMultiplier ===
-        next.project?.timeRoi?.speedupMultiplier
+      a.id === b.id &&
+      a.name === b.name &&
+      a.branch === b.branch &&
+      a.snapshotId === b.snapshotId &&
+      a.activeSnapshotId === b.activeSnapshotId &&
+      a.healthScore === b.healthScore &&
+      a.grade === b.grade &&
+      a.delta === b.delta &&
+      a.unifiedCoveragePct === b.unifiedCoveragePct &&
+      a.lifecycleStatus === b.lifecycleStatus &&
+      a.activeJob?.id === b.activeJob?.id &&
+      a.activeJob?.status === b.activeJob?.status &&
+      a.activeJob?.progress === b.activeJob?.progress &&
+      a.activeJob?.pillar === b.activeJob?.pillar &&
+      a.timeRoi?.speedupMultiplier === b.timeRoi?.speedupMultiplier &&
+      a.timeRoi?.totalHoursSaved === b.timeRoi?.totalHoursSaved &&
+      a.pillars?.unit?.coveragePct === b.pillars?.unit?.coveragePct &&
+      a.pillars?.unit?.passedTests === b.pillars?.unit?.passedTests &&
+      a.pillars?.unit?.failedTests === b.pillars?.unit?.failedTests &&
+      a.pillars?.unit?.totalTests === b.pillars?.unit?.totalTests &&
+      a.pillars?.integration?.coveragePct === b.pillars?.integration?.coveragePct &&
+      a.pillars?.integration?.coveredApis === b.pillars?.integration?.coveredApis &&
+      a.pillars?.integration?.totalApis === b.pillars?.integration?.totalApis &&
+      a.pillars?.integration?.passedTests === b.pillars?.integration?.passedTests &&
+      a.pillars?.integration?.failedTests === b.pillars?.integration?.failedTests &&
+      a.pillars?.integration?.totalTests === b.pillars?.integration?.totalTests &&
+      a.pillars?.system?.coveragePct === b.pillars?.system?.coveragePct &&
+      a.pillars?.system?.coveredJourneys === b.pillars?.system?.coveredJourneys &&
+      a.pillars?.system?.totalJourneys === b.pillars?.system?.totalJourneys &&
+      a.pillars?.system?.passedTests === b.pillars?.system?.passedTests &&
+      a.pillars?.system?.failedTests === b.pillars?.system?.failedTests &&
+      a.pillars?.system?.totalTests === b.pillars?.system?.totalTests &&
+      (a.sparkline || []).join(",") === (b.sparkline || []).join(",")
     );
   }
 );

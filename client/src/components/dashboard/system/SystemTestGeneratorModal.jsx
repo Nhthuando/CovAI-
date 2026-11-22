@@ -15,6 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import Button from "../../common/Button.jsx";
+import { DraftVerification } from "./ExternalTestKeyNotices.jsx";
 import { generateColdStartSystemTests } from "../../../services/systemTest.service.js";
 
 const DEFAULT_ROUTES = ["/"];
@@ -27,6 +28,7 @@ export default function SystemTestGeneratorModal({
   executionMode = "full",
   initialFramework = "playwright",
   onSuccess,
+  onOpenSetup,
 }) {
   const access = useProjectAccess(projectId);
   const [reviewed, setReviewed] = useState(false);
@@ -46,7 +48,7 @@ export default function SystemTestGeneratorModal({
         .then((data) => {
           if (current && data && data.executionMode === "full") setResult(data);
         })
-        .catch(() => {});
+        .catch(error => console.warn("Could not load the latest system test draft.", error.response?.status));
     }
     return () => {
       current = false;
@@ -193,6 +195,7 @@ export default function SystemTestGeneratorModal({
 
           {result ? (
             <div className="space-y-5">
+              <DraftVerification draft={result} onOpenSetup={onOpenSetup} />
               {result.stale && (
                 <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs">
                   Workspace changed after this draft was generated. Click <strong>Regenerate</strong> before applying.
@@ -352,9 +355,20 @@ export default function SystemTestGeneratorModal({
             <div className="space-y-6">
               {/* Framework Selector */}
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] mb-2.5">
-                  Target Framework
-                </label>
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Target Framework
+                  </label>
+                  {frameworksData && !frameworksData.needsUserSelection && frameworksData.recommendedFramework ? (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
+                      Auto: {frameworksData.recommendedFramework.toUpperCase()} ({frameworksData.detectionSource === "package_json" ? "installed lib" : "test syntax"})
+                    </span>
+                  ) : frameworksData?.needsUserSelection ? (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25">
+                      Zero-test project — choose 1 of 2
+                    </span>
+                  ) : null}
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"

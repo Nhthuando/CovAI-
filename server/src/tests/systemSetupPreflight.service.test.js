@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {it,expect,jest} from '@jest/globals';
-import {inspectSystemSetup,systemSetupConfig,saveSystemTestEnvironment} from '../services/systemSetupPreflight.service.js';
+import {inspectSystemSetup,systemSetupConfig,saveSystemTestEnvironment,importSystemTestEnvironment} from '../services/systemSetupPreflight.service.js';
 import {parse as parseEnvironment} from 'dotenv';
 import {systemTestEnvironmentDirectory} from '../services/systemTestEnvironmentRoot.service.js';
 import {createSystemSetupControllers} from '../controllers/systemSetup.controller.js';
@@ -34,6 +34,28 @@ it('explains missing setup and startup credentials, without treating lazy integr
         expect(checked.environment.find(row=>row.name==='STRIPE_SECRET_KEY').status).toBe('PRESENT');
         expect(checked.environment.find(row=>row.name==='AI_API_KEY').status).toBe('MAY_BE_NEEDED');
         expect(JSON.stringify(checked)).not.toContain('private-test-value');expect(JSON.stringify(checked)).not.toContain('production-value');
+    }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+it('infers unknown providers from route environment references',async()=>{
+    const root=fixture();
+    try {
+        write(root,'server/index.js',[
+            "const app = require('express')();",
+            "app.get('/health', (_req, res) => res.send('ok'));",
+            "app.post('/pay', (_req, res) => {",
+            "    const apiKey = process.env.PAYOS_API_KEY;",
+            "    const checksumKey = process.env.PAYOS_CHECKSUM_KEY;",
+            "    res.sendStatus(apiKey && checksumKey ? 200 : 503);",
+            "});",
+            "app.listen(process.env.PORT || 5000);",
+        ].join('\n'));
+        const {externalServices}=await inspectSystemSetup({rootDir:root,dependencies});
+        expect(externalServices.find(service=>service.id==='env:PAYOS')).toMatchObject({
+            label:'Payos',inferred:true,status:'NEEDS_CONFIG',
+            variables:[{name:'PAYOS_API_KEY'},{name:'PAYOS_CHECKSUM_KEY'}],
+            features:[{method:'POST',path:'/pay',sourceFile:'server/index.js'}],
+        });
+        expect(externalServices.flatMap(service=>service.variables.map(variable=>variable.name))).not.toContain('PORT');
     }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 it('checks Docker only for required local services and reports unsupported stacks honestly',async()=>{
@@ -94,6 +116,16 @@ it('does not block selected application startup on an unused package credential'
         expect(report.environment.find(row=>row.name==='UNUSED_PROVIDER_TOKEN')).toMatchObject({status:'MAY_BE_NEEDED',required:false});
     } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+it('accepts a server entry file in a backend-only package without a start script',async()=>{
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'covai-preflight-'));
+    try {
+        write(root,'package.json',JSON.stringify({main:'index.js',scripts:{test:'echo'},dependencies:{express:'^4'}}));
+        write(root,'app.js',"const express=require('express');const app=express();app.post('/x',(q,s)=>s.json({}));app.listen(4000);");
+        const report=await inspectSystemSetup({rootDir:root,dependencies});
+        expect(report.candidateConfig).toMatchObject({backendOnly:true});
+        expect(report.issues).not.toContainEqual(expect.objectContaining({code:'START_SCRIPT_REQUIRED'}));
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 it('discovers package metadata even after the source context budget has been consumed',async()=>{
     const root=fs.mkdtempSync(path.join(os.tmpdir(),'covai-large-preflight-'));
     try {
@@ -105,6 +137,77 @@ it('discovers package metadata even after the source context budget has been con
     } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 const environmentDb=root=>({projectSnapshot:{findFirst:jest.fn(async()=>({id:'snapshot',projectId:'project',rootDir:root}))},project:{findFirst:jest.fn(async()=>({id:'project',ownerId:'owner',workspaceRevision:0}))},job:{findFirst:jest.fn(async()=>null)}});
+it('groups setup providers with route evidence and hard-coded credential locations',async()=>{
+    const root=fixture();
+    try {
+        write(root,'server/pay.js',"const stripe = require('stripe')('example-key');\napp.post('/create-checkout-session', () => stripe.checkout.sessions.create({}));");
+        write(root,'server/index.js',"import OpenAI from 'openai';\napp.post('/ai', () => new OpenAI({apiKey:process.env.AI_API_KEY}));");
+        const result=await inspectSystemSetup({rootDir:root,dependencies});
+        const feature={method:'POST',path:'/ai',sourceFile:'server/index.js',line:2};
+        expect(result.environment.find(row=>row.name==='AI_API_KEY')).toMatchObject({provider:{id:'openai'},features:[feature]});
+        expect(result.externalServices).toMatchObject([
+            {id:'openai',status:'NEEDS_CONFIG',features:[feature]},
+            {id:'stripe',status:'HARDCODED',
+                variables:[{name:'STRIPE_SECRET_KEY',envFile:'server/.env.test',status:'MISSING',required:false}],
+                features:[{method:'POST',path:'/create-checkout-session',sourceFile:'server/pay.js',line:2}],
+                hardcoded:[{sourceFile:'server/pay.js',line:1,envName:'STRIPE_SECRET_KEY'}]},
+        ]);
+        expect(result.externalServices[1].guidance).toContain('process.env.STRIPE_SECRET_KEY');
+        const args={snapshotId:'snapshot',userId:'owner',db:environmentDb(root),dependencies};
+        await expect(importSystemTestEnvironment({...args,input:{expectedWorkspaceRevision:0,dryRun:true,
+            content:'STRIPE_SECRET_KEY=sk_test_fixture\nSTRIPE_X=sk_live_x',
+        }})).resolves.toEqual({
+            recognized:[{name:'STRIPE_SECRET_KEY',envFile:'server/.env.test',service:'Stripe',action:'add'}],
+            ignored:[],rejected:[{name:'STRIPE_X',reason:'LIVE_KEY'}],saved:false,
+        });
+        await expect(saveSystemTestEnvironment({...args,input:{expectedWorkspaceRevision:0,
+            variables:[{envFile:'server/.env.test',name:'STRIPE_SECRET_KEY',value:'sk_test_fixture'}],
+        }})).resolves.toEqual({saved:1});
+        const saved=await inspectSystemSetup({rootDir:root,dependencies});
+        expect(saved.externalServices.find(service=>service.id==='stripe')).toMatchObject({
+            status:'HARDCODED',variables:[{name:'STRIPE_SECRET_KEY',status:'PRESENT',required:false}],
+        });
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('classifies dotenv keys on dry run and saves recognized keys only on import',async()=>{
+    const root=fixture();
+    try {
+        write(root,'server/webhook.js','const signingSecret = process.env.STRIPE_WEBHOOK_SECRET;');
+        write(root,'server/.env.test','AI_API_KEY=existing');
+        const envFile=path.join(root,'server/.env.test');
+        const content='AI_API_KEY=sandbox\nVITE_ANALYTICS_KEY=fixture\nUNKNOWN_KEY=ignored\nSTRIPE_SECRET_KEY=sk_live_x\nSTRIPE_WEBHOOK_SECRET=';
+        const args={snapshotId:'snapshot',userId:'owner',db:environmentDb(root),dependencies};
+        const dryRun=await importSystemTestEnvironment({...args,input:{expectedWorkspaceRevision:0,content,dryRun:true}});
+        expect(dryRun).toEqual({
+            recognized:[
+                {name:'AI_API_KEY',envFile:'server/.env.test',service:'OpenAI',action:'replace'},
+                {name:'VITE_ANALYTICS_KEY',envFile:'client/.env.test',service:'Application',action:'add'},
+            ],
+            ignored:['UNKNOWN_KEY'],
+            rejected:[{name:'STRIPE_SECRET_KEY',reason:'LIVE_KEY'},{name:'STRIPE_WEBHOOK_SECRET',reason:'EMPTY'}],
+            saved:false,
+        });
+        expect(fs.readFileSync(envFile,'utf8')).toBe('AI_API_KEY=existing');
+        expect(fs.existsSync(path.join(root,'client/.env.test'))).toBe(false);
+        expect(await importSystemTestEnvironment({...args,input:{expectedWorkspaceRevision:0,content,dryRun:false}}))
+            .toEqual({...dryRun,saved:true});
+        expect(parseEnvironment(fs.readFileSync(envFile))).toEqual({AI_API_KEY:'sandbox'});
+        expect(parseEnvironment(fs.readFileSync(path.join(root,'client/.env.test')))).toEqual({VITE_ANALYTICS_KEY:'fixture'});
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('rejects a live credential before writing any submitted environment values',async()=>{
+    const root=fixture();
+    try {
+        const variables=[
+            {envFile:'client/.env.test',name:'VITE_ANALYTICS_KEY',value:'fixture'},
+            {envFile:'server/.env.test',name:'STRIPE_SECRET_KEY',value:'sk_live_x'},
+        ];
+        await expect(saveSystemTestEnvironment({snapshotId:'snapshot',userId:'owner',db:environmentDb(root),input:{expectedWorkspaceRevision:0,variables},dependencies}))
+            .rejects.toMatchObject({statusCode:422,code:'LIVE_CREDENTIAL_REJECTED',details:{variables:['STRIPE_SECRET_KEY']}});
+        expect(fs.existsSync(path.join(root,'client/.env.test'))).toBe(false);
+        expect(fs.existsSync(path.join(root,'server/.env.test'))).toBe(false);
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 it('saves sandbox values from the dialog only into detected test environment files without returning secrets',async()=>{
     const root=fixture(),db=environmentDb(root);
     try {

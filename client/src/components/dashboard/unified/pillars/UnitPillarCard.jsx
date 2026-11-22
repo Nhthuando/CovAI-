@@ -1,4 +1,3 @@
-import React from "react";
 import { CheckCircle2, AlertCircle, PlayCircle } from "lucide-react";
 import { PillarCardShell } from "./PillarCardShell.jsx";
 import { HorizontalBarList } from "../primitives/charts/HorizontalBarList.jsx";

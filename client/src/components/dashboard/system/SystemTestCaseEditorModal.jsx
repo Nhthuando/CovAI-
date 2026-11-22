@@ -123,6 +123,20 @@ export default function SystemTestCaseEditorModal({
     setSaving(true);
     setError("");
     try {
+      if (!runAfterSave && onSaved) {
+        onSaved({
+          staged: true,
+          mode,
+          testFile: cleanFile,
+          testName: cleanTitle || scenario?.title || scenario?.testName || "Scenario",
+          originalTestName: scenario?.title || scenario?.testName || cleanTitle,
+          code: cleanCode,
+          framework,
+          runAfterSave: false,
+        });
+        onClose();
+        return;
+      }
       if (mode === "add") {
         const res = await addSystemTestCaseApi(snapshotId, {
           testFile: cleanFile,

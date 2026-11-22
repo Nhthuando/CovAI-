@@ -47,14 +47,19 @@ export const discoverExecutionScenarios = ({rootDir,testFiles}) => testFiles.fla
 });
 
 export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir }) => {
-    const files = scanSystemTestFiles(rootDir).playwrightFiles.map(file => file.filePath);
-    const seen = new Set(), unsupportedFeatures = [];
+    const scanned = scanSystemTestFiles(rootDir);
+    const files = [
+        ...(scanned.playwrightFiles || []).map(file => file.filePath),
+        ...(scanned.cypressFiles || []).map(file => file.filePath),
+    ];
+    const seen = new Set(), failedFiles = new Set(), unsupportedFeatures = [];
     for (const filePath of files) {
         let content, analysis;
         try {
             content = readTest(rootDir, filePath);
             analysis = analyzeSystemTestFile({ content, filePath });
         } catch (error) {
+            failedFiles.add(filePath.replaceAll('\\', '/'));
             unsupportedFeatures.push({ filePath, reason: error.statusCode ? error.message : 'Test file could not be analyzed' });
             continue;
         }
@@ -83,7 +88,15 @@ export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir })
         }
     }
     const all = await client.systemScenario.findMany({ where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] });
-    for (const scenario of all) if (scenario.filePath && !seen.has(scenario.scenarioKey)) await client.systemScenario.delete({ where: { id: scenario.id } });
+    for (const scenario of all) {
+        if (!scenario.filePath || seen.has(scenario.scenarioKey)) continue;
+        const normRel = scenario.filePath.replaceAll('\\', '/');
+        if (failedFiles.has(normRel)) continue;
+        const absFile = path.resolve(rootDir, normRel);
+        if (!fs.existsSync(absFile)) {
+            await client.systemScenario.delete({ where: { id: scenario.id } });
+        }
+    }
     return { scenarios: fullStackCatalog(await client.systemScenario.findMany({ where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] }),rootDir), discoveryStatus: files.length ? 'DISCOVERED' : 'NO_TESTS', unsupportedFeatures };
 };
 

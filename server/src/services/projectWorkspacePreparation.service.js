@@ -68,6 +68,7 @@ export const withPreparedProjectWorkspace = async ({projectId,snapshotId,userId,
         };
         const completeNonPublish = async (tx) => {
             await assertProjectOperationActive(undefined, tx);
+            await flushPreparedPublications(tx);
             const status = result?.status === 'WAITING_FOR_ENV' ? 'WAITING_FOR_ENV' : result?.success === false ? 'FAILED' : 'SUCCESS';
             await tx.projectOperation.update({
                 where: { id: operation.id },

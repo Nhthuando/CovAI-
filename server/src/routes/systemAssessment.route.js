@@ -14,6 +14,7 @@ const setup=createSystemSetupControllers();
 router.get(base + '/setup', setup.inspect);
 router.post(base + '/setup/apply', setup.apply);
 router.post(base + '/setup/environment', setup.environment);
+router.post(base + '/setup/environment/import', setup.importEnvironment);
 router.get(base + '/generation-drafts/latest', latestGeneratedSystemDraft);
 router.post(base + '/generation-drafts/:draftId/apply', applyGeneratedSystemDraft);
 router.get(base + '/versions', systemSuiteControllers.history);

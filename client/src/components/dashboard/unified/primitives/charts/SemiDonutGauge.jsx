@@ -1,4 +1,3 @@
-import React from "react";
 
 /**
  * SemiDonutGauge - Pure SVG 180° Radial Gauge for Health Score (0 - 100).

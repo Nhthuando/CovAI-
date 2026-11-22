@@ -5,6 +5,22 @@ import { ServiceError } from "../utils/serviceError.js";
 import { clearManifestCache } from "./unitTestVersion.service.js";
 
 const validId = value => typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
+const CLOUD_CLEANUP_TIMEOUT_MS = 30000;
+const STORAGE_CLEANUP_TIMEOUT_MS = 45000;
+
+function withTimeout(promise, ms, label) {
+    let timer;
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const err = new Error(`${label} timed out after ${ms}ms`);
+                err.code = "ETIMEDOUT";
+                reject(err);
+            }, ms);
+        }),
+    ]).finally(() => clearTimeout(timer));
+}
 
 // Build deletion targets from owned database IDs, never from a stored rootDir.
 // rootDir can point to only backend/ inside an uploaded monorepo, or be stale.
@@ -46,9 +62,13 @@ async function resetReadOnlyAttributes(dirPath) {
         if (stat.isDirectory()) {
             await fs.chmod(dirPath, 0o777).catch(() => {});
             const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
-            for (const entry of entries) {
-                const fullPath = path.join(dirPath, entry.name);
-                await resetReadOnlyAttributes(fullPath);
+            const BATCH_SIZE = 32;
+            for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+                await Promise.all(
+                    entries.slice(i, i + BATCH_SIZE).map((entry) =>
+                        resetReadOnlyAttributes(path.join(dirPath, entry.name)),
+                    ),
+                );
             }
         } else {
             await fs.chmod(dirPath, 0o666).catch(() => {});
@@ -76,18 +96,26 @@ async function deleteCloudFiles(projectId) {
     const bucket = getBucket();
     if (!bucket) throw new Error("Cloud storage is unavailable");
     const prefix = `projects/${projectId}/`;
-    const [files] = await bucket.getFiles({ prefix });
+    const [files] = await withTimeout(
+        bucket.getFiles({ prefix }),
+        CLOUD_CLEANUP_TIMEOUT_MS,
+        "Cloud storage listFiles",
+    );
     // storagePath can be a local GitHub clone path; do not send it to Firebase.
     if (files.some(file => typeof file.name !== "string" || !file.name.startsWith(prefix))) {
         throw new Error("Cloud cleanup returned a file outside the project's prefix");
     }
-    const results = await Promise.allSettled(files.map(async file => {
-        try {
-            await file.delete({ ignoreNotFound: true });
-        } catch (error) {
-            if (Number(error.code) !== 404) throw error;
-        }
-    }));
+    const results = await withTimeout(
+        Promise.allSettled(files.map(async file => {
+            try {
+                await file.delete({ ignoreNotFound: true });
+            } catch (error) {
+                if (Number(error.code) !== 404) throw error;
+            }
+        })),
+        CLOUD_CLEANUP_TIMEOUT_MS,
+        "Cloud storage deleteFiles",
+    );
     const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
     if (errors.length) throw new AggregateError(errors, "Some cloud files could not be deleted");
 }
@@ -156,13 +184,17 @@ export async function cleanupProjectStorageAsync(projectId, snapshots = [], { ba
         // Validate the entire plan before deleting any local or cloud data.
         await Promise.all(uniqueTargets.map(target => verifyTarget(canonicalBase, target)));
 
-        const results = await Promise.allSettled([
-            deleteCloudFiles(projectId),
-            ...uniqueTargets.map(async target => {
-                await verifyTarget(canonicalBase, target);
-                await forceRemoveDirectory(target);
-            }),
-        ]);
+        const results = await withTimeout(
+            Promise.allSettled([
+                deleteCloudFiles(projectId),
+                ...uniqueTargets.map(async target => {
+                    await verifyTarget(canonicalBase, target);
+                    await forceRemoveDirectory(target);
+                }),
+            ]),
+            STORAGE_CLEANUP_TIMEOUT_MS,
+            "Project storage cleanup",
+        );
         const failures = results.flatMap((result, index) => result.status === "rejected"
             ? [{ location: index === 0 ? "Firebase" : uniqueTargets[index - 1], error: result.reason }]
             : []);

@@ -234,7 +234,7 @@ export async function workspace(db, projectId, userId = null) {
         db.aiEvaluationKnowledgeSource.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, name: true, format: true, version: true, status: true, contentHash: true, provenance: true, createdAt: true } }),
         db.aiEvaluationRun.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, targetVersionId: true, profileVersionId: true, executionStatus: true, verdict: true, summary: true, jobId: true, errorCode: true, createdAt: true, finishedAt: true } }),
         getRemainingAiQuota(db, userId),
-        getChatbotDesignAudit(db, projectId, { autoScan: false }),
+        getChatbotDesignAudit(db, projectId, { autoScan: true }),
     ]);
     return {
         targets: targets.map(cleanTarget),

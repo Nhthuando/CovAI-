@@ -9,7 +9,7 @@ import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.serv
 import { stagePreparedPublication } from './projectOperationWorkspace.service.js';
 import { captureSystemSuiteManifest, suiteDigest } from './systemSuiteManifest.service.js';
 import { commitSystemSuiteVersion } from './systemSuiteVersion.service.js';
-import { generateColdStartSystemTests } from './verifiedSystemGeneration.service.js';
+import { generateColdStartSystemTests, verifyAndRepairSystemDraft } from './verifiedSystemGeneration.service.js';
 import { containedPath, resolveSystemRepositoryRoot } from './fullSystemConfig.service.js';
 import { syncSystemScenarioCatalog, updateScenarioDraft } from './systemScenarioCatalog.service.js';
 import { validateGeneratedTestCode } from '../validators/aiTestCode.validator.js';
@@ -21,9 +21,21 @@ import { generateText } from './gemini.service.js';
 import { withGeminiChannel } from './geminiTokenTracker.service.js';
 import { ensureFullSystemSetup } from './fullSystemSetup.service.js';
 
-export const createSystemGenerationDraft = async ({snapshotId,userId,framework,targetRoutes,executionMode,model,signal=AbortSignal.timeout(10*60*1000),db=prisma,dependencies={}}) => {
+export const systemDraftModuleExtension = code => {
+    const source = String(code || '');
+    const usesEsm = /^\s*(?:import\s[^;]*from\s*['"]|import\s*['"]|export\s)/m.test(source);
+    const usesCjs = /\brequire\s*\(\s*['"]/.test(source) || /\bmodule\.exports\b/.test(source);
+    return usesCjs && !usesEsm ? 'cjs' : 'mjs';
+};
+
+export const createSystemGenerationDraft = async ({signal=AbortSignal.timeout(10*60*1000),...options}) => {
+    const deadlineAt = Date.now() + 7*60*1000;
+    const createDraft = () => prepareSystemGenerationDraft({...options,signal,deadlineAt});
+    return currentAiJobBudget() ? createDraft() : withAiJobBudget(createAiJobBudget({maxRequests:9,signal}),createDraft);
+};
+
+const prepareSystemGenerationDraft = async ({snapshotId,userId,framework,targetRoutes,executionMode,model,signal,deadlineAt,db=prisma,dependencies={}}) => {
     executionMode=requireFullStackMode(executionMode);
-    if(!currentAiJobBudget())return withAiJobBudget(createAiJobBudget({maxRequests:6,signal}),()=>createSystemGenerationDraft({snapshotId,userId,framework,targetRoutes,executionMode,model,signal,db,dependencies}));
     if(signal?.aborted)throw new ServiceError('Generation canceled',409);
     const {snapshot,project} = await resolveSnapshotAccess({snapshotId,userId,capability:'ai.use',db});
     try { assertSystemSuiteStorage(db);await db.systemSuiteState.findUnique({where:{snapshotId}}); }
@@ -43,25 +55,38 @@ export const createSystemGenerationDraft = async ({snapshotId,userId,framework,t
             : (model ? (prompt, instruction, config) => withGeminiChannel("E2E_TEST", () => generateText(prompt, model, instruction, config)) : ((...args) => withGeminiChannel("E2E_TEST", () => generateText(...args))));
         const setup = executionMode === 'full' ? await (dependencies.setup || ensureFullSystemSetup)({ rootDir, model, dependencies: { generate: aiGenerate } }) : null;
         const generated = await (dependencies.generate || generateColdStartSystemTests)({rootDir,framework,targetRoutes,executionMode,model,requirements:revision?.contentJson||null});
-        const filePath = framework==='cypress'?`cypress/e2e/covai-${suiteDigest(generated.code).slice(0,12)}.cy.js`:`tests/e2e/covai-${suiteDigest(generated.code).slice(0,12)}.spec.mjs`;
+        const verification = executionMode==='full' && framework!=='cypress'
+            ? await verifyAndRepairSystemDraft({rootDir,code:generated.code,generate:aiGenerate,signal,deadlineAt,dependencies:{run:dependencies.run}})
+            : {code:generated.code,verificationStatus:'NOT_VERIFIED',droppedScenarios:[]};
+    const {code,verificationStatus,droppedScenarios,verificationError,externalRequirements} = verification;
+        if(verificationStatus==='FAILED'){
+            const errors = droppedScenarios.slice(0,2).map(({title,error})=>`${title}: ${error}`.slice(0,300)).join(' ');
+            throw new ServiceError(`None of the generated scenarios passed against the running application. ${errors} Retry generation or review the application setup.`,422);
+        }
+        const droppedTitles = new Set(droppedScenarios.map(({title})=>title));
+        const scenarios = (generated.generationMetadata?.scenarios||[]).filter(({title})=>!droppedTitles.has(title));
+        const scenarioCount = generated.scenarioCount - droppedTitles.size;
+        const filePath = framework==='cypress'?`cypress/e2e/covai-${suiteDigest(code).slice(0,12)}.cy.js`:`tests/e2e/covai-${suiteDigest(code).slice(0,12)}.spec.${systemDraftModuleExtension(code)}`;
         if(signal?.aborted)throw new ServiceError('Generation canceled',409);
         const setupChanges = [];
         if(setup?.generated && setup.config?.database?.initSql === '.covai/generated-schema.sql')setupChanges.push({path:path.relative(context.rootDir,path.join(rootDir,setup.config.database.initSql)).replaceAll('\\','/'),content:await fs.readFile(path.join(rootDir,setup.config.database.initSql),'utf8'),beforeHash:null});
         if(executionMode==='full' && !systemConfigExisted)setupChanges.push({path:path.relative(context.rootDir,path.join(rootDir,'.covai/system-test.json')).replaceAll('\\','/'),content:await fs.readFile(path.join(rootDir,'.covai/system-test.json'),'utf8'),beforeHash:null});
         if(generated.configCreated && !existing.has(generated.configPath)) setupChanges.push({path:path.relative(context.rootDir,path.join(rootDir,generated.configPath)).replaceAll('\\','/'),content:await fs.readFile(path.join(rootDir,generated.configPath),'utf8'),beforeHash:null});
         const relative = path.relative(context.rootDir,path.join(rootDir,filePath)).replaceAll('\\','/');
-        const meta = {kind:'SYSTEM_GENERATION_DRAFT',framework,executionMode,promptVersion:SYSTEM_PROMPT_VERSION,model:model||null,contextHash:generated.contextHash||null,attempts:generated.generationAttempts||null,testDesign:generated.testDesign||null,aiUsage:currentAiJobBudget()?.snapshot()||null,sourceHash:baseline.sourceHash,suiteHash:baseline.suiteHash,workspaceRevision:project.workspaceRevision,setupChanges,scenarioCount:generated.scenarioCount,scenarios:generated.generationMetadata?.scenarios||[],metadataStatus:generated.generationMetadata?.metadataStatus||'CODE_ONLY',requirementRevisionId:revision?.id||null,applied:false};
-        await stagePreparedPublication(async tx=>{draft=await tx.aiTest.create({data:{projectId:snapshot.projectId,snapshotId,filePath:relative,content:generated.code,status:'DRAFT',mode:framework==='cypress'?'CYPRESS_E2E':'PLAYWRIGHT_E2E',metaJson:JSON.stringify(meta)}});});
+    const meta = {kind:'SYSTEM_GENERATION_DRAFT',framework,executionMode,promptVersion:SYSTEM_PROMPT_VERSION,model:model||null,contextHash:generated.contextHash||null,attempts:generated.generationAttempts||null,testDesign:generated.testDesign||null,aiUsage:currentAiJobBudget()?.snapshot()||null,sourceHash:baseline.sourceHash,suiteHash:baseline.suiteHash,workspaceRevision:project.workspaceRevision,setupChanges,scenarioCount,scenarios,metadataStatus:generated.generationMetadata?.metadataStatus||'CODE_ONLY',requirementRevisionId:revision?.id||null,applied:false,verificationStatus,droppedScenarios,verificationError,externalRequirements};
+        await stagePreparedPublication(async tx=>{draft=await tx.aiTest.create({data:{projectId:snapshot.projectId,snapshotId,filePath:relative,content:code,status:'DRAFT',mode:framework==='cypress'?'CYPRESS_E2E':'PLAYWRIGHT_E2E',metaJson:JSON.stringify(meta)}});});
     });
-    return {aiTestId:draft.id,filePath:draft.filePath,code:draft.content,candidateHash:suiteDigest(draft.content),...JSON.parse(draft.metaJson),verificationStatus:'NOT_VERIFIED',state:'DRAFT'};
+    if(!draft)throw new ServiceError('The generated draft could not be saved. Retry generation.',500);
+    const meta = JSON.parse(draft.metaJson);
+    return {aiTestId:draft.id,filePath:draft.filePath,code:draft.content,candidateHash:suiteDigest(draft.content),...meta,verificationStatus:meta.verificationStatus||'NOT_VERIFIED',state:'DRAFT'};
 };
 
 export const latestSystemGenerationDraft = async ({snapshotId,userId,db=prisma}) => {
-    const {project}=await resolveSnapshotAccess({snapshotId,userId,capability:'project.read',db});
+    await resolveSnapshotAccess({snapshotId,userId,capability:'project.read',db});
     const candidates=await db.aiTest.findMany({where:{snapshotId,status:'DRAFT',metaJson:{contains:'SYSTEM_GENERATION_DRAFT'}},orderBy:{createdAt:'desc'},take:20});
     for(const draft of candidates){
         const meta=JSON.parse(draft.metaJson);
-        if(meta.kind==='SYSTEM_GENERATION_DRAFT' && meta.executionMode==='full')return {aiTestId:draft.id,filePath:draft.filePath,code:draft.content,candidateHash:suiteDigest(draft.content),...meta,stale:project.workspaceRevision!==meta.workspaceRevision,verificationStatus:'NOT_VERIFIED',state:'DRAFT'};
+        if(meta.kind==='SYSTEM_GENERATION_DRAFT' && meta.executionMode==='full')return {aiTestId:draft.id,filePath:draft.filePath,code:draft.content,candidateHash:suiteDigest(draft.content),...meta,stale:false,verificationStatus:meta.verificationStatus||'NOT_VERIFIED',state:'DRAFT'};
     }
     return null;
 };
@@ -100,7 +125,7 @@ export const applySystemGenerationDraft = async ({snapshotId,draftId,userId,inpu
                 const scenario=catalog.scenarios.find(item=>item.title===row.title && item.filePath===path.relative(repoRoot,target).replaceAll('\\','/'));
                 if(scenario)await updateScenarioDraft({client:tx,snapshotId,scenarioId:scenario.id,input:{title:scenario.title,flow:row.actions,inputs:[...row.preconditions,...row.inputs],expected:row.expected,criterionIds:row.criterionIds,expectedScenarioHash:scenario.scenarioHash}});
             }
-            version = await commitSystemSuiteVersion({tx,snapshotId,capture,baseline,userId,requestId:`generation-${draftId}`,provenance:{draftId,promptVersion:meta.promptVersion,model:meta.model,verificationStatus:'NOT_VERIFIED',sharedSetupPaths:meta.setupChanges.map(file=>file.path)}});
+            version = await commitSystemSuiteVersion({tx,snapshotId,capture,baseline,userId,requestId:`generation-${draftId}`,provenance:{draftId,promptVersion:meta.promptVersion,model:meta.model,verificationStatus:meta.verificationStatus||'NOT_VERIFIED',sharedSetupPaths:meta.setupChanges.map(file=>file.path)}});
             await tx.aiTest.update({where:{id:draftId},data:{status:'APPLIED',metaJson:JSON.stringify({...meta,applied:true,versionId:version.id})}});
         });
         return {};

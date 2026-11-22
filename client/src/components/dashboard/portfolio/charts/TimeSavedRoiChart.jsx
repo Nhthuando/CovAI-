@@ -10,23 +10,21 @@ function TimeSavedRoiChart({
 }) {
   const [hoveredProjectId, setHoveredProjectId] = useState(null);
 
-  // Filter only active projects that have run or test metrics
-  const activeProjects = (projects || []).filter(
-    (p) => !p.isExcludedFromActiveKpis && p.lifecycleStatus === "DOING"
-  );
+  // Render metrics & bars for the currently scoped (filtered) projects
+  const scopedProjects = projects || [];
 
   // Compute summary values if timeRoiAnalytics is not already provided
   const totalAutoSeconds =
     timeRoiAnalytics?.totalAutoExecutionSeconds ??
-    activeProjects.reduce((acc, p) => acc + (p.timeRoi?.actualAutoDurationMs || 0) / 1000, 0);
+    scopedProjects.reduce((acc, p) => acc + (p.timeRoi?.actualAutoDurationMs || 0) / 1000, 0);
 
   const totalManualHours =
     timeRoiAnalytics?.totalManualExecutionHours ??
-    activeProjects.reduce((acc, p) => acc + (p.timeRoi?.estimatedManualDurationMs || 0) / 3600000, 0);
+    scopedProjects.reduce((acc, p) => acc + (p.timeRoi?.estimatedManualDurationMs || 0) / 3600000, 0);
 
   const totalHoursSaved =
     timeRoiAnalytics?.totalQaHoursSaved ??
-    activeProjects.reduce((acc, p) => acc + (p.timeRoi?.totalHoursSaved || 0), 0);
+    scopedProjects.reduce((acc, p) => acc + (p.timeRoi?.totalHoursSaved || 0), 0);
 
   const avgSpeedup =
     timeRoiAnalytics?.averageSpeedupMultiplier ??
@@ -37,7 +35,7 @@ function TimeSavedRoiChart({
   // Maximum manual duration among projects to scale the horizontal bars
   const maxManualMs = Math.max(
     1,
-    ...activeProjects.map((p) => p.timeRoi?.estimatedManualDurationMs || 0)
+    ...scopedProjects.map((p) => p.timeRoi?.estimatedManualDurationMs || 0)
   );
 
   return (
@@ -52,7 +50,7 @@ function TimeSavedRoiChart({
           <div className="text-sm font-bold text-[var(--ud-text)] mt-1 tabular-nums">
             {totalAutoSeconds.toFixed(1)}s
           </div>
-          <div className="text-[10px] text-[var(--ud-text-muted)]">Across active suites</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">Across shown suites</div>
         </div>
 
         <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
@@ -114,12 +112,12 @@ function TimeSavedRoiChart({
 
       {/* ── Project Horizontal Bars ────────────────────────────────────────── */}
       <div className="space-y-2.5 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-3 max-h-[380px] overflow-y-auto">
-        {activeProjects.length === 0 ? (
+        {scopedProjects.length === 0 ? (
           <div className="py-8 text-center text-xs text-[var(--ud-text-muted)] font-mono">
-            No active DOING projects with execution data available.
+            No matching projects with execution data available.
           </div>
         ) : (
-          activeProjects.map((p) => {
+          scopedProjects.map((p) => {
             const timeRoi = p.timeRoi || {};
             const speedup = timeRoi.speedupMultiplier || 0;
             const autoMs = timeRoi.actualAutoDurationMs || 0;

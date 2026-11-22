@@ -89,6 +89,10 @@ export default function SystemSpecMatrixTable({
   onAIFixScenario,
   onInspectScenario,
   onOpenSpecFile,
+  pendingOpsCount = 0,
+  isApplyingPending = false,
+  onApplyPendingChanges = null,
+  onDiscardPendingChanges = null,
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -346,6 +350,30 @@ export default function SystemSpecMatrixTable({
                 <Sparkles size={12} className="text-[var(--color-primary)]" />
                 <span>Generate Selected ({selectedFileList.length})</span>
               </button>
+            )}
+
+            {pendingOpsCount > 0 && onApplyPendingChanges && (
+              <div className="inline-flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onApplyPendingChanges}
+                  disabled={isApplyingPending}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer transition-colors disabled:opacity-50"
+                  title="Write temporary UI edits, additions, and deletions to spec files"
+                >
+                  {isApplyingPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                  <span>{isApplyingPending ? "Applying..." : `Apply Changes (${pendingOpsCount})`}</span>
+                </button>
+                {onDiscardPendingChanges && !isApplyingPending && (
+                  <button
+                    type="button"
+                    onClick={onDiscardPendingChanges}
+                    className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[11px] font-medium text-[var(--color-text-muted)] cursor-pointer"
+                  >
+                    Discard
+                  </button>
+                )}
+              </div>
             )}
 
             {hasPendingDraft && onApplyDraft && (

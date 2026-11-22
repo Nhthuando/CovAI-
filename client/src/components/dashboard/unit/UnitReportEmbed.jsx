@@ -27,6 +27,8 @@ export default function UnitReportEmbed({
   executedScenarios = [],
   testStats = { total: 0, passed: 0, failed: 0, durationMs: 0 },
   hasExecuted = false,
+  isPeakReport = false,
+  peakMeta = null,
   onRunCoverage,
   onOpenExportModal,
   onAIFixTestCase,
@@ -113,8 +115,18 @@ export default function UnitReportEmbed({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="text-[11px] font-medium text-[var(--color-text-muted)]">
-              Unit Quality Score
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
+                Unit Quality Score
+              </span>
+              {isPeakReport && (
+                <span
+                  className="px-1.5 py-0.5 rounded-md text-[10px] font-mono tabular-nums bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]"
+                  title="Preserves the highest unit coverage snapshot achieved after analysis runs."
+                >
+                  Peak snapshot · {Number(peakMeta?.linesPct ?? linesPct).toFixed(1)}% lines
+                </span>
+              )}
             </div>
             <div className="flex items-baseline gap-2 font-mono tabular-nums">
               <span className="text-3xl font-bold text-[var(--color-text)]">{weightedScore}</span>

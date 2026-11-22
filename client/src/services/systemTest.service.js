@@ -218,6 +218,9 @@ export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', 
   return response.data.data;
 };
 
+export const importSystemEnvironment = (snapshotId, body) =>
+  systemEvidenceRequest(snapshotId, 'setup/environment/import', { method: 'POST', data: body });
+
 export const getSystemRunArtifact = async (snapshotId, artifactId, { signal } = {}) => {
   const response = await axios.get(`${API_BASE}/coverage/${snapshotId}/system/artifacts/${encodeURIComponent(artifactId)}`, { headers: getAuthHeaders(), responseType: 'blob', signal });
   return response.data;

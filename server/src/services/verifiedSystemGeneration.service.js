@@ -12,6 +12,8 @@ import { ensureFullSystemSetup } from "./fullSystemSetup.service.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { stripVTControlCharacters } from "node:util";
+import { parse } from "@babel/parser";
 import {
   collectSystemGenerationContext,
   observeSystemApplication,
@@ -23,9 +25,16 @@ const generateText = (...args) =>
   withGeminiFeature("system-test", () => generateFeatureText(...args));
 import { withAgentContext } from "../agents/registry.js";
 import { runSystemTests } from "./systemTestRunner.service.js";
+import {
+  classifyExternalDependencies,
+  collectExternalRequirements,
+  readEgressLog,
+} from "./externalDependencyClassifier.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 import { validateFullSystemTest } from "./systemTestEvidence.service.js";
 import { parseTestFileDetails } from "../utils/testFileParser.js";
+import { detectCypress } from "../utils/cypressDetector.js";
+import { detectPlaywright } from "../utils/playwrightDetector.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { focusTestContext } from "./systemTestPromptBudget.service.js";
 import {
@@ -47,7 +56,7 @@ const repairPlaywrightMistakenTestCalls = (code) => {
   // LLMs occasionally write `test.goto(...)` or `test.locator(...)` instead of `page.goto(...)` / `page.locator(...)`
   return code.replace(
     /\btest\.(goto|locator|getByRole|getByText|getByLabel|getByPlaceholder|getByTestId|getByAltText|getByTitle|waitForURL|waitForSelector|waitForLoadState|reload|screenshot|url|title|fill|click)\s*\(/g,
-    "page.$1("
+    "page.$1(",
   );
 };
 
@@ -60,7 +69,8 @@ export const extractSystemTestCode = (response) => {
   try {
     const parsed = JSON.parse(text);
     const code = parsed.tests?.[0]?.content || parsed.content;
-    if (typeof code === "string" && code.trim()) return repairPlaywrightMistakenTestCalls(code);
+    if (typeof code === "string" && code.trim())
+      return repairPlaywrightMistakenTestCalls(code);
   } catch {
     /* A code block is accepted for older model responses. */
   }
@@ -101,21 +111,52 @@ export const applySystemTestRepair = (response, code) => {
         "Repair cannot replace imports, scenarios or assertions.",
         422,
       );
-    const first = result.indexOf(previous);
-    if (first < 0 || result.indexOf(previous, first + previous.length) >= 0)
+    let first = result.indexOf(previous);
+    let matchLength = previous.length;
+    let duplicate;
+    if (first >= 0) {
+      duplicate = result.indexOf(previous, first + matchLength) >= 0;
+    } else {
+      const pattern = previous
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/\s+/g, "\\s+")
+        .replace(/['"`]/g, "['\"`]");
+      const matcher = new RegExp(pattern, "g");
+      const match = matcher.exec(result);
+      if (match) {
+        first = match.index;
+        matchLength = match[0].length;
+        duplicate = matcher.exec(result) !== null;
+      }
+    }
+    if (first < 0 || duplicate)
       throw new ServiceError(
         "Repair must match exactly one candidate fragment.",
         422,
       );
-    result =
-      result.slice(0, first) + next + result.slice(first + previous.length);
+    result = result.slice(0, first) + next + result.slice(first + matchLength);
   }
   return result;
 };
 
-export const validateSystemTestIntent = (code, { quality = false } = {}) => {
+const validatePlainJavaScript = (code) => {
+  try {
+    parse(code, { sourceType: "unambiguous", plugins: ["jsx"] });
+  } catch (error) {
+    throw new ServiceError(
+      `Generated tests must be plain JavaScript; remove TypeScript-only syntax (for example "as" casts or type annotations). Parser: ${error.message}`,
+      422,
+    );
+  }
+};
+
+export const validateSystemTestIntent = (
+  code,
+  { quality = false, allowCommonJs = false } = {},
+) => {
   const { ast } = validateGeneratedTestCode(code);
   validateFullSystemTest(code);
+  validatePlainJavaScript(code);
   const titles = [];
   const countAssertions = (node) => {
     if (!node || typeof node !== "object") return 0;
@@ -132,6 +173,16 @@ export const validateSystemTestIntent = (code, { quality = false } = {}) => {
   };
   const visit = (node) => {
     if (!node || typeof node !== "object") return;
+    if (
+      allowCommonJs &&
+      node.type === "CallExpression" &&
+      node.callee.type === "Identifier" &&
+      node.callee.name === "require" &&
+      node.arguments.length === 1 &&
+      node.arguments[0].type === "StringLiteral" &&
+      node.arguments[0].value === "@playwright/test"
+    )
+      return;
     if (
       node.type === "Identifier" &&
       ["process", "require", "globalThis"].includes(node.name)
@@ -496,6 +547,19 @@ export const generateVerifiedSystemTests = async ({
   }
 };
 
+function usesModulePackage(rootDir) {
+  let directory = path.resolve(rootDir);
+  while (true) {
+    const packagePath = path.join(directory, "package.json");
+    if (fs.existsSync(packagePath)) {
+      return JSON.parse(fs.readFileSync(packagePath, "utf8")).type === "module";
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return false;
+    directory = parent;
+  }
+}
+
 /**
  * Ensures system test configuration file exists (Playwright or Cypress).
  * Creates default configuration if not present.
@@ -526,8 +590,17 @@ export const ensureSystemTestConfig = ({
         return { configCreated: false, configPath: f };
       }
     }
+    const detectedConfig = detectCypress(rootDir).configPath;
+    if (
+      detectedConfig &&
+      fs.existsSync(path.resolve(rootDir, detectedConfig))
+    ) {
+      return { configCreated: false, configPath: detectedConfig };
+    }
 
-    const configPath = "cypress.config.js";
+    const configPath = usesModulePackage(rootDir)
+      ? "cypress.config.cjs"
+      : "cypress.config.js";
     const configContent = `const { defineConfig } = require('cypress');
 
 module.exports = defineConfig({
@@ -557,6 +630,10 @@ module.exports = defineConfig({
     if (fs.existsSync(full)) {
       return { configCreated: false, configPath: f };
     }
+  }
+  const detectedConfig = detectPlaywright(rootDir).configPath;
+  if (detectedConfig && fs.existsSync(path.resolve(rootDir, detectedConfig))) {
+    return { configCreated: false, configPath: detectedConfig };
   }
 
   const configPath = "playwright.config.mjs";
@@ -884,6 +961,7 @@ export const generateColdStartSystemTests = async ({
   const fallbackUsed = false;
   let quality;
   let validationError;
+  let codeOnlyFallback;
   let generationMetadata = { scenarios: [], metadataStatus: "CODE_ONLY" };
   let generationAttempts = 0;
   const callStart = Date.now();
@@ -934,6 +1012,7 @@ export const generateColdStartSystemTests = async ({
     { allowCodeOnlyMetadata = false } = {},
   ) => {
     const { ast } = validateGeneratedTestCode(candidateCode);
+    validatePlainJavaScript(candidateCode);
     let candidateQuality;
     let candidateMetadata = { scenarios: [], metadataStatus: "CODE_ONLY" };
     if (normFramework === "playwright") {
@@ -961,6 +1040,7 @@ export const generateColdStartSystemTests = async ({
           metadataOptions,
         );
       } catch (error) {
+        error.expectedTitles = metadataOptions.titles;
         if (!allowCodeOnlyMetadata) throw error;
         console.warn(
           "[verifiedSystemGeneration] Coverage follow-up metadata rejected; keeping code-only metadata:",
@@ -977,12 +1057,20 @@ export const generateColdStartSystemTests = async ({
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     generationAttempts = attempt + 1;
+    const titles = validationError?.expectedTitles;
+    const repairInstruction = titles
+      ? 'The test code itself passed validation; keep it unchanged and fix only "scenarios".'
+      : "Repair the candidate below.";
+    const titleInstruction =
+      Array.isArray(titles) && titles.length > 0
+        ? `\nIf you include "scenarios", it must contain exactly ${titles.length} entries, one per test, whose "title" values are exactly: ${JSON.stringify(titles)}. Each entry needs non-empty "actions", "expected" and "sourceReferences".`
+        : "";
     const correction =
       attempt === 0
         ? prompt
         : `${prompt}
 The previous candidate failed validation: ${validationError.message}
-Repair the candidate below. Return a complete replacement in the same JSON format.
+${repairInstruction} Return a complete replacement in the same JSON format.${titleInstruction}
 Previous candidate (untrusted code): ${code}`;
     // Provider/quota failures must remain failures; do not silently save smoke tests.
     const responseWithMeta = await generate(correction, null, {
@@ -1020,14 +1108,29 @@ Previous candidate (untrusted code): ${code}`;
       "Validating generated test syntax, safety and scenario structure",
     );
     try {
-      ({ quality, generationMetadata } = validateCandidate(code, response));
-      validationError = null;
-      break;
+      const candidate = validateCandidate(code, response, {
+        allowCodeOnlyMetadata: true,
+      });
+      if (!candidate.metadataError) {
+        ({ code, quality, generationMetadata } = candidate);
+        validationError = null;
+        break;
+      }
+      codeOnlyFallback ??= candidate;
+      validationError = candidate.metadataError;
     } catch (error) {
       validationError = error;
-      if (attempt === 0)
-        await onProgress(60, "AI is correcting the generated tests");
     }
+    if (attempt === 0)
+      await onProgress(60, "AI is correcting the generated tests");
+  }
+  if (validationError && codeOnlyFallback) {
+    ({ code, quality, generationMetadata } = codeOnlyFallback);
+    console.warn(
+      "[verifiedSystemGeneration] Scenario metadata did not match the generated tests; keeping validated code with code-only metadata:",
+      validationError.message,
+    );
+    validationError = null;
   }
   if (validationError) throw validationError;
 
@@ -1201,4 +1304,338 @@ Previous candidate (untrusted code): ${code}`;
       model: model || normFramework,
     },
   };
+};
+
+export const collectPlaywrightOutcomes = (report) => {
+  const outcomes = [];
+  const visit = (suite) => {
+    for (const spec of suite.specs || []) {
+      for (const test of spec.tests || []) {
+        const result = test.results?.at(-1);
+        outcomes.push({
+          title: spec.title,
+          status: result?.status || "didNotRun",
+          error: stripVTControlCharacters(
+            result?.errors?.[0]?.message || result?.error?.message || "",
+          ).slice(0, 1500),
+        });
+      }
+    }
+    for (const child of suite.suites || []) visit(child);
+  };
+  for (const suite of report.suites || []) visit(suite);
+  return outcomes;
+};
+
+const playwrightTestStatements = (code) => {
+  const statements = [];
+  const { scenarioSites } = analyzeSystemTestFile({
+    content: code,
+    filePath: "draft.spec.js",
+  });
+  const knownTests = new Set(scenarioSites.map(({ start }) => start));
+  const visit = (node) => {
+    const call = node.type === "ExpressionStatement" ? node.expression : null;
+    if (call?.type === "CallExpression") {
+      const { callee } = call;
+      const isTest = callee.type === "Identifier" && callee.name === "test";
+      const isOnly =
+        callee.type === "MemberExpression" &&
+        !callee.computed &&
+        callee.object.type === "Identifier" &&
+        callee.object.name === "test" &&
+        callee.property.name === "only";
+      const argument = call.arguments[0];
+      const title =
+        argument?.type === "StringLiteral"
+          ? argument.value
+          : argument?.type === "TemplateLiteral" && !argument.expressions.length
+            ? argument.quasis[0].value.cooked
+            : null;
+      if (
+        (isTest || isOnly || knownTests.has(call.start)) &&
+        typeof title === "string"
+      ) {
+        statements.push({ title, start: node.start, end: node.end });
+        return;
+      }
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const child of value) if (child?.type) visit(child);
+      } else if (value?.type) visit(value);
+    }
+  };
+  visit(parse(code, { sourceType: "unambiguous", plugins: ["jsx"] }).program);
+  return statements;
+};
+
+export const removePlaywrightTests = (code, titles) => {
+  const removed = new Set(titles);
+  const statements = playwrightTestStatements(code);
+  let pruned = code;
+  for (const { title, start, end } of statements.sort(
+    (a, b) => b.start - a.start,
+  )) {
+    if (!removed.has(title)) continue;
+    const trailing = /^[\t ]*(?:\r\n|\n|\r)/.exec(code.slice(end));
+    pruned =
+      pruned.slice(0, start) + pruned.slice(end + (trailing?.[0].length || 0));
+  }
+  return pruned;
+};
+
+export const verifyAndRepairSystemDraft = async ({
+  rootDir,
+  code,
+  generate,
+  signal,
+  deadlineAt,
+  onProgress = async () => {},
+  dependencies = {},
+}) => {
+  const hasTime = () => {
+    signal?.throwIfAborted();
+    return !(Date.now() > deadlineAt - 150000);
+  };
+  let runs = 0;
+  const notVerified = (error) => ({
+    code,
+    verificationStatus: "NOT_VERIFIED",
+    ...(error && { verificationError: error.message }),
+    droppedScenarios: [],
+    runs,
+  });
+  if (!hasTime()) return notVerified();
+
+  const expectedTitles = new Set(
+    playwrightTestStatements(code).map(({ title }) => title),
+  );
+  const usesEsm =
+    /^\s*(?:import\s[^;]*from\s*['"]|import\s*['"]|export\s)/m.test(code);
+  const usesCjs =
+    /\brequire\s*\(\s*['"]/.test(code) || /\bmodule\.exports\b/.test(code);
+  const intentOptions = { allowCommonJs: usesCjs && !usesEsm };
+  const tempDir = fs.mkdtempSync(path.join(rootDir, ".covai-draft-"));
+  const testFile = path.join(
+    tempDir,
+    `candidate.spec.${intentOptions.allowCommonJs ? "cjs" : "mjs"}`,
+  );
+  let candidate = code;
+  let testedCode = code;
+  let failures = [];
+  let externalFailures = [];
+  try {
+    while (runs < 3 && hasTime()) {
+      fs.writeFileSync(testFile, candidate, "utf8");
+      let feedback;
+      try {
+        runs++;
+        const result = await (dependencies.run || runSystemTests)({
+          jobId: null,
+          rootDir,
+          executionMode: "full",
+          signal,
+          onPreparing: (_percent, message) => onProgress(message),
+          execution: {
+            runner: "playwright",
+            rootDir,
+            testDirectory: "tests/system",
+            testFile,
+          },
+        });
+        signal?.throwIfAborted();
+        const parsed = readFailureFeedback(result.reportPath);
+        const outcomes = collectPlaywrightOutcomes(parsed.report);
+        const reportedTitles = new Set(outcomes.map(({ title }) => title));
+        const externalDependencies = classifyExternalDependencies({
+          report: parsed.report,
+          egressEvents: readEgressLog(result.egressLogPath),
+        });
+        if (
+          !outcomes.length ||
+          (parsed.runnerErrors.length && !externalDependencies.size)
+        ) {
+          throw new Error(
+            parsed.runnerErrors[0]?.message ||
+              "Playwright did not report any test outcomes.",
+          );
+        }
+        const failedTitles = new Map();
+        for (const { title, status, error } of outcomes) {
+          if (status !== "passed" && (!failedTitles.has(title) || error)) {
+            failedTitles.set(
+              title,
+              error || `Playwright reported status "${status}".`,
+            );
+          }
+        }
+        for (const title of expectedTitles) {
+          if (!reportedTitles.has(title))
+            failedTitles.set(title, "Playwright did not run this scenario.");
+        }
+        if (!failedTitles.size && !result.success) {
+          throw new Error("Playwright did not complete successfully.");
+        }
+        externalFailures = [];
+        for (const title of failedTitles.keys()) {
+          const dependency = externalDependencies.get(title);
+          if (!dependency) continue;
+          externalFailures.push([title, dependency]);
+          failedTitles.delete(title);
+        }
+        failures = Array.from(failedTitles, ([title, error]) => ({
+          title,
+          error,
+        }));
+        feedback = parsed.feedback.filter(
+          ({ title, pageSnapshot }) => failedTitles.has(title) && pageSnapshot,
+        );
+        testedCode = candidate;
+      } catch (error) {
+        signal?.throwIfAborted();
+        console.warn(
+          "[verifiedSystemGeneration] Draft verification could not run:",
+          error.message,
+        );
+        if (externalFailures.length) break;
+        return notVerified(error);
+      }
+      if (!failures.length) {
+        if (externalFailures.length) {
+          return {
+            code: testedCode,
+            verificationStatus: "NEEDS_EXTERNAL_CONFIG",
+            droppedScenarios: [],
+            externalRequirements: collectExternalRequirements(externalFailures),
+            runs,
+          };
+        }
+        return {
+          code: testedCode,
+          verificationStatus: "VERIFIED",
+          droppedScenarios: [],
+          runs,
+        };
+      }
+      if (runs === 3 || !hasTime()) break;
+
+      try {
+        const titles = validateSystemTestIntent(testedCode, intentOptions);
+        const prompt = `Fix selector/action mechanics only in tests listed under EXECUTION FAILURES using the real DOM implied by the errors and the source. Return ONLY JSON {"replacements":[{"old":"exact unique candidate fragment","new":"corrected fragment"}]}, at most 4 replacements. Do not change test titles, imports or expect assertions; never skip tests or relax expected behaviour. If the error shows a real application bug, leave that test unchanged.
+For a strict-mode locator failure inside an assertion, replace only its locator expression, not the enclosing expect(), matcher, or expected value. Scope the locator to the actual dialog/row or use exact text matching where source supports it. For example, replace itemRow.getByText(expectedSubtotal) with itemRow.getByText(expectedSubtotal, { exact: true }); preserve the visibility assertion and expectedSubtotal.
+CANDIDATE:
+${testedCode}
+EXECUTION FAILURES:
+${JSON.stringify(failures)}
+PAGE SNAPSHOTS:
+${JSON.stringify(feedback.map(({ title, pageSnapshot }) => ({ title, pageSnapshot })))}`;
+        const response = await generate(prompt, null, {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              replacements: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    old: { type: "STRING" },
+                    new: { type: "STRING" },
+                  },
+                  required: ["old", "new"],
+                },
+              },
+            },
+            required: ["replacements"],
+          },
+          temperature: 0.2,
+          maxOutputTokens: 4000,
+          requestTimeoutMs: 120000,
+          totalTimeoutMs: 240000,
+          maxAttempts: 2,
+        });
+        signal?.throwIfAborted();
+        const patched = applySystemTestRepair(response, testedCode);
+        if (externalFailures.length) {
+          const blockedTitles = new Set(
+            externalFailures.map(([title]) => title),
+          );
+          const blockedTests = (source) =>
+            playwrightTestStatements(source)
+              .filter(({ title }) => blockedTitles.has(title))
+              .map(({ start, end }) => source.slice(start, end));
+          if (
+            JSON.stringify(blockedTests(testedCode)) !==
+            JSON.stringify(blockedTests(patched))
+          ) {
+            throw new ServiceError(
+              "Repair changed a scenario blocked by external configuration.",
+              422,
+            );
+          }
+        }
+        const repaired = ensurePlaywrightExecutionSteps(patched);
+        const repairedTitles = validateSystemTestIntent(
+          repaired,
+          intentOptions,
+        );
+        if (
+          repairedTitles.length !== titles.length ||
+          repairedTitles.some((title) => !titles.includes(title))
+        ) {
+          throw new ServiceError(
+            "Repair changed the generated scenario titles.",
+            422,
+          );
+        }
+        candidate = repaired;
+      } catch (error) {
+        signal?.throwIfAborted();
+        console.warn(
+          "[verifiedSystemGeneration] Draft repair failed:",
+          error.message,
+        );
+        break;
+      }
+    }
+    signal?.throwIfAborted();
+    if (!runs) return notVerified();
+    const pruned = removePlaywrightTests(
+      testedCode,
+      failures.map(({ title }) => title),
+    );
+    const remaining = playwrightTestStatements(pruned);
+    const failedTitles = new Set(failures.map(({ title }) => title));
+    if (
+      !remaining.length ||
+      remaining.some(({ title }) => failedTitles.has(title))
+    ) {
+      return {
+        code,
+        verificationStatus: "FAILED",
+        droppedScenarios: failures,
+        runs,
+      };
+    }
+    validateGeneratedTestCode(pruned);
+    validateFullSystemTest(pruned);
+    if (externalFailures.length) {
+      return {
+        code: pruned,
+        verificationStatus: "NEEDS_EXTERNAL_CONFIG",
+        droppedScenarios: failures,
+        externalRequirements: collectExternalRequirements(externalFailures),
+        runs,
+      };
+    }
+    return {
+      code: pruned,
+      verificationStatus: "PARTIAL",
+      droppedScenarios: failures,
+      runs,
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 };

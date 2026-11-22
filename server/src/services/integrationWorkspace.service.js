@@ -33,7 +33,11 @@ export const extractValidatedTestRequests = (t) => {
   try {
     const meta =
       typeof t.metaJson === "string" ? JSON.parse(t.metaJson) : t.metaJson;
-    if (meta?.requests && Array.isArray(meta.requests)) {
+    if (
+      meta?.requests &&
+      Array.isArray(meta.requests) &&
+      (meta.requests.length > 0 || meta.userModified)
+    ) {
       const metaMap = new Map(meta.requests.map((r) => [r.testName, r]));
       const validNames = new Set(meta.requests.map((r) => r.testName));
       const filteredReqs = reqs
@@ -466,9 +470,21 @@ export const isMatch = (parsedReq, discoveredEp) => {
   // 2. Exact match
   if (cleanPath.toLowerCase() === cleanRoute.toLowerCase()) return true;
 
-  // 3. Parameterized match: e.g. /api/food-items/get/:id matches /api/food-items/get/123 or /api/food-items/get/:param
-  const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
-  if (new RegExp(regexStr, "i").test(cleanPath)) return true;
+  // 3. Parameterized & wildcard match: escape regex metacharacters safely before expanding "*" and ":param"
+  const escapedRoute = cleanRoute
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/:[^/]+/g, "[^/]+");
+  const regexStr = `^${escapedRoute}$`;
+  try {
+    if (new RegExp(regexStr, "i").test(cleanPath)) return true;
+  } catch (regexErr) {
+    console.warn(
+      "[IntegrationWorkspace] Skipped invalid route regex:",
+      regexStr,
+      regexErr?.message,
+    );
+  }
 
   // 4. Subpath suffix match: only when cleanRoute has at least 2 segments and does not conflict
   if (
@@ -1236,7 +1252,7 @@ const executeBuildIntegrationWorkspace = async (
         : prisma.testRun.findMany({
             where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } },
             orderBy: { createdAt: "desc" },
-            take: 1,
+            take: 15,
             include: { scenarios: { omit: { executionDetails: true } } },
           }),
       preloadedData?.coverageSummary !== undefined
@@ -1259,7 +1275,7 @@ const executeBuildIntegrationWorkspace = async (
         : prisma.job.findMany({
             where: { snapshotId },
             orderBy: { createdAt: "desc" },
-            take: 15,
+            take: 100,
             select: {
               id: true,
               type: true,
@@ -1529,8 +1545,21 @@ const executeBuildIntegrationWorkspace = async (
   } else if (firebaseCache.has(firebaseCacheKey)) {
     testScenarios = firebaseCache.get(firebaseCacheKey);
   } else if (latestRun?.scenarios?.length > 0) {
-    // FAST PATH 1: Directly use scenarios already retrieved from PostgreSQL DB (0ms network)
-    testScenarios = latestRun.scenarios.map((s) => ({
+    // FAST PATH 1: Directly use scenarios already retrieved from PostgreSQL DB (0ms network),
+    // merging across recent runs (newest wins per testFile + title) so targeted single-endpoint runs
+    // never wipe out other endpoints' executed scenarios on reload.
+    const mergedRunScenarios = [];
+    const seenRunScenarioKeys = new Set();
+    for (const runItem of testRuns || [latestRun]) {
+      for (const s of runItem?.scenarios || []) {
+        const cleanFile = cleanStoragePath(s.testFile) || s.testFile || "";
+        const dedupKey = `${String(cleanFile).toLowerCase()}::${String(s.title || "").trim().toLowerCase()}`;
+        if (seenRunScenarioKeys.has(dedupKey)) continue;
+        seenRunScenarioKeys.add(dedupKey);
+        mergedRunScenarios.push(s);
+      }
+    }
+    testScenarios = mergedRunScenarios.map((s) => ({
       title: s.title,
       suiteName: s.suiteName,
       status: s.status,
@@ -1755,8 +1784,8 @@ const executeBuildIntegrationWorkspace = async (
     hasPriorHistory || integrationTests.length > 0 || options.includeProjectTests,
   );
 
-  // Discover existing integration test files from the project codebase ONLY after Run Coverage or when AI tests exist
-  if (resolvedSnapshotRoot && hasScannedEndpoints && hasAnalyzedCoverage) {
+  // Discover existing integration test files from the project codebase whenever endpoints have been scanned
+  if (resolvedSnapshotRoot && hasScannedEndpoints) {
     try {
       const projectExistingTests = await discoverProjectIntegrationTests(
         resolvedSnapshotRoot,
@@ -2542,11 +2571,7 @@ const executeBuildIntegrationWorkspace = async (
       analyzedEndpointSet.has(epSignatureUpper) ||
       hasActualRun;
 
-    const visibleScenarios = wasAnalyzed
-      ? cleanScenarios
-      : cleanScenarios.filter(
-          (s) => s.aiTestId && !String(s.aiTestId).startsWith("existing_test_"),
-        );
+    const visibleScenarios = cleanScenarios;
 
     const caseCoverage = getEndpointCaseCoverage(ep, visibleScenarios);
     const metrics = evaluateEndpointMetrics({
@@ -2597,7 +2622,7 @@ const executeBuildIntegrationWorkspace = async (
     }, 0);
 
     const finalExecutedCount = hasActualRun ? executedCount : 0;
-    if (!hasActualRun && aiGeneratedCount === 0) {
+    if (!hasActualRun && visibleScenarios.length === 0) {
       status = wasAnalyzed ? "UNCOVERED" : "DISCOVERED";
     }
 

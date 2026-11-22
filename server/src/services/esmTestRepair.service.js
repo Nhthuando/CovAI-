@@ -455,14 +455,82 @@ const isJestFrameworkImport = (spec) => spec === "@jest/globals" || spec === "su
  */
 export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "tests/unit.test.js", sourceCode = [], rootDir = null, targetSourceFile = null, forcePrismaMock = false, forceGenAiMock = false } = {}) => {
     if (!code || typeof code !== "string") return code;
+    if (rootDir && testFilePath && path.isAbsolute(testFilePath)) {
+        testFilePath = path.relative(rootDir, testFilePath).replace(/\\/g, "/");
+    }
 
     // Step 0: Strip any legacy CommonJS Universal Prisma Mock block (which loops `for (const _rp of _sanitizerRelPrismaPaths)`)
     let out = code
         .replace(/\/\/\s*Universal Prisma Mock to prevent database connection attempts during tests[\s\S]*?for\s*\(\s*const\s+_rp\s+of\s+_sanitizerRelPrismaPaths\s*\)\s*\{[\s\S]*?\}\s*(?:catch\s*\([^)]*\)\s*\{\s*\}\s*)?\}\s*\r?\n?/g, "")
         .replace(/const\s+_sanitizerRelPrismaPaths\s*=\s*\[[\s\S]*?\];\s*\r?\n?for\s*\(\s*const\s+_rp\s+of\s+_sanitizerRelPrismaPaths\s*\)\s*\{[\s\S]*?\}\s*\r?\n?/g, "");
 
-    // Step 1: Resolve relative import/mock specifiers + strip `{ virtual: true }` on jest.mock calls
+    // Step 1: Resolve relative import/mock specifiers, strip `{ virtual: true }`, and drop unresolvable
+    // path-alias or non-existent relative mocks (e.g. `@/lib/prisma`) because Jest ESM unstable_mockModule
+    // cannot virtual-mock modules that do not exist on disk.
     out = out.replace(/\bjest\.mock\s*\(/g, "jest.unstable_mockModule(");
+
+    const hasExplicitAliasMapper = (aliasPrefix) => {
+        if (!rootDir) return false;
+        const cleanPrefix = aliasPrefix.replace(/[^@~]/g, "");
+        const pkgSub = String(testFilePath || "").includes("/") ? String(testFilePath).split("/")[0] : "";
+        const cfgDirs = [...new Set([pkgSub ? path.join(rootDir, pkgSub) : null, rootDir].filter(Boolean))];
+        for (const dir of cfgDirs) {
+            for (const cfgName of ["jest.config.js", "jest.config.mjs", "jest.config.cjs", "jest.config.ts", "jest.config.json"]) {
+                const cfgPath = path.join(dir, cfgName);
+                if (fs.existsSync(cfgPath)) {
+                    try {
+                        const txt = fs.readFileSync(cfgPath, "utf8");
+                        if (txt.includes("moduleNameMapper") && txt.includes(cleanPrefix)) return true;
+                    } catch {}
+                }
+            }
+            const pkgPath = path.join(dir, "package.json");
+            if (fs.existsSync(pkgPath)) {
+                try {
+                    const txt = fs.readFileSync(pkgPath, "utf8");
+                    if (txt.includes("moduleNameMapper") && txt.includes(cleanPrefix)) return true;
+                } catch {}
+            }
+        }
+        return false;
+    };
+
+    const testFileBase = path.posix.basename(String(testFilePath || "").replace(/\\/g, "/"))
+        .replace(/(?:\.(?:partial|redundant|coverage|vitest|jest|unit))*\.(?:test|spec|steps?)\.[cm]?[jt]sx?$/i, "")
+        .toLowerCase();
+
+    const isUnresolvableEsmMockSpecifier = (specVal) => {
+        if (!specVal || typeof specVal !== "string") return false;
+        const normSutNoExt = String(targetSourceFile || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\.[cm]?[jt]sx?$/i, "").toLowerCase();
+        if (specVal.startsWith(".")) {
+            const resolved = resolveRelativeSpecifier(specVal, testFilePath, sourceCode, rootDir);
+            const fromDir = path.posix.dirname(String(testFilePath || "tests/unit.test.js").replace(/\\/g, "/").replace(/^\/+/, ""));
+            const targetRel = path.posix.normalize(path.posix.join(fromDir, resolved));
+            const targetNoExt = targetRel.replace(/\.[cm]?[jt]sx?$/i, "").toLowerCase();
+            if (normSutNoExt && targetNoExt === normSutNoExt) return true;
+            // Also guard against self-mocking when targetSourceFile wasn't explicitly passed (e.g. prisma.coverage.test.js mocking ../../src/config/prisma.js)
+            const targetBase = path.posix.basename(targetNoExt);
+            if (!normSutNoExt && testFileBase && targetBase === testFileBase && new RegExp(`import\\s*\\(\\s*['"]${resolved.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}['"]`).test(out)) {
+                return true;
+            }
+            if (!rootDir) return false;
+            return !EXTENSION_CANDIDATES.some((ext) => {
+                const candidate = ext ? `${targetNoExt}${ext}` : targetRel;
+                try {
+                    const abs = path.resolve(rootDir, candidate);
+                    return fs.existsSync(abs) && fs.statSync(abs).isFile();
+                } catch {
+                    return false;
+                }
+            });
+        }
+        if (/^[@~]{1,2}\//.test(specVal)) {
+            const aliasPrefix = specVal.match(/^([@~]{1,2}\/)/)?.[1] || "@/";
+            if (!hasExplicitAliasMapper(aliasPrefix)) return true;
+            return false;
+        }
+        return false;
+    };
 
     // Strip trailing `{ virtual: true }` 3rd arg from jest.unstable_mockModule(a, b, { virtual: true })
     // and wrap converted relative module factories so `default` export is always populated in native ESM.
@@ -470,19 +538,32 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
     if (parsed0.success) {
         const edits0 = [];
         traverse(parsed0.ast, {
-            CallExpression({ node }) {
+            CallExpression(callPath) {
+                const { node } = callPath;
                 if (
                     node.callee?.type === "MemberExpression" &&
                     node.callee.object?.name === "jest" &&
                     node.callee.property?.name === "unstable_mockModule"
                 ) {
+                    const arg0 = node.arguments[0];
+                    const arg1 = node.arguments[1];
+                    const specVal = arg0?.type === "StringLiteral" ? arg0.value : "";
+                    if (isUnresolvableEsmMockSpecifier(specVal)) {
+                        const stmtNode = callPath.parent?.type === "AwaitExpression"
+                            ? callPath.parentPath?.parent
+                            : callPath.parent;
+                        if (stmtNode?.type === "ExpressionStatement" && stmtNode.start != null && stmtNode.end != null) {
+                            let rmEnd = stmtNode.end;
+                            if (out[rmEnd] === "\r") rmEnd++;
+                            if (out[rmEnd] === "\n") rmEnd++;
+                            edits0.push({ start: stmtNode.start, end: rmEnd, text: "" });
+                            return;
+                        }
+                    }
                     if (node.arguments.length >= 3 && node.arguments[2].type === "ObjectExpression") {
                         const prevArg = node.arguments[1];
                         edits0.push({ start: prevArg.end, end: node.arguments[2].end, text: "" });
                     }
-                    const arg0 = node.arguments[0];
-                    const arg1 = node.arguments[1];
-                    const specVal = arg0?.type === "StringLiteral" ? arg0.value : "";
                     if (arg0?.type === "StringLiteral" && specVal.startsWith(".")) {
                         const resolved = resolveRelativeSpecifier(specVal, testFilePath, sourceCode, rootDir);
                         if (resolved !== specVal) {
@@ -517,6 +598,33 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
         });
         for (const e of edits0.sort((a, b) => b.start - a.start)) {
             out = out.slice(0, e.start) + e.text + out.slice(e.end);
+        }
+    } else {
+        // Fallback when AST parse of rest of file temporarily fails: strip unresolvable path-alias mocks
+        for (const m of [...out.matchAll(/(?:await\s+)?jest\.unstable_mockModule\s*\(\s*(['"])([^'"]+)\1/g)]) {
+            const specVal = m[2];
+            if (!isUnresolvableEsmMockSpecifier(specVal)) continue;
+            const startIdx = m.index;
+            const parenStart = out.indexOf("(", startIdx);
+            if (parenStart === -1) continue;
+            let depth = 1, i = parenStart + 1, inStr = null, esc = false;
+            while (i < out.length && depth > 0) {
+                const ch = out[i];
+                if (inStr) {
+                    if (esc) esc = false;
+                    else if (ch === "\\") esc = true;
+                    else if (ch === inStr) inStr = null;
+                } else {
+                    if (ch === "'" || ch === '"' || ch === "`") inStr = ch;
+                    else if (ch === "(") depth++;
+                    else if (ch === ")") depth--;
+                }
+                i++;
+            }
+            while (i < out.length && (out[i] === ";" || out[i] === " " || out[i] === "\t")) i++;
+            if (out[i] === "\r") i++;
+            if (out[i] === "\n") i++;
+            out = out.slice(0, startIdx) + out.slice(i);
         }
     }
 
@@ -612,13 +720,19 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
         }
 
         // Keep top-level helper variables and function declarations declared before describe/test blocks
-        // in their original relative order ahead of unstable_mockModule calls to avoid TDZ errors.
-        if (!seenSuiteBlock && (stmt.type === "VariableDeclaration" || stmt.type === "FunctionDeclaration")) {
-            const hasRequire = /\brequire\s*\(/.test(rawStmt);
-            const hasDynamicImport = /\bawait\s+import\b/.test(rawStmt);
-            if (!hasRequire && !hasDynamicImport) {
-                hoistedMockVars.push(rawStmt);
-                continue;
+        // (or referenced inside any hoisted unstable_mockModule call) ahead of unstable_mockModule calls to avoid TDZ errors.
+        if (stmt.type === "VariableDeclaration" || stmt.type === "FunctionDeclaration") {
+            const declaredNames = stmt.type === "FunctionDeclaration"
+                ? [stmt.id?.name].filter(Boolean)
+                : (stmt.declarations || []).map((d) => d.id?.name).filter(Boolean);
+            const isReferencedByMock = declaredNames.some((n) => mockReferencedIds.has(n));
+            if (!seenSuiteBlock || isReferencedByMock) {
+                const hasRequire = /\brequire\s*\(/.test(rawStmt);
+                const hasDynamicImport = /\bawait\s+import\b/.test(rawStmt);
+                if (!hasRequire && !hasDynamicImport) {
+                    hoistedMockVars.push(rawStmt);
+                    continue;
+                }
             }
         }
 

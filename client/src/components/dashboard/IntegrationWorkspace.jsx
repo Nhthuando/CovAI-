@@ -1,6 +1,16 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useChatTestContext } from '../../hooks/useChatTestContext';
 import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
+import {
+  loadStagedOps,
+  saveStagedOps,
+  stageAddOp,
+  stageUpdateOp,
+  stageDeleteOp,
+  countStagedOps,
+  matchesStagedTarget,
+  extractBlockTitle,
+} from "../../lib/stagedScenarioOps.js";
 import React, {
   useCallback,
   useEffect,
@@ -323,7 +333,7 @@ export default function IntegrationWorkspace({
   onChatContextChange,
   projectId,
   snapshotId,
-  onGenerate,
+  onGenerate: _onGenerate,
   generating,
   onOpenFile,
   onOpenCFG,
@@ -361,6 +371,17 @@ export default function IntegrationWorkspace({
   const [setupAutoRun, setSetupAutoRun] = useState(true);
   const [isRunningSetupFlow, setIsRunningSetupFlow] = useState(false);
   const autoRunAfterGenerateRef = useRef(false);
+  const [selectedZeroTestFramework, setSelectedZeroTestFramework] = useState(null);
+  const [frameworkPickerState, setFrameworkPickerState] = useState({
+    isOpen: false,
+    targets: null,
+  });
+  const [frameworkPickerChoice, setFrameworkPickerChoice] = useState("SUPERTEST");
+
+  useEffect(() => {
+    setSelectedZeroTestFramework(null);
+    setFrameworkPickerState({ isOpen: false, targets: null });
+  }, [snapshotId]);
 
   // Active Jobs State
   const [activeJobId, setActiveJobId] = useState(null);
@@ -379,6 +400,21 @@ export default function IntegrationWorkspace({
   // Framework Installation & Banner
   const [isInstallingDeps, setIsInstallingDeps] = useState(false);
   const [isGeneratingWithBanner, setIsGeneratingWithBanner] = useState(false);
+
+  const [pendingOps, setPendingOps] = useState(() =>
+    loadStagedOps("integration", snapshotId),
+  );
+  const [isApplyingPending, setIsApplyingPending] = useState(false);
+
+  useEffect(() => {
+    setPendingOps(loadStagedOps("integration", snapshotId));
+  }, [snapshotId]);
+
+  useEffect(() => {
+    saveStagedOps("integration", snapshotId, pendingOps);
+  }, [snapshotId, pendingOps]);
+
+  const pendingOpsCount = countStagedOps(pendingOps);
 
   // Modals & Drawer State
   const [applyModalOpen, setApplyModalOpen] = useState(false);
@@ -573,6 +609,65 @@ export default function IntegrationWorkspace({
       }
     },
     [snapshotId, projectId],
+  );
+
+  const flushPendingOps = useCallback(
+    async ({ reload = true } = {}) => {
+      if (!snapshotId || countStagedOps(pendingOps) === 0) return true;
+      setIsApplyingPending(true);
+      try {
+        for (const d of pendingOps.deletes || []) {
+          await mutateIntegrationScenarioApi({
+            snapshotId,
+            aiTestId: d.aiTestId,
+            scenarioId: d.scenarioId,
+            expectedVersion: d.expectedVersion ?? 1,
+            filePath: d.filePath,
+            testName: d.testName,
+            origin: d.origin,
+            action: "DELETE",
+          });
+        }
+        for (const u of pendingOps.updates || []) {
+          await mutateIntegrationScenarioApi({
+            snapshotId,
+            aiTestId: u.aiTestId || "default",
+            scenarioId: u.scenarioId,
+            expectedVersion: u.expectedVersion,
+            action: "UPDATE",
+            code: u.code,
+            endpoint: u.endpoint,
+            filePath: u.filePath,
+            testName: u.originalTestName || u.testName,
+            origin: u.origin,
+          });
+        }
+        for (const a of pendingOps.adds || []) {
+          await mutateIntegrationScenarioApi({
+            snapshotId,
+            aiTestId: a.aiTestId || "default",
+            expectedVersion: a.expectedVersion,
+            action: "ADD",
+            code: a.code,
+            endpoint: a.endpoint,
+            filePath: a.filePath,
+            testName: a.testName,
+            origin: a.origin,
+          });
+        }
+        const cleared = { deletes: [], updates: [], adds: [] };
+        setPendingOps(cleared);
+        saveStagedOps("integration", snapshotId, cleared);
+        if (reload) await load({ scan: false });
+        return true;
+      } catch (err) {
+        setError(err.message || "Failed to apply pending scenario changes.");
+        return false;
+      } finally {
+        setIsApplyingPending(false);
+      }
+    },
+    [snapshotId, pendingOps, load],
   );
 
   // Explicit AST API Endpoint Discovery Triggered from Endpoints Matrix
@@ -899,8 +994,8 @@ export default function IntegrationWorkspace({
     }
   };
 
-  // Run AI Test Generator
-  const handleGenerateClick = async (explicitTargets = null) => {
+  // Run AI Test Generator (3-rule framework selection: installed lib -> syntax inference -> 1-of-2 choice when zero libs & zero tests)
+  const handleGenerateClick = async (explicitTargets = null, explicitFramework = null) => {
     if (!projectAccess.can("ai.use")) return;
     if (isJobActive || pendingAction === "GENERATE") {
       return;
@@ -917,10 +1012,34 @@ export default function IntegrationWorkspace({
       });
       return;
     }
+
+    const perm = detectionInfo?.permutationDetails || null;
+    if (!explicitFramework && perm?.needsUserSelection && !selectedZeroTestFramework) {
+      setFrameworkPickerChoice("SUPERTEST");
+      setFrameworkPickerState({ isOpen: true, targets: explicitTargets });
+      return;
+    }
+
+    const detectedOrChosenFw =
+      explicitFramework ||
+      selectedZeroTestFramework ||
+      perm?.targetFramework ||
+      perm?.inferredFramework ||
+      detectionInfo?.targetFramework ||
+      setupFramework ||
+      "SUPERTEST";
+    const resolvedFramework = String(detectedOrChosenFw).toUpperCase().includes("PLAYWRIGHT")
+      ? "PLAYWRIGHT_API"
+      : "SUPERTEST";
+
     setError("");
     setPendingAction("GENERATE");
     try {
-      const res = await onGenerate(explicitTargets);
+      const res = await generateIntegrationTests(snapshotId, {
+        framework: resolvedFramework,
+        targetEndpoints: Array.isArray(explicitTargets) ? explicitTargets : [],
+        force: true,
+      });
       if (res === undefined || res === null) return;
       const jobId =
         res?.data?.job?.id ||
@@ -935,8 +1054,8 @@ export default function IntegrationWorkspace({
           type: "info",
           title: "AI Test Generation Started",
           message: explicitTargets?.length
-            ? `Generating tests for ${explicitTargets.length} endpoint(s)...`
-            : "Generating integration test scenarios with AI...",
+            ? `Generating ${resolvedFramework === "PLAYWRIGHT_API" ? "Playwright API" : "Supertest"} tests for ${explicitTargets.length} endpoint(s)...`
+            : `Generating ${resolvedFramework === "PLAYWRIGHT_API" ? "Playwright API" : "Supertest"} integration scenarios with AI...`,
         });
       } else {
         await load();
@@ -1009,6 +1128,10 @@ export default function IntegrationWorkspace({
 
     setPendingAction("RUN");
     try {
+      if (pendingOpsCount > 0) {
+        const ok = await flushPendingOps({ reload: false });
+        if (!ok) return;
+      }
       if (allScenarioIds.length > 0) {
         await approveIntegrationTestsApi(snapshotId, allScenarioIds).catch(
           (err) => {
@@ -1121,6 +1244,10 @@ export default function IntegrationWorkspace({
     setPendingAction("RUN_ENDPOINT");
     setRunningTargetKey(epKey);
     try {
+      if (pendingOpsCount > 0) {
+        const ok = await flushPendingOps({ reload: false });
+        if (!ok) return;
+      }
       if (
         workspace?.aiTests &&
         workspace.aiTests.length > 0 &&
@@ -1184,6 +1311,10 @@ export default function IntegrationWorkspace({
     setPendingAction("RUN_ENDPOINT");
     setRunningTargetKey(targetLabel);
     try {
+      if (pendingOpsCount > 0) {
+        const ok = await flushPendingOps({ reload: false });
+        if (!ok) return;
+      }
       if (
         workspace?.aiTests &&
         workspace.aiTests.length > 0 &&
@@ -1252,6 +1383,10 @@ export default function IntegrationWorkspace({
     setPendingAction("RETRY_SCENARIO");
     setRunningTargetKey(targetLabel);
     try {
+      if (pendingOpsCount > 0) {
+        const ok = await flushPendingOps({ reload: false });
+        if (!ok) return;
+      }
       const response = await runCoverageByType(
         snapshotId,
         "integration",
@@ -1548,22 +1683,25 @@ export default function IntegrationWorkspace({
   const handleDeleteScenario = async (sc) => {
     if (!projectAccess.can("files.write") || !snapshotId || !sc) return;
     setError("");
-    try {
-      const identity = editableScenario(sc);
-      await mutateIntegrationScenarioApi({
-        snapshotId,
+    const identity = editableScenario(sc);
+    const title = sc.title || sc.testName || sc.scenarioId || "Scenario";
+    setPendingOps((prev) =>
+      stageDeleteOp(prev, {
+        key: sc.id || `${identity.aiTestId || "ep"}::${identity.scenarioId || title}`,
+        id: sc.id,
         ...identity,
-        action: "DELETE",
-      });
-      showToast({
-        type: "info",
-        title: "Scenario Deleted",
-        message: `Removed "${sc.title || sc.scenarioId}" from test suite.`,
-      });
-      await load({ scan: false });
-    } catch (err) {
-      setError(err.message || "Failed to delete scenario.");
-    }
+        title,
+        testName: identity.testName || title,
+        testFile: identity.filePath,
+        endpointMethod: sc.method,
+        endpointPath: sc.path,
+      }),
+    );
+    showToast({
+      type: "info",
+      title: "Removed (Temp)",
+      message: `Removed "${title}" from view. Click Apply Changes to save.`,
+    });
   };
 
   const handleToggleScenario = async (sc, enableState) => {
@@ -1711,38 +1849,52 @@ export default function IntegrationWorkspace({
     if (!projectAccess.can("files.write") || !snapshotId) return false;
     setError("");
     setEditorSaveError("");
-    setSavingScenario(true);
-    try {
-      await mutateIntegrationScenarioApi({
-        snapshotId,
-        aiTestId: editorModalScenario.aiTestId || "default",
-        scenarioId: editorModalScenario.scenarioId,
-        expectedVersion: editorModalScenario.expectedVersion,
-        action: isAddScenarioMode ? "ADD" : "UPDATE",
-        code: typeof savedData === "string" ? savedData : savedData.code,
-        endpoint: editorModalEndpoint,
-        filePath: editorModalScenario.filePath,
-        testName: editorModalScenario.testName,
-        origin: editorModalScenario.origin,
-      });
-      setEditorModalOpen(false);
-      showToast({
-        type: "success",
-        title: isAddScenarioMode ? "Scenario Added" : "Scenario Updated",
-        message: isAddScenarioMode
-          ? "New integration test scenario added to workspace."
-          : "Integration test scenario changes saved.",
-      });
-      await load({ scan: false });
-      return true;
-    } catch (err) {
-      const msg = err.message || "Failed to save scenario.";
-      setEditorSaveError(msg);
-      setError(msg);
-      return false;
-    } finally {
-      setSavingScenario(false);
+    const codeStr = typeof savedData === "string" ? savedData : savedData.code;
+    const nextTitle = extractBlockTitle(
+      codeStr,
+      editorModalScenario?.testName || editorModalScenario?.title || "New scenario",
+    );
+    if (isAddScenarioMode) {
+      setPendingOps((prev) =>
+        stageAddOp(prev, {
+          aiTestId: editorModalScenario?.aiTestId || "default",
+          expectedVersion: editorModalScenario?.expectedVersion,
+          code: codeStr,
+          title: nextTitle,
+          testName: nextTitle,
+          endpoint: editorModalEndpoint,
+          endpointMethod: (editorModalEndpoint?.method || "GET").toUpperCase(),
+          endpointPath: editorModalEndpoint?.path || editorModalEndpoint?.fullPath || "/",
+          filePath: editorModalScenario?.filePath,
+          testFile: editorModalScenario?.filePath,
+        }),
+      );
+    } else {
+      setPendingOps((prev) =>
+        stageUpdateOp(prev, {
+          key: editorModalScenario?.id || `${editorModalScenario?.aiTestId || "ep"}::${editorModalScenario?.scenarioId || editorModalScenario?.testName}`,
+          id: editorModalScenario?.id,
+          aiTestId: editorModalScenario?.aiTestId || "default",
+          scenarioId: editorModalScenario?.scenarioId,
+          expectedVersion: editorModalScenario?.expectedVersion,
+          originalTestName: editorModalScenario?.testName || editorModalScenario?.title,
+          testName: nextTitle,
+          title: nextTitle,
+          code: codeStr,
+          endpoint: editorModalEndpoint,
+          filePath: editorModalScenario?.filePath,
+          testFile: editorModalScenario?.filePath,
+          origin: editorModalScenario?.origin,
+        }),
+      );
     }
+    setEditorModalOpen(false);
+    showToast({
+      type: "success",
+      title: isAddScenarioMode ? "Scenario Added (Temp)" : "Scenario Updated (Temp)",
+      message: "Saved in temporary workspace. Click Apply Changes to write to source.",
+    });
+    return true;
   };
 
   // Parse progress steps for active running job
@@ -1837,7 +1989,64 @@ export default function IntegrationWorkspace({
   };
 
   // Calculate failed scenarios list across all endpoints
-  const { endpoints = [], summary, execution, generation } = workspace || {};
+  const { endpoints: rawEndpoints = [], summary, execution, generation } = workspace || {};
+
+  const endpoints = useMemo(() => {
+    if (!pendingOpsCount) return rawEndpoints;
+    const deletes = pendingOps.deletes || [];
+    const updates = pendingOps.updates || [];
+    const adds = pendingOps.adds || [];
+    return rawEndpoints.map((ep) => {
+      const m = (ep.method || "GET").toUpperCase();
+      const p = ep.path || ep.fullPath || ep.route || "/";
+      const baseList = (ep.scenarios || [])
+        .filter((sc) => {
+          const t = {
+            key: sc.id,
+            id: sc.id,
+            aiTestId: sc.aiTestId,
+            scenarioId: sc.scenarioId,
+            testFile: sc.filePath || sc.testFile,
+            testName: sc.testName || sc.title,
+          };
+          return !deletes.some((d) => matchesStagedTarget(d, t));
+        })
+        .map((sc) => {
+          const t = {
+            key: sc.id,
+            id: sc.id,
+            aiTestId: sc.aiTestId,
+            scenarioId: sc.scenarioId,
+            testFile: sc.filePath || sc.testFile,
+            testName: sc.testName || sc.title,
+          };
+          const upd = updates.find((u) => matchesStagedTarget(u, t));
+          if (!upd) return sc;
+          return {
+            ...sc,
+            title: upd.title || sc.title,
+            testName: upd.testName || sc.testName,
+            code: upd.code,
+            stagedEdit: true,
+          };
+        });
+      const epAdds = adds
+        .filter((a) => (a.endpointMethod || "GET") === m && (a.endpointPath || "/") === p)
+        .map((a) => ({
+          id: a.id,
+          aiTestId: a.aiTestId,
+          title: a.title,
+          testName: a.testName,
+          code: a.code,
+          method: m,
+          path: p,
+          status: "draft",
+          origin: "STAGED_ADD",
+          stagedTemp: true,
+        }));
+      return { ...ep, scenarios: [...baseList, ...epAdds] };
+    });
+  }, [rawEndpoints, pendingOps, pendingOpsCount]);
 
   const availableApplyScenarios = useMemo(() => {
     const statusByTitle = new Map();
@@ -2810,6 +3019,28 @@ export default function IntegrationWorkspace({
                   (isJobActive && activeJobType === "EXECUTE")
                 }
                 runningKey={runningTargetKey}
+                pendingOpsCount={pendingOpsCount}
+                isApplyingPending={isApplyingPending}
+                onApplyPendingChanges={async () => {
+                  const ok = await flushPendingOps({ reload: true });
+                  if (ok) {
+                    showToast({
+                      type: "success",
+                      title: "Changes Applied",
+                      message: "All temporary scenario edits, additions, and deletions have been saved.",
+                    });
+                  }
+                }}
+                onDiscardPendingChanges={() => {
+                  const cleared = { deletes: [], updates: [], adds: [] };
+                  setPendingOps(cleared);
+                  saveStagedOps("integration", snapshotId, cleared);
+                  showToast({
+                    type: "info",
+                    title: "Temporary Edits Discarded",
+                    message: "Reverted temporary scenario changes in UI.",
+                  });
+                }}
               />
             </div>
           )}
@@ -3164,6 +3395,104 @@ export default function IntegrationWorkspace({
         </div>
       )}
 
+      {/* Zero-Test Integration Framework Picker Modal (only when zero libs & zero existing tests) */}
+      {frameworkPickerState.isOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 no-print"
+          onClick={() => setFrameworkPickerState({ isOpen: false, targets: null })}
+        >
+          <div
+            className="w-full max-w-lg bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text)] m-0">
+                  Choose Integration Testing Framework
+                </h3>
+                <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5">
+                  No API test library or existing integration test files were detected. Pick 1 of 2 supported runners.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFrameworkPickerState({ isOpen: false, targets: null })}
+                className="p-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {[
+                {
+                  id: "SUPERTEST",
+                  title: "Supertest + Jest",
+                  badge: "In-Memory",
+                  desc: "Fast Express / Node HTTP assertions with Istanbul/V8 endpoint line coverage.",
+                },
+                {
+                  id: "PLAYWRIGHT_API",
+                  title: "Playwright API",
+                  badge: "Contract",
+                  desc: "Full HTTP APIRequestContext workflow & contract testing against running endpoints.",
+                },
+              ].map((fw) => {
+                const selected = frameworkPickerChoice === fw.id;
+                return (
+                  <button
+                    key={fw.id}
+                    type="button"
+                    onClick={() => setFrameworkPickerChoice(fw.id)}
+                    className={`p-3.5 rounded-md border text-left transition-colors duration-150 cursor-pointer ${
+                      selected
+                        ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)] text-[var(--color-text)]"
+                        : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-mono font-bold text-xs text-[var(--color-text)]">{fw.title}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${
+                          selected
+                            ? "bg-[var(--color-primary)] text-white"
+                            : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"
+                        }`}
+                      >
+                        {fw.badge}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">{fw.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="px-5 py-3 bg-[var(--color-surface-secondary)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setFrameworkPickerState({ isOpen: false, targets: null })}
+                className="px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border)] cursor-pointer transition-colors duration-150"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const chosen = frameworkPickerChoice;
+                  const targets = frameworkPickerState.targets;
+                  setSelectedZeroTestFramework(chosen);
+                  setSetupFramework(chosen);
+                  setFrameworkPickerState({ isOpen: false, targets: null });
+                  handleGenerateClick(targets, chosen);
+                }}
+                className="px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] text-white hover:opacity-90 cursor-pointer transition-colors duration-150"
+              >
+                Generate with {frameworkPickerChoice === "PLAYWRIGHT_API" ? "Playwright API" : "Supertest"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 5. OTHER MODALS */}
       <SourceCodeViewerModal
         isOpen={sourceViewerOpen}
@@ -3181,6 +3510,8 @@ export default function IntegrationWorkspace({
         testIds={applyModalTestIds}
         scenarios={availableApplyScenarios}
         initialSelectedKeys={applyModalInitialKeys}
+        onBeforeApply={() => flushPendingOps({ reload: false })}
+        onAppliedSuccess={() => load({ scan: false })}
         onTriggerRerun={() => {
           setApplyModalOpen(false);
           handleRunApprovedTests(true);

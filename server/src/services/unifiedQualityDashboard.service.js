@@ -372,11 +372,7 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
 
   for (const sc of systemScenarios) {
     const key = extractDomainKey(sc.file || sc.suiteName || sc.title || "");
-    if (domainMap.has(key)) {
-      ensureDomain(key).systemScenarios.push(sc);
-    } else if (domainMap.size > 0) {
-      ensureDomain(key).systemScenarios.push(sc);
-    }
+    ensureDomain(key).systemScenarios.push(sc);
   }
 
   const rows = [];
@@ -564,7 +560,7 @@ export async function buildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     err.statusCode = 400;
     throw err;
   }
-  const flightKey = `${snapshotId}`;
+  const flightKey = `${snapshotId}:${userId || "anon"}`;
   if (!bypassCache && inFlightUnifiedBuilds.has(flightKey)) {
     return inFlightUnifiedBuilds.get(flightKey);
   }
@@ -655,6 +651,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     projectSnapshots,
     aiTestsList,
     historicalTestRuns,
+    snapshotSpecificRuns,
   ] = await Promise.all([
     prisma.projectSnapshot.findUnique({
       where: { id: snapshotId },
@@ -678,6 +675,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
             id: true,
             ownerId: true,
             name: true,
+            defaultBranch: true,
             lifecycleStatus: true,
             lifecycleUpdatedAt: true,
             updatedAt: true,
@@ -743,6 +741,19 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
         },
       },
     }),
+    prisma.testRun.findMany({
+      where: { snapshotId },
+      orderBy: { createdAt: "desc" },
+      take: 15,
+      include: {
+        snapshot: {
+          select: { id: true, commitSha: true, createdAt: true },
+        },
+        scenarios: {
+          omit: { executionDetails: true },
+        },
+      },
+    }),
   ]);
 
   if (!snapshot) {
@@ -776,9 +787,20 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   }
 
   const unitSummaryRecord = snapshot.coverageSummaries || null;
-  const snapshotRuns = (historicalTestRuns || []).filter(
-    (r) => r.snapshotId === snapshot.id
+  const mergedRunsMap = new Map();
+  for (const r of snapshotSpecificRuns || []) {
+    mergedRunsMap.set(r.id, r);
+  }
+  for (const r of historicalTestRuns || []) {
+    if (!mergedRunsMap.has(r.id)) mergedRunsMap.set(r.id, r);
+  }
+  const combinedHistoricalRuns = Array.from(mergedRunsMap.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
+  const snapshotRuns =
+    snapshotSpecificRuns?.length > 0
+      ? snapshotSpecificRuns
+      : combinedHistoricalRuns.filter((r) => r.snapshotId === snapshot.id);
   const latestUnitRun =
     (snapshotRuns || []).find((r) => ["JEST", "VITEST"].includes(r.type)) || null;
   const latestSystemRun =
@@ -832,9 +854,14 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       branch: displayCommit ? `git:${displayCommit.slice(0, 7)}` : "local",
       createdAt: s.createdAt,
       label: isActive ? `${baseLabel} — Active` : baseLabel,
+      rawLabel: baseLabel,
       isActive,
     };
   });
+  const activeSnapshotEntry = formattedSnapshots.find((s) => s.id === snapshot.id) || null;
+  const activeSnapshotLabel =
+    activeSnapshotEntry?.rawLabel ||
+    (snapshot.id ? snapshot.id.slice(0, 7) : "");
 
   // 3. Aggregate Unit Layer
   const startUnit = Date.now();
@@ -972,7 +999,16 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   const totalApis = Number(
     wsSummary.totalApis ?? wsSummary.discoveredApis ?? (endpoints.length || intTotalExecuted)
   );
-  const coveredApis = intTotalExecuted > 0 ? (coveredEpCount > 0 ? coveredEpCount : intPassed) : 0;
+  const coveredApis =
+    intTotalExecuted > 0 && totalApis > 0
+      ? Math.min(
+          totalApis,
+          Number(
+            wsSummary.endpointCoverageMetrics?.coveredEndpoints ??
+              (coveredEpCount > 0 ? coveredEpCount : intPassed)
+          )
+        )
+      : 0;
   const uncoveredApis = Math.max(0, totalApis - coveredApis);
   const intDurationMs = Number(wsSummary.durationMs ?? 0);
   const intAvgLatencyMs = Number(
@@ -986,7 +1022,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       ? 0
       : wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
       ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
-      : toFixedNum((coveredEpCount / totalApis) * 100);
+      : toFixedNum((coveredApis / totalApis) * 100);
 
   const intCodeCov = wsSummary.codeCoverage || {};
   const intCoverageMetrics = {
@@ -995,6 +1031,8 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     functions: intHasRuns ? toFixedNum(intCodeCov.function?.pct ?? intCodeCov.function ?? 0) : 0,
     statements: intHasRuns ? toFixedNum(intCodeCov.statement?.pct ?? intCodeCov.statement ?? 0) : 0,
     apiEndpoint: epCovPct,
+    coveredApis,
+    failedApis: failedEpCount,
     uncoveredApis,
     totalApis,
   };
@@ -1252,7 +1290,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
 
   // 8. Build Historical Runs & Trends across Project TestRuns
   const startHistory = Date.now();
-  const historyRuns = historicalTestRuns.map((run) => {
+  const historyRuns = combinedHistoricalRuns.map((run) => {
     const tType = String(run.type || "").toUpperCase();
     const pillarType =
       tType === "PLAYWRIGHT" || tType === "CYPRESS"
@@ -1335,7 +1373,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   });
 
   // Build chronological trend series from historical runs (oldest -> newest)
-  const chronologicalRuns = [...historicalTestRuns].reverse();
+  const chronologicalRuns = [...combinedHistoricalRuns].reverse();
   const trendSeries = [];
   let rollingUnitCov = unitLinesPct;
   let rollingIntCov = epCovPct;
@@ -1460,12 +1498,19 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     },
   };
 
-  // Compute health delta between firstPoint and lastPoint if multiple runs exist
+  // Compute health delta between previous and latest trend points using the weighted 50/30/20 health formula
   let healthDelta = null;
   if (trendSeries.length >= 2) {
-    const prevOverall = Number(trendSeries[trendSeries.length - 2].overallCoverage || 0);
-    const currOverall = Number(lastPoint.overallCoverage || 0);
-    healthDelta = toFixedNum(currOverall - prevOverall);
+    const computeTrendPointHealth = (pt) => {
+      const u = 0.5 * Number(pt?.unitPassRate || 0) + 0.5 * Number(pt?.unitCoverage || 0);
+      const i =
+        0.5 * Number(pt?.integrationPassRate || 0) + 0.5 * Number(pt?.integrationCoverage || 0);
+      const s = 0.5 * Number(pt?.systemPassRate || 0) + 0.5 * Number(pt?.systemCoverage || 0);
+      return u * 0.5 + i * 0.3 + s * 0.2;
+    };
+    const prevHealth = computeTrendPointHealth(trendSeries[trendSeries.length - 2]);
+    const currHealth = computeTrendPointHealth(lastPoint);
+    healthDelta = toFixedNum(currHealth - prevHealth);
   }
 
   // Multi-tier Quality Health Score (Weights: Unit 50%, Integration 30%, System 20%)
@@ -1483,10 +1528,14 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     healthScore = Math.max(0, healthScore - Math.min(15, totalFailures * 2));
   }
 
-  let healthGrade = "D";
-  if (healthScore >= 80) healthGrade = "A";
-  else if (healthScore >= 65) healthGrade = "B";
-  else if (healthScore >= 50) healthGrade = "C";
+  const totalExecutedTests = unitTotal + intTotalExecuted + sysTotal;
+  let healthGrade = "—";
+  if (totalExecutedTests > 0) {
+    if (healthScore >= 80) healthGrade = "A";
+    else if (healthScore >= 65) healthGrade = "B";
+    else if (healthScore >= 50) healthGrade = "C";
+    else healthGrade = "D";
+  }
 
   const hasProjectActivity =
     unitTotal + intTotalExecuted + sysTotal > 0 ||
@@ -1528,8 +1577,10 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     context: {
       projectId: snapshot.projectId,
       projectName: snapshot.project?.name || "CovAI Project",
+      branch: snapshot.project?.defaultBranch || "main",
       lifecycleStatus: effectiveLifecycleStatus,
       snapshotId: snapshot.id,
+      snapshotLabel: activeSnapshotLabel,
       commitSha: snapshot.commitSha || snapshot.id.slice(0, 7),
       snapshots: formattedSnapshots,
       activeSuiteRun,
@@ -1566,7 +1617,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   const historyTime = Date.now() - startHistory;
   if (!currentFingerprint) {
     const latestSnapshotRun =
-      (historicalTestRuns || []).find((r) => r.snapshotId === snapshot.id) ||
+      snapshotRuns[0] ||
       latestUnitRun ||
       latestSystemRun ||
       null;

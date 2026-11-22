@@ -56,6 +56,8 @@ export function isUnitTestFailed(tc) {
 
 /**
  * Classifies a unit test case into one of the 4 standard CovAI unit test categories.
+ * Checks explicit caseKey/category and explicit leading title tags first so that
+ * incidental words in a scenario description never misclassify its intended case.
  */
 export function classifyUnitTestCase(tc = {}) {
   const explicitKey =
@@ -64,40 +66,84 @@ export function classifyUnitTestCase(tc = {}) {
     return UNIT_CASE_DEFINITIONS[explicitKey];
   }
 
-  const text = [
-    tc.title || tc.testName || tc.name || "",
-    ...(Array.isArray(tc.ancestorTitles) ? tc.ancestorTitles : []),
-    tc.description || "",
-  ]
-    .join(" ")
-    .toLowerCase();
+  const rawTitle = String(tc.title || tc.testName || tc.name || "").trim();
 
+  // 1. Check explicit bracketed tag, category label, or leading TC-* prefix in title
   if (
-    /\b(error|errors|throw|throws|exception|reject|rejects|catch|fail|fails|failed|failure|invalid|malformed|unauthorized|forbidden|timeout|abort|crash)\b/.test(
-      text,
+    /^(?:\[\s*happy(?:\s*path)?\s*\]|happy\s*path\s*[:\-]|category\s*a\b|tc[-_\s]*happy\b)/i.test(
+      rawTitle,
     ) ||
-    /\b(400|401|403|404|409|422|500)\b/.test(text)
+    /\[\s*category\s*a\s*:\s*happy\s*path\s*\]/i.test(rawTitle)
+  ) {
+    return UNIT_CASE_DEFINITIONS.HAPPY;
+  }
+  if (
+    /^(?:\[\s*boundary(?:\s*\/\s*edge|\s*values?)?\s*\]|boundary(?:\s*\/\s*edge|\s*values?)?\s*[:\-]|category\s*b\b|tc[-_\s]*(?:bound(?:ary)?|edge)\b)/i.test(
+      rawTitle,
+    ) ||
+    /\[\s*category\s*b\s*:\s*boundary/i.test(rawTitle)
+  ) {
+    return UNIT_CASE_DEFINITIONS.BOUNDARY;
+  }
+  if (
+    /^(?:\[\s*branch(?:\s*paths?|\s*toggling|\s*coverage)?\s*\]|branch(?:\s*paths?|\s*toggling)?\s*[:\-]|category\s*c\b|tc[-_\s]*branch\b)/i.test(
+      rawTitle,
+    ) ||
+    /\[\s*category\s*c\s*:\s*branch/i.test(rawTitle)
+  ) {
+    return UNIT_CASE_DEFINITIONS.BRANCH;
+  }
+  if (
+    /^(?:\[\s*error(?:\s*handling|\s*&\s*exception)?\s*\]|error(?:\s*handling)?\s*[:\-]|category\s*d\b|tc[-_\s]*err(?:or)?\b)/i.test(
+      rawTitle,
+    ) ||
+    /\[\s*category\s*d\s*:\s*error/i.test(rawTitle)
   ) {
     return UNIT_CASE_DEFINITIONS.ERROR;
   }
 
-  if (
-    /\b(boundary|edge|null|undefined|empty|zero|negative|min|max|limit|overflow|nan|blank|missing|whitespace|single|truncated|large)\b/.test(
-      text,
-    )
-  ) {
-    return UNIT_CASE_DEFINITIONS.BOUNDARY;
-  }
+  // 2. Classify by title text first (before ancestorTitles so suite names don't hijack every test)
+  const matchKeywords = (str) => {
+    const s = String(str || "").toLowerCase();
+    if (!s) return null;
+    if (
+      /\b(error|errors|throw|throws|exception|reject|rejects|catch|fail|fails|failed|failure|invalid|malformed|unauthorized|forbidden|timeout|abort|crash)\b/.test(
+        s,
+      ) ||
+      /\b(400|401|403|404|409|422|500)\b/.test(s)
+    ) {
+      return UNIT_CASE_DEFINITIONS.ERROR;
+    }
+    if (
+      /\b(boundary|edge|null|undefined|empty|zero|negative|min|max|limit|overflow|nan|blank|missing|whitespace|single|truncated|large|falsy)\b/.test(
+        s,
+      )
+    ) {
+      return UNIT_CASE_DEFINITIONS.BOUNDARY;
+    }
+    if (
+      /\b(branch|when|if|else|switch|case|fallback|skip|ignore|toggle|already|duplicate|false|true|without|default|existing)\b/.test(
+        s,
+      )
+    ) {
+      return UNIT_CASE_DEFINITIONS.BRANCH;
+    }
+    if (/\b(happy|valid|success|standard|normal|correctly)\b/.test(s)) {
+      return UNIT_CASE_DEFINITIONS.HAPPY;
+    }
+    return null;
+  };
 
-  if (
-    /\b(branch|when|if|else|switch|case|fallback|skip|ignore|toggle|already|duplicate|false|true|without|default|existing)\b/.test(
-      text,
-    )
-  ) {
-    return UNIT_CASE_DEFINITIONS.BRANCH;
-  }
+  const titleMatch = matchKeywords(rawTitle);
+  if (titleMatch) return titleMatch;
 
-  return UNIT_CASE_DEFINITIONS.HAPPY;
+  const fullText = [
+    rawTitle,
+    tc.description || "",
+    ...(Array.isArray(tc.ancestorTitles) ? tc.ancestorTitles : []),
+  ].join(" ");
+
+  return matchKeywords(fullText) || UNIT_CASE_DEFINITIONS.HAPPY;
 }
 
 /**
@@ -140,9 +186,27 @@ function unitTestIdentity(tc, index) {
   );
 }
 
+export function isUserOrExistingUnitTest(tc = {}) {
+  const origin = String(tc?.origin || "").toUpperCase();
+  if (
+    origin === "AI_DRAFT" ||
+    origin === "AI_SUGGESTED" ||
+    origin === "AI" ||
+    origin === "AI_GENERATED" ||
+    tc?.isAiGenerated === true
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * Annotates unit test cases with which required Unit case they satisfy vs Duplicate / Optional,
- * matching Integration's scenario annotation model.
+ * enforcing user-vs-AI precedence:
+ * - If the user's existing test (PROJECT_EXISTING / USER) passed or has not failed yet,
+ *   the user's test is Primary (`Case: <Label>`) and any AI test for the same case is marked `Duplicate`.
+ * - If the user's existing test FAILED after running and an AI test for that case passed (or is valid),
+ *   the user's test is marked `Failed · <Label>` and the AI test becomes Primary (`Case: <Label>`).
  */
 export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases = []) {
   const requiredCases = getRequiredUnitCasesForFile(file, fileFunctions);
@@ -152,17 +216,28 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
     const def = classifyUnitTestCase(tc);
     const passed = isUnitTestPassed(tc);
     const failed = isUnitTestFailed(tc);
-    const isProjectExisting =
-      tc?.origin !== "AI_DRAFT" && tc?.origin !== "AI_SUGGESTED";
-    // Higher score wins primary slot per required case
-    const score =
-      (passed ? 100 : failed ? 20 : 50) + (isProjectExisting ? 10 : 0);
+    const isProjectExisting = isUserOrExistingUnitTest(tc);
+    let score;
+    if (isProjectExisting && !failed) {
+      // User's existing test is valid (passed or not yet failed) -> always preferred over AI
+      score = passed ? 220 : 200;
+    } else if (!isProjectExisting && !failed) {
+      // AI test is valid (passed or pending draft) -> takes over Primary if user test failed or is absent
+      score = passed ? 170 : 150;
+    } else if (isProjectExisting && failed) {
+      score = 40;
+    } else {
+      score = 20;
+    }
     return {
       tc,
       index,
       id: unitTestIdentity(tc, index),
       key: def.key,
       def,
+      passed,
+      failed,
+      isProjectExisting,
       score,
     };
   });
@@ -199,10 +274,11 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       continue;
     }
 
+    const winner = bestForKey.get(entry.key);
     const isPrimary = primaryByKey.get(entry.key) === entry.id;
     if (isPrimary) {
-      const passed = isUnitTestPassed(entry.tc);
-      const failed = isUnitTestFailed(entry.tc);
+      const passed = entry.passed;
+      const failed = entry.failed;
       annotations[entry.id] = {
         badgeType: passed
           ? "PRIMARY_PASS"
@@ -213,6 +289,22 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
         caseKey: reqDef.key,
         caseLabel: reqDef.label,
         isRemovableSuggestion: false,
+      };
+    } else if (
+      entry.isProjectExisting &&
+      entry.failed &&
+      winner &&
+      !winner.isProjectExisting &&
+      !winner.failed
+    ) {
+      // User's pre-existing test failed after running and was superseded by a valid AI test
+      annotations[entry.id] = {
+        badgeType: "PRIMARY_FAIL",
+        badgeLabel: `Failed · ${reqDef.label}`,
+        caseKey: reqDef.key,
+        caseLabel: reqDef.label,
+        isRemovableSuggestion: true,
+        supersededByAi: true,
       };
     } else {
       redundantCount++;
@@ -259,8 +351,8 @@ export function getFileUnitCaseCoverage(
   const cases = requiredCases.map((c) => ({
     ...c,
     covered: coveredKeys.has(c.key),
-    passed: passedKeys.has(c.key) && !failedKeys.has(c.key),
-    failed: failedKeys.has(c.key),
+    passed: passedKeys.has(c.key),
+    failed: failedKeys.has(c.key) && !passedKeys.has(c.key),
   }));
 
   const coveredCount = cases.filter((c) => c.covered).length;

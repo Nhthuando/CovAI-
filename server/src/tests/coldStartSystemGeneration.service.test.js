@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, jest, afterEach } from '@jest/globals';
+import { describe, it, test, expect, jest, afterEach } from '@jest/globals';
 import { harvestFrontendContext, collectSystemGenerationContext } from '../services/systemGenerationContext.service.js';
 import { extractValidationFacts, buildTestDesignChecklist, formatTestDesignForPrompt } from '../services/systemValidationFacts.service.js';
 import { SYSTEM_PROMPT_VERSION, SYSTEM_TEST_DESIGN_RULES, systemTestPromptRules, testDesignPromptSection } from '../services/systemTestPrompt.service.js';
@@ -14,6 +14,7 @@ import {
   generateColdStartSystemTests,
 } from '../services/verifiedSystemGeneration.service.js';
 import { validateGeneratedTestCode } from '../validators/aiTestCode.validator.js';
+import { systemDraftModuleExtension } from '../services/systemGenerationProposal.service.js';
 
 const tempDirs = [];
 const createTempDir = () => {
@@ -30,6 +31,17 @@ afterEach(() => {
   }
 });
 
+describe('systemDraftModuleExtension', () => {
+  test.each([
+    ['CommonJS require', "const { test, expect } = require('@playwright/test');", 'cjs'],
+    ['ESM import', "import { test } from '@playwright/test'", 'mjs'],
+    ['mixed import and require', "import { test } from '@playwright/test';\nconst fs = require('node:fs');", 'mjs'],
+    ['empty source', '', 'mjs'],
+  ])('selects the extension for %s', (_label, code, extension) => {
+    expect(systemDraftModuleExtension(code)).toBe(extension);
+  });
+});
+
 describe('Phase 2: Cold-Start AI System Test Generator', () => {
   describe('Validation facts and test design', () => {
     const files = [{ path: 'src/App.jsx', content: 'export default function App() { return <input name="password" minLength={8} />; }' }];
@@ -37,6 +49,16 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       const validationFacts = extractValidationFacts({ files });
       return { sourceCode: files, routes: ['/'], uiActions: [], validationFacts, testDesign: buildTestDesignChecklist({ facts: validationFacts }) };
     };
+
+    test('does not warn when extracting validation facts from package.json', () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        extractValidationFacts({ files: [{ path: 'package.json', content: '{\n "name": "x"\n}' }] });
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
 
     it('collects validation facts and a deterministic checklist from a temporary project', () => {
       const dir = createTempDir();
@@ -110,6 +132,74 @@ test('READ home heading',async({page})=>{
   await test.step('Assert: heading',async()=>{await expect(page.getByRole('heading',{name:'Welcome'})).toBeVisible();});
   await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
 });`;
+    describe('Cold-start scenario metadata', () => {
+      const scenario = {
+        id: 'read-home-heading',
+        title: 'READ home heading',
+        criterionIds: [],
+        preconditions: [],
+        inputs: [],
+        actions: ['Open the home page'],
+        expected: ['The Welcome heading is visible'],
+        sourceReferences: ['src/App.jsx'],
+      };
+      const wrongMetadata = JSON.stringify({
+        content: validCode,
+        scenarios: [scenario, { ...scenario, id: 'extra', title: 'Extra scenario' }],
+      });
+      const generateFullSystemTests = (generate) => generateColdStartSystemTests({
+        rootDir: createTempDir(),
+        executionMode: 'full',
+        dependencies: {
+          generate,
+          collect: () => ({
+            routes: ['/'],
+            sourceCode: [{ path: 'src/App.jsx', content: 'export default () => <h1>Welcome</h1>;' }],
+          }),
+        },
+      });
+
+      test('keeps validated code when both scenario metadata responses have the wrong count', async () => {
+        const generate = jest.fn().mockResolvedValue(wrongMetadata);
+        const result = await generateFullSystemTests(generate);
+
+        expect(generate).toHaveBeenCalledTimes(2);
+        expect(result.generationMetadata.metadataStatus).toBe('CODE_ONLY');
+        expect(result.code).toBe(validCode);
+      });
+
+      test('keeps validated code when the metadata repair request fails', async () => {
+        const generate = jest.fn()
+          .mockResolvedValueOnce(wrongMetadata)
+          .mockRejectedValueOnce(Object.assign(new Error('[503 Service Unavailable] high demand'), { status: 503 }));
+        const result = await generateFullSystemTests(generate);
+
+        expect(generate).toHaveBeenCalledTimes(2);
+        expect(result.generationMetadata.metadataStatus).toBe('CODE_ONLY');
+        expect(result.code).toBe(validCode);
+      });
+
+      test('accepts corrected scenario metadata and includes the exact titles in the repair prompt', async () => {
+        const generate = jest.fn()
+          .mockResolvedValueOnce(wrongMetadata)
+          .mockResolvedValueOnce(JSON.stringify({ content: validCode, scenarios: [scenario] }));
+        const result = await generateFullSystemTests(generate);
+
+        expect(result.generationMetadata.metadataStatus).toBe('DRAFT');
+        expect(generate.mock.calls[1][0]).toContain(
+          'If you include "scenarios", it must contain exactly 1 entries, one per test, whose "title" values are exactly: ["READ home heading"]. Each entry needs non-empty "actions", "expected" and "sourceReferences".',
+        );
+        expect(generate.mock.calls[1][0]).toContain('The test code itself passed validation; keep it unchanged and fix only "scenarios".');
+      });
+
+      test('rejects generation when both code responses have a syntax error', async () => {
+        const generate = jest.fn().mockResolvedValue(JSON.stringify({ content: validCode + '\nconst invalid = ;' }));
+
+        await expect(generateFullSystemTests(generate)).rejects.toThrow();
+        expect(generate).toHaveBeenCalledTimes(2);
+      });
+    });
+
     const additionalTests = checklist.map((item) => `
 // covers: ${item.id}
 test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.input.length}-character password',async({page})=>{

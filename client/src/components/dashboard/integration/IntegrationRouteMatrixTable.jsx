@@ -111,6 +111,10 @@ export default function IntegrationRouteMatrixTable({
   isRunning = false,
   generatingKey = null,
   runningKey = null,
+  pendingOpsCount = 0,
+  isApplyingPending = false,
+  onApplyPendingChanges = null,
+  onDiscardPendingChanges = null,
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [methodFilter, setMethodFilter] = useState("ALL");
@@ -737,6 +741,31 @@ export default function IntegrationRouteMatrixTable({
                 <Plus className="w-3.5 h-3.5 text-[var(--color-primary)]" />
                 <span>New Scenario</span>
               </button>
+            )}
+
+            {pendingOpsCount > 0 && onApplyPendingChanges && (
+              <div className="inline-flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onApplyPendingChanges}
+                  disabled={isApplyingPending || isRunning}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                  title="Apply staged UI edits, additions, and deletions to repository source"
+                >
+                  <HardDriveDownload className="w-3.5 h-3.5" />
+                  <span>{isApplyingPending ? "Applying..." : `Apply Changes (${pendingOpsCount})`}</span>
+                </button>
+                {onDiscardPendingChanges && !isApplyingPending && (
+                  <button
+                    type="button"
+                    onClick={onDiscardPendingChanges}
+                    className="px-2 py-1.5 rounded-md text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-bg)] cursor-pointer"
+                    title="Discard temporary edits"
+                  >
+                    Discard
+                  </button>
+                )}
+              </div>
             )}
 
             <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] pl-1">

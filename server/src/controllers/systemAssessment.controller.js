@@ -82,7 +82,19 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
     };
     return {
         capabilities: handler(async (req, res) => { await owned(req); res.json({ success: true, data: assessmentCapabilities() }); }),
-        catalog: handler(async (req, res) => { const snapshot = await owned(req); const scenarios = await client.systemScenario.findMany({ where: { snapshotId: snapshot.id }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] }); res.json({ success: true, data: { scenarios:fullStackCatalog(scenarios,snapshot.rootDir), discoveryStatus: scenarios.length ? 'DISCOVERED' : 'NOT_SCANNED' } }); }),
+        catalog: handler(async (req, res) => {
+            const snapshot = await owned(req);
+            if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
+                try {
+                    const synced = await syncSystemScenarioCatalog({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir });
+                    if (synced?.scenarios) {
+                        return res.json({ success: true, data: { scenarios: synced.scenarios, discoveryStatus: synced.scenarios.length ? 'DISCOVERED' : 'NOT_SCANNED' } });
+                    }
+                } catch (_) {}
+            }
+            const scenarios = await client.systemScenario.findMany({ where: { snapshotId: snapshot.id }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] });
+            res.json({ success: true, data: { scenarios: fullStackCatalog(scenarios, snapshot.rootDir), discoveryStatus: scenarios.length ? 'DISCOVERED' : 'NOT_SCANNED' } });
+        }),
         catalogFeatures: handler(async (req, res) => { const snapshot = await owned(req); if (!snapshot.rootDir) throw new ServiceError('Snapshot source is not ready', 409); res.json({ success: true, data: { features: discoverScenarioFeatures(snapshot.rootDir) } }); }),
         syncCatalog: handler(async (req, res) => { enabled(); const snapshot = await owned(req); if (!snapshot.rootDir) throw new ServiceError('Snapshot source is not ready', 409); res.json({ success: true, data: await withLease(snapshot.id, () => syncSystemScenarioCatalog({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir })) }); }),
         prepareCatalog: handler(async (req, res) => {
