@@ -129,8 +129,15 @@ export async function ensureVitestEnvironment({rootDir,directory,config=findVite
 export function groupVitestProjects(rootDir, files) {
     const root = path.resolve(rootDir), groups = new Map();
     const isProjectSubroot = (dir) => {
-        if (findVitestConfig(dir)) return true;
-        if (dir !== root && fs.existsSync(path.join(dir, 'package.json'))) {
+        if (dir === root) return false;
+        const hasPkg = fs.existsSync(path.join(dir, 'package.json'));
+        if (findVitestConfig(dir)) {
+            // Only treat a nested vitest.config.* folder as a separate cwd subroot when it has its own package.json.
+            // Nested config folders without package.json (e.g. examples/vitest/vitest.config.mts) expect cwd at the
+            // parent package root so relative fixture/feature paths resolve from workspace root.
+            return hasPkg;
+        }
+        if (hasPkg) {
             try {
                 const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
                 if (pkg.devDependencies?.vitest || pkg.dependencies?.vitest || pkg.scripts?.test?.includes('vitest')) {

@@ -225,9 +225,24 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
             explicitConfig = (value || '').replace(/^(["'])(.*)\1$/, '$2');
         }
     }
-    const config = explicitConfig ?? (hasRootOverride ? null : findVitestConfig(executionDir) ??
-        (!hasBackendDir ? ['examples/vitest/vitest.config.mts', 'examples/vitest/vitest.config.ts']
-            .find(file => fs.existsSync(path.join(executionDir, file))) : null));
+    const findNestedVitestConfig = () => {
+        if (Array.isArray(specificFiles) && specificFiles.length > 0) {
+            let dir = path.dirname(path.resolve(rootDir, specificFiles[0]));
+            const execAbs = path.resolve(executionDir);
+            while (dir !== execAbs && !path.relative(execAbs, dir).startsWith('..')) {
+                const found = findVitestConfig(dir);
+                if (found) return path.relative(execAbs, path.join(dir, found)).replaceAll('\\', '/');
+                const parent = path.dirname(dir);
+                if (parent === dir) break;
+                dir = parent;
+            }
+        }
+        return !hasBackendDir
+            ? ['examples/vitest/vitest.config.mts', 'examples/vitest/vitest.config.ts']
+                .find(file => fs.existsSync(path.join(executionDir, file)))
+            : null;
+    };
+    const config = explicitConfig ?? (hasRootOverride ? null : findVitestConfig(executionDir) ?? findNestedVitestConfig());
     const configArg = explicitConfig === undefined && config ? `--config "${config}"` : '';
     const createdHarnessFiles = options?.createdHarnessFiles || new Set();
     let setupValidation = null;
