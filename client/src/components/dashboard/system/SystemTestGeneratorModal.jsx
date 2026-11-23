@@ -25,6 +25,7 @@ export default function SystemTestGeneratorModal({
   projectId,
   executionMode = "full",
   initialFramework = "playwright",
+  frameworksData = null,
   initialView = "latest",
   onStarted,
   onSuccess,
