@@ -19,5 +19,6 @@ jobs:
           port: 22
           script_stop: true
           script: |
-            cd ~/CovAI
+            cd /home/dinh/CovAI-
+            chmod +x ./deploy.sh
             ./deploy.sh
