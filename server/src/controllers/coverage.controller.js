@@ -5575,7 +5575,7 @@ export const getSystemTestSummary = async (req, res) => {
     const totalTests = latestRun.totalTests || 0;
     const passedTests = latestRun.passedTests || 0;
     const failedTests = latestRun.failedTests || 0;
-    const failedScenarios = latestRun.scenarios.some(
+    const failedScenarios = (latestRun.scenarios || []).some(
       (scenario) => scenario.status === "failed",
     )
       ? await prisma.testScenario.findMany({
@@ -5805,15 +5805,14 @@ export const getSystemTestScenarios = async (req, res) => {
         snapshotId,
         type: { in: ["PLAYWRIGHT", "CYPRESS"] },
         ...resultFilter,
+        ...(testRunId ? { id: testRunId } : {}),
       },
       orderBy: { createdAt: "desc" },
-      take: 12,
+      take: testRunId ? 1 : 12,
       include: { scenarios: true, testFiles: true },
     });
-    let targetRun = testRunId
-      ? recentSystemRuns.find((r) => r.id === testRunId) || recentSystemRuns[0] || null
-      : recentSystemRuns[0] || null;
-    if (targetRun && recentSystemRuns.length > 1) {
+    let targetRun = recentSystemRuns[0] || null;
+    if (!testRunId && recentSystemRuns.length > 1) {
       const mergedScenariosMap = new Map();
       const mergedFilesMap = new Map();
       for (const run of recentSystemRuns) {
@@ -7529,11 +7528,13 @@ export const aiFixUnitTestCaseController = async (req, res) => {
       req.user?.id,
       "ai.use",
     );
-    await resolveProjectAccess({
-      projectId: snapshot.projectId,
-      userId: req.user?.id,
-      capability: "files.write",
-    });
+    if (!req.body?.isDraft) {
+      await resolveProjectAccess({
+        projectId: snapshot.projectId,
+        userId: req.user?.id,
+        capability: "files.write",
+      });
+    }
     const { aiFixUnitTestCase } =
       await import("../services/unitTestCaseOperations.service.js");
     const data = await aiFixUnitTestCase({
@@ -7680,11 +7681,13 @@ export const aiFixSystemTestCaseController = async (req, res) => {
       req.user?.id,
       "ai.use",
     );
-    await resolveProjectAccess({
-      projectId: snapshot.projectId,
-      userId: req.user?.id,
-      capability: "files.write",
-    });
+    if (!req.body?.isDraft) {
+      await resolveProjectAccess({
+        projectId: snapshot.projectId,
+        userId: req.user?.id,
+        capability: "files.write",
+      });
+    }
     const { aiFixSystemTestCase } =
       await import("../services/systemTestCaseOperations.service.js");
     const data = await aiFixSystemTestCase({

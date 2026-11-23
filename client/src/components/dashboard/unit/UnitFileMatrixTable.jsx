@@ -514,8 +514,11 @@ export default function UnitFileMatrixTable({
                   const isSelected = selectedFiles.has(entry.filePath);
                   const role = inferRoleBadge(entry.filePath);
                   const testCount = (entry.testCases || []).length;
-                  const fnCount = (entry.functions || []).length || Number(entry.funcsTotal || 0);
-                  const uncoveredFns = (entry.functions || []).filter((f) => Number(f.hit || 0) === 0);
+                  const fnCov = entry.caseCov?.functionCoverage;
+                  const fnList = fnCov?.functions?.length ? fnCov.functions : (entry.functions || []);
+                  const fnCount = fnCov?.totalFunctions ?? (fnList.length || Number(entry.funcsTotal || 0));
+                  const coveredFnCount = fnCov?.coveredFunctions ?? fnList.filter((f) => Boolean(f.covered) || Number(f.hit || 0) > 0).length;
+                  const uncoveredFns = fnCov?.uncoveredFunctions ?? fnList.filter((f) => Number(f.hit || 0) === 0);
 
                   return (
                     <React.Fragment key={entry.filePath}>
@@ -716,7 +719,7 @@ export default function UnitFileMatrixTable({
                                   <span>
                                     Functions:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {entry.funcsCovered ?? Math.max(0, fnCount - uncoveredFns.length)}/{entry.funcsTotal || fnCount} ({Number(entry.funcsPct ?? 0).toFixed(1)}%)
+                                      {coveredFnCount}/{fnCount} ({Number(entry.funcsPct ?? 0).toFixed(1)}%)
                                     </span>
                                   </span>
                                   <span>
@@ -935,7 +938,7 @@ export default function UnitFileMatrixTable({
                                               </button>
                                             )}
 
-                                            {failed && onAIFixTestCase && !isDraft && (
+                                            {failed && onAIFixTestCase && (
                                               <button
                                                 type="button"
                                                 onClick={() => onAIFixTestCase(tc, entry)}

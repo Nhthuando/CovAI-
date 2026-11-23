@@ -74,6 +74,16 @@ const TRIVIAL_CALLBACK_NAMES = new Set([
   "done",
   "resolve",
   "reject",
+  "addeventlistener",
+  "removeeventlistener",
+  "addlistener",
+  "removelistener",
+  "dispatchevent",
+  "clearinterval",
+  "cleartimeout",
+  "requestidlecallback",
+  "pushstate",
+  "replacestate",
 ]);
 
 export function isTrivialCallbackFunctionName(rawName = "") {
@@ -84,7 +94,7 @@ export function isTrivialCallbackFunctionName(rawName = "") {
     .toLowerCase();
   if (!clean) return true;
   if (TRIVIAL_CALLBACK_NAMES.has(clean)) return true;
-  if (/^anonymous_\d+$/i.test(clean) || /^fn_\d+$/i.test(clean)) return true;
+  if (/^anonymous_\d+$/i.test(clean) || /^fn_\d+$/i.test(clean) || /^<anonymous@[^>]+>$/i.test(clean)) return true;
   return false;
 }
 

@@ -1031,6 +1031,7 @@ export const generateColdStartSystemTests = async ({
     const { ast } = validateGeneratedTestCode(candidateCode);
     validatePlainJavaScript(candidateCode);
     let candidateQuality;
+    let metadataError;
     let candidateMetadata = { scenarios: [], metadataStatus: "CODE_ONLY" };
     if (normFramework === "playwright") {
       if (executionMode === "full") validateFullSystemTest(candidateCode);
@@ -1059,10 +1060,7 @@ export const generateColdStartSystemTests = async ({
       } catch (error) {
         error.expectedTitles = metadataOptions.titles;
         if (!allowCodeOnlyMetadata) throw error;
-        console.warn(
-          "[verifiedSystemGeneration] Coverage follow-up metadata rejected; keeping code-only metadata:",
-          error.message,
-        );
+        metadataError = error;
         candidateMetadata = { scenarios: [], metadataStatus: "CODE_ONLY" };
       }
     }
@@ -1070,6 +1068,7 @@ export const generateColdStartSystemTests = async ({
       code: candidateCode,
       quality: candidateQuality,
       generationMetadata: candidateMetadata,
+      metadataError,
     };
   };
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -1193,6 +1192,12 @@ Previous candidate (untrusted code): ${code}`;
         checklist,
       });
       if (candidateCoverage.covered.length > coverage.covered.length) {
+        if (candidate.metadataError) {
+          console.warn(
+            "[verifiedSystemGeneration] Coverage follow-up metadata rejected; keeping code-only metadata:",
+            candidate.metadataError.message,
+          );
+        }
         ({ code, quality, generationMetadata } = candidate);
         lastTelemetry = followUp?.telemetry || lastTelemetry;
         coverage = candidateCoverage;

@@ -49,6 +49,7 @@ function resolveSafeTestFile(snapshotRootDir, relTestFile, { mustExist = true } 
     diskRoot: path.resolve(diskRoot),
     resolvedRoot: path.resolve(resolvedRoot),
     absPath,
+    exists: fs.existsSync(absPath),
     relPath: path.relative(path.resolve(diskRoot), absPath).replace(/\\/g, "/"),
   };
 }
@@ -301,11 +302,18 @@ export async function aiFixUnitTestCase({
   testName,
   failureMessage = "",
   currentCode = "",
+  fullTestContent = "",
+  isDraft = false,
   framework = "jest",
   model = null,
 }) {
-  const { diskRoot, absPath, relPath } = resolveSafeTestFile(snapshot.rootDir, testFile, { mustExist: true });
-  const originalContent = fs.readFileSync(absPath, "utf8");
+  const { diskRoot, absPath, relPath, exists } = resolveSafeTestFile(snapshot.rootDir, testFile, {
+    mustExist: !isDraft && !fullTestContent,
+  });
+  const diskContent = exists ? fs.readFileSync(absPath, "utf8") : "";
+  const originalContent = isDraft
+    ? (fullTestContent || diskContent || currentCode || "")
+    : (diskContent || fullTestContent || "");
   const blocks = extractUnitTestBlocks(originalContent);
   const target = findMatchingBlock(blocks, testName);
 
@@ -360,20 +368,23 @@ export async function aiFixUnitTestCase({
   }
 
   assertValidTestSyntax(updatedContent, relPath);
-  fs.writeFileSync(absPath, updatedContent, "utf8");
+  const draftMode = Boolean(isDraft || !exists);
+  if (!draftMode) {
+    fs.writeFileSync(absPath, updatedContent, "utf8");
 
-  persistWithVersion({
-    snapshotId: snapshot.id,
-    diskRoot,
-    projectId: snapshot.projectId,
-    sourceFile,
-    relTestFile: relPath,
-    originalContent,
-    updatedContent,
-    framework,
-    summary: `AI Fix for failing test: ${testName || path.basename(relPath)} (${failureSummary})`,
-    isExisting: true,
-  });
+    persistWithVersion({
+      snapshotId: snapshot.id,
+      diskRoot,
+      projectId: snapshot.projectId,
+      sourceFile,
+      relTestFile: relPath,
+      originalContent,
+      updatedContent,
+      framework,
+      summary: `AI Fix for failing test: ${testName || path.basename(relPath)} (${failureSummary})`,
+      isExisting: true,
+    });
+  }
 
   return {
     testFile: relPath,
@@ -381,5 +392,6 @@ export async function aiFixUnitTestCase({
     fixedBlock: cleanFix,
     updatedContent,
     failureSummary,
+    isDraft: draftMode,
   };
 }

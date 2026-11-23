@@ -4,6 +4,7 @@ import path from 'node:path';
 import { jest, describe, test, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   classifyUnitTestCase,
+  isTrivialCallbackFunctionName,
   getRequiredUnitCasesForFile,
   getTestableUnitFunctions,
   getFileUnitFunctionCoverage,
@@ -26,6 +27,8 @@ const {
   deleteUnitTestCase,
   aiFixUnitTestCase,
 } = await import('../services/unitTestCaseOperations.service.js');
+const { generateFallbackUnitTests } = await import('../services/unitTestSuggestion.service.js');
+const { verifyAndRefineUnitTestDraft } = await import('../services/unitTestGenerator.service.js');
 
 describe('shared/unitTestCaseCoverage', () => {
   test('derives required unit test cases from file branches and function metrics', () => {
@@ -205,5 +208,180 @@ describe('unitTestCaseOperations.service', () => {
     const onDisk = fs.readFileSync(path.join(tmpRoot, 'tests', 'unit', 'math.test.js'), 'utf8');
     expect(onDisk).toContain('expect(add(2, 3)).toBe(5)');
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  test('filters DOM/event listener callback noise consistently and generates per-function fallback tests for non-export scripts', () => {
+    expect(isTrivialCallbackFunctionName('addEventListener')).toBe(true);
+    expect(isTrivialCallbackFunctionName('removeEventListener')).toBe(true);
+    expect(isTrivialCallbackFunctionName('<anonymous@L689C23>')).toBe(true);
+
+    const fnCov = getFileUnitFunctionCoverage(
+      { funcsPct: 0, linesPct: 0 },
+      [
+        { functionName: 'debug', startLine: 48, hit: 0 },
+        { functionName: 'getWebsiteConfig', startLine: 53, hit: 0 },
+        { functionName: 'find', startLine: 55, hit: 0 },
+        { functionName: 'addEventListener', startLine: 368, hit: 0 },
+        { functionName: 'extractArticleContent', startLine: 59, hit: 0 },
+        { functionName: 'handleNavigation', startLine: 133, hit: 0 },
+      ],
+      [],
+    );
+    expect(fnCov.totalFunctions).toBe(4);
+    expect(fnCov.functions.map((f) => f.name)).toEqual([
+      'debug',
+      'getWebsiteConfig',
+      'extractArticleContent',
+      'handleNavigation',
+    ]);
+
+    const browserScript = [
+      'function debug(msg) { console.log(msg); }',
+      'function getWebsiteConfig() { return window.location.hostname; }',
+      'function extractArticleContent() { return document.querySelector("article")?.textContent || ""; }',
+      'function handleNavigation() { return history.pushState({}, "", "/x"); }',
+      'function sendEvent() { return fetch("/api/events"); }',
+      'function storePendingEvent() { return chrome.storage.local.get(["pendingEvents"], () => {}); }',
+      'document.addEventListener("DOMContentLoaded", () => { handleNavigation(); });',
+    ].join('\n');
+
+    const fallback = generateFallbackUnitTests({
+      framework: 'jest',
+      sourceFile: 'extension/content.js',
+      targetTestFile: 'tests/content.test.js',
+      baseName: 'content',
+      sourceCode: browserScript,
+    });
+    const generatedCode = fallback.fullUpdatedContent || fallback.suggestedTestCode || '';
+    const blocks = extractUnitTestBlocks(generatedCode);
+    expect(blocks.length).toBeGreaterThanOrEqual(6);
+    expect(generatedCode).toContain('[debug]');
+    expect(generatedCode).toContain('[extractArticleContent]');
+    expect(generatedCode).toContain('[handleNavigation]');
+    expect(generatedCode).not.toContain('module [Category A: Happy Path]');
+  });
+
+  test('aiFixUnitTestCase repairs unapplied AI_DRAFT tests in memory without requiring disk presence', async () => {
+    mockGenerateText.mockResolvedValueOnce(
+      "```javascript\nit('subtracts safely', () => {\n  expect(sub(5, 2)).toBe(3);\n});\n```",
+    );
+
+    const draftTestFile = 'tests/unit/draft-only.test.js';
+    const fullDraft = [
+      "import { sub } from '../../src/math.js';",
+      "describe('math draft', () => {",
+      "  it('subtracts safely', () => {",
+      '    expect(sub(5, 2)).toBe(999);',
+      '  });',
+      '});',
+    ].join('\n');
+
+    const fixed = await aiFixUnitTestCase({
+      snapshot,
+      sourceFile: 'src/math.js',
+      testFile: draftTestFile,
+      testName: 'subtracts safely',
+      failureMessage: 'Expected: 999, Received: 3',
+      currentCode: "it('subtracts safely', () => {\n  expect(sub(5, 2)).toBe(999);\n});",
+      fullTestContent: fullDraft,
+      isDraft: true,
+      framework: 'jest',
+    });
+
+    expect(fixed.isDraft).toBe(true);
+    expect(fixed.updatedContent).toContain('expect(sub(5, 2)).toBe(3)');
+    expect(fs.existsSync(path.join(tmpRoot, draftTestFile))).toBe(false);
+  });
+
+  test('verifyAndRefineUnitTestDraft repairs failing assertions and fills uncovered business functions to 100%', async () => {
+    const srcRel = 'src/calc.js';
+    const testRel = 'tests/unit/calc.test.js';
+    fs.writeFileSync(
+      path.join(tmpRoot, srcRel),
+      'export function add(a, b) { return a + b; }\nexport function mul(a, b) { return a * b; }\n',
+      'utf8',
+    );
+    const initialDraft = [
+      "import { add, mul } from '../../src/calc.js';",
+      "describe('calc', () => {",
+      "  it('[add] adds numbers', () => { expect(add(1, 2)).toBe(99); });",
+      '});',
+    ].join('\n');
+
+    let evalCalls = 0;
+    const mockEval = async (code) => {
+      evalCalls++;
+      if (evalCalls === 1) {
+        return {
+          passedTests: 0,
+          failedTests: 1,
+          failedScenarios: [{ title: '[add] adds numbers', error: 'Expected: 99, Received: 3' }],
+          linesPct: 50,
+          branchesPct: 100,
+          funcsPct: 50,
+          stmtsPct: 50,
+          uncoveredFns: [{ name: 'mul', line: 2 }],
+          uncoveredLines: [2],
+          uncoveredBranchLines: [],
+        };
+      }
+      expect(code).toContain('[mul]');
+      return {
+        passedTests: 2,
+        failedTests: 0,
+        failedScenarios: [],
+        linesPct: 100,
+        branchesPct: 100,
+        funcsPct: 100,
+        stmtsPct: 100,
+        uncoveredFns: [],
+        uncoveredLines: [],
+        uncoveredBranchLines: [],
+      };
+    };
+
+    const mockAi = async (prompt) => {
+      expect(prompt).toContain('mul() at line 2');
+      expect(prompt).toContain('Expected: 99, Received: 3');
+      return JSON.stringify({
+        explanation: 'Fixed [add] expectation and added [mul] coverage.',
+        suggestedTestCode: [
+          "import { add, mul } from '../../src/calc.js';",
+          "describe('calc', () => {",
+          "  it('[add] adds numbers', () => { expect(add(1, 2)).toBe(3); });",
+          "  it('[mul] multiplies numbers', () => { expect(mul(2, 3)).toBe(6); });",
+          '});',
+        ].join('\n'),
+        fullUpdatedContent: [
+          "import { add, mul } from '../../src/calc.js';",
+          "describe('calc', () => {",
+          "  it('[add] adds numbers', () => { expect(add(1, 2)).toBe(3); });",
+          "  it('[mul] multiplies numbers', () => { expect(mul(2, 3)).toBe(6); });",
+          '});',
+        ].join('\n'),
+      });
+    };
+
+    const refined = await verifyAndRefineUnitTestDraft({
+      rootDir: tmpRoot,
+      snapshot,
+      suggestion: {
+        sourceFile: srcRel,
+        testFile: testRel,
+        framework: 'jest',
+        fullUpdatedContent: initialDraft,
+        suggestedTestCode: initialDraft,
+      },
+      runEvaluator: mockEval,
+      generateTextFn: mockAi,
+    });
+
+    expect(refined.validation.status).toBe('VERIFIED_DRAFT');
+    expect(refined.validation.coverageGoalStatus).toBe('MET');
+    expect(refined.validation.passedTests).toBe(2);
+    expect(refined.validation.failedTests).toBe(0);
+    expect(refined.validation.funcsPct).toBe(100);
+    expect(refined.validation.linesPct).toBe(100);
+    expect(refined.testCases).toHaveLength(2);
   });
 });

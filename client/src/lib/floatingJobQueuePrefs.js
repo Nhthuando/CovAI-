@@ -118,9 +118,9 @@ export const JOB_TYPE_META = Object.freeze({
     description: "Generating AI test & improvement suggestions",
   },
   AI_TESTS: {
-    domain: "unit",
-    label: "AI Test Generator",
-    description: "Synthesizing AI test scenarios and assertions",
+    domain: "integration",
+    label: "Integration AI Tests",
+    description: "Synthesizing API integration test scenarios and assertions",
   },
   SUPERTEST_COVERAGE: {
     domain: "integration",

@@ -41,6 +41,7 @@ import {
   sanitizeAllProjectTestFiles,
   cleanAndDeduplicateTestContent,
   healImportPathsInTestCode,
+  ensureNodeDomFallback,
 } from "./testSanitizer.service.js";
 import {
   cleanStoragePath,
@@ -49,6 +50,7 @@ import {
 } from "../utils/pathSanitizer.js";
 import {
   isBusinessLogicSourceFile,
+  isTestFilePath,
   extractProjectCoverageExclusions,
 } from "../utils/businessLogicFileDetector.js";
 import {
@@ -3362,6 +3364,9 @@ export const runJestCoverage = async (
           ? filesToPass.map((f) => `<rootDir>/${f.replace(/\\/g, "/")}`)
           : baseTestMatch;
 
+      const subPackagePrefixes = Array.from(packageGroups.keys())
+        .filter((k) => Boolean(k))
+        .map((k) => `${k.replace(/\\/g, "/").replace(/\/+$/, "")}/`);
       const scopedCollectCoverageFrom = [];
       if (
         isExplicitFiles &&
@@ -3371,11 +3376,19 @@ export const runJestCoverage = async (
         for (const sf of options.targetSourceFiles) {
           if (!sf || typeof sf !== "string") continue;
           const canonSf = canonicalizeFilePath(sf, rootDir).replace(/^\/+/, "");
-          if (canonSf && fs.existsSync(path.join(rootDir, canonSf))) {
+          if (!canonSf || isTestFilePath(canonSf)) continue;
+          if (subPackagePrefixes.some((pfx) => canonSf.startsWith(pfx))) continue;
+          if (fs.existsSync(path.join(rootDir, canonSf))) {
             scopedCollectCoverageFrom.push(canonSf);
           }
         }
       }
+      const rootTestNamePattern =
+        options?.testNamePattern &&
+        typeof options.testNamePattern === "string" &&
+        options.testNamePattern.trim()
+          ? options.testNamePattern.trim()
+          : null;
 
       const filteredSetupFiles = filterExistingSetupFiles(
         cleanProjectJestConfig?.setupFiles,
@@ -3402,6 +3415,7 @@ export const runJestCoverage = async (
           ...(scopedCollectCoverageFrom.length > 0
             ? { collectCoverageFrom: scopedCollectCoverageFrom }
             : {}),
+          ...(rootTestNamePattern ? { testNamePattern: rootTestNamePattern } : {}),
           testEnvironment: resolveTestEnvironment(
             rootDir,
             rootDir,
@@ -3474,9 +3488,6 @@ export const runJestCoverage = async (
             .join(" ");
           jestCmd += ` ${isExplicitFiles ? "--runTestsByPath " : ""}${fileArgs}`;
         }
-        if (options?.testNamePattern && typeof options.testNamePattern === "string" && options.testNamePattern.trim()) {
-          jestCmd += ` --testNamePattern=${JSON.stringify(options.testNamePattern.trim())}`;
-        }
       } catch (configErr) {
         console.warn(
           `[runJestCoverage] Warning creating primary Jest config at ${tempConfigPath}:`,
@@ -3494,6 +3505,10 @@ export const runJestCoverage = async (
             const fallbackConfig = {
               testEnvironment: "node",
               testMatch: ["**/*.test.[jt]s", "**/*.spec.[jt]s"],
+              ...(scopedCollectCoverageFrom.length > 0
+                ? { collectCoverageFrom: scopedCollectCoverageFrom }
+                : {}),
+              ...(rootTestNamePattern ? { testNamePattern: rootTestNamePattern } : {}),
               moduleFileExtensions: [
                 "js",
                 "jsx",
@@ -3522,8 +3537,12 @@ export const runJestCoverage = async (
             .join(" ");
           jestCmd += ` ${isExplicitFiles ? "--runTestsByPath " : ""}${fileArgs}`;
         }
-        if (options?.testNamePattern && typeof options.testNamePattern === "string" && options.testNamePattern.trim()) {
-          jestCmd += ` --testNamePattern=${JSON.stringify(options.testNamePattern.trim())}`;
+        if (
+          !tempConfigCreated &&
+          rootTestNamePattern &&
+          rootTestNamePattern.length <= 1500
+        ) {
+          jestCmd += ` --testNamePattern=${JSON.stringify(rootTestNamePattern)}`;
         }
       }
 
@@ -3857,9 +3876,44 @@ export const runJestCoverage = async (
         },
       );
 
+      const subScopedCoverageFiles = [];
+      if (
+        Array.isArray(specificFiles) &&
+        specificFiles.length > 0 &&
+        Array.isArray(options?.targetSourceFiles) &&
+        options.targetSourceFiles.length > 0
+      ) {
+        const normPkgPrefix =
+          pkgDir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+        for (const sf of options.targetSourceFiles) {
+          if (!sf || typeof sf !== "string") continue;
+          const canonSf = canonicalizeFilePath(sf, rootDir).replace(/^\/+/, "");
+          if (!canonSf || isTestFilePath(canonSf)) continue;
+          if (!canonSf.startsWith(normPkgPrefix)) continue;
+          const relToPkg = canonSf.slice(normPkgPrefix.length);
+          if (relToPkg && fs.existsSync(path.join(targetDir, relToPkg))) {
+            subScopedCoverageFiles.push(relToPkg.replace(/\\/g, "/"));
+          }
+        }
+      }
+      const subCollectCoverageFrom =
+        subScopedCoverageFiles.length > 0
+          ? subScopedCoverageFiles
+          : fs.existsSync(path.join(targetDir, "src"))
+            ? ["src/**/*.{js,jsx,ts,tsx}", "!src/**/*.d.ts"]
+            : null;
+      const subTestNamePattern =
+        options?.testNamePattern &&
+        typeof options.testNamePattern === "string" &&
+        options.testNamePattern.trim()
+          ? options.testNamePattern.trim()
+          : null;
+
       try {
         const subConfig = {
           ...cleanPkgJestConfig,
+          ...(subCollectCoverageFrom ? { collectCoverageFrom: subCollectCoverageFrom } : {}),
+          ...(subTestNamePattern ? { testNamePattern: subTestNamePattern } : {}),
           testPathIgnorePatterns: [
             ...(Array.isArray(cleanPkgJestConfig?.testPathIgnorePatterns)
               ? cleanPkgJestConfig.testPathIgnorePatterns
@@ -3958,7 +4012,15 @@ export const runJestCoverage = async (
         try {
           fs.writeFileSync(
             tempSubConfigPath,
-            JSON.stringify({ testEnvironment: "node" }, null, 2),
+            JSON.stringify(
+              {
+                testEnvironment: "node",
+                ...(subCollectCoverageFrom ? { collectCoverageFrom: subCollectCoverageFrom } : {}),
+                ...(subTestNamePattern ? { testNamePattern: subTestNamePattern } : {}),
+              },
+              null,
+              2,
+            ),
             "utf8",
           );
           tempSubConfigCreated = true;
@@ -3970,37 +4032,21 @@ export const runJestCoverage = async (
         ? ` --config="${tempSubConfigName}"`
         : "";
       const subJestBin = resolveJestBin(targetDir, isSubEsm);
-      const subScopedCoverageFiles = [];
-      if (
-        Array.isArray(specificFiles) &&
-        specificFiles.length > 0 &&
-        Array.isArray(options?.targetSourceFiles) &&
-        options.targetSourceFiles.length > 0
-      ) {
-        const normPkgPrefix =
-          pkgDir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
-        for (const sf of options.targetSourceFiles) {
-          if (!sf || typeof sf !== "string") continue;
-          const canonSf = canonicalizeFilePath(sf, rootDir).replace(/^\/+/, "");
-          const relToPkg = canonSf.startsWith(normPkgPrefix)
-            ? canonSf.slice(normPkgPrefix.length)
-            : canonSf;
-          if (relToPkg && fs.existsSync(path.join(targetDir, relToPkg))) {
-            subScopedCoverageFiles.push(relToPkg.replace(/\\/g, "/"));
-          }
-        }
-      }
       const collectSrcFlag =
-        subScopedCoverageFiles.length > 0
-          ? subScopedCoverageFiles
+        !tempSubConfigCreated && subCollectCoverageFrom
+          ? subCollectCoverageFrom
               .map((f) => ` --collectCoverageFrom="${f}"`)
               .join("")
-          : fs.existsSync(path.join(targetDir, "src"))
-            ? ' --collectCoverageFrom="src/**/*.{js,jsx,ts,tsx}" --collectCoverageFrom="!src/**/*.d.ts"'
-            : "";
+          : "";
+      const subTestNameFlag =
+        !tempSubConfigCreated &&
+        subTestNamePattern &&
+        subTestNamePattern.length <= 1500
+          ? ` --testNamePattern=${JSON.stringify(subTestNamePattern)}`
+          : "";
       const subWorkerFlags = getOptimalWorkerFlags(subFiles.length);
       const subJestCmd =
-        `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --json --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`
+        `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag}${subTestNameFlag} --json --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`
           .replace(/\s+/g, " ")
           .trim();
 
@@ -5117,7 +5163,15 @@ export function materializeDraftTestsForRun(rootDir, draftTests = []) {
     const existed = fs.existsSync(absTest);
     const prevContent = existed ? fs.readFileSync(absTest, "utf8") : null;
     tempDraftBackups.push({ absPath: absTest, existed, prevContent });
-    fs.writeFileSync(absTest, draft.code, "utf8");
+    let preparedCode = draft.code;
+    const requestsJsdom = /@jest-environment\s+jsdom/.test(preparedCode);
+    if (requestsJsdom && resolveTestEnvironment(path.dirname(absTest), resolvedRoot, "jsdom") === "node") {
+      preparedCode = preparedCode.replace(/@jest-environment\s+jsdom/g, "@jest-environment node");
+      preparedCode = ensureNodeDomFallback(preparedCode, { force: true });
+    } else {
+      preparedCode = ensureNodeDomFallback(preparedCode);
+    }
+    fs.writeFileSync(absTest, preparedCode, "utf8");
 
     const normRelTest = relTest.toLowerCase();
     if (draft.sourceFile) {
@@ -5778,6 +5832,12 @@ export const processRunTestsJob = async (jobId, options = {}) => {
     const scopedSourceKeys = new Set(
       scopedLogicFiles.map((lf) => canonicalizeFilePath(lf.relativePath, rootDir)),
     );
+    if (isTargetedUnitRun) {
+      runnerOptions.targetSourceFiles =
+        scopedSourceKeys.size > 0
+          ? Array.from(scopedSourceKeys)
+          : requestedTargetFiles.filter((f) => f && !isTestFilePath(f));
+    }
 
     if (isTargetedUnitRun) {
       await addJobLog(
@@ -6659,16 +6719,110 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             }
           }
         }
+        // Automatic In-Flight DOM / Browser Fallback Healing (for suite-load ReferenceError: window/document/chrome/location is not defined)
+        const domRefMatch = fullOutput.match(
+          /ReferenceError:\s*(window|document|navigator|location|localStorage|sessionStorage|chrome|Event|CustomEvent)\s+is not defined/i,
+        );
+        const missingJsdomEnv = /Test environment jest-environment-jsdom cannot be found/i.test(fullOutput);
+        if (
+          (domRefMatch || missingJsdomEnv) &&
+          !attemptedDependencies.has("covai-dom-fallback-heal")
+        ) {
+          attemptedDependencies.add("covai-dom-fallback-heal");
+          let healedDomAny = false;
+          try {
+            const candidateFiles = new Set();
+            for (const m of fullOutput.matchAll(
+              /^\s*FAIL\s+([^\s(]+\.(?:test|spec|unit)\.[cm]?[jt]sx?)\b/gm,
+            )) {
+              candidateFiles.add(m[1].replace(/\\/g, "/").replace(/^\/+/, ""));
+            }
+            for (const m of fullOutput.matchAll(
+              /\(\s*([^():\s]+\.(?:test|spec|unit)\.[cm]?[jt]sx?):\d+:\d+\s*\)/g,
+            )) {
+              candidateFiles.add(m[1].replace(/\\/g, "/").replace(/^\/+/, ""));
+            }
+
+            const allTestFiles = [...(jestFiles || []), ...(vitestFiles || [])];
+            const filesToPatch = allTestFiles.filter((tf) => {
+              const normTf = String(tf || "").replace(/\\/g, "/");
+              if (candidateFiles.size === 0) return true;
+              for (const hint of candidateFiles) {
+                if (normTf === hint || normTf.endsWith(`/${hint}`) || hint.endsWith(`/${normTf}`)) {
+                  return true;
+                }
+              }
+              return false;
+            });
+
+            if (!draftRunState) {
+              draftRunState = {
+                tempDraftBackups: [],
+                tempCreatedDirs: [],
+                draftSourceByTestRel: new Map(),
+                draftFrameworkByTestRel: new Map(),
+              };
+            }
+            const trackedPaths = new Set(
+              (draftRunState.tempDraftBackups || []).map((b) => path.resolve(b.absPath)),
+            );
+
+            for (const tf of filesToPatch) {
+              const absTf = path.isAbsolute(tf) ? path.resolve(tf) : path.resolve(rootDir, tf);
+              if (!fs.existsSync(absTf)) continue;
+              const orig = fs.readFileSync(absTf, "utf8");
+              let updated = orig.replace(/@jest-environment\s+jsdom/g, "@jest-environment node");
+              updated = ensureNodeDomFallback(updated, { force: true });
+              if (updated !== orig) {
+                if (!trackedPaths.has(absTf)) {
+                  draftRunState.tempDraftBackups.push({
+                    absPath: absTf,
+                    existed: true,
+                    prevContent: orig,
+                  });
+                  trackedPaths.add(absTf);
+                }
+                fs.writeFileSync(absTf, updated, "utf8");
+                healedDomAny = true;
+              }
+            }
+          } catch (domHealErr) {
+            console.warn("[runTestsJob] Error during automatic DOM fallback healing:", domHealErr.message);
+          }
+
+          if (healedDomAny) {
+            await addJobLog(
+              jobId,
+              "INFO",
+              `[RUN_TESTS] Detected missing browser/DOM globals (${domRefMatch?.[1] || "jsdom"}). Injected Node DOM fallback shim and re-running suite...`,
+            ).catch(() => {});
+            for (const sf of staleCoverageFiles) {
+              for (const covTargetDir of [
+                coverageDir,
+                unitCoverageDir,
+                activeCoverageDir,
+                activeUnitCoverageDir,
+              ]) {
+                try {
+                  if (covTargetDir && fs.existsSync(path.join(covTargetDir, sf)))
+                    fs.unlinkSync(path.join(covTargetDir, sf));
+                } catch {}
+              }
+            }
+            continue;
+          }
+        }
+
         // Automatic In-Flight AI Draft Assertion & Coverage Self-Healing
         if (
           draftRunState?.tempDraftBackups?.length > 0 &&
           !attemptedDependencies.has("covai-draft-assertion-heal") &&
-          (runnerResult.exitCode !== 0 ||
-            reportedScenarios.some(
-              (sc) =>
-                String(sc.status || "").toLowerCase() === "failed" ||
-                sc.isSuiteLevelFailure,
-            ))
+          !/command line is too long/i.test(fullOutput) &&
+          reportedScenarios.some(
+            (sc) =>
+              String(sc.status || "").toLowerCase() === "failed" ||
+              sc.isSuiteLevelFailure,
+          )
         ) {
           attemptedDependencies.add("covai-draft-assertion-heal");
           let healedDraftAny = false;
@@ -6894,14 +7048,24 @@ export const processRunTestsJob = async (jobId, options = {}) => {
         const brokenSuite = reportedScenarios.find(
           (scenario) => scenario.isSuiteLevelFailure,
         );
+        const hasAnyExecutedCoverage =
+          Boolean(hasValidCoverage) &&
+          Boolean(validSummaryData) &&
+          (Object.entries(validSummaryData).some(
+            ([k, v]) =>
+              k !== "total" &&
+              ((v?.lines?.covered || 0) > 0 ||
+                (v?.statements?.covered || 0) > 0 ||
+                (v?.functions?.covered || 0) > 0),
+          ) ||
+            pendingTestRuns.some((r) => (r.passedTests || 0) > 0));
 
         // Case 1: Fatal crash / Runner failed before generating valid coverage
-        // Suite-load errors invalidate coverage. Assertion failures can still produce usable coverage.
+        // Suite-load errors invalidate coverage ONLY when no partial tests executed with valid coverage.
         if (
           !hasValidCoverage ||
           runnerResult.exitCode === null ||
-          modResError ||
-          brokenSuite
+          ((modResError || brokenSuite) && !hasAnyExecutedCoverage)
         ) {
           const existingSummary = await prisma.coverageSummary.findUnique({
             where: { snapshotId },

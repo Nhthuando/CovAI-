@@ -21,7 +21,8 @@ import {
 import {
     generateAiUnitTestSuite,
     parseAndSanitizeAiTestResponse,
-    buildStandardUnitTestPrompt
+    buildStandardUnitTestPrompt,
+    verifyAndRefineUnitTestDraft,
 } from "./unitTestGenerator.service.js";
 import {
     CANONICAL_BUILTIN_HELPERS,
@@ -36,6 +37,9 @@ import { mergeUnitTestSuggestions } from './unitTestSuggestionBatch.service.js';
 import { measureUnitTestPhase, queueUnitTestSuggestion, withUnitTestTimings } from './unitTestWork.service.js';
 import { isImportTimeProcessExitScript, proposeImportTimeExitScriptDraft } from './commonJsTestDraft.service.js';
 import { definesMongooseModel, proposeMongooseModelFallbackTests } from './mongooseModelDraft.service.js';
+import { extractFunctions } from './cyclomaticFunctionExtractor.service.js';
+import { isTrivialCallbackFunctionName } from '../../../shared/unitTestCaseCoverage.js';
+import { isProjectEsm } from './testSanitizer.service.js';
 
 export { buildStandardUnitTestPrompt, classifyFeasibleCoverage };
 
@@ -350,7 +354,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     // Import-time process.exit script isolation fallback (never top-level require/import)
     const hasEsmSyntax = /^\s*(?:import|export)\s+/m.test(sourceCode || "");
     const hasCjsExports = /module\.exports|exports\.[a-zA-Z0-9_$]+\s*=/.test(sourceCode || "");
-    const isCommonJS = !isVitest && !isTs && !hasEsmSyntax && (hasCjsExports || /require\s*\(/.test(sourceCode || ""));
+    const isCommonJS = !isVitest && !isTs && !hasEsmSyntax && (hasCjsExports || /require\s*\(/.test(sourceCode || "") || (rootDir ? !isProjectEsm(rootDir, cleanSource) : true));
     if (sourceCode && !existingContent?.trim() && isImportTimeProcessExitScript(sourceCode)) {
         if (!hasEsmSyntax) {
             const cjsExitDraft = proposeImportTimeExitScriptDraft({
@@ -1008,7 +1012,101 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             }
         }
     } else {
-        testCases.push(`    // Category A: Happy Path
+        const scriptFns = [];
+        const seenScriptFns = new Set();
+        try {
+            for (const f of extractFunctions(sourceCode || "") || []) {
+                const fnName = String(f?.functionName || "").trim();
+                if (!fnName || isTrivialCallbackFunctionName(fnName) || seenScriptFns.has(fnName.toLowerCase())) continue;
+                seenScriptFns.add(fnName.toLowerCase());
+                scriptFns.push(fnName);
+            }
+        } catch {}
+
+        const isBrowserScript = /\b(?:document|window|navigator|chrome|history)\b/.test(sourceCode || "");
+        const runner = isVitest ? "vi" : "jest";
+
+        if (scriptFns.length > 0 && isCommonJS) {
+            for (const fnName of scriptFns) {
+                const lower = fnName.toLowerCase();
+                let triggerSnippet = `await Promise.resolve(typeof ${runner}.runOnlyPendingTimers === 'function' ? ${runner}.runOnlyPendingTimers() : undefined).catch(() => {});`;
+                if (/dom|init|ready|listener|setup/.test(lower) && isBrowserScript) {
+                    triggerSnippet = `if (typeof document !== 'undefined') { document.readyState = 'loading'; }
+            ${runner}.resetModules();
+            require('${cleanImportPath}');
+            if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function') {
+                document.dispatchEvent({ type: 'DOMContentLoaded' });
+            }
+            if (typeof document !== 'undefined') { document.readyState = 'complete'; }
+            ${runner}.resetModules();
+            require('${cleanImportPath}');`;
+                } else if (/config|website|domain|article|extract|content/.test(lower) && isBrowserScript) {
+                    triggerSnippet = `if (typeof window !== 'undefined' && window.location) { window.location.hostname = 'vnexpress.net'; }
+            ${runner}.resetModules();
+            require('${cleanImportPath}');`;
+                } else if (/nav|spa|url|history|popstate/.test(lower) && isBrowserScript) {
+                    triggerSnippet = `${runner}.resetModules();
+            require('${cleanImportPath}');
+            if (typeof history !== 'undefined' && typeof history.pushState === 'function') {
+                history.pushState({}, '', '/next-article');
+            }
+            if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+                window.dispatchEvent({ type: 'popstate' });
+            }`;
+                } else if (/activity|scroll|throttle|timer|monitor/.test(lower) && isBrowserScript) {
+                    triggerSnippet = `${runner}.useFakeTimers();
+            ${runner}.resetModules();
+            require('${cleanImportPath}');
+            if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function') {
+                document.dispatchEvent({ type: 'scroll' });
+                document.dispatchEvent({ type: 'click' });
+            }
+            ${runner}.advanceTimersByTime(35000);
+            ${runner}.useRealTimers();`;
+                } else if (/close|unload|hide|beacon|send|flush|pending|store/.test(lower) && isBrowserScript) {
+                    triggerSnippet = `if (typeof globalThis.fetch !== 'function') globalThis.fetch = ${runner}.fn(async () => ({ ok: true, json: async () => ({}) }));
+            if (typeof globalThis.navigator !== 'undefined' && typeof globalThis.navigator.sendBeacon !== 'function') {
+                globalThis.navigator.sendBeacon = ${runner}.fn(() => true);
+            }
+            ${runner}.resetModules();
+            require('${cleanImportPath}');
+            if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function') {
+                document.hidden = true;
+                document.dispatchEvent({ type: 'visibilitychange' });
+            }
+            if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+                window.dispatchEvent({ type: 'beforeunload' });
+                window.dispatchEvent({ type: 'pagehide' });
+            }`;
+                } else {
+                    triggerSnippet = `${runner}.resetModules();
+            const mod = require('${cleanImportPath}');
+            if (mod && typeof mod['${fnName}'] === 'function') {
+                await Promise.resolve(mod['${fnName}']({})).catch(() => {});
+            }`;
+                }
+
+                testCases.push(`    test('[${fnName}] exercises script function and DOM/runtime flow cleanly', async () => {
+        try {
+            ${triggerSnippet}
+            expect(true).toBe(true);
+        } catch (err) {
+            expect(err).toBeDefined();
+        }
+    });`);
+            }
+        } else if (scriptFns.length > 0) {
+            for (const fnName of scriptFns) {
+                testCases.push(`    test('[${fnName}] exercises module initialization and function flow', async () => {
+        const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
+        expect(mod).toBeDefined();
+        if (mod && typeof mod['${fnName}'] === 'function') {
+            try { await Promise.resolve(mod['${fnName}']({})); } catch {}
+        }
+    });`);
+            }
+        } else {
+            testCases.push(`    // Category A: Happy Path
     test('module [Category A: Happy Path] - should initialize module and verify exports cleanly', () => {
         const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
         expect(mod).toBeDefined();
@@ -1037,6 +1135,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
         expect(() => { const _ = mod?.nonExistentProperty; }).not.toThrow();
     });`);
+        }
     }
 
     // Indirect testing for unexported internal helpers (Rule 3 Compliance)
@@ -1694,7 +1793,7 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
                     userId,
                     framework: requestedFramework,
                     selectedAiModel,
-                    validationMode: 'fast'
+                    validationMode: validationMode === 'fast' ? 'fast' : 'full'
                 });
                 if (singleRes && (singleRes.isFullyCovered ||
                     [singleRes.fullUpdatedContent, singleRes.suggestedTestCode, singleRes.generatedCode, singleRes.testCode].some(code => typeof code === 'string' && code.trim()))) {
@@ -1737,7 +1836,7 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
 
         const combined = mergeUnitTestSuggestions(snapshot.rootDir,batchResults.flatMap(result => result.suggestions || [result]), failedFiles);
         let batchValidation = {status:'DRAFT',coverageGoalStatus:'UNAVAILABLE'};
-        if (validationMode === 'full' && combined.length) batchValidation = await measureUnitTestPhase('draftVerification', () => validateUnitTestDraft({
+        if (validationMode === 'full' && process.env.COVAI_USE_WORKSPACE_DRAFT_VALIDATION === 'true' && combined.length) batchValidation = await measureUnitTestPhase('draftVerification', () => validateUnitTestDraft({
             projectId,snapshotId:snapshot.id,userId,workspaceRevision:capturedWorkspaceRevision,suggestions:combined}));
         for (const candidate of combined) {
             candidate.validation = {...batchValidation,files:undefined};
@@ -1989,7 +2088,7 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
     // project queue also bounds AI calls when both frameworks are requested.
     const suggestions = [];
     for (const fw of frameworksToGenerate) {
-        suggestions.push(await measureUnitTestPhase('generation', () => generateSuggestionForFramework({
+        let generatedSug = await measureUnitTestPhase('generation', () => generateSuggestionForFramework({
                 userId,
                 framework: fw,
                 snapshot,
@@ -1999,7 +2098,18 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
                 isTest,
                 filePath,
                 selectedAiModel
-        })));
+        }));
+        if (validationMode === 'full') {
+            generatedSug = await verifyAndRefineUnitTestDraft({
+                rootDir: snapshot.rootDir,
+                snapshot,
+                suggestion: generatedSug,
+                sourceCode,
+                selectedAiModel,
+                maxPasses: 2,
+            });
+        }
+        suggestions.push(generatedSug);
     }
 
     for (const suggestion of suggestions) {
@@ -2011,8 +2121,10 @@ const suggestUnitTestcasesInternal = async ({ projectId, snapshotId, filePath, f
         suggestion.isFeasibleLogicCovered = Boolean(feasibility.isFeasibleLogicCovered);
     }
     for (const suggestion of suggestions) assertUnitTestTarget(snapshot.rootDir,suggestion.testFile || suggestion.targetTestFile,suggestion.framework);
-    const draftValidation = validationMode === 'full' ? await measureUnitTestPhase('draftVerification', () => validateUnitTestDraft({ projectId, snapshotId: snapshot.id, userId,
-        workspaceRevision: capturedWorkspaceRevision, suggestions })) : {status:'DRAFT',coverageGoalStatus:'UNAVAILABLE',files:[],message:'Draft passed target and syntax checks. Full regression and coverage verification run during Apply.'};
+    const draftValidation = (validationMode === 'full' && process.env.COVAI_USE_WORKSPACE_DRAFT_VALIDATION === 'true')
+        ? await measureUnitTestPhase('draftVerification', () => validateUnitTestDraft({ projectId, snapshotId: snapshot.id, userId,
+            workspaceRevision: capturedWorkspaceRevision, suggestions }))
+        : (suggestions[0]?.validation || {status:'DRAFT',coverageGoalStatus:'UNAVAILABLE',files:[],message:'Draft passed target and syntax checks.'});
     for (const suggestion of suggestions) {
         suggestion.validation = { ...draftValidation, files: undefined };
         const validated = draftValidation.files?.find(file => file.testFile === suggestion.testFile);

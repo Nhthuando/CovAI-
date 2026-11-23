@@ -236,9 +236,55 @@ export const harvestApiDeepContext = ({ endpoint = {}, sourceCode = [] } = {}) =
         if (fileObj && fileObj.content) {
             const lines = fileObj.content.split("\n");
             const start = Math.max(0, (endpoint.controllerLineStart || endpoint.controllerLine || 1) - 1);
-            const end = Math.min(lines.length, endpoint.controllerLineEnd || (start + 30));
+            const end = Math.min(lines.length, endpoint.controllerLineEnd || (start + 120));
             controllerSnippet = lines.slice(start, end).join("\n");
         }
+    }
+
+    // 1.5 Collect locally imported service/validator modules referenced by controller/route
+    const importedModules = [];
+    const seenImported = new Set();
+    const resolveLocalImportsFrom = (sourceContent, baseFilePath) => {
+        if (!sourceContent || !baseFilePath) return;
+        const normBase = normalizeFilePath(baseFilePath);
+        const baseParts = normBase.split("/").slice(0, -1);
+        const importRe = /(?:import\s+[\s\S]*?from\s+|require\s*\(\s*)['"](\.[^'"]+)['"]/g;
+        let m;
+        while ((m = importRe.exec(sourceContent)) !== null) {
+            const rel = m[1];
+            const stack = [...baseParts];
+            for (const seg of rel.split("/")) {
+                if (!seg || seg === ".") continue;
+                if (seg === "..") stack.pop();
+                else stack.push(seg);
+            }
+            const joined = stack.join("/");
+            const targetObj = (sourceCode || []).find((f) => {
+                const fp = normalizeFilePath(f.path || f.filePath || "");
+                return fp === joined || fp === `${joined}.js` || fp === `${joined}/index.js`;
+            });
+            if (targetObj && targetObj.content) {
+                const fp = targetObj.path || targetObj.filePath;
+                if (!seenImported.has(fp)) {
+                    seenImported.add(fp);
+                    importedModules.push({ filePath: fp, content: targetObj.content });
+                }
+            }
+        }
+    };
+    const ctrlObj = controllerFile
+        ? (sourceCode || []).find((f) => {
+            const p = normalizeFilePath(f.path || f.filePath || "");
+            return p === normalizeFilePath(controllerFile) || p.endsWith(normalizeFilePath(controllerFile));
+        })
+        : null;
+    if (ctrlObj?.content) resolveLocalImportsFrom(ctrlObj.content, ctrlObj.path || ctrlObj.filePath);
+    if (endpoint.routerFile) {
+        const routerObj = (sourceCode || []).find((f) => {
+            const p = normalizeFilePath(f.path || f.filePath || "");
+            return p === normalizeFilePath(endpoint.routerFile) || p.endsWith(normalizeFilePath(endpoint.routerFile));
+        });
+        if (routerObj?.content) resolveLocalImportsFrom(routerObj.content, routerObj.path || routerObj.filePath);
     }
 
     // 2. Harvest Branch Conditions from Controller Snippet
@@ -277,6 +323,7 @@ export const harvestApiDeepContext = ({ endpoint = {}, sourceCode = [] } = {}) =
         path: routePath,
         controllerFile: endpoint.controllerFile || "unknown",
         controllerSnippet,
+        importedModules,
         branchConditions,
         relatedModels,
         frontendCallers,
@@ -330,20 +377,29 @@ export const buildIntegrationTestPrompt = ({
 
     if (isPlaywright) {
         prompt += `#### Playwright API Testing Guidelines:\n`;
-        prompt += `- Use \`import { test, expect } from '@playwright/test';\` (or \`require\` if CommonJS).\n`;
+        prompt += `- Use a SINGLE \`import { test, expect } from '@playwright/test';\` statement at the top of the file.\n`;
         prompt += `- Use the built-in \`request\` fixture in test arguments: \`test('title', async ({ request }) => { ... });\`.\n`;
         prompt += `- Use standard Playwright API methods: \`await request.get(path)\`, \`await request.post(path, { data: payload })\`, \`await request.put(...)\`, \`await request.delete(...)\`.\n`;
         prompt += `- Status assertions: \`expect(res.status()).toBe(200)\` or \`expect(res.ok()).toBeTruthy()\`.\n`;
-        prompt += `- Body assertions: \`const body = await res.json(); expect(body).toHaveProperty('id');\`.\n`;
+        prompt += `- Body assertions: assert ONLY fields actually returned by the controller/service below (never invent fields like \`weeklyStats\` unless seen in source code).\n`;
         prompt += `- Target file path MUST start with: \`tests/api/\` (e.g. \`tests/api/orders.api.spec.js\`).\n\n`;
     } else {
         prompt += `#### Supertest + Jest Guidelines:\n`;
-        prompt += `- Use \`import request from 'supertest';\` and import the Express app module.\n`;
+        prompt += `- Follow the repository's module system and existing integration test mocking pattern shown below (if ESM \`"type": "module"\`, use \`import { jest, describe, it, expect, beforeEach } from '@jest/globals';\` and \`await jest.unstable_mockModule(...)\` BEFORE dynamically importing routes/app; if CommonJS, use \`require\` and \`jest.mock(...)\`).\n`;
+        prompt += `- Mock external AI/network/payment/email services (e.g. \`ai.service.js\`, \`@google/generative-ai\`) and Prisma/DB modules when existing tests do so, so tests pass deterministically offline without live API keys.\n`;
         prompt += `- Use inline chain calls: \`const res = await request(app).post(path).send(payload);\`.\n`;
         prompt += `- Status assertions: \`expect(res.status).toBe(200);\`.\n`;
-        prompt += `- Body assertions: \`expect(res.body).toHaveProperty('id');\`.\n`;
-        prompt += `- DO NOT call \`app.listen()\`. Import the app instance directly.\n`;
+        prompt += `- Body assertions: assert ONLY fields actually returned by the controller/service below.\n`;
+        prompt += `- DO NOT call \`app.listen()\`. Import the app or mount the tested router cleanly.\n`;
         prompt += `- Target file path MUST start with: \`tests/integration/\` (e.g. \`tests/integration/orders.test.js\`).\n\n`;
+    }
+
+    const sampleTestFiles = (testFiles || []).filter((tf) => tf?.content && tf.content.trim().length > 0).slice(0, 2);
+    if (sampleTestFiles.length > 0) {
+        prompt += `### 1.5 EXISTING REPOSITORY TEST PATTERN (FOLLOW THIS EXACT IMPORT & MOCKING STYLE)\n`;
+        for (const tf of sampleTestFiles) {
+            prompt += `\`\`\`javascript\n// Existing test: ${tf.path || "integration.test.js"}\n${String(tf.content).slice(0, 1500)}\n\`\`\`\n\n`;
+        }
     }
 
     prompt += `### 2. REQUIRED CASE CONTRACT & STRICT TOKEN-SAVING CAP\n`;
@@ -378,7 +434,13 @@ export const buildIntegrationTestPrompt = ({
         }
 
         if (deepCtx.controllerSnippet) {
-            prompt += `\`\`\`javascript\n// Handler Snippet:\n${deepCtx.controllerSnippet.slice(0, 500)}\n\`\`\`\n`;
+            prompt += `\`\`\`javascript\n// Handler Snippet:\n${deepCtx.controllerSnippet.slice(0, 2500)}\n\`\`\`\n`;
+        }
+
+        if (Array.isArray(deepCtx.importedModules) && deepCtx.importedModules.length > 0) {
+            for (const mod of deepCtx.importedModules.slice(0, 2)) {
+                prompt += `\`\`\`javascript\n// Dependency Module (${mod.filePath}):\n${String(mod.content).slice(0, 1500)}\n\`\`\`\n`;
+            }
         }
 
         if (deepCtx.branchConditions.length > 0) {
@@ -430,6 +492,49 @@ export const buildIntegrationTestPrompt = ({
     prompt += `OUTPUT STRICTLY VALID JSON ONLY. NO OTHER EXPLANATORY TEXT OUTSIDE THE JSON BLOCK.`;
 
     return withAgentContext(prompt, 'integration-test');
+};
+
+/**
+ * Builds a targeted repair prompt after running generated integration tests against
+ * the actual Express app / Jest runner when one or more scenarios fail.
+ */
+export const buildIntegrationRepairPrompt = ({
+    code = "",
+    failureSummary = "",
+    framework = "supertest",
+    endpoints = [],
+    sourceCode = [],
+} = {}) => {
+    const isPlaywright = framework === "playwright" || String(framework).toLowerCase().includes("playwright");
+    let prompt = `You are a Principal Node.js QA & Test Repair Engineer.\n`;
+    prompt += `We executed the generated ${isPlaywright ? "Playwright API" : "Supertest + Jest"} integration test suite against the project and one or more test cases FAILED.\n`;
+    prompt += `Fix ALL failing test cases so that EVERY test in the suite passes when executed in Jest (NODE_ENV=test) while still covering ALL required endpoint scenarios.\n\n`;
+
+    prompt += `### 1. CURRENT FAILING TEST FILE\n\`\`\`javascript\n${code}\n\`\`\`\n\n`;
+    prompt += `### 2. ACTUAL JEST EXECUTION FAILURE OUTPUT\n\`\`\`\n${String(failureSummary).slice(0, 3500)}\n\`\`\`\n\n`;
+
+    if (Array.isArray(endpoints) && endpoints.length > 0) {
+        prompt += `### 3. ACTUAL ENDPOINT & DEPENDENCY SOURCE CONTEXT\n`;
+        for (const ep of endpoints.slice(0, 8)) {
+            const deepCtx = harvestApiDeepContext({ endpoint: ep, sourceCode });
+            prompt += `- \`${deepCtx.method} ${deepCtx.path}\` (${deepCtx.controllerFile})\n`;
+            if (deepCtx.controllerSnippet) {
+                prompt += `\`\`\`javascript\n${deepCtx.controllerSnippet.slice(0, 1500)}\n\`\`\`\n`;
+            }
+            for (const mod of (deepCtx.importedModules || []).slice(0, 1)) {
+                prompt += `\`\`\`javascript\n// ${mod.filePath}\n${String(mod.content).slice(0, 1000)}\n\`\`\`\n`;
+            }
+        }
+    }
+
+    prompt += `### 4. STRICT REPAIR RULES\n`;
+    prompt += `1. Keep ONE single top-level import block (no duplicate imports/declarations).\n`;
+    prompt += `2. Fix wrong payloads, missing DB/external service mocks, wrong route paths, or hallucinated response body keys using the failure output and controller/service source above.\n`;
+    prompt += `3. Assert ONE exact HTTP status code per test (matching what the controller actually returns for that case).\n`;
+    prompt += `4. Do NOT delete failing scenarios — fix them so all endpoint cases are covered AND PASSING.\n`;
+    prompt += `5. Return ONLY a JSON object inside \`\`\`json\`\`\`:\n\`\`\`json\n{\n  "content": "// Complete repaired, runnable test file..."\n}\n\`\`\``;
+
+    return withAgentContext(prompt, 'integration-test', { phase: 'repair' });
 };
 
 /**

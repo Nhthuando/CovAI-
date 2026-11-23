@@ -4,11 +4,20 @@ import path from "path";
 import {
   sanitizeAllProjectTestFiles,
   cleanAndDeduplicateTestContent,
+  ensureNodeDomFallback,
 } from "../services/testSanitizer.service.js";
 import { convertJestMocksAndStaticImportsToEsm } from "../services/esmTestRepair.service.js";
 import {
   healAllTestFiles,
+  materializeDraftTestsForRun,
+  restoreDraftTestsForRun,
+  filterDiscoveredUnitFiles,
+  runJestCoverage,
 } from "../services/runTestsJob.service.js";
+import {
+  isBusinessLogicSourceFile,
+  isTestFilePath,
+} from "../utils/businessLogicFileDetector.js";
 import {
   classifyUnitTestCase,
   annotateFileUnitTests,
@@ -303,4 +312,153 @@ describe('Socket Config', () => {
     expect(sanitized).not.toContain("JSON.parse(JSON.stringify");
     expect(sanitized).toContain("GoogleGenerativeAI: jest.fn()");
   });
+
+  it("auto-injects DOM/browser shims during draft materialization without needing prior Apply", () => {
+    const testRel = "tests/content.test.js";
+    const draftCode = [
+      "/** @jest-environment jsdom */",
+      "const content = require('../extension/content.js');",
+      "describe('extension content script', () => {",
+      "  it('reads window.location and document', () => {",
+      "    expect(window.location.href).toBeDefined();",
+      "    expect(document.title).toBeDefined();",
+      "  });",
+      "});",
+    ].join("\n");
+
+    const state = materializeDraftTestsForRun(tmpDir, [
+      { sourceFile: "extension/content.js", testFile: testRel, code: draftCode },
+    ]);
+    const written = fs.readFileSync(path.join(tmpDir, testRel), "utf8");
+    expect(written).toContain("@jest-environment node");
+    expect(written).toContain("globalThis.window");
+    expect(written).toContain("globalThis.localStorage");
+    expect(written).toContain("globalThis.navigator");
+    expect(written).toContain("globalThis.chrome");
+    // Forced healing on plain Node suite without docblock also succeeds
+    const forced = ensureNodeDomFallback("const x = require('./mod');\n", { force: true });
+    expect(forced).toContain("__covaiDomFallbackV3Applied");
+
+    const reordered = ensureNodeDomFallback(
+      "import { jest } from '@jest/globals';\nimport * as importedModule from '../extension/content';\ndescribe('c', () => {});\n",
+      { force: true },
+    );
+    expect(reordered).toContain("const importedModule = require('../extension/content');");
+    expect(reordered.indexOf("__covaiDomFallbackV3Applied")).toBeLessThan(
+      reordered.indexOf("require('../extension/content')"),
+    );
+    expect(reordered).toContain("globalThis.history");
+    expect(reordered).toContain("globalThis.fetch");
+
+    restoreDraftTestsForRun(state);
+    expect(fs.existsSync(path.join(tmpDir, testRel))).toBe(false);
+  });
+
+  it("resolves monorepo draft targets cleanly for root extension and server subpackages without confusing test files with source files", () => {
+    const extSrc = path.join(tmpDir, "extension", "background.js");
+    const srvSrc = path.join(tmpDir, "server", "src", "config", "prisma.js");
+    fs.mkdirSync(path.dirname(extSrc), { recursive: true });
+    fs.mkdirSync(path.dirname(srvSrc), { recursive: true });
+    fs.writeFileSync(extSrc, "export function initBg() { return true; }\n", "utf8");
+    fs.writeFileSync(srvSrc, "export default {};\n", "utf8");
+
+    const draftState = materializeDraftTestsForRun(tmpDir, [
+      {
+        sourceFile: "extension/background.js",
+        testFile: "tests/background.test.js",
+        framework: "jest",
+        code: "it('bg', () => expect(true).toBe(true));\n",
+      },
+      {
+        sourceFile: "server/src/config/prisma.js",
+        testFile: "server/tests/config/prisma.test.js",
+        framework: "jest",
+        code: "it('prisma', () => expect(true).toBe(true));\n",
+      },
+    ]);
+
+    try {
+      expect(isTestFilePath("tests/background.test.js")).toBe(true);
+      expect(isTestFilePath("server/tests/config/prisma.test.js")).toBe(true);
+      expect(isBusinessLogicSourceFile("extension/background.js")).toBe(true);
+      expect(isBusinessLogicSourceFile("server/src/config/prisma.js")).toBe(true);
+
+      const filtered = filterDiscoveredUnitFiles({
+        rootDir: tmpDir,
+        jestFiles: ["tests/background.test.js", "server/tests/config/prisma.test.js"],
+        vitestFiles: [],
+        requestedTargetFiles: ["extension/background.js", "server/src/config/prisma.js"],
+        draftSourceByTestRel: draftState.draftSourceByTestRel,
+        draftFrameworkByTestRel: draftState.draftFrameworkByTestRel,
+      });
+
+      expect(filtered.jestFiles).toEqual([
+        "tests/background.test.js",
+        "server/tests/config/prisma.test.js",
+      ]);
+      expect(filtered.vitestFiles).toEqual([]);
+    } finally {
+      restoreDraftTestsForRun(draftState);
+    }
+
+    expect(fs.existsSync(path.join(tmpDir, "tests", "background.test.js"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "server", "tests", "config", "prisma.test.js"))).toBe(false);
+  });
+
+  it("writes long testNamePattern and scoped collectCoverageFrom into Jest JSON config to avoid Windows CLI length overflow", async () => {
+    const extSrc = path.join(tmpDir, "extension", "background.js");
+    const pkgJson = path.join(tmpDir, "package.json");
+    fs.mkdirSync(path.dirname(extSrc), { recursive: true });
+    fs.writeFileSync(
+      pkgJson,
+      JSON.stringify({ name: "cli-len-fixture" }),
+      "utf8",
+    );
+    fs.writeFileSync(
+      extSrc,
+      "function pingBg(v) { return v ? 'ok' : 'no'; }\nmodule.exports = { pingBg };\n",
+      "utf8",
+    );
+
+    const draftState = materializeDraftTestsForRun(tmpDir, [
+      {
+        sourceFile: "extension/background.js",
+        testFile: "tests/background.test.js",
+        framework: "jest",
+        code: "const { pingBg } = require('../extension/background.js');\nit('runs selected draft case', () => { expect(pingBg(true)).toBe('ok'); });\n",
+      },
+    ]);
+
+    try {
+      const fillerPatterns = Array.from({ length: 120 }, (_, i) => `unused scenario name padding number ${i} ${"x".repeat(55)}`);
+      const longPattern = ["runs selected draft case", ...fillerPatterns].join("|");
+      expect(longPattern.length).toBeGreaterThan(9000);
+
+      const jestBin = path.resolve(process.cwd(), "node_modules", "jest", "bin", "jest.js");
+      const covOutDir = ".covai-temp/scoped-cli-check";
+      const res = await runJestCoverage(
+        "test-cli-len-job",
+        tmpDir,
+        null,
+        ["tests/background.test.js"],
+        `node "${jestBin}"`,
+        {
+          coverageDir: covOutDir,
+          targetSourceFiles: ["extension/background.js"],
+          testNamePattern: longPattern,
+        },
+      );
+
+      expect(res.exitCode).toBe(0);
+      const sumPath = path.join(tmpDir, covOutDir, "coverage-summary.json");
+      expect(fs.existsSync(sumPath)).toBe(true);
+      const sum = JSON.parse(fs.readFileSync(sumPath, "utf8"));
+      const bgEntry = Object.entries(sum).find(([k]) => k.replace(/\\/g, "/").endsWith("extension/background.js"))?.[1];
+      expect(bgEntry).toBeDefined();
+      expect(bgEntry.lines.covered).toBeGreaterThan(0);
+      expect(bgEntry.lines.pct).toBeGreaterThan(0);
+    } finally {
+      restoreDraftTestsForRun(draftState);
+    }
+  }, 30000);
 });

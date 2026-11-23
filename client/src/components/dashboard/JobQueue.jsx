@@ -107,9 +107,9 @@ const JOB_TYPE_CONFIG = {
     category: "ai",
   },
   AI_TESTS: {
-    label: "AI Test Generator",
+    label: "Integration AI Tests",
     icon: BrainCircuit,
-    taskLabel: "Synthesizing AI test scenarios and edge cases",
+    taskLabel: "Synthesizing API integration test scenarios and assertions",
     category: "ai",
   },
   CODE_HYGIENE: {
