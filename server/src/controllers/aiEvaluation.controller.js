@@ -20,6 +20,7 @@ export function createEvaluationController({ db = prisma, enqueue = service.enqu
 
     return {
         getCapabilities: json(req => service.getCapabilities(db, req.params.projectId, req.user.id)),
+        updateProjectToggle: json(req => service.setProjectEvaluationEnabled(db, req.params.projectId, req.body?.enabled)),
         getWorkspace: json(req => service.workspace(db, req.params.projectId, req.user.id)),
         getDesignAudit: json(req => getChatbotDesignAudit(db, req.params.projectId, {
             snapshotId: typeof req.query.snapshotId === 'string' ? req.query.snapshotId : undefined,

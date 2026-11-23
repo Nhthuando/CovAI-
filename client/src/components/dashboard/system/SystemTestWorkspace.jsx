@@ -30,6 +30,8 @@ import {
   getSystemTestSummary,
   runSystemTest,
   systemEvidenceRequest,
+  getSystemGenerationStatus,
+  cancelSystemGeneration,
   addSystemTestCaseApi,
   updateSystemTestCaseApi,
   deleteSystemTestCaseApi,
@@ -46,12 +48,14 @@ import {
   extractBlockTitle,
 } from "../../../lib/stagedScenarioOps.js";
 import { getJobDetailApi } from "../../../services/job.service.js";
-import CoverageJobQueueButton from "../CoverageJobQueueButton.jsx";
+import { openFloatingJobQueue } from "../../../lib/floatingJobQueuePrefs.js";
 import SystemSpecMatrixTable from "./SystemSpecMatrixTable.jsx";
 import SystemTestLiveRun from "./SystemTestLiveRun.jsx";
 import SystemReportEmbed from "./SystemReportEmbed.jsx";
 import SystemTestCaseEditorModal from "./SystemTestCaseEditorModal.jsx";
 import SystemTestGeneratorModal from "./SystemTestGeneratorModal.jsx";
+import GenerationProgressStrip from "./GenerationProgressStrip.jsx";
+import { ExternalServicesBanner } from "./ExternalTestKeyNotices.jsx";
 import SystemTestBreakpointModal from "./SystemTestBreakpointModal.jsx";
 import SystemTestSetupDialog from "./SystemTestSetupDialog.jsx";
 import SystemTestReportView from "./SystemTestReportView.jsx";
@@ -84,7 +88,6 @@ export default function SystemTestWorkspace({
   onChatContextChange,
   snapshotId,
   projectId,
-  onOpenJobQueue,
   focusScenario,
   onOpenFile,
 }) {
@@ -138,8 +141,13 @@ export default function SystemTestWorkspace({
   const pendingOpsCount = countStagedOps(pendingSystemOps);
 
   const [setupOpen, setSetupOpen] = useState(false);
+  const [focusServiceId, setFocusServiceId] = useState();
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [generatorView, setGeneratorView] = useState(null);
+  const [generationTask, setGenerationTask] = useState();
+  const [dismissedGenerationId, setDismissedGenerationId] = useState(null);
+  const generationRunning = generationTask?.state === "RUNNING";
+  const runningGenerationId = generationRunning ? generationTask.id : null;
   const [inspectedScenario, setInspectedScenario] = useState(null);
   const [editorModal, setEditorModal] = useState({
     open: false,
@@ -152,6 +160,7 @@ export default function SystemTestWorkspace({
   const frameworkDiscoveryRef = useRef(null);
   const runRequestRef = useRef(false);
   const pendingRunRef = useRef(null);
+  const cancelGenerationRef = useRef(null);
   const applyJobUpdateRef = useRef(null);
 
   const workspace = useSystemTestWorkspace({
@@ -165,6 +174,89 @@ export default function SystemTestWorkspace({
     setLoading(true);
     setRefreshKey((k) => k + 1);
   }, []);
+
+  // The parent keys this workspace by snapshot, so generation state starts fresh per snapshot.
+  useEffect(() => {
+    if (!snapshotId) return;
+
+    const controller = new AbortController();
+    getSystemGenerationStatus(snapshotId, controller.signal)
+      .then((task) => {
+        if (controller.signal.aborted) return;
+        setGenerationTask((previous) => previous === undefined ? task : previous);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          console.warn("[SystemTest] Generation status unavailable:", error.message);
+        }
+      });
+    return () => controller.abort();
+  }, [snapshotId]);
+
+  useEffect(() => {
+    if (!snapshotId || !runningGenerationId) return;
+    let active = true;
+    let canceling = false;
+    let request = null;
+
+    async function refreshStatus() {
+      request?.abort();
+      const controller = new AbortController();
+      request = controller;
+      try {
+        const task = await getSystemGenerationStatus(snapshotId, controller.signal);
+        if (controller.signal.aborted) return;
+        setGenerationTask(task);
+        if (task?.id === runningGenerationId && task.state === "SUCCEEDED") {
+          if (projectId) invalidateProjectTree(projectId, snapshotId);
+          refreshData();
+          window.dispatchEvent(new CustomEvent("covai:ai-usage-updated"));
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.warn("[SystemTest] Generation status unavailable:", error.message);
+        }
+      } finally {
+        if (request === controller) request = null;
+      }
+    }
+
+    const timer = setInterval(() => {
+      if (!request && !canceling) void refreshStatus();
+    }, 2000);
+
+    cancelGenerationRef.current = async () => {
+      if (canceling) return;
+      canceling = true;
+      request?.abort();
+      try {
+        await cancelSystemGeneration(snapshotId);
+        if (active) await refreshStatus();
+      } catch (error) {
+        if (active) {
+          setError(error.response?.data?.message || error.message || "Could not cancel generation.");
+        }
+      } finally {
+        canceling = false;
+      }
+    };
+
+    return () => {
+      active = false;
+      request?.abort();
+      clearInterval(timer);
+      cancelGenerationRef.current = null;
+    };
+  }, [snapshotId, runningGenerationId, projectId, refreshData]);
+
+  function openGenerator() {
+    if (!generationRunning) setGeneratorView("latest");
+  }
+
+  function openExternalSetup(serviceId) {
+    setFocusServiceId(serviceId);
+    setSetupOpen(true);
+  }
 
   // Restore any queued/running assessment job after refresh
   useEffect(() => {
@@ -1060,10 +1152,6 @@ export default function SystemTestWorkspace({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {onOpenJobQueue && (
-              <CoverageJobQueueButton onClick={onOpenJobQueue} running={runningTests} />
-            )}
-
             <button
               type="button"
               onClick={() => setSetupOpen(true)}
@@ -1283,6 +1371,26 @@ export default function SystemTestWorkspace({
         </div>
       </header>
 
+      <div className="shrink-0 space-y-3 px-5 pt-3 empty:hidden">
+        {generationTask && generationTask.state !== "CANCELED" && generationTask.id !== dismissedGenerationId && (
+          <GenerationProgressStrip
+            key={generationTask.id}
+            task={generationTask}
+            onCancel={() => cancelGenerationRef.current?.()}
+            onReview={() => setGeneratorView("review")}
+            onRetry={() => setGeneratorView("generate")}
+            onDismiss={() => setDismissedGenerationId(generationTask.id)}
+          />
+        )}
+        <ExternalServicesBanner
+          setup={setupReport}
+          summary={summaryData}
+          onOpenSetup={openExternalSetup}
+          onRunTests={() => handleRunTests()}
+          running={runningTests}
+        />
+      </div>
+
       {/* ── MAIN WORKSPACE CONTENT ── */}
       <main className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
         <SystemTestErrorNotice
@@ -1291,7 +1399,7 @@ export default function SystemTestWorkspace({
             setError(null);
             setDiscoveryError(null);
           }}
-          onOpenLogs={onOpenJobQueue}
+          onOpenLogs={() => openFloatingJobQueue({ domain: "system" })}
           onOpenSetup={() => setSetupOpen(true)}
         />
 
@@ -1310,6 +1418,8 @@ export default function SystemTestWorkspace({
 
         {activeTab === "matrix" && (
           <SystemSpecMatrixTable
+            key={snapshotId || "system"}
+            snapshotId={snapshotId}
             specGroups={specGroups}
             framework={activeFramework}
             latestDraft={latestDraft}
@@ -1322,8 +1432,8 @@ export default function SystemTestWorkspace({
             canEditTests={projectAccess.can("tests.edit") || projectAccess.can("tests.run")}
             canUseAi={projectAccess.can("ai.use")}
             onSyncCatalog={handleSyncCatalog}
-            onOpenGenerator={() => setGeneratorOpen(true)}
-            onGenerateSelected={() => setGeneratorOpen(true)}
+            onOpenGenerator={openGenerator}
+            onGenerateSelected={openGenerator}
             onApplyDraft={handleApplyDraft}
             onRunSelectedFiles={(files) =>
               handleRunTests({ selectedFiles: files, targetLabel: `${files.length} specs` })
@@ -1476,16 +1586,20 @@ export default function SystemTestWorkspace({
         }}
       />
 
-      {generatorOpen && (
+      {generatorView && !generationRunning && (
         <SystemTestGeneratorModal
-          isOpen={generatorOpen}
-          onClose={() => setGeneratorOpen(false)}
+          isOpen
+          initialView={generatorView}
+          onStarted={setGenerationTask}
+          onOpenSetup={openExternalSetup}
+          onClose={() => setGeneratorView(null)}
           snapshotId={snapshotId}
           projectId={projectId}
           initialFramework={activeFramework}
           frameworksData={frameworksData}
           executionMode={executionMode}
           onSuccess={() => {
+            if (generationTask?.id) setDismissedGenerationId(generationTask.id);
             if (projectId) invalidateProjectTree(projectId, snapshotId);
             refreshData();
           }}
@@ -1507,16 +1621,24 @@ export default function SystemTestWorkspace({
 
       {setupOpen && (
         <SystemTestSetupDialog
+          focusServiceId={focusServiceId}
           projectId={projectId}
           snapshotId={snapshotId}
           onClose={() => {
             pendingRunRef.current = null;
+            setFocusServiceId(undefined);
             setSetupOpen(false);
+            if (snapshotId) {
+              systemEvidenceRequest(snapshotId, "setup")
+                .then(setSetupReport)
+                .catch((err) => console.warn("[SystemTest] Setup status unavailable:", err?.message || err));
+            }
           }}
           onChanged={refreshData}
           onStatus={setSetupReport}
           onReady={() => {
             const pending = pendingRunRef.current;
+            setFocusServiceId(undefined);
             setSetupOpen(false);
             if (pending) {
               pendingRunRef.current = null;
@@ -1525,9 +1647,11 @@ export default function SystemTestWorkspace({
           }}
           runtimeMessage={error}
           onGenerate={() => {
+            if (generationRunning) return;
             pendingRunRef.current = null;
+            setFocusServiceId(undefined);
             setSetupOpen(false);
-            setGeneratorOpen(true);
+            openGenerator();
           }}
         />
       )}

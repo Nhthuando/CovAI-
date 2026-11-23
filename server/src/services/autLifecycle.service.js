@@ -12,6 +12,7 @@ import { isPsAvailable } from "./dockerRunner.service.js";
 import { addJobLog } from "./job.service.js";
 import { selectFrontendPackage } from './projectRuntimePlan.service.js';
 import { prepareProjectDependencies, redactRuntimeOutput } from './projectDependencies.service.js';
+import { redactSystemTestSecrets } from './systemTestSecrets.service.js';
 import { dockerRunner } from './dockerRunner.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { autStartupCommand, inferNodeEntryFile } from "../utils/autStartupCommand.js";
@@ -288,7 +289,7 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
   }
   await safeAddJobLog(jobId,'INFO',`[AUT Seed] Running ${seedScript} against the isolated test database...`);
   const result=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command,forceHost:true,isolatedEnv:true,timeoutMs:60000,jobId,signal,env:{...runtime.env,...env,NODE_ENV:'test'}});
-  if(!result.success)throw new ServiceError(`Application seed failed. ${redactRuntimeOutput(result.stderr || result.stdout,env)}`,422);
+    if(!result.success)throw new ServiceError(`Application seed failed. ${redactRuntimeOutput(redactSystemTestSecrets(result.stderr || result.stdout),env)}`,422);
   return {executed:true,success:true,script:seedScript};
 };
 
@@ -358,7 +359,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     if(typeof chosenMetadata.scripts.build!=='string')throw new ServiceError('The application starts from build output but has no build script. Include a build script or a development server script.',422);
     await safeAddJobLog(jobId,'INFO','[AUT Lifecycle] Building application before preview/production startup...');
     const built=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command:`${runtime.command} run build`,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,env:{...startupEnv,NODE_ENV:'development'}});
-    if(!built.success)throw new ServiceError(`Application build failed. ${redactRuntimeOutput(built.stderr || built.stdout,startupEnv)}`,422);
+    if(!built.success)throw new ServiceError(`Application build failed. ${redactRuntimeOutput(redactSystemTestSecrets(built.stderr || built.stdout),startupEnv)}`,422);
   }
   if(signal?.aborted)throw new ServiceError('AUT startup canceled',409);
 
@@ -449,12 +450,12 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     port,
     command,
     httpStatus: httpResult.status,
-    recentOutput: (maxChars = 1200) => redactRuntimeOutput(`${stdoutBuffer}\n${stderrBuffer}`.trim(), env).slice(-maxChars),
+    recentOutput: (maxChars = 1200) => redactRuntimeOutput(redactSystemTestSecrets(`${stdoutBuffer}\n${stderrBuffer}`.trim()), env).slice(-maxChars),
   };
 };
 
 export const formatAutStartupFailure = (output, env = {}) => {
-  let clean = output.replace(/\x1b\[[0-9;]*m/g, '').trim();
+  let clean = redactSystemTestSecrets(output.replace(/\x1b\[[0-9;]*m/g, '').trim());
   for (const [key, value] of Object.entries({...process.env, ...env})) {
     if (value && /PASSWORD|SECRET|TOKEN|KEY|URL/i.test(key)) clean = clean.replaceAll(value, '[redacted]');
   }

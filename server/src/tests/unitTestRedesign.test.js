@@ -5,6 +5,8 @@ import { jest, describe, test, expect, beforeEach, afterEach } from '@jest/globa
 import {
   classifyUnitTestCase,
   getRequiredUnitCasesForFile,
+  getTestableUnitFunctions,
+  getFileUnitFunctionCoverage,
   annotateFileUnitTests,
   getFileUnitCaseCoverage,
   summarizeUnitFailure,
@@ -65,6 +67,41 @@ describe('shared/unitTestCaseCoverage', () => {
     const summary = summarizeUnitFailure([raw]);
     expect(summary).toContain("TypeError: Cannot read properties of undefined (reading 'id')");
     expect(summary).not.toContain('\u001b[');
+  });
+
+  test('tracks business logic function coverage and preserves distinct function test scenarios without false duplicate labels', () => {
+    const file = { funcsTotal: 3, funcsCovered: 2, branchesTotal: 4, linesTotal: 45, linesPct: 75 };
+    const fns = [
+      { functionName: 'calculateActiveTimeForSession', startLine: 22, hit: 0, cyclomatic: 3 },
+      { functionName: 'summarizeArticle', startLine: 55, hit: 4, cyclomatic: 2 },
+      { functionName: 'getArticleStats', startLine: 90, hit: 2, cyclomatic: 2 },
+      { functionName: 'then', startLine: 60, hit: 4, cyclomatic: 1 },
+    ];
+    const tests = [
+      { id: 'fn1', title: '[summarizeArticle] summarizes valid article content', status: 'passed', origin: 'AI_DRAFT' },
+      { id: 'fn2', title: '[getArticleStats] computes stats for active sessions', status: 'passed', origin: 'AI_DRAFT' },
+      { id: 'fn3', title: '[calculateActiveTimeForSession] computes active reading time and caps idle gaps', status: 'draft', origin: 'AI_DRAFT' },
+    ];
+
+    const testable = getTestableUnitFunctions(file, fns);
+    expect(testable.map((f) => f.name)).toEqual([
+      'calculateActiveTimeForSession',
+      'summarizeArticle',
+      'getArticleStats',
+    ]);
+
+    const fnCov = getFileUnitFunctionCoverage(file, fns, tests);
+    expect(fnCov.totalFunctions).toBe(3);
+    expect(fnCov.coveredFunctions).toBe(2);
+
+    const cov = getFileUnitCaseCoverage(file, fns, tests);
+    expect(cov.redundantCount).toBe(0);
+    expect(cov.scenarioAnnotations.fn1.badgeType).toBe('PRIMARY_PASS');
+    expect(cov.scenarioAnnotations.fn1.functionLabel).toBe('summarizeArticle()');
+    expect(cov.scenarioAnnotations.fn2.badgeType).toBe('PRIMARY_PASS');
+    expect(cov.scenarioAnnotations.fn2.functionLabel).toBe('getArticleStats()');
+    expect(cov.scenarioAnnotations.fn3.badgeType).toBe('PRIMARY_PENDING');
+    expect(cov.scenarioAnnotations.fn3.functionLabel).toBe('calculateActiveTimeForSession()');
   });
 });
 

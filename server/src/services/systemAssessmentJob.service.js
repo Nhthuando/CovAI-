@@ -16,10 +16,11 @@ import { analyzeSystemTestFile, digest } from './systemTestStaticAnalysis.servic
 import { buildSystemAssessment } from './systemAssessment.service.js';
 import { runSystemTests } from './systemTestRunner.service.js';
 import { parseSystemTestResult } from './systemTestResultParser.service.js';
-import { classifyExternalDependencies, readEgressLog } from './externalDependencyClassifier.service.js';
+import { classifyExternalCalls, readEgressLog } from './externalDependencyClassifier.service.js';
 import { containedPath, readFullSystemConfig } from './fullSystemConfig.service.js';
 import { getJobById, markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, addJobLog } from './job.service.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { redactDeep, redactSystemTestSecrets } from './systemTestSecrets.service.js';
 import { enumerateMutations } from './systemMutation.service.js';
 import { storeScenarioScreenshot } from './systemTestEvidence.service.js';
 import { prepareAutomaticAssessment } from './systemAssessmentPreparation.service.js';
@@ -69,12 +70,14 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
             const testRun = parseSystemTestResult({ runner: 'playwright', resultPath: result.reportPath, startedAt, finishedAt: new Date(), rootDir: workspace.rootDir, stderr: result.stderr });
             if (result.exitCode !== 0 && testRun.status === 'PASSED') throw new ServiceError('Runner report and exit code disagree', 422);
             const rawReport = JSON.parse(fs.readFileSync(result.reportPath, 'utf8'));
-            const externalDependencies = classifyExternalDependencies({ report: rawReport, egressEvents: readEgressLog(result.egressLogPath) });
+            const { credentialFailures, callFailures } = classifyExternalCalls({ report: rawReport, egressEvents: readEgressLog(result.egressLogPath) });
             for (const scenario of testRun.scenarios) {
                 if (scenario.status !== 'failed') continue;
                 const key = scenario.testFile ? `${scenario.testFile}::${scenario.title}` : scenario.title;
-                const externalDependency = externalDependencies.get(key);
+                const externalDependency = credentialFailures.get(key);
+                const externalCallFailure = callFailures.get(key);
                 if (externalDependency) scenario.executionDetails = { ...scenario.executionDetails, externalDependency };
+                else if (externalCallFailure) scenario.executionDetails = { ...scenario.executionDetails, externalCallFailure };
             }
             const mapping = JSON.parse(fs.readFileSync(path.join(path.dirname(result.reportPath), 'source-map.json'), 'utf8'));
             testRun.scenarios = testRun.scenarios.map(s => ({ ...s, testFile: mapping[path.basename(s.testFile || '')] || s.testFile, screenshotPath: storeScenarioScreenshot({ rootDir:environmentRoot, source: typeof s.screenshotSource === 'string' && fs.existsSync(s.screenshotSource) ? {body: fs.readFileSync(containedPath(workspace.rootDir, path.relative(workspace.rootDir, s.screenshotSource))).toString('base64')} : s.screenshotSource, runKey: measurementId }), screenshotSource: undefined }));
@@ -87,13 +90,13 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
             artifacts.push(...raw.map(artifact => ({ ...artifact, measurementId: 'aggregate', sourceHash: initial.sourceHash })));
             preparations.push(preparation);
             const runtimeHash = runtimeDependencyFingerprint(workspace.rootDir);
-            runs.push({ index: index + 1, testRun, criterionEvidence, measurement: collectSystemCoverage({ preparation, runtimeArtifacts: raw }), measurementId, runtimeHash, mutationActivations: [...new Set(raw.flatMap(artifact => artifact.activeMutations || []))] });
+            runs.push({ index: index + 1, testRun: redactDeep(testRun), criterionEvidence: redactDeep(criterionEvidence), measurement: collectSystemCoverage({ preparation, runtimeArtifacts: raw }), measurementId, runtimeHash, mutationActivations: [...new Set(raw.flatMap(artifact => artifact.activeMutations || []))] });
             await onEvent({ runIndex: index + 1, type: 'RUN_ENDED', status: testRun.status });
-            // Preserve raw evidence outside the temporary AUT; never interpret pre-existing artifacts as this run.
+            // Preserve this run's evidence outside the temporary AUT; never interpret pre-existing artifacts as this run.
             const evidenceRoot = containedPath(environmentRoot, `.covai-system-test/assessment/${measurementId}`);
             fs.mkdirSync(evidenceRoot, { recursive: true });
-            fs.copyFileSync(result.reportPath, path.join(evidenceRoot, 'results.json'));
-            fs.writeFileSync(path.join(evidenceRoot, 'measurement.json'), JSON.stringify({ manifest: { ...preparation.manifest, directory: undefined }, zeroMaps: Object.fromEntries(Object.entries(preparation.tiers).map(([tier, value]) => [tier, value.zeroMaps])), artifacts: raw, events }), 'utf8');
+            fs.writeFileSync(path.join(evidenceRoot, 'results.json'), JSON.stringify(redactDeep(rawReport)), 'utf8');
+            fs.writeFileSync(path.join(evidenceRoot, 'measurement.json'), JSON.stringify(redactDeep({ manifest: { ...preparation.manifest, directory: undefined }, zeroMaps: Object.fromEntries(Object.entries(preparation.tiers).map(([tier, value]) => [tier, value.zeroMaps])), artifacts: raw, events })), 'utf8');
             const visitSuite = suite => {
                 const filePath = mapping[path.basename(suite.file || '')] || null;
                 for (const spec of suite.specs || []) for (const test of spec.tests || []) for (const attempt of test.results || []) for (const attachment of attempt.attachments || []) {
@@ -159,7 +162,7 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
     let workspaceIdentity;
     try {
         await withOperationPublishGuard(tx=>tx.systemTestAssessment.update({where:{jobId},data:{status:'RUNNING'}}));
-        const onProgress = async (message, progress = 30) => { await lease.assertHeld(); const current = await getJobById(jobId); if (current.status !== 'RUNNING') throw new ServiceError('Assessment canceled', 409); await updateJobProgress(jobId, Math.max(current.progress || 0, progress)); await addJobLog(jobId, 'INFO', `Assessment stage: ${message}`); };
+    const onProgress = async (message, progress = 30) => { await lease.assertHeld(); const current = await getJobById(jobId); if (current.status !== 'RUNNING') throw new ServiceError('Assessment canceled', 409); await updateJobProgress(jobId, Math.max(current.progress || 0, progress)); await addJobLog(jobId, 'INFO', redactSystemTestSecrets(`Assessment stage: ${message}`)); };
         // Staleness is judged against the snapshot as imported. Preparation may add
         // lockfiles or runtime config inside the disposable workspace afterwards.
         const startIdentity=snapshotIdentity(job.snapshot.rootDir);
@@ -223,7 +226,7 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
                     }
                 } catch { /* Checkpoint failure must not change the runner verdict. */ }
             }
-            return emit({ runIndex, type, scenarioKey: matches.length === 1 ? matches[0].scenarioKey : null, payload });
+            return emit({ runIndex, type, scenarioKey: matches.length === 1 ? matches[0].scenarioKey : null, payload: redactDeep(payload) });
         };
         const report = await withProjectDependencyCache(() => assessSystemWorkspace({ rootDir: job.snapshot.rootDir, input, jobId, signal:lease.signal, revision, bindings: revision?.bindings || [], catalog, onProgress, onEvent }));
         if(automaticCatalog) {
@@ -238,17 +241,20 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
         await lease.assertHeld();
         await updateJobProgress(jobId, 95);
         await addJobLog(jobId, 'INFO', 'Assessment stage: Saving coverage measurements and scenario results');
-        const testRunId = await persistAssessmentRuns({report,snapshotId:job.snapshotId,executionMode:input.executionMode});
+        const testRunId = await persistAssessmentRuns({report:redactDeep(report),snapshotId:job.snapshotId,executionMode:input.executionMode});
         const storedAssessment = await prisma.systemTestAssessment.findUnique({where:{jobId},select:{id:true,suiteVersionId:true}});
         if(storedAssessment.suiteVersionId)report.suiteVersionId=storedAssessment.suiteVersionId;
         report.presentation = buildSystemReportProjection({ assessment: {id: storedAssessment.id, snapshotId: job.snapshotId, requirementRevisionId: revision?.id}, report });
-        await stagePreparedPublication(tx=>tx.systemTestAssessment.update({ where: { jobId }, data: { status: 'COMPLETED', sourceHash: report.sourceHash, testHash: report.testHash, scopeHash: report.scopeHash, testRunId, reportJson: JSON.parse(JSON.stringify(report)) } }));
+        await stagePreparedPublication(tx=>tx.systemTestAssessment.update({ where: { jobId }, data: { status: 'COMPLETED', sourceHash: report.sourceHash, testHash: report.testHash, scopeHash: report.scopeHash, testRunId, reportJson: redactDeep(JSON.parse(JSON.stringify(report))) } }));
         const persistedArtifacts = await persistRunArtifacts({ client: prisma, assessmentId: storedAssessment.id, rootDir: job.snapshot.rootDir, artifacts: report.evidenceArtifacts || [], catalog });
         report.qualityScore = scoreSystemSuite({report,catalog,verdicts:report.scenarioVerdicts,artifacts:persistedArtifacts});
         report.presentation = buildSystemReportProjection({assessment:{id:storedAssessment.id,snapshotId:job.snapshotId,requirementRevisionId:revision?.id,suiteVersionId:report.suiteVersionId},report,artifacts:persistedArtifacts});
-        await stagePreparedPublication(tx=>tx.systemTestAssessment.update({where:{jobId},data:{reportJson:JSON.parse(JSON.stringify(report))}}));
+        await stagePreparedPublication(tx=>tx.systemTestAssessment.update({where:{jobId},data:{reportJson:redactDeep(JSON.parse(JSON.stringify(report)))}}));
         await markJobSuccess(jobId, { assessmentId: storedAssessment.id });
     } catch (error) {
+        error.message = redactSystemTestSecrets(error.message);
+        error.stack = redactSystemTestSecrets(error.stack);
+        if (error.details) error.details = redactDeep(error.details);
         const current = await getJobById(jobId);
         const canceled = current.status === 'CANCELED' || error.code === 'SYSTEM_OPERATION_CANCELED';
         await prisma.systemTestAssessment.updateMany({ where: { jobId }, data: { status: canceled ? 'CANCELED' : 'FAILED', reportJson: { input, errorCode:error.code || 'SYSTEM_ASSESSMENT_FAILED', error: canceled ? 'Assessment canceled' : error.statusCode ? error.message.replace(/[a-z]:[\\/][^\s"'<>]+/gi, '[internal path]') : 'Assessment failed; inspect the owned job log' } } });

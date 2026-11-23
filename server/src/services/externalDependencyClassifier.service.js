@@ -27,8 +27,17 @@ export const readEgressLog = logPath => {
   return events;
 };
 
-export const classifyExternalDependencies = ({ report, egressEvents, environment = [] }) => {
-  const dependencies = new Map();
+const failureCategory = matches => {
+  if (matches.some(({ end }) => end?.status === 401 || end?.status === 403)) return 'AUTH_REJECTED';
+  if (matches.some(({ end, error }) => !end && !error)) return 'BACKEND_STOPPED_DURING_EXTERNAL_CALL';
+  if (matches.some(({ error }) => error?.code != null)) return 'UNREACHABLE';
+  if (matches.some(({ end }) => end?.status >= 500)) return 'PROVIDER_ERROR';
+  return 'REQUEST_REJECTED';
+};
+
+export const classifyExternalCalls = ({ report, egressEvents, environment = [] }) => {
+  const credentialFailures = new Map();
+  const callFailures = new Map();
   const calls = new Map();
   for (const event of egressEvents) {
     if (!calls.has(event.id)) calls.set(event.id, {});
@@ -39,7 +48,7 @@ export const classifyExternalDependencies = ({ report, egressEvents, environment
   }
   const failed = [...calls.values()].filter(({ start, end, error }) =>
     typeof start?.host === 'string' && (error || !end || end.status >= 400));
-  if (!failed.length) return dependencies;
+  if (!failed.length) return { credentialFailures, callFailures };
 
   const visit = (suite, parentFile) => {
     const suiteFile = suite.file || parentFile;
@@ -52,6 +61,14 @@ export const classifyExternalDependencies = ({ report, egressEvents, environment
         const matches = failed.filter(({ start }) =>
           start.t >= startTime - 500 && start.t <= startTime + result.duration + 2000);
         if (!matches.length) continue;
+        const category = failureCategory(matches);
+        const isAuthRejected = category === 'AUTH_REJECTED';
+        const matchedCalls = new Map();
+        for (const { start, end, error } of matches) {
+          const call = { host: start.host, status: end?.status ?? null, code: error?.code ?? null };
+          matchedCalls.set(JSON.stringify(call), call);
+          if (matchedCalls.size === 5) break;
+        }
         const hosts = [...new Set(matches.map(({ start }) => start.host))];
         const services = new Map();
         const variables = new Set();
@@ -62,8 +79,10 @@ export const classifyExternalDependencies = ({ report, egressEvents, environment
             if (token) {
               const id = `env:${token}`;
               services.set(id, { id, label: humanizeVendorToken(token), host });
-              for (const { name } of environment) {
-                if (vendorTokenForEnvName(name) === token) variables.add(name);
+              if (isAuthRejected) {
+                for (const { name } of environment) {
+                  if (vendorTokenForEnvName(name) === token) variables.add(name);
+                }
               }
             } else {
               services.set(`host:${host}`, { id: `host:${host}`, label: host });
@@ -71,27 +90,36 @@ export const classifyExternalDependencies = ({ report, egressEvents, environment
             continue;
           }
           services.set(service.id, { id: service.id, label: service.label });
+          if (!isAuthRejected) continue;
           const rows = environment.filter(row => row.provider?.id === service.id);
           for (const name of rows.length ? rows.map(row => row.name) : [service.primaryEnv]) variables.add(name);
         }
-        const dependency = {
+        const evidence = {
           services: [...services.values()],
           hosts,
-          variables: [...variables],
-          configured: [...variables].every(name => environment.some(row => row.name === name && row.status === 'PRESENT')),
-          reason: matches.some(({ end, error }) => !end && !error)
-            ? 'BACKEND_STOPPED_DURING_EXTERNAL_CALL' : 'EXTERNAL_CALL_FAILED',
+          calls: [...matchedCalls.values()],
         };
-        if (spec.file) dependencies.set(`${spec.file}::${spec.title}`, dependency);
-        if (suiteFile && suiteFile !== spec.file) dependencies.set(`${suiteFile}::${spec.title}`, dependency);
-        dependencies.set(spec.title, dependency);
+        const failure = isAuthRejected ? {
+          ...evidence,
+          variables: [...variables],
+          configured: environment.length
+            ? [...variables].every(name => environment.some(row => row.name === name && row.status === 'PRESENT'))
+            : null,
+          reason: 'AUTH_REJECTED',
+        } : { ...evidence, category };
+        const failures = isAuthRejected ? credentialFailures : callFailures;
+        if (spec.file) failures.set(`${spec.file}::${spec.title}`, failure);
+        if (suiteFile && suiteFile !== spec.file) failures.set(`${suiteFile}::${spec.title}`, failure);
+        failures.set(spec.title, failure);
       }
     }
     for (const child of suite.suites || []) visit(child, suiteFile);
   };
   for (const suite of report.suites || []) visit(suite);
-  return dependencies;
+  return { credentialFailures, callFailures };
 };
+
+export const classifyExternalDependencies = options => classifyExternalCalls(options).credentialFailures;
 
 export const collectExternalRequirements = entries => {
   const requirements = new Map();

@@ -1,4 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  loadMatrixSelection,
+  saveMatrixSelection,
+  toggleParentSelection,
+  toggleAllParentsSelection,
+  toggleChildSelection,
+} from "../../../lib/matrixSelectionStorage.js";
 import {
   Search,
   ChevronRight,
@@ -64,6 +71,7 @@ const STATUS_BADGE = {
 };
 
 export default function SystemSpecMatrixTable({
+  snapshotId = null,
   specGroups = [],
   framework = "playwright",
   latestDraft = null,
@@ -97,8 +105,16 @@ export default function SystemSpecMatrixTable({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [expandedKeys, setExpandedKeys] = useState(() => new Set());
-  const [selectedFiles, setSelectedFiles] = useState(() => new Set());
-  const [selectedScenarioKeys, setSelectedScenarioKeys] = useState(() => new Set());
+  const [selectedFiles, setSelectedFiles] = useState(
+    () => loadMatrixSelection("system", snapshotId).parents,
+  );
+  const [selectedScenarioKeys, setSelectedScenarioKeys] = useState(
+    () => loadMatrixSelection("system", snapshotId).children,
+  );
+
+  useEffect(() => {
+    saveMatrixSelection("system", snapshotId, selectedFiles, selectedScenarioKeys);
+  }, [snapshotId, selectedFiles, selectedScenarioKeys]);
 
   const enrichedGroups = useMemo(() => {
     return (specGroups || []).map((group) => {
@@ -176,13 +192,21 @@ export default function SystemSpecMatrixTable({
     });
   };
 
+  const scenarioSelectionKey = (sc, group) =>
+    `${sc.testFile || group.filePath}::${sc.title || sc.id}`;
+
   const toggleSelectFile = (filePath) => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(filePath)) next.delete(filePath);
-      else next.add(filePath);
-      return next;
+    const targetGroup = enrichedGroups.find((g) => g.filePath === filePath);
+    const next = toggleParentSelection({
+      parentKey: filePath,
+      childKeys: (targetGroup?.annotatedScenarios || []).map((sc) =>
+        scenarioSelectionKey(sc, targetGroup),
+      ),
+      parents: selectedFiles,
+      children: selectedScenarioKeys,
     });
+    setSelectedFiles(next.parents);
+    setSelectedScenarioKeys(next.children);
   };
 
   const allVisibleSelected =
@@ -190,26 +214,33 @@ export default function SystemSpecMatrixTable({
     filteredGroups.every((g) => g.filePath && selectedFiles.has(g.filePath));
 
   const toggleSelectAllFiles = () => {
-    if (allVisibleSelected) {
-      setSelectedFiles(new Set());
-    } else {
-      setSelectedFiles(
-        new Set(filteredGroups.map((g) => g.filePath).filter(Boolean)),
-      );
-    }
+    const next = toggleAllParentsSelection({
+      items: filteredGroups.map((group) => ({
+        parentKey: group.filePath,
+        childKeys: (group.annotatedScenarios || []).map((sc) =>
+          scenarioSelectionKey(sc, group),
+        ),
+      })),
+      allSelected: allVisibleSelected,
+      parents: selectedFiles,
+      children: selectedScenarioKeys,
+    });
+    setSelectedFiles(next.parents);
+    setSelectedScenarioKeys(next.children);
   };
 
-  const scenarioSelectionKey = (sc, group) =>
-    `${sc.testFile || group.filePath}::${sc.title || sc.id}`;
-
   const toggleSelectScenario = (sc, group) => {
-    const key = scenarioSelectionKey(sc, group);
-    setSelectedScenarioKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+    const next = toggleChildSelection({
+      childKey: scenarioSelectionKey(sc, group),
+      parentKey: group?.filePath || null,
+      siblingKeys: (group?.annotatedScenarios || []).map((item) =>
+        scenarioSelectionKey(item, group),
+      ),
+      parents: selectedFiles,
+      children: selectedScenarioKeys,
     });
+    setSelectedFiles(next.parents);
+    setSelectedScenarioKeys(next.children);
   };
 
   const selectedFileList = useMemo(() => Array.from(selectedFiles), [selectedFiles]);
@@ -217,14 +248,15 @@ export default function SystemSpecMatrixTable({
   const selectedScenarioObjects = useMemo(() => {
     const out = [];
     for (const group of enrichedGroups) {
+      const parentSelected = Boolean(group.filePath && selectedFiles.has(group.filePath));
       for (const sc of group.annotatedScenarios || []) {
-        if (selectedScenarioKeys.has(scenarioSelectionKey(sc, group))) {
+        if (parentSelected || selectedScenarioKeys.has(scenarioSelectionKey(sc, group))) {
           out.push({ ...sc, filePath: sc.testFile || group.filePath });
         }
       }
     }
     return out;
-  }, [enrichedGroups, selectedScenarioKeys]);
+  }, [enrichedGroups, selectedFiles, selectedScenarioKeys]);
 
   const hasPendingDraft =
     latestDraft &&
@@ -626,7 +658,7 @@ export default function SystemSpecMatrixTable({
                           {group.annotatedScenarios.map((sc, idx) => {
                             const st = normalizeStatus(sc.status);
                             const selKey = scenarioSelectionKey(sc, group);
-                            const isChecked = selectedScenarioKeys.has(selKey);
+                            const isChecked = Boolean(isFileSelected) || selectedScenarioKeys.has(selKey);
                             const isFixingThis =
                               fixingTarget === selKey || fixingTarget === sc.id;
                             const isDeletingThis =

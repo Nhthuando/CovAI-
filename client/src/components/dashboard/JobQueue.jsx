@@ -1,5 +1,3 @@
-import { useProjectAccess } from "../../hooks/useProjectAccess";
-import { useAuth } from "../../hooks/useAuth";
 /* eslint-disable no-unused-vars */
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,19 +14,14 @@ import {
   Wrench,
   BrainCircuit,
   Ban,
-  Layers,
   History,
-  Calendar,
   FileCode2,
   Sparkles,
-  AlertCircle,
   Search,
-  Filter,
   Users,
   ChevronDown,
   ChevronRight,
-  Terminal,
-  ExternalLink,
+  ListOrdered,
   Info,
   Check,
   ShieldCheck,
@@ -39,8 +32,8 @@ import {
 import {
   getUserJobsApi,
   getProjectJobsApi,
-  cancelJobApi,
 } from "../../services/job.service";
+import { openFloatingJobQueue } from "../../lib/floatingJobQueuePrefs";
 import { getProjectEventsApi } from "../../services/project.service";
 import { JobsListSkeleton } from "../common/Skeleton";
 
@@ -295,13 +288,7 @@ const POLL_FAST = 8000;
 const POLL_SLOW = 30000;
 
 /* ── Component ─────────────────────────────────────────────── */
-export default function JobQueue({ projectId, onSync }) {
-  const projectAccess = useProjectAccess(projectId);
-  const { userId } = useAuth();
-
-  // Active view: "activity" (Activity Log & Audit Trail) | "tasks" (Task Queue & Runners)
-  const [activeTab, setActiveTab] = useState("activity");
-
+export default function JobQueue({ projectId }) {
   /* ── Activity / Events State ─────────────────────────────── */
   const [events, setEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
@@ -310,13 +297,9 @@ export default function JobQueue({ projectId, onSync }) {
   const [activitySearch, setActivitySearch] = useState("");
   const [expandedEventId, setExpandedEventId] = useState(null);
 
-  /* ── Job Queue State ─────────────────────────────────────── */
+  /* ── Job Summary State (fed into timeline) ───────────────── */
   const [jobs, setJobs] = useState([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
-  const [errorJobs, setErrorJobs] = useState(null);
-  const [filterJobs, setFilterJobs] = useState("ALL"); // ALL | ACTIVE | COMPLETED | FAILED
-  const [cancelingJobId, setCancelingJobId] = useState(null);
-  const [selectedJobForModal, setSelectedJobForModal] = useState(null);
   const intervalRef = useRef(null);
 
   /* ── Fetch Handlers ──────────────────────────────────────── */
@@ -349,7 +332,6 @@ export default function JobQueue({ projectId, onSync }) {
   const fetchJobs = useCallback(
     async (silent = false) => {
       if (!silent) setLoadingJobs(true);
-      setErrorJobs(null);
       try {
         let jobList = [];
         if (projectId) {
@@ -358,8 +340,8 @@ export default function JobQueue({ projectId, onSync }) {
             if (projectJobsRes?.jobs) {
               jobList = projectJobsRes.jobs;
             }
-          } catch (_) {
-            // fallback to user jobs
+          } catch (projErr) {
+            console.warn("Could not load project jobs, falling back to user jobs:", projErr.message);
             const userJobsRes = await getUserJobsApi();
             jobList = userJobsRes?.jobs || [];
           }
@@ -368,12 +350,9 @@ export default function JobQueue({ projectId, onSync }) {
           jobList = userJobsRes?.jobs || [];
         }
 
-        const visibleJobs = jobList.filter(
-          (job) => !["PERFORMANCE_ANALYSIS", "CODE_HYGIENE"].includes(job.type),
-        );
-        setJobs(visibleJobs);
+        setJobs(jobList);
       } catch (err) {
-        setErrorJobs(err.message || "Failed to load jobs");
+        console.warn("Could not load jobs:", err.message);
       } finally {
         setLoadingJobs(false);
       }
@@ -385,37 +364,23 @@ export default function JobQueue({ projectId, onSync }) {
     await Promise.all([fetchEvents(), fetchJobs()]);
   };
 
-  const handleCancelJob = async (jobId) => {
-    const job = jobs.find((row) => row.id === jobId);
-    if (
-      !projectAccess.can("tests.run") ||
-      (projectAccess.role !== "OWNER" && job?.userId !== userId)
-    ) {
-      return;
-    }
-    try {
-      setCancelingJobId(jobId);
-      await cancelJobApi(jobId);
-      await fetchJobs(true);
-    } catch (err) {
-      setErrorJobs(err.message || "Failed to cancel task");
-    } finally {
-      setCancelingJobId(null);
-    }
-  };
-
   /* ── Initial Fetch & Polling ─────────────────────────────── */
   useEffect(() => {
     if (!projectId) return;
-    fetchEvents();
-    fetchJobs();
+    const initTimer = setTimeout(() => {
+      fetchEvents();
+      fetchJobs();
+    }, 0);
 
     intervalRef.current = setInterval(() => {
       fetchJobs(true);
       fetchEvents(true);
     }, POLL_FAST);
 
-    return () => clearInterval(intervalRef.current);
+    return () => {
+      clearTimeout(initTimer);
+      clearInterval(intervalRef.current);
+    };
   }, [projectId, fetchEvents, fetchJobs]);
 
   // Adjust polling speed according to active jobs
@@ -445,14 +410,6 @@ export default function JobQueue({ projectId, onSync }) {
     () => jobs.filter((j) => j.status === "FAILED"),
     [jobs],
   );
-
-  const filteredJobs = useMemo(() => {
-    if (filterJobs === "ALL") return jobs;
-    if (filterJobs === "ACTIVE") return activeJobs;
-    if (filterJobs === "COMPLETED") return completedJobs;
-    if (filterJobs === "FAILED") return failedJobs;
-    return jobs;
-  }, [jobs, filterJobs, activeJobs, completedJobs, failedJobs]);
 
   // Combine jobs and events into an unified chronological activity feed
   const unifiedActivities = useMemo(() => {
@@ -632,6 +589,22 @@ export default function JobQueue({ projectId, onSync }) {
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => openFloatingJobQueue({ domain: "all" })}
+            className="flex items-center gap-1.5 rounded-[var(--radius-md)] text-xs font-medium cursor-pointer transition-colors hover:bg-[var(--color-surface-secondary)]"
+            style={{
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              color: "var(--color-text)",
+              padding: "7px 12px",
+            }}
+            title="Open the global floating Job Queue"
+          >
+            <ListOrdered size={13} style={{ color: "var(--color-primary)" }} />
+            <span>Open Job Queue</span>
+          </button>
+
           <motion.button
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
@@ -798,112 +771,8 @@ export default function JobQueue({ projectId, onSync }) {
         </div>
       </div>
 
-      {/* ── Tab Switcher: Activity Log vs Task Queue ────────────── */}
-      <div
-        className="flex items-center gap-2 border-b border-[var(--color-border)] pb-2.5"
-        style={{ marginBottom: 20 }}
-      >
-        <button
-          onClick={() => setActiveTab("activity")}
-          className="flex items-center gap-2 rounded-[var(--radius-md)] px-3.5 py-1.5 text-xs font-semibold cursor-pointer transition-colors"
-          style={{
-            background:
-              activeTab === "activity"
-                ? "var(--color-surface-secondary)"
-                : "transparent",
-            color:
-              activeTab === "activity"
-                ? "var(--color-text)"
-                : "var(--color-text-muted)",
-            border:
-              activeTab === "activity"
-                ? "1px solid var(--color-border)"
-                : "1px solid transparent",
-          }}
-        >
-          <History
-            size={13}
-            style={{
-              color:
-                activeTab === "activity"
-                  ? "var(--color-primary)"
-                  : "var(--color-text-muted)",
-            }}
-          />
-          <span>Activity Log</span>
-          <span
-            className="rounded-full px-1.5 py-0.2 text-[10px] font-mono font-medium"
-            style={{
-              background:
-                activeTab === "activity"
-                  ? "rgba(109, 93, 251, 0.12)"
-                  : "var(--color-surface-secondary)",
-              color:
-                activeTab === "activity"
-                  ? "var(--color-primary)"
-                  : "var(--color-text-muted)",
-            }}
-          >
-            {unifiedActivities.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("tasks")}
-          className="flex items-center gap-2 rounded-[var(--radius-md)] px-3.5 py-1.5 text-xs font-semibold cursor-pointer transition-colors"
-          style={{
-            background:
-              activeTab === "tasks"
-                ? "var(--color-surface-secondary)"
-                : "transparent",
-            color:
-              activeTab === "tasks"
-                ? "var(--color-text)"
-                : "var(--color-text-muted)",
-            border:
-              activeTab === "tasks"
-                ? "1px solid var(--color-border)"
-                : "1px solid transparent",
-          }}
-        >
-          <Cpu
-            size={13}
-            style={{
-              color:
-                activeTab === "tasks"
-                  ? "var(--color-primary)"
-                  : "var(--color-text-muted)",
-            }}
-          />
-          <span>Task Queue</span>
-          {activeJobs.length > 0 ? (
-            <span
-              className="flex items-center gap-1 rounded-full px-2 py-0.2 text-[10px] font-semibold"
-              style={{
-                background: "rgba(2, 132, 199, 0.12)",
-                color: "var(--color-info)",
-              }}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-info)]" />
-              {activeJobs.length} running
-            </span>
-          ) : (
-            <span
-              className="rounded-full px-1.5 py-0.2 text-[10px] font-mono font-medium"
-              style={{
-                background: "var(--color-surface-secondary)",
-                color: "var(--color-text-muted)",
-              }}
-            >
-              {jobs.length}
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* ── TAB 1: ACTIVITY LOG & AUDIT TRAIL ────────────────────── */}
-      {activeTab === "activity" && (
-        <div className="flex flex-col gap-4">
+      {/* ── ACTIVITY LOG & AUDIT TRAIL ─────────────────────────── */}
+      <div className="flex flex-col gap-4">
           {/* Filters & Search Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             {/* Category pills */}
@@ -1215,524 +1084,6 @@ export default function JobQueue({ projectId, onSync }) {
             })}
           </div>
         </div>
-      )}
-
-      {/* ── TAB 2: TASK QUEUE & BACKGROUND RUNNERS ──────────────── */}
-      {activeTab === "tasks" && (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          {/* Left Column: Jobs List */}
-          <div className="xl:col-span-2 flex flex-col gap-4">
-            <div className="flex items-center justify-between mb-1">
-              <h2
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: "var(--color-text)",
-                }}
-              >
-                {filterJobs === "ALL"
-                  ? `All Tasks (${jobs.length})`
-                  : filterJobs === "ACTIVE"
-                    ? `Running (${activeJobs.length})`
-                    : filterJobs === "COMPLETED"
-                      ? `Completed (${completedJobs.length})`
-                      : `Failed (${failedJobs.length})`}
-              </h2>
-              <div className="flex items-center gap-1.5">
-                {[
-                  { id: "ALL", label: "All" },
-                  { id: "ACTIVE", label: "Running" },
-                  { id: "COMPLETED", label: "Completed" },
-                  { id: "FAILED", label: "Failed" },
-                ].map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => setFilterJobs(f.id)}
-                    className="rounded-[var(--radius-md)] transition-colors cursor-pointer"
-                    style={{
-                      background:
-                        filterJobs === f.id
-                          ? "var(--color-surface-secondary)"
-                          : "transparent",
-                      border:
-                        filterJobs === f.id
-                          ? "1px solid var(--color-border)"
-                          : "1px solid transparent",
-                      color:
-                        filterJobs === f.id
-                          ? "var(--color-text)"
-                          : "var(--color-text-muted)",
-                      fontSize: 12,
-                      fontWeight: 500,
-                      padding: "4px 10px",
-                    }}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Loading state */}
-            {loadingJobs && jobs.length === 0 && <JobsListSkeleton count={3} />}
-
-            {/* Error state */}
-            {errorJobs && (
-              <div
-                className="rounded-[var(--radius-md)] flex items-center gap-2.5 p-3 text-xs"
-                style={{
-                  background: "rgba(220, 38, 38, 0.1)",
-                  border: "1px solid rgba(220, 38, 38, 0.25)",
-                  color: "var(--color-danger)",
-                }}
-              >
-                <XCircle size={15} />
-                <span>{errorJobs}</span>
-              </div>
-            )}
-
-            {/* Empty state */}
-            {!loadingJobs && !errorJobs && filteredJobs.length === 0 && (
-              <div
-                className="flex flex-col items-center justify-center rounded-[var(--radius-lg)] p-12 text-center"
-                style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
-                <Clock
-                  size={32}
-                  style={{ color: "var(--color-text-muted)", marginBottom: 8 }}
-                />
-                <p
-                  style={{
-                    color: "var(--color-text)",
-                    fontSize: 14,
-                    fontWeight: 600,
-                  }}
-                >
-                  No tasks found
-                </p>
-                <p
-                  style={{
-                    color: "var(--color-text-secondary)",
-                    fontSize: 12,
-                    marginTop: 4,
-                  }}
-                >
-                  {filterJobs !== "ALL"
-                    ? "Try adjusting the filter."
-                    : "Background tasks will appear here when running tests or automated analysis."}
-                </p>
-              </div>
-            )}
-
-            {/* Job Cards */}
-            <div className="flex flex-col gap-3">
-              <AnimatePresence mode="popLayout">
-                {filteredJobs.map((job, idx) => {
-                  const visual = getJobVisual(job);
-                  const isActive = ["QUEUED", "RUNNING"].includes(job.status);
-                  const canCancel =
-                    isActive &&
-                    (projectAccess.can("tests.run") ||
-                      projectAccess.role === "OWNER" ||
-                      job?.userId === userId);
-
-                  return (
-                    <motion.div
-                      key={job.id}
-                      layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{
-                        opacity: 0,
-                        y: -8,
-                        transition: { duration: 0.15 },
-                      }}
-                      transition={{
-                        delay: idx * 0.03,
-                        duration: 0.2,
-                        ease: "easeOut",
-                      }}
-                      className="relative rounded-[var(--radius-lg)] overflow-hidden flex flex-col"
-                      style={{
-                        background: "var(--color-surface)",
-                        border: "1px solid var(--color-border)",
-                        padding: "16px 20px",
-                      }}
-                    >
-                      {/* Left Accent Bar */}
-                      <div
-                        className="absolute left-0 top-0 bottom-0"
-                        style={{
-                          width: 3,
-                          background: visual.color,
-                        }}
-                      />
-
-                      {/* Header Row */}
-                      <div className="flex items-start justify-between gap-3 mb-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className="w-8 h-8 rounded-[var(--radius-md)] flex items-center justify-center flex-shrink-0"
-                            style={{
-                              background: visual.bg,
-                              border: `1px solid ${visual.border}`,
-                              color: visual.color,
-                            }}
-                          >
-                            <visual.Icon size={16} />
-                          </div>
-
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span
-                                style={{
-                                  fontSize: 13,
-                                  fontWeight: 600,
-                                  color: "var(--color-text)",
-                                }}
-                              >
-                                {visual.typeLabel}
-                              </span>
-                              <span
-                                className="font-mono text-[10px] px-1.5 py-0.2 rounded"
-                                style={{
-                                  background: "var(--color-surface-secondary)",
-                                  color: "var(--color-text-secondary)",
-                                  border: "1px solid var(--color-border)",
-                                }}
-                              >
-                                #{job.id.slice(0, 8)}
-                              </span>
-                            </div>
-                            <p
-                              style={{
-                                fontSize: 11,
-                                color: "var(--color-text-secondary)",
-                                marginTop: 1,
-                              }}
-                            >
-                              {visual.taskLabel}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Status Badge & Actions */}
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span
-                            className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold tracking-wide"
-                            style={{
-                              background: visual.bg,
-                              color: visual.color,
-                              border: `1px solid ${visual.border}`,
-                            }}
-                          >
-                            {isActive ? (
-                              <Loader2 size={10} className="animate-spin" />
-                            ) : (
-                              <span
-                                className="w-1.5 h-1.5 rounded-full"
-                                style={{ background: visual.color }}
-                              />
-                            )}
-                            {visual.statusLabel}
-                          </span>
-
-                          {canCancel && (
-                            <button
-                              onClick={() => handleCancelJob(job.id)}
-                              disabled={cancelingJobId === job.id}
-                              className="text-xs px-2 py-1 rounded text-[var(--color-danger)] hover:bg-[rgba(220,38,38,0.1)] transition-colors cursor-pointer"
-                              title="Cancel task"
-                            >
-                              {cancelingJobId === job.id ? (
-                                <Loader2 size={12} className="animate-spin" />
-                              ) : (
-                                "Cancel"
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Progress Bar (if running) */}
-                      {isActive && (
-                        <div className="my-2">
-                          <div className="flex items-center justify-between text-[11px] mb-1">
-                            <span style={{ color: "var(--color-text-muted)" }}>
-                              {job.status === "QUEUED"
-                                ? "Waiting for available worker..."
-                                : "Executing runner process..."}
-                            </span>
-                            <span
-                              className="font-mono font-medium"
-                              style={{ color: "var(--color-info)" }}
-                            >
-                              {job.progress ? `${job.progress}%` : "In flight"}
-                            </span>
-                          </div>
-                          <div
-                            className="w-full h-1.5 rounded-full overflow-hidden"
-                            style={{ background: "var(--color-surface-secondary)" }}
-                          >
-                            <div
-                              className="h-full rounded-full transition-all duration-300"
-                              style={{
-                                width: job.progress ? `${job.progress}%` : "50%",
-                                background: "var(--color-info)",
-                              }}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Failure / Error Snippet */}
-                      {job.status === "FAILED" && job.error && (
-                        <div
-                          className="my-2 p-2.5 rounded-[var(--radius-sm)] flex items-start justify-between gap-2 text-xs"
-                          style={{
-                            background: "rgba(220, 38, 38, 0.08)",
-                            border: "1px solid rgba(220, 38, 38, 0.2)",
-                            color: "var(--color-danger)",
-                          }}
-                        >
-                          <div className="flex items-start gap-1.5 overflow-hidden">
-                            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
-                            <span className="font-mono text-[11px] truncate">
-                              {job.error}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => setSelectedJobForModal(job)}
-                            className="underline text-[11px] whitespace-nowrap hover:opacity-80 cursor-pointer"
-                          >
-                            Details
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Metadata Footer */}
-                      <div
-                        className="flex items-center justify-between gap-4 pt-2 mt-1 border-t border-[var(--color-border)] text-[11px]"
-                        style={{ color: "var(--color-text-muted)" }}
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="flex items-center gap-1">
-                            <Calendar size={11} />
-                            {formatDateTime(job.createdAt)}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock size={11} />
-                            {formatDuration(job.startedAt || job.createdAt, job.completedAt)}
-                          </span>
-                        </div>
-
-                        {job.status === "FAILED" && (
-                          <button
-                            onClick={() => setSelectedJobForModal(job)}
-                            className="text-[var(--color-primary)] hover:underline font-medium cursor-pointer"
-                          >
-                            View error log
-                          </button>
-                        )}
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </AnimatePresence>
-            </div>
-          </div>
-
-          {/* Right Column: Runner Health & Metrics */}
-          <div className="flex flex-col gap-4">
-            <div
-              className="rounded-[var(--radius-lg)] p-4 flex flex-col gap-3.5"
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
-                <span
-                  className="font-semibold text-xs"
-                  style={{ color: "var(--color-text)" }}
-                >
-                  Runner Health & System Load
-                </span>
-                <span
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                  style={{
-                    background: "rgba(22, 163, 74, 0.12)",
-                    color: "var(--color-success)",
-                  }}
-                >
-                  Online
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-2.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "var(--color-text-secondary)" }}>
-                    Worker Status
-                  </span>
-                  <span
-                    className="font-semibold"
-                    style={{
-                      color:
-                        activeJobs.length > 0
-                          ? "var(--color-info)"
-                          : "var(--color-success)",
-                    }}
-                  >
-                    {activeJobs.length > 0 ? "Busy (Processing)" : "Idle (Ready)"}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "var(--color-text-secondary)" }}>
-                    Success Rate
-                  </span>
-                  <span
-                    className="font-mono font-semibold"
-                    style={{ color: "var(--color-text)" }}
-                  >
-                    {jobs.length > 0
-                      ? `${Math.round((completedJobs.length / jobs.length) * 100)}%`
-                      : "100%"}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <span style={{ color: "var(--color-text-secondary)" }}>
-                    Sync Polling
-                  </span>
-                  <span
-                    className="font-mono text-[11px]"
-                    style={{ color: "var(--color-text-muted)" }}
-                  >
-                    {activeJobs.length > 0 ? `${POLL_FAST / 1000}s` : `${POLL_SLOW / 1000}s`}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick tips */}
-            <div
-              className="rounded-[var(--radius-lg)] p-4 flex flex-col gap-2"
-              style={{
-                background: "var(--color-surface-secondary)",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <div className="flex items-center gap-1.5 text-xs font-semibold">
-                <Info size={13} style={{ color: "var(--color-primary)" }} />
-                <span>Version Control Note</span>
-              </div>
-              <p
-                className="text-[11px] leading-relaxed"
-                style={{ color: "var(--color-text-secondary)" }}
-              >
-                The <strong>Snapshot & Checkpoint</strong> features have been consolidated into the <strong>Version Control</strong> tab on the left navigation bar.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Error Detail Inspection Modal ───────────────────────── */}
-      <AnimatePresence>
-        {selectedJobForModal && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            style={{ background: "rgba(0, 0, 0, 0.5)" }}
-            onClick={() => setSelectedJobForModal(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.15 }}
-              className="w-full max-w-xl rounded-[var(--radius-lg)] overflow-hidden shadow-xl"
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="p-4 border-b border-[var(--color-border)] flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertCircle size={16} style={{ color: "var(--color-danger)" }} />
-                  <h3
-                    className="font-bold text-sm"
-                    style={{ color: "var(--color-text)" }}
-                  >
-                    Task Error Details #{selectedJobForModal.id.slice(0, 8)}
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setSelectedJobForModal(null)}
-                  className="text-xs p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="p-5 flex flex-col gap-3">
-                <div className="text-xs flex flex-col gap-1">
-                  <span
-                    className="font-medium text-[11px]"
-                    style={{ color: "var(--color-text-muted)" }}
-                  >
-                    Task Type:
-                  </span>
-                  <span
-                    className="font-semibold"
-                    style={{ color: "var(--color-text)" }}
-                  >
-                    {JOB_TYPE_CONFIG[selectedJobForModal.type]?.label ||
-                      selectedJobForModal.type}
-                  </span>
-                </div>
-
-                <div className="text-xs flex flex-col gap-1">
-                  <span
-                    className="font-medium text-[11px]"
-                    style={{ color: "var(--color-text-muted)" }}
-                  >
-                    Error Message / Stack Trace:
-                  </span>
-                  <pre
-                    className="p-3 rounded-[var(--radius-sm)] text-xs font-mono overflow-x-auto whitespace-pre-wrap max-h-60"
-                    style={{
-                      background: "rgba(220, 38, 38, 0.08)",
-                      border: "1px solid rgba(220, 38, 38, 0.2)",
-                      color: "var(--color-danger)",
-                    }}
-                  >
-                    {selectedJobForModal.error || "No detailed stack trace available"}
-                  </pre>
-                </div>
-              </div>
-
-              <div className="p-3.5 border-t border-[var(--color-border)] flex justify-end">
-                <button
-                  onClick={() => setSelectedJobForModal(null)}
-                  className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-md)] cursor-pointer"
-                  style={{
-                    background: "var(--color-surface-secondary)",
-                    border: "1px solid var(--color-border)",
-                    color: "var(--color-text)",
-                  }}
-                >
-                  Close
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

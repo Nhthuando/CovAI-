@@ -44,6 +44,50 @@ export const UNIT_CATEGORY_TO_KEY = {
   ERROR: "ERROR",
 };
 
+const TRIVIAL_CALLBACK_NAMES = new Set([
+  "anonymous",
+  "(anonymous)",
+  "function",
+  "arrow",
+  "then",
+  "catch",
+  "finally",
+  "map",
+  "filter",
+  "find",
+  "findindex",
+  "foreach",
+  "reduce",
+  "reduceright",
+  "some",
+  "every",
+  "sort",
+  "flatmap",
+  "settimeout",
+  "setinterval",
+  "setimmediate",
+  "requestanimationframe",
+  "promise",
+  "next",
+  "cb",
+  "callback",
+  "done",
+  "resolve",
+  "reject",
+]);
+
+export function isTrivialCallbackFunctionName(rawName = "") {
+  const clean = String(rawName || "")
+    .trim()
+    .replace(/\(\)$/, "")
+    .trim()
+    .toLowerCase();
+  if (!clean) return true;
+  if (TRIVIAL_CALLBACK_NAMES.has(clean)) return true;
+  if (/^anonymous_\d+$/i.test(clean) || /^fn_\d+$/i.test(clean)) return true;
+  return false;
+}
+
 export function isUnitTestPassed(tc) {
   const status = String(tc?.status || "").toUpperCase();
   return status === "PASS" || status === "PASSED";
@@ -55,9 +99,100 @@ export function isUnitTestFailed(tc) {
 }
 
 /**
+ * Extracts and normalizes testable business logic functions for a unit source file.
+ * Prioritizes named business functions while retaining full Istanbul function telemetry.
+ */
+export function getTestableUnitFunctions(file = {}, fileFunctions = []) {
+  const rawList = Array.isArray(fileFunctions) ? fileFunctions : [];
+  const normalized = [];
+  const seenKeys = new Set();
+
+  for (let i = 0; i < rawList.length; i++) {
+    const fn = rawList[i];
+    if (!fn || typeof fn !== "object") continue;
+    const rawName = String(fn.functionName || fn.realName || fn.name || "")
+      .trim()
+      .replace(/\(\)$/, "")
+      .trim();
+    if (!rawName) continue;
+    const startLine = Number(fn.startLine ?? fn.line ?? 0) || i + 1;
+    const hit = Number(fn.hit ?? fn.hits ?? (fn.covered ? 1 : 0)) || 0;
+    const cyclomatic = Number(fn.cyclomatic ?? fn.complexity ?? 1) || 1;
+    const isCallback = isTrivialCallbackFunctionName(rawName);
+    const dedupKey = `${rawName.toLowerCase()}::${startLine}`;
+    if (seenKeys.has(dedupKey)) continue;
+    seenKeys.add(dedupKey);
+    normalized.push({
+      key: `FN:${rawName}:${startLine}`,
+      name: rawName,
+      startLine,
+      hit,
+      cyclomatic,
+      isCallback,
+      coveredByExecution: hit > 0 || Number(file?.funcsPct ?? 0) >= 100,
+    });
+  }
+
+  const namedBusinessFns = normalized.filter((f) => !f.isCallback);
+  return namedBusinessFns.length > 0 ? namedBusinessFns : normalized;
+}
+
+/**
+ * Matches a unit test case to a specific business logic function in the file if referenced
+ * in `[functionName]` title tags, title words, or test code body.
+ */
+export function matchUnitTestToFunction(tc = {}, testableFunctions = []) {
+  if (!tc || !Array.isArray(testableFunctions) || testableFunctions.length === 0) {
+    return null;
+  }
+
+  if (tc.targetFunction) {
+    const explicit = testableFunctions.find(
+      (f) => f.name.toLowerCase() === String(tc.targetFunction).trim().toLowerCase(),
+    );
+    if (explicit) return explicit;
+  }
+
+  const rawTitle = String(tc.title || tc.testName || tc.name || "").trim();
+  const rawCode = String(tc.code || "");
+
+  // 1. Check leading bracketed function tag `[fnName]` or leading `fnName`
+  const bracketMatches = [...rawTitle.matchAll(/\[\s*([A-Za-z_$][A-Za-z0-9_$.]*)\s*\]/g)];
+  for (const m of bracketMatches) {
+    const token = String(m[1] || "").split(".").pop().toLowerCase();
+    const found = testableFunctions.find((f) => f.name.toLowerCase() === token);
+    if (found) return found;
+  }
+
+  // Sort functions by descending name length so `getArticleStats` matches before `getArticle`
+  const sortedFns = [...testableFunctions].sort((a, b) => b.name.length - a.name.length);
+
+  // 2. Check whole-word match in title
+  for (const fn of sortedFns) {
+    if (fn.name.length < 2) continue;
+    const escaped = fn.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(rawTitle)) {
+      return fn;
+    }
+  }
+
+  // 3. Check function invocation in test code body
+  if (rawCode) {
+    for (const fn of sortedFns) {
+      if (fn.name.length < 2) continue;
+      const escaped = fn.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`\\b${escaped}\\s*\\(`, "i").test(rawCode)) {
+        return fn;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Classifies a unit test case into one of the 4 standard CovAI unit test categories.
- * Checks explicit caseKey/category and explicit leading title tags first so that
- * incidental words in a scenario description never misclassify its intended case.
+ * Strips any leading `[functionName]` tag first so function names never skew classification.
  */
 export function classifyUnitTestCase(tc = {}) {
   const explicitKey =
@@ -67,39 +202,45 @@ export function classifyUnitTestCase(tc = {}) {
   }
 
   const rawTitle = String(tc.title || tc.testName || tc.name || "").trim();
+  const titleWithoutFnPrefix = rawTitle.replace(
+    /^\[\s*(?!(?:happy|boundary|edge|branch|error|category\s+[a-d]|tc[-_]))[A-Za-z_$][A-Za-z0-9_$.]*\s*\]\s*/i,
+    "",
+  );
 
   // 1. Check explicit bracketed tag, category label, or leading TC-* prefix in title
-  if (
-    /^(?:\[\s*happy(?:\s*path)?\s*\]|happy\s*path\s*[:\-]|category\s*a\b|tc[-_\s]*happy\b)/i.test(
-      rawTitle,
-    ) ||
-    /\[\s*category\s*a\s*:\s*happy\s*path\s*\]/i.test(rawTitle)
-  ) {
-    return UNIT_CASE_DEFINITIONS.HAPPY;
-  }
-  if (
-    /^(?:\[\s*boundary(?:\s*\/\s*edge|\s*values?)?\s*\]|boundary(?:\s*\/\s*edge|\s*values?)?\s*[:\-]|category\s*b\b|tc[-_\s]*(?:bound(?:ary)?|edge)\b)/i.test(
-      rawTitle,
-    ) ||
-    /\[\s*category\s*b\s*:\s*boundary/i.test(rawTitle)
-  ) {
-    return UNIT_CASE_DEFINITIONS.BOUNDARY;
-  }
-  if (
-    /^(?:\[\s*branch(?:\s*paths?|\s*toggling|\s*coverage)?\s*\]|branch(?:\s*paths?|\s*toggling)?\s*[:\-]|category\s*c\b|tc[-_\s]*branch\b)/i.test(
-      rawTitle,
-    ) ||
-    /\[\s*category\s*c\s*:\s*branch/i.test(rawTitle)
-  ) {
-    return UNIT_CASE_DEFINITIONS.BRANCH;
-  }
-  if (
-    /^(?:\[\s*error(?:\s*handling|\s*&\s*exception)?\s*\]|error(?:\s*handling)?\s*[:\-]|category\s*d\b|tc[-_\s]*err(?:or)?\b)/i.test(
-      rawTitle,
-    ) ||
-    /\[\s*category\s*d\s*:\s*error/i.test(rawTitle)
-  ) {
-    return UNIT_CASE_DEFINITIONS.ERROR;
+  for (const candidateTitle of [titleWithoutFnPrefix, rawTitle]) {
+    if (
+      /^(?:\[\s*happy(?:\s*path)?\s*\]|happy\s*path\s*[:\-]|category\s*a\b|tc[-_\s]*happy\b)/i.test(
+        candidateTitle,
+      ) ||
+      /\[\s*(?:category\s*a\s*:\s*)?happy(?:\s*path)?\s*\]/i.test(candidateTitle)
+    ) {
+      return UNIT_CASE_DEFINITIONS.HAPPY;
+    }
+    if (
+      /^(?:\[\s*boundary(?:\s*\/\s*edge|\s*values?)?\s*\]|boundary(?:\s*\/\s*edge|\s*values?)?\s*[:\-]|category\s*b\b|tc[-_\s]*(?:bound(?:ary)?|edge)\b)/i.test(
+        candidateTitle,
+      ) ||
+      /\[\s*(?:category\s*b\s*:\s*)?boundary/i.test(candidateTitle)
+    ) {
+      return UNIT_CASE_DEFINITIONS.BOUNDARY;
+    }
+    if (
+      /^(?:\[\s*branch(?:\s*paths?|\s*toggling|\s*coverage)?\s*\]|branch(?:\s*paths?|\s*toggling)?\s*[:\-]|category\s*c\b|tc[-_\s]*branch\b)/i.test(
+        candidateTitle,
+      ) ||
+      /\[\s*(?:category\s*c\s*:\s*)?branch/i.test(candidateTitle)
+    ) {
+      return UNIT_CASE_DEFINITIONS.BRANCH;
+    }
+    if (
+      /^(?:\[\s*error(?:\s*handling|\s*&\s*exception)?\s*\]|error(?:\s*handling)?\s*[:\-]|category\s*d\b|tc[-_\s]*err(?:or)?\b)/i.test(
+        candidateTitle,
+      ) ||
+      /\[\s*(?:category\s*d\s*:\s*)?error/i.test(candidateTitle)
+    ) {
+      return UNIT_CASE_DEFINITIONS.ERROR;
+    }
   }
 
   // 2. Classify by title text first (before ancestorTitles so suite names don't hijack every test)
@@ -134,11 +275,11 @@ export function classifyUnitTestCase(tc = {}) {
     return null;
   };
 
-  const titleMatch = matchKeywords(rawTitle);
+  const titleMatch = matchKeywords(titleWithoutFnPrefix);
   if (titleMatch) return titleMatch;
 
   const fullText = [
-    rawTitle,
+    titleWithoutFnPrefix,
     tc.description || "",
     ...(Array.isArray(tc.ancestorTitles) ? tc.ancestorTitles : []),
   ].join(" ");
@@ -201,39 +342,100 @@ export function isUserOrExistingUnitTest(tc = {}) {
 }
 
 /**
- * Annotates unit test cases with which required Unit case they satisfy vs Duplicate / Optional,
- * enforcing user-vs-AI precedence:
- * - If the user's existing test (PROJECT_EXISTING / USER) passed or has not failed yet,
- *   the user's test is Primary (`Case: <Label>`) and any AI test for the same case is marked `Duplicate`.
- * - If the user's existing test FAILED after running and an AI test for that case passed (or is valid),
- *   the user's test is marked `Failed · <Label>` and the AI test becomes Primary (`Case: <Label>`).
+ * Computes per-function coverage and test mapping for a business logic source file.
+ */
+export function getFileUnitFunctionCoverage(
+  file = {},
+  fileFunctions = [],
+  testCases = [],
+) {
+  const testableFunctions = getTestableUnitFunctions(file, fileFunctions);
+  const allFunctions = Array.isArray(fileFunctions) ? fileFunctions : [];
+  const fileFuncsPct = Number(file?.funcsPct ?? file?.functionsPct ?? 0);
+  const fileLinesPct = Number(file?.linesPct ?? 0);
+
+  const functions = testableFunctions.map((fn) => {
+    const matchedTests = (testCases || []).filter(
+      (tc) => matchUnitTestToFunction(tc, [fn])?.key === fn.key,
+    );
+    const hasPassedTest = matchedTests.some(isUnitTestPassed);
+    const hasFailedTest = matchedTests.some(isUnitTestFailed);
+    const hasDraftTest = matchedTests.length > 0;
+    const covered =
+      fn.hit > 0 ||
+      fileFuncsPct >= 100 ||
+      (fileLinesPct >= 100 && !hasFailedTest) ||
+      (hasPassedTest && fileLinesPct > 0);
+    return {
+      ...fn,
+      covered,
+      passed: covered && !hasFailedTest,
+      failed: hasFailedTest,
+      hasDraftTest,
+      testCount: matchedTests.length,
+    };
+  });
+
+  const totalFunctions =
+    functions.length > 0
+      ? functions.length
+      : Number(file?.funcsTotal ?? file?.functionsTotal ?? allFunctions.length ?? 0);
+  const coveredFunctions =
+    functions.length > 0
+      ? functions.filter((f) => f.covered).length
+      : Number(
+          file?.funcsCovered ??
+            file?.functionsCovered ??
+            allFunctions.filter((f) => Number(f?.hit ?? f?.hits ?? 0) > 0).length ??
+            0,
+        );
+
+  return {
+    functions,
+    totalFunctions,
+    coveredFunctions: Math.min(totalFunctions, coveredFunctions),
+    uncoveredFunctions: functions.filter((f) => !f.covered),
+    isAllFunctionsCovered: totalFunctions > 0 ? coveredFunctions >= totalFunctions : fileLinesPct >= 100,
+  };
+}
+
+/**
+ * Annotates unit test cases with their target business logic function and category,
+ * enforcing user-vs-AI precedence per (function, category) slot.
  */
 export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases = []) {
   const requiredCases = getRequiredUnitCasesForFile(file, fileFunctions);
   const requiredByKey = new Map(requiredCases.map((c) => [c.key, c]));
+  const testableFunctions = getTestableUnitFunctions(file, fileFunctions);
+  const useFunctionSlots = testableFunctions.length > 1;
 
   const orderedEntries = (testCases || []).map((tc, index) => {
     const def = classifyUnitTestCase(tc);
+    const matchedFn = matchUnitTestToFunction(tc, testableFunctions);
     const passed = isUnitTestPassed(tc);
     const failed = isUnitTestFailed(tc);
     const isProjectExisting = isUserOrExistingUnitTest(tc);
     let score;
     if (isProjectExisting && !failed) {
-      // User's existing test is valid (passed or not yet failed) -> always preferred over AI
       score = passed ? 220 : 200;
     } else if (!isProjectExisting && !failed) {
-      // AI test is valid (passed or pending draft) -> takes over Primary if user test failed or is absent
       score = passed ? 170 : 150;
     } else if (isProjectExisting && failed) {
       score = 40;
     } else {
       score = 20;
     }
+    const slotKey =
+      matchedFn && (useFunctionSlots || /^\[\s*[A-Za-z_$]/.test(String(tc.title || "").trim()))
+        ? `FN::${matchedFn.name.toLowerCase()}::${def.key}`
+        : def.key;
     return {
       tc,
       index,
       id: unitTestIdentity(tc, index),
       key: def.key,
+      slotKey,
+      matchedFn,
       def,
       passed,
       failed,
@@ -242,18 +444,19 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
     };
   });
 
-  const bestForKey = new Map();
+  const bestForSlot = new Map();
   for (const entry of orderedEntries) {
-    if (!requiredByKey.has(entry.key)) continue;
-    const prev = bestForKey.get(entry.key);
+    const isFnSlot = entry.slotKey.startsWith("FN::");
+    if (!isFnSlot && !requiredByKey.has(entry.key)) continue;
+    const prev = bestForSlot.get(entry.slotKey);
     if (!prev || entry.score > prev.score) {
-      bestForKey.set(entry.key, entry);
+      bestForSlot.set(entry.slotKey, entry);
     }
   }
 
-  const primaryByKey = new Map();
-  for (const [key, entry] of bestForKey.entries()) {
-    primaryByKey.set(key, entry.id);
+  const primaryBySlot = new Map();
+  for (const [slotKey, entry] of bestForSlot.entries()) {
+    primaryBySlot.set(slotKey, entry.id);
   }
 
   const annotations = {};
@@ -261,21 +464,30 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
   let extraCount = 0;
 
   for (const entry of orderedEntries) {
-    const reqDef = requiredByKey.get(entry.key);
-    if (!reqDef) {
+    const isFnSlot = entry.slotKey.startsWith("FN::");
+    const reqDef = requiredByKey.get(entry.key) || entry.def;
+    const fnPrefix = entry.matchedFn ? `Fn: ${entry.matchedFn.name}()` : null;
+
+    if (!isFnSlot && !requiredByKey.has(entry.key)) {
       extraCount++;
       annotations[entry.id] = {
         badgeType: "OPTIONAL",
-        badgeLabel: `Optional · ${entry.def.label}`,
+        badgeLabel: fnPrefix ? `${fnPrefix} · ${entry.def.label}` : `Optional · ${entry.def.label}`,
         caseKey: entry.key,
         caseLabel: entry.def.label,
+        targetFunction: entry.matchedFn?.name || null,
+        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
         isRemovableSuggestion: false,
       };
       continue;
     }
 
-    const winner = bestForKey.get(entry.key);
-    const isPrimary = primaryByKey.get(entry.key) === entry.id;
+    const winner = bestForSlot.get(entry.slotKey);
+    const isPrimary = primaryBySlot.get(entry.slotKey) === entry.id;
+    const displayTarget = fnPrefix
+      ? `${fnPrefix} · ${reqDef.label}`
+      : `Case: ${reqDef.label}`;
+
     if (isPrimary) {
       const passed = entry.passed;
       const failed = entry.failed;
@@ -285,9 +497,11 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
           : failed
             ? "PRIMARY_FAIL"
             : "PRIMARY_PENDING",
-        badgeLabel: `Case: ${reqDef.label}`,
+        badgeLabel: displayTarget,
         caseKey: reqDef.key,
         caseLabel: reqDef.label,
+        targetFunction: entry.matchedFn?.name || null,
+        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
         isRemovableSuggestion: false,
       };
     } else if (
@@ -297,12 +511,15 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       !winner.isProjectExisting &&
       !winner.failed
     ) {
-      // User's pre-existing test failed after running and was superseded by a valid AI test
       annotations[entry.id] = {
         badgeType: "PRIMARY_FAIL",
-        badgeLabel: `Failed · ${reqDef.label}`,
+        badgeLabel: fnPrefix
+          ? `Failed · ${entry.matchedFn.name}() · ${reqDef.label}`
+          : `Failed · ${reqDef.label}`,
         caseKey: reqDef.key,
         caseLabel: reqDef.label,
+        targetFunction: entry.matchedFn?.name || null,
+        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
         isRemovableSuggestion: true,
         supersededByAi: true,
       };
@@ -310,9 +527,13 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       redundantCount++;
       annotations[entry.id] = {
         badgeType: "DUPLICATE",
-        badgeLabel: `Duplicate · ${reqDef.label}`,
+        badgeLabel: fnPrefix
+          ? `Duplicate · ${entry.matchedFn.name}() · ${reqDef.label}`
+          : `Duplicate · ${reqDef.label}`,
         caseKey: reqDef.key,
         caseLabel: reqDef.label,
+        targetFunction: entry.matchedFn?.name || null,
+        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
         isRemovableSuggestion: true,
       };
     }
@@ -322,7 +543,7 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
 }
 
 /**
- * Full Unit Test case coverage computation for a source file.
+ * Full Unit Test coverage computation for a source file (both function-level and category-level).
  */
 export function getFileUnitCaseCoverage(
   file = {},
@@ -359,6 +580,7 @@ export function getFileUnitCaseCoverage(
   const passedCasesCount = cases.filter((c) => c.passed).length;
   const { annotations: scenarioAnnotations, redundantCount, extraCount } =
     annotateFileUnitTests(file, fileFunctions, testCases);
+  const functionCoverage = getFileUnitFunctionCoverage(file, fileFunctions, testCases);
 
   return {
     cases,
@@ -377,6 +599,7 @@ export function getFileUnitCaseCoverage(
     scenarioAnnotations,
     redundantCount,
     extraCount,
+    functionCoverage,
   };
 }
 

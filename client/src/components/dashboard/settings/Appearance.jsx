@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Palette, Check, Code2, Sun, Moon, Monitor } from "lucide-react";
 import { useToast } from "../ToastContext";
 import { useTheme } from "../../../contexts/ThemeContext";
 import Button from "../../common/Button";
+import {
+  FLOATING_QUEUE_VISIBILITY_EVENT,
+  isFloatingJobQueueVisible,
+  setFloatingJobQueueVisible,
+} from "../../../lib/floatingJobQueuePrefs";
 
 export default function Appearance() {
   const { showToast } = useToast();
@@ -26,6 +31,26 @@ export default function Appearance() {
   const [wordWrap, setWordWrap] = useState(
     localStorage.getItem("editor_word_wrap") === "true",
   );
+  const [showFloatingQueue, setShowFloatingQueue] = useState(() =>
+    isFloatingJobQueueVisible(),
+  );
+
+  useEffect(() => {
+    const syncVisibility = (e) => {
+      const next =
+        typeof e?.detail?.visible === "boolean"
+          ? e.detail.visible
+          : isFloatingJobQueueVisible();
+      setShowFloatingQueue(next);
+    };
+    window.addEventListener(FLOATING_QUEUE_VISIBILITY_EVENT, syncVisibility);
+    return () => {
+      window.removeEventListener(
+        FLOATING_QUEUE_VISIBILITY_EVENT,
+        syncVisibility,
+      );
+    };
+  }, []);
 
   const themeOptions = [
     {
@@ -74,6 +99,7 @@ export default function Appearance() {
     localStorage.setItem("editor_minimap", showMinimap);
     localStorage.setItem("editor_line_numbers", lineNumbers);
     localStorage.setItem("editor_word_wrap", wordWrap);
+    setFloatingJobQueueVisible(showFloatingQueue);
 
     showToast({
       type: "success",
@@ -284,6 +310,29 @@ export default function Appearance() {
                 type="checkbox"
                 checked={wordWrap}
                 onChange={(e) => setWordWrap(e.target.checked)}
+                className="w-4 h-4 accent-[var(--color-primary)] cursor-pointer"
+              />
+            </div>
+
+            {/* Floating Job Queue Button */}
+            <div className="flex items-center justify-between gap-4 pt-3 border-t border-[var(--color-border)]">
+              <div>
+                <div className="text-xs font-medium text-[var(--color-text)]">
+                  Show Floating Job Queue Button
+                </div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  Display the draggable Job Queue widget across workspace
+                  screens
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={showFloatingQueue}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setShowFloatingQueue(checked);
+                  setFloatingJobQueueVisible(checked);
+                }}
                 className="w-4 h-4 accent-[var(--color-primary)] cursor-pointer"
               />
             </div>

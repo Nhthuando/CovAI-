@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, test, expect, jest } from '@jest/globals';
 import {
+    applySystemTestRepair,
     collectPlaywrightOutcomes,
     removePlaywrightTests,
     verifyAndRepairSystemDraft,
@@ -29,6 +30,35 @@ const finalLocator = "getByRole('button', { name: 'Delete draft', exact: true })
 const patch = (old, replacement) => JSON.stringify({ replacements: [{ old, new: replacement }] });
 const timeout = 'Timed out waiting for the delete button';
 const directories = [];
+
+describe('Playwright test repairs', () => {
+    const old = "await page.getByText('Cart').click();";
+    const replacement = "await page.getByText('Cart').click({ force: true });";
+    const tolerantMatch = 'await  page.getByText("Cart").click();';
+    const repair = (all) => JSON.stringify({ replacements: [{ old, new: replacement, all }] });
+
+    test('replaces three exact occurrences before considering tolerant matches', () => {
+        const candidate = [old, old, tolerantMatch, old].join('\n');
+        const expected = [replacement, replacement, tolerantMatch, replacement].join('\n');
+        expect(applySystemTestRepair(repair(true), candidate)).toBe(expected);
+    });
+
+    test('replaces all whitespace and quote variants when no exact match exists', () => {
+        const candidate = Array(3).fill(tolerantMatch).join('\n');
+        expect(applySystemTestRepair(repair(true), candidate)).toBe(Array(3).fill(replacement).join('\n'));
+    });
+
+    test.each([0, 11])('rejects all:true with %i matches', (count) => {
+        const candidate = Array(count).fill(old).join('\n');
+        expect(() => applySystemTestRepair(repair(true), candidate))
+            .toThrow('Repair with all:true must match between 1 and 10 fragments.');
+    });
+
+    test('rejects duplicate fragments without all', () => {
+        expect(() => applySystemTestRepair(repair(), [old, old].join('\n')))
+            .toThrow('Repair must match exactly one candidate fragment.');
+    });
+});
 
 afterEach(() => {
     for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
@@ -57,8 +87,8 @@ const makeRun = () => {
         ] : []).map(event => JSON.stringify(event)).join('\n'));
         return { success: !failed.length, reportPath, egressLogPath };
     };
-    const verify = () => verifyAndRepairSystemDraft({
-        rootDir, code, generate, deadlineAt: Date.now() + 420000, dependencies: { run },
+    const verify = (dependencies = {}, options = {}) => verifyAndRepairSystemDraft({
+        rootDir, code, generate, deadlineAt: Date.now() + 420000, dependencies: { run, ...dependencies }, ...options,
     });
     return { rootDir, generate, run, report, verify };
 };
@@ -92,6 +122,47 @@ describe('Playwright draft verification', () => {
         expect(generate.mock.calls[0][0]).toContain(timeout);
     });
 
+    test('reuses the provided stack across repair attempts and leaves cleanup to its owner', async () => {
+        const { generate, run, report, verify } = makeRun();
+        const startStack = jest.fn();
+        const stack = { frontendPort: 3001, cleanup: jest.fn() };
+        run.mockImplementationOnce(report([titleB])).mockImplementationOnce(report());
+        generate.mockResolvedValueOnce(patch(oldLocator, newLocator));
+
+        await expect(verify({ startStack }, { stack })).resolves.toMatchObject({
+            verificationStatus: 'VERIFIED', runs: 2,
+        });
+        for (const [input] of run.mock.calls) expect(input.stack).toBe(stack);
+        expect(startStack).not.toHaveBeenCalled();
+        expect(stack.cleanup).not.toHaveBeenCalled();
+    });
+
+    test('returns NOT_VERIFIED after a stack startup error without running tests or calling AI', async () => {
+        const { generate, run, verify } = makeRun();
+        const startStack = jest.fn();
+        await expect(verify({ startStack }, { stackError: new Error('Startup failed') })).resolves.toEqual({
+            code, verificationStatus: 'NOT_VERIFIED', verificationError: 'Startup failed', droppedScenarios: [], runs: 0,
+        });
+        expect(startStack).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        expect(generate).not.toHaveBeenCalled();
+    });
+
+    test('retries a rejected repair before running verification again', async () => {
+        const { generate, run, report, verify } = makeRun();
+        const assertion = "expect(page.getByRole('dialog'))";
+        run.mockImplementationOnce(report([titleB])).mockImplementationOnce(report());
+        generate.mockResolvedValueOnce(patch(assertion, "expect(page.getByRole('alertdialog'))"))
+            .mockResolvedValueOnce(patch(oldLocator, newLocator));
+
+        const result = await verify();
+        expect(result).toMatchObject({ verificationStatus: 'VERIFIED', runs: 2 });
+        expect(result.code).toContain(newLocator);
+        expect(generate).toHaveBeenCalledTimes(2);
+        expect(generate.mock.calls[1][0]).toContain('PREVIOUS REPAIR WAS REJECTED: Repair cannot replace imports, scenarios or assertions.');
+        expect(run).toHaveBeenCalledTimes(2);
+    });
+
     test('keeps an externally blocked scenario without calling repair', async () => {
         const { generate, run, report, verify } = makeRun();
         run.mockImplementationOnce(report([titleB], [titleB]));
@@ -101,6 +172,26 @@ describe('Playwright draft verification', () => {
             externalRequirements: [{ id: 'stripe', label: 'Stripe', variables: ['STRIPE_SECRET_KEY'], scenarios: [titleB] }],
         });
         expect(generate).not.toHaveBeenCalled();
+    });
+
+    test('reuses one stack for both fast-fail attempts and cleans it up after the retry', async () => {
+        const { generate, run, report, verify } = makeRun();
+        const stack = { cleanup: jest.fn(), egressLogPath: undefined, frontendPort: 1, backendUrl: 'x' };
+        const startStack = jest.fn().mockResolvedValue(stack);
+        run.mockImplementationOnce(report([titleB])).mockImplementationOnce(args => {
+            expect(stack.cleanup).not.toHaveBeenCalled();
+            return report()(args);
+        });
+        generate.mockResolvedValueOnce(patch(oldLocator, newLocator));
+
+        await expect(verify({ startStack })).resolves.toMatchObject({ verificationStatus: 'VERIFIED', runs: 2 });
+        expect(startStack).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledTimes(2);
+        for (const [args] of run.mock.calls) {
+            expect(args.stack).toBe(stack);
+            expect(args.execution.fastFail).toBe(true);
+        }
+        expect(stack.cleanup).toHaveBeenCalledTimes(1);
     });
 
     test('keeps the selector repair alongside an externally blocked scenario', async () => {

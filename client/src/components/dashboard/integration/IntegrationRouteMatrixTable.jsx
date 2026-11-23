@@ -1,4 +1,11 @@
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
+import {
+  loadMatrixSelection,
+  saveMatrixSelection,
+  toggleParentSelection,
+  toggleAllParentsSelection,
+  toggleChildSelection,
+} from "../../../lib/matrixSelectionStorage.js";
 import {
   Search,
   CheckCircle2,
@@ -86,6 +93,7 @@ function doesRouteMatch(routePath = "", requestPath = "") {
 }
 
 export default function IntegrationRouteMatrixTable({
+  snapshotId = null,
   endpoints = [],
   aiTests = [],
   hasScanned = false,
@@ -122,8 +130,21 @@ export default function IntegrationRouteMatrixTable({
   const [moduleFilter, setModuleFilter] = useState("ALL");
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [expandedLogicKeys, setExpandedLogicKeys] = useState(new Set());
-  const [selectedEndpointKeys, setSelectedEndpointKeys] = useState(new Set());
-  const [selectedScenarioKeys, setSelectedScenarioKeys] = useState(new Set());
+  const [selectedEndpointKeys, setSelectedEndpointKeys] = useState(
+    () => loadMatrixSelection("integration", snapshotId).parents,
+  );
+  const [selectedScenarioKeys, setSelectedScenarioKeys] = useState(
+    () => loadMatrixSelection("integration", snapshotId).children,
+  );
+
+  useEffect(() => {
+    saveMatrixSelection(
+      "integration",
+      snapshotId,
+      selectedEndpointKeys,
+      selectedScenarioKeys,
+    );
+  }, [snapshotId, selectedEndpointKeys, selectedScenarioKeys]);
   const [expandedScenarioCodeKey, setExpandedScenarioCodeKey] = useState(null);
   const [confirmDeleteKey, setConfirmDeleteKey] = useState(null);
   const [copiedKey, setCopiedKey] = useState(null);
@@ -467,34 +488,22 @@ export default function IntegrationRouteMatrixTable({
     `${(ep.method || "GET").toUpperCase()}:${ep.path || ep.fullPath || "/"}`;
 
   const getScenarioIdentityKey = (sc, epKey = "") =>
-    sc.id || `${epKey}::${sc.scenarioId || sc.title || sc.testName || ""}`;
+    `${epKey}::${String(sc.title || sc.testName || sc.scenarioId || sc.id || "").trim()}`;
 
   const toggleSelectEndpoint = (epKey) => {
-    const isCurrentlySelected = selectedEndpointKeys.has(epKey);
     const targetEp = enrichedEndpoints.find(
       (ep) => getEpIdentityKey(ep) === epKey,
     );
-    const childKeys = (targetEp?.scenarios || []).map((sc) =>
-      getScenarioIdentityKey(sc, epKey),
-    );
-
-    setSelectedEndpointKeys((prev) => {
-      const next = new Set(prev);
-      if (isCurrentlySelected) next.delete(epKey);
-      else next.add(epKey);
-      return next;
+    const next = toggleParentSelection({
+      parentKey: epKey,
+      childKeys: (targetEp?.scenarios || []).map((sc) =>
+        getScenarioIdentityKey(sc, epKey),
+      ),
+      parents: selectedEndpointKeys,
+      children: selectedScenarioKeys,
     });
-
-    if (childKeys.length > 0) {
-      setSelectedScenarioKeys((prev) => {
-        const next = new Set(prev);
-        for (const ck of childKeys) {
-          if (isCurrentlySelected) next.delete(ck);
-          else next.add(ck);
-        }
-        return next;
-      });
-    }
+    setSelectedEndpointKeys(next.parents);
+    setSelectedScenarioKeys(next.children);
   };
 
   const toggleSelectAllFiltered = () => {
@@ -502,28 +511,22 @@ export default function IntegrationRouteMatrixTable({
     const allSelected =
       filteredKeys.length > 0 &&
       filteredKeys.every((k) => selectedEndpointKeys.has(k));
-    const allChildKeys = filteredEndpoints.flatMap((ep) => {
-      const epKey = getEpIdentityKey(ep);
-      return (ep.scenarios || []).map((sc) =>
-        getScenarioIdentityKey(sc, epKey),
-      );
+    const next = toggleAllParentsSelection({
+      items: filteredEndpoints.map((ep) => {
+        const epKey = getEpIdentityKey(ep);
+        return {
+          parentKey: epKey,
+          childKeys: (ep.scenarios || []).map((sc) =>
+            getScenarioIdentityKey(sc, epKey),
+          ),
+        };
+      }),
+      allSelected,
+      parents: selectedEndpointKeys,
+      children: selectedScenarioKeys,
     });
-
-    if (allSelected) {
-      setSelectedEndpointKeys(new Set());
-      setSelectedScenarioKeys((prev) => {
-        const next = new Set(prev);
-        for (const ck of allChildKeys) next.delete(ck);
-        return next;
-      });
-    } else {
-      setSelectedEndpointKeys(new Set(filteredKeys));
-      setSelectedScenarioKeys((prev) => {
-        const next = new Set(prev);
-        for (const ck of allChildKeys) next.add(ck);
-        return next;
-      });
-    }
+    setSelectedEndpointKeys(next.parents);
+    setSelectedScenarioKeys(next.children);
   };
 
   const selectedEndpointsList = useMemo(
@@ -534,29 +537,38 @@ export default function IntegrationRouteMatrixTable({
     [enrichedEndpoints, selectedEndpointKeys],
   );
 
-  const toggleSelectScenario = (scKey) => {
-    setSelectedScenarioKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(scKey)) next.delete(scKey);
-      else next.add(scKey);
-      return next;
+  const toggleSelectScenario = (scKey, ep = null) => {
+    const epKey = ep ? getEpIdentityKey(ep) : null;
+    const next = toggleChildSelection({
+      childKey: scKey,
+      parentKey: epKey,
+      siblingKeys: (ep?.scenarios || []).map((sc) =>
+        getScenarioIdentityKey(sc, epKey),
+      ),
+      parents: selectedEndpointKeys,
+      children: selectedScenarioKeys,
     });
+    setSelectedEndpointKeys(next.parents);
+    setSelectedScenarioKeys(next.children);
   };
 
   const selectedScenariosList = useMemo(() => {
-    if (selectedScenarioKeys.size === 0) return [];
+    if (selectedEndpointKeys.size === 0 && selectedScenarioKeys.size === 0) {
+      return [];
+    }
     const list = [];
     for (const ep of enrichedEndpoints) {
       const epKey = getEpIdentityKey(ep);
+      const parentSelected = selectedEndpointKeys.has(epKey);
       for (const sc of ep.scenarios || []) {
         const scKey = getScenarioIdentityKey(sc, epKey);
-        if (selectedScenarioKeys.has(scKey)) {
+        if (parentSelected || selectedScenarioKeys.has(scKey)) {
           list.push(sc);
         }
       }
     }
     return list;
-  }, [enrichedEndpoints, selectedScenarioKeys]);
+  }, [enrichedEndpoints, selectedEndpointKeys, selectedScenarioKeys]);
 
   const selectedHasScenarios = selectedEndpointsList.some(
     (ep) => (ep.scenarios || []).length > 0,
@@ -1389,7 +1401,7 @@ export default function IntegrationRouteMatrixTable({
                                     getEpIdentityKey(ep),
                                   );
                                   const isSelectedSc =
-                                    selectedScenarioKeys.has(scIdentityKey);
+                                    isSelected || selectedScenarioKeys.has(scIdentityKey);
 
                                   return (
                                     <div
@@ -1413,6 +1425,7 @@ export default function IntegrationRouteMatrixTable({
                                             onChange={() =>
                                               toggleSelectScenario(
                                                 scIdentityKey,
+                                                ep,
                                               )
                                             }
                                             aria-label={`Select scenario ${sc.title || sIdx + 1}`}

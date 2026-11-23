@@ -100,7 +100,7 @@ describe('chained SDK initialization', () => {
 });
 
 it('reports mandatory imported SDK credentials before starting a database or installing packages',()=>{
-    expect(()=>validateStartupEnvironment({files,env:{},directory:'server',scripts:{start:'node index.js'}})).toThrow('Set these variables in server/.env.test');
+    expect(()=>validateStartupEnvironment({files,env:{},directory:'server',scripts:{start:'node index.js'}})).toThrow('Add them in Test setup');
     try{validateStartupEnvironment({files,env:{},directory:'server',scripts:{start:'node index.js'}});}catch(error){expect(error.code).toBe('SYSTEM_TEST_ENVIRONMENT_REQUIRED');}
 });
 it('accepts configured credentials without including values in diagnostics',()=>{

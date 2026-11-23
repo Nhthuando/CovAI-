@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {it,expect,jest} from '@jest/globals';
+import {it,expect,jest,afterEach} from '@jest/globals';
 import {inspectSystemSetup,systemSetupConfig,saveSystemTestEnvironment,importSystemTestEnvironment} from '../services/systemSetupPreflight.service.js';
-import {parse as parseEnvironment} from 'dotenv';
+import {readAssessmentTestEnvironment} from '../services/fullSystemRuntime.service.js';
+import {__clearAllSystemTestSecretsForTest} from '../services/systemTestSecrets.service.js';
 import {systemTestEnvironmentDirectory} from '../services/systemTestEnvironmentRoot.service.js';
 import {createSystemSetupControllers} from '../controllers/systemSetup.controller.js';
+
+afterEach(__clearAllSystemTestSecretsForTest);
 
 const write=(root,name,content)=>{const file=path.join(root,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,content);};
 const fixture=()=>{
@@ -191,8 +194,10 @@ it('classifies dotenv keys on dry run and saves recognized keys only on import',
         expect(fs.existsSync(path.join(root,'client/.env.test'))).toBe(false);
         expect(await importSystemTestEnvironment({...args,input:{expectedWorkspaceRevision:0,content,dryRun:false}}))
             .toEqual({...dryRun,saved:true});
-        expect(parseEnvironment(fs.readFileSync(envFile))).toEqual({AI_API_KEY:'sandbox'});
-        expect(parseEnvironment(fs.readFileSync(path.join(root,'client/.env.test')))).toEqual({VITE_ANALYTICS_KEY:'fixture'});
+        expect(fs.readFileSync(envFile,'utf8')).toBe('AI_API_KEY=existing');
+        expect(fs.existsSync(path.join(root,'client/.env.test'))).toBe(false);
+        expect(readAssessmentTestEnvironment(path.join(root,'server'))).toEqual({AI_API_KEY:'sandbox'});
+        expect(readAssessmentTestEnvironment(path.join(root,'client'))).toEqual({VITE_ANALYTICS_KEY:'fixture'});
     } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 it('rejects a live credential before writing any submitted environment values',async()=>{
@@ -208,17 +213,49 @@ it('rejects a live credential before writing any submitted environment values',a
         expect(fs.existsSync(path.join(root,'server/.env.test'))).toBe(false);
     } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
-it('saves sandbox values from the dialog only into detected test environment files without returning secrets',async()=>{
+it('saves sandbox values from the dialog in memory without returning secrets',async()=>{
     const root=fixture(),db=environmentDb(root);
     try {
         write(root,'server/.env','STRIPE_SECRET_KEY=production-unchanged');
-        write(root,'server/.env.test','EXISTING_SETTING=preserved');
-        const result=await saveSystemTestEnvironment({snapshotId:'snapshot',userId:'owner',db,input:{expectedWorkspaceRevision:0,variables:[{envFile:'server/.env.test',name:'STRIPE_SECRET_KEY',value:'sandbox-test-key'}]},dependencies});
-        expect(result).toEqual({saved:1});
-        expect(JSON.stringify(result)).not.toContain('sandbox-test-key');
-        expect(parseEnvironment(fs.readFileSync(path.join(root,'server/.env.test')))).toEqual({EXISTING_SETTING:'preserved',STRIPE_SECRET_KEY:'sandbox-test-key'});
+        const setup=createSystemSetupControllers({db,dependencies});
+        const req={params:{snapshotId:'snapshot'},user:{id:'owner'},body:{expectedWorkspaceRevision:0,variables:[{envFile:'server/.env.test',name:'STRIPE_SECRET_KEY',value:'sandbox-test-key'}]}};
+        const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
+        await setup.environment(req,res);
+        expect(res.json).toHaveBeenCalledWith({success:true,data:{saved:1}});
+        expect(fs.existsSync(path.join(root,'server/.env.test'))).toBe(false);
+        expect(readAssessmentTestEnvironment(path.join(root,'server'))).toEqual({STRIPE_SECRET_KEY:'sandbox-test-key'});
         expect(fs.readFileSync(path.join(root,'server/.env'),'utf8')).toBe('STRIPE_SECRET_KEY=production-unchanged');
-        expect((await inspectSystemSetup({rootDir:root,dependencies})).ready).toBe(true);
+        const report=await inspectSystemSetup({rootDir:root,dependencies});
+        expect(report.ready).toBe(true);
+        expect(report.environment.find(row=>row.name==='STRIPE_SECRET_KEY')).toMatchObject({status:'PRESENT',storage:'MEMORY'});
+        expect(report.secrets).toEqual({storage:'MEMORY',expiresAt:expect.any(String),updatedAt:expect.any(String),legacyFiles:[]});
+        expect(JSON.stringify(report)).not.toContain('sandbox-test-key');
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('clears memory and optionally removes only detected legacy files',async()=>{
+    const root=fixture(),db=environmentDb(root);
+    try {
+        const setup=createSystemSetupControllers({db,dependencies});
+        const req={params:{snapshotId:'snapshot'},user:{id:'owner'}};
+        const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
+        const revision={expectedWorkspaceRevision:0};
+        write(root,'server/.env.test','STRIPE_SECRET_KEY=legacy-sandbox');
+        write(root,'client/.env.test','UNDETECTED_KEY=preserved');
+        await setup.environment({...req,body:{...revision,variables:[
+            {envFile:'server/.env.test',name:'STRIPE_SECRET_KEY',value:'memory-sandbox'},
+            {envFile:'client/.env.test',name:'VITE_ANALYTICS_KEY',value:'memory-analytics'},
+        ]}},res);
+        await setup.deleteEnvironment({...req,body:revision},res);
+        expect(res.json).toHaveBeenLastCalledWith({success:true,data:{cleared:true,removedFiles:[]}});
+        expect(readAssessmentTestEnvironment(path.join(root,'server'))).toEqual({STRIPE_SECRET_KEY:'legacy-sandbox'});
+        expect(readAssessmentTestEnvironment(path.join(root,'client'))).toEqual({UNDETECTED_KEY:'preserved'});
+        const report=await inspectSystemSetup({rootDir:root,dependencies});
+        expect(report.environment.find(row=>row.name==='STRIPE_SECRET_KEY')).toMatchObject({status:'PRESENT',storage:'FILE'});
+        expect(report.secrets).toEqual({storage:'MEMORY',expiresAt:null,updatedAt:null,legacyFiles:['server/.env.test']});
+        await setup.deleteEnvironment({...req,body:{...revision,removeLegacyFiles:true}},res);
+        expect(res.json).toHaveBeenLastCalledWith({success:true,data:{cleared:true,removedFiles:['server/.env.test']}});
+        expect(fs.existsSync(path.join(root,'server/.env.test'))).toBe(false);
+        expect(fs.existsSync(path.join(root,'client/.env.test'))).toBe(true);
     } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 it.each([['server/.env','STRIPE_SECRET_KEY'],['server/.env.test','NODE_OPTIONS'],['client/.env.test','STRIPE_SECRET_KEY']])('rejects an unapproved credential destination %s:%s',async(envFile,name)=>{

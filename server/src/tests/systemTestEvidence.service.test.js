@@ -29,6 +29,7 @@ describe('real system execution and evidence',()=>{
       storeScenarioScreenshot:()=> 'checkpoint.png',
       persistRunArtifacts:async input=>{checkpoints.push(input);return [{id:'artifact'}];},
       emit:async event=>events.push(event),
+      redactDeep:value=>value,
     };
     const onEvent=new Function(...Object.keys(dependencies),`${source.slice(start,end)} return onEvent;`)(...Object.values(dependencies));
     await onEvent({runIndex:0,type:'SCENARIO_ENDED',screenshotBody:'blank-page',filePath:'test.spec.js',title:'scenario'});
@@ -66,6 +67,25 @@ describe('real system execution and evidence',()=>{
     const config=fs.readFileSync(path.join(result.directory,'playwright.config.mjs'),'utf8');
     expect(config).toContain('import original from');expect(config).toContain('original.webServer');
     expect(config).toContain('...base.use');expect(config).not.toContain("baseURL:'http://127.0.0.1:4173'");
+  });
+  it.each([undefined, false, true])('writes fast-fail timeouts only when enabled (%s)', fastFail => {
+    const directory = root();
+    fs.mkdirSync(path.join(directory, 'e2e'));
+    fs.writeFileSync(path.join(directory, 'e2e/home.spec.js'), "import {test,expect} from '@playwright/test'; test('title',async({page})=>{await expect(page).toHaveTitle('Home');});");
+    const result = prepareSystemPlaywright({
+      rootDir: directory, execution: { testDirectory: 'e2e', fastFail },
+      executionMode: 'frontend', frontendPort: 4173, runKey: 'timeouts',
+    });
+    const config = fs.readFileSync(path.join(result.directory, 'playwright.config.mjs'), 'utf8');
+    if (fastFail) {
+      expect(config).toContain('...base.use,actionTimeout:8000,navigationTimeout:15000,');
+      expect(config).toContain('timeout:Math.min(base.timeout || 30000, 20000)');
+      expect(config).toContain('expect:{...base.expect,timeout:Math.min(base.expect?.timeout || 5000, 5000)}');
+    } else {
+      expect(config).not.toContain('actionTimeout:8000');
+      expect(config).not.toContain('navigationTimeout:15000');
+      expect(config).toContain('timeout:base.timeout || 30000');
+    }
   });
   it('stores inline PNG checkpoints and rejects invalid or excessive attachment bodies',()=>{
     const directory=root();

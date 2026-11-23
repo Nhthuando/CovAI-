@@ -136,12 +136,20 @@ export const generateColdStartSystemTests = async (
   { framework = "playwright", routes = ["/"], executionMode = "full" } = {}
 ) => {
   const headers = getAuthHeaders();
-  const response = await axios.post(
-    `${API_BASE}/coverage/${snapshotId}/system/generate-tests`,
-    { framework, routes, executionMode },
-    { headers }
-  );
-  return response.data;
+  try {
+    const response = await axios.post(
+      `${API_BASE}/coverage/${snapshotId}/system/generate-tests`,
+      { framework, routes, executionMode },
+      { headers }
+    );
+    return response.data.data;
+  } catch (error) {
+    const response = error.response;
+    if (response?.status === 409 && response.data?.code === 'GENERATION_IN_PROGRESS') {
+      return response.data.data;
+    }
+    throw error;
+  }
 };
 
 /**
@@ -217,6 +225,12 @@ export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', 
   const response = await axios({ signal, url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
   return response.data.data;
 };
+
+export const getSystemGenerationStatus = (snapshotId, signal) =>
+  systemEvidenceRequest(snapshotId, 'generate-tests/status', { signal });
+
+export const cancelSystemGeneration = (snapshotId) =>
+  systemEvidenceRequest(snapshotId, 'generate-tests', { method: 'DELETE' });
 
 export const importSystemEnvironment = (snapshotId, body) =>
   systemEvidenceRequest(snapshotId, 'setup/environment/import', { method: 'POST', data: body });

@@ -6,7 +6,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import Editor from "./Editor";
-import RetainedPanel from '../common/RetainedPanel';
+import RetainedPanel from "../common/RetainedPanel";
 import GitPanel from "./GitPanel";
 import CoverageDashboard from "./CoverageDashboard";
 import UnitTestDashboard from "./UnitTestDashboard";
@@ -18,7 +18,7 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
-import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
+import TrustworthinessWorkspace from "./trustworthiness/TrustworthinessWorkspace";
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import VersionControlWorkspace from "./VersionControlWorkspace";
 import LifecycleStatusSelect from "./portfolio/primitives/LifecycleStatusSelect";
@@ -83,25 +83,7 @@ import {
 } from "../../utils/fileTreeUtils";
 import { getProjectJobsApi } from "../../services/job.service";
 import { queryClient } from "../../lib/queryClient.js";
-
-function CoverageJobsDialog({ projectId, onClose }) {
-  const dialogRef = useRef(null);
-  useEffect(() => { dialogRef.current?.showModal(); }, []);
-  return (
-    <dialog
-      ref={dialogRef}
-      aria-labelledby="coverage-job-queue-title"
-      onCancel={onClose}
-      className="m-auto w-[min(95vw,70rem)] max-h-[85vh] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] backdrop:bg-black/60"
-    >
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] p-4">
-        <h2 id="coverage-job-queue-title" className="text-sm font-semibold">Job Queue</h2>
-        <button type="button" aria-label="Close Job Queue" onClick={onClose} className="cursor-pointer rounded-md p-1 hover:bg-[var(--color-surface-secondary)]"><X size={18} /></button>
-      </div>
-      <JobQueue projectId={projectId} />
-    </dialog>
-  );
-}
+import { openFloatingJobQueue } from "../../lib/floatingJobQueuePrefs.js";
 
 const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -109,7 +91,12 @@ const DEFAULT_AI_PANEL_WIDTH = 340;
 
 const COVERAGE_TEST_TABS = [
   { key: "unit", label: "Unit Test", shortLabel: "Unit", icon: FlaskConical },
-  { key: "integration", label: "Integration Test", shortLabel: "Integration", icon: Network },
+  {
+    key: "integration",
+    label: "Integration Test",
+    shortLabel: "Integration",
+    icon: Network,
+  },
   { key: "system", label: "System Test", shortLabel: "System", icon: Layers },
 ];
 
@@ -144,7 +131,6 @@ function LayoutInner() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
-  const [coverageJobsOpen, setCoverageJobsOpen] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
 
   const handleLogout = () => {
@@ -189,7 +175,9 @@ function LayoutInner() {
   };
 
   const [activeActivity, setActiveActivity] = useState(initialTab);
-  const [visitedPanels, setVisitedPanels] = useState(() => new Set([initialTab]));
+  const [visitedPanels, setVisitedPanels] = useState(
+    () => new Set([initialTab]),
+  );
   const [showGit, setShowGit] = useState(false);
 
   useEffect(() => {
@@ -201,7 +189,9 @@ function LayoutInner() {
     if (tab === "system") {
       setActiveActivity("coverage");
       setCoverageType("system");
-      setVisitedPanels((prev) => new Set([...prev, "coverage", "coverage:system"]));
+      setVisitedPanels(
+        (prev) => new Set([...prev, "coverage", "coverage:system"]),
+      );
     } else {
       setActiveActivity(tab);
       const type = params.get("coverageType") || params.get("type");
@@ -237,19 +227,34 @@ function LayoutInner() {
     }
   }, [location.search, showToast]);
 
-  const allowedSettings = ["profile", "appearance", "security", "notifications", "usage", "billing", "members"];
+  const allowedSettings = [
+    "profile",
+    "appearance",
+    "security",
+    "notifications",
+    "usage",
+    "billing",
+    "members",
+  ];
   const selectedSetting = searchParams.get("setting");
-  const activeSetting = allowedSettings.includes(selectedSetting) ? selectedSetting : "profile";
-  const membersTab = searchParams.get("membersTab") === "pending" ? "pending" : "members";
-  const setActiveSetting = setting => {
+  const activeSetting = allowedSettings.includes(selectedSetting)
+    ? selectedSetting
+    : "profile";
+  const membersTab =
+    searchParams.get("membersTab") === "pending" ? "pending" : "members";
+  const setActiveSetting = (setting) => {
     const params = new URLSearchParams(location.search);
     params.set("tab", "settings");
-    params.set("setting", allowedSettings.includes(setting) ? setting : "profile");
+    params.set(
+      "setting",
+      allowedSettings.includes(setting) ? setting : "profile",
+    );
     navigate(`${location.pathname}?${params}`);
   };
-  const setMembersTabInUrl = tab => {
+  const setMembersTabInUrl = (tab) => {
     const params = new URLSearchParams(location.search);
-    params.set("tab", "settings"); params.set("setting", "members");
+    params.set("tab", "settings");
+    params.set("setting", "members");
     params.set("membersTab", tab === "pending" ? "pending" : "members");
     navigate(`${location.pathname}?${params}`);
   };
@@ -262,14 +267,21 @@ function LayoutInner() {
   const [tabs, setTabs] = useState(INITIAL_TABS);
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
-  const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
+  const initialCoverageType =
+    searchParams.get("coverageType") ||
+    searchParams.get("type") ||
+    (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
   const [unifiedSummary, setUnifiedSummary] = useState(null);
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
   const [aiPanelOwner, setAiPanelOwner] = useState(null);
   const [chatTestContext, setChatTestContext] = useState({});
-  const updateChatTestContext = useCallback(detail => {
-    setChatTestContext(previous => JSON.stringify(previous[detail.testType]) === JSON.stringify(detail) ? previous : { ...previous, [detail.testType]: detail });
+  const updateChatTestContext = useCallback((detail) => {
+    setChatTestContext((previous) =>
+      JSON.stringify(previous[detail.testType]) === JSON.stringify(detail)
+        ? previous
+        : { ...previous, [detail.testType]: detail },
+    );
   }, []);
   const isFullWidthWorkspace = [
     "architecture",
@@ -286,7 +298,8 @@ function LayoutInner() {
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
   const [editorJumpTarget, setEditorJumpTarget] = useState(null);
   const [archInitialContext, setArchInitialContext] = useState(null);
-  const [integrationInitialContext, setIntegrationInitialContext] = useState(null);
+  const [integrationInitialContext, setIntegrationInitialContext] =
+    useState(null);
 
   useEffect(() => {
     if (activeActivity !== "architecture") {
@@ -302,7 +315,11 @@ function LayoutInner() {
     navigate(`${location.pathname}?${params.toString()}`);
   };
 
-  const handleOpenCFG = (filePath = null, functionName = null, initialLine = null) => {
+  const handleOpenCFG = (
+    filePath = null,
+    functionName = null,
+    initialLine = null,
+  ) => {
     if (filePath) {
       setCfgInitialContext({
         initialFile: filePath,
@@ -332,7 +349,11 @@ function LayoutInner() {
 
   const handleSuggestTestcase = (filePath, options = {}) => {
     // Never open AIPanel for bulk test suggestions; they belong to the guided dashboard workflow
-    if (options?.isBulk || (typeof filePath === "object" && filePath?.isBulk) || options?.skipAiPanel) {
+    if (
+      options?.isBulk ||
+      (typeof filePath === "object" && filePath?.isBulk) ||
+      options?.skipAiPanel
+    ) {
       return;
     }
     setAiPanelOpen(true);
@@ -363,19 +384,25 @@ function LayoutInner() {
       }
     };
     window.addEventListener("covai:prefill-prompt", onPrefillEvent);
-    return () => window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
+    return () =>
+      window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
   }, []);
 
   const resolveCachedProjectsList = useCallback(() => {
     const direct = queryClient.getQueryData(["projects", user?.id]);
     if (Array.isArray(direct) && direct.length > 0) return direct;
 
-    const allProjectQueries = queryClient.getQueriesData({ queryKey: ["projects"] });
+    const allProjectQueries = queryClient.getQueriesData({
+      queryKey: ["projects"],
+    });
     for (const [, data] of allProjectQueries) {
       if (Array.isArray(data) && data.length > 0) return data;
     }
 
-    const portfolioRaw = queryClient.getQueryData(["projectsPortfolio", "live"]);
+    const portfolioRaw = queryClient.getQueryData([
+      "projectsPortfolio",
+      "live",
+    ]);
     const portfolioProjects =
       portfolioRaw?.data?.projects || portfolioRaw?.projects || null;
     if (Array.isArray(portfolioProjects) && portfolioProjects.length > 0) {
@@ -410,41 +437,76 @@ function LayoutInner() {
     return null;
   });
   const projectAccess = useProjectAccess(project?.id);
-  const chatSnapshotId = searchParams.get("snapshotId") || project?.activeSnapshotId ||
-    project?.latestSnapshotId || project?.snapshots?.[0]?.id ||
-    (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId;
+  const chatSnapshotId =
+    searchParams.get("snapshotId") ||
+    project?.activeSnapshotId ||
+    project?.latestSnapshotId ||
+    project?.snapshots?.[0]?.id ||
+    (project?.id
+      ? localStorage.getItem(`latestSnapshot_${project.id}`)
+      : null) ||
+    testPromptSnapshotId;
   const aiPanelScope = `${user?.id}:${project?.id}`;
   const isAiPanelVisible = aiPanelOpen && aiPanelOwner === aiPanelScope;
   const selectedChatTest = chatTestContext[coverageType];
-  const activeChatTest = project?.id && chatSnapshotId && activeActivity === 'coverage' && selectedChatTest?.projectId === project.id &&
-    selectedChatTest?.snapshotId === chatSnapshotId ? selectedChatTest : null;
-  const activeOverviewSummary = activeActivity === "overview" && unifiedSummary?.projectId === project?.id &&
-    unifiedSummary?.snapshotId === chatSnapshotId ? unifiedSummary : null;
+  const activeChatTest =
+    project?.id &&
+    chatSnapshotId &&
+    activeActivity === "coverage" &&
+    selectedChatTest?.projectId === project.id &&
+    selectedChatTest?.snapshotId === chatSnapshotId
+      ? selectedChatTest
+      : null;
+  const activeOverviewSummary =
+    activeActivity === "overview" &&
+    unifiedSummary?.projectId === project?.id &&
+    unifiedSummary?.snapshotId === chatSnapshotId
+      ? unifiedSummary
+      : null;
   const screenContext = useMemo(
     () => ({
       activity: activeActivity,
-      testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
-      filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
+      testType:
+        activeActivity === "coverage"
+          ? coverageType
+          : activeActivity === "overview"
+            ? "overview"
+            : undefined,
+      filePath:
+        activeActivity === "explorer" ? activeTabId || undefined : undefined,
       unifiedSummary: activeOverviewSummary || undefined,
       testRunId: activeChatTest?.testRunId,
       scenarioId: activeChatTest?.scenarioId,
-      displayedMetrics: activeOverviewSummary && project?.id && chatSnapshotId ? {
-        kind: "overview", projectId: project.id, snapshotId: chatSnapshotId,
-        state: activeOverviewSummary.state || "ready",
-        healthScore: activeOverviewSummary.healthScore,
-        healthGrade: activeOverviewSummary.healthGrade,
-        qualityGate: activeOverviewSummary.qualityGateLabel,
-        totalTests: activeOverviewSummary.totalExecutedTests,
-        passedTests: activeOverviewSummary.passedTests,
-        failedTests: activeOverviewSummary.failedTests,
-        overallCoveragePct: activeOverviewSummary.overallCoveragePct,
-        unitLinesPct: activeOverviewSummary.unitLinesPct,
-        unitBranchesPct: activeOverviewSummary.unitBranchesPct,
-        apiCoveragePct: activeOverviewSummary.apiCoveragePct,
-        systemFlowPct: activeOverviewSummary.systemFlowPct,
-      } : activeChatTest?.displayedMetrics,
+      displayedMetrics:
+        activeOverviewSummary && project?.id && chatSnapshotId
+          ? {
+              kind: "overview",
+              projectId: project.id,
+              snapshotId: chatSnapshotId,
+              state: activeOverviewSummary.state || "ready",
+              healthScore: activeOverviewSummary.healthScore,
+              healthGrade: activeOverviewSummary.healthGrade,
+              qualityGate: activeOverviewSummary.qualityGateLabel,
+              totalTests: activeOverviewSummary.totalExecutedTests,
+              passedTests: activeOverviewSummary.passedTests,
+              failedTests: activeOverviewSummary.failedTests,
+              overallCoveragePct: activeOverviewSummary.overallCoveragePct,
+              unitLinesPct: activeOverviewSummary.unitLinesPct,
+              unitBranchesPct: activeOverviewSummary.unitBranchesPct,
+              apiCoveragePct: activeOverviewSummary.apiCoveragePct,
+              systemFlowPct: activeOverviewSummary.systemFlowPct,
+            }
+          : activeChatTest?.displayedMetrics,
     }),
-    [activeActivity, coverageType, activeTabId, activeOverviewSummary, activeChatTest, project?.id, chatSnapshotId]
+    [
+      activeActivity,
+      coverageType,
+      activeTabId,
+      activeOverviewSummary,
+      activeChatTest,
+      project?.id,
+      chatSnapshotId,
+    ],
   );
   useEffect(() => {
     setAiPanelOpen(false);
@@ -453,19 +515,24 @@ function LayoutInner() {
   }, [project?.id, user?.id]);
   useEffect(() => {
     if (!isAiPanelVisible) return;
-    const frame = requestAnimationFrame(() => document.querySelector('#covai-chatbot textarea')?.focus());
-    const onKey = event => {
-      if (event.key === 'Escape' && !event.defaultPrevented) {
+    const frame = requestAnimationFrame(() =>
+      document.querySelector("#covai-chatbot textarea")?.focus(),
+    );
+    const onKey = (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
         setAiPanelOpen(false);
-        document.getElementById('covai-chatbot-toggle')?.focus();
+        document.getElementById("covai-chatbot-toggle")?.focus();
       }
     };
-    document.addEventListener('keydown', onKey);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener('keydown', onKey); };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [isAiPanelVisible]);
   const closeChatbot = () => {
     setAiPanelOpen(false);
-    document.getElementById('covai-chatbot-toggle')?.focus();
+    document.getElementById("covai-chatbot-toggle")?.focus();
   };
   const [fileTree, setFileTree] = useState([]);
   const [treeVersion, setTreeVersion] = useState(null);
@@ -476,16 +543,32 @@ function LayoutInner() {
   const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
   useEffect(() => {
     if (![403, 404].includes(projectAccess.error?.status)) return;
-    queryClient.cancelQueries({ predicate: query => query.queryKey.includes(project?.id) });
-    queryClient.removeQueries({ predicate: query => query.queryKey.includes(project?.id) });
+    queryClient.cancelQueries({
+      predicate: (query) => query.queryKey.includes(project?.id),
+    });
+    queryClient.removeQueries({
+      predicate: (query) => query.queryKey.includes(project?.id),
+    });
     setFileTree([]);
     setProject(null);
-    navigate("/projects", { replace: true, state: { projectAccessLost: true } });
+    navigate("/projects", {
+      replace: true,
+      state: { projectAccessLost: true },
+    });
   }, [projectAccess.error, project?.id, navigate]);
 
-  useProjectEvents(project?.id, user?.id, event => {
-    if (event.revoked) { setFileTree([]); setProject(null); navigate("/projects", { replace: true, state: { projectAccessLost: true } }); return; }
-    if (/file|workspace|snapshot/i.test(event.type || "")) setEditorRefreshTrigger(value => value + 1);
+  useProjectEvents(project?.id, user?.id, (event) => {
+    if (event.revoked) {
+      setFileTree([]);
+      setProject(null);
+      navigate("/projects", {
+        replace: true,
+        state: { projectAccessLost: true },
+      });
+      return;
+    }
+    if (/file|workspace|snapshot/i.test(event.type || ""))
+      setEditorRefreshTrigger((value) => value + 1);
   });
 
   const handleSelectCoverageType = (type) => {
@@ -496,7 +579,8 @@ function LayoutInner() {
     params.set("tab", "coverage");
     params.set("coverageType", type);
     params.set("type", type);
-    for (const key of ["focusFile", "focusEndpoint", "focusScenario"]) params.delete(key);
+    for (const key of ["focusFile", "focusEndpoint", "focusScenario"])
+      params.delete(key);
     if (params.toString() !== location.search.slice(1)) {
       navigate(`${location.pathname}?${params.toString()}`, { replace: true });
     }
@@ -547,7 +631,9 @@ function LayoutInner() {
         if (!cancelled) {
           setLatestRunJob(latest);
           // If a job is active, poll faster (4s); if idle, poll slowly (20s) to keep app responsive without hammering DB
-          const hasActiveJob = jobs.some((j) => ["QUEUED", "RUNNING"].includes(j.status));
+          const hasActiveJob = jobs.some((j) =>
+            ["QUEUED", "RUNNING"].includes(j.status),
+          );
           const nextInterval = hasActiveJob ? 4000 : 20000;
           if (!cancelled) {
             timerId = window.setTimeout(refreshRunJob, nextInterval);
@@ -597,10 +683,13 @@ function LayoutInner() {
         if (seededProjects.length > 0) {
           setProjects((prev) => (prev.length > 0 ? prev : seededProjects));
           const seededTarget = activeProjId
-            ? seededProjects.find((p) => p.id === activeProjId) || seededProjects[0]
+            ? seededProjects.find((p) => p.id === activeProjId) ||
+              seededProjects[0]
             : seededProjects[0];
           if (seededTarget) {
-            setProject((prev) => (prev?.id === seededTarget.id ? prev : seededTarget));
+            setProject((prev) =>
+              prev?.id === seededTarget.id ? prev : seededTarget,
+            );
           }
         }
 
@@ -616,13 +705,15 @@ function LayoutInner() {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-            loadedProjects[0]
+              loadedProjects[0]
             : loadedProjects[0];
           setProject(targetProj);
           if (targetProj && searchParams.get("projectId") !== targetProj.id) {
             const newParams = new URLSearchParams(location.search);
             newParams.set("projectId", targetProj.id);
-            navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
+            navigate(`${location.pathname}?${newParams.toString()}`, {
+              replace: true,
+            });
           }
 
           const loadProjectFileTree = async () => {
@@ -646,23 +737,26 @@ function LayoutInner() {
                   Array.isArray(tree)
                     ? null
                     : {
-                      snapshotId: tree.snapshotId,
-                      expectedWorkspaceRevision: tree.workspaceRevision,
-                    }
+                        snapshotId: tree.snapshotId,
+                        expectedWorkspaceRevision: tree.workspaceRevision,
+                      },
                 );
                 setFileTree(sourceTree || []);
                 if (sourceTree && sourceTree.length > 0) {
                   const fileExistsInTree = (nodes, path) => {
                     for (const node of nodes) {
                       if (node.id === path) return true;
-                      if (node.children && fileExistsInTree(node.children, path))
+                      if (
+                        node.children &&
+                        fileExistsInTree(node.children, path)
+                      )
                         return true;
                     }
                     return false;
                   };
                   setTabs((prev) => {
                     const remaining = prev.filter((t) =>
-                      fileExistsInTree(sourceTree, t.id)
+                      fileExistsInTree(sourceTree, t.id),
                     );
                     if (remaining.length !== prev.length) {
                       setActiveTabId((currActive) => {
@@ -705,7 +799,7 @@ function LayoutInner() {
 
           if (activeActivity === "overview") {
             window.setTimeout(() => {
-              loadProjectFileTree().catch(() => { });
+              loadProjectFileTree().catch(() => {});
             }, 600);
           } else {
             await loadProjectFileTree();
@@ -804,20 +898,36 @@ function LayoutInner() {
     if (!project?.id) return;
     let alive = true;
     let request = 0;
-    const refreshTree = async event => {
-      if (event.detail?.projectId !== project.id || !/workspace|file|snapshot/i.test(event.detail?.type || "")) return;
+    const refreshTree = async (event) => {
+      if (
+        event.detail?.projectId !== project.id ||
+        !/workspace|file|snapshot/i.test(event.detail?.type || "")
+      )
+        return;
       const currentRequest = ++request;
       try {
         const response = await getProjectTreeApi(project.id);
         if (!alive || currentRequest !== request) return;
-        const next = { tree: response.data || [], snapshotId: response.snapshotId, workspaceRevision: response.workspaceRevision };
+        const next = {
+          tree: response.data || [],
+          snapshotId: response.snapshotId,
+          workspaceRevision: response.workspaceRevision,
+        };
         queryClient.setQueryData(["projectTree", user?.id, project.id], next);
         setFileTree(next.tree);
-        setTreeVersion({ snapshotId: next.snapshotId, expectedWorkspaceRevision: next.workspaceRevision });
-      } catch { /* A revoked project is handled by the access boundary. */ }
+        setTreeVersion({
+          snapshotId: next.snapshotId,
+          expectedWorkspaceRevision: next.workspaceRevision,
+        });
+      } catch {
+        /* A revoked project is handled by the access boundary. */
+      }
     };
     window.addEventListener("covai:project-event", refreshTree);
-    return () => { alive = false; window.removeEventListener("covai:project-event", refreshTree); };
+    return () => {
+      alive = false;
+      window.removeEventListener("covai:project-event", refreshTree);
+    };
   }, [project?.id, user?.id]);
 
   useEffect(() => {
@@ -844,9 +954,15 @@ function LayoutInner() {
       });
     };
 
-    window.addEventListener("covai:project-status-updated", handleStatusUpdated);
+    window.addEventListener(
+      "covai:project-status-updated",
+      handleStatusUpdated,
+    );
     return () => {
-      window.removeEventListener("covai:project-status-updated", handleStatusUpdated);
+      window.removeEventListener(
+        "covai:project-status-updated",
+        handleStatusUpdated,
+      );
     };
   }, [project?.id]);
 
@@ -855,30 +971,41 @@ function LayoutInner() {
   useEffect(() => {
     const summaryStatus = unifiedSummary?.lifecycleStatus;
     const summaryProjectId = unifiedSummary?.projectId;
-    if (!summaryProjectId || !summaryStatus || project?.id !== summaryProjectId) return;
+    if (!summaryProjectId || !summaryStatus || project?.id !== summaryProjectId)
+      return;
 
     const currentStatus = project?.lifecycleStatus || "NOT_STARTED";
     if (currentStatus === "NOT_STARTED" && summaryStatus !== "NOT_STARTED") {
       setProject((prev) =>
         prev && prev.id === summaryProjectId
           ? { ...prev, lifecycleStatus: summaryStatus }
-          : prev
+          : prev,
       );
       setProjects((prev) =>
         Array.isArray(prev)
           ? prev.map((p) =>
-            p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
-          )
-          : prev
+              p.id === summaryProjectId
+                ? { ...p, lifecycleStatus: summaryStatus }
+                : p,
+            )
+          : prev,
       );
       queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
         if (!Array.isArray(old)) return old;
         return old.map((p) =>
-          p.id === summaryProjectId ? { ...p, lifecycleStatus: summaryStatus } : p
+          p.id === summaryProjectId
+            ? { ...p, lifecycleStatus: summaryStatus }
+            : p,
         );
       });
     }
-  }, [unifiedSummary?.projectId, unifiedSummary?.lifecycleStatus, project?.id, project?.lifecycleStatus, queryClient]);
+  }, [
+    unifiedSummary?.projectId,
+    unifiedSummary?.lifecycleStatus,
+    project?.id,
+    project?.lifecycleStatus,
+    queryClient,
+  ]);
 
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
@@ -897,7 +1024,8 @@ function LayoutInner() {
   };
 
   const handleDeleteProject = async (projectId) => {
-    if (project?.id === projectId && !projectAccess.can("project.delete")) return;
+    if (project?.id === projectId && !projectAccess.can("project.delete"))
+      return;
     try {
       const { deleteProjectApi } =
         await import("../../services/project.service");
@@ -915,14 +1043,20 @@ function LayoutInner() {
         newParams.delete("focusFile");
         newParams.delete("focusEndpoint");
         newParams.delete("focusScenario");
-        navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
+        navigate(`${location.pathname}?${newParams.toString()}`, {
+          replace: true,
+        });
         loadData();
       } else {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
       }
       return true;
     } catch (err) {
-      showToast({ type: "error", title: "Delete failed", message: err.message || "Could not delete the project. Please retry." });
+      showToast({
+        type: "error",
+        title: "Delete failed",
+        message: err.message || "Could not delete the project. Please retry.",
+      });
       return false;
     }
   };
@@ -946,7 +1080,12 @@ function LayoutInner() {
     setActiveTabId(node.id);
   };
 
-  const handleOpenFileByPath = (filePath, targetLine = null, functionName = null, endLine = null) => {
+  const handleOpenFileByPath = (
+    filePath,
+    targetLine = null,
+    functionName = null,
+    endLine = null,
+  ) => {
     setShowCFG(false);
     setActiveActivity("explorer");
     const params = new URLSearchParams(location.search);
@@ -1012,13 +1151,19 @@ function LayoutInner() {
     if (!project?.id) return;
     try {
       if (silent) {
-        const { getProjectTreeApi } = await import("../../services/project.service");
+        const { getProjectTreeApi } =
+          await import("../../services/project.service");
         const res = await getProjectTreeApi(project.id);
-        const sourceTree = Array.isArray(res) ? res : (res?.data || res?.tree || []);
+        const sourceTree = Array.isArray(res)
+          ? res
+          : res?.data || res?.tree || [];
         if (sourceTree && sourceTree.length > 0) {
           setFileTree(sourceTree);
           if (res.snapshotId) {
-            setTreeVersion({ snapshotId: res.snapshotId, expectedWorkspaceRevision: res.workspaceRevision });
+            setTreeVersion({
+              snapshotId: res.snapshotId,
+              expectedWorkspaceRevision: res.workspaceRevision,
+            });
           }
           queryClient.setQueryData(["projectTree", user?.id, project.id], {
             tree: sourceTree,
@@ -1053,17 +1198,30 @@ function LayoutInner() {
     });
 
     try {
-      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
-      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      const snapId =
+        treeVersion?.snapshotId ||
+        project.latestSnapshotId ||
+        searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision)
+        ? treeVersion.expectedWorkspaceRevision
+        : 0;
       await createProjectFileApi(project.id, normalizedPath, "", {
         snapshotId: snapId,
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
-      showToast({ type: "success", title: "File created", message: normalizedPath });
+      showToast({
+        type: "success",
+        title: "File created",
+        message: normalizedPath,
+      });
     } catch (err) {
       setFileTree((prev) => deleteNodeFromTree(prev, normalizedPath));
-      showToast({ type: "error", title: "Could not create file", message: err?.message || "File creation failed" });
+      showToast({
+        type: "error",
+        title: "Could not create file",
+        message: err?.message || "File creation failed",
+      });
     }
   };
 
@@ -1075,17 +1233,30 @@ function LayoutInner() {
     setFileTree((prev) => insertNodeIntoTree(prev, normalizedPath, true));
 
     try {
-      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
-      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      const snapId =
+        treeVersion?.snapshotId ||
+        project.latestSnapshotId ||
+        searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision)
+        ? treeVersion.expectedWorkspaceRevision
+        : 0;
       await createProjectFolderApi(project.id, normalizedPath, {
         snapshotId: snapId,
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
-      showToast({ type: "success", title: "Folder created", message: normalizedPath });
+      showToast({
+        type: "success",
+        title: "Folder created",
+        message: normalizedPath,
+      });
     } catch (err) {
       setFileTree((prev) => deleteNodeFromTree(prev, normalizedPath));
-      showToast({ type: "error", title: "Could not create folder", message: err?.message || "Folder creation failed" });
+      showToast({
+        type: "error",
+        title: "Could not create folder",
+        message: err?.message || "Folder creation failed",
+      });
     }
   };
 
@@ -1117,17 +1288,30 @@ function LayoutInner() {
     }
 
     try {
-      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
-      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      const snapId =
+        treeVersion?.snapshotId ||
+        project.latestSnapshotId ||
+        searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision)
+        ? treeVersion.expectedWorkspaceRevision
+        : 0;
       await renameProjectEntryApi(project.id, normOld, normNew, {
         snapshotId: snapId,
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
-      showToast({ type: "success", title: "Renamed", message: `${normOld} → ${normNew}` });
+      showToast({
+        type: "success",
+        title: "Renamed",
+        message: `${normOld} → ${normNew}`,
+      });
     } catch (err) {
       setFileTree((prev) => renameNodeInTree(prev, normNew, normOld));
-      showToast({ type: "error", title: "Could not rename", message: err?.message || "Rename failed" });
+      showToast({
+        type: "error",
+        title: "Could not rename",
+        message: err?.message || "Rename failed",
+      });
     }
   };
 
@@ -1144,23 +1328,39 @@ function LayoutInner() {
         (tab) => tab.id !== targetPath && !tab.id.startsWith(`${targetPath}/`),
       ),
     );
-    if (activeFileId === targetPath || activeFileId?.startsWith(`${targetPath}/`)) {
+    if (
+      activeFileId === targetPath ||
+      activeFileId?.startsWith(`${targetPath}/`)
+    ) {
       setActiveFileId(null);
       setActiveTabId(null);
     }
 
     try {
-      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
-      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      const snapId =
+        treeVersion?.snapshotId ||
+        project.latestSnapshotId ||
+        searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision)
+        ? treeVersion.expectedWorkspaceRevision
+        : 0;
       await deleteProjectEntryApi(project.id, targetPath, {
         snapshotId: snapId,
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
-      showToast({ type: "success", title: "Deleted", message: node.name || targetPath });
+      showToast({
+        type: "success",
+        title: "Deleted",
+        message: node.name || targetPath,
+      });
     } catch (err) {
       refreshProjectFiles(false);
-      showToast({ type: "error", title: "Could not delete", message: err?.message || "Delete failed" });
+      showToast({
+        type: "error",
+        title: "Could not delete",
+        message: err?.message || "Delete failed",
+      });
     }
   };
 
@@ -1201,13 +1401,13 @@ function LayoutInner() {
   const rawActivePath = activeTabId || activeFileId;
   const activeFilePath = rawActivePath
     ? String(rawActivePath)
-      .replace(/\\/g, "/")
-      .replace(/^\.?\//, "")
+        .replace(/\\/g, "/")
+        .replace(/^\.?\//, "")
     : null;
   const cleanFilePath =
     activeFilePath &&
-      project?.name &&
-      activeFilePath.startsWith(project.name + "/")
+    project?.name &&
+    activeFilePath.startsWith(project.name + "/")
       ? activeFilePath.slice(project.name.length + 1)
       : activeFilePath;
   const filePathSegments = cleanFilePath
@@ -1265,34 +1465,47 @@ function LayoutInner() {
                   align="left"
                   disabled={!projectAccess.can("files.write")}
                   currentStatus={
-                    (project.lifecycleStatus && project.lifecycleStatus !== "NOT_STARTED"
+                    (project.lifecycleStatus &&
+                    project.lifecycleStatus !== "NOT_STARTED"
                       ? project.lifecycleStatus
-                      : unifiedSummary?.projectId === project.id && unifiedSummary?.lifecycleStatus
+                      : unifiedSummary?.projectId === project.id &&
+                          unifiedSummary?.lifecycleStatus
                         ? unifiedSummary.lifecycleStatus
                         : project.lifecycleStatus) || "NOT_STARTED"
                   }
                   onStatusChange={(newStatus) => {
                     setProject((prev) =>
-                      prev ? { ...prev, lifecycleStatus: newStatus } : prev
+                      prev ? { ...prev, lifecycleStatus: newStatus } : prev,
                     );
                     setProjects((prev) =>
                       (prev || []).map((p) =>
-                        p.id === project.id ? { ...p, lifecycleStatus: newStatus } : p
-                      )
+                        p.id === project.id
+                          ? { ...p, lifecycleStatus: newStatus }
+                          : p,
+                      ),
                     );
                     setUnifiedSummary((prev) =>
                       prev && prev.projectId === project.id
                         ? { ...prev, lifecycleStatus: newStatus }
-                        : prev
+                        : prev,
                     );
-                    queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
-                      if (!Array.isArray(old)) return old;
-                      return old.map((p) =>
-                        p.id === project.id ? { ...p, lifecycleStatus: newStatus } : p
-                      );
+                    queryClient.setQueriesData(
+                      { queryKey: ["projects"] },
+                      (old) => {
+                        if (!Array.isArray(old)) return old;
+                        return old.map((p) =>
+                          p.id === project.id
+                            ? { ...p, lifecycleStatus: newStatus }
+                            : p,
+                        );
+                      },
+                    );
+                    queryClient.invalidateQueries({
+                      queryKey: ["projectsPortfolio"],
                     });
-                    queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
-                    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+                    queryClient.invalidateQueries({
+                      queryKey: ["unifiedDashboard"],
+                    });
                   }}
                   className="ml-1 shrink-0"
                 />
@@ -1306,10 +1519,11 @@ function LayoutInner() {
                   >
                     <span className="flex-shrink-0 select-none">/</span>
                     <span
-                      className={`truncate max-w-[100px] md:max-w-[180px] ${isLast
-                        ? "text-[var(--color-text)] font-semibold"
-                        : "text-[var(--color-text-secondary)] font-medium"
-                        }`}
+                      className={`truncate max-w-[100px] md:max-w-[180px] ${
+                        isLast
+                          ? "text-[var(--color-text)] font-semibold"
+                          : "text-[var(--color-text-secondary)] font-medium"
+                      }`}
                       title={cleanFilePath}
                     >
                       {segment}
@@ -1330,7 +1544,8 @@ function LayoutInner() {
           >
             {COVERAGE_TEST_TABS.map((tab) => {
               const Icon = tab.icon;
-              const isActive = activeActivity === "coverage" && coverageType === tab.key;
+              const isActive =
+                activeActivity === "coverage" && coverageType === tab.key;
               return (
                 <button
                   key={tab.key}
@@ -1351,24 +1566,33 @@ function LayoutInner() {
                       navigate(`${location.pathname}?${params.toString()}`);
                     }
                   }}
-                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[5px] text-xs font-medium transition-colors duration-150 cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--ps-cobalt)] ${isActive
-                    ? "text-[var(--ps-ink)] font-semibold"
-                    : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
-                    }`}
+                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[5px] text-xs font-medium transition-colors duration-150 cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--ps-cobalt)] ${
+                    isActive
+                      ? "text-[var(--ps-ink)] font-semibold"
+                      : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
+                  }`}
                   title={`${tab.label} Suite`}
                 >
                   {isActive && (
                     <motion.div
                       layoutId="active-test-tab-pill"
                       className="absolute inset-0 rounded-[5px] bg-[var(--ps-surface-2)] border border-[var(--ps-line-strong)]"
-                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 450,
+                        damping: 32,
+                      }}
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-1.5">
                     <Icon
                       size={13}
                       strokeWidth={isActive ? 2 : 1.75}
-                      className={isActive ? "text-[var(--ps-cobalt)]" : "text-[var(--ps-ink-muted)]"}
+                      className={
+                        isActive
+                          ? "text-[var(--ps-cobalt)]"
+                          : "text-[var(--ps-ink-muted)]"
+                      }
                     />
                     <span className="hidden sm:inline">{tab.label}</span>
                     <span className="sm:hidden">{tab.shortLabel}</span>
@@ -1420,10 +1644,11 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}
-              className={`p-1 rounded-[5px] transition-colors cursor-pointer ${sidebarOpen
-                ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
-                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
-                }`}
+              className={`p-1 rounded-[5px] transition-colors cursor-pointer ${
+                sidebarOpen
+                  ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
+                  : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
+              }`}
               title={
                 sidebarOpen
                   ? "Collapse Explorer (Left)"
@@ -1444,15 +1669,12 @@ function LayoutInner() {
               aria-label="AI Chatbot"
               aria-expanded={isAiPanelVisible}
               aria-controls="covai-chatbot"
-              className={`px-1.5 py-1 rounded-[5px] transition-colors cursor-pointer flex items-center gap-1 ${isAiPanelVisible
-                ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
-                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
-                }`}
-              title={
+              className={`px-1.5 py-1 rounded-[5px] transition-colors cursor-pointer flex items-center gap-1 ${
                 isAiPanelVisible
-                  ? "Close AI Chatbot"
-                  : "Open AI Chatbot"
-              }
+                  ? "text-[var(--ps-ink)] bg-[var(--ps-surface-2)]"
+                  : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)]"
+              }`}
+              title={isAiPanelVisible ? "Close AI Chatbot" : "Open AI Chatbot"}
             >
               {isAiPanelVisible ? (
                 <PanelRightClose size={14} />
@@ -1503,22 +1725,22 @@ function LayoutInner() {
               style={
                 isMobile
                   ? {
-                    position: "fixed",
-                    top: 42,
-                    bottom: 26,
-                    left: 0,
-                    width: 280,
-                    maxWidth: "85vw",
-                    overflow: "hidden",
-                    zIndex: 35,
-                    borderRight: "1px solid var(--color-border-strong)",
-                    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.25)",
-                  }
+                      position: "fixed",
+                      top: 42,
+                      bottom: 26,
+                      left: 0,
+                      width: 280,
+                      maxWidth: "85vw",
+                      overflow: "hidden",
+                      zIndex: 35,
+                      borderRight: "1px solid var(--color-border-strong)",
+                      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.25)",
+                    }
                   : {
-                    overflow: "hidden",
-                    flexShrink: 0,
-                    borderRight: "1px solid var(--ide-border)",
-                  }
+                      overflow: "hidden",
+                      flexShrink: 0,
+                      borderRight: "1px solid var(--ide-border)",
+                    }
               }
             >
               {activeActivity === "settings" ? (
@@ -1571,7 +1793,13 @@ function LayoutInner() {
           variants={panelVariants}
         >
           {(activeActivity === "settings" || visitedPanels.has("settings")) && (
-            <div className={activeActivity === "settings" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <div
+              className={
+                activeActivity === "settings"
+                  ? "w-full h-full overflow-y-auto"
+                  : "hidden"
+              }
+            >
               {isMobile && (
                 <SettingsSidebar
                   project={project}
@@ -1584,28 +1812,77 @@ function LayoutInner() {
               {activeSetting === "appearance" && <Appearance />}
               {activeSetting === "security" && <Security />}
               {activeSetting === "notifications" && <NotificationsSettings />}
-              {activeSetting === "usage" && <Usage isActive={activeActivity === "settings"} />}
+              {activeSetting === "usage" && (
+                <Usage isActive={activeActivity === "settings"} />
+              )}
               {activeSetting === "billing" && <Billing />}
-              {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
+              {activeSetting === "members" && project?.id && (
+                <ProjectMembersSettings
+                  key={project.id}
+                  projectId={project.id}
+                  projectName={project.name}
+                  access={projectAccess.access}
+                  loading={projectAccess.isPending}
+                  error={projectAccess.error}
+                  onRetry={projectAccess.refetch}
+                  tab={membersTab}
+                  onTabChange={setMembersTabInUrl}
+                />
+              )}
             </div>
           )}
 
-          {(activeActivity === "version-control" || activeActivity === "git" || visitedPanels.has("version-control") || visitedPanels.has("git")) && (
-            <div className={(activeActivity === "version-control" || activeActivity === "git") ? "w-full h-full overflow-y-auto" : "hidden"}>
-              <VersionControlWorkspace projectId={project?.id} onSync={handleGitSync} />
+          {(activeActivity === "version-control" ||
+            activeActivity === "git" ||
+            visitedPanels.has("version-control") ||
+            visitedPanels.has("git")) && (
+            <div
+              className={
+                activeActivity === "version-control" || activeActivity === "git"
+                  ? "w-full h-full overflow-y-auto"
+                  : "hidden"
+              }
+            >
+              <VersionControlWorkspace
+                projectId={project?.id}
+                onSync={handleGitSync}
+              />
             </div>
           )}
 
-          {(activeActivity === "jobs" || activeActivity === "activity" || visitedPanels.has("jobs") || visitedPanels.has("activity")) && (
-            <div className={(activeActivity === "jobs" || activeActivity === "activity") ? "w-full h-full overflow-y-auto" : "hidden"}>
+          {(activeActivity === "jobs" ||
+            activeActivity === "activity" ||
+            visitedPanels.has("jobs") ||
+            visitedPanels.has("activity")) && (
+            <div
+              className={
+                activeActivity === "jobs" || activeActivity === "activity"
+                  ? "w-full h-full overflow-y-auto"
+                  : "hidden"
+              }
+            >
               <JobQueue projectId={project?.id} onSync={handleGitSync} />
             </div>
           )}
 
-          {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
+          {activeActivity === "trustworthiness" && (
+            <div className="w-full h-full overflow-y-auto">
+              <TrustworthinessWorkspace
+                key={project?.id}
+                projectId={project?.id}
+              />
+            </div>
+          )}
 
-          {(activeActivity === "architecture" || visitedPanels.has("architecture")) && (
-            <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
+          {(activeActivity === "architecture" ||
+            visitedPanels.has("architecture")) && (
+            <div
+              className={
+                activeActivity === "architecture"
+                  ? "w-full h-full overflow-y-auto"
+                  : "hidden"
+              }
+            >
               <ProjectArchitecturePanel
                 key={project?.id || "none"}
                 projectId={project?.id}
@@ -1615,7 +1892,13 @@ function LayoutInner() {
           )}
 
           {(activeActivity === "overview" || visitedPanels.has("overview")) && (
-            <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <div
+              className={
+                activeActivity === "overview"
+                  ? "w-full h-full overflow-y-auto"
+                  : "hidden"
+              }
+            >
               <UnifiedDashboard
                 projectId={project?.id || initialProjectId}
                 project={project}
@@ -1628,8 +1911,8 @@ function LayoutInner() {
                   project?.snapshots?.[0]?.id ||
                   (project?.id || initialProjectId
                     ? localStorage.getItem(
-                      `latestSnapshot_${project?.id || initialProjectId}`
-                    )
+                        `latestSnapshot_${project?.id || initialProjectId}`,
+                      )
                     : null) ||
                   testPromptSnapshotId
                 }
@@ -1644,10 +1927,27 @@ function LayoutInner() {
           )}
 
           {(activeActivity === "coverage" || visitedPanels.has("coverage")) && (
-            <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
-              {(coverageType === "unit" || visitedPanels.has("coverage:unit")) && (
-                <div className={coverageType === "unit" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
-                  <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'unit'}>
+            <div
+              className={
+                activeActivity === "coverage"
+                  ? "w-full h-full overflow-hidden"
+                  : "hidden"
+              }
+            >
+              {(coverageType === "unit" ||
+                visitedPanels.has("coverage:unit")) && (
+                <div
+                  className={
+                    coverageType === "unit"
+                      ? "h-full overflow-hidden flex flex-col min-h-0"
+                      : "hidden"
+                  }
+                >
+                  <RetainedPanel
+                    active={
+                      activeActivity === "coverage" && coverageType === "unit"
+                    }
+                  >
                     <UnitTestDashboard
                       onChatContextChange={updateChatTestContext}
                       snapshotId={
@@ -1666,15 +1966,26 @@ function LayoutInner() {
                       onOpenFile={handleOpenFileByPath}
                       onSuggestTestcase={handleSuggestTestcase}
                       onOpenCFG={handleOpenCFG}
-                      onOpenJobQueue={() => setCoverageJobsOpen(true)}
                       runTrigger={coverageRunTrigger}
                     />
                   </RetainedPanel>
                 </div>
               )}
-              {(coverageType === "integration" || visitedPanels.has("coverage:integration")) && (
-                <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
-                  <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'integration'}>
+              {(coverageType === "integration" ||
+                visitedPanels.has("coverage:integration")) && (
+                <div
+                  className={
+                    coverageType === "integration"
+                      ? "h-full overflow-hidden flex flex-col min-h-0"
+                      : "hidden"
+                  }
+                >
+                  <RetainedPanel
+                    active={
+                      activeActivity === "coverage" &&
+                      coverageType === "integration"
+                    }
+                  >
                     <IntegrationTestDashboard
                       onChatContextChange={updateChatTestContext}
                       snapshotId={
@@ -1692,16 +2003,26 @@ function LayoutInner() {
                       onOpenCFG={handleOpenCFG}
                       onSuggestTestcase={handleSuggestTestcase}
                       onOpenArchitecture={handleOpenArchitecture}
-                      onOpenJobQueue={() => setCoverageJobsOpen(true)}
                       initialContext={integrationInitialContext}
                       onContextChange={setIntegrationInitialContext}
                     />
                   </RetainedPanel>
                 </div>
               )}
-              {(coverageType === "system" || visitedPanels.has("coverage:system")) && (
-                <div className={coverageType === "system" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
-                  <RetainedPanel active={activeActivity === 'coverage' && coverageType === 'system'}>
+              {(coverageType === "system" ||
+                visitedPanels.has("coverage:system")) && (
+                <div
+                  className={
+                    coverageType === "system"
+                      ? "h-full overflow-hidden flex flex-col min-h-0"
+                      : "hidden"
+                  }
+                >
+                  <RetainedPanel
+                    active={
+                      activeActivity === "coverage" && coverageType === "system"
+                    }
+                  >
                     {project?.id ? (
                       <SystemTestDashboard
                         onChatContextChange={updateChatTestContext}
@@ -1711,17 +2032,23 @@ function LayoutInner() {
                           project?.snapshots?.[0]?.id ||
                           project?.latestSnapshotId ||
                           (project?.id
-                            ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                            ? localStorage.getItem(
+                                `latestSnapshot_${project.id}`,
+                              )
                             : null) ||
                           testPromptSnapshotId
                         }
                         projectId={project?.id}
-                        onOpenJobQueue={() => setCoverageJobsOpen(true)}
                         focusScenario={searchParams.get("focusScenario")}
                         onOpenFile={handleOpenFileByPath}
                       />
                     ) : (
-                      <div className="flex min-h-[400px] items-center justify-center text-sm text-[var(--color-text-secondary)]" aria-busy="true">Loading project...</div>
+                      <div
+                        className="flex min-h-[400px] items-center justify-center text-sm text-[var(--color-text-secondary)]"
+                        aria-busy="true"
+                      >
+                        Loading project...
+                      </div>
                     )}
                   </RetainedPanel>
                 </div>
@@ -1729,8 +2056,18 @@ function LayoutInner() {
             </div>
           )}
 
-          {(!isFullWidthWorkspace || visitedPanels.has("editor") || visitedPanels.has("explorer")) && (
-            <div className={!isFullWidthWorkspace && activeActivity !== "settings" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
+          {(!isFullWidthWorkspace ||
+            visitedPanels.has("editor") ||
+            visitedPanels.has("explorer")) && (
+            <div
+              className={
+                !isFullWidthWorkspace &&
+                activeActivity !== "settings" &&
+                activeActivity !== "coverage"
+                  ? "w-full h-full"
+                  : "hidden"
+              }
+            >
               <Editor
                 key={`${user?.id}:${project?.id}:${searchParams.get("snapshotId") || project?.activeSnapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || ""}`}
                 tabs={tabs}
@@ -1789,28 +2126,33 @@ function LayoutInner() {
                 ? { x: 0, opacity: 1 }
                 : { width: aiPanelWidth, opacity: 1 }
             }
-            exit={
-              isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
-            }
+            exit={isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }}
             transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
             style={
               isMobile
                 ? {
-                  position: "fixed",
-                  top: 42,
-                  bottom: 26,
-                  right: 0,
-                  width: "100%",
-                  maxWidth: 360,
-                  display: isAiPanelVisible ? undefined : "none",
-                  overflow: "hidden",
-                  zIndex: 35,
-                  boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                }
-                : { overflow: "hidden", flexShrink: 0, display: isAiPanelVisible ? undefined : "none" }
+                    position: "fixed",
+                    top: 42,
+                    bottom: 26,
+                    right: 0,
+                    width: "100%",
+                    maxWidth: 360,
+                    display: isAiPanelVisible ? undefined : "none",
+                    overflow: "hidden",
+                    zIndex: 35,
+                    boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                  }
+                : {
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    display: isAiPanelVisible ? undefined : "none",
+                  }
             }
           >
-            <RetainedPanel key={`${user?.id}:${project?.id}`} active={isAiPanelVisible}>
+            <RetainedPanel
+              key={`${user?.id}:${project?.id}`}
+              active={isAiPanelVisible}
+            >
               <AIPanel
                 onClose={closeChatbot}
                 key={`${user?.id}:${project?.id}`}
@@ -1866,20 +2208,12 @@ function LayoutInner() {
             onSuccess={() => {
               setShowImport(false);
               setShowCFG(false);
-              setActiveActivity("jobs");
-              const params = new URLSearchParams(location.search);
-              if (params.get("tab") !== "jobs") {
-                params.set("tab", "jobs");
-                navigate(`${location.pathname}?${params.toString()}`);
-              }
+              openFloatingJobQueue({ domain: "import" });
               setTimeout(() => loadData(null, 3, 2500), 1500);
             }}
           />
         )}
       </AnimatePresence>
-      {coverageJobsOpen && project?.id && (
-        <CoverageJobsDialog projectId={project.id} onClose={() => setCoverageJobsOpen(false)} />
-      )}
       <AnimatePresence>
         {showCFG && (
           <CFGCalculator
@@ -1925,7 +2259,11 @@ function LayoutInner() {
         <ProjectExportDialog
           key={project.id}
           project={project}
-          initialSnapshotId={project.snapshots?.[0]?.id || project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
+          initialSnapshotId={
+            project.snapshots?.[0]?.id ||
+            project.latestSnapshotId ||
+            localStorage.getItem(`latestSnapshot_${project.id}`)
+          }
           onClose={() => setShowExport(false)}
         />
       )}

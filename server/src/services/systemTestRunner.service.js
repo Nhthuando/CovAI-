@@ -18,6 +18,7 @@ import {
 } from "./autLifecycle.service.js";
 
 const SYSTEM_TEST_TIMEOUT_MS = 10 * 60 * 1000;
+const installedBrowserClis = new Map();
 const RUNNER_IMAGES = Object.freeze({
   playwright:
     process.env.PLAYWRIGHT_DOCKER_IMAGE ||
@@ -180,6 +181,7 @@ export const preparePlaywrightBrowsers = async (
     : fileURLToPath(
         new URL("../../node_modules/playwright/cli.js", import.meta.url),
       );
+  if (installedBrowserClis.has(cli)) return installedBrowserClis.get(cli);
   const tempBrowsersDir =
     process.env.PLAYWRIGHT_BROWSERS_PATH ||
     fileURLToPath(
@@ -231,6 +233,7 @@ export const preparePlaywrightBrowsers = async (
       422,
     );
   }
+  installedBrowserClis.set(cli, env);
   return env;
 };
 
@@ -598,56 +601,20 @@ export const streamPlaywrightEvents = async (managed, onEvent, run) => {
   }
 };
 
-export const runSystemTests = async ({
-  jobId,
-  rootDir,
-  execution,
-  onReady,
-  onPreparing,
-  onEvent,
-  executionMode = "frontend",
-  measurementPreparation,
-  assertionBindings = [],
-  signal,
-  environmentRoot,
-}) => {
+export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPreparing, onEvent, executionMode = "frontend", measurementPreparation, assertionBindings = [], signal, environmentRoot, stack }) => {
   if (executionMode === "full") {
     if (execution.runner === "playwright") {
-      const stack = await startFullSystem({
-        rootDir,
-        jobId,
-        onProgress: onPreparing,
-        measurementPreparation,
-        signal,
-        environmentRoot,
-      });
+      const ownsStack = !stack;
+      const activeStack = stack || await startFullSystem({rootDir,jobId,onProgress:onPreparing,measurementPreparation,signal,environmentRoot});
       try {
-        const runnerRoot = execution.rootDir || rootDir;
-        const config = resolveProjectPlaywrightConfig(runnerRoot, execution);
-        ensurePlaywrightPrerequisites(runnerRoot, stack.frontendPort, {
-          dependencyRoot: config ? path.dirname(config) : runnerRoot,
-        });
+        if (!ownsStack && activeStack.egressLogPath) fs.writeFileSync(activeStack.egressLogPath, "");
+        const runnerRoot=execution.rootDir || rootDir;
+        const config=resolveProjectPlaywrightConfig(runnerRoot,execution);
+        ensurePlaywrightPrerequisites(runnerRoot,activeStack.frontendPort,{dependencyRoot:config ? path.dirname(config) : runnerRoot});
         await onPreparing?.(30, "Preparing Playwright browsers...");
-        const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId, {
-          signal,
-        });
-        const managed = prepareSystemPlaywright({
-          rootDir: runnerRoot,
-          execution,
-          executionMode,
-          backendUrl: stack.backendUrl,
-          frontendPort: stack.frontendPort,
-          runKey: crypto.randomUUID(),
-          testFile: execution.testFile,
-          configPath: config,
-          managedServer: true,
-          measurementPreparation,
-          assertionBindings,
-          headed: Boolean(execution.headed),
-        });
-        const serverNodeModules = fileURLToPath(
-          new URL("../../node_modules/", import.meta.url),
-        );
+        const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId, {signal});
+        const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:activeStack.backendUrl,frontendPort:activeStack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:config,managedServer:true,measurementPreparation,assertionBindings,headed:Boolean(execution.headed)});
+        const serverNodeModules = fileURLToPath(new URL("../../node_modules/", import.meta.url));
         const nodePath = [
           serverNodeModules,
           path.join(runnerRoot, "node_modules"),
@@ -657,31 +624,9 @@ export const runSystemTests = async ({
           .filter((p) => fs.existsSync(p))
           .join(path.delimiter);
         await onReady?.();
-        const result = await streamPlaywrightEvents(managed, onEvent, () =>
-          dockerRunner.run({
-            snapshotPath: runnerRoot,
-            command: resolvePlaywrightCommand(runnerRoot, managed.command),
-            timeoutMs: SYSTEM_TEST_TIMEOUT_MS,
-            jobId,
-            forceHost: true,
-            isolatedEnv: true,
-            signal,
-            env: {
-              ...browserEnv,
-              NODE_PATH: nodePath,
-              PLAYWRIGHT_BASE_URL: `http://127.0.0.1:${stack.frontendPort}`,
-            },
-          }),
-        );
-        return {
-          ...result,
-          reportPath: managed.reportPath,
-          autPort: stack.frontendPort,
-          executionMode,
-        };
-      } finally {
-        await stack.cleanup();
-      }
+        const result=await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,isolatedEnv:true,signal,env:{...browserEnv,NODE_PATH:nodePath,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${activeStack.frontendPort}`}}));
+        return {...result,reportPath:managed.reportPath,autPort:activeStack.frontendPort,executionMode,egressLogPath:activeStack.egressLogPath};
+      } finally {if (ownsStack) await activeStack.cleanup();}
     } else if (execution.runner === "cypress") {
       const stack = await startFullSystem({
         rootDir,

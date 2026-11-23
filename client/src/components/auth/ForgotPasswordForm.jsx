@@ -7,23 +7,23 @@ import {
   Loader2,
 } from "lucide-react";
 import { forgotPasswordApi } from "../../services/auth.service";
+import { EMAIL_REGEX, AUTH_MESSAGES } from "../../../../shared/authValidation.js";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export default function ForgotPasswordForm({ setMode }) {
-  const [email, setEmail] = useState("");
+export default function ForgotPasswordForm({ setMode, initialEmail = "" }) {
+  const [email, setEmail] = useState(initialEmail);
   const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email.trim()) {
-      setErrorMsg("Email address is required");
+    const trimmed = email.trim();
+    if (!trimmed) {
+      setErrorMsg(AUTH_MESSAGES.EMAIL_REQUIRED);
       setStatus("error");
       return;
     }
-    if (!EMAIL_RE.test(email)) {
-      setErrorMsg("Please enter a valid email address");
+    if (!EMAIL_REGEX.test(trimmed)) {
+      setErrorMsg(AUTH_MESSAGES.EMAIL_INVALID);
       setStatus("error");
       return;
     }
@@ -32,7 +32,7 @@ export default function ForgotPasswordForm({ setMode }) {
     setStatus("loading");
 
     try {
-      await forgotPasswordApi(email.trim().toLowerCase());
+      await forgotPasswordApi(trimmed.toLowerCase());
       setStatus("success");
     } catch (error) {
       setErrorMsg(error.message || "Failed to send reset link.");

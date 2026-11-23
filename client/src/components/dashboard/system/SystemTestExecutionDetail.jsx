@@ -1,7 +1,7 @@
 import SystemTestEvidencePreview from './SystemTestEvidencePreview.jsx';
 import { executionDuration } from './systemTestExecutionModel.js';
 import SystemTestProgress from './SystemTestProgress.jsx';
-import { ExternalDependencyBadge, ExternalDependencyNotice } from './ExternalTestKeyNotices.jsx';
+import { ExternalCallNote, ExternalDependencyBadge, ExternalDependencyNotice } from './ExternalTestKeyNotices.jsx';
 import { stripAnsi } from '../../../utils/stripAnsi.js';
 
 export function ExecutionStatus({ status, dependency }) {
@@ -48,6 +48,7 @@ export default function SystemTestExecutionDetail({ scenario, snapshotId, onInsp
       <SystemTestProgress scenario={scenario} showErrors />
     {scenario.errorMessage && <pre className="whitespace-pre-wrap break-words">{stripAnsi(scenario.errorMessage)}</pre>}
     </ExternalDependencyNotice>}
+    {!scenario.externalDependency && scenario.externalCallFailure && <ExternalCallNote failure={scenario.externalCallFailure} />}
     {!scenario.externalDependency && <SystemTestProgress scenario={scenario} showErrors />}
     {!details?.attempts.length ? <p className="text-xs text-[var(--color-text-muted)]">Execution detail unavailable for this result. Run tests again to collect report details.</p>
       : <div className="space-y-4">

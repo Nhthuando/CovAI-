@@ -250,7 +250,7 @@ export default function GlobalProcessIndicator() {
     <div
       style={{
         position: "fixed",
-        bottom: 24,
+        bottom: 78,
         right: 24,
         zIndex: 9999,
         maxWidth: minimized ? 260 : 380,

@@ -65,7 +65,6 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "./ToastContext";
-import CoverageJobQueueButton from "./CoverageJobQueueButton.jsx";
 
 import IntegrationRouteMatrixTable from "./integration/IntegrationRouteMatrixTable.jsx";
 import IntegrationReportEmbed from "./integration/IntegrationReportEmbed.jsx";
@@ -342,7 +341,6 @@ export default function IntegrationWorkspace({
   initialContext,
   onContextChange,
   activeView,
-  onOpenJobQueue,
 }) {
   const { showToast } = useToast();
   const projectAccess = useProjectAccess(projectId);
@@ -2486,12 +2484,6 @@ export default function IntegrationWorkspace({
 
           {/* Right: Header Utilities (Initial Scan, Framework Setup, History) */}
           <div className="flex items-center gap-2 flex-wrap">
-            {onOpenJobQueue && (
-              <CoverageJobQueueButton
-                onClick={onOpenJobQueue}
-                running={isJobActive}
-              />
-            )}
             {!hasScanned ? (
               <button
                 type="button"
@@ -2949,6 +2941,8 @@ export default function IntegrationWorkspace({
           {activeTab === "endpoints" && (
             <div className="space-y-4">
               <IntegrationRouteMatrixTable
+                key={snapshotId || "integration"}
+                snapshotId={snapshotId}
                 endpoints={endpoints}
                 aiTests={workspace?.aiTests || []}
                 hasScanned={hasScanned}

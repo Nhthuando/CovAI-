@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {jest,it,expect,afterEach} from '@jest/globals';
+import {jest,it,expect,beforeEach,afterEach} from '@jest/globals';
 await jest.unstable_mockModule('../services/job.service.js',()=>({addJobLog:jest.fn()}));
 await jest.unstable_mockModule('../services/dockerRunner.service.js',()=>({dockerRunner:{run:jest.fn()}}));
 const {prepareProjectDependencies,verifyRuntimeTooling}=await import('../services/projectDependencies.service.js');
@@ -12,7 +12,141 @@ const fixture=(pkg={scripts:{dev:'vite'},devDependencies:{vite:'7'}})=>{
     const root=fs.mkdtempSync(path.join(os.tmpdir(),'covai-deps-'));roots.push(root);fs.writeFileSync(path.join(root,'package.json'),JSON.stringify(pkg));return root;
 };
 const tooling=root=>{fs.mkdirSync(path.join(root,'node_modules/vite'),{recursive:true});fs.writeFileSync(path.join(root,'node_modules/vite/package.json'),'{"name":"vite","type":"module","main":"index.js"}');fs.writeFileSync(path.join(root,'node_modules/vite/index.js'),'throw new Error("resolution must not execute application packages");');};
-afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+const cacheEnvKeys = ['COVAI_DEPENDENCY_CACHE', 'COVAI_DEPENDENCY_CACHE_DIR', 'COVAI_DEPENDENCY_CACHE_MAX_ENTRIES'];
+let originalCacheEnv;
+beforeEach(() => {
+    originalCacheEnv = cacheEnvKeys.map(name => process.env[name]);
+    process.env.COVAI_DEPENDENCY_CACHE = 'off';
+    delete process.env.COVAI_DEPENDENCY_CACHE_MAX_ENTRIES;
+});
+afterEach(() => {
+    for (const [index, name] of cacheEnvKeys.entries()) {
+        if (originalCacheEnv[index] === undefined) delete process.env[name];
+        else process.env[name] = originalCacheEnv[index];
+    }
+    for (const root of roots.splice(0)) fs.rmSync(root, {recursive:true,force:true});
+});
+
+const persistentFixture = () => {
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-persistent-deps-'));
+    roots.push(cacheRoot);
+    delete process.env.COVAI_DEPENDENCY_CACHE;
+    process.env.COVAI_DEPENDENCY_CACHE_DIR = cacheRoot;
+    const run = jest.fn(async ({snapshotPath}) => {
+        const modules = path.join(snapshotPath, 'node_modules');
+        for (const name of ['pkg', '.vite', '.cache', '.prisma']) {
+            fs.mkdirSync(path.join(modules, name), {recursive:true});
+            fs.writeFileSync(path.join(modules, name, 'package.json'), '{"name":"pkg"}');
+        }
+        fs.writeFileSync(path.join(snapshotPath, 'package-lock.json'), '{"lockfileVersion":3,"resolved":"installed"}');
+        return {success:true};
+    });
+    const verify = jest.fn(async plan => {
+        expect(fs.existsSync(path.join(plan.installRoot, 'node_modules/pkg/package.json'))).toBe(true);
+    });
+    const prepare = (pkg = {dependencies:{pkg:'1'}}) => {
+        const directory = fixture(pkg);
+        fs.writeFileSync(path.join(directory, 'package-lock.json'), '{"lockfileVersion":3}');
+        return prepareProjectDependencies({directory, dependencies:{run, verify}});
+    };
+    const entries = () => fs.readdirSync(cacheRoot).map(name => path.join(cacheRoot, name));
+    return {run, verify, prepare, entries};
+};
+
+it('persists a complete dependency template across jobs and keys it by manifest', async () => {
+    const {run, verify, prepare, entries} = persistentFixture();
+    const first = await withProjectDependencyCache(() => prepare());
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(entries()).toHaveLength(1);
+    const [entry] = entries();
+    const metadataPath = path.join(entry, 'meta.json');
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    expect(metadata).toEqual({createdAt:expect.any(String),lastUsedAt:expect.any(String),sizeHintFiles:1});
+    const old = new Date(0).toISOString();
+    fs.writeFileSync(metadataPath, JSON.stringify({...metadata,lastUsedAt:old}));
+    expect(fs.readdirSync(path.join(entry, 'node_modules'))).toEqual(['pkg']);
+
+    const second = await withProjectDependencyCache(() => prepare());
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(fs.readFileSync(path.join(second.directory, 'package-lock.json'), 'utf8'))
+        .toBe(fs.readFileSync(path.join(entry, 'locks/package-lock.json'), 'utf8'));
+    expect(fs.existsSync(path.join(second.directory, '.covai-system-test/runtime-dependencies.json'))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(metadataPath, 'utf8')).lastUsedAt).not.toBe(old);
+    fs.writeFileSync(path.join(second.directory, 'node_modules/pkg/package.json'), '{}');
+    expect(fs.readFileSync(path.join(entry, 'node_modules/pkg/package.json'), 'utf8')).toBe('{"name":"pkg"}');
+    expect(fs.readFileSync(path.join(first.directory, 'node_modules/pkg/package.json'), 'utf8')).toBe('{"name":"pkg"}');
+
+    await prepare({dependencies:{pkg:'2'}});
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(entries()).toHaveLength(2);
+});
+
+it('replaces an incomplete persistent entry after installing normally', async () => {
+    const {run, prepare, entries} = persistentFixture();
+    await prepare();
+    const [entry] = entries();
+    const metadataPath = path.join(entry, 'meta.json');
+    fs.rmSync(metadataPath);
+    await prepare();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(entries()).toEqual([entry]);
+    expect(fs.existsSync(metadataPath)).toBe(true);
+});
+
+it('discards an unverifiable persistent template and installs again', async () => {
+    const {run, verify, prepare, entries} = persistentFixture();
+    await prepare();
+    const [entry] = entries();
+    fs.writeFileSync(path.join(entry, 'node_modules/pkg/stale'), '');
+    verify.mockRejectedValueOnce(new Error('invalid cached tree'));
+    const second = await prepare();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(second.directory, 'node_modules/pkg/stale'))).toBe(false);
+    expect(fs.existsSync(path.join(entry, 'node_modules/pkg/stale'))).toBe(false);
+});
+
+it('evicts the least recently used old entry and protects recent entries', async () => {
+    const {prepare, entries} = persistentFixture();
+    process.env.COVAI_DEPENDENCY_CACHE_MAX_ENTRIES = '2';
+    const oldEntries = [];
+    for (const version of ['1', '2']) {
+        await prepare({dependencies:{pkg:version}});
+        const entry = entries().find(candidate => !oldEntries.includes(candidate));
+        oldEntries.push(entry);
+        const metadataPath = path.join(entry, 'meta.json');
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+        fs.writeFileSync(metadataPath, JSON.stringify({...metadata,lastUsedAt:new Date(Number(version)).toISOString()}));
+    }
+    await prepare({dependencies:{pkg:'3'}});
+    expect(entries()).toHaveLength(2);
+    expect(entries()).not.toContain(oldEntries[0]);
+    expect(entries()).toContain(oldEntries[1]);
+    process.env.COVAI_DEPENDENCY_CACHE_MAX_ENTRIES = '1';
+    await prepare({dependencies:{pkg:'4'}});
+    expect(entries()).toHaveLength(2);
+    expect(entries()).not.toContain(oldEntries[1]);
+});
+
+it('installs in every fresh copy when the persistent cache is off', async () => {
+    const {run, prepare, entries} = persistentFixture();
+    await prepare();
+    process.env.COVAI_DEPENDENCY_CACHE = 'off';
+    await prepare();
+    await prepare();
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(entries()).toHaveLength(1);
+});
+
+it('skips a cache directory configured inside the imported project', async () => {
+    const {run, verify} = persistentFixture();
+    const directory = fixture();
+    const cacheRoot = path.join(directory, '.covai-temp', 'dependency-cache');
+    process.env.COVAI_DEPENDENCY_CACHE_DIR = cacheRoot;
+    await prepareProjectDependencies({directory, dependencies:{run, verify}});
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(cacheRoot)).toBe(false);
+});
 it('allows a queued preparation to recover after an earlier caller fails',async()=>{
     const directory=fixture({});
     let failFirst;

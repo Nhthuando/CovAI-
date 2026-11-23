@@ -93,7 +93,6 @@ import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
 import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
-import JobQueue from "./JobQueue.jsx";
 import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
 import { useRunningProcess } from "../../contexts/RunningProcessContext.jsx";
 import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
@@ -1081,7 +1080,6 @@ export default function CoverageTypeDashboard({
     }
   };
 
-  const [showJobQueueModal, setShowJobQueueModal] = useState(false);
   const [dependencyInstallError, setDependencyInstallError] = useState("");
   const [dependencyInstallLogs, setDependencyInstallLogs] = useState([]);
 
@@ -3709,44 +3707,6 @@ export default function CoverageTypeDashboard({
               Full system · Real API & database
             </span>
           )}
-          {projectId && type !== "unit" && (
-            <button
-              onClick={() => setShowJobQueueModal(true)}
-              style={{
-                ...buttonStyle(running || isGenerating ? "#38bdf8" : "#8b949e"),
-                background:
-                  running || isGenerating
-                    ? isLight
-                      ? "#e0f2fe"
-                      : "rgba(56, 189, 248, 0.15)"
-                    : "rgba(255, 255, 255, 0.05)",
-                border:
-                  running || isGenerating
-                    ? "1px solid rgba(56,189,248,0.5)"
-                    : "1px solid rgba(255, 255, 255, 0.12)",
-                color: running || isGenerating ? "#38bdf8" : "#c9d1d9",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                cursor: "pointer",
-              }}
-              title="View Job Queue and real-time execution logs"
-            >
-              <ListOrdered size={14} />
-              <span>Job Queue</span>
-              {(running || isGenerating) && (
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 7,
-                    height: 7,
-                    borderRadius: "50%",
-                    backgroundColor: "#38bdf8",
-                  }}
-                />
-              )}
-            </button>
-          )}
           {type === "system" ? (
             <>
               <button
@@ -4047,7 +4007,6 @@ export default function CoverageTypeDashboard({
             hasPartialFailures={hasPartialFailures}
             onRefresh={load}
             isRefreshing={isCoverageQueryFetching}
-            onOpenJobQueue={() => setShowJobQueueModal(true)}
             onOpenReviewModal={() => openReviewForFile(null)}
             hasReviewableDiffs={reviewFiles.length > 0}
             activeTab={activeMetricView}
@@ -4150,27 +4109,6 @@ export default function CoverageTypeDashboard({
               </div>
             </div>
           </div>
-          <button
-            onClick={() => setShowJobQueueModal(true)}
-            style={{
-              background: "rgba(56, 189, 248, 0.15)",
-              border: "1px solid rgba(56, 189, 248, 0.45)",
-              color: "#0284c7",
-              padding: "7px 14px",
-              borderRadius: 6,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              transition: "all 0.2s",
-            }}
-            title="Inspect logs and progress in real-time Job Queue"
-          >
-            <Terminal size={14} />
-            <span>Open Job Queue & Logs</span>
-          </button>
         </div>
       )}
 
@@ -7517,92 +7455,6 @@ export default function CoverageTypeDashboard({
           initialLine={cfgModalContext?.line}
           onOpenFile={handleOpenFileInPlace}
         />
-      )}
-      {showJobQueueModal && projectId && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0, 0, 0, 0.75)",
-            backdropFilter: "blur(5px)",
-            zIndex: 9999,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "20px",
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowJobQueueModal(false);
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: "#0d1117",
-              border: "1px solid rgba(255, 255, 255, 0.15)",
-              borderRadius: 14,
-              width: "92vw",
-              maxWidth: 1100,
-              height: "85vh",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.8)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "14px 20px",
-                borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-                background: "rgba(22, 27, 34, 0.95)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <ListOrdered size={20} color="#38bdf8" />
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: 16,
-                    fontWeight: 700,
-                    color: "#f0f6fc",
-                  }}
-                >
-                  System Test Job Queue & Live Execution Logs
-                </h2>
-              </div>
-              <button
-                onClick={() => setShowJobQueueModal(false)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#8b949e",
-                  cursor: "pointer",
-                  fontSize: 18,
-                  padding: "4px 8px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: 6,
-                }}
-                title="Close"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div style={{ flex: 1, overflowY: "auto", padding: 0 }}>
-              <JobQueue projectId={projectId} />
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Unit Test Diff Review Modal (Monaco Side-by-Side Diff) */}

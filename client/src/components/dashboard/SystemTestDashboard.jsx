@@ -24,8 +24,8 @@ import {
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { getJobDetailApi } from "../../services/job.service.js";
+import { openFloatingJobQueue } from "../../lib/floatingJobQueuePrefs.js";
 import Button from "../common/Button.jsx";
-import CoverageJobQueueButton from "./CoverageJobQueueButton.jsx";
 import SystemTestAssessmentPanel from "./system/SystemTestAssessmentPanel.jsx";
 import SystemTestErrorNotice from "./system/SystemTestErrorNotice.jsx";
 import SystemTestMetricsCards from "./system/SystemTestMetricsCards.jsx";
@@ -90,7 +90,6 @@ function SystemTestDashboardWorkspace({
   focusScenario = null,
   onOpenFile,
   onChatContextChange,
-  onOpenJobQueue,
 }) {
   const projectAccess = useProjectAccess(projectId);
   // Current view: "dashboard" | "report"
@@ -777,7 +776,7 @@ function SystemTestDashboardWorkspace({
           className="max-w-2xl"
           message={error}
           onDismiss={() => setError(null)}
-          onOpenLogs={onOpenJobQueue}
+          onOpenLogs={() => openFloatingJobQueue({ domain: "system" })}
           onOpenSetup={() => setSetupOpen(true)}
         />
         {setupDialog}
@@ -971,12 +970,6 @@ function SystemTestDashboardWorkspace({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {onOpenJobQueue && (
-            <CoverageJobQueueButton
-              onClick={onOpenJobQueue}
-              running={runningTests}
-            />
-          )}
           <Button
             variant="primary"
             size="sm"
@@ -1183,22 +1176,11 @@ function SystemTestDashboardWorkspace({
             />
           </div>
 
-          {(jobProgress.message || onOpenJobQueue) && (
+          {jobProgress.message && (
             <div className="flex flex-wrap items-start justify-between gap-2">
-              {jobProgress.message && (
-                <p className="min-w-0 flex-1 break-words text-[11px] font-mono text-[var(--color-text-secondary)]">
-                  {jobProgress.message}
-                </p>
-              )}
-              {onOpenJobQueue && (
-                <button
-                  type="button"
-                  onClick={onOpenJobQueue}
-                  className="shrink-0 text-[11px] font-medium text-[var(--color-primary)] underline-offset-2 hover:underline cursor-pointer"
-                >
-                  View detailed logs
-                </button>
-              )}
+              <p className="min-w-0 flex-1 break-words text-[11px] font-mono text-[var(--color-text-secondary)]">
+                {jobProgress.message}
+              </p>
             </div>
           )}
         </div>
@@ -1208,7 +1190,7 @@ function SystemTestDashboardWorkspace({
       <SystemTestErrorNotice
         message={stripAnsi(error)}
         onDismiss={() => setError(null)}
-        onOpenLogs={onOpenJobQueue}
+        onOpenLogs={() => openFloatingJobQueue({ domain: "system" })}
         onOpenSetup={() => setSetupOpen(true)}
       />
 

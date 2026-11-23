@@ -1,4 +1,5 @@
-import { testDesignPromptSection } from "./systemTestPrompt.service.js";
+import { testDesignPromptSection } from './systemTestPrompt.service.js';
+import { redactDeep, redactSystemTestSecrets } from './systemTestSecrets.service.js';
 import {
   buildSystemGenerationInput,
   parseSystemGenerationResponse,
@@ -9,6 +10,7 @@ import {
   SYSTEM_PROMPT_VERSION,
 } from "./systemTestPrompt.service.js";
 import { ensureFullSystemSetup } from "./fullSystemSetup.service.js";
+import { startFullSystem } from "./fullSystemLifecycle.service.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -25,11 +27,8 @@ const generateText = (...args) =>
   withGeminiFeature("system-test", () => generateFeatureText(...args));
 import { withAgentContext } from "../agents/registry.js";
 import { runSystemTests } from "./systemTestRunner.service.js";
-import {
-  classifyExternalDependencies,
-  collectExternalRequirements,
-  readEgressLog,
-} from "./externalDependencyClassifier.service.js";
+import { selectSnapshotRoutes } from "./livePageSnapshot.service.js";
+import { classifyExternalDependencies, collectExternalRequirements, readEgressLog } from "./externalDependencyClassifier.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 import { validateFullSystemTest } from "./systemTestEvidence.service.js";
 import { parseTestFileDetails } from "../utils/testFileParser.js";
@@ -92,7 +91,7 @@ export const applySystemTestRepair = (response, code) => {
     throw new ServiceError("Repair must return 1–4 precise replacements.", 422);
   let result = code;
   for (const replacement of patch.replacements) {
-    const { old: previous, new: next } = replacement;
+    const { old: previous, new: next, all } = replacement;
     if (
       typeof previous !== "string" ||
       typeof next !== "string" ||
@@ -111,30 +110,27 @@ export const applySystemTestRepair = (response, code) => {
         "Repair cannot replace imports, scenarios or assertions.",
         422,
       );
-    let first = result.indexOf(previous);
-    let matchLength = previous.length;
-    let duplicate;
-    if (first >= 0) {
-      duplicate = result.indexOf(previous, first + matchLength) >= 0;
-    } else {
+    const maxMatches = all === true ? 10 : 1;
+    // One extra split detects matches over the limit without scanning for the rest.
+    const splitLimit = maxMatches + 2;
+    let fragments = result.split(previous, splitLimit);
+    if (fragments.length === 1) {
       const pattern = previous
         .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
         .replace(/\s+/g, "\\s+")
         .replace(/['"`]/g, "['\"`]");
       const matcher = new RegExp(pattern, "g");
-      const match = matcher.exec(result);
-      if (match) {
-        first = match.index;
-        matchLength = match[0].length;
-        duplicate = matcher.exec(result) !== null;
-      }
+      fragments = result.split(matcher, splitLimit);
     }
-    if (first < 0 || duplicate)
+    const matchCount = fragments.length - 1;
+    if (matchCount < 1 || matchCount > maxMatches)
       throw new ServiceError(
-        "Repair must match exactly one candidate fragment.",
+        all === true
+          ? "Repair with all:true must match between 1 and 10 fragments."
+          : "Repair must match exactly one candidate fragment.",
         422,
       );
-    result = result.slice(0, first) + next + result.slice(first + matchLength);
+    result = fragments.join(next);
   }
   return result;
 };
@@ -292,17 +288,17 @@ const readFailureFeedback = (reportPath) => {
               .startsWith("..") === false &&
             fs.existsSync(attachment.path)
           )
-            entry.pageSnapshot = fs
+            entry.pageSnapshot = redactSystemTestSecrets(fs
               .readFileSync(attachment.path, "utf8")
               .split("# Page snapshot")[1]
-              ?.split("# Test source")[0]
+              ?.split("# Test source")[0])
               ?.slice(0, 16000);
           feedback.push(entry);
         }
     for (const child of suite.suites || []) walk(child);
   };
   for (const suite of report.suites || []) walk(suite);
-  return { feedback, runnerErrors: report.errors || [], report };
+  return { feedback: redactDeep(feedback), runnerErrors: redactDeep(report.errors || []), report };
 };
 
 export const generateVerifiedSystemTests = async ({
@@ -384,6 +380,7 @@ export const generateVerifiedSystemTests = async ({
                   properties: {
                     old: { type: "STRING" },
                     new: { type: "STRING" },
+                    all: { type: "BOOLEAN" },
                   },
                   required: ["old", "new"],
                 },
@@ -400,7 +397,7 @@ export const generateVerifiedSystemTests = async ({
         ? "\nFor a strict-mode locator failure inside an assertion, replace only its locator expression, not the enclosing expect(), matcher, or expected value. Scope the locator to the actual dialog/row or use exact text matching where source supports it. For example, replace itemRow.getByText(expectedSubtotal) with itemRow.getByText(expectedSubtotal, { exact: true }); preserve the visibility assertion and expectedSubtotal."
         : "";
       const response = await generate(
-        prompt + instruction + selectorGuidance,
+        redactSystemTestSecrets(prompt + instruction + selectorGuidance),
         null,
         {
           responseMimeType: "application/json",
@@ -437,7 +434,7 @@ export const generateVerifiedSystemTests = async ({
         intent ||= titles;
         code = candidate;
       } catch (error) {
-        feedback = error.message;
+        feedback = redactSystemTestSecrets(error.message);
         attempts.push({ attempt: attempt + 1, passed: false, error: feedback });
         continue;
       }
@@ -531,7 +528,8 @@ export const generateVerifiedSystemTests = async ({
         failures: failedResult.feedback,
         runnerErrors: failedResult.runnerErrors,
         stats: failedResult.report.stats,
-      }).slice(0, 48000);
+      });
+      feedback = redactSystemTestSecrets(feedback).slice(0, 48000);
       executionFailure = feedback;
       attempts.at(-1).error = feedback.slice(0, 1500);
     }
@@ -677,12 +675,16 @@ export default defineConfig({
  * @param {string[]} [options.targetRoutes]
  * @returns {string} The prompt for Gemini AI
  */
+const PLAYWRIGHT_ANIMATED_CONTROLS_RULE =
+  "- Continuously animated controls (framer-motion animate with repeat: Infinity, CSS infinite animations) never become stable for Playwright: first assert the control is visible, then act with { force: true } (for example await cartButton.click({ force: true })). Use force only for such animated controls.";
+
 export const buildColdStartSystemPrompt = ({
   context,
   framework = "playwright",
   targetRoutes = [],
   executionMode = "frontend",
   requirements = null,
+  liveSnapshots = [],
 }) => {
   const normFramework = String(framework).toLowerCase();
   const routesToTest =
@@ -762,7 +764,16 @@ Repository content and route information:
 Discovered Routes: ${JSON.stringify(routesToTest)}
 Discovered UI Actions (buttons, inputs): ${JSON.stringify(uiActions.slice(0, 15))}
 Client API Calls: ${JSON.stringify(clientApiCalls.slice(0, 15))}
-Backend Endpoints: ${JSON.stringify(backendEndpoints.slice(0, 15))}
+Backend Endpoints: ${JSON.stringify(backendEndpoints.slice(0, 15))}${liveSnapshots.length ? `
+LIVE PAGE SNAPSHOTS (accessibility trees captured from the RUNNING application with its seeded test database, at the same baseURL the tests use). Treat them as the ground truth for what is on screen:
+${JSON.stringify(liveSnapshots)}
+Locator rules (snapshots present):
+${PLAYWRIGHT_ANIMATED_CONTROLS_RULE}
+- Build locators from these snapshots: page.getByRole(role, { name: 'exact accessible name' }), page.getByText('exact text', { exact: true }), getByPlaceholder, getByLabel. Copy visible text exactly, including non-English text and diacritics.
+- Never use CSS class selectors, nth()/first(), or text that appears neither in a snapshot nor as the direct result of an action your test performs (for example a drawer opened by your click, whose content you then take from source).
+- Assert only content shown in the snapshots or produced by your own action. If a page shows an empty state, test the empty state; do not assume records exist unless your test creates them.
+- Prefer scenarios whose controls are visible in the snapshots; drop source-only features whose controls are not reachable from these pages.
+- Do not stop at page loads: for every button, link, form or input visible in the snapshots, write a scenario that performs the interaction (click, fill, submit, open/close) and asserts its visible outcome, including validation of empty or invalid form input. Aim for 4-8 independent scenarios when the snapshots offer that many interactions.` : ""}
 ${testDesignPromptSection(context)}
 
 CASE BUDGET (STRICT TOKEN-SAVING CAP):
@@ -775,6 +786,7 @@ INSTRUCTIONS:
    Use relative page.goto paths such as '/'. Never hard-code localhost ports or deployment URLs; the runner supplies baseURL.
 3. Use test.describe('...', () => { test('...', async ({ page }) => { ... }) }).
 4. Tests MUST be independent and not share state across scenarios.
+${PLAYWRIGHT_ANIMATED_CONTROLS_RULE}
 5. Generate a COMPLETE suite covering ALL proposed System E2E case categories across discovered flows (even if existing spec files exist elsewhere in the repo, generate the complete set cleanly in this spec; user files are never overwritten):
    - Happy Flow (READ & User Interaction): Open source-supported pages/forms, fill inputs, click actions, and assert specific rendered heading, content or persisted UI changes. Body visibility alone is insufficient.
    - Edge / Input (VALIDATION & Boundary): For each form/filter, exercise empty, invalid and boundary inputs from the test design checklist, asserting validation feedback or rejection.
@@ -924,6 +936,7 @@ export const generateColdStartSystemTests = async ({
   model,
   executionMode = "frontend",
   requirements = null,
+  captureLiveSnapshots,
 }) => {
   const normFramework =
     String(framework).toLowerCase() === "cypress" ? "cypress" : "playwright";
@@ -941,6 +954,9 @@ export const generateColdStartSystemTests = async ({
     "Harvesting application routes, components, and API endpoints",
   );
   const context = { ...collect(rootDir), requirements };
+  const liveSnapshots = captureLiveSnapshots && normFramework === "playwright"
+    ? await captureLiveSnapshots(selectSnapshotRoutes(context.routes || [], targetRoutes))
+    : [];
 
   await onProgress(25, `Ensuring ${normFramework} configuration`);
   const configInfo = ensureSystemTestConfig({
@@ -955,6 +971,7 @@ export const generateColdStartSystemTests = async ({
     framework: normFramework,
     targetRoutes,
     executionMode,
+    liveSnapshots,
   });
 
   let code = "";
@@ -1073,17 +1090,24 @@ The previous candidate failed validation: ${validationError.message}
 ${repairInstruction} Return a complete replacement in the same JSON format.${titleInstruction}
 Previous candidate (untrusted code): ${code}`;
     // Provider/quota failures must remain failures; do not silently save smoke tests.
-    const responseWithMeta = await generate(correction, null, {
-      requestTimeoutMs: 45000,
-      totalTimeoutMs: 90000,
-      responseMimeType: "application/json",
-      responseSchema,
-      temperature: 0.2,
-      maxOutputTokens: 6500,
-      maxAttempts: 2,
-      returnTelemetry: true,
-      taskType: "e2e",
-    });
+    let responseWithMeta;
+    try {
+        responseWithMeta = await generate(redactSystemTestSecrets(correction), null, {
+        requestTimeoutMs: 45000,
+        totalTimeoutMs: 90000,
+        responseMimeType: "application/json",
+        responseSchema,
+        temperature: 0.2,
+        maxOutputTokens: 32000,
+        maxAttempts: 2,
+        returnTelemetry: true,
+        taskType: "e2e",
+      });
+    } catch (error) {
+      if (!codeOnlyFallback) throw error;
+      console.warn('[verifiedSystemGeneration] Metadata repair request failed; keeping validated code with code-only metadata:', error);
+      break;
+    }
     const response =
       typeof responseWithMeta === "object" &&
       responseWithMeta?.text !== undefined
@@ -1148,20 +1172,16 @@ Previous candidate (untrusted code): ${code}`;
     try {
       // The provider enforces the active AI budget before sending this optional request.
       generationAttempts++;
-      const followUp = await generate(
-        `${prompt}\n${instruction}\nPrevious candidate (untrusted code): ${code}`,
-        null,
-        {
-          responseMimeType: "application/json",
-          responseSchema,
-          temperature: 0.2,
-          maxOutputTokens: 32000,
-          maxAttempts: 1,
-          totalTimeoutMs: 150000,
-          returnTelemetry: true,
-          taskType: "e2e",
-        },
-      );
+      const followUp = await generate(redactSystemTestSecrets(`${prompt}\n${instruction}\nPrevious candidate (untrusted code): ${code}`), null, {
+        responseMimeType: "application/json",
+        responseSchema,
+        temperature: 0.2,
+        maxOutputTokens: 32000,
+        maxAttempts: 1,
+        totalTimeoutMs: 150000,
+        returnTelemetry: true,
+        taskType: "e2e",
+      });
       const response = followUp?.text !== undefined ? followUp.text : followUp;
       const candidate = validateCandidate(
         extractSystemTestCode(response),
@@ -1276,6 +1296,7 @@ Previous candidate (untrusted code): ${code}`;
   return {
     generationMetadata,
     generationAttempts,
+    liveSnapshotCount: liveSnapshots.length,
     testDesign: {
       facts: (context.validationFacts || []).length,
       checklist: checklist.length,
@@ -1393,6 +1414,8 @@ export const verifyAndRepairSystemDraft = async ({
   deadlineAt,
   onProgress = async () => {},
   dependencies = {},
+  stack: providedStack,
+  stackError,
 }) => {
   const hasTime = () => {
     signal?.throwIfAborted();
@@ -1406,6 +1429,7 @@ export const verifyAndRepairSystemDraft = async ({
     droppedScenarios: [],
     runs,
   });
+  if (stackError) return notVerified(stackError);
   if (!hasTime()) return notVerified();
 
   const expectedTitles = new Set(
@@ -1425,24 +1449,30 @@ export const verifyAndRepairSystemDraft = async ({
   let testedCode = code;
   let failures = [];
   let externalFailures = [];
+  let stack = providedStack;
   try {
     while (runs < 3 && hasTime()) {
       fs.writeFileSync(testFile, candidate, "utf8");
       let feedback;
       try {
         runs++;
+        await onProgress(`Running the tests on your app (attempt ${runs}/3)`, { stage: "VERIFYING", attempt: runs });
+        if (runs === 1 && !providedStack && (!dependencies.run || dependencies.startStack)) {
+          stack = await (dependencies.startStack || startFullSystem)({
+            rootDir,
+            jobId: null,
+            signal,
+            onProgress: (_percent, message) => onProgress(message, { stage: "VERIFYING", attempt: 1 }),
+          });
+        }
         const result = await (dependencies.run || runSystemTests)({
           jobId: null,
           rootDir,
           executionMode: "full",
           signal,
-          onPreparing: (_percent, message) => onProgress(message),
-          execution: {
-            runner: "playwright",
-            rootDir,
-            testDirectory: "tests/system",
-            testFile,
-          },
+          stack,
+          onPreparing: (_percent, message) => onProgress(message, { stage: "VERIFYING", attempt: runs }),
+          execution: { runner: "playwright", rootDir, testDirectory: "tests/system", testFile, fastFail: true },
         });
         signal?.throwIfAborted();
         const parsed = readFailureFeedback(result.reportPath);
@@ -1522,74 +1552,71 @@ export const verifyAndRepairSystemDraft = async ({
 
       try {
         const titles = validateSystemTestIntent(testedCode, intentOptions);
-        const prompt = `Fix selector/action mechanics only in tests listed under EXECUTION FAILURES using the real DOM implied by the errors and the source. Return ONLY JSON {"replacements":[{"old":"exact unique candidate fragment","new":"corrected fragment"}]}, at most 4 replacements. Do not change test titles, imports or expect assertions; never skip tests or relax expected behaviour. If the error shows a real application bug, leave that test unchanged.
+        const prompt = `Fix selector/action mechanics only in tests listed under EXECUTION FAILURES using the real DOM implied by the errors and the source. Return ONLY JSON {"replacements":[{"old":"exact candidate fragment","new":"corrected fragment"}]}, at most 4 replacements. Do not change test titles, imports or expect assertions; never skip tests or relax expected behaviour. If the error shows a real application bug, leave that test unchanged.
 For a strict-mode locator failure inside an assertion, replace only its locator expression, not the enclosing expect(), matcher, or expected value. Scope the locator to the actual dialog/row or use exact text matching where source supports it. For example, replace itemRow.getByText(expectedSubtotal) with itemRow.getByText(expectedSubtotal, { exact: true }); preserve the visibility assertion and expectedSubtotal.
+When the same failing locator or action appears in several failing tests, return ONE replacement with "all": true instead of separate ones.
+If a click/fill times out on an element that is visible but continuously animated (for example a framer-motion element with animate + transition repeat: Infinity, or a CSS animate-* / infinite animation in the source), Playwright's stability check never passes: keep the same locator and pass { force: true } to that action, right after the existing visibility assertion.
 CANDIDATE:
 ${testedCode}
 EXECUTION FAILURES:
 ${JSON.stringify(failures)}
 PAGE SNAPSHOTS:
 ${JSON.stringify(feedback.map(({ title, pageSnapshot }) => ({ title, pageSnapshot })))}`;
-        const response = await generate(prompt, null, {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: "OBJECT",
-            properties: {
-              replacements: {
-                type: "ARRAY",
-                items: {
-                  type: "OBJECT",
-                  properties: {
-                    old: { type: "STRING" },
-                    new: { type: "STRING" },
+        await onProgress("Fixing failing scenarios with AI", { stage: "REPAIRING", attempt: runs });
+        let repairFeedback = "";
+        for (let repairTry = 1; repairTry <= 2; repairTry++) {
+          const response = await generate(redactSystemTestSecrets(prompt + repairFeedback), null, {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                replacements: {
+                  type: "ARRAY",
+                  items: {
+                    type: "OBJECT",
+                    properties: {
+                      old: { type: "STRING" },
+                      new: { type: "STRING" },
+                      all: { type: "BOOLEAN" },
+                    },
+                    required: ["old", "new"],
                   },
-                  required: ["old", "new"],
                 },
               },
+              required: ["replacements"],
             },
-            required: ["replacements"],
-          },
-          temperature: 0.2,
-          maxOutputTokens: 4000,
-          requestTimeoutMs: 120000,
-          totalTimeoutMs: 240000,
-          maxAttempts: 2,
-        });
-        signal?.throwIfAborted();
-        const patched = applySystemTestRepair(response, testedCode);
-        if (externalFailures.length) {
-          const blockedTitles = new Set(
-            externalFailures.map(([title]) => title),
-          );
-          const blockedTests = (source) =>
-            playwrightTestStatements(source)
-              .filter(({ title }) => blockedTitles.has(title))
-              .map(({ start, end }) => source.slice(start, end));
-          if (
-            JSON.stringify(blockedTests(testedCode)) !==
-            JSON.stringify(blockedTests(patched))
-          ) {
-            throw new ServiceError(
-              "Repair changed a scenario blocked by external configuration.",
-              422,
-            );
+            temperature: 0.2,
+            maxOutputTokens: 4000,
+            requestTimeoutMs: 120000,
+            totalTimeoutMs: 240000,
+            maxAttempts: 2,
+          });
+          signal?.throwIfAborted();
+          try {
+            const patched = applySystemTestRepair(response, testedCode);
+            if (externalFailures.length) {
+              const blockedTitles = new Set(externalFailures.map(([title]) => title));
+              const blockedTests = source => playwrightTestStatements(source)
+                .filter(({ title }) => blockedTitles.has(title))
+                .map(({ start, end }) => source.slice(start, end));
+              if (JSON.stringify(blockedTests(testedCode)) !== JSON.stringify(blockedTests(patched))) {
+                throw new ServiceError("Repair changed a scenario blocked by external configuration.", 422);
+              }
+            }
+            const repaired = ensurePlaywrightExecutionSteps(patched);
+            const repairedTitles = validateSystemTestIntent(repaired, intentOptions);
+            if (repairedTitles.length !== titles.length || repairedTitles.some(title => !titles.includes(title))) {
+              throw new ServiceError("Repair changed the generated scenario titles.", 422);
+            }
+            candidate = repaired;
+            break;
+          } catch (error) {
+            const providerFailure = error?.status === 429 || error?.status === 503 ||
+              /quota|budget|rate limit|high demand|overloaded/i.test(String(error?.message || ""));
+            if (repairTry === 2 || signal?.aborted || providerFailure || !hasTime()) throw error;
+            repairFeedback = `\n\nPREVIOUS REPAIR WAS REJECTED: ${error.message}\nReturn replacements whose "old" fragment contains only the failing locator or action call (for example page.locator('...') or .click()), never the enclosing expect( ... ) call, matchers, expected values, imports or test titles.`;
           }
         }
-        const repaired = ensurePlaywrightExecutionSteps(patched);
-        const repairedTitles = validateSystemTestIntent(
-          repaired,
-          intentOptions,
-        );
-        if (
-          repairedTitles.length !== titles.length ||
-          repairedTitles.some((title) => !titles.includes(title))
-        ) {
-          throw new ServiceError(
-            "Repair changed the generated scenario titles.",
-            422,
-          );
-        }
-        candidate = repaired;
       } catch (error) {
         signal?.throwIfAborted();
         console.warn(
@@ -1636,6 +1663,11 @@ ${JSON.stringify(feedback.map(({ title, pageSnapshot }) => ({ title, pageSnapsho
       runs,
     };
   } finally {
+    try {
+      if (!providedStack) await stack?.cleanup();
+    } catch (error) {
+      console.warn(redactSystemTestSecrets(`[verifiedSystemGeneration] Draft stack cleanup failed: ${error.message}`));
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 };

@@ -1,4 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  loadMatrixSelection,
+  saveMatrixSelection,
+  toggleParentSelection,
+  toggleAllParentsSelection,
+  toggleChildSelection,
+} from "../../../lib/matrixSelectionStorage.js";
 import {
   Search,
   ChevronRight,
@@ -48,17 +55,28 @@ function inferRoleBadge(filePath = "") {
   return { label: "SRC", style: METHOD_LIKE_FILE_BADGES.default };
 }
 
-function getFileRowStatus(entry, caseCov) {
-  const hasTests = (entry.testCases || []).length > 0;
+function getFileRowStatus(entry) {
   const hasFailures = (entry.testCases || []).some(isUnitTestFailed);
   const linesPct = Number(entry.linesPct ?? 0);
+  const stmtsPct = Number(entry.stmtsPct ?? 0);
+  const funcsPct = Number(entry.funcsPct ?? 0);
   const branchesPct = Number(entry.branchesPct ?? 0);
+  const funcsTotal = Number(entry.funcsTotal ?? (entry.functions || []).length ?? 0);
+  const funcsCovered = Number(
+    entry.funcsCovered ??
+      (entry.functions || []).filter((f) => Number(f.hit || 0) > 0).length ??
+      0,
+  );
 
   if (hasFailures) return "FAIL";
-  if (linesPct >= 100 && (branchesPct >= 100 || Number(entry.branchesTotal || 0) === 0)) {
+  if (
+    linesPct >= 100 &&
+    (funcsTotal === 0 || funcsPct >= 100) &&
+    (Number(entry.branchesTotal || 0) === 0 || branchesPct >= 100)
+  ) {
     return "PASS";
   }
-  if (linesPct > 0 || (hasTests && caseCov.passedCasesCount > 0)) {
+  if (linesPct > 0 || stmtsPct > 0 || funcsCovered > 0) {
     return "PARTIAL";
   }
   return "UNCOVERED";
@@ -72,6 +90,7 @@ function pctColorClass(pct) {
 }
 
 export default function UnitFileMatrixTable({
+  snapshotId = null,
   fileEntries = [],
   hasExecuted = false,
   onSuggestSelected,
@@ -102,8 +121,16 @@ export default function UnitFileMatrixTable({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [expandedPaths, setExpandedPaths] = useState(() => new Set());
-  const [selectedFiles, setSelectedFiles] = useState(() => new Set());
-  const [selectedTestIds, setSelectedTestIds] = useState(() => new Set());
+  const [selectedFiles, setSelectedFiles] = useState(
+    () => loadMatrixSelection("unit", snapshotId).parents,
+  );
+  const [selectedTestIds, setSelectedTestIds] = useState(
+    () => loadMatrixSelection("unit", snapshotId).children,
+  );
+
+  useEffect(() => {
+    saveMatrixSelection("unit", snapshotId, selectedFiles, selectedTestIds);
+  }, [snapshotId, selectedFiles, selectedTestIds]);
 
   const enrichedEntries = useMemo(() => {
     return (fileEntries || []).map((entry) => {
@@ -142,32 +169,65 @@ export default function UnitFileMatrixTable({
     setExpandedPaths(new Set());
   };
 
+  const getUnitTestSelectionKey = (tc, entry) => {
+    const title = tc?.title || tc?.testName;
+    if (title) {
+      return `${entry?.filePath || tc?.sourceFile || ""}::${tc?.testFile || ""}::${title}`;
+    }
+    return String(tc?.id || "");
+  };
+
   const toggleSelectFile = (filePath) => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(filePath)) next.delete(filePath);
-      else next.add(filePath);
-      return next;
+    const targetEntry = enrichedEntries.find((e) => e.filePath === filePath);
+    const next = toggleParentSelection({
+      parentKey: filePath,
+      childKeys: (targetEntry?.testCases || [])
+        .map((tc) => getUnitTestSelectionKey(tc, targetEntry))
+        .filter(Boolean),
+      legacyChildKeys: (targetEntry?.testCases || [])
+        .map((tc) => String(tc?.id || ""))
+        .filter(Boolean),
+      parents: selectedFiles,
+      children: selectedTestIds,
     });
+    setSelectedFiles(next.parents);
+    setSelectedTestIds(next.children);
   };
 
   const toggleSelectAllFiles = () => {
     if (filteredEntries.length === 0) return;
     const allSelected = filteredEntries.every((e) => selectedFiles.has(e.filePath));
-    if (allSelected) {
-      setSelectedFiles(new Set());
-    } else {
-      setSelectedFiles(new Set(filteredEntries.map((e) => e.filePath)));
-    }
+    const next = toggleAllParentsSelection({
+      items: filteredEntries.map((entry) => ({
+        parentKey: entry.filePath,
+        childKeys: (entry.testCases || [])
+          .map((tc) => getUnitTestSelectionKey(tc, entry))
+          .filter(Boolean),
+        legacyChildKeys: (entry.testCases || [])
+          .map((tc) => String(tc?.id || ""))
+          .filter(Boolean),
+      })),
+      allSelected,
+      parents: selectedFiles,
+      children: selectedTestIds,
+    });
+    setSelectedFiles(next.parents);
+    setSelectedTestIds(next.children);
   };
 
-  const toggleSelectTest = (testId) => {
-    setSelectedTestIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(testId)) next.delete(testId);
-      else next.add(testId);
-      return next;
+  const toggleSelectTest = (testKey, entry = null, legacyId = null) => {
+    const next = toggleChildSelection({
+      childKey: testKey,
+      legacyChildKey: legacyId ? String(legacyId) : null,
+      parentKey: entry?.filePath || null,
+      siblingKeys: (entry?.testCases || [])
+        .map((tc) => getUnitTestSelectionKey(tc, entry))
+        .filter(Boolean),
+      parents: selectedFiles,
+      children: selectedTestIds,
     });
+    setSelectedFiles(next.parents);
+    setSelectedTestIds(next.children);
   };
 
   const selectedFileList = useMemo(
@@ -209,14 +269,16 @@ export default function UnitFileMatrixTable({
   const selectedTestCasesList = useMemo(() => {
     const list = [];
     for (const entry of enrichedEntries) {
+      const parentSelected = selectedFiles.has(entry.filePath);
       for (const tc of entry.testCases || []) {
-        if (selectedTestIds.has(tc.id)) {
+        const selKey = getUnitTestSelectionKey(tc, entry);
+        if (parentSelected || selectedTestIds.has(selKey) || selectedTestIds.has(tc.id)) {
           list.push({ ...tc, sourceFile: entry.filePath });
         }
       }
     }
     return list;
-  }, [enrichedEntries, selectedTestIds]);
+  }, [enrichedEntries, selectedFiles, selectedTestIds]);
 
   const allVisibleSelected =
     filteredEntries.length > 0 &&
@@ -546,10 +608,12 @@ export default function UnitFileMatrixTable({
                             ) : entry.status === "PARTIAL" ? (
                               <span
                                 className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] font-mono tabular-nums"
-                                title={`Cases verified: ${entry.caseCov.passedCasesCount}/${entry.caseCov.totalRequired}`}
+                                title={`Business functions covered: ${entry.funcsCovered ?? (fnCount - uncoveredFns.length)}/${entry.funcsTotal || fnCount}`}
                               >
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500/75" />
-                                Partial ({entry.caseCov.passedCasesCount}/{entry.caseCov.totalRequired})
+                                {(entry.funcsTotal || fnCount) > 0
+                                  ? `Partial (${entry.funcsCovered ?? Math.max(0, fnCount - uncoveredFns.length)}/${entry.funcsTotal || fnCount} fns)`
+                                  : `Partial (${Number(entry.linesPct ?? 0).toFixed(0)}%)`}
                               </span>
                             ) : entry.status === "FAIL" ? (
                               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-400">
@@ -559,7 +623,11 @@ export default function UnitFileMatrixTable({
                             ) : (
                               <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" />
-                                {hasExecuted ? "Uncovered" : "Not run"}
+                                {testCount > 0
+                                  ? "Draft ready (0%)"
+                                  : hasExecuted
+                                    ? "Uncovered"
+                                    : "Not run"}
                               </span>
                             )}
                           </div>
@@ -632,19 +700,31 @@ export default function UnitFileMatrixTable({
                                   <span>
                                     Statements:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {entry.stmtsCovered ?? 0}/{entry.stmtsTotal ?? 0} ({Number(entry.stmtsPct ?? 0).toFixed(1)}%)
+                                      {Number(entry.stmtsTotal || 0) > 0
+                                        ? `${entry.stmtsCovered ?? 0}/${entry.stmtsTotal} (${Number(entry.stmtsPct ?? 0).toFixed(1)}%)`
+                                        : `${Number(entry.stmtsPct ?? 0).toFixed(1)}%`}
                                     </span>
                                   </span>
                                   <span>
                                     Branches:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {entry.branchesCovered ?? 0}/{entry.branchesTotal ?? 0} ({Number(entry.branchesPct ?? 0).toFixed(1)}%)
+                                      {Number(entry.branchesTotal || 0) > 0
+                                        ? `${entry.branchesCovered ?? 0}/${entry.branchesTotal} (${Number(entry.branchesPct ?? 0).toFixed(1)}%)`
+                                        : `${Number(entry.branchesPct ?? 0).toFixed(1)}%`}
                                     </span>
                                   </span>
                                   <span>
                                     Functions:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {entry.funcsCovered ?? 0}/{entry.funcsTotal ?? fnCount} ({Number(entry.funcsPct ?? 0).toFixed(1)}%)
+                                      {entry.funcsCovered ?? Math.max(0, fnCount - uncoveredFns.length)}/{entry.funcsTotal || fnCount} ({Number(entry.funcsPct ?? 0).toFixed(1)}%)
+                                    </span>
+                                  </span>
+                                  <span>
+                                    Lines:{" "}
+                                    <span className="text-[var(--color-text-secondary)]">
+                                      {Number(entry.linesTotal || 0) > 0
+                                        ? `${entry.linesCovered ?? 0}/${entry.linesTotal} (${Number(entry.linesPct ?? 0).toFixed(1)}%)`
+                                        : `${Number(entry.linesPct ?? 0).toFixed(1)}%`}
                                     </span>
                                   </span>
                                 </div>
@@ -673,29 +753,61 @@ export default function UnitFileMatrixTable({
                                 </div>
                               </div>
 
-                              {/* Required Unit Cases Strip (Business Logic 4 Categories + Redundancy Check) */}
+                              {/* Business Logic Functions Coverage Strip */}
                               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
                                 <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                                   <span className="font-mono text-[var(--color-text-muted)] mr-1">
-                                    Cases ({entry.caseCov.coveredCount}/{entry.caseCov.totalRequired}):
+                                    Unit Functions (
+                                    {entry.funcsCovered ??
+                                      entry.caseCov.functionCoverage?.coveredFunctions ??
+                                      Math.max(0, fnCount - uncoveredFns.length)}
+                                    /
+                                    {entry.funcsTotal ||
+                                      entry.caseCov.functionCoverage?.totalFunctions ||
+                                      fnCount}
+                                    ):
                                   </span>
-                                  {entry.caseCov.cases.map((c) => (
-                                    <span
-                                      key={c.key}
-                                      title={c.description}
-                                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border font-mono text-[10px] ${
-                                        c.passed
-                                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                                          : c.failed
-                                            ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-                                            : c.covered
-                                              ? "bg-sky-500/10 text-sky-400 border-sky-500/25"
-                                              : "bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-                                      }`}
-                                    >
-                                      {c.passed ? "✓" : c.failed ? "✕" : c.covered ? "•" : "○"} {c.label}
+                                  {(entry.caseCov.functionCoverage?.functions || []).length > 0 ? (
+                                    entry.caseCov.functionCoverage.functions.map((fn) => (
+                                      <button
+                                        key={fn.key}
+                                        type="button"
+                                        onClick={() =>
+                                          onOpenSourceFile &&
+                                          onOpenSourceFile(entry.filePath, fn.startLine || 1)
+                                        }
+                                        title={`Jump to ${fn.name}() at line ${fn.startLine || 1} (${fn.hit || 0} hits)`}
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border font-mono text-[10px] cursor-pointer transition-colors ${
+                                          fn.passed
+                                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20"
+                                            : fn.failed
+                                              ? "bg-rose-500/10 text-rose-400 border-rose-500/25 hover:bg-rose-500/20"
+                                              : fn.hasDraftTest
+                                                ? "bg-sky-500/10 text-sky-400 border-sky-500/25 hover:bg-sky-500/20"
+                                                : "bg-amber-500/10 text-amber-300 border-amber-500/20 hover:bg-amber-500/20"
+                                        }`}
+                                      >
+                                        <span>
+                                          {fn.passed
+                                            ? "✓"
+                                            : fn.failed
+                                              ? "✕"
+                                              : fn.hasDraftTest
+                                                ? "•"
+                                                : "○"}
+                                        </span>
+                                        <span>
+                                          {fn.name}() :{fn.startLine || 1}
+                                        </span>
+                                      </button>
+                                    ))
+                                  ) : (
+                                    <span className="font-mono text-[10px] text-[var(--color-text-secondary)]">
+                                      {Number(entry.linesPct ?? 0) >= 100
+                                        ? "✓ Module top-level logic covered (100%)"
+                                        : "Module top-level logic"}
                                     </span>
-                                  ))}
+                                  )}
                                 </div>
 
                                 <div className="flex items-center gap-2 text-[10px] font-mono text-[var(--color-text-muted)]">
@@ -704,37 +816,11 @@ export default function UnitFileMatrixTable({
                                       {entry.caseCov.redundantCount} duplicate
                                     </span>
                                   )}
-                                  {entry.caseCov.extraCount > 0 && (
-                                    <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">
-                                      {entry.caseCov.extraCount} optional
-                                    </span>
-                                  )}
+                                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">
+                                    {testCount} {testCount === 1 ? "scenario" : "scenarios"}
+                                  </span>
                                 </div>
                               </div>
-
-                              {/* Uncovered Functions Breakdown */}
-                              {uncoveredFns.length > 0 && (
-                                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                  <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
-                                    Uncovered functions:
-                                  </span>
-                                  {uncoveredFns.slice(0, 8).map((fn, idx) => (
-                                    <button
-                                      key={`${fn.functionName}-${idx}`}
-                                      type="button"
-                                      onClick={() => onOpenSourceFile && onOpenSourceFile(entry.filePath, fn.startLine || 1)}
-                                      className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] font-mono text-amber-300 hover:bg-amber-500/20 cursor-pointer"
-                                    >
-                                      {fn.functionName}() :{fn.startLine || 1}
-                                    </button>
-                                  ))}
-                                  {uncoveredFns.length > 8 && (
-                                    <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-                                      +{uncoveredFns.length - 8} more
-                                    </span>
-                                  )}
-                                </div>
-                              )}
 
                               {/* Test Cases List */}
                               {(entry.testCases || []).length === 0 ? (
@@ -763,6 +849,7 @@ export default function UnitFileMatrixTable({
                                     const failureSummary = failed
                                       ? tc.failureSummary || summarizeUnitFailure(tc.failureMessages)
                                       : "";
+                                    const tcSelKey = getUnitTestSelectionKey(tc, entry);
                                     const rawErr = Array.isArray(tc.failureMessages)
                                       ? tc.failureMessages.join("\n").trim()
                                       : "";
@@ -773,8 +860,8 @@ export default function UnitFileMatrixTable({
                                           <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                             <input
                                               type="checkbox"
-                                              checked={selectedTestIds.has(tc.id)}
-                                              onChange={() => toggleSelectTest(tc.id)}
+                                              checked={isSelected || selectedTestIds.has(tcSelKey) || selectedTestIds.has(tc.id)}
+                                              onChange={() => toggleSelectTest(tcSelKey, entry, tc.id)}
                                               className="rounded border-[var(--color-border)] accent-[var(--color-primary)] cursor-pointer shrink-0"
                                             />
                                             {passed ? (

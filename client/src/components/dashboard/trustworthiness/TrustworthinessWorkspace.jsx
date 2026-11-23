@@ -12,7 +12,7 @@ import HomeScreen from './HomeScreen';
 import TargetSetup from './TargetSetup';
 import KnowledgeSources from './KnowledgeSources';
 import BenchmarkEditor from './BenchmarkEditor';
-import { ArrowLeft, ArrowRight, Check, Code2, House, ScanSearch } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Code2, House, Power, ScanSearch } from 'lucide-react';
 import { Button as UiButton } from '../../ui/button';
 import { TooltipProvider } from '../../ui/tooltip';
 import { getStepStatus, nextStep } from './evaluationSteps';
@@ -47,17 +47,22 @@ export default function TrustworthinessWorkspace({ projectId }) {
   const requestedView = legacyViews[params.get('view')] || params.get('view');
   const view = tabs.some(([key]) => key === requestedView) ? requestedView : 'home';
   const capabilities = useTrustworthinessQuery(projectId, '/capabilities');
+  const [toggleOverride, setToggleOverride] = useState(null);
+  const projectEnabled =
+    toggleOverride && toggleOverride.projectId === projectId
+      ? toggleOverride.enabled
+      : capabilities.data?.projectEnabled !== false;
   const workspace = useTrustworthinessQuery(projectId, '', {
-    enabled: capabilities.data?.enabled === true,
+    enabled: capabilities.data?.enabled === true && projectEnabled,
     poll: true,
   });
   const { refetch: refetchWorkspace } = workspace;
-  const workspaceEnabled = capabilities.data?.enabled === true;
+  const workspaceEnabled = capabilities.data?.enabled === true && projectEnabled;
   useEffect(() => {
     if (view === 'connect' && workspaceEnabled) refetchWorkspace();
   }, [view, workspaceEnabled, refetchWorkspace]);
   const { connected, progressByRun, prepareByVersion } = useEvaluationSocket({
-    projectId: capabilities.data?.enabled ? projectId : null,
+    projectId: capabilities.data?.enabled && projectEnabled ? projectId : null,
     userId,
   });
   const [busy, setBusy] = useState(false);
@@ -108,6 +113,17 @@ export default function TrustworthinessWorkspace({ projectId }) {
     }
   }
   const api = (suffix, method = 'GET', body) => evaluationRequest(projectId, suffix, { method, body });
+  async function handleToggleEvaluation(nextEnabled) {
+    setToggleOverride({ projectId, enabled: nextEnabled });
+    try {
+      await act(
+        () => api('/settings/toggle', 'PATCH', { enabled: nextEnabled }),
+        nextEnabled ? 'Chatbot evaluation turned ON.' : 'Chatbot evaluation turned OFF.',
+      );
+    } finally {
+      setToggleOverride(null);
+    }
+  }
   if (!projectId) {
     return <p className="p-5 text-[var(--color-text-secondary)]">Select a project to evaluate its chatbot.</p>;
   }
@@ -130,23 +146,56 @@ export default function TrustworthinessWorkspace({ projectId }) {
       </div>
     );
   }
-  if (!capabilities.data?.enabled) {
-    return (
-      <div className="space-y-3 p-5">
-        <h1 className="text-xl font-semibold">Chatbot evaluation</h1>
-        <p>
-          This feature is not enabled on the server. Ask an administrator to run the migration and enable
-          AI_EVALUATION_ENABLED.
-        </p>
-      </div>
-    );
-  }
   const data = workspace.data;
   const common = { projectId, data, api, act, busy, navigateView };
   const status = getStepStatus(data);
   const next = nextStep(status);
   const step = stepViews[view];
   const StepScreen = step?.Screen;
+  const renderOnOffSwitch = () => {
+    const canToggle = Boolean(capabilities.data?.canRun) && !busy;
+    return (
+      <button
+        type="button"
+        id="chatbot-evaluation-toggle"
+        role="switch"
+        aria-checked={projectEnabled}
+        aria-label={projectEnabled ? 'Turn Chatbot Evaluation off' : 'Turn Chatbot Evaluation on'}
+        disabled={!canToggle}
+        onClick={() => handleToggleEvaluation(!projectEnabled)}
+        title={
+          !capabilities.data?.canRun
+            ? 'Only project owners or editors can turn Chatbot Evaluation ON/OFF'
+            : projectEnabled
+              ? 'Chatbot Evaluation is ON — click to turn OFF'
+              : 'Chatbot Evaluation is OFF — click to turn ON'
+        }
+        className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors duration-150 ${
+          canToggle ? 'cursor-pointer active:scale-[0.98]' : 'cursor-not-allowed opacity-60'
+        } ${
+          projectEnabled
+            ? 'border-emerald-500/45 bg-[var(--color-surface)] text-[var(--color-text)] hover:border-emerald-400'
+            : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]'
+        }`}
+      >
+        <Power size={13} className={projectEnabled ? 'text-emerald-400' : 'text-[var(--color-text-muted)]'} aria-hidden="true" />
+        <span>Chatbot Evaluation</span>
+        <span
+          aria-hidden="true"
+          className={`inline-flex h-4 w-7 items-center rounded p-0.5 transition-colors duration-150 ${
+            projectEnabled
+              ? 'justify-end border border-emerald-500/50 bg-emerald-500/20'
+              : 'justify-start border border-[var(--color-border)] bg-[var(--color-surface-secondary)]'
+          }`}
+        >
+          <span className={`h-2.5 w-2.5 rounded-sm ${projectEnabled ? 'bg-emerald-400' : 'bg-[var(--color-text-muted)]'}`} />
+        </span>
+        <span className={`font-mono text-[11px] font-semibold tabular-nums ${projectEnabled ? 'text-emerald-400' : 'text-[var(--color-text-muted)]'}`}>
+          {projectEnabled ? 'ON' : 'OFF'}
+        </span>
+      </button>
+    );
+  };
   return (
     <TooltipProvider delayDuration={200}>
     <section ref={workspaceRef} aria-label="Project chatbot evaluation"
@@ -158,12 +207,39 @@ export default function TrustworthinessWorkspace({ projectId }) {
             <p className="text-sm text-[var(--color-text-muted)]">Test how well your chatbot answers questions about your business.</p>
           </div>
         </div>
-        {!connected && (
-          <span role="status" className="inline-flex items-center gap-2 text-xs font-medium text-amber-400">
-            <span aria-hidden="true" className="size-2 rounded-full bg-amber-400" />Reconnecting…
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {projectEnabled && !connected && (
+            <span role="status" className="inline-flex items-center gap-2 text-xs font-medium text-amber-400">
+              <span aria-hidden="true" className="size-2 rounded-full bg-amber-400" />Reconnecting…
+            </span>
+          )}
+          {renderOnOffSwitch()}
+        </div>
       </header>
+      {error && <p role="alert" className="rounded-md border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-400">{error}</p>}
+      {notice && <p role="status" className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">{notice}</p>}
+      {!projectEnabled ? (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-3">
+          <div className="flex items-center gap-2.5">
+            <Power size={16} className="text-[var(--color-text-muted)]" aria-hidden="true" />
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Chatbot evaluation is OFF</h2>
+          </div>
+          <p className="max-w-xl text-sm text-[var(--color-text-muted)]">
+            Chatbot evaluation is currently turned off for this project. Saved targets, business documents, test questions, and previous evaluation reports remain preserved.
+          </p>
+          {capabilities.data?.canRun && (
+            <Button
+              className={buttonClass}
+              variant="primary"
+              disabled={busy}
+              onClick={() => handleToggleEvaluation(true)}
+            >
+              Turn ON Chatbot Evaluation
+            </Button>
+          )}
+        </div>
+      ) : (
+        <>
       <nav role="tablist" aria-label="Evaluation workflow"
         className="-mx-1 flex gap-1 overflow-x-auto border-b border-[var(--color-border)] px-1"
         onKeyDown={event => {
@@ -202,8 +278,6 @@ export default function TrustworthinessWorkspace({ projectId }) {
           );
         })}
       </nav>
-      {error && <p role="alert" className="rounded-md border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-400">{error}</p>}
-      {notice && <p role="status" className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">{notice}</p>}
       {workspace.isPending && (
         <div role="status" aria-label="Loading evaluation workspace">
           <Skeleton rounded="rounded-lg" className="h-48 w-full" />
@@ -246,6 +320,8 @@ export default function TrustworthinessWorkspace({ projectId }) {
           )}
           {view === 'review' && <CalibrationScreen key={projectId} {...common} />}
         </div>
+      )}
+        </>
       )}
     </section>
     </TooltipProvider>
