@@ -2,10 +2,8 @@ FROM node:24-slim
 
 WORKDIR /app
 
-# Install openssl for Prisma, git for githubClone.service, procps (ps) for process tree management, and configure safe.directory for container volume mounts
-RUN apt-get update -y && apt-get install -y openssl git procps && rm -rf /var/lib/apt/lists/* && git config --global --add safe.directory "*"
+RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/lists/* && git config --global --add safe.directory "*"
 
-# Copy package files
 COPY package*.json ./
 
 # Install dependencies with retry and network resiliency (includes Playwright Chromium for in-process System Tests without Docker-in-Docker)
@@ -16,17 +14,10 @@ RUN npm config set fetch-retries 5 && \
     npx playwright install --with-deps chromium && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy source code
 COPY . .
 
-# Ensure runtime directories exist
 RUN mkdir -p storage uploads
-
-# Generate Prisma client
 RUN npx prisma generate
 
-# Expose port
 EXPOSE 5000
-
-# Start the server
 CMD ["npm", "run", "start"]

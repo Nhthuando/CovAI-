@@ -116,6 +116,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/api/ai-evaluation-gateway', aiEvaluationGatewayRoutes);
+app.set('trust proxy', 1);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use('/invitations', (_req, res, next) => { res.setHeader('Referrer-Policy', 'no-referrer'); next(); });
@@ -190,11 +191,11 @@ app.use((err, req, res, next) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-app.use(express.static(path.join(__dirname, "../client/dist")));
+// app.use(express.static(path.join(__dirname, "../client/dist")));
 
-app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(__dirname, "../client/dist/index.html"));
-});
+// app.get(/.*/, (req, res) => {
+//   res.sendFile(path.join(__dirname, "../client/dist/index.html"));
+// });
 
 // Socket.IO connection handling
 io.on("connection", (socket) => {
