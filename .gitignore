@@ -20,6 +20,8 @@
 !docs/
 !server/
 !shared/
+!.github/
+!.agents/
 
 # ==============================================================================
 # 2. QUY TẮC BỎ QUA NỘI BỘ (Bên trong client, server, shared, docs...)

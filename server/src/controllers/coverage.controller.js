@@ -7689,4 +7689,5 @@ export const aiFixSystemTestCaseController = async (req, res) => {
     });
     return res.status(200).json({ success: true, data });
   } catch (error) {
-    console.error("[aiFi
+    console.error("[aiFail]")
+  }}
