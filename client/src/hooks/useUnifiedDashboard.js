@@ -1,22 +1,18 @@
-import { useMemo } from "react";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useMemo, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { fetchCoverageDashboardData } from "./useCoverageQuery.js";
 import {
   getUnifiedQualityDashboard,
   getIntegrationWorkspace,
-  getCoverageSummary,
   getBeforeAfterComparison,
 } from "../services/coverage.service.js";
-import {
-  getSystemTestSummary,
-  getSystemTestScenarios,
-} from "../services/systemTest.service.js";
+import { getSystemTestSummary } from "../services/systemTest.service.js";
 import { adaptUnifiedDashboard } from "../services/unifiedDashboard/unifiedDashboard.adapter.js";
 
 /**
  * Fetch 100% real data across Unified Aggregation API + Unit, Integration, and System testing layers in parallel.
  */
-export async function fetchAllTestingLayers({ snapshotId, projectId }) {
+export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = false }) {
   if (!snapshotId) {
     return {
       unifiedBackendRaw: null,
@@ -32,7 +28,7 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
 
   // FAST PATH: Single unified endpoint returns aggregated data across all 3 tiers in < 300ms
   try {
-    const unifiedRes = await getUnifiedQualityDashboard(snapshotId);
+    const unifiedRes = await getUnifiedQualityDashboard(snapshotId, { refresh });
     if (unifiedRes?.data) {
       return {
         unifiedBackendRaw: unifiedRes.data,
@@ -48,7 +44,7 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
   }
 
   // FALLBACK PATH: If unified aggregation endpoint is unavailable, fan out to legacy individual endpoints
-  const [unitRes, intWorkspaceRes, , sysSummaryRes, , comparisonRes] =
+  const [unitRes, intWorkspaceRes, sysSummaryRes, comparisonRes] =
     await Promise.all([
       // 1. Unit Test Layer (re-uses shared cached queryFn)
       fetchCoverageDashboardData({ snapshotId, type: "unit", projectId }).catch((err) => {
@@ -57,17 +53,12 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
       }),
 
       // 2. Integration Workspace
-      getIntegrationWorkspace(snapshotId)
+      getIntegrationWorkspace(snapshotId, { skipAutoScan: true })
         .then((res) => res?.data || null)
         .catch((err) => {
           errorsByLayer.integration = err.message || "Failed to load integration workspace";
           return null;
         }),
-
-      // 2b. Integration Coverage Summary
-      getCoverageSummary(snapshotId, "integration")
-        .then((res) => res?.data || null)
-        .catch(() => null),
 
       // 3. System Test Summary
       getSystemTestSummary(snapshotId)
@@ -76,11 +67,6 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
           errorsByLayer.system = err.message || "Failed to load system test summary";
           return null;
         }),
-
-      // 3b. System Test Scenarios
-      getSystemTestScenarios(snapshotId)
-        .then((res) => res?.data || [])
-        .catch(() => []),
 
       // 4. Baseline Before/After Comparison (for deltas & trends)
       projectId
@@ -109,36 +95,49 @@ export function useUnifiedDashboard({
   snapshotId,
   projectId,
   projectName = "",
+  branch = "",
   snapshots = EMPTY_SNAPSHOTS,
 }) {
   const effectiveSnapshotId = snapshotId || snapshots[0]?.id || "";
+  const isEnabled = Boolean(effectiveSnapshotId && projectId);
+  const isForceRefreshingRef = useRef(false);
 
   const query = useQuery({
     queryKey: ["unifiedDashboard", effectiveSnapshotId, projectId || null],
-    queryFn: () => fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId }),
-    enabled: Boolean(effectiveSnapshotId),
-    placeholderData: keepPreviousData,
-    staleTime: 2 * 60 * 1000, // 2 minutes cache freshness
+    queryFn: () => {
+      const isRefresh = isForceRefreshingRef.current;
+      isForceRefreshingRef.current = false;
+      return fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId, refresh: isRefresh });
+    },
+    enabled: isEnabled,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey?.[1] === effectiveSnapshotId ? previousData : undefined,
+    staleTime: 15_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     gcTime: 30 * 60 * 1000,
   });
 
-  const vm = useMemo(() => {
-    if (!effectiveSnapshotId) {
-      return adaptUnifiedDashboard({
-        context: {
-          projectId,
-          projectName,
-          snapshotId: "",
-          snapshots,
-        },
-      });
+  const forceRefresh = useCallback(async () => {
+    if (!effectiveSnapshotId) return;
+    isForceRefreshingRef.current = true;
+    try {
+      return await query.refetch();
+    } finally {
+      isForceRefreshingRef.current = false;
     }
+  }, [effectiveSnapshotId, query]);
 
-    if (!query.data && query.isLoading) {
+  const vm = useMemo(() => {
+    if (!effectiveSnapshotId || !projectId) {
       return null;
     }
 
-    return adaptUnifiedDashboard({
+    if (!query.data && (query.isLoading || query.isFetching)) {
+      return null;
+    }
+
+    const adapted = adaptUnifiedDashboard({
       unifiedBackendRaw: query.data?.unifiedBackendRaw || null,
       unitRaw: query.data?.unitRaw || null,
       integrationRaw: query.data?.integrationRaw || null,
@@ -147,15 +146,26 @@ export function useUnifiedDashboard({
       context: {
         projectId,
         projectName,
+        branch,
         snapshotId: effectiveSnapshotId,
         snapshots,
       },
     });
+
+    if (adapted && adapted.context) {
+      const latestSyncTime = query.dataUpdatedAt || adapted.context.updatedAt || null;
+      adapted.context.updatedAt = latestSyncTime;
+    }
+
+    return adapted;
   }, [
     query.data,
+    query.dataUpdatedAt,
+    query.isFetching,
     query.isLoading,
     projectId,
     projectName,
+    branch,
     effectiveSnapshotId,
     snapshots,
   ]);
@@ -163,11 +173,12 @@ export function useUnifiedDashboard({
   return {
     vm,
     errorsByLayer: query.data?.errorsByLayer || { unit: null, integration: null, system: null },
-    isLoading: Boolean(effectiveSnapshotId) ? query.isLoading : false,
-    isFetching: Boolean(effectiveSnapshotId) ? query.isFetching : false,
-    isError: Boolean(effectiveSnapshotId) ? query.isError : false,
+    isLoading: isEnabled ? query.isLoading : false,
+    isFetching: isEnabled ? query.isFetching : false,
+    isError: isEnabled ? query.isError : false,
     error: query.error,
     refetch: query.refetch,
+    forceRefresh,
   };
 }
 

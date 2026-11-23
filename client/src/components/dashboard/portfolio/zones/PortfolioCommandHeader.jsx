@@ -1,155 +1,127 @@
-import { useState } from "react";
-import { Database, Layers, ArrowLeftRight, Download, Play, Clock, Sparkles } from "lucide-react";
-import { SegmentedFilter } from "../../unified/primitives/SegmentedFilter.jsx";
-import { PortfolioGatePopover } from "../primitives/PortfolioGatePopover.jsx";
-import { Button } from "../../../common/Button.jsx";
-import ConfirmDialog from "../../../common/ConfirmDialog.jsx";
+import { FileDown, RefreshCw, X, RotateCcw } from "lucide-react";
+import { useToast } from "../../ToastContext.jsx";
+import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
 
 export function PortfolioCommandHeader({
   vm,
-  dataMode = "live",
-  onChangeDataMode,
-  onOpenCompareModal,
   onOpenExportModal,
-  onSelectStatusFilter,
-  onBatchRunCompleted,
+  isSyncing = false,
+  onForceRefresh = null,
+  isFiltered = false,
+  activeFilterTags = [],
+  onRemoveFilterTag = null,
+  onResetFilters = null,
   className = "",
 }) {
-  const [showConfirmBatchRun, setShowConfirmBatchRun] = useState(false);
-  const [isBatchRunning, setIsBatchRunning] = useState(false);
+  const { addToast } = useToast?.() || {};
 
-  const kpis = vm?.kpis || {};
   const metadata = vm?.metadata || {};
-  const activeProjectsCount = metadata.activeProjectsCount ?? vm?.projects?.length ?? 0;
+  const activeProjectsCount = metadata.activeProjectsCount ?? 0;
   const totalSnapshotsCount = metadata.totalSnapshotsCount ?? 0;
+  const matchingProjectsCount =
+    metadata.matchingProjectsCount ?? vm?.projects?.length ?? 0;
+  const totalProjectsCount = metadata.totalProjectsCount ?? matchingProjectsCount;
 
-  const handleStartBatchRun = () => {
-    setShowConfirmBatchRun(false);
-    setIsBatchRunning(true);
-    setTimeout(() => {
-      setIsBatchRunning(false);
-      onBatchRunCompleted?.();
-    }, 2500);
+  const handleManualRefresh = async () => {
+    if (onForceRefresh) {
+      await onForceRefresh();
+      addToast?.({
+        title: "Synced",
+        message: "Portfolio metrics updated.",
+        type: "success",
+      });
+    }
   };
 
   return (
     <header
       id="portfolio-command-header"
-      className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 shadow-xs transition-colors ${className}`}
+      className={`space-y-2.5 pb-1 ${className}`}
     >
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-        {/* Left Side: Portfolio Identity & Metadata Strip (NO duplicate +Project button) */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-lg font-bold tracking-tight text-[var(--ud-text)]">
-              Projects Quality Portfolio
-            </h1>
-            <span className="text-[11px] font-mono font-medium text-[var(--ud-text-muted)] bg-[var(--ud-surface-2)] px-2 py-0.5 rounded border border-[var(--ud-border)] select-none">
-              Account Overview
+          <h1 className="ps-display text-2xl sm:text-[26px] font-bold text-[var(--ps-ink)] leading-tight">
+            Projects Portfolio
+          </h1>
+          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-[var(--ps-ink-muted)] ps-mono">
+            {isFiltered && (
+              <>
+                <span className="text-[var(--ps-cobalt)] font-semibold tabular-nums">
+                  Showing {matchingProjectsCount} of {totalProjectsCount}
+                </span>
+                <span>·</span>
+              </>
+            )}
+            <span className="text-[var(--ps-ink-secondary)] font-medium tabular-nums">
+              {activeProjectsCount} active
             </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-1.5 text-xs text-[var(--ud-text-muted)] font-mono">
-            <span className="font-semibold text-[var(--ud-text)]">
-              {activeProjectsCount} Active Project{activeProjectsCount !== 1 ? "s" : ""}
-            </span>
-            <span className="text-[var(--ud-border)]">•</span>
+            <span>·</span>
+            <span className="tabular-nums">{totalSnapshotsCount} snapshots</span>
+            <span>·</span>
             <span>
-              {totalSnapshotsCount} Total Snapshot{totalSnapshotsCount !== 1 ? "s" : ""}
+              {fmtRelativeTime(metadata.lastSyncedAt || new Date().toISOString())}
             </span>
-            <span className="text-[var(--ud-border)] hidden sm:inline">•</span>
-            <div className="inline-flex items-center gap-1 font-sans">
-              <Clock size={12} className="shrink-0 text-[var(--ud-text-muted)]" />
-              <span>
-                Last synced {metadata.lastSyncedAt ? "just now" : "recently"}
-              </span>
-            </div>
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={isSyncing}
+              aria-label="Refresh portfolio metrics"
+              title="Refresh metrics"
+              className="inline-flex items-center justify-center p-1 rounded-md hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw
+                size={12}
+                className={isSyncing ? "animate-spin text-[var(--ps-cobalt)]" : ""}
+              />
+            </button>
           </div>
         </div>
 
-        {/* Right Side: Mode Switcher + Gate Badge + Compare + Batch Run + Export */}
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* 1. Global Data Mode Switcher (Live State vs Demo Showcase) */}
-          {onChangeDataMode && (
-            <SegmentedFilter
-              idPrefix="portfolio-data-mode"
-              options={[
-                { label: "Live State", value: "live", icon: Database },
-                { label: "Demo Showcase", value: "demo", icon: Layers },
-              ]}
-              value={dataMode}
-              onChange={onChangeDataMode}
-              size="sm"
-            />
-          )}
-
-          <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
-
-          {/* 2. Portfolio Quality Gate Summary Badge & Popover */}
-          <PortfolioGatePopover
-            gateBreakdown={kpis.gateBreakdown}
-            totalProjects={activeProjectsCount}
-            onSelectStatusFilter={onSelectStatusFilter}
-          />
-
-          <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
-
-          {/* 3. Compare Projects Action */}
-          <Button
-            id="portfolio-btn-compare"
-            variant="secondary"
-            size="sm"
-            icon={ArrowLeftRight}
-            onClick={() => onOpenCompareModal?.()}
-            title="Side-by-side comparison of 2-3 projects"
-          >
-            Compare Projects
-          </Button>
-
-          {/* 4. Batch Run Suites Action */}
-          <Button
-            id="portfolio-btn-batch-run"
-            variant="primary"
-            size="sm"
-            icon={Play}
-            loading={isBatchRunning}
-            disabled={isBatchRunning || activeProjectsCount === 0}
-            onClick={() => setShowConfirmBatchRun(true)}
-            title="Execute test suites across pinned projects"
-          >
-            {isBatchRunning ? "Running Suites..." : "Batch Run"}
-          </Button>
-
-          {/* 5. Export Portfolio Report Action */}
-          <Button
+        <div className="flex items-center gap-2 shrink-0">
+          <button
             id="portfolio-btn-export"
-            variant="outline"
-            size="sm"
-            icon={Download}
+            type="button"
             onClick={() => onOpenExportModal?.()}
-            title="Export Account-Wide Quality Portfolio Summary Report"
-            className="ud-no-print"
+            className="ud-no-print h-8 px-3 rounded-lg border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-xs font-medium text-[var(--ps-ink)] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
           >
-            Export Portfolio
-          </Button>
+            <FileDown size={13} className="text-[var(--ps-cobalt)]" />
+            <span>Export PDF</span>
+          </button>
         </div>
       </div>
 
-      {/* Confirmation Dialog before batch execution */}
-      <ConfirmDialog
-        isOpen={showConfirmBatchRun}
-        onClose={() => setShowConfirmBatchRun(false)}
-        onConfirm={handleStartBatchRun}
-        title="Trigger Batch Suite Execution?"
-        message={`This will schedule and execute Unit, Integration, and System test suites sequentially across all ${activeProjectsCount} active projects in your workspace queue.`}
-        confirmText="Start Batch Run"
-        cancelText="Cancel"
-        variant="primary"
-        icon={Play}
-      />
+      {isFiltered && activeFilterTags.length > 0 && (
+        <div
+          aria-label="Active portfolio filters"
+          className="flex flex-wrap items-center gap-1.5 pt-0.5"
+        >
+          <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)] mr-1">
+            Filtered scope:
+          </span>
+          {activeFilterTags.map((tag) => (
+            <button
+              key={tag.key}
+              type="button"
+              onClick={() => onRemoveFilterTag?.(tag.key)}
+              className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-[var(--ps-cobalt)]/10 border border-[var(--ps-cobalt)]/30 text-[11px] ps-mono text-[var(--ps-cobalt)] hover:bg-[var(--ps-cobalt)]/15 transition-colors duration-150 cursor-pointer"
+              title={`Remove ${tag.label}`}
+            >
+              <span>{tag.label}</span>
+              <X size={11} />
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => onResetFilters?.()}
+            className="inline-flex items-center gap-1 h-6 px-2 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-[11px] ps-mono text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors duration-150 cursor-pointer"
+          >
+            <RotateCcw size={10} />
+            <span>Reset filters</span>
+          </button>
+        </div>
+      )}
     </header>
   );
 }
 
 export default PortfolioCommandHeader;
-

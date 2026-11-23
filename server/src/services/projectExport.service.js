@@ -2,6 +2,7 @@ import { membershipWhere } from './projectAccess.service.js';
 import path from "node:path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { systemAssessmentEnabled } from "./systemFeatureFlags.service.js";
 
 const projectSelect = { id: true, name: true, description: true, repoUrl: true, createdAt: true, updatedAt: true };
 const snapshotSelect = { id: true, projectId: true, source: true, checksum: true, commitSha: true, createdAt: true, rootDir: true, storagePath: true };
@@ -77,7 +78,7 @@ export const collectAnalysisExport = async ({ project, snapshot }) => {
             id: true, type: true, executionMode: true, totalTests: true, passedTests: true, failedTests: true, flakyTests: true, skippedTests: true,
             durationMs: true, status: true, startedAt: true, finishedAt: true, createdAt: true,
             coverageLinesPct: true, coverageBranchesPct: true, coverageStatementsPct: true, coverageFunctionsPct: true,
-            ...(process.env.SYSTEM_ASSESSMENT_ENABLED === "true" ? {systemMeasurement:true} : {}),
+            ...(systemAssessmentEnabled() ? {systemMeasurement:true} : {}),
             scenarios: { orderBy: { createdAt: "asc" }, select: { title: true, suiteName: true, status: true, testFile: true, durationMs: true, failureCategory: true } },
         } }),
         prisma.aiSuggestion.findMany({ where, orderBy: { createdAt: "desc" }, select: { filePath: true, functionName: true, priority: true, message: true, createdAt: true } }),
@@ -94,7 +95,7 @@ export const collectAnalysisExport = async ({ project, snapshot }) => {
         structure: parseJson(structure?.resultJson, "Structure analysis", warnings),
         quality: quality ? { ...quality, recommendations: parseJson(quality.recommendations, "Quality recommendations", warnings) } : null,
         testRuns: testRuns.map(run=>['PLAYWRIGHT','CYPRESS'].includes(run.type) ? {...run,coverageLinesPct:null,coverageBranchesPct:null,coverageStatementsPct:null,coverageFunctionsPct:null,coverageProvenance:run.systemMeasurement ? 'RUN_INSTRUMENTATION' : 'LEGACY_UNVERIFIED'} : run),
-        systemAssessments: process.env.SYSTEM_ASSESSMENT_ENABLED === 'true' ? await prisma.systemTestAssessment.findMany({where,orderBy:{createdAt:'desc'},select:{id:true,status:true,sourceHash:true,testHash:true,scopeHash:true,reportJson:true,createdAt:true}}) : [],
+        systemAssessments: systemAssessmentEnabled() ? await prisma.systemTestAssessment.findMany({where,orderBy:{createdAt:'desc'},select:{id:true,status:true,sourceHash:true,testHash:true,scopeHash:true,reportJson:true,createdAt:true}}) : [],
         suggestions,
         controlFlow: cfgs.map(({ graphJson, ...cfg }) => ({ ...cfg, graph: parseJson(graphJson, "Control flow", warnings) })),
         performance: performance ? { createdAt: performance.createdAt, metrics: parseJson(performance.metricsJson, "Performance", warnings) } : null,

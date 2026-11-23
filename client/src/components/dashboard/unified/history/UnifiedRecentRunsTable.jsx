@@ -16,6 +16,7 @@ import {
 
 export function UnifiedRecentRunsTable({
   historyData,
+  loading = false,
   onNavigateWorkspace,
   onInspectItem,
 }) {
@@ -33,10 +34,11 @@ export function UnifiedRecentRunsTable({
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(filteredRuns.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageItems = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
+    const start = (safeCurrentPage - 1) * pageSize;
     return filteredRuns.slice(start, start + pageSize);
-  }, [filteredRuns, currentPage, pageSize]);
+  }, [filteredRuns, safeCurrentPage, pageSize]);
 
   const handleViewRun = (run) => {
     if (onInspectItem) {
@@ -218,12 +220,16 @@ export function UnifiedRecentRunsTable({
                 >
                   <div className="max-w-xs mx-auto space-y-2">
                     <p className="text-xs font-semibold text-[var(--ud-text)]">
-                      {runs.length === 0
+                      {loading && runs.length === 0
+                        ? "Loading execution history..."
+                        : runs.length === 0
                         ? "No Test Executions Recorded Yet"
                         : "No test executions match this filter"}
                     </p>
                     <p className="text-[11px] text-[var(--ud-text-muted)]">
-                      {runs.length === 0
+                      {loading && runs.length === 0
+                        ? "Retrieving recent Unit, Integration, and System E2E runs."
+                        : runs.length === 0
                         ? "Execute Unit, Integration, or System E2E suites to inspect execution logs, scenarios, and step timings."
                         : "Select 'All' to view runs across all testing suites."}
                     </p>
@@ -238,13 +244,13 @@ export function UnifiedRecentRunsTable({
       {/* Pagination Footer */}
       <div className="p-3 border-t border-[var(--ud-border)] flex items-center justify-between text-xs font-mono text-[var(--ud-text-muted)]">
         <span>
-          Page {currentPage} of {totalPages} ({filteredRuns.length} runs)
+          Page {safeCurrentPage} of {totalPages} ({filteredRuns.length} runs)
         </span>
         <div className="flex items-center gap-1 ud-no-print">
           <button
             type="button"
-            disabled={currentPage <= 1}
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={safeCurrentPage <= 1}
+            onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
             className="p-1 rounded border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer hover:border-[var(--ud-text-muted)]"
             title="Previous Page"
           >
@@ -252,8 +258,8 @@ export function UnifiedRecentRunsTable({
           </button>
           <button
             type="button"
-            disabled={currentPage >= totalPages}
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safeCurrentPage >= totalPages}
+            onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
             className="p-1 rounded border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer hover:border-[var(--ud-text-muted)]"
             title="Next Page"
           >

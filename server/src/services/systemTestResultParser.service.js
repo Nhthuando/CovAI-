@@ -5,6 +5,8 @@ import { analyzeFailureBreakpoint } from "./failureBreakpointAnalyzer.service.js
 import { normalizeExecutionDetails } from "./systemTestExecutionDetails.service.js";
 import { readPlaywrightStepPlan } from "./systemTestStepPlan.service.js";
 import { containedPath } from './fullSystemConfig.service.js';
+import { cleanStorageText, stripAnsi } from "../utils/pathSanitizer.js";
+import { summarizeSystemFailure } from "../../../shared/systemCaseCoverage.js";
 
 const readInteractionEvidence = (result, rootDir) => {
   const attachment = result?.attachments?.find(item => item.name === 'covai-interaction-evidence' && item.contentType === 'application/json');
@@ -38,14 +40,17 @@ const readApiEvidence = (result, rootDir) => {
   } catch { return []; }
 };
 
-const readReport = (resultPath) => {
+const readReport = (resultPath, fallbackOutput = "") => {
   if (!fs.existsSync(resultPath)) {
     throw new ServiceError(`System test report was not created: ${resultPath}`, 422);
   }
 
   try {
     const raw = fs.readFileSync(resultPath, "utf8").trim();
-    if (!raw) throw new Error("report is empty");
+    if (!raw) {
+      const detail = String(fallbackOutput || "").replace(/\x1b\[[0-9;]*m/g, "").trim().slice(-600);
+      throw new Error(detail ? `report is empty (${detail})` : "report is empty");
+    }
     try {
       return JSON.parse(raw);
     } catch {
@@ -119,6 +124,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
           });
         }
 
+        const cleanedFailureMessages = failureMessages.map((m) => stripAnsi(cleanStorageText(m)));
         const interactionEvidence = readInteractionEvidence(lastResult, rootDir);
         scenarios.push({
           title: spec.title || "Unnamed Test",
@@ -126,7 +132,10 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
           status: statusStr,
           durationMs: results.some(r => typeof r.duration === 'number') ? totalDuration : null,
           executionDetails: normalizeExecutionDetails({ runner: 'playwright', test, rootDir, plannedSteps: readPlaywrightStepPlan(rootDir, { ...spec, file: report.config?.rootDir ? path.resolve(report.config.rootDir, spec.file || currentFile) : spec.file || currentFile }) }),
-          failureMessages,
+          failureMessages: cleanedFailureMessages,
+          ...(statusStr === "failed" || statusStr === "flaky"
+            ? { failureSummary: summarizeSystemFailure(cleanedFailureMessages) }
+            : {}),
           testFile: currentFile || spec.file || null,
           apiCalls: readApiEvidence(lastResult, rootDir),
           screenshotSource: (() => {
@@ -330,7 +339,7 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
   };
 };
 
-export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedAt, rootDir = null }) => {
+export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedAt, rootDir = null, stderr = "" }) => {
   if (!["playwright", "cypress"].includes(runner)) {
     throw new ServiceError("Unsupported system test runner", 400);
   }
@@ -339,7 +348,7 @@ export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedA
   if (Number.isNaN(start.getTime()) || Number.isNaN(finish.getTime())) {
     throw new ServiceError("System test timestamps are invalid", 422);
   }
-  const report = readReport(resultPath);
+  const report = readReport(resultPath, stderr);
   return runner === "playwright"
     ? normalisePlaywright(report, start, finish, rootDir)
     : normaliseCypress(report, start, finish, rootDir);

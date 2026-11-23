@@ -1,18 +1,18 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { queryClient } from "../lib/queryClient";
+import { useToast } from "../components/dashboard/ToastContext";
 import {
-  Terminal,
   Plus,
   LogOut,
   AlertTriangle,
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
+import CovaiLogo from "../components/common/CovaiLogo";
 import { deleteProjectApi } from "../services/project.service";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { useAuth } from "../hooks/useAuth";
-import Button from "../components/common/Button";
 import ThemeSelector from "../components/common/ThemeSelector";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { NotificationCenter } from "../components/NotificationCenter";
@@ -21,6 +21,7 @@ import PanelResizer from "../components/dashboard/PanelResizer";
 import AIPanel from "../components/dashboard/AIPanel";
 import ProjectsPortfolioDashboard from "../components/dashboard/portfolio/ProjectsPortfolioDashboard";
 import { motion, AnimatePresence } from "framer-motion";
+import "../components/dashboard/portfolio/portfolio.css";
 
 const DEFAULT_AI_PANEL_WIDTH = 340;
 
@@ -29,24 +30,52 @@ export default function ProjectSelectionPage() {
   const userId = user?.id;
   const navigate = useNavigate();
   const location = useLocation();
+  const { showToast } = useToast();
   const { isMobile } = useBreakpoints();
 
-  // URL query parameter for demo vs live data mode
-  const [dataMode, setDataMode] = useState(() => {
-    const params = new URLSearchParams(location.search);
-    return params.get("mode") === "demo" ? "demo" : "live";
-  });
+  const [showImport, setShowImport] = useState(() =>
+    Boolean(location.state?.openImport),
+  );
 
-  const [showImport, setShowImport] = useState(false);
+  useEffect(() => {
+    if (location.state?.openImport || location.state?.githubConnected) {
+      if (location.state?.githubConnected) {
+        showToast({
+          type: "success",
+          title: "GitHub Connected",
+          message: "Your GitHub account is now linked for repository imports.",
+        });
+      }
+      navigate(location.pathname + location.search, {
+        replace: true,
+        state: {},
+      });
+    }
+  }, [location.state, location.pathname, location.search, navigate, showToast]);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // AI Assistant Sidebar state
-  const [aiPanelOpen, setAiPanelOpen] = useState(() => !isMobile);
+  // AI Assistant Sidebar state (collapsed by default across pages)
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
   const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
+  const [portfolioProjects, setPortfolioProjects] = useState([]);
+  const [aiTargetProjectId, setAiTargetProjectId] = useState(null);
+
+  const activeAiProject = useMemo(() => {
+    if (!portfolioProjects.length) return null;
+    if (aiTargetProjectId) {
+      const matched = portfolioProjects.find((p) => p.id === aiTargetProjectId);
+      if (matched) return matched;
+    }
+    return (
+      portfolioProjects.find((p) => p.lifecycleStatus === "DOING") ||
+      portfolioProjects[0] ||
+      null
+    );
+  }, [portfolioProjects, aiTargetProjectId]);
 
   // Favorites (Pinned projects)
   const [favorites, setFavorites] = useState(() => {
@@ -66,17 +95,6 @@ export default function ProjectSelectionPage() {
       return next;
     });
   }, []);
-
-  const handleChangeDataMode = useCallback(
-    (nextMode) => {
-      const normalized = nextMode === "demo" ? "demo" : "live";
-      setDataMode(normalized);
-      const params = new URLSearchParams(location.search);
-      params.set("mode", normalized);
-      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
-    },
-    [location, navigate]
-  );
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
@@ -102,8 +120,11 @@ export default function ProjectSelectionPage() {
     }
   };
 
-  const handleAskAiPrompt = useCallback((promptText) => {
+  const handleAskAiPrompt = useCallback((promptText, context = {}) => {
     if (!promptText) return;
+    if (context?.projectId) {
+      setAiTargetProjectId(context.projectId);
+    }
     setAiPanelOpen(true);
     setPendingAiSuggestion({ promptText, timestamp: Date.now() });
   }, []);
@@ -131,7 +152,7 @@ export default function ProjectSelectionPage() {
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },
-    [aiPanelWidth]
+    [aiPanelWidth],
   );
 
   const userInitials = useMemo(() => {
@@ -147,24 +168,22 @@ export default function ProjectSelectionPage() {
 
   const screenContext = useMemo(
     () => ({ activity: "projects-portfolio", testType: "portfolio" }),
-    []
+    [],
   );
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] font-sans transition-colors duration-150">
+    <div className="portfolio-studio h-screen w-screen flex flex-col overflow-hidden bg-[var(--ps-bg)] text-[var(--ps-ink)] font-sans transition-colors duration-150">
       {/* ── Global Top Navigation Bar (with single +Project button) ────── */}
-      <header className="h-11 sm:h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 flex items-center justify-between sticky top-0 z-40 select-none shrink-0">
+      <header className="h-12 border-b border-[var(--ps-line)] bg-[var(--ps-surface)] px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40 select-none shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs shrink-0">
-            <Terminal size={13} strokeWidth={2.5} />
-          </div>
-          <div className="flex items-center gap-1.5 font-mono">
-            <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
+          <CovaiLogo size={24} />
+          <div className="flex items-center gap-1.5 ps-mono">
+            <span className="font-bold text-xs tracking-tight text-[var(--ps-ink)]">
               CovAI
             </span>
-            <span className="text-[10px] text-[var(--color-text-muted)]">/</span>
-            <span className="text-xs font-semibold text-[var(--color-primary)]">
-              Projects
+            <span className="text-[11px] text-[var(--ps-ink-muted)]">/</span>
+            <span className="text-xs font-medium text-[var(--ps-ink-secondary)]">
+              Portfolio
             </span>
           </div>
         </div>
@@ -172,15 +191,14 @@ export default function ProjectSelectionPage() {
         {/* Header Right Actions */}
         <div className="flex items-center gap-2">
           {/* THE ONLY + Project Button on the page per UX rules */}
-          <Button
+          <button
             type="button"
-            variant="primary"
-            size="sm"
             onClick={() => setShowImport(true)}
-            icon={Plus}
+            className="ps-btn-contrast h-8 px-3 text-xs inline-flex items-center gap-1.5 cursor-pointer"
           >
-            Project
-          </Button>
+            <Plus size={13} strokeWidth={2.5} />
+            <span>Project</span>
+          </button>
 
           <div className="h-4 w-px bg-[var(--color-border)] mx-0.5 hidden sm:block" />
 
@@ -192,15 +210,21 @@ export default function ProjectSelectionPage() {
           <button
             type="button"
             onClick={() => setAiPanelOpen((prev) => !prev)}
-            className={`p-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] transition-colors cursor-pointer ${
+            className={`p-1.5 rounded-[var(--radius-md)] border transition-colors cursor-pointer ${
               aiPanelOpen
-                ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/40"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)]"
+                ? "bg-[var(--ps-surface-2)] text-[var(--ps-ink)] border-[var(--ps-line-strong)]"
+                : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)]/60 border-[var(--ps-line)]"
             }`}
-            title={aiPanelOpen ? "Collapse AI Assistant" : "Expand AI Assistant"}
+            title={
+              aiPanelOpen ? "Collapse AI Assistant" : "Expand AI Assistant"
+            }
             aria-label="Toggle AI Assistant"
           >
-            {aiPanelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+            {aiPanelOpen ? (
+              <PanelRightClose size={14} />
+            ) : (
+              <PanelRightOpen size={14} />
+            )}
           </button>
 
           <div className="h-4 w-px bg-[var(--color-border)] mx-0.5" />
@@ -236,31 +260,37 @@ export default function ProjectSelectionPage() {
                 role="alert"
                 className="rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-4 text-sm text-[var(--color-text)]"
               >
-                Your access to this project has been removed. Your unsaved editor drafts are kept in this browser.
+                Your access to this project has been removed. Your unsaved
+                editor drafts are kept in this browser.
               </div>
             </div>
           )}
           <ProjectsPortfolioDashboard
-            dataMode={dataMode}
-            onChangeDataMode={handleChangeDataMode}
             favorites={favorites}
             onTogglePin={toggleFavorite}
-            onOpenProjectOverview={(projectId) =>
-              navigate(`/main-editor?projectId=${projectId}&tab=overview${dataMode === "demo" ? "&mode=demo" : ""}`)
-            }
+            onOpenProjectOverview={(projectId, project) => {
+              const snapId = project?.snapshotId || project?.activeSnapshotId;
+              const snapQuery = snapId ? `&snapshotId=${snapId}` : "";
+              navigate(
+                `/main-editor?projectId=${projectId}${snapQuery}&tab=overview`,
+              );
+            }}
             onNavigateWorkspace={(projectId, pillar, focus = {}) => {
               const params = new URLSearchParams();
               params.set("projectId", projectId);
               params.set("tab", "coverage");
               params.set("coverageType", pillar);
               if (focus?.focusFile) params.set("focusFile", focus.focusFile);
-              if (focus?.focusEndpoint) params.set("focusEndpoint", focus.focusEndpoint);
-              if (focus?.focusScenario) params.set("focusScenario", focus.focusScenario);
+              if (focus?.focusEndpoint)
+                params.set("focusEndpoint", focus.focusEndpoint);
+              if (focus?.focusScenario)
+                params.set("focusScenario", focus.focusScenario);
               navigate(`/main-editor?${params.toString()}`);
             }}
             onDeleteProject={(proj) => setProjectToDelete(proj)}
             onAddProject={() => setShowImport(true)}
             onAskAi={handleAskAiPrompt}
+            onProjectsLoaded={setPortfolioProjects}
           />
         </main>
 
@@ -281,6 +311,7 @@ export default function ProjectSelectionPage() {
               )}
               <motion.div
                 key="portfolio-ai-panel"
+                className="flex flex-col h-full"
                 initial={
                   isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
                 }
@@ -309,18 +340,49 @@ export default function ProjectSelectionPage() {
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >
-                <AIPanel
-                  screenContext={screenContext}
-                  projectId={null}
-                  snapshotId={null}
-                  fileTree={[]}
-                  pendingAiSuggestion={pendingAiSuggestion}
-                  onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
-                  onOpenFile={(filePath) =>
-                    navigate(`/main-editor?focusFile=${encodeURIComponent(filePath)}`)
-                  }
-                  onRunAnalysis={() => {}}
-                />
+                {portfolioProjects.length > 0 && (
+                  <div className="px-3 py-2 border-l border-b border-[var(--ps-line)] bg-[var(--ps-surface)] flex items-center justify-between gap-2 shrink-0">
+                    <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)] shrink-0">
+                      AI Context
+                    </span>
+                    <select
+                      aria-label="Select project for AI Assistant"
+                      value={activeAiProject?.id || ""}
+                      onChange={(e) => setAiTargetProjectId(e.target.value)}
+                      className="ps-select flex-1 min-w-0 h-7 text-[11px]"
+                    >
+                      {portfolioProjects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <AIPanel
+                    key={activeAiProject?.id || "no-project"}
+                    screenContext={screenContext}
+                    projectId={activeAiProject?.id || null}
+                    snapshotId={
+                      activeAiProject?.snapshotId ||
+                      activeAiProject?.activeSnapshotId ||
+                      null
+                    }
+                    fileTree={[]}
+                    pendingAiSuggestion={pendingAiSuggestion}
+                    onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
+                    onOpenFile={(filePath) => {
+                      const pid = activeAiProject?.id
+                        ? `projectId=${encodeURIComponent(activeAiProject.id)}&`
+                        : "";
+                      navigate(
+                        `/main-editor?${pid}focusFile=${encodeURIComponent(filePath)}`,
+                      );
+                    }}
+                    onRunAnalysis={() => {}}
+                  />
+                </div>
               </motion.div>
             </>
           )}

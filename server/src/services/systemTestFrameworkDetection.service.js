@@ -1,12 +1,11 @@
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
 import { detectCypress } from "../utils/cypressDetector.js";
 import { detectPlaywright } from "../utils/playwrightDetector.js";
-import {
-  scanSystemTestFiles,
-  parseTestFileDetails,
-} from "../utils/testFileParser.js";
+import { classifySystemTestFile, parseTestFileDetails, scanSystemTestFiles } from "../utils/testFileParser.js";
+import { resolveSnapshotRootDir } from "../utils/snapshotWorkspace.js";
 
 /**
  * Detects System Test frameworks (Playwright, Cypress) in a project
@@ -15,7 +14,8 @@ import {
  * @param {string} rootDir - The root directory of the project
  * @returns {Promise<Object>} Detection result with frameworks array and test files
  */
-export async function detectSystemTestFrameworks(rootDir) {
+export async function detectSystemTestFrameworks(rawRootDir) {
+  const rootDir = normalizeDiskPath(rawRootDir) || rawRootDir;
   if (!rootDir || typeof rootDir !== "string") {
     return {
       category: "SYSTEM",
@@ -29,6 +29,13 @@ export async function detectSystemTestFrameworks(rootDir) {
       allTestFiles: [],
       error: "Invalid root directory",
     };
+  }
+
+  if (
+    /^\/?app\/(?:storage|uploads)\//i.test(rootDir.replace(/\\/g, "/")) &&
+    !fs.existsSync(rootDir)
+  ) {
+    rootDir = resolveSnapshotRootDir(rootDir) || rootDir;
   }
 
   if (!fs.existsSync(rootDir)) {
@@ -52,30 +59,54 @@ export async function detectSystemTestFrameworks(rootDir) {
   // 1. Recursive scan for all system test files in rootDir
   const { playwrightFiles: scannedPlaywright, cypressFiles: scannedCypress } =
     scanSystemTestFiles(rootDir);
+  const seenFiles = new Set([...scannedPlaywright, ...scannedCypress].map(file => file.filePath));
+  const detectAndMerge = (detect, detectorFramework, label) => {
+    try {
+      const result = detect(rootDir);
+      const testDir = result.configPath && (result.testDir || result.testDirectory);
+      for (const file of result.testFiles) {
+        const filePath = typeof file === "string" ? file : file.path;
+        const relativePath = path.relative(rootDir, path.resolve(rootDir, filePath)).replace(/\\/g, "/");
+        if (seenFiles.has(relativePath) || /(?:^|\/)(?:\.covai-system-test|node_modules)(?:\/|$)/i.test(relativePath)) {
+          continue;
+        }
+        let framework = classifySystemTestFile(rootDir, relativePath);
+        if (!framework && testDir) {
+          const fromTestDir = path.relative(path.resolve(rootDir, testDir), path.resolve(rootDir, relativePath));
+          if (fromTestDir && fromTestDir !== ".." && !fromTestDir.startsWith(`..${path.sep}`) && !path.isAbsolute(fromTestDir)) {
+            framework = detectorFramework;
+          }
+        }
+        if (!framework) continue;
+
+        const details = parseTestFileDetails(rootDir, relativePath, framework);
+        const bucket = framework === "CYPRESS" ? scannedCypress : scannedPlaywright;
+        bucket.push(details);
+        seenFiles.add(details.filePath);
+      }
+      return result;
+    } catch (error) {
+      detectionErrors.push(`${label} detection error: ${error.message}`);
+      return null;
+    }
+  };
 
   // 2. Detect Playwright framework
-  try {
-    const playwrightResult = detectPlaywright(rootDir);
+  const playwrightResult = detectAndMerge(detectPlaywright, "PLAYWRIGHT", "Playwright");
+  // 3. Detect Cypress framework
+  const cypressResult = detectAndMerge(detectCypress, "CYPRESS", "Cypress");
 
-    // Merge scanned test files with playwrightResult files
-    const fileMap = new Map();
-    for (const f of scannedPlaywright) {
-      fileMap.set(f.filePath, f);
-    }
-    for (const f of playwrightResult.testFiles || []) {
-      const rel = typeof f === "string" ? f : f.path || f.filePath;
-      if (rel && !rel.split(/[\\/]/).includes('.covai-system-test') && !fileMap.has(rel)) {
-        fileMap.set(rel, parseTestFileDetails(rootDir, rel, "PLAYWRIGHT"));
-      }
-    }
-    const mergedPlaywrightFiles = Array.from(fileMap.values());
-    const scenarioCount = mergedPlaywrightFiles.reduce(
+  if (playwrightResult) {
+    const scenarioCount = scannedPlaywright.reduce(
       (sum, file) => sum + (file.scenarioCount || 0),
       0,
     );
 
     const isDetected =
-      playwrightResult.hasPlaywright || mergedPlaywrightFiles.length > 0;
+      scannedPlaywright.length > 0 ||
+      playwrightResult.configPath ||
+      playwrightResult.packageVersion ||
+      (playwrightResult.hasPlaywright && !playwrightResult.testFiles.length);
 
     if (isDetected) {
       frameworks.push({
@@ -84,44 +115,30 @@ export async function detectSystemTestFrameworks(rootDir) {
         configPath: playwrightResult.configPath,
         testDirectory:
           playwrightResult.testDir ||
-          (mergedPlaywrightFiles.length > 0
-            ? path.dirname(mergedPlaywrightFiles[0].filePath)
+          (scannedPlaywright.length > 0
+            ? path.dirname(scannedPlaywright[0].filePath)
             : null),
-        testFiles: mergedPlaywrightFiles,
-        testFileCount: mergedPlaywrightFiles.length,
+        testFiles: scannedPlaywright,
+        testFileCount: scannedPlaywright.length,
         scenarioCount,
         browsers: playwrightResult.browsers,
         command: playwrightResult.playwrightCommand,
         packageVersion: playwrightResult.packageVersion,
       });
     }
-  } catch (error) {
-    detectionErrors.push(`Playwright detection error: ${error.message}`);
   }
 
-  // 3. Detect Cypress framework
-  try {
-    const cypressResult = detectCypress(rootDir);
-
-    // Merge scanned test files with cypressResult files
-    const fileMap = new Map();
-    for (const f of scannedCypress) {
-      fileMap.set(f.filePath, f);
-    }
-    for (const f of cypressResult.testFiles || []) {
-      const rel = typeof f === "string" ? f : f.path || f.filePath;
-      if (rel && !fileMap.has(rel)) {
-        fileMap.set(rel, parseTestFileDetails(rootDir, rel, "CYPRESS"));
-      }
-    }
-    const mergedCypressFiles = Array.from(fileMap.values());
-    const scenarioCount = mergedCypressFiles.reduce(
+  if (cypressResult) {
+    const scenarioCount = scannedCypress.reduce(
       (sum, file) => sum + (file.scenarioCount || 0),
       0,
     );
 
     const isDetected =
-      cypressResult.detected || mergedCypressFiles.length > 0;
+      scannedCypress.length > 0 ||
+      cypressResult.configPath ||
+      cypressResult.version ||
+      cypressResult.command?.startsWith("npm run ");
 
     if (isDetected) {
       frameworks.push({
@@ -130,22 +147,20 @@ export async function detectSystemTestFrameworks(rootDir) {
         configPath: cypressResult.configPath,
         testDirectory:
           cypressResult.testDirectory ||
-          (mergedCypressFiles.length > 0
-            ? path.dirname(mergedCypressFiles[0].filePath)
+          (scannedCypress.length > 0
+            ? path.dirname(scannedCypress[0].filePath)
             : null),
-        testFiles: mergedCypressFiles,
-        testFileCount: mergedCypressFiles.length,
+        testFiles: scannedCypress,
+        testFileCount: scannedCypress.length,
         scenarioCount,
-        command: cypressResult.command || cypressResult.cypressCommand,
+        command: cypressResult.command || "npx cypress run",
         packageVersion: cypressResult.version,
         version: cypressResult.version,
       });
     }
-  } catch (error) {
-    detectionErrors.push(`Cypress detection error: ${error.message}`);
   }
 
-  // 4. Aggregate all test files
+  // 4. Aggregate all test files & classify 3-rule framework resolution
   const allTestFilesMap = new Map();
   for (const fw of frameworks) {
     for (const tf of fw.testFiles || []) {
@@ -162,12 +177,54 @@ export async function detectSystemTestFrameworks(rootDir) {
   const isZeroTestProject = !hasTestFiles;
   const hasSystemTests = frameworks.length > 0 || hasTestFiles;
 
+  const pwFramework = frameworks.find((f) => f.name === "PLAYWRIGHT");
+  const cyFramework = frameworks.find((f) => f.name === "CYPRESS");
+  const hasPlaywrightDep = Boolean(pwFramework?.packageVersion || pwFramework?.configPath);
+  const hasCypressDep = Boolean(cyFramework?.packageVersion || cyFramework?.version || cyFramework?.configPath);
+  const hasDependencies = hasPlaywrightDep || hasCypressDep;
+  const installedFrameworks = [
+    ...(hasPlaywrightDep ? ["PLAYWRIGHT"] : []),
+    ...(hasCypressDep ? ["CYPRESS"] : []),
+  ];
+  const hasPlaywrightTests = (pwFramework?.testFileCount || 0) > 0;
+  const hasCypressTests = (cyFramework?.testFileCount || 0) > 0;
+
+  let permutation = "ZERO_TESTS_NO_DEPS";
+  let detectionSource = "user_selection_required";
+  let recommendedFramework = null;
+  let inferredFramework = null;
+  let needsUserSelection = false;
+
+  if (hasDependencies) {
+    permutation = hasTestFiles ? "HAS_TESTS_AND_DEPS" : "HAS_DEPS_NO_TESTS";
+    detectionSource = "package_json";
+    recommendedFramework = hasPlaywrightDep ? "playwright" : "cypress";
+    inferredFramework = recommendedFramework;
+  } else if (hasTestFiles) {
+    permutation = "HAS_TESTS_NO_DEPS";
+    detectionSource = "test_syntax";
+    inferredFramework = hasPlaywrightTests ? "playwright" : hasCypressTests ? "cypress" : null;
+    recommendedFramework = inferredFramework;
+  } else {
+    permutation = "ZERO_TESTS_NO_DEPS";
+    detectionSource = "user_selection_required";
+    needsUserSelection = true;
+  }
+
   return {
     category: "SYSTEM",
     frameworks,
     hasSystemTests,
     hasTestFiles,
     isZeroTestProject,
+    hasDependencies,
+    installedFrameworks,
+    inferredFramework,
+    recommendedFramework,
+    detectionSource,
+    permutation,
+    needsUserSelection,
+    proposedFrameworks: ["PLAYWRIGHT", "CYPRESS"],
     detectedCount: frameworks.length,
     totalFilesCount,
     totalScenariosCount,
@@ -199,7 +256,10 @@ export async function detectSystemTestFrameworksForSnapshot(
     };
   }
 
-  const detection = await detectSystemTestFrameworks(snapshot.rootDir);
+  const effectiveRootDir =
+    normalizeDiskPath(snapshot.rootDir || snapshot.storagePath) ||
+    snapshot.rootDir;
+  const detection = await detectSystemTestFrameworks(effectiveRootDir);
 
   // Sync flags to ProjectSnapshot and Project in database
   if (snapshotId) {

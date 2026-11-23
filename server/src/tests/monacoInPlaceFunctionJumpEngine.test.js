@@ -5,8 +5,8 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-describe("## 5. CHI TIẾT TRIỂN KHAI PHÂN HỆ OPEN CODE (MONACO IN-PLACE FUNCTION JUMP ENGINE)", () => {
-  describe("5.1 Nâng Cấp Layout.jsx (handleOpenFileByPath & Jump Target Dispatcher)", () => {
+describe("## 5. MONACO IN-PLACE FUNCTION JUMP ENGINE IMPLEMENTATION DETAILS", () => {
+  describe("5.1 Upgrade Layout.jsx (handleOpenFileByPath & Jump Target Dispatcher)", () => {
     // Simulated Layout jump dispatcher logic matching Layout.jsx implementation
     const createLayoutNavigationDispatcher = (fileTree) => {
       let activeActivity = "coverage";
@@ -141,7 +141,7 @@ describe("## 5. CHI TIẾT TRIỂN KHAI PHÂN HỆ OPEN CODE (MONACO IN-PLACE FU
     });
   });
 
-  describe("5.2 Nâng Cấp Editor.jsx (Monaco Line Jump & Range Decoration Engine)", () => {
+  describe("5.2 Upgrade Editor.jsx (Monaco Line Jump & Range Decoration Engine)", () => {
     // Simulated Monaco editor instance and jump engine
     const createMonacoJumpEngine = ({ lineCount = 100, activeTabId = "backend/src/services/aiService.js" } = {}) => {
       const actions = {
@@ -297,7 +297,7 @@ describe("## 5. CHI TIẾT TRIỂN KHAI PHÂN HỆ OPEN CODE (MONACO IN-PLACE FU
     });
   });
 
-  describe("5.3 Xác Thực CSS Tokens & Keyframe Animations (CSS Specifications Contract)", () => {
+  describe("5.3 Verify CSS Tokens & Keyframe Animations (CSS Specifications Contract)", () => {
     const candidatePaths = [
       path.resolve(__dirname, "../../../client/src/index.css"),
       path.resolve(process.cwd(), "../client/src/index.css"),

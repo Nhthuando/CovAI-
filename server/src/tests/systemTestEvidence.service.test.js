@@ -3,13 +3,42 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import {afterEach,describe,it,expect} from '@jest/globals';
+import { describe, test, expect } from '@jest/globals';
+import { afterEach, it } from '@jest/globals';
 import {validateFullSystemTest,storeScenarioScreenshot,prepareSystemPlaywright} from '../services/systemTestEvidence.service.js';
 import {readFullSystemConfig} from '../services/fullSystemLifecycle.service.js';
+import { ServiceError } from '../utils/serviceError.js';
 const roots=[];
 const root=()=>{const directory=fs.mkdtempSync(path.join(os.tmpdir(),'covai-evidence-'));roots.push(directory);return directory;};
 afterEach(()=>{for(const directory of roots.splice(0)) fs.rmSync(directory,{recursive:true,force:true});});
 describe('real system execution and evidence',()=>{
+  it('keeps scenario screenshots as checkpoints without relaying them as live frames',async()=>{
+    const source=fs.readFileSync(new URL('../services/systemAssessmentJob.service.js',import.meta.url),'utf8');
+    const start=source.indexOf('const onEvent = async (');
+    const end=source.indexOf('const report = await withProjectDependencyCache',start);
+    expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
+    const frames=[],recorded=[],transport=[],events=[],checkpoints=[];
+    const dependencies={
+      job:{snapshotId:'snapshot',userId:'user',snapshot:{rootDir:'/workspace'}},
+      assessment:{id:'assessment'},prisma:{},
+      catalog:[{filePath:'test.spec.js',title:'scenario',scenarioKey:'scenario-key'}],
+      recordSystemLiveFrame:frame=>recorded.push(frame),
+      global:{io:{to:()=>({emit:(event,payload)=>frames.push({event,payload})})}},
+      currentProjectOperation:()=>({projectId:'project'}),
+      deliverScopedProjectTransport:payload=>transport.push(payload),
+      storeScenarioScreenshot:()=> 'checkpoint.png',
+      persistRunArtifacts:async input=>{checkpoints.push(input);return [{id:'artifact'}];},
+      emit:async event=>events.push(event),
+    };
+    const onEvent=new Function(...Object.keys(dependencies),`${source.slice(start,end)} return onEvent;`)(...Object.values(dependencies));
+    await onEvent({runIndex:0,type:'SCENARIO_ENDED',screenshotBody:'blank-page',filePath:'test.spec.js',title:'scenario'});
+    expect(frames).toEqual([]);expect(recorded).toEqual([]);expect(transport).toEqual([]);
+    expect(checkpoints[0].artifacts[0]).toEqual(expect.objectContaining({purpose:'CHECKPOINT',relativePath:'checkpoint.png'}));
+    expect(events[0]).toEqual(expect.objectContaining({type:'SCENARIO_ENDED',payload:expect.objectContaining({artifactId:'artifact'})}));
+    await onEvent({runIndex:0,type:'LIVE_FRAME',frame:'live-page'});
+    expect(frames).toEqual([{event:'system-run:frame',payload:expect.objectContaining({frame:'live-page'})}]);
+    expect(recorded).toHaveLength(1);expect(transport).toHaveLength(1);
+  });
   it('limits a selected scenario run to its literal Playwright title',()=>{
     const directory=root();fs.mkdirSync(path.join(directory,'e2e'));
     const file=path.join(directory,'e2e/items.spec.js');
@@ -51,7 +80,73 @@ describe('real system execution and evidence',()=>{
     expect(()=>validateFullSystemTest("await page.route('**/api/**', () => {});")).toThrow(/real backend/);
     expect(()=>validateFullSystemTest("await page.goto('/'); await page.reload();")).not.toThrow();
   });
-  it('fails explicitly when full-system configuration is absent',()=>{expect(()=>readFullSystemConfig(root())).toThrow(/Choose Frontend Dev Server/);});
+  test.each([
+    "import { test } from '@playwright/test'; await test.goto('/');",
+    "import { test as check } from '@playwright/test'; await check['goto']('/');",
+    "const { test: check } = require('@playwright/test'); await check.goto('/');",
+    "const check = require('@playwright/test').test; await check.goto('/');",
+  ])('rejects invalid calls on the Playwright test binding: %s', code => {
+    expect(() => validateFullSystemTest(code)).toThrow('Use page.goto() instead of test.goto() in Playwright tests');
+  });
+  test('accepts test.step, test.info().attach and test.describe.configure', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test.describe.configure({ mode: 'serial' });
+      test('valid methods', async () => {
+        await test.step('Attach evidence', async () => {
+          await test.info().attach('evidence', { body: 'ok' });
+        });
+      });
+      function unrelated(test) { test.goto('/'); }
+    `)).not.toThrow();
+  });
+  test('rejects fixture destructuring in a test.step callback', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test('toggle todo', async ({ page }) => {
+        await test.step('Create todo', async ({ request }) => {
+          await request.post('/api/todos', { data: { title: 'Todo' } });
+        });
+      });
+    `)).toThrow(expect.objectContaining({
+      ...new ServiceError('', 422),
+      message: expect.stringMatching(/^test\.step callbacks do not receive fixtures/),
+    }));
+  });
+  test('accepts a test.step callback using a fixture from the test', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test('toggle todo', async ({ page, request }) => {
+        await test.step('Create todo', async () => {
+          await request.post('/api/todos', { data: { title: 'Todo' } });
+        });
+      });
+    `)).not.toThrow();
+  });
+  test('accepts an identifier parameter in a test.step callback', () => {
+    expect(() => validateFullSystemTest(`
+      import { test } from '@playwright/test';
+      test('toggle todo', async ({ page }) => {
+        await test.step('Open todos', async (step) => {
+          await page.goto('/');
+        });
+      });
+    `)).not.toThrow();
+  });
+  test('rewrites absolute loopback request URLs before forwarding them', () => {
+    const directory = root();
+    const file = path.join(directory, 'request.spec.js');
+    fs.writeFileSync(file, "import { test } from '@playwright/test'; test('request', async ({ request }) => { await request.get('/api/x'); });");
+    const result = prepareSystemPlaywright({
+      rootDir: directory, execution: { selectedFiles: [file] }, executionMode: 'full', backendUrl: 'http://127.0.0.1:4500',
+      frontendPort: 4173, runKey: 'request-routing',
+    });
+    for (const name of ['fixture.mjs', 'fixture.cjs']) {
+      const fixture = fs.readFileSync(path.join(result.directory, name), 'utf8');
+      expect(fixture).toMatch(/URL\.canParse\(args\[0\]\)[\s\S]*?\['http:', 'https:'\]\.includes\(target\.protocol\)[\s\S]*?\['localhost', '127\.0\.0\.1', '\[::1\]'\]\.includes\(target\.hostname\)[\s\S]*?port !== Number\(4173\)[\s\S]*?args\[0\] = backend \+ target\.pathname \+ target\.search;[\s\S]*?await original\(\.\.\.args\)/);
+    }
+  });
+  it('fails explicitly when full-system configuration is absent',()=>{expect(()=>readFullSystemConfig(root())).toThrow(/Full Stack startup setup is missing|Generate and apply a Full Stack test draft/);});
   it('persists PNG evidence and rejects files outside the snapshot',()=>{
     const directory=root();const source=path.join(directory,'shot.png');
     fs.writeFileSync(source,Buffer.from([137,80,78,71,13,10,26,10,0]));
@@ -65,6 +160,9 @@ describe('real system execution and evidence',()=>{
     const result=prepareSystemPlaywright({rootDir:directory,execution:{testDirectory:'tests/system'},executionMode:'full',backendUrl:'http://127.0.0.1:4500',frontendPort:4173,runKey:'run'});
     expect(fs.readFileSync(path.join(result.directory,'playwright.config.mjs'),'utf8')).toContain("screenshot:'on'");
     const fixture=fs.readFileSync(path.join(result.directory,'fixture.mjs'),'utf8');
+    expect(fixture).toContain('Page.startScreencast');
+    expect(fixture).toContain('Page.screencastFrameAck');
+    expect(fixture).toContain('Page.stopScreencast');
     expect(fixture).toContain('route.continue');expect(fixture).not.toContain('route.fulfill');
     expect(fixture).toContain('playwright.request.newContext({baseURL:backend');
     expect(fixture).toContain('await request.dispose()');

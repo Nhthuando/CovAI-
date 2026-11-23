@@ -1,4 +1,5 @@
 import { scenarioProgress } from './systemTestExecutionModel.js';
+import { stripAnsi } from '../../../utils/stripAnsi.js';
 
 export default function SystemTestProgress({ scenario, attempt, showErrors = false, compact = false }) {
   const progress = scenarioProgress(scenario, attempt);
@@ -15,7 +16,7 @@ export default function SystemTestProgress({ scenario, attempt, showErrors = fal
     {showErrors && progress.failed && <div className="space-y-2 rounded border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 p-3">
       <p className="font-medium text-[var(--color-danger)]">{progress.failedStep ? `Failed at: ${progress.failedStep}` : 'Test failed'}</p>
       {progress.percent === null && <p className="text-[var(--color-text-muted)]">The report does not contain a complete step plan. No percentage was estimated.</p>}
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-[var(--color-danger)]">{progress.errors.length ? progress.errors.join('\n\n') : 'No error log was recorded for this result.'}</pre>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-[var(--color-danger)]">{progress.errors.length ? stripAnsi(progress.errors.join('\n\n')) : 'No error log was recorded for this result.'}</pre>
     </div>}
   </div>;
 }

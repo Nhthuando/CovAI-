@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { classifyUnitTestPath, unitTestInventory } from '../services/unitTestFilePolicy.service.js';
 
 const FRAMEWORKS = [
     {
@@ -21,7 +22,7 @@ const FRAMEWORKS = [
 
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
 const IGNORED_DIRECTORIES = new Set(["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest"]);
-const TEST_FILE_PATTERN = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$|^(?:tests?|specs?)[-_.]|[-_.](?:tests?|specs?)\.[cm]?[jt]sx?$|^tests?[A-Z]|[a-z0-9](?:Tests?|Specs?)\.[cm]?[jt]sx?$/i;
+const TEST_FILE_PATTERN = /(?:^|\.)(?:test|spec|steps?)\.[cm]?[jt]sx?$|^(?:tests?|specs?)[-_.]|[-_.](?:tests?|specs?)\.[cm]?[jt]sx?$|^tests?[A-Z]|[a-z0-9](?:Tests?|Specs?)\.[cm]?[jt]sx?$/i;
 
 const readPackageJson = (packagePath, errors) => {
     if (!fs.existsSync(packagePath)) return null;
@@ -45,12 +46,7 @@ export const classifyTestFile = (content, filePath = "", detectedUnitFrameworks 
         lowerContent.includes("supertest") ||
         lowerContent.includes("request(app)") ||
         lowerContent.includes("request(server)") ||
-        lowerPath.includes("/integration/") ||
-        lowerPath.includes("\\integration\\") ||
-        lowerPath.includes("/routes/") ||
-        lowerPath.includes("\\routes\\") ||
-        lowerPath.includes("/api/") ||
-        lowerPath.includes("\\api\\") ||
+        /(^|[/\\])(?:integration|api|routes)([/\\]|$)/i.test(lowerPath) ||
         /\b(integration|api)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
     ) return "supertest";
 
@@ -61,10 +57,7 @@ export const classifyTestFile = (content, filePath = "", detectedUnitFrameworks 
         lowerPath.includes("playwright") ||
         lowerContent.includes("@playwright/test") ||
         lowerContent.includes("page.goto") ||
-        lowerPath.includes("/e2e/") ||
-        lowerPath.includes("\\e2e\\") ||
-        lowerPath.includes("/system/") ||
-        lowerPath.includes("\\system\\") ||
+        /(^|[/\\])(?:e2e|system)([/\\]|$)/i.test(lowerPath) ||
         /\b(e2e|system)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
     ) return "playwright";
 
@@ -117,7 +110,7 @@ const discoverTestFiles = (rootDir, errors, detectedUnitFrameworks = []) => {
         for (const entry of entries) {
             if (entry.isDirectory()) {
                 const inTestDir = isTestDirectory || /^(tests?|__tests__|specs?|unit)$/i.test(entry.name);
-                if (!IGNORED_DIRECTORIES.has(entry.name)) visit(path.join(directory, entry.name), inTestDir);
+                if (!IGNORED_DIRECTORIES.has(entry.name) && !entry.name.startsWith('.covai') && !['storage','uploads'].includes(entry.name)) visit(path.join(directory, entry.name), inTestDir);
                 continue;
             }
             if (!entry.isFile()) continue;
@@ -147,10 +140,17 @@ const discoverTestFiles = (rootDir, errors, detectedUnitFrameworks = []) => {
             const hasAnyTest = /\b(test|it|describe|scenario|suite)\s*\(/i.test(content);
             if (!hasAnyTest && !isTestFileName) continue;
 
-            files.push({ path: relPath, framework: classifyTestFile(content, relPath, detectedUnitFrameworks) });
+            const framework = classifyTestFile(content, relPath, detectedUnitFrameworks);
+            if (['jest', 'vitest'].includes(framework) && !classifyUnitTestPath(rootDir, relPath, framework).writable) continue;
+            files.push({ path: relPath, framework });
         }
     };
     visit(rootDir);
+    // Configured custom suites need not have a conventional suffix or live in
+    // a test directory. Use the same inventory as Suggest and Apply.
+    for (const test of unitTestInventory(rootDir).tests) {
+        if (!files.some(file => file.path === test.filePath)) files.push({path:test.filePath,framework:test.framework});
+    }
     return files.sort((left, right) => left.path.localeCompare(right.path));
 };
 

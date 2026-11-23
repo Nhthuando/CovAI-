@@ -248,5 +248,39 @@ model Food {
             expect(validItem.id).toBe(1);
             expect(validItem.price).toBe(50000);
         });
+
+        test('extracts Mongoose model schemas, SQL table schemas, and generates System Test preload files', async () => {
+            const { ensureSystemDatabaseMockPreload } = await import('../services/databaseMockTemplate.service.js');
+            fs.writeFileSync(
+                path.join(tempDir, 'package.json'),
+                JSON.stringify({ dependencies: { mongoose: '^8.0.0', pg: '^8.0.0', ioredis: '^5.0.0' } })
+            );
+            fs.mkdirSync(path.join(tempDir, 'models'), { recursive: true });
+            fs.writeFileSync(
+                path.join(tempDir, 'models', 'Article.js'),
+                `const mongoose = require('mongoose');\nconst ArticleSchema = new mongoose.Schema({ title: { type: String, required: true }, views: Number });\nmodule.exports = mongoose.model('Article', ArticleSchema);`
+            );
+            fs.writeFileSync(
+                path.join(tempDir, 'schema.sql'),
+                `CREATE TABLE articles (id SERIAL PRIMARY KEY, title VARCHAR(255), views INT);`
+            );
+
+            const dbInfo = detectProjectDatabase(tempDir);
+            expect(dbInfo.hasMongoose).toBe(true);
+            expect(dbInfo.hasSql).toBe(true);
+            expect(dbInfo.hasRedis).toBe(true);
+            expect(dbInfo.mongooseModels.Article).toBeDefined();
+            expect(dbInfo.mongooseSeeds.Article).toHaveLength(4);
+            expect(dbInfo.sqlTables.articles).toBeDefined();
+            expect(dbInfo.sqlSeeds.articles).toHaveLength(4);
+
+            const preload = ensureSystemDatabaseMockPreload(tempDir);
+            expect(fs.existsSync(preload.preloadPath)).toBe(true);
+            expect(fs.existsSync(preload.loaderPath)).toBe(true);
+            expect(fs.existsSync(preload.stateFilePath)).toBe(true);
+            expect(preload.environment.COVAI_MOCK_DB).toBe('true');
+            await preload.cleanup();
+            expect(fs.existsSync(preload.preloadPath)).toBe(false);
+        });
     });
 });

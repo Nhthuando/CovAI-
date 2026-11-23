@@ -1,8 +1,14 @@
-import { scenarioArtifactVersion } from './scenarioManager.service.js';
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { detectSupertest } from "./supertestDetection.service.js";
+import { scenarioArtifactVersion } from "./scenarioManager.service.js";
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
-import { loadSourceCode } from "./aiContextBuilder.service.js";
+import { cleanStoragePath, stripAnsi } from "../utils/pathSanitizer.js";
+import {
+  loadSourceCode,
+  clearSourceCodeCache,
+} from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { getBucket } from "../config/firebase.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
@@ -19,6 +25,7 @@ export {
   buildApiCoverageReport,
 };
 import crypto from "crypto";
+import { getEndpointCaseCoverage } from "../../../shared/integrationCaseCoverage.js";
 
 export const extractValidatedTestRequests = (t) => {
   let reqs = extractTestRequests(t.content, t.filePath);
@@ -26,7 +33,11 @@ export const extractValidatedTestRequests = (t) => {
   try {
     const meta =
       typeof t.metaJson === "string" ? JSON.parse(t.metaJson) : t.metaJson;
-    if (meta?.requests && Array.isArray(meta.requests)) {
+    if (
+      meta?.requests &&
+      Array.isArray(meta.requests) &&
+      (meta.requests.length > 0 || meta.userModified)
+    ) {
       const metaMap = new Map(meta.requests.map((r) => [r.testName, r]));
       const validNames = new Set(meta.requests.map((r) => r.testName));
       const filteredReqs = reqs
@@ -54,7 +65,7 @@ export const extractValidatedTestRequests = (t) => {
             suiteName: mr.suiteName || "Integration Test Suite",
             method: (mr.method || "GET").toUpperCase(),
             path: mr.path || "/",
-            testFile: t.filePath,
+            testFile: cleanStoragePath(t.filePath) || t.filePath,
             scenarioId: mr.scenarioId,
             enabled: mr.enabled !== false,
             userEdited: Boolean(mr.userEdited),
@@ -113,7 +124,7 @@ export function parseFailureMessages(failureMessages, req = null) {
   if (!text.trim()) return null;
 
   // Clean ANSI escape codes
-  const cleanText = text.replace(
+  const cleanText = stripAnsi(text).replace(
     /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
     "",
   );
@@ -207,16 +218,216 @@ export function parseFailureMessages(failureMessages, req = null) {
   };
 }
 
+/**
+ * Produces a short, human-readable summary from verbose Jest / Supertest failure logs
+ * so UI dashboards show the root cause directly instead of raw ANSI / boilerplate stack dumps.
+ */
+export function summarizeFailureMessage(
+  failureMessages,
+  parsedFailure = null,
+  req = null,
+) {
+  const parsed = parsedFailure || parseFailureMessages(failureMessages, req);
+  const rawText = stripAnsi(
+    parsed?.raw ||
+      (Array.isArray(failureMessages)
+        ? failureMessages.join("\n")
+        : String(failureMessages || "")),
+  ).trim();
+
+  if (!rawText) {
+    return "Assertion or runtime failure during API test execution.";
+  }
+
+  // 1. CommonJS / ESM syntax mismatch
+  if (/Cannot use import statement outside a module/i.test(rawText)) {
+    const fileMatch = rawText.match(/([A-Za-z0-9_.\-/]+\.(?:test|spec)\.[cm]?[jt]s):(\d+)/);
+    const loc = fileMatch ? ` (${fileMatch[1]}:${fileMatch[2]})` : "";
+    return `Module syntax mismatch${loc}: Test file uses ES module 'import' syntax inside a CommonJS Jest runner. Re-generate or convert imports to require().`;
+  }
+
+  // 2. Missing module / wrong relative path
+  const modNotFound = rawText.match(/Cannot find module ['"]([^'"]+)['"]/i);
+  if (modNotFound) {
+    return `Missing module '${modNotFound[1]}': Check the relative app/dependency import path in this test file.`;
+  }
+
+  // 3. SyntaxError / ReferenceError / TypeError
+  const jsErrorMatch = rawText.match(
+    /(?:SyntaxError|TypeError|ReferenceError|RangeError):\s*([^\n\r]{1,180})/,
+  );
+  if (jsErrorMatch && !/expect\(/i.test(jsErrorMatch[0])) {
+    return jsErrorMatch[0].trim();
+  }
+
+  // 4. Supertest HTTP status assertion mismatch
+  if (
+    parsed?.expected &&
+    parsed?.received &&
+    /^\d{3}$/.test(parsed.expected.trim()) &&
+    /^\d{3}$/.test(parsed.received.trim())
+  ) {
+    return `HTTP status mismatch: Expected ${parsed.expected.trim()}, but server returned ${parsed.received.trim()}.`;
+  }
+
+  // 5. General Jest Expect (Expected vs Received)
+  if (parsed?.expected && parsed?.received) {
+    const expShort = parsed.expected.replace(/\s+/g, " ").slice(0, 70);
+    const recShort = parsed.received.replace(/\s+/g, " ").slice(0, 70);
+    const propMatch = rawText.match(/Expected path:\s*"([^"]+)"/);
+    if (propMatch) {
+      return `Response contract mismatch at '${propMatch[1]}': Expected ${expShort}, got ${recShort}.`;
+    }
+    return `Assertion mismatch: Expected ${expShort}, but received ${recShort}.`;
+  }
+
+  // 6. Supertest 'expected 200 "OK", got 404 "Not Found"'
+  const supertestStatus = rawText.match(
+    /expected\s+(\d{3})\b[^,\n]*,\s*got\s+(\d{3})\b/i,
+  );
+  if (supertestStatus) {
+    return `HTTP status mismatch: Expected ${supertestStatus[1]}, but received ${supertestStatus[2]}.`;
+  }
+
+  // 7. Timeout
+  if (/Exceeded timeout of \d+ ms|Timeout - Async callback/i.test(rawText)) {
+    return "Test timed out waiting for HTTP response or async database operation.";
+  }
+
+  // 8. Fallback: pick first meaningful non-boilerplate line
+  const meaningfulLines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !/^Test suite failed to run$/i.test(l) &&
+        !/^Jest encountered an unexpected token/i.test(l) &&
+        !/^Out of the box Jest supports/i.test(l) &&
+        !/^Details:/i.test(l) &&
+        !/^Here's what you can do:/i.test(l) &&
+        !/^[•*-]\s/.test(l) &&
+        !/^https?:\/\//.test(l) &&
+        !/^at\s+/.test(l) &&
+        !/^\d+\s*\|/.test(l),
+    );
+
+  const firstUseful = meaningfulLines[0] || parsed?.headline || rawText.split("\n")[0];
+  return firstUseful.length > 200 ? `${firstUseful.slice(0, 197)}...` : firstUseful;
+}
+
 const endpointCache = new Map();
 const firebaseCache = new Map();
+const runtimeEvidenceCache = new Map();
+const inFlightIntegrationBuilds = new Map();
+const integrationWorkspacePayloadCache = new Map();
+const projectIntegrationTestsCache = new Map();
 const aiTestParseCache = new Map(); // Structure: Map<snapshotId, Map<aiTestId, { updatedAt: number, requests: Array }>>
 const apiTraceCache = new Map();
 
+const INTEGRATION_FAST_TTL_MS = 15_000; // 15s zero-RTT fast path (explicitly invalidated on mutations)
+const INTEGRATION_MAX_TTL_MS = 5 * 60 * 1000; // 5m fingerprint-verified cache
+
+export function computeIntegrationFingerprintFromData({
+  latestRun,
+  latestJob,
+  aiTestsCount,
+  snapshotMeta,
+}) {
+  if (!snapshotMeta) return null;
+  let filesMtime = 0;
+  const resolvedRoot = snapshotMeta.rootDir
+    ? resolveProjectRoot(snapshotMeta.rootDir) || snapshotMeta.rootDir
+    : null;
+  if (resolvedRoot && fs.existsSync(resolvedRoot)) {
+    try {
+      const candidateFiles = [
+        path.join(resolvedRoot, "coverage", "integration-scenarios.json"),
+        path.join(resolvedRoot, ".covai", "integration-scenarios.json"),
+        path.join(resolvedRoot, "coverage", "runtime-evidence.json"),
+        path.join(resolvedRoot, ".covai", "runtime-evidence.json"),
+        path.join(resolvedRoot, "coverage", "coverage-final.json"),
+      ];
+      for (const cf of candidateFiles) {
+        if (fs.existsSync(cf)) {
+          filesMtime += fs.statSync(cf).mtimeMs;
+        }
+      }
+    } catch (_) {}
+  }
+  const snapCreatedMs =
+    snapshotMeta.createdAt instanceof Date
+      ? snapshotMeta.createdAt.getTime()
+      : snapshotMeta.createdAt
+        ? new Date(snapshotMeta.createdAt).getTime()
+        : 0;
+  return `${latestRun?.id || "none"}_${latestRun?.status || ""}_${latestJob?.id || "none"}_${latestJob?.status || ""}_${aiTestsCount ?? 0}_${snapCreatedMs}_${Math.round(filesMtime)}`;
+}
+
+export async function getIntegrationWorkspaceFingerprint(snapshotId) {
+  try {
+    const [latestRun, latestJob, aiTestsCount, snapshotMeta] = await Promise.all([
+      prisma.testRun.findFirst({
+        where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, createdAt: true },
+      }),
+      prisma.job.findFirst({
+        where: { snapshotId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, createdAt: true },
+      }),
+      prisma.aiTest.count({ where: { snapshotId } }),
+      prisma.projectSnapshot.findUnique({
+        where: { id: snapshotId },
+        select: { id: true, rootDir: true, createdAt: true },
+      }),
+    ]);
+    if (!snapshotMeta) return null;
+    return computeIntegrationFingerprintFromData({
+      latestRun,
+      latestJob,
+      aiTestsCount,
+      snapshotMeta,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export const invalidateEndpointCache = (snapshotId, rootDir = null) => {
   endpointCache.delete(snapshotId);
-  firebaseCache.delete(snapshotId);
+  integrationWorkspacePayloadCache.delete(snapshotId);
+  clearSourceCodeCache(snapshotId);
+  projectIntegrationTestsCache.clear();
+  for (const key of Array.from(firebaseCache.keys())) {
+    if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+      firebaseCache.delete(key);
+    }
+  }
+  for (const key of Array.from(runtimeEvidenceCache.keys())) {
+    if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+      runtimeEvidenceCache.delete(key);
+    }
+  }
   aiTestParseCache.delete(snapshotId);
-  apiTraceCache.delete(snapshotId);
+  for (const key of apiTraceCache.keys()) {
+    if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+      apiTraceCache.delete(key);
+    }
+  }
+  try {
+    import("./unifiedQualityDashboard.service.js")
+      .then((mod) => {
+        mod?.clearUnifiedDashboardCache?.(snapshotId);
+      })
+      .catch(() => {});
+    import("./portfolioDashboard.service.js")
+      .then((mod) => {
+        mod?.clearPortfolioCache?.();
+      })
+      .catch(() => {});
+  } catch (_) {}
   if (rootDir) {
     try {
       import("fs").then((fsModule) => {
@@ -259,9 +470,21 @@ export const isMatch = (parsedReq, discoveredEp) => {
   // 2. Exact match
   if (cleanPath.toLowerCase() === cleanRoute.toLowerCase()) return true;
 
-  // 3. Parameterized match: e.g. /api/food-items/get/:id matches /api/food-items/get/123 or /api/food-items/get/:param
-  const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
-  if (new RegExp(regexStr, "i").test(cleanPath)) return true;
+  // 3. Parameterized & wildcard match: escape regex metacharacters safely before expanding "*" and ":param"
+  const escapedRoute = cleanRoute
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/:[^/]+/g, "[^/]+");
+  const regexStr = `^${escapedRoute}$`;
+  try {
+    if (new RegExp(regexStr, "i").test(cleanPath)) return true;
+  } catch (regexErr) {
+    console.warn(
+      "[IntegrationWorkspace] Skipped invalid route regex:",
+      regexStr,
+      regexErr?.message,
+    );
+  }
 
   // 4. Subpath suffix match: only when cleanRoute has at least 2 segments and does not conflict
   if (
@@ -343,6 +566,7 @@ export function evaluateEndpointMetrics({
   consistentPassedCount = 0,
   hasRelevantTestFile = false,
   hasObservedServerResponse = false,
+  caseCoverageComplete = true,
 } = {}) {
   const hasGenuineApiCall =
     executedCount > 0 &&
@@ -363,7 +587,7 @@ export function evaluateEndpointMetrics({
     } else if (failedCount > 0) {
       status = "Partial";
     } else if (passedCount === executedCount) {
-      status = "Covered";
+      status = caseCoverageComplete ? "Covered" : "Partial";
     } else {
       status = "Partial";
     }
@@ -719,43 +943,367 @@ export const isScenarioContractVerified = (s) => {
  * Builds the data payload for the Integration Test workspace.
  * Re-extracts endpoints dynamically from source code and merges with Jest execution results.
  */
-export const buildIntegrationWorkspace = async (snapshotId) => {
+
+export const discoverProjectIntegrationTests = async (rootDir) => {
+  if (!rootDir) return [];
+  const resolvedRoot = resolveProjectRoot(rootDir) || rootDir;
+  if (!fs.existsSync(resolvedRoot)) return [];
+
+  const cached = projectIntegrationTestsCache.get(resolvedRoot);
+  if (cached && Date.now() - cached.cachedAt < 30_000) {
+    return cached.results;
+  }
+
+  const candidateDirs = [
+    resolvedRoot,
+    path.join(resolvedRoot, "server"),
+    path.join(resolvedRoot, "backend"),
+    path.join(resolvedRoot, "api"),
+  ].filter((d) => fs.existsSync(d));
+
+  const foundTestFiles = new Set();
+
+  for (const dir of candidateDirs) {
+    try {
+      const supertestInfo = await detectSupertest(dir).catch(() => null);
+      const detected = [
+        ...(supertestInfo?.supertestFiles || []),
+        ...(supertestInfo?.testFiles || []),
+      ];
+      for (const f of detected) {
+        const full = path.isAbsolute(f) ? f : path.join(dir, f);
+        if (fs.existsSync(full)) foundTestFiles.add(full);
+      }
+    } catch (_) {}
+
+    const testFolderNames = ["tests", "test", "__tests__"];
+    for (const folder of testFolderNames) {
+      const folderPath = path.join(dir, folder);
+      if (fs.existsSync(folderPath)) {
+        try {
+          const files = fs.readdirSync(folderPath);
+          for (const f of files) {
+            if (/\.(test|spec)\.(js|cjs|mjs|ts)$/i.test(f)) {
+              foundTestFiles.add(path.join(folderPath, f));
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  const results = [];
+  for (const fullPath of foundTestFiles) {
+    try {
+      const content = fs.readFileSync(fullPath, "utf8");
+      if (!/supertest|request\s*\(|superagent|chai-http/i.test(content))
+        continue;
+
+      const relativePath = path
+        .relative(resolvedRoot, fullPath)
+        .replace(/\\/g, "/");
+      const reqs = extractTestRequests(content, relativePath);
+      if (reqs.length > 0) {
+        const fileId = `existing_test_${crypto.createHash("md5").update(relativePath).digest("hex").slice(0, 10)}`;
+        const requests = reqs.map((r, idx) => ({
+          ...r,
+          scenarioId: `sc_${idx}_${crypto
+            .createHash("md5")
+            .update(r.testName || `scenario_${idx}`)
+            .digest("hex")
+            .slice(0, 8)}`,
+          testName: r.testName,
+          suiteName: r.suiteName || "",
+          method: (r.method || "GET").toUpperCase(),
+          path: r.path || "/",
+          expectedStatus: r.expectedStatus || 200,
+          origin: "PROJECT_EXISTING",
+          enabled: true,
+          userEdited: false,
+          description: r.description || r.testName || "",
+          category:
+            r.category ||
+            (r.expectedStatus && r.expectedStatus >= 400
+              ? "Validation"
+              : "Happy Path"),
+          code: r.code || undefined,
+        }));
+
+        results.push({
+          id: fileId,
+          filePath: relativePath,
+          content,
+          version: 1,
+          isExisting: true,
+          metaJson: JSON.stringify({
+            framework: "SUPERTEST",
+            status: "APPROVED",
+            origin: "PROJECT_EXISTING",
+            isValid: true,
+            requests,
+            approvedScenarios: requests.map((r) => r.scenarioId),
+          }),
+          requests,
+        });
+      }
+    } catch (err) {
+      console.warn(
+        "[discoverProjectIntegrationTests] Failed to parse file:",
+        fullPath,
+        err.message,
+      );
+    }
+  }
+
+  projectIntegrationTestsCache.set(resolvedRoot, { results, cachedAt: Date.now() });
+  return results;
+};
+
+export const buildIntegrationWorkspace = async (snapshotId, options = {}) => {
+  if (!snapshotId) return null;
+
+  if (options.scanNow) {
+    endpointCache.delete(snapshotId);
+    integrationWorkspacePayloadCache.delete(snapshotId);
+  }
+
+  if (!options.bypassCache && !options.scanNow) {
+    const cached = integrationWorkspacePayloadCache.get(snapshotId);
+    if (
+      cached &&
+      (options.skipAutoScan ||
+        cached.data?.generation?.hasScannedEndpoints !== false)
+    ) {
+      const now = Date.now();
+      // Fast-path within 15s (since any mutation explicitly calls invalidateEndpointCache)
+      if (now - cached.lastVerifiedAt < INTEGRATION_FAST_TTL_MS) {
+        return cached.data;
+      }
+      if (now - cached.cachedAt < INTEGRATION_MAX_TTL_MS) {
+        const currentFp = await getIntegrationWorkspaceFingerprint(snapshotId);
+        if (currentFp && cached.fingerprint === currentFp) {
+          cached.lastVerifiedAt = Date.now();
+          return cached.data;
+        }
+      }
+    }
+  }
+
+  if (!options.bypassCache && !options.scanNow && inFlightIntegrationBuilds.has(snapshotId)) {
+    return inFlightIntegrationBuilds.get(snapshotId);
+  }
+  const buildPromise = (async () => {
+    try {
+      const built = await executeBuildIntegrationWorkspace(
+        snapshotId,
+        options.preloadedData || null,
+        options,
+      );
+      if (built?.payload) {
+        const now = Date.now();
+        integrationWorkspacePayloadCache.set(snapshotId, {
+          data: built.payload,
+          cachedAt: now,
+          lastVerifiedAt: now,
+          fingerprint: built.fingerprint,
+        });
+        return built.payload;
+      }
+      return null;
+    } finally {
+      inFlightIntegrationBuilds.delete(snapshotId);
+    }
+  })();
+  if (!options.bypassCache && !options.scanNow) {
+    inFlightIntegrationBuilds.set(snapshotId, buildPromise);
+  }
+  return buildPromise;
+};
+
+const loadIntegrationScanFromDb = (structureAnalysisRow) => {
+  if (!structureAnalysisRow?.resultJson) return null;
+  try {
+    const parsed =
+      typeof structureAnalysisRow.resultJson === "string"
+        ? JSON.parse(structureAnalysisRow.resultJson)
+        : structureAnalysisRow.resultJson;
+    if (
+      parsed?.integrationScan?.explicitlyScanned &&
+      Array.isArray(parsed.integrationScan.discoveredEndpoints)
+    ) {
+      return parsed.integrationScan;
+    }
+  } catch (err) {
+    console.warn("[IntegrationWorkspace] Failed to parse DB integrationScan:", err.message);
+  }
+  return null;
+};
+
+const saveIntegrationScanToDb = async (
+  snapshotId,
+  { discoveredEndpoints, sourceFilesCount },
+) => {
+  if (
+    !snapshotId ||
+    typeof prisma?.projectStructureAnalysis?.findUnique !== "function" ||
+    typeof prisma?.projectStructureAnalysis?.upsert !== "function"
+  ) {
+    return;
+  }
+  try {
+    const existing = await prisma.projectStructureAnalysis.findUnique({
+      where: { snapshotId },
+      select: { schemaVersion: true, resultJson: true },
+    });
+    let baseObj = {};
+    if (existing?.resultJson) {
+      try {
+        baseObj =
+          typeof existing.resultJson === "string"
+            ? JSON.parse(existing.resultJson)
+            : existing.resultJson || {};
+      } catch (_) {
+        baseObj = {};
+      }
+    }
+    const nextJson = JSON.stringify({
+      ...baseObj,
+      integrationScan: {
+        explicitlyScanned: true,
+        scannedAt: new Date().toISOString(),
+        sourceFilesCount,
+        discoveredEndpoints,
+      },
+    });
+    await prisma.projectStructureAnalysis.upsert({
+      where: { snapshotId },
+      create: {
+        snapshotId,
+        schemaVersion: existing?.schemaVersion || 1,
+        resultJson: nextJson,
+      },
+      update: {
+        resultJson: nextJson,
+      },
+    });
+  } catch (err) {
+    console.warn(
+      "[IntegrationWorkspace] Could not persist integrationScan to DB:",
+      err.message,
+    );
+  }
+};
+
+const buildEndpointDescription = (ep) => {
+  const method = (ep.method || "GET").toUpperCase();
+  const routePath = ep.fullPath || ep.path || "/";
+  const handler =
+    ep.controllerMethod ||
+    ep.requestProcessingChain?.controller?.name ||
+    ep.handler ||
+    "";
+  const readableHandler =
+    handler && handler !== "anonymousHandler" && handler !== "inlineHandler"
+      ? handler
+          .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+          .replace(/[_-]+/g, " ")
+          .toLowerCase()
+      : "";
+  const actionVerb =
+    method === "GET"
+      ? "Fetches"
+      : method === "POST"
+        ? "Creates or processes"
+        : method === "PUT" || method === "PATCH"
+          ? "Updates"
+          : method === "DELETE"
+            ? "Deletes"
+            : "Handles";
+  const authNote =
+    ep.authRequired ||
+    (ep.middlewares || []).some((m) => /auth|jwt|token|protect/i.test(String(m)))
+      ? " (protected)"
+      : "";
+  if (readableHandler) {
+    return `${actionVerb} ${routePath} via ${readableHandler}${authNote}.`;
+  }
+  return `${actionVerb} requests at ${routePath}${authNote}.`;
+};
+
+const executeBuildIntegrationWorkspace = async (
+  snapshotId,
+  preloadedData = null,
+  options = {},
+) => {
   const start = Date.now();
 
   const startDb = Date.now();
-  // 1. Run all DB queries concurrently
-  const [testRuns, coverageSummary, coverageFiles, aiTests, snapshot, jobs] =
-    await Promise.all([
-      prisma.testRun.findMany({
-        where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } },
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        include: { scenarios: true },
-      }),
-      prisma.coverageSummary.findUnique({ where: { snapshotId } }),
-      prisma.coverageFile.findMany({ where: { snapshotId } }),
-      prisma.aiTest.findMany({ where: { snapshotId } }),
-      prisma.projectSnapshot.findUnique({
-        where: { id: snapshotId },
-        select: { storagePath: true, rootDir: true },
-      }),
-      prisma.job.findMany({
-        where: { snapshotId },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          type: true,
-          status: true,
-          createdAt: true,
-          startedAt: true,
-          finishedAt: true,
-          errorMessage: true,
-          resultJson: true,
-        },
-      }),
+  const [
+    testRuns,
+    coverageSummary,
+    coverageFiles,
+    aiTests,
+    snapshot,
+    jobs,
+    structureAnalysis,
+  ] = await Promise.all([
+      preloadedData?.testRuns !== undefined
+        ? Promise.resolve(preloadedData.testRuns)
+        : prisma.testRun.findMany({
+            where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } },
+            orderBy: { createdAt: "desc" },
+            take: 15,
+            include: { scenarios: { omit: { executionDetails: true } } },
+          }),
+      preloadedData?.coverageSummary !== undefined
+        ? Promise.resolve(preloadedData.coverageSummary)
+        : prisma.coverageSummary.findUnique({ where: { snapshotId } }),
+      preloadedData?.coverageFiles !== undefined
+        ? Promise.resolve(preloadedData.coverageFiles)
+        : prisma.coverageFile.findMany({ where: { snapshotId } }),
+      preloadedData?.aiTests !== undefined
+        ? Promise.resolve(preloadedData.aiTests)
+        : prisma.aiTest.findMany({ where: { snapshotId } }),
+      preloadedData?.snapshot !== undefined
+        ? Promise.resolve(preloadedData.snapshot)
+        : prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { id: true, storagePath: true, rootDir: true, createdAt: true },
+          }),
+      preloadedData?.jobs !== undefined
+        ? Promise.resolve(preloadedData.jobs)
+        : prisma.job.findMany({
+            where: { snapshotId },
+            orderBy: { createdAt: "desc" },
+            take: 100,
+            select: {
+              id: true,
+              type: true,
+              status: true,
+              payloadJson: true,
+              resultJson: true,
+              createdAt: true,
+              startedAt: true,
+              finishedAt: true,
+              errorMessage: true,
+            },
+          }),
+      preloadedData?.structureAnalysis !== undefined
+        ? Promise.resolve(preloadedData.structureAnalysis)
+        : typeof prisma?.projectStructureAnalysis?.findUnique === "function"
+          ? prisma.projectStructureAnalysis
+              .findUnique({
+                where: { snapshotId },
+                select: { schemaVersion: true, resultJson: true },
+              })
+              .catch(() => null)
+          : Promise.resolve(null),
     ]);
   const dbTime = Date.now() - startDb;
   const latestRun = (testRuns && testRuns[0]) || null;
+  const resolvedSnapshotRoot = snapshot?.rootDir
+    ? resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir
+    : null;
   const analyzeJob = (jobs || []).find((j) => j.type === "ANALYSIS");
   const generateJob = (jobs || []).find((j) => j.type === "AI_TESTS");
   const executeJob = (jobs || []).find(
@@ -768,57 +1316,169 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       j.type === "CYPRESS_SYSTEM_TEST",
   );
 
-  // 2. Load API Endpoints (Cached by snapshotId in memory and fs)
+  // Extract which endpoints were actually targeted/analyzed across historical Supertest executions
+  let isFullSupertestAnalysis = false;
+  let isLatestSupertestTargeted = false;
+  const analyzedEndpointSet = new Set();
+  const supertestSuccessJobs = (jobs || []).filter(
+    (j) =>
+      (j.type === "SUPERTEST_COVERAGE" || j.type === "PLAYWRIGHT_API") &&
+      j.status === "SUCCESS",
+  );
+  const latestSuccessSupertestJob = supertestSuccessJobs[0] || null;
+
+  const parseJobAnalyzedEndpoints = (jobItem) => {
+    let jResult = {};
+    let jPayload = {};
+    try {
+      jResult =
+        typeof jobItem.resultJson === "string"
+          ? JSON.parse(jobItem.resultJson)
+          : jobItem.resultJson || {};
+    } catch (_) {}
+    try {
+      jPayload =
+        typeof jobItem.payloadJson === "string"
+          ? JSON.parse(jobItem.payloadJson)
+          : jobItem.payloadJson || {};
+    } catch (_) {}
+    return Array.isArray(jResult?.analyzedEndpoints)
+      ? jResult.analyzedEndpoints
+      : Array.isArray(jPayload?.targetEndpoints) && jPayload.targetEndpoints.length > 0
+        ? jPayload.targetEndpoints
+        : null;
+  };
+
+  if (latestSuccessSupertestJob) {
+    const latestList = parseJobAnalyzedEndpoints(latestSuccessSupertestJob);
+    isLatestSupertestTargeted = Boolean(latestList && !latestList.includes("*"));
+  }
+
+  for (const jobItem of supertestSuccessJobs) {
+    const list = parseJobAnalyzedEndpoints(jobItem);
+    if (!list || list.includes("*")) {
+      isFullSupertestAnalysis = true;
+    } else {
+      for (const item of list) {
+        const norm = String(item || "").trim().toUpperCase();
+        if (norm) analyzedEndpointSet.add(norm);
+      }
+    }
+  }
+
+  // 2. Load API Endpoints (Cached by DB, memory, and fs)
   const startAst = Date.now();
-  let discoveredEndpointsCache = endpointCache.get(snapshotId);
+  const dbIntegrationScan = loadIntegrationScanFromDb(structureAnalysis);
+  const hasPriorHistory = Boolean(
+    (latestRun && latestRun.status !== "CANCELED") ||
+      (jobs || []).some(
+        (j) =>
+          (j.type === "SUPERTEST_COVERAGE" || j.type === "PLAYWRIGHT_API") &&
+          j.status === "SUCCESS",
+      ),
+  );
+
+  let discoveredEndpointsCache = options.scanNow
+    ? null
+    : endpointCache.get(snapshotId);
   let discoveredEndpoints = [];
   let sourceFilesCount = 0;
   let sourceTime = 0;
+  let loadedSourceCode = null;
+  let hasScannedEndpoints = Boolean(
+    options.scanNow ||
+      dbIntegrationScan?.explicitlyScanned ||
+      hasPriorHistory ||
+      discoveredEndpointsCache?.explicitlyScanned,
+  );
 
   if (!discoveredEndpointsCache) {
-    // Try file cache
-    const fs = (await import("fs")).default;
-    const path = (await import("path")).default;
-    const cacheFile = snapshot?.rootDir
+    // 2a. Check persisted DB scan first (unless explicitly rescanning)
+    if (!options.scanNow && dbIntegrationScan) {
+      discoveredEndpoints = dbIntegrationScan.discoveredEndpoints || [];
+      sourceFilesCount = dbIntegrationScan.sourceFilesCount || 0;
+      hasScannedEndpoints = true;
+      endpointCache.set(snapshotId, {
+        discoveredEndpoints,
+        sourceFilesCount,
+        explicitlyScanned: true,
+      });
+      discoveredEndpointsCache = endpointCache.get(snapshotId);
+    }
+
+    // 2b. Fallback to file cache
+    const resolvedRootDir = resolvedSnapshotRoot;
+    const cacheFile = resolvedRootDir
       ? path.join(
-          snapshot.rootDir,
+          resolvedRootDir,
           ".covai-temp",
           `endpoints-${snapshotId}.json`,
         )
       : null;
 
-    try {
-      if (cacheFile && fs.existsSync(cacheFile)) {
-        const fileData = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-        discoveredEndpoints = fileData.discoveredEndpoints;
-        sourceFilesCount = fileData.sourceFilesCount;
-        endpointCache.set(snapshotId, {
-          discoveredEndpoints,
-          sourceFilesCount,
-        });
-        discoveredEndpointsCache = endpointCache.get(snapshotId);
+    if (!discoveredEndpointsCache && !options.scanNow) {
+      try {
+        if (cacheFile && fs.existsSync(cacheFile)) {
+          const fileData = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+          const isExplicitlyScanned = Boolean(fileData.explicitlyScanned);
+          const canUseCachedFile =
+            isExplicitlyScanned || hasPriorHistory || !options.skipAutoScan;
+          if (canUseCachedFile) {
+            discoveredEndpoints = fileData.discoveredEndpoints || [];
+            sourceFilesCount = fileData.sourceFilesCount || 0;
+            hasScannedEndpoints = isExplicitlyScanned || hasPriorHistory;
+            endpointCache.set(snapshotId, {
+              discoveredEndpoints,
+              sourceFilesCount,
+              explicitlyScanned: isExplicitlyScanned,
+            });
+            discoveredEndpointsCache = endpointCache.get(snapshotId);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to read endpoint cache file", e);
       }
-    } catch (e) {
-      console.error("Failed to read endpoint cache file", e);
     }
 
-    // Fallback to computing
-    if (!discoveredEndpointsCache) {
+    const shouldRunAstScan =
+      !discoveredEndpointsCache &&
+      (Boolean(options.scanNow) || hasPriorHistory || !options.skipAutoScan);
+
+    // 2c. Run AST Scan when explicitly triggered or allowed
+    if (shouldRunAstScan) {
       const startSource = Date.now();
-      const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
+      const sourceCode = await loadSourceCode(snapshotId, snapshot?.rootDir).catch(() => []);
+      loadedSourceCode = sourceCode;
       sourceTime = Date.now() - startSource;
       sourceFilesCount = sourceCode.length;
       discoveredEndpoints = extractValidEndpoints(sourceCode);
-      endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+      const isExplicitlyScanned = Boolean(options.scanNow);
+      hasScannedEndpoints = isExplicitlyScanned || hasPriorHistory || !options.skipAutoScan;
+      endpointCache.set(snapshotId, {
+        discoveredEndpoints,
+        sourceFilesCount,
+        explicitlyScanned: isExplicitlyScanned,
+      });
 
-      if (cacheFile) {
+      if (isExplicitlyScanned) {
+        await saveIntegrationScanToDb(snapshotId, {
+          discoveredEndpoints,
+          sourceFilesCount,
+        });
+      }
+
+      if (cacheFile && resolvedRootDir && fs.existsSync(resolvedRootDir)) {
         try {
           if (!fs.existsSync(path.dirname(cacheFile))) {
             fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
           }
           fs.writeFileSync(
             cacheFile,
-            JSON.stringify({ discoveredEndpoints, sourceFilesCount }),
+            JSON.stringify({
+              discoveredEndpoints,
+              sourceFilesCount,
+              explicitlyScanned: isExplicitlyScanned,
+            }),
             "utf8",
           );
         } catch (e) {
@@ -827,8 +1487,19 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       }
     }
   } else {
-    sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
-    discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+    const canUseMemoryCache =
+      Boolean(discoveredEndpointsCache.explicitlyScanned) ||
+      hasPriorHistory ||
+      !options.skipAutoScan;
+    if (canUseMemoryCache) {
+      sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
+      discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+      hasScannedEndpoints = true;
+    } else {
+      sourceFilesCount = 0;
+      discoveredEndpoints = [];
+      hasScannedEndpoints = false;
+    }
   }
   const astTime = Date.now() - startAst;
 
@@ -839,20 +1510,56 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     executeJob &&
     executeJob.status === "FAILED" &&
     (!latestRun || latestRun.createdAt < executeJob.createdAt);
-  const outputJob = jobs.find(job => ['SUPERTEST_COVERAGE','PLAYWRIGHT_API'].includes(job.type) && job.status === 'SUCCESS' && job.resultJson);
+  const outputJob = jobs.find(
+    (job) =>
+      ["SUPERTEST_COVERAGE", "PLAYWRIGHT_API"].includes(job.type) &&
+      job.status === "SUCCESS" &&
+      job.resultJson,
+  );
   let artifactPrefix;
-  try { artifactPrefix = outputJob ? JSON.parse(outputJob.resultJson).storageBasePath : undefined; } catch { /* Legacy results remain readable. */ }
-  if (!artifactPrefix && typeof snapshot?.storagePath === 'string' && snapshot.storagePath.startsWith('projects/') && snapshot.storagePath.endsWith('/coverage')) artifactPrefix = snapshot.storagePath;
-  if (artifactPrefix && (typeof artifactPrefix !== 'string' || !artifactPrefix.startsWith('projects/') || artifactPrefix.split('/').includes('..'))) artifactPrefix = undefined;
-  const firebaseCacheKey = `${snapshotId}_${latestRun?.id || "none"}_${outputJob?.id || 'legacy'}`;
+  try {
+    artifactPrefix = outputJob
+      ? JSON.parse(outputJob.resultJson).storageBasePath
+      : undefined;
+  } catch {
+    /* Legacy results remain readable. */
+  }
+  if (
+    !artifactPrefix &&
+    typeof snapshot?.storagePath === "string" &&
+    snapshot.storagePath.startsWith("projects/") &&
+    snapshot.storagePath.endsWith("/coverage")
+  )
+    artifactPrefix = snapshot.storagePath;
+  if (
+    artifactPrefix &&
+    (typeof artifactPrefix !== "string" ||
+      !artifactPrefix.startsWith("projects/") ||
+      artifactPrefix.split("/").includes(".."))
+  )
+    artifactPrefix = undefined;
+  const firebaseCacheKey = `${snapshotId}_${latestRun?.id || "none"}_${outputJob?.id || "legacy"}`;
   if (executeFailedBeforeTests) {
     // Current execution job failed before tests could execute; do not load stale prior scenarios
     testScenarios = [];
   } else if (firebaseCache.has(firebaseCacheKey)) {
     testScenarios = firebaseCache.get(firebaseCacheKey);
   } else if (latestRun?.scenarios?.length > 0) {
-    // FAST PATH 1: Directly use scenarios already retrieved from PostgreSQL DB (0ms network)
-    testScenarios = latestRun.scenarios.map((s) => ({
+    // FAST PATH 1: Directly use scenarios already retrieved from PostgreSQL DB (0ms network),
+    // merging across recent runs (newest wins per testFile + title) so targeted single-endpoint runs
+    // never wipe out other endpoints' executed scenarios on reload.
+    const mergedRunScenarios = [];
+    const seenRunScenarioKeys = new Set();
+    for (const runItem of testRuns || [latestRun]) {
+      for (const s of runItem?.scenarios || []) {
+        const cleanFile = cleanStoragePath(s.testFile) || s.testFile || "";
+        const dedupKey = `${String(cleanFile).toLowerCase()}::${String(s.title || "").trim().toLowerCase()}`;
+        if (seenRunScenarioKeys.has(dedupKey)) continue;
+        seenRunScenarioKeys.add(dedupKey);
+        mergedRunScenarios.push(s);
+      }
+    }
+    testScenarios = mergedRunScenarios.map((s) => ({
       title: s.title,
       suiteName: s.suiteName,
       status: s.status,
@@ -882,17 +1589,18 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
               : null,
       duration: typeof s.duration === "number" ? s.duration : s.durationMs || 0,
       failureMessages: s.failureMessages || [],
-      testFile: s.testFile || null,
+      testFile: cleanStoragePath(s.testFile) || s.testFile || null,
     }));
     firebaseCache.set(firebaseCacheKey, testScenarios);
   } else {
-    // FAST PATH 2: Check local disk (0ms network)
+    // FAST PATH 2: Check local disk (0ms network) using resolved host rootDir
     let loadedFromDisk = false;
-    if (snapshot?.rootDir) {
+    if (resolvedSnapshotRoot) {
       const candidatePaths = [
-        path.join(snapshot.rootDir, "coverage", "integration-scenarios.json"),
+        path.join(resolvedSnapshotRoot, "coverage", "integration-scenarios.json"),
+        path.join(resolvedSnapshotRoot, ".covai", "integration-scenarios.json"),
         path.join(
-          snapshot.rootDir,
+          resolvedSnapshotRoot,
           ".covai-temp",
           "integration-scenarios.json",
         ),
@@ -910,13 +1618,13 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       }
     }
 
-    // SLOW FALLBACK: Only if DB and local disk do not have scenarios, query Firebase Cloud Storage
-    if (!loadedFromDisk && artifactPrefix) {
+    // SLOW FALLBACK: Only if no TestRun exists in PostgreSQL DB and local disk does not have scenarios, query Firebase Cloud Storage for legacy jobs
+    if (!loadedFromDisk && artifactPrefix && !latestRun && Boolean(outputJob)) {
       try {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error("Firebase scenario check timed out")),
-            2500,
+            400,
           ),
         );
         const downloadPromise = (async () => {
@@ -951,51 +1659,105 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
   // 3.5 Load Runtime Execution Evidence
   let runtimeEvidences = [];
-  if (snapshot?.rootDir) {
-    const candidateEvPaths = [
-      path.join(snapshot.rootDir, "coverage", "runtime-evidence.json"),
-      path.join(snapshot.rootDir, ".covai-temp", "runtime-evidence.json"),
-    ];
-    for (const cand of candidateEvPaths) {
-      try {
-        if (fs.existsSync(cand)) {
-          const parsed = JSON.parse(fs.readFileSync(cand, "utf8"));
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            runtimeEvidences = parsed;
-            break;
+  if (runtimeEvidenceCache.has(firebaseCacheKey)) {
+    runtimeEvidences = runtimeEvidenceCache.get(firebaseCacheKey);
+  } else {
+    if (resolvedSnapshotRoot) {
+      const candidateEvPaths = [
+        path.join(resolvedSnapshotRoot, "coverage", "runtime-evidence.json"),
+        path.join(resolvedSnapshotRoot, ".covai", "runtime-evidence.json"),
+        path.join(resolvedSnapshotRoot, ".covai-temp", "runtime-evidence.json"),
+      ];
+      for (const cand of candidateEvPaths) {
+        try {
+          if (fs.existsSync(cand)) {
+            const parsed = JSON.parse(fs.readFileSync(cand, "utf8"));
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              runtimeEvidences = parsed;
+              break;
+            }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
     }
+
+    if (
+      runtimeEvidences.length === 0 &&
+      artifactPrefix &&
+      testScenarios.length > 0 &&
+      (!latestRun || (latestRun.status !== "CANCELED" && (latestRun.totalTests || 0) > 0)) &&
+      Boolean(latestRun || outputJob)
+    ) {
+      try {
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(
+            () =>
+              reject(new Error("Firebase runtime-evidence check timed out")),
+            400,
+          ),
+        );
+        const downloadPromise = (async () => {
+          const file = getBucket().file(
+            `${artifactPrefix}/runtime-evidence.json`,
+          );
+          const [exists] = await file.exists();
+          if (exists) {
+            const [content] = await file.download();
+            return JSON.parse(content.toString("utf8"));
+          }
+          return null;
+        })();
+        const downloaded = await Promise.race([
+          downloadPromise,
+          timeoutPromise,
+        ]);
+        if (downloaded && Array.isArray(downloaded)) {
+          runtimeEvidences = downloaded;
+        }
+      } catch (e) {
+        // non-fatal
+      }
+    }
+    runtimeEvidenceCache.set(firebaseCacheKey, runtimeEvidences);
   }
 
-  if (runtimeEvidences.length === 0 && artifactPrefix) {
+  // Extract staged workspace scenario deletions so deleted repo/orphan scenarios stay hidden in Workspace until Apply
+  const stagedDeletedScenarios = (() => {
+    if (!structureAnalysis?.resultJson) return [];
     try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Firebase runtime-evidence check timed out")),
-          2500,
-        ),
-      );
-      const downloadPromise = (async () => {
-        const file = getBucket().file(
-          `${artifactPrefix}/runtime-evidence.json`,
-        );
-        const [exists] = await file.exists();
-        if (exists) {
-          const [content] = await file.download();
-          return JSON.parse(content.toString("utf8"));
-        }
-        return null;
-      })();
-      const downloaded = await Promise.race([downloadPromise, timeoutPromise]);
-      if (downloaded && Array.isArray(downloaded)) {
-        runtimeEvidences = downloaded;
-      }
-    } catch (e) {
-      // non-fatal
+      const parsed =
+        typeof structureAnalysis.resultJson === "string"
+          ? JSON.parse(structureAnalysis.resultJson)
+          : structureAnalysis.resultJson || {};
+      return Array.isArray(parsed?.deletedIntegrationScenarios)
+        ? parsed.deletedIntegrationScenarios
+        : [];
+    } catch {
+      return [];
     }
-  }
+  })();
+
+  const isStagedDeletedScenario = (item, fallbackFilePath = null) => {
+    if (!stagedDeletedScenarios || stagedDeletedScenarios.length === 0 || !item) {
+      return false;
+    }
+    const itemTitle = String(item.testName || item.title || item.name || "").trim().toLowerCase();
+    const itemId = item.scenarioId ? String(item.scenarioId) : null;
+    const itemFile = String(item.filePath || item.testFile || fallbackFilePath || "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
+      .toLowerCase();
+    return stagedDeletedScenarios.some((d) => {
+      const dTitle = String(d?.testName || "").trim().toLowerCase();
+      const dId = d?.scenarioId ? String(d.scenarioId) : null;
+      const dFile = String(d?.filePath || "").replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+      const fileCompatible = !dFile || !itemFile || dFile === itemFile || dFile.endsWith(itemFile) || itemFile.endsWith(dFile);
+      if (!fileCompatible) return false;
+      if (dTitle && itemTitle && dTitle === itemTitle) return true;
+      if (dId && itemId && dId === itemId) return true;
+      return false;
+    });
+  };
 
   // Isolate runtime evidence to the active testRun to prevent mixing historical runs
   if (latestRun?.id && Array.isArray(runtimeEvidences)) {
@@ -1018,38 +1780,99 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     }
   });
 
+  const hasAnalyzedCoverage = Boolean(
+    hasPriorHistory || integrationTests.length > 0 || options.includeProjectTests,
+  );
+
+  // Discover existing integration test files from the project codebase whenever endpoints have been scanned
+  if (resolvedSnapshotRoot && hasScannedEndpoints) {
+    try {
+      const projectExistingTests = await discoverProjectIntegrationTests(
+        resolvedSnapshotRoot,
+      );
+      const existingFilePaths = new Set(
+        integrationTests.map((t) =>
+          (t.filePath || "").replace(/\\/g, "/").toLowerCase(),
+        ),
+      );
+      for (const pt of projectExistingTests) {
+        const norm = (pt.filePath || "").replace(/\\/g, "/").toLowerCase();
+        if (!existingFilePaths.has(norm)) {
+          integrationTests.push(pt);
+          existingFilePaths.add(norm);
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[buildIntegrationWorkspace] Error discovering project tests:",
+        err.message,
+      );
+    }
+  }
+
   // 5.5 Load Unified Coverage and Trace API Coverage (Cached by snapshotId + latestRun)
-  const apiTraceCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
-  let apiTraceResult = apiTraceCache.get(apiTraceCacheKey);
-  if (!apiTraceResult) {
-    let fileCoverageMap = {};
-    if (snapshot?.rootDir) {
+  let fileCoverageMap = null;
+  let sourceCodeList = null;
+
+  const getOrLoadFileCoverage = () => {
+    if (fileCoverageMap !== null) return fileCoverageMap;
+    fileCoverageMap = {};
+    if (resolvedSnapshotRoot) {
       const candidateCovPaths = [
-        path.join(snapshot.rootDir, "coverage", "coverage-final.json"),
-        path.join(snapshot.rootDir, ".covai-temp", "coverage-final.json"),
+        path.join(resolvedSnapshotRoot, "coverage", "coverage-final.json"),
+        path.join(resolvedSnapshotRoot, ".covai-temp", "coverage-final.json"),
       ];
       for (const cp of candidateCovPaths) {
         try {
           if (fs.existsSync(cp)) {
-            const parsed = parseUnifiedCoverage(cp, snapshot.rootDir);
+            const parsed = parseUnifiedCoverage(cp, resolvedSnapshotRoot);
             if (parsed && parsed.files) {
               fileCoverageMap = parsed.files;
               break;
             }
           }
-        } catch (_) {}
+        } catch (err) {
+          console.warn(
+            "[buildIntegrationWorkspace] Failed to parse unified coverage:",
+            err.message,
+          );
+        }
       }
     }
+    return fileCoverageMap;
+  };
 
-    let sourceCodeList = [];
+  const getOrLoadSourceCode = async () => {
+    if (sourceCodeList !== null) return sourceCodeList;
+    if (loadedSourceCode) {
+      sourceCodeList = loadedSourceCode;
+      return sourceCodeList;
+    }
     try {
-      sourceCodeList = await loadSourceCode(snapshotId);
-    } catch (_) {}
+      sourceCodeList = await loadSourceCode(snapshotId, snapshot?.rootDir);
+      loadedSourceCode = sourceCodeList;
+    } catch (err) {
+      console.warn(
+        "[buildIntegrationWorkspace] Failed to load source code:",
+        err.message,
+      );
+      sourceCodeList = [];
+    }
+    return sourceCodeList;
+  };
+
+  const apiTraceCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
+  let apiTraceResult = hasScannedEndpoints
+    ? apiTraceCache.get(apiTraceCacheKey)
+    : { endpointsTraceability: [], summary: {} };
+  if (!apiTraceResult && hasScannedEndpoints) {
+    const fMap = getOrLoadFileCoverage();
+    const sCode = await getOrLoadSourceCode();
 
     apiTraceResult = traceApiEndpointCoverage({
       endpoints: discoveredEndpoints,
-      fileCoverageMap,
-      sourceCode: sourceCodeList,
+      fileCoverageMap: fMap,
+      sourceCode: sCode,
     });
     apiTraceCache.set(apiTraceCacheKey, apiTraceResult);
   }
@@ -1150,6 +1973,9 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
           : requests;
     }
 
+    requests = requests.filter((r) => !isStagedDeletedScenario(r, t.filePath));
+    approvedReqs = approvedReqs.filter((r) => !isStagedDeletedScenario(r, t.filePath));
+
     return {
       test: t,
       requests,
@@ -1170,7 +1996,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
   const testParseTime = Date.now() - startTestParse;
 
-  const enrichedScenarios = testScenarios.map((s) => {
+  const activeTestScenarios = testScenarios.filter((s) => !isStagedDeletedScenario(s, s.testFile));
+  const enrichedScenarios = activeTestScenarios.map((s) => {
     let matchingRequests = allParsedRequests.filter(
       (pr) =>
         pr.testName === s.title &&
@@ -1278,6 +2105,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
           scenarioId: genReq.scenarioId,
           testId: genReq.testId,
           title: genReq.testName,
+          name: genReq.testName,
+          method: genReq.method,
+          path: genReq.path,
+          code: genReq.code,
+          origin: genReq.origin,
           suiteName: genReq.suiteName || "",
           status: "not_run",
           duration: 0,
@@ -1307,11 +2139,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             ? Number(parsedFailure.expected)
             : null;
         const expectedFromTitle = rest.title.match(
-          /(?:should return|returns?|status|mong đợi|kỳ vọng)\s*[:=]?\s*(\d{3})/i,
+          /(?:should return|returns?|status|expected)\s*[:=]?\s*(\d{3})/i,
         )
           ? Number(
               rest.title.match(
-                /(?:should return|returns?|status|mong đợi|kỳ vọng)\s*[:=]?\s*(\d{3})/i,
+                /(?:should return|returns?|status|expected)\s*[:=]?\s*(\d{3})/i,
               )[1],
             )
           : null;
@@ -1331,8 +2163,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                   expectedStatus: expectedStatus,
                 },
                 failureMessages: rest.failureMessages || [],
-                fileCoverageMap,
-                sourceCode: sourceCodeList,
+                fileCoverageMap: getOrLoadFileCoverage(),
+                sourceCode: sourceCodeList || loadedSourceCode || [],
               })
             : null;
         const classification = classifyScenarioFailure(rest, req);
@@ -1619,6 +2451,19 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
         return {
           ...rest,
+          aiTestId: rest.aiTestId || rest.testId || req?.testId || null,
+          scenarioId: rest.scenarioId || req?.scenarioId || rest.id || null,
+          filePath: rest.filePath || req?.filePath || req?.testFile || null,
+          name: rest.name || rest.title || req?.testName,
+          method: rest.method || requestMethod,
+          path: rest.path || rawReqPath,
+          code: rest.code || req?.code || null,
+          origin: rest.origin || req?.origin || "AI_GENERATED",
+          testFile:
+            cleanStoragePath(rest.testFile || req?.testFile) ||
+            rest.testFile ||
+            req?.testFile ||
+            null,
           targetEndpoint: `${ep.method.toUpperCase()} ${ep.fullPath || ep.path}`,
           failureLayer:
             failureDiagnostics?.failureLayer ||
@@ -1662,6 +2507,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
           requestPayload: req?.payload || null,
           queryParams: req?.queryParams || null,
           expectedStatus,
+          expectedStatuses: req?.expectedStatuses || null,
           actualStatus,
           actualStatusFromRuntime,
           evidenceSource,
@@ -1669,7 +2515,14 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
           runtimeEvidence: structuredEvidence,
           setupRequests,
           teardownRequests,
+          failureSummary:
+            rest.status === "failed" || parsedFailure
+              ? summarizeFailureMessage(rest.failureMessages, parsedFailure, req)
+              : null,
           failureDetails: parsedFailure,
+          failureMessages: Array.isArray(rest.failureMessages)
+            ? rest.failureMessages.map((m) => stripAnsi(String(m || "")))
+            : rest.failureMessages,
         };
       },
     );
@@ -1707,6 +2560,20 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         (s.actualStatusFromRuntime !== null &&
           s.actualStatusFromRuntime !== undefined),
     );
+    const epSignatureUpper = `${String(ep.method || "GET").toUpperCase()} ${String(ep.fullPath || ep.path || "/").trim()}`.toUpperCase();
+    const hasActualRun = passedCount + failedCount > 0;
+    const aiGeneratedCount = parsedTests.reduce((acc, pt) => {
+      if (String(pt.test?.id || pt.id || "").startsWith("existing_test_")) return acc;
+      return acc + pt.requests.filter((r) => isMatch(r, ep)).length;
+    }, 0);
+    const wasAnalyzed =
+      isFullSupertestAnalysis ||
+      analyzedEndpointSet.has(epSignatureUpper) ||
+      hasActualRun;
+
+    const visibleScenarios = cleanScenarios;
+
+    const caseCoverage = getEndpointCaseCoverage(ep, visibleScenarios);
     const metrics = evaluateEndpointMetrics({
       executedCount,
       passedCount,
@@ -1717,6 +2584,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       consistentPassedCount,
       hasRelevantTestFile,
       hasObservedServerResponse,
+      caseCoverageComplete: caseCoverage.isFullyVerified,
     });
     const hasGenuineApiCall = metrics.hasGenuineApiCall;
     const isVerifiedTested = metrics.isVerifiedTested;
@@ -1726,8 +2594,10 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
     if (executedCount > 0) {
       if (hasGenuineApiCall) {
-        testedApis++;
         executedApis++;
+        if (failedCount === 0 && caseCoverage.isFullyVerified) {
+          testedApis++;
+        }
       }
       if (isImplementationConsistent) {
         implementationConsistentApis++;
@@ -1751,14 +2621,22 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       return acc + pt.approvedReqs.filter((r) => isMatch(r, ep)).length;
     }, 0);
 
+    const finalExecutedCount = hasActualRun ? executedCount : 0;
+    if (!hasActualRun && visibleScenarios.length === 0) {
+      status = wasAnalyzed ? "UNCOVERED" : "DISCOVERED";
+    }
+
     return {
       id: ep.id || `${ep.method}:${ep.fullPath}`,
       method: ep.method,
       path: ep.fullPath,
       route: ep.fullPath,
+      description: ep.description || buildEndpointDescription(ep),
       status,
-      testCount: executedCount, // Legacy for UI if needed
-      executedCount,
+      caseCoverage,
+      wasAnalyzed,
+      testCount: finalExecutedCount, // Legacy for UI if needed
+      executedCount: finalExecutedCount,
       passedCount,
       failedCount,
       skippedCount: mappedScenarios.filter((s) => s.status === "pending")
@@ -1890,7 +2768,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       provenance: ep.provenance,
       generatedCount,
       approvedCount,
-      scenarios: cleanScenarios,
+      scenarios: visibleScenarios,
     };
   });
 
@@ -2059,12 +2937,19 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       ? Math.round(totalScenarioDuration / allExecutedScenarios.length)
       : 0;
 
+  const computedFingerprint = computeIntegrationFingerprintFromData({
+    latestRun,
+    latestJob: (jobs && jobs[0]) || null,
+    aiTestsCount: Array.isArray(aiTests) ? aiTests.length : 0,
+    snapshotMeta: snapshot,
+  });
+
   const totalTime = Date.now() - start;
   console.log(
     `[PERF: Integration Workspace] snapshotId=${snapshotId} Total=${totalTime}ms | FS_Read=${sourceTime}ms | AST_Extract=${astTime}ms | DB=${dbTime}ms | Firebase=${fbTime}ms | Test_Parse=${testParseTime}ms`,
   );
 
-  return {
+  const payload = {
     snapshot: {
       id: snapshotId,
       rootDir: snapshot?.rootDir || "",
@@ -2154,13 +3039,35 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       semanticState,
       executionJobId,
       testRunId,
-      endpointCoverageMetrics: apiTraceResult?.summary || {
-        totalEndpoints: discoveredEndpoints.length,
-        coveredEndpoints: 0,
-        uncoveredEndpoints: discoveredEndpoints.length,
-        endpointCoveragePct: 0,
-        effectiveCoveragePct: 0,
-      },
+      endpointCoverageMetrics: (() => {
+        const hasExecutedRun = (latestRun?.totalTests || 0) > 0;
+        const coveredEpCount = endpoints.filter(
+          (e) => e.status === "Covered",
+        ).length;
+        const effectiveCoveredEp =
+          hasExecutedRun && discoveredEndpoints.length > 0 ? coveredEpCount : 0;
+        const effectiveEpCovPct =
+          hasExecutedRun && discoveredEndpoints.length > 0
+            ? Number(
+                ((effectiveCoveredEp / discoveredEndpoints.length) * 100).toFixed(
+                  1,
+                ),
+              )
+            : 0;
+        return {
+          ...(apiTraceResult?.summary || {}),
+          totalEndpoints: discoveredEndpoints.length,
+          coveredEndpoints: effectiveCoveredEp,
+          partialEndpoints: endpoints.filter((e) => e.status === "Partial")
+            .length,
+          uncoveredEndpoints: Math.max(
+            0,
+            discoveredEndpoints.length - effectiveCoveredEp,
+          ),
+          endpointCoveragePct: effectiveEpCovPct,
+          effectiveCoveragePct: effectiveEpCovPct,
+        };
+      })(),
       endpointsTraceability: apiTraceResult?.endpointsTraceability || [],
       codeCoverage: coverageSummary
         ? {
@@ -2257,30 +3164,50 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       },
     },
     generation: {
-      hasAnalysis: analyzeJob?.status === "SUCCESS",
+      hasAnalysis:
+        analyzeJob?.status === "SUCCESS" || discoveredEndpoints.length > 0,
+      hasScannedEndpoints,
+      hasAnalyzedCoverage,
+      hasPriorHistory,
       hasGeneratedTests: integrationTests.length > 0,
       targetedApis,
       generatedFiles: integrationTests.length,
       generatedScenarios: allParsedRequests.length,
       isApproved,
       isValid,
+      telemetry: integrationTests[0]?.metaJson
+        ? (() => {
+            try {
+              const m =
+                typeof integrationTests[0].metaJson === "string"
+                  ? JSON.parse(integrationTests[0].metaJson)
+                  : integrationTests[0].metaJson;
+              return m.telemetry || null;
+            } catch {
+              return null;
+            }
+          })()
+        : null,
     },
-    endpoints,
-    aiTests: integrationTests.map((t) => {
+    endpoints: hasScannedEndpoints ? endpoints : [],
+    aiTests: hasScannedEndpoints
+      ? integrationTests.map((t) => {
       const meta =
         (typeof t.metaJson === "string"
           ? JSON.parse(t.metaJson)
           : t.metaJson) || {};
       const cacheEntry = snapshotParseCache.get(t.id);
-      const cachedRequests = cacheEntry
+      const cachedRequests = (cacheEntry
         ? cacheEntry.requests
-        : extractValidatedTestRequests(t);
+        : extractValidatedTestRequests(t)
+      ).filter((r) => !isStagedDeletedScenario(r, t.filePath));
       return {
         id: t.id,
         version: scenarioArtifactVersion(t),
         filePath: t.filePath,
         status: meta.status || "DRAFT",
         isValid: meta.isValid !== false,
+        telemetry: meta.telemetry || null,
         requests: cachedRequests.map((r) => {
           const metaReq = meta.requests
             ? meta.requests.find(
@@ -2308,10 +3235,12 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             createdAt: metaReq?.createdAt || null,
             lastModifiedAt: metaReq?.lastModifiedAt || null,
             originalTestName: metaReq?.originalTestName || null,
+            telemetry: metaReq?.telemetry || meta.telemetry || null,
           };
         }),
       };
-    }),
+    })
+      : [],
     execution: latestRun
       ? {
           id: latestRun.id,
@@ -2330,6 +3259,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       : null,
     semanticState,
   };
+
+  return { payload, fingerprint: computedFingerprint };
 };
 
 /**

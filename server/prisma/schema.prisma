@@ -7,6 +7,40 @@ datasource db {
   provider = "postgresql"
 }
 
+model AiEvaluationProjectSettings {
+  projectId String @id
+  revision Int @default(1)
+  settings Json
+  encryptedEnvironment String?
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model AiEvaluationProjectRun {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  jobId String @unique
+  evaluationRunId String?
+  idempotencyKey String
+  status String @default("QUEUED")
+  phase String @default("CHECKING")
+  configuration Json
+  encryptedEnvironment String?
+  discovery Json?
+  result Json?
+  errorCode String?
+  errorMessage String?
+  leaseToken String?
+  leaseUntil DateTime?
+  createdAt DateTime @default(now())
+  finishedAt DateTime?
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([projectId, idempotencyKey])
+  @@index([status, leaseUntil])
+  @@index([projectId, createdAt])
+}
+
 model AiEvaluationTarget {
   id String @id @default(cuid())
   projectId String
@@ -240,6 +274,23 @@ model AiEvaluationHumanReview {
   @@index([criterionResultId, createdAt])
 }
 
+model AiEvaluationDesignAudit {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  detected Boolean @default(false)
+  designScore Float?
+  summaryJson Json
+  findingsJson Json
+  autoFillConfigJson Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  @@unique([projectId, snapshotId])
+  @@index([projectId, createdAt])
+}
+
 model User {
   id                   String         @id @default(cuid())
   email                String         @unique
@@ -267,6 +318,8 @@ model User {
   requirementApprovals SystemRequirementRevision[] @relation("RequirementApprover")
   bindingApprovals SystemAssertionBinding[] @relation("BindingApprover")
   proposalApplications SystemTestProposal[] @relation("ProposalApplier")
+  editorUpdates ProjectEditorUpdate[]
+  codeChanges ProjectCodeChange[]
   projectMemberships ProjectMember[] @relation("MemberUser")
   membershipsAdded ProjectMember[] @relation("MemberAddedBy")
   sentProjectInvitations ProjectInvitation[] @relation("InvitationSender")
@@ -282,14 +335,20 @@ model User {
 }
 
 model Project {
+  chatbotEvaluations AiEvaluationProjectRun[]
+  chatbotEvaluationSettings AiEvaluationProjectSettings?
   evaluationTargets AiEvaluationTarget[]
   evaluationSources AiEvaluationKnowledgeSource[]
   evaluationProfiles AiEvaluationProfile[]
   evaluationRuns AiEvaluationRun[]
+  evaluationDesignAudits AiEvaluationDesignAudit[]
   id                   String            @id @default(cuid())
+  editorDocuments ProjectEditorDocument[]
+  codeChanges ProjectCodeChange[]
   accessRevision       Int               @default(0)
   workspaceRevision    Int               @default(0)
   eventSequence        Int               @default(0)
+  activeSnapshotId     String?
   ownerId              String
   name                 String
   description          String?
@@ -332,10 +391,21 @@ model Project {
   operations           ProjectOperation[]
   operationRequests    ProjectOperationRequest[]
 
+  lifecycleStatus      ProjectLifecycleStatus @default(NOT_STARTED)
+  lifecycleUpdatedAt   DateTime               @default(now())
+  isPinned             Boolean                @default(false)
+
   @@index([ownerId])
+  @@index([ownerId, lifecycleStatus])
+  @@index([updatedAt])
 }
 
 model ProjectSnapshot {
+  evaluationDesignAudits AiEvaluationDesignAudit[]
+  systemSuiteState SystemSuiteState?
+  systemSuiteVersions SystemSuiteVersion[]
+  editorDocuments ProjectEditorDocument[]
+  codeChanges ProjectCodeChange[]
   id                          String                    @id @default(cuid())
   fileVersions                ProjectFileVersion[]
   mutations                   ProjectMutation[]
@@ -343,6 +413,9 @@ model ProjectSnapshot {
   projectId                   String
   source                      SnapshotSource
   checksum                    String?
+  contentHash                 String?
+  versionNumber               Int?
+  label                       String?
   commitSha                   String?
   storagePath                 String
   rootDir                     String?
@@ -385,6 +458,8 @@ model ProjectSnapshot {
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
   @@index([projectId])
+  @@index([projectId, contentHash])
+  @@index([projectId, createdAt])
   systemRequirements SystemRequirementRevision[]
   systemAssessments SystemTestAssessment[]
   systemProposals SystemTestProposal[]
@@ -452,6 +527,7 @@ model Job {
   @@index([snapshotId])
   @@index([status, type])
   @@index([projectId, snapshotId, type, status])
+  @@index([projectId, status, createdAt])
 }
 
 model JobLog {
@@ -621,6 +697,8 @@ model TestRun {
   testFiles             SystemTestFile[]
 
   @@index([snapshotId])
+  @@index([snapshotId, type, createdAt])
+  @@index([createdAt])
   systemMeasurement Json?
   systemAssessments SystemTestAssessment[]
 
@@ -787,6 +865,14 @@ model ProjectMemory {
   @@index([projectId, userId, status])
 }
 
+enum ProjectLifecycleStatus {
+  NOT_STARTED
+  DOING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
 enum SnapshotSource {
   ZIP
   GITHUB
@@ -802,6 +888,8 @@ enum JobType {
   BUILD_CFG
   AI_SUGGEST
   AI_TESTS
+  UNIT_TEST_SUGGEST
+  UNIT_TEST_APPLY
   CODE_HYGIENE
   PERFORMANCE_ANALYSIS
   ANALYSIS
@@ -904,6 +992,7 @@ model SystemAssertionBinding {
   @@unique([revisionId, assertionId, testHash])
 }
 model SystemTestAssessment {
+  suiteVersionId String?
   id String @id @default(cuid())
   snapshotId String
   jobId String @unique
@@ -964,6 +1053,11 @@ model SystemRunEvent {
   @@index([assessmentId, scenarioKey])
 }
 model SystemRunArtifact {
+  runIndex Int?
+  attemptIndex Int?
+  stepKey String?
+  purpose String?
+  expiredAt DateTime?
   id String @id @default(cuid())
   assessmentId String
   scenarioKey String?
@@ -994,6 +1088,49 @@ model SystemTestProposal {
   applier User? @relation("ProposalApplier", fields: [appliedByUserId], references: [id], onDelete: SetNull)
   @@index([snapshotId, state])
 }
+model SystemSuiteState {
+  snapshotId String @id
+  headVersionId String? @unique
+  revision Int @default(0)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  head SystemSuiteVersion? @relation("SuiteHead", fields: [headVersionId], references: [id], onDelete: SetNull)
+}
+
+model SystemSuiteVersion {
+  id String @id @default(cuid())
+  snapshotId String
+  parentVersionId String?
+  restoredFromVersionId String?
+  sequence Int
+  action String
+  suiteHash String
+  sourceHash String
+  configHash String
+  requirementRevisionId String?
+  manifestJson Json
+  scenarioSnapshotJson Json
+  provenanceJson Json
+  actorId String?
+  requestId String
+  requestHash String
+  createdAt DateTime @default(now())
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  parent SystemSuiteVersion? @relation("SuiteParent", fields: [parentVersionId], references: [id], onDelete: SetNull)
+  children SystemSuiteVersion[] @relation("SuiteParent")
+  restoredFrom SystemSuiteVersion? @relation("SuiteRestore", fields: [restoredFromVersionId], references: [id], onDelete: SetNull)
+  restores SystemSuiteVersion[] @relation("SuiteRestore")
+  state SystemSuiteState? @relation("SuiteHead")
+  @@unique([snapshotId, sequence])
+  @@unique([snapshotId, requestId])
+}
+
+model SystemTestBlob {
+  sha256 String @id
+  content String @db.Text
+  byteSize Int
+  createdAt DateTime @default(now())
+}
+
 model SystemMutationRun {
   id String @id @default(cuid())
   assessmentId String
@@ -1006,6 +1143,7 @@ model SystemMutationRun {
 }
 
 model ProjectMember {
+  disciplineRole String?
   id String @id @default(cuid())
   projectId String
   userId String
@@ -1020,6 +1158,7 @@ model ProjectMember {
   @@index([userId])
 }
 model ProjectInvitation {
+  disciplineRole String?
   id String @id @default(cuid())
   projectId String
   canonicalEmail String
@@ -1071,6 +1210,8 @@ model ProjectEvent {
   @@unique([projectId, sequence])
 }
 model ProjectFileVersion {
+  lineAttributionJson Json?
+  attributionStatus String?
   id String @id @default(cuid())
   snapshotId String
   relativePath String
@@ -1163,4 +1304,56 @@ model AiQuotaReservation {
   createdAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@unique([userId, requestKey])
+}
+
+model ProjectEditorDocument {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  relativePath String
+  generation Int @default(1)
+  revision Int @default(0)
+  stateBytes Bytes
+  text String @db.Text
+  contentHash String
+  baseFileRevision Int
+  baseFileHash String
+  checkpointRevision Int @default(0)
+  lineAttributionJson Json
+  attributionStatus String @default("AVAILABLE")
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  updates ProjectEditorUpdate[]
+  @@unique([snapshotId, relativePath])
+  @@index([projectId, active])
+}
+model ProjectEditorUpdate {
+  id String @id @default(cuid())
+  documentId String
+  generation Int
+  actorId String?
+  requestId String
+  updateHash String
+  resultRevision Int
+  resultContentHash String
+  createdAt DateTime @default(now())
+  document ProjectEditorDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@unique([documentId, generation, actorId, requestId])
+}
+model ProjectCodeChange {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  actorId String?
+  source String
+  metadata Json?
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([projectId, snapshotId])
 }

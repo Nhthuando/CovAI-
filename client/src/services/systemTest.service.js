@@ -1,12 +1,15 @@
 import { getAIModelHeaders } from './aiModel.service.js';
-import axios from "axios";
+import axiosLibrary from "axios";
+import { prepareEditorRequest } from './editorAwareRequest';
+import { getAccessToken, installAxiosAuthRefresh } from '../lib/authSession.js';
+const axios = axiosLibrary.create();
+axios.interceptors.request.use(async config => { await prepareEditorRequest(config.url, {method: config.method}); return config; });
+installAxiosAuthRefresh(axios);
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 const getAuthHeaders = () => {
-  const user = localStorage.getItem("user");
-  const userToken = user ? JSON.parse(user).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = getAccessToken();
   return { ...getAIModelHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 };
 
@@ -31,12 +34,26 @@ export const getSystemTestFrameworks = async (projectId, snapshotId = null) => {
  */
 export const runSystemTest = async (
   snapshotId,
-  { framework = "playwright", executionMode = "frontend", testFile = null } = {}
+  {
+    framework = "playwright",
+    executionMode = "full",
+    testFile = null,
+    selectedFiles = [],
+    selectedTitles = [],
+    headed = false,
+  } = {}
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
     `${API_BASE}/coverage/${snapshotId}/system/run`,
-    { framework, executionMode, testFile },
+    {
+      framework,
+      executionMode,
+      testFile,
+      ...(Array.isArray(selectedFiles) && selectedFiles.length > 0 ? { selectedFiles } : {}),
+      ...(Array.isArray(selectedTitles) && selectedTitles.length > 0 ? { selectedTitles } : {}),
+      ...(headed ? { headed: true } : {}),
+    },
     { headers }
   );
   return response.data;
@@ -116,7 +133,7 @@ export const getSystemTestEvidence = async (
  */
 export const generateColdStartSystemTests = async (
   snapshotId,
-  { framework = "playwright", routes = ["/"], executionMode = "frontend" } = {}
+  { framework = "playwright", routes = ["/"], executionMode = "full" } = {}
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -150,6 +167,9 @@ export const updateSystemTestFileContent = async (
   content,
   options = {}
 ) => {
+  const { saveCollaborativeSnapshotFile } = await import('../lib/editor/editorModelRegistry');
+  const live = await saveCollaborativeSnapshotFile(snapshotId, filePath, content);
+  if (live) return live;
   const headers = getAuthHeaders();
   const response = await axios.put(
     `${API_BASE}/coverage/${snapshotId}/system/tests/content`,
@@ -166,7 +186,7 @@ export const runSingleSystemTest = async (
   snapshotId,
   filePath,
   framework = "playwright",
-  executionMode = "frontend"
+  executionMode = "full"
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -193,10 +213,13 @@ export const optimizeSystemTest = async (
   return response.data;
 };
 
-export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data } = {}) => {
-  const response = await axios({ url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
+export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data, signal } = {}) => {
+  const response = await axios({ signal, url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
   return response.data.data;
 };
+
+export const importSystemEnvironment = (snapshotId, body) =>
+  systemEvidenceRequest(snapshotId, 'setup/environment/import', { method: 'POST', data: body });
 
 export const getSystemRunArtifact = async (snapshotId, artifactId, { signal } = {}) => {
   const response = await axios.get(`${API_BASE}/coverage/${snapshotId}/system/artifacts/${encodeURIComponent(artifactId)}`, { headers: getAuthHeaders(), responseType: 'blob', signal });
@@ -214,6 +237,52 @@ export const downloadSystemAssessmentPdf = async (snapshotId, assessmentId) => {
     link.click();
     link.remove();
   } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+};
+
+export const getSystemTestCaseDetail = async (snapshotId, { testFile, testName } = {}) => {
+  const params = new URLSearchParams();
+  if (testFile) params.set("testFile", testFile);
+  if (testName) params.set("testName", testName);
+  const response = await axios.get(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case?${params.toString()}`,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
+export const addSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.post(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case`,
+    payload,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
+export const updateSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.put(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case`,
+    payload,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
+export const deleteSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.delete(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case`,
+    { headers: getAuthHeaders(), data: payload },
+  );
+  return response.data;
+};
+
+export const aiFixSystemTestCaseApi = async (snapshotId, payload = {}) => {
+  const response = await axios.post(
+    `${API_BASE}/coverage/${snapshotId}/system/test-case/ai-fix`,
+    payload,
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
 };
 
 

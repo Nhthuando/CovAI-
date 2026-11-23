@@ -5,18 +5,18 @@
  */
 
 export const PORTFOLIO_CONFIG = {
-  // Default layer weights for composite health calculation
+  // Standardized layer weights matching Single-Project Unified Quality Overview (50/30/20)
   weights: {
-    unit: 0.35,
-    integration: 0.35,
-    system: 0.30,
+    unit: 0.50,
+    integration: 0.30,
+    system: 0.20,
   },
 
   // Health Score Grade Thresholds
   grades: {
-    A: 85,
-    B: 75,
-    C: 60,
+    A: 80,
+    B: 65,
+    C: 50,
     D: 0,
   },
 

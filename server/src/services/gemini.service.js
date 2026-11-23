@@ -1,4 +1,4 @@
-import { GEMINI_MODEL_IDS } from '../../../shared/aiModels.js';
+import { AI_MODELS, GEMINI_MODEL_IDS, normalizeModelId } from '../../../shared/aiModels.js';
 import { geminiQuotaError } from '../utils/geminiQuota.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -6,42 +6,171 @@ import dotenv from "dotenv";
 import { runGeminiRequest, isDailyQuotaError } from './geminiRequestPolicy.service.js';
 import { currentAiJobBudget } from './aiJobBudget.service.js';
 import { isCollaborationLocalTest } from '../config/collaborationLocal.js';
+import { geminiConfiguration } from './geminiRouting.service.js';
+import { buildAgentInstruction } from '../agents/registry.js';
+import { chatThinkingConfig } from './chatResponsePolicy.service.js';
+import {
+  withGeminiChannel,
+  getCurrentGeminiChannel,
+  recordGeminiTokenUsage,
+  recordGeminiRateLimit,
+} from "./geminiTokenTracker.service.js";
+
+export { withGeminiChannel, getCurrentGeminiChannel };
 
 dotenv.config();
 
-// Manage API keys & Configure Gemini SDK
-const apiKey = process.env.GEMINI_API_KEY;
-let genAI = null;
+// Task-to-Environment-Variable mapping for independent quota separation
+export const TASK_KEY_MAP = {
+  unit: ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
+  "unit-test": ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
+  unit_test: ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"],
+  integration: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  "integration-test": ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  integration_test: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  supertest: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"],
+  e2e: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  "e2e-test": ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  e2e_test: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  system: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  "system-test": ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  system_test: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"],
+  chatbox: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
+  chat: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
+  chat_box: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"],
+};
 
-if (apiKey) {
-  genAI = new GoogleGenerativeAI(apiKey);
-} else {
-  console.warn(
-    "[Gemini API] WARNING: GEMINI_API_KEY is not defined in the environment variables.",
-  );
+/**
+ * Validates availability of task-specific environment keys on service startup.
+ */
+export function validateGeminiKeys() {
+  const REQUIRED = [
+    { label: "GEMINI_KEY_UNIT_TEST", vars: ["GEMINI_KEY_UNIT_TEST", "GEMINI_UNIT_TEST_API_KEY"] },
+    { label: "GEMINI_KEY_INTEGRATION_TEST", vars: ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"] },
+    { label: "GEMINI_KEY_E2E_TEST", vars: ["GEMINI_KEY_E2E_TEST", "GEMINI_SYSTEM_TEST_API_KEY"] },
+    { label: "GEMINI_KEY_CHATBOX", vars: ["GEMINI_KEY_CHATBOX", "GEMINI_CHATBOX_API_KEY", "GEMINI_API_KEY"] },
+  ];
+  for (const req of REQUIRED) {
+    const hasKey = req.vars.some(v => Boolean(process.env[v]?.trim()));
+    if (!hasKey) {
+      console.warn(
+        `[Gemini API] WARNING: Dedicated environment variable ${req.label} is not defined. Falling back to GEMINI_API_KEY.`
+      );
+    }
+  }
+  if (!process.env.GEMINI_API_KEY && !process.env.GEMINI_KEY_INTEGRATION_TEST && !process.env.GEMINI_INTEGRATION_TEST_API_KEY) {
+    console.warn(
+      "[Gemini API] CRITICAL: Neither GEMINI_KEY_INTEGRATION_TEST nor GEMINI_API_KEY is configured in environment.",
+    );
+  }
 }
+if (process.env.NODE_ENV !== 'test') {
+  validateGeminiKeys();
+}
+
+/**
+ * Resolves the appropriate Gemini API key for a given task type.
+ * Priority: Dedicated Task Key -> Legacy GEMINI_API_KEY.
+ *
+ * @param {'unit' | 'integration' | 'e2e' | 'system' | 'chatbox' | 'chat'} taskType
+ * @returns {string} The resolved API key
+ */
+export function getGeminiApiKey(taskType = "integration") {
+  const normalizedTask = String(taskType || "integration").toLowerCase();
+  const envVars = TASK_KEY_MAP[normalizedTask] || ["GEMINI_KEY_INTEGRATION_TEST", "GEMINI_INTEGRATION_TEST_API_KEY"];
+  const list = Array.isArray(envVars) ? envVars : [envVars];
+  for (const v of list) {
+    if (process.env[v]?.trim()) return process.env[v].trim();
+  }
+  return process.env.GEMINI_API_KEY?.trim() || "";
+}
+
+// Client cache to avoid reinstantiating GoogleGenerativeAI on every request
+const clientCache = new Map();
+
+/**
+ * Factory provider returning a cached GoogleGenerativeAI client instance for the specified task.
+ *
+ * @param {'unit' | 'integration' | 'e2e' | 'chatbox'} taskType
+ * @param {string|null} explicitApiKey
+ * @returns {GoogleGenerativeAI}
+ */
+export function getGeminiClient(
+  taskType = "integration",
+  explicitApiKey = null,
+) {
+  const key = explicitApiKey || getGeminiApiKey(taskType);
+  if (!key) {
+    throw new Error(
+      `Gemini API key is not configured for task '${taskType}'. Please set ${
+        TASK_KEY_MAP[taskType?.toLowerCase()] || "GEMINI_KEY_INTEGRATION_TEST"
+      } or GEMINI_API_KEY in your environment.`,
+    );
+  }
+  if (!clientCache.has(key)) {
+    clientCache.set(key, new GoogleGenerativeAI(key));
+  }
+  return clientCache.get(key);
+}
+
+// Manage API keys & Configure Gemini SDK
+const clients = new Map();
 
 const VALID_MODELS = GEMINI_MODEL_IDS;
 const exhaustedModels = new Map();
 
+const ALLOWED_GENERATION_CONFIG_KEYS = new Set([
+  "candidateCount",
+  "stopSequences",
+  "maxOutputTokens",
+  "temperature",
+  "topP",
+  "topK",
+  "responseMimeType",
+  "responseSchema",
+  "presencePenalty",
+  "frequencyPenalty",
+  "responseLogprobs",
+  "logprobs",
+  "thinkingConfig",
+  "speechConfig",
+  "audioTimestamp",
+  "seed",
+  "responseModalities",
+]);
+
 /**
  * Checks if a model is currently exhausted and cleans up expired entries.
  */
-export function markModelExhausted(modelName, error = {message:'daily quota'}) {
-  if(modelName) exhaustedModels.set(modelName,geminiQuotaError(error,modelName));
+export function markModelExhausted(modelName, error = { message: 'daily quota' }, configuration = geminiConfiguration()) {
+  if (modelName) exhaustedModels.set(`${configuration.credentialId}:${modelName}`, geminiQuotaError(error, modelName));
+}
+
+function getModelQuotaError(modelName, configuration) {
+  const quotaKey = `${configuration?.credentialId || 'default'}:${modelName}`;
+  const blocked = exhaustedModels.get(quotaKey);
+  if (blocked?.resetAt && Date.parse(blocked.resetAt) > Date.now()) return blocked;
+  exhaustedModels.delete(quotaKey);
 }
 
 /**
  * Normalizes model names, replacing deprecated or quota-exhausted models
  * with the currently active and verified models.
  */
-function resolveModelName(requestedModel) {
-  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-  if(!VALID_MODELS.includes(preferred)) throw new ServiceError('Select one of the four supported Gemini models.',400);
-  const blocked=exhaustedModels.get(preferred);
-  if(blocked?.resetAt && Date.parse(blocked.resetAt)>Date.now()) throw blocked;
-  exhaustedModels.delete(preferred);
-  return preferred;
+function resolveModelName(requestedModel, configuration) {
+  const preferred = (requestedModel && requestedModel.trim()) || configuration?.model || process.env.GEMINI_MODEL || AI_MODELS[0].id;
+  const normalized = normalizeModelId(preferred);
+  if (!VALID_MODELS.includes(normalized)) {
+    const fallback = normalizeModelId(configuration?.model || process.env.GEMINI_MODEL || AI_MODELS[0].id);
+    if (VALID_MODELS.includes(fallback)) {
+      console.warn(`[Gemini API] Model '${preferred}' is not in catalog. Falling back to '${fallback}'.`);
+      return fallback;
+    }
+    throw new ServiceError('Select one of the supported Gemini models.', 400);
+  }
+  const blocked = getModelQuotaError(normalized, configuration);
+  if (blocked) throw blocked;
+  return normalized;
 }
 
 /**
@@ -51,23 +180,109 @@ function resolveModelName(requestedModel) {
  * @param {string|null} maybeInstruction - Optional system instruction if model name was provided as 2nd arg
  * @returns {Promise<string>} The generated text response
  */
-export const generateText = async (prompt, modelOrInstruction = null, maybeInstructionOrConfig = null, maybeConfig = {}) => {
+export const generateText = async (
+  prompt,
+  modelOrInstruction = null,
+  maybeInstructionOrConfig = null,
+  maybeConfig = {},
+) => {
   let modelName = null;
   let systemInstruction = null;
   let generationConfig = {};
 
-  if (typeof modelOrInstruction === "string" && (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.includes("/"))) {
+  const isModelName = typeof modelOrInstruction === "string" &&
+    !modelOrInstruction.includes(" ") &&
+    !modelOrInstruction.includes("\n") &&
+    (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.startsWith("models/"));
+
+  if (isModelName) {
     modelName = modelOrInstruction;
-    systemInstruction = maybeInstructionOrConfig;
-    generationConfig = maybeConfig || {};
+    if (
+      typeof maybeInstructionOrConfig === "object" &&
+      maybeInstructionOrConfig !== null
+    ) {
+      generationConfig = maybeInstructionOrConfig;
+      systemInstruction = null;
+    } else {
+      systemInstruction = maybeInstructionOrConfig;
+      generationConfig = maybeConfig || {};
+    }
+  } else if (
+    typeof modelOrInstruction === "object" &&
+    modelOrInstruction !== null
+  ) {
+    generationConfig = modelOrInstruction;
   } else {
     systemInstruction = modelOrInstruction;
-    if (maybeInstructionOrConfig && typeof maybeInstructionOrConfig === "object") {
+    if (
+      maybeInstructionOrConfig &&
+      typeof maybeInstructionOrConfig === "object"
+    ) {
       generationConfig = maybeInstructionOrConfig;
+    } else {
+      generationConfig = maybeConfig || {};
     }
   }
 
-  return generateMultimodalText(prompt, [], systemInstruction, modelName, generationConfig);
+  return generateMultimodalText(
+    prompt,
+    [],
+    systemInstruction,
+    modelName,
+    generationConfig,
+  );
+};
+
+export const generateTextWithTelemetry = async (
+  prompt,
+  modelOrInstruction = null,
+  maybeInstructionOrConfig = null,
+  maybeConfig = {},
+) => {
+  let modelName = null;
+  let systemInstruction = null;
+  let generationConfig = {};
+
+  if (
+    typeof modelOrInstruction === "string" &&
+    (modelOrInstruction.startsWith("gemini-") ||
+      modelOrInstruction.includes("/"))
+  ) {
+    modelName = modelOrInstruction;
+    if (
+      typeof maybeInstructionOrConfig === "object" &&
+      maybeInstructionOrConfig !== null
+    ) {
+      generationConfig = { ...maybeInstructionOrConfig, returnTelemetry: true };
+      systemInstruction = null;
+    } else {
+      systemInstruction = maybeInstructionOrConfig;
+      generationConfig = { ...(maybeConfig || {}), returnTelemetry: true };
+    }
+  } else if (
+    typeof modelOrInstruction === "object" &&
+    modelOrInstruction !== null
+  ) {
+    generationConfig = { ...modelOrInstruction, returnTelemetry: true };
+  } else {
+    systemInstruction = modelOrInstruction;
+    if (
+      maybeInstructionOrConfig &&
+      typeof maybeInstructionOrConfig === "object"
+    ) {
+      generationConfig = { ...maybeInstructionOrConfig, returnTelemetry: true };
+    } else {
+      generationConfig = { ...(maybeConfig || {}), returnTelemetry: true };
+    }
+  }
+
+  return generateMultimodalText(
+    prompt,
+    [],
+    systemInstruction,
+    modelName,
+    generationConfig,
+  );
 };
 
 /**
@@ -84,19 +299,28 @@ export const generateMultimodalText = async (
   images = [],
   systemInstruction = null,
   modelNameOrConfig = null,
-  maybeConfig = {}
+  maybeConfig = {},
 ) => {
   if (process.env.AI_PROVIDER_MODE === "fixture") {
     if (!isCollaborationLocalTest()) {
-      throw new ServiceError("Fixture AI is restricted to the isolated collaboration test environment", 503);
+      throw new ServiceError(
+        "Fixture AI is restricted to the isolated collaboration test environment",
+        503,
+      );
     }
-    if (String(prompt).startsWith("Extract only explicit durable USER requirements")) return '{"notes":[]}';
-    if (String(prompt).startsWith("Summarize stored chat DATA")) return "[LOCAL AI FIXTURE] Shared conversation context retained for the collaboration test.";
+    if (
+      String(prompt).startsWith(
+        "Extract only explicit durable USER requirements",
+      )
+    )
+      return '{"notes":[]}';
+    if (String(prompt).startsWith("Summarize stored chat DATA"))
+      return "[LOCAL AI FIXTURE] Shared conversation context retained for the collaboration test.";
     return "[LOCAL AI FIXTURE] Shared project chat response. This deterministic response verifies collaboration; no live Gemini request was made.";
   }
-  if (!genAI) {
-    throw new Error("GEMINI_API_KEY is not configured.");
-  }
+  const configuration = geminiConfiguration(undefined, { required: true });
+  let genAI = clients.get(configuration.credentialId);
+  if (!genAI) { genAI = new GoogleGenerativeAI(configuration.apiKey); clients.set(configuration.credentialId, genAI); }
 
   let modelName = null;
   let generationConfig = {};
@@ -110,13 +334,46 @@ export const generateMultimodalText = async (
     generationConfig = maybeConfig || {};
   }
 
-  const {requestTimeoutMs,totalTimeoutMs,maxAttempts,onRetry,onWait,retryBaseDelayMs,...providerConfig}=generationConfig;
-  let primaryModelName = resolveModelName(modelName);
-  
+  const taskType =
+    generationConfig.taskType || getCurrentGeminiChannel() || configuration.feature || "integration";
+  const resolvedApiKey = generationConfig.apiKey || configuration.apiKey || getGeminiApiKey(taskType);
+  if (generationConfig.apiKey) {
+    genAI = getGeminiClient(taskType, generationConfig.apiKey);
+  }
+
+  const {
+    requestTimeoutMs,
+    totalTimeoutMs,
+    maxAttempts,
+    onRetry,
+    onWait,
+    retryBaseDelayMs,
+    taskType: _taskType,
+    apiKey: _apiKey,
+    returnTelemetry: _returnTelemetry,
+    userId: _userId,
+    model: _model,
+    signal: callerSignal,
+    timeout: _timeout,
+    ...providerConfig
+  } = generationConfig;
+
+  const cleanProviderConfig = {};
+  for (const [key, value] of Object.entries(providerConfig)) {
+    if (ALLOWED_GENERATION_CONFIG_KEYS.has(key) && value !== undefined) {
+      cleanProviderConfig[key] = value;
+    }
+  }
+
+  const primaryModelName = resolveModelName(modelName, configuration);
+  const budget = currentAiJobBudget();
+  const callerSignals = [callerSignal, budget?.signal].filter(Boolean);
+
   const createModelInstance = (mName) => {
     const modelOptions = { model: mName };
-    if (systemInstruction) {
-      modelOptions.systemInstruction = systemInstruction;
+    const specialist = ['general', 'chatbox'].includes(configuration.feature) ? '' : buildAgentInstruction(configuration.feature);
+    if (specialist || systemInstruction) {
+      modelOptions.systemInstruction = [specialist, systemInstruction].filter(Boolean).join('\n');
     }
     return genAI.getGenerativeModel(modelOptions);
   };
@@ -140,36 +397,131 @@ export const generateMultimodalText = async (
 
   parts.push({ text: prompt });
 
-  const apiCall = async ({signal}) => {
-    primaryModelName = resolveModelName(modelName);
-    const budget = currentAiJobBudget();
+  const apiCall = async ({ signal }, activeModel = primaryModelName) => {
+    const requestSignal = callerSignals.length ? AbortSignal.any([signal, ...callerSignals]) : signal;
+    requestSignal.throwIfAborted();
+    const blocked = getModelQuotaError(activeModel, configuration);
+    if (blocked) throw blocked;
     await budget?.beforeRequest();
-    const requestSignal = budget?.signal ? AbortSignal.any([signal, budget.signal]) : signal;
+    requestSignal.throwIfAborted();
     try {
-      const model = createModelInstance(primaryModelName);
+      const model = createModelInstance(activeModel);
+      const callStartTime = Date.now();
       const result = await model.generateContent({
         contents: [{ role: "user", parts }],
         generationConfig: {
           maxOutputTokens: 65536,
-          ...providerConfig,
+          ...cleanProviderConfig,
+          ...(configuration.feature === 'chatbox' && chatThinkingConfig(activeModel) ? { thinkingConfig: chatThinkingConfig(activeModel) } : {}),
         },
-      }, {signal:requestSignal});
+      }, { signal: requestSignal });
       if (requestSignal.aborted) throw requestSignal.reason || new Error('AI request canceled');
+      const durationMs = Date.now() - callStartTime;
       await budget?.record(result.response?.usageMetadata);
-      console.log(`[Gemini API] Successfully generated response using primary model: ${primaryModelName}`);
+      console.log(`[Gemini API] feature=${configuration.feature} credential=${configuration.keyEnv} model=${activeModel} (${durationMs}ms)`);
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
       }
-      return result.response.text();
+      let rawText = "";
+      try {
+        rawText =
+          typeof result.response?.text === "function"
+            ? result.response.text()
+            : result.response?.text || "";
+      } catch (_) {
+        rawText = "";
+      }
+
+      const usageMetadata = result.response?.usageMetadata;
+      const promptTokens =
+        usageMetadata?.promptTokenCount ||
+        Math.max(1, Math.round(prompt.length / 4));
+      const completionTokens =
+        usageMetadata?.candidatesTokenCount ||
+        Math.max(1, Math.round((rawText || "").length / 4));
+      const totalTokens =
+        usageMetadata?.totalTokenCount || promptTokens + completionTokens;
+
+      try {
+        recordGeminiTokenUsage({
+          taskType,
+          apiKey: resolvedApiKey,
+          modelName: activeModel,
+          usageMetadata: result.response?.usageMetadata,
+          promptText: prompt,
+          responseText: rawText,
+        });
+      } catch (trackingErr) {
+        console.warn(
+          "[geminiTokenTracker] Error recording usage:",
+          trackingErr.message,
+        );
+      }
+
+      const telemetry = {
+        durationMs,
+        durationSeconds: Number((durationMs / 1000).toFixed(2)),
+        tokens: {
+          prompt: promptTokens,
+          completion: completionTokens,
+          total: totalTokens,
+        },
+        model: activeModel,
+      };
+
+      if (generationConfig?.userId) {
+        import("./aiQuota.service.js")
+          .then(({ incrementTokenUsage }) => {
+            incrementTokenUsage(generationConfig.userId, totalTokens).catch(
+              () => {},
+            );
+          })
+          .catch(() => {});
+      }
+
+      if (generationConfig?.returnTelemetry) {
+        return {
+          text: rawText,
+          telemetry,
+        };
+      }
+
+      return rawText;
     } catch (primaryErr) {
-      if (signal.aborted) throw primaryErr;
-      if(primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
-        if(isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName,primaryErr);
-        throw geminiQuotaError(primaryErr,primaryModelName);
+      if (requestSignal.aborted) throw primaryErr;
+      if (primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
+        try {
+          recordGeminiRateLimit({
+            taskType,
+            apiKey: resolvedApiKey,
+            modelName: activeModel,
+            error: primaryErr,
+          });
+        } catch (rateLimitErr) {
+          console.warn(
+            "[geminiTokenTracker] Error recording rate limit:",
+            rateLimitErr.message,
+          );
+        }
+        if (isDailyQuotaError(primaryErr)) markModelExhausted(activeModel, primaryErr, configuration);
+        throw geminiQuotaError(primaryErr, activeModel);
       }
       throw primaryErr;
     }
   };
 
-  return runGeminiRequest(apiCall,{requestTimeoutMs,totalTimeoutMs,maxAttempts,onRetry,onWait,retryBaseDelayMs});
+  const getFallbackRequest = error => {
+    if (modelName || error.name === 'AbortError' || callerSignals.some(signal => signal.aborted)) return;
+    const status = Number(error.status ?? error.statusCode);
+    const message = String(error.message || '');
+    if ((status >= 400 && status < 500) || /(?:^|\[|\bHTTP\s+|\bstatus(?:\s+code)?\s*[:=]?\s*)4\d{2}\b/i.test(message)) return;
+    if (status !== 503 && !/503|Service Unavailable|high demand|overloaded|UNAVAILABLE/i.test(message)) return;
+
+    const fallback = AI_MODELS.find(({ id }) => id !== primaryModelName && !getModelQuotaError(id, configuration));
+    if (!fallback) return;
+    console.warn(`[Gemini API] ${primaryModelName} is overloaded; retrying once with ${fallback.id}`);
+    return options => apiCall(options, fallback.id);
+  };
+
+  return runGeminiRequest(apiCall, { requestTimeoutMs, totalTimeoutMs, maxAttempts, onRetry, onWait, retryBaseDelayMs, getFallbackRequest });
 };

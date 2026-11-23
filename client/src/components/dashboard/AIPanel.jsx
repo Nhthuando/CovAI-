@@ -1,14 +1,17 @@
+import { chatGreeting, chatScreenLabel, normalizeChatScreenContext, detectChatLanguage } from '../../services/chatScreenContext';
+import { AI_MODELS } from "../../shared/aiModels.js";
+import { getSelectedAIModel } from "../../services/aiModel.service.js";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
   ArrowUp,
   User,
-  Bot,
   Copy,
   Check,
   Loader2,
   RotateCcw,
+  Undo2,
   Shield,
   FileCode,
   Wand2,
@@ -32,15 +35,17 @@ import {
   Trash2,
   Edit2,
   Search,
+  AlertCircle,
 } from "lucide-react";
+import CovaiLogo from "../common/CovaiLogo";
+import "./portfolio/portfolio.css";
 
 import {
   sendAiChatMessageApi,
-  getAiSuggestionsApi,
-  generateSkeletonApi,
   getFileContentApi,
   updateFileContentApi,
   createProjectFileApi,
+  deleteProjectEntryApi,
   getProjectTreeApi,
   getChatSessionsApi,
   getChatSessionMessagesApi,
@@ -50,13 +55,18 @@ import {
 import {
   suggestUnitTestcase,
   getIntegrationWorkspace,
+  applyUnitTestSuggestion,
 } from "../../services/coverage.service";
+import { mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
-import DiffReviewModal from "./DiffReviewModal";
+import DiffReviewModal, { countDiffLines } from "./DiffReviewModal";
 import AIContextDialog from "./AIContextDialog";
-import { getAiContext } from "../../services/aiContext.service";
+import { branchAiConversation, getAiContext } from "../../services/aiContext.service";
+import Button from "../common/Button";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery";
+import { evaluateUnitTestApplyResponse } from "../../services/unitTestReview";
 import { isTestFile } from "./CoverageTypeDashboard";
 
 /* ── Clean and Normalize Path Utilities ─────────────────── */
@@ -85,7 +95,10 @@ function getIdeFileIcon(fileName = "") {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".jsx") || lower.endsWith(".tsx")) {
     return (
-      <span className="text-cyan-400 font-bold text-xs select-none flex items-center justify-center w-4 h-4">
+      <span
+        className="font-bold text-xs select-none flex items-center justify-center w-4 h-4"
+        style={{ color: "var(--ps-cobalt)" }}
+      >
         ⚛
       </span>
     );
@@ -93,8 +106,11 @@ function getIdeFileIcon(fileName = "") {
   if (lower.endsWith(".ts")) {
     return (
       <span
-        className="text-[9px] font-bold px-1 py-0.2 rounded font-mono select-none"
-        style={{ background: "rgba(56, 189, 248, 0.2)", color: "#38bdf8" }}
+        className="text-[9px] font-bold px-1 py-0.2 rounded ps-mono select-none"
+        style={{
+          background: "color-mix(in srgb, var(--ps-cobalt) 14%, transparent)",
+          color: "var(--ps-cobalt)",
+        }}
       >
         TS
       </span>
@@ -103,14 +119,17 @@ function getIdeFileIcon(fileName = "") {
   if (lower.endsWith(".js") || lower.endsWith(".mjs")) {
     return (
       <span
-        className="text-[9px] font-bold px-1 py-0.2 rounded font-mono select-none"
-        style={{ background: "rgba(251, 191, 36, 0.2)", color: "#fbbf24" }}
+        className="text-[9px] font-bold px-1 py-0.2 rounded ps-mono select-none"
+        style={{
+          background: "color-mix(in srgb, var(--ps-amber) 14%, transparent)",
+          color: "var(--ps-amber)",
+        }}
       >
         JS
       </span>
     );
   }
-  return <TestTube2 size={13} className="text-purple-400 flex-shrink-0" />;
+  return <TestTube2 size={13} style={{ color: "var(--ps-ink-secondary)" }} className="flex-shrink-0" />;
 }
 
 /* ── Flatten File Tree Utility ──────────────────────────── */
@@ -207,13 +226,14 @@ function groupSessionsByDate(sessions) {
   ].filter((g) => g.items.length > 0);
 }
 
-/* ── Initial conversation (English) ─────────────────────── */
+/* ── Initial conversation; the UI follows the current screen until the first send. ── */
 const INITIAL_MESSAGES = [
   {
     id: 1,
+    isGreeting: true,
     role: "assistant",
     content:
-      "Hello! I am **COV**, your AI testing assistant for TestCovAI.\n\nI can help you analyze code logic, discover edge cases, and automatically generate comprehensive test suites. How can I help you today?",
+      "How can I help with your project?",
     timestamp: new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
@@ -441,6 +461,58 @@ function TestSuggestionCard({
       {/* Code block */}
       <CodeBlock code={current.suggestedTestCode} language="javascript" />
 
+      {/* Inline Apply Error & Source Defect Isolation Diagnostics */}
+      {(current.testRunError || (Array.isArray(current.isolatedDefects) && current.isolatedDefects.length > 0)) && (
+        <div
+          className="px-3 py-2 space-y-2"
+          style={{
+            background: "var(--color-surface)",
+            borderTop: "1px solid var(--color-border)",
+          }}
+        >
+          {current.testRunError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md px-3 py-2 text-xs border"
+              style={{
+                background: "color-mix(in srgb, var(--ps-rose) 8%, transparent)",
+                color: "var(--ps-rose)",
+                borderColor: "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
+              }}
+            >
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <span className="ps-mono break-words">{current.testRunError}</span>
+            </div>
+          )}
+          {Array.isArray(current.isolatedDefects) && current.isolatedDefects.length > 0 && (
+            <div
+              role="status"
+              className="rounded-md px-3 py-2 text-xs border space-y-1 ps-mono"
+              style={{
+                background: "color-mix(in srgb, var(--ps-amber) 8%, transparent)",
+                color: "var(--ps-amber)",
+                borderColor: "color-mix(in srgb, var(--ps-amber) 25%, transparent)",
+              }}
+            >
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertCircle size={13} className="shrink-0" />
+                <span>Isolated target source defect(s):</span>
+              </div>
+              {current.isolatedDefects.map((defect, idx) => (
+                <div key={`${defect.symbol || "defect"}-${defect.file || ""}-${defect.line || idx}`} className="pl-5 text-[11px] text-[var(--ps-ink-secondary)]">
+                  <span className="font-semibold text-[var(--ps-ink)]">{defect.symbol || "Source defect"}</span>
+                  {defect.file && (
+                    <span> ({defect.file}{defect.line ? `:${defect.line}` : ""})</span>
+                  )}
+                  {": "}
+                  <span>{defect.diagnostic || defect.reason || defect.message || "Unfixable target source defect"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Actions footer */}
       <div
         className="p-3 flex items-center gap-2 flex-wrap"
@@ -452,15 +524,12 @@ function TestSuggestionCard({
         {!current.applied ? (
           <motion.button
             type="button"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
             disabled={current.isApplying}
             onClick={() => onApplySuggestion?.(msg.id, current)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ps-btn-contrast"
             style={{
-              background: "var(--color-primary)",
-              color: "#ffffff",
-              border: "none",
               cursor: current.isApplying ? "wait" : "pointer",
             }}
             title={`Write ${current.framework?.toUpperCase()} test cases to ${current.targetTestFile}`}
@@ -562,34 +631,32 @@ function IdeChangesWidget({
 
   return (
     <div
-      className="mt-3.5 rounded-xl overflow-hidden shadow-xl select-text"
+      className="mt-3.5 rounded-xl overflow-hidden select-text"
       style={{
-        background: "#161b22",
-        border: "1px solid rgba(255, 255, 255, 0.12)",
+        background: "var(--ps-surface)",
+        border: "1px solid var(--ps-line-strong)",
       }}
     >
-      {/* ── IDE Widget Top Header (matches media_1790509595152.png) ── */}
+      {/* ── IDE Widget Top Header ── */}
       <div
         className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none"
         style={{
-          background: "rgba(255, 255, 255, 0.03)",
-          borderBottom: expanded
-            ? "1px solid rgba(255, 255, 255, 0.08)"
-            : "none",
+          background: "var(--ps-inset)",
+          borderBottom: expanded ? "1px solid var(--ps-line)" : "none",
         }}
         onClick={() => setExpanded(!expanded)}
       >
         {/* Left: File count & additions/deletions stats */}
         <div className="flex items-center gap-2">
-          <span className="text-slate-400 text-xs flex items-center">
+          <span className="text-[var(--ps-ink-muted)] text-xs flex items-center">
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </span>
-          <span className="text-xs font-semibold text-white">
+          <span className="text-xs font-semibold text-[var(--ps-ink)]">
             {totalFiles} file{totalFiles > 1 ? "s" : ""} changed
           </span>
-          <div className="flex items-center gap-1 font-mono text-[11px] font-semibold">
-            <span style={{ color: "#4ade80" }}>+{totalAdded}</span>
-            <span style={{ color: "#f87171" }}>-{totalDeleted}</span>
+          <div className="flex items-center gap-1 ps-mono text-[11px] font-medium">
+            <span style={{ color: "var(--ps-emerald)" }}>+{totalAdded}</span>
+            <span style={{ color: "var(--ps-rose)" }}>-{totalDeleted}</span>
           </div>
         </div>
 
@@ -602,14 +669,10 @@ function IdeChangesWidget({
           <button
             type="button"
             onClick={onReviewAll}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-slate-200 hover:text-white transition-all cursor-pointer"
-            style={{
-              background: "rgba(255, 255, 255, 0.08)",
-              border: "1px solid rgba(255, 255, 255, 0.15)",
-            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface)] border border-[var(--ps-line)] hover:border-[var(--ps-line-strong)] transition-colors cursor-pointer"
             title="Open Review & Diff for comprehensive comparison"
           >
-            <FileDiff size={12} className="text-purple-400" />
+            <FileDiff size={12} style={{ color: "var(--ps-cobalt)" }} />
             <span>Review</span>
           </button>
 
@@ -619,10 +682,7 @@ function IdeChangesWidget({
               type="button"
               disabled={anyApplying}
               onClick={onApplyAll}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-white transition-all cursor-pointer"
-              style={{
-                background: "var(--color-primary, #6d5dfb)",
-              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs ps-btn-contrast cursor-pointer disabled:opacity-50"
               title="Apply all suggested test files"
             >
               {anyApplying ? (
@@ -634,11 +694,11 @@ function IdeChangesWidget({
             </button>
           ) : (
             <div
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border"
               style={{
-                background: "rgba(34, 197, 94, 0.15)",
-                color: "#4ade80",
-                border: "1px solid rgba(34, 197, 94, 0.3)",
+                background: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                color: "var(--ps-emerald)",
+                borderColor: "color-mix(in srgb, var(--ps-emerald) 28%, transparent)",
               }}
             >
               <Check size={12} />
@@ -650,7 +710,7 @@ function IdeChangesWidget({
 
       {/* ── File List (Collapsible) ── */}
       {expanded && (
-        <div className="divide-y divide-white/5">
+        <div className="divide-y divide-[var(--ps-line)]">
           {files.map((file, idx) => {
             const isApplied = file.applied;
             const isApplying = file.isApplying;
@@ -661,7 +721,7 @@ function IdeChangesWidget({
             return (
               <div
                 key={file.targetTestFile || idx}
-                className="flex items-center justify-between px-3.5 py-2 hover:bg-white/[0.02] transition-colors group text-xs"
+                className="flex items-center justify-between px-3.5 py-2 hover:bg-[var(--ps-surface-2)]/60 transition-colors group text-xs"
               >
                 {/* File info */}
                 <div
@@ -670,37 +730,30 @@ function IdeChangesWidget({
                   title={`Click to review diff of ${file.targetTestFile}`}
                 >
                   {getIdeFileIcon(fileName)}
-                  <span className="font-semibold text-[#e6edf3] truncate hover:text-purple-300 transition-colors">
+                  <span className="font-medium text-[var(--ps-ink)] truncate group-hover:text-[var(--ps-cobalt)] transition-colors">
                     {fileName}
                   </span>
                   {dirPath && (
-                    <span className="text-[11px] text-slate-500 font-mono truncate hidden sm:inline">
+                    <span className="text-[11px] text-[var(--ps-ink-muted)] ps-mono truncate hidden sm:inline">
                       {dirPath}
                     </span>
                   )}
                   <span
-                    className="text-[10px] font-mono px-1 py-0.2 rounded font-semibold ml-1 flex-shrink-0"
+                    className="text-[10px] ps-mono px-1 py-0.2 rounded font-medium ml-1 flex-shrink-0"
                     style={{
-                      background: "rgba(34, 197, 94, 0.12)",
-                      color: "#4ade80",
+                      background: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                      color: "var(--ps-emerald)",
                     }}
                   >
                     +{file.linesAdded || 0}
                   </span>
                   {file.framework && (
                     <span
-                      className="text-[9.5px] uppercase font-bold px-1.5 py-0.2 rounded flex-shrink-0"
+                      className="text-[9.5px] uppercase font-semibold ps-mono px-1.5 py-0.2 rounded flex-shrink-0 border"
                       style={{
-                        background:
-                          file.framework === "vitest"
-                            ? "rgba(245, 158, 11, 0.15)"
-                            : "rgba(124, 58, 237, 0.15)",
-                        color:
-                          file.framework === "vitest" ? "#fbbf24" : "#c084fc",
-                        border:
-                          file.framework === "vitest"
-                            ? "1px solid rgba(245, 158, 11, 0.3)"
-                            : "1px solid rgba(124, 58, 237, 0.3)",
+                        background: "var(--ps-inset)",
+                        color: file.framework === "vitest" ? "var(--ps-amber)" : "var(--ps-cobalt)",
+                        borderColor: "var(--ps-line)",
                       }}
                     >
                       {file.framework}
@@ -714,7 +767,7 @@ function IdeChangesWidget({
                   <button
                     type="button"
                     onClick={() => onReviewFile?.(file, idx)}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
                     title="View Diff details for this file"
                   >
                     <Eye size={12} />
@@ -727,11 +780,7 @@ function IdeChangesWidget({
                       type="button"
                       disabled={isApplying}
                       onClick={() => onApplyFile?.(file)}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold text-white transition-all cursor-pointer"
-                      style={{
-                        background:
-                          file.framework === "vitest" ? "#d97706" : "#7c3aed",
-                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] ps-btn-contrast cursor-pointer disabled:opacity-50"
                       title={`Apply testcases to ${file.targetTestFile}`}
                     >
                       {isApplying ? (
@@ -746,8 +795,8 @@ function IdeChangesWidget({
                       <span
                         className="flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-medium"
                         style={{
-                          background: "rgba(34, 197, 94, 0.15)",
-                          color: "#4ade80",
+                          background: "color-mix(in srgb, var(--ps-emerald) 10%, transparent)",
+                          color: "var(--ps-emerald)",
                         }}
                       >
                         <Check size={11} />
@@ -757,7 +806,7 @@ function IdeChangesWidget({
                         type="button"
                         disabled={isUndoing}
                         onClick={() => onUndoFile?.(file)}
-                        className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
+                        className="p-1 rounded text-[var(--ps-ink-muted)] hover:text-[var(--ps-rose)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
                         title="Undo this file"
                       >
                         {isUndoing ? (
@@ -780,23 +829,20 @@ function IdeChangesWidget({
         <div
           className="flex items-center justify-between px-3.5 py-2.5 flex-wrap gap-2"
           style={{
-            background: "rgba(124, 58, 237, 0.08)",
-            borderTop: "1px solid rgba(124, 58, 237, 0.2)",
+            background: "var(--ps-inset)",
+            borderTop: "1px solid var(--ps-line)",
           }}
         >
-          <div className="text-[11px] text-purple-300 font-medium">
-            💡 Test files have been written to the project. Re-run analysis to verify coverage increase:
+          <div className="text-[11px] text-[var(--ps-ink-secondary)] font-medium">
+            Test files written. Re-run analysis to verify coverage gain:
           </div>
           <button
             type="button"
             onClick={onRunAnalysis}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ml-auto cursor-pointer"
-            style={{
-              background: "var(--color-primary, #6d5dfb)",
-            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ps-btn-contrast ml-auto cursor-pointer"
             title="Re-run Analysis Unit"
           >
-            <Play size={11} className="fill-white" />
+            <Play size={11} className="fill-current" />
             <span>Run Analysis Unit ↵</span>
           </button>
         </div>
@@ -995,6 +1041,9 @@ function FormattedMessage({ content }) {
 function ChatMessage({
   msg,
   onRetry,
+  onEditMessage,
+  onUndoMessage,
+  messageActionsBusy,
   onApplySuggestion,
   onUndoSuggestion,
   onApplyAllSuggestions,
@@ -1007,6 +1056,7 @@ function ChatMessage({
   const isUser = msg.role === "user";
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editText, setEditText] = useState(null);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(msg.content);
@@ -1028,64 +1078,43 @@ function ChatMessage({
     >
       {/* Header Info */}
       <div
-        className="flex items-center gap-2 mb-1.5 px-1"
+        className="flex items-center gap-2 mb-1.5 px-0.5"
         style={{
           fontSize: 11,
           flexDirection: isUser ? "row-reverse" : "row",
         }}
       >
-        <div
-          className="flex items-center justify-center rounded-full flex-shrink-0"
-          style={{
-            width: 22,
-            height: 22,
-            background: isUser
-              ? "rgba(109, 93, 251, 0.15)"
-              : "var(--color-surface)",
-            border: isUser
-              ? "1px solid var(--color-primary)"
-              : "1px solid var(--color-border)",
-            boxShadow: "none",
-          }}
-        >
-          {isUser ? (
-            <User size={11} style={{ color: "var(--color-primary)" }} />
-          ) : (
-            <Bot size={11} style={{ color: "var(--color-primary)" }} />
-          )}
-        </div>
+        {isUser ? (
+          <div
+            className="flex items-center justify-center rounded-md flex-shrink-0 border"
+            style={{
+              width: 20,
+              height: 20,
+              background: "var(--ps-surface-2)",
+              borderColor: "var(--ps-line-strong)",
+            }}
+          >
+            <User size={11} style={{ color: "var(--ps-ink-secondary)" }} />
+          </div>
+        ) : (
+          <CovaiLogo size={18} />
+        )}
 
         <span
           style={{
             fontWeight: 600,
-            color: isUser ? "var(--color-primary)" : "var(--color-text)",
+            color: isUser ? "var(--ps-ink-secondary)" : "var(--ps-ink)",
             fontFamily: "var(--font-sans)",
-            fontSize: 12,
+            fontSize: 11.5,
           }}
         >
           {isUser ? "You" : "COV"}
         </span>
 
-        {!isUser && (
-          <span
-            style={{
-              fontSize: 9,
-              fontWeight: 700,
-              padding: "1px 5px",
-              borderRadius: 4,
-              background: "rgba(109, 93, 251, 0.15)",
-              color: "var(--color-primary)",
-              letterSpacing: "0.04em",
-            }}
-          >
-            AI
-          </span>
-        )}
-
         <span
+          className="ps-mono"
           style={{
-            color: "var(--color-text-muted)",
-            fontFamily: "var(--font-mono)",
+            color: "var(--ps-ink-muted)",
             fontSize: 10,
           }}
         >
@@ -1093,6 +1122,36 @@ function ChatMessage({
         </span>
       </div>
 
+      {editText !== null && onEditMessage ? (
+        <form className="w-full space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-2" onSubmit={async event => {
+          event.preventDefault();
+          const text = editText.trim();
+          if (text && text !== msg.content && !messageActionsBusy && await onEditMessage(text)) setEditText(null);
+        }}>
+          <textarea
+            aria-label="Edit message"
+            value={editText}
+            onChange={event => setEditText(event.target.value)}
+            disabled={messageActionsBusy}
+            autoFocus
+            rows={3}
+            maxLength={16000}
+            className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-2 text-sm text-[var(--color-text)]"
+            onKeyDown={event => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!messageActionsBusy) setEditText(null);
+              }
+            }}
+          />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" disabled={messageActionsBusy} onClick={() => setEditText(null)}>Cancel</Button>
+            <Button size="sm" type="submit" disabled={messageActionsBusy || !editText.trim() || editText.trim() === msg.content}>Send</Button>
+          </div>
+        </form>
+      ) : (
+      <>
       {/* Message Bubble */}
       {msg.type === "quota" ? (
         <div
@@ -1146,17 +1205,17 @@ function ChatMessage({
         </div>
       ) : (
         <div
-          className="relative group rounded-2xl min-w-0"
+          className="relative group min-w-0"
           style={{
-            maxWidth: isUser ? "85%" : "100%",
-            padding: isUser ? "10px 15px" : "14px 18px",
+            maxWidth: isUser ? "86%" : "100%",
+            padding: isUser ? "9px 13px" : "12px 15px",
             background: isUser
-              ? "rgba(109, 93, 251, 0.08)"
-              : "var(--color-surface)",
+              ? "var(--ps-surface-2)"
+              : "var(--ps-surface)",
             border: isUser
-              ? "1px solid var(--color-primary)"
-              : "1px solid var(--color-border)",
-            borderRadius: isUser ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
+              ? "1px solid var(--ps-line-strong)"
+              : "1px solid var(--ps-line)",
+            borderRadius: isUser ? "12px 4px 12px 12px" : "4px 12px 12px 12px",
             boxShadow: "none",
             wordBreak: "break-word",
             overflowWrap: "anywhere",
@@ -1174,7 +1233,7 @@ function ChatMessage({
                   return (
                     <div
                       key={att.id || att.name}
-                      className="relative rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-bg)]"
+                      className="relative rounded-lg overflow-hidden border border-[var(--ps-line)] bg-[var(--ps-inset)]"
                       style={{ maxHeight: 180 }}
                     >
                       <img
@@ -1189,11 +1248,11 @@ function ChatMessage({
                   return (
                     <div
                       key={att.id || att.path}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono"
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] ps-mono border"
                       style={{
-                        background: "rgba(109, 93, 251, 0.12)",
-                        border: "1px solid var(--color-primary)",
-                        color: "var(--color-primary)",
+                        background: "var(--ps-inset)",
+                        borderColor: "var(--ps-line-strong)",
+                        color: "var(--ps-cobalt)",
                       }}
                     >
                       <AtSign size={11} />
@@ -1222,7 +1281,7 @@ function ChatMessage({
             </div>
           )}
 
-          <FormattedMessage content={msg.content} />
+          {msg.isRegenerating ? <TypingIndicator /> : <FormattedMessage content={msg.content} />}
 
           {/* Options / Action chips generated by AI */}
           {msg.options && (
@@ -1285,7 +1344,7 @@ function ChatMessage({
             )}
 
           {/* Hover Actions (Copy / Retry) */}
-          {!isUser && hovered && (
+          {!isUser && (hovered || msg.failed) && !msg.isRegenerating && (
             <div
               className="absolute -bottom-3 right-3 flex items-center gap-1 px-1.5 py-0.5 rounded-md"
               style={{
@@ -1333,12 +1392,26 @@ function ChatMessage({
           )}
         </div>
       )}
+      {onEditMessage && (
+        <div className="mt-1 flex gap-1">
+          <Button size="sm" variant="ghost" icon={Edit2} disabled={messageActionsBusy} onClick={() => setEditText(msg.content)}>Edit</Button>
+          <Button size="sm" variant="ghost" icon={Undo2} disabled={messageActionsBusy || !onUndoMessage} onClick={onUndoMessage} title="Return this message to the composer">Undo</Button>
+        </div>
+      )}
+      </>
+      )}
     </motion.div>
   );
 }
 
 /* ── Typing Indicator ────────────────────────────────────── */
 function TypingIndicator() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -1347,42 +1420,32 @@ function TypingIndicator() {
       className="flex flex-col items-start"
     >
       <div
-        className="flex items-center gap-2 mb-1.5 px-1"
+        className="flex items-center gap-2 mb-1.5 px-0.5"
         style={{ fontSize: 11 }}
       >
-        <div
-          className="flex items-center justify-center rounded-full flex-shrink-0"
-          style={{
-            width: 22,
-            height: 22,
-            background: "var(--color-surface)",
-            border: "1px solid var(--color-border)",
-          }}
-        >
-          <Bot size={11} style={{ color: "var(--color-primary)" }} />
-        </div>
+        <CovaiLogo size={18} />
         <span
-          style={{ fontWeight: 600, color: "var(--color-text)", fontSize: 12 }}
+          style={{ fontWeight: 600, color: "var(--ps-ink)", fontSize: 11.5 }}
         >
           COV
         </span>
-        <span style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>
-          thinking…
+        <span role="status" className="ps-mono" style={{ color: "var(--ps-ink-muted)", fontSize: 10.5 }}>
+          {elapsed >= 8 ? 'Analyzing…' : 'Thinking…'} <span aria-hidden="true">{elapsed}s</span>
         </span>
       </div>
 
       <div
-        className="flex items-center gap-1.5 px-4 py-3 rounded-2xl"
+        className="flex items-center gap-1.5 px-3.5 py-2.5"
         style={{
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "4px 16px 16px 16px",
+          background: "var(--ps-surface)",
+          border: "1px solid var(--ps-line)",
+          borderRadius: "4px 12px 12px 12px",
         }}
       >
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
-            animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }}
+            animate={{ scale: [1, 1.35, 1], opacity: [0.3, 0.9, 0.3] }}
             transition={{
               duration: 1.1,
               repeat: Infinity,
@@ -1390,10 +1453,10 @@ function TypingIndicator() {
               ease: "easeInOut",
             }}
             style={{
-              width: 5,
-              height: 5,
+              width: 4.5,
+              height: 4.5,
               borderRadius: "50%",
-              background: "var(--color-primary)",
+              background: "var(--ps-cobalt)",
             }}
           />
         ))}
@@ -1402,55 +1465,20 @@ function TypingIndicator() {
   );
 }
 
-/* ── AI Model Options ────────────────────────────────────── */
-const AI_MODELS = [
-  {
-    id: "gemini-1.5-pro",
-    name: "Gemini 1.5 Pro",
-    provider: "Google",
-    badge: "Default",
-    badgeColor: "#a78bfa",
-    desc: "Complex logic & test generation",
-  },
-  {
-    id: "gemini-1.5-flash",
-    name: "Gemini 1.5 Flash",
-    provider: "Google",
-    badge: "Fast",
-    badgeColor: "#38bdf8",
-    desc: "Ultra-low latency reasoning",
-  },
-  {
-    id: "claude-3-5-sonnet",
-    name: "Claude 3.5 Sonnet",
-    provider: "Anthropic",
-    badge: "Pro",
-    badgeColor: "#f472b6",
-    desc: "Advanced refactoring & test design",
-  },
-  {
-    id: "gpt-4o",
-    name: "GPT-4o",
-    provider: "OpenAI",
-    badge: "Smart",
-    badgeColor: "#4ade80",
-    desc: "High precision code synthesis",
-  },
-];
-
+/* ── AI Model Options (Loaded from shared catalog) ── */
 /* ── Modern Prompt Input (Compact & Dynamic Auto-Resize) ─── */
 function ChatInput({
   onSend,
   isTyping,
-  selectedModel,
-  setSelectedModel,
+  isRevising,
   fileTree = [],
   projectId,
+  input,
+  setInput,
+  attachments,
+  setAttachments,
 }) {
-  const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [attachments, setAttachments] = useState([]);
 
   // @ mention autocomplete state
   const [atMentionOpen, setAtMentionOpen] = useState(false);
@@ -1458,7 +1486,6 @@ function ChatInput({
   const [atMentionIndex, setAtMentionIndex] = useState(0);
 
   const textareaRef = useRef(null);
-  const menuRef = useRef(null);
   const atMenuRef = useRef(null);
   const fileInputRef = useRef(null);
   const selectedMentionItemRef = useRef(null);
@@ -1505,10 +1532,7 @@ function ChatInput({
   // Click outside to close menus
   useEffect(() => {
     const handleClickOutside = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setModelMenuOpen(false);
-      }
-      if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
+if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
         setAtMentionOpen(false);
       }
     };
@@ -1654,30 +1678,17 @@ function ChatInput({
     setInput(replacedBefore + textAfterCursor);
     setAtMentionOpen(false);
 
-    // Add to attachments as project_file so its content is sent to AI
+    // The chat service reads the referenced file from the authorized snapshot.
     if (!attachments.some((a) => a.path === file.path)) {
       const newAtt = {
         id: "proj-" + file.path,
         type: "project_file",
         name: file.name,
         path: file.path,
-        content: null,
       };
       setAttachments((prev) => [...prev, newAtt]);
 
-      if (projectId) {
-        getFileContentApi(projectId, file.path)
-          .then((res) => {
-            if (res?.content !== undefined) {
-              setAttachments((prev) =>
-                prev.map((a) =>
-                  a.id === newAtt.id ? { ...a, content: res.content } : a,
-                ),
-              );
-            }
-          })
-          .catch(() => {});
-      }
+
     }
 
     setTimeout(() => {
@@ -1714,15 +1725,15 @@ function ChatInput({
       }
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
   };
 
   const handleSend = () => {
-    if ((!input.trim() && attachments.length === 0) || isTyping) return;
-    onSend(input.trim(), attachments);
+    if (!input.trim() || isTyping) return;
+    if (!onSend(input.trim(), attachments)) return;
     setInput("");
     setAttachments([]);
     setAtMentionOpen(false);
@@ -1731,13 +1742,14 @@ function ChatInput({
     }
   };
 
-  const canSend = (input.trim() || attachments.length > 0) && !isTyping;
+  const canSend = Boolean(input.trim()) && !isTyping;
 
   return (
     <div
       className="flex-shrink-0 relative"
       style={{ padding: "6px 14px 12px" }}
       onPaste={handlePaste}
+      inert={isRevising}
     >
       {/* Hidden file input for system file attachment */}
       <input
@@ -1818,10 +1830,10 @@ function ChatInput({
                       className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer w-full"
                       style={{
                         background: isSelected
-                          ? "rgba(109, 93, 251, 0.12)"
+                          ? "var(--ps-surface-2)"
                           : "transparent",
                         border: isSelected
-                          ? "1px solid var(--color-primary)"
+                          ? "1px solid var(--ps-line-strong)"
                           : "1px solid transparent",
                       }}
                     >
@@ -1829,24 +1841,24 @@ function ChatInput({
                         size={14}
                         className={
                           isSelected
-                            ? "text-[var(--color-primary)] shrink-0"
-                            : "text-[var(--color-text-muted)] shrink-0"
+                            ? "text-[var(--ps-cobalt)] shrink-0"
+                            : "text-[var(--ps-ink-muted)] shrink-0"
                         }
                       />
                       <div className="flex-1 min-w-0">
                         <div
-                          className="text-xs font-mono font-medium truncate"
+                          className="text-xs ps-mono font-medium truncate"
                           style={{
                             color: isSelected
-                              ? "var(--color-primary)"
-                              : "var(--color-text)",
+                              ? "var(--ps-ink)"
+                              : "var(--ps-ink-secondary)",
                           }}
                         >
                           {file.name}
                         </div>
                         <div
-                          className="text-[10px] font-mono truncate"
-                          style={{ color: "var(--color-text-muted)" }}
+                          className="text-[10px] ps-mono truncate"
+                          style={{ color: "var(--ps-ink-muted)" }}
                         >
                           {file.path}
                         </div>
@@ -1860,161 +1872,35 @@ function ChatInput({
         )}
       </AnimatePresence>
 
-      {/* ── AI Model Selector Dropdown ── */}
-      <AnimatePresence>
-        {modelMenuOpen && (
-          <motion.div
-            ref={menuRef}
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
-            style={{
-              position: "absolute",
-              bottom: "calc(100% - 2px)",
-              left: 14,
-              width: 270,
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              borderRadius: 12,
-              boxShadow: "var(--shadow-lg)",
-              padding: "6px",
-              zIndex: 50,
-            }}
-          >
-            <div
-              className="px-2.5 py-1.5 text-[10px] font-semibold tracking-wider uppercase flex items-center justify-between"
-              style={{
-                color: "var(--color-text-secondary)",
-                borderBottom: "1px solid var(--color-border)",
-              }}
-            >
-              <span>Select AI Model</span>
-              <span
-                style={{
-                  color: "var(--color-primary)",
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                COV Multi-LLM
-              </span>
-            </div>
-
-            <div className="flex flex-col gap-1 mt-1">
-              {AI_MODELS.map((model) => {
-                const isSelected = selectedModel?.id === model.id;
-                return (
-                  <button
-                    key={model.id}
-                    onClick={() => {
-                      setSelectedModel(model);
-                      setModelMenuOpen(false);
-                    }}
-                    className="flex items-start gap-2.5 p-2 rounded-lg text-left transition-colors cursor-pointer"
-                    style={{
-                      background: isSelected
-                        ? "rgba(109, 93, 251, 0.12)"
-                        : "transparent",
-                      border: isSelected
-                        ? "1px solid var(--color-primary)"
-                        : "1px solid transparent",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isSelected)
-                        e.currentTarget.style.background = "var(--color-bg)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isSelected)
-                        e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: "var(--color-text)",
-                          }}
-                        >
-                          {model.name}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 700,
-                            padding: "0 5px",
-                            borderRadius: 4,
-                            background: `${model.badgeColor}20`,
-                            color: model.badgeColor,
-                            border: `1px solid ${model.badgeColor}40`,
-                          }}
-                        >
-                          {model.badge}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 10.5,
-                          color: "var(--color-text-secondary)",
-                          marginTop: 2,
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        {model.desc}
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <Check
-                        size={14}
-                        style={{ color: "var(--color-primary)" }}
-                        className="flex-shrink-0 mt-0.5"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* ── Main Input Box ── */}
       <div
-        className="relative rounded-2xl transition-all duration-200"
+        className="relative rounded-xl transition-colors duration-150"
         style={{
-          background: "var(--color-surface)",
+          background: "var(--ps-surface)",
           border: focused
-            ? "1.5px solid var(--color-primary)"
-            : "1px solid var(--color-border)",
-          boxShadow: focused ? "0 0 0 2px rgba(124, 58, 237, 0.2)" : "none",
-          padding: "8px 12px 6px",
+            ? "1px solid var(--ps-cobalt)"
+            : "1px solid var(--ps-line-strong)",
+          padding: "10px 12px 8px",
         }}
       >
         {/* Attachments chip row */}
         {attachments.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-1.5 border-b border-[var(--color-border)]">
+          <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-2 border-b border-[var(--ps-line)]">
             {attachments.map((att) => (
               <div
                 key={att.id}
-                className="group/att flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-lg text-xs"
+                className="group/att flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-md text-xs border"
                 style={{
-                  background:
-                    att.type === "project_file"
-                      ? "rgba(109, 93, 251, 0.12)"
-                      : "var(--color-surface-secondary)",
-                  border:
-                    att.type === "project_file"
-                      ? "1px solid var(--color-primary)"
-                      : "1px solid var(--color-border)",
+                  background: "var(--ps-inset)",
+                  borderColor: "var(--ps-line-strong)",
                   color:
                     att.type === "project_file"
-                      ? "var(--color-primary)"
-                      : "var(--color-text)",
+                      ? "var(--ps-cobalt)"
+                      : "var(--ps-ink)",
                 }}
               >
                 {att.type === "image" ? (
-                  <div className="w-5 h-5 rounded overflow-hidden flex-shrink-0 border border-[var(--color-border)] bg-[var(--color-bg)]">
+                  <div className="w-5 h-5 rounded overflow-hidden flex-shrink-0 border border-[var(--ps-line)] bg-[var(--ps-bg)]">
                     <img
                       src={att.previewUrl || att.data}
                       alt="Thumbnail"
@@ -2026,18 +1912,19 @@ function ChatInput({
                 ) : (
                   <FileText
                     size={12}
-                    className="flex-shrink-0 text-[var(--color-primary)]"
+                    className="flex-shrink-0"
+                    style={{ color: "var(--ps-cobalt)" }}
                   />
                 )}
 
-                <span className="font-mono text-[11px] truncate max-w-[140px]">
+                <span className="ps-mono text-[11px] truncate max-w-[140px]">
                   {att.type === "project_file" ? `@${att.path}` : att.name}
                 </span>
 
                 <button
                   type="button"
                   onClick={() => removeAttachment(att.id)}
-                  className="p-0.5 rounded hover:bg-[var(--color-danger)]/15 hover:text-[var(--color-danger)] text-[var(--color-text-muted)] cursor-pointer transition-colors"
+                  className="p-0.5 rounded hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-muted)] hover:text-[var(--ps-rose)] cursor-pointer transition-colors"
                   title="Remove"
                 >
                   <X size={12} />
@@ -2054,117 +1941,69 @@ function ChatInput({
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder="Ask COV or type @ to reference..."
+          placeholder="Ask COV or type @ to reference a file..."
           rows={1}
           className="w-full resize-none outline-none bg-transparent custom-scrollbar"
           style={{
-            padding: "2px 4px 4px",
+            padding: "2px 2px 6px",
             fontFamily: "var(--font-sans)",
-            color: "var(--color-text)",
+            color: "var(--ps-ink)",
             fontSize: 13,
             lineHeight: "20px",
             height: "24px",
             maxHeight: 160,
-            caretColor: "var(--color-primary)",
+            caretColor: "var(--ps-cobalt)",
           }}
         />
 
-        {/* Clean Single Horizontal Row: [+] [Model Selector] on Left, [Send] on Right */}
-        <div className="flex items-center justify-between pt-1 gap-2">
-          {/* Left: [+] Add File button + Model Selector */}
+        {/* Compact Single Footer Row */}
+        <div className="flex items-center justify-between pt-1.5 gap-2">
           <div className="flex items-center gap-1.5 min-w-0">
-            {/* '+' Add File Button */}
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+            <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center rounded-lg cursor-pointer transition-all shrink-0"
-              style={{
-                width: 26,
-                height: 26,
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text-secondary)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = "var(--color-primary)";
-                e.currentTarget.style.borderColor = "var(--color-primary)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = "var(--color-text-secondary)";
-                e.currentTarget.style.borderColor = "var(--color-border)";
-              }}
-              title="Attach file or image (+)"
+              className="h-7 px-2 rounded-md inline-flex items-center gap-1 text-[11px] font-medium border border-[var(--ps-line)] bg-[var(--ps-inset)] hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer shrink-0"
+              title="Attach file or image"
             >
-              <Plus size={15} strokeWidth={2.4} />
-            </motion.button>
+              <Plus size={13} />
+              <span>Attach</span>
+            </button>
 
-            {/* Model Selector Button */}
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setModelMenuOpen(!modelMenuOpen)}
+            <button
               type="button"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all"
-              style={{
-                background: modelMenuOpen
-                  ? "var(--color-surface)"
-                  : "var(--color-bg)",
-                border: modelMenuOpen
-                  ? "1px solid var(--color-primary)"
-                  : "1px solid var(--color-border)",
-                fontSize: 11,
-                color: "var(--color-text)",
+              onClick={() => {
+                const next = input ? `${input}${input.endsWith(" ") ? "" : " "}@` : "@";
+                setInput(next);
+                setAtMentionQuery("");
+                setAtMentionOpen(true);
+                setAtMentionIndex(0);
+                textareaRef.current?.focus();
               }}
-              title="Switch AI Model"
+              className="h-7 px-2 rounded-md inline-flex items-center gap-1 text-[11px] ps-mono text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink-secondary)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer shrink-0"
+              title="Reference a repository file (@)"
             >
-              <Sparkles
-                size={11}
-                style={{
-                  color: selectedModel?.badgeColor || "var(--color-primary)",
-                }}
-              />
-              <span
-                style={{ fontWeight: 500 }}
-                className="truncate max-w-[120px]"
-              >
-                {selectedModel?.name || "Gemini 1.5 Pro"}
-              </span>
-              <ChevronDown
-                size={12}
-                style={{
-                  color: "var(--color-text-secondary)",
-                  transform: modelMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.2s ease",
-                }}
-              />
-            </motion.button>
+              <AtSign size={12} />
+              <span>File</span>
+            </button>
           </div>
 
-          {/* Right: Send Button */}
-          <motion.button
-            whileHover={canSend ? { scale: 1.08 } : {}}
-            whileTap={canSend ? { scale: 0.92 } : {}}
+          <button
+            type="button"
             onClick={handleSend}
             disabled={!canSend}
-            className="flex items-center justify-center rounded-xl cursor-pointer shrink-0"
-            style={{
-              width: 28,
-              height: 28,
-              background: canSend ? "var(--color-primary)" : "var(--color-bg)",
-              color: canSend ? "#fff" : "var(--color-text-secondary)",
-              border: canSend ? "none" : "1px solid var(--color-border)",
-              boxShadow: "none",
-              transition: "all 0.2s ease",
-            }}
+            aria-label="Send message"
+            className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-all ${
+              canSend
+                ? "ps-btn-contrast cursor-pointer"
+                : "bg-[var(--ps-inset)] text-[var(--ps-ink-muted)] border border-[var(--ps-line)] cursor-not-allowed opacity-60"
+            }`}
           >
             {isTyping ? (
-              <Loader2 size={13} className="animate-spin text-purple-300" />
+              <Loader2 size={13} className="animate-spin" style={{ color: "var(--ps-cobalt)" }} />
             ) : (
-              <ArrowUp size={14} strokeWidth={2.5} />
+              <ArrowUp size={14} strokeWidth={2.2} />
             )}
-          </motion.button>
+          </button>
         </div>
       </div>
     </div>
@@ -2174,6 +2013,7 @@ function ChatInput({
 
 /* ── AI Agent Panel — Main Export ────────────────────────── */
 export default function AIPanel({
+  onClose,
   projectId,
   snapshotId,
   screenContext,
@@ -2200,18 +2040,24 @@ export default function AIPanel({
             setInternalTree(list);
           }
         })
-        .catch(() => {});
+        .catch((err) => console.error("Unable to refresh project tree", err));
     }
   }, [fileTree, projectId]);
 
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [draftText, setDraftText] = useState("");
+  const [draftAttachments, setDraftAttachments] = useState([]);
+  const [isRevising, setIsRevising] = useState(false);
+  const revisionRef = useRef(false);
+  const access = useProjectAccess(projectId);
   const [isTyping, setIsTyping] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
-  const [generateExpanded, setGenerateExpanded] = useState(false);
+  const [selectedModel] = useState(() => {
+    const curId = typeof getSelectedAIModel === "function" ? getSelectedAIModel() : null;
+    return AI_MODELS.find((m) => m.id === curId) || AI_MODELS[0];
+  });
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewFiles, setReviewFiles] = useState([]);
   const [reviewIndex, setReviewIndex] = useState(0);
-  const [hasAnalysis, setHasAnalysis] = useState(false);
   const bottomRef = useRef(null);
   const messageIdRef = useRef(10);
   const getNextId = () => ++messageIdRef.current;
@@ -2223,28 +2069,13 @@ export default function AIPanel({
     setReviewModalOpen(true);
   };
 
-  useEffect(() => {
-    if (!snapshotId) return;
-    getIntegrationWorkspace(snapshotId)
-      .then((res) => {
-        setHasAnalysis(Boolean(res?.data?.generation?.hasAnalysis));
-      })
-      .catch((err) => {
-        setHasAnalysis(false);
-        if (err?.status !== 404) {
-          console.warn("[AIPanel] Integration workspace unavailable:", err.message);
-        }
-      });
-  }, [snapshotId]);
-
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
-  const [activeSessionMeta, setActiveSessionMeta] = useState(null);
   const [useProjectMemory, setUseProjectMemory] = useState(true);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
-  const [contextInfo, setContextInfo] = useState(null);
   const [contextDialog, setContextDialog] = useState(null);
+  const [integrationFixContext, setIntegrationFixContext] = useState(null);
   const contextRequestRef = useRef(0);
   const sendRef = useRef(false);
   const storageKey = useMemo(() => {
@@ -2275,8 +2106,8 @@ export default function AIPanel({
     }
   }, [projectId]);
 
-  const handleSelectSession = useCallback(async (sessionId, throwOnError = false) => {
-    if (!sessionId) return;
+  const handleSelectSession = useCallback(async (sessionId, throwOnError = false, fromRevision = false) => {
+    if (!sessionId || (revisionRef.current && !fromRevision)) return;
     const request = ++contextRequestRef.current;
     setIsLoadingSession(true);
     try {
@@ -2285,15 +2116,16 @@ export default function AIPanel({
       if (!res?.success || !res.data) throw new Error("Could not load conversation.");
       const session = res.data.session;
       const formatted = (res.data.messages || []).map(m => ({
-        id: m.id, role: m.role, content: m.content, model: m.model,
+        id: m.id, savedMessageId: m.id, role: m.role, content: m.content, model: m.model,
         attachments: (m.attachments || []).map((att, index) => ({ ...att, id: att.id || `${m.id}_${index}`, previewUrl: att.type === "image" ? att.data : undefined })),
         timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       }));
-      setActiveSessionId(sessionId); setActiveSessionMeta(session);
-      setUseProjectMemory(session.useMemory ?? true); setContextInfo(null);
+      setActiveSessionId(sessionId);
+      setUseProjectMemory(session.useMemory ?? true);
       setMessages(formatted.length ? formatted : INITIAL_MESSAGES); setIsHistoryOpen(false);
       if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: sessionId, useMemory: session.useMemory ?? true }));
       if (res.data.truncated) showToast({ type: "info", title: "Recent history loaded", message: "Only the latest 2,000 messages are shown. Older stored context may be summarized." });
+      return true;
     } catch (err) {
       if (request === contextRequestRef.current) showToast({ type: "error", title: "Load failed", message: err.message });
       if (throwOnError) throw err;
@@ -2305,7 +2137,7 @@ export default function AIPanel({
     const requestState = contextRequestRef;
     Promise.resolve().then(async () => {
       if (cancelled) return;
-      setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null); setActiveSessionMeta(null); setContextInfo(null);
+      setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null);
       fetchSessions();
       if (projectId && projectId !== "undefined") {
         getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config?.automaticMemory ?? false); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
@@ -2324,10 +2156,9 @@ export default function AIPanel({
   }, [projectId, storageKey, fetchSessions, handleSelectSession]);
 
   const handleNewChat = (memory = useProjectMemory) => {
-    if (isTyping || isRestoring || isLoadingSession) return;
+    if (isTyping || isRestoring || isLoadingSession || revisionRef.current) return;
     contextRequestRef.current++;
     setUseProjectMemory(typeof memory === "boolean" ? memory : useProjectMemory);
-    setActiveSessionMeta(null); setContextInfo(null);
     if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: null, useMemory: typeof memory === "boolean" ? memory : useProjectMemory }));
     setActiveSessionId(null);
     setMessages(INITIAL_MESSAGES);
@@ -2383,7 +2214,6 @@ export default function AIPanel({
         setSessions((prev) => prev.filter((s) => s.id !== sessionId));
         if (activeSessionId === sessionId) {
           setActiveSessionId(null);
-          setActiveSessionMeta(null); setContextInfo(null);
           if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: null, useMemory: useProjectMemory }));
           setMessages(INITIAL_MESSAGES);
         }
@@ -2451,11 +2281,11 @@ export default function AIPanel({
       }),
     };
 
-    setMessages((m) => [...m, userMsg]);
+    setMessages((m) => [...m.map(message => message.isGreeting ? { ...message, isGreeting: false, content: chatGreeting(screenContext) } : message), userMsg]);
     setIsTyping(true);
 
     try {
-      const res = await suggestUnitTestcase(snapshotId, filePath, projectId);
+      const res = await suggestUnitTestcase(snapshotId, filePath, projectId, isTest ? undefined : "all");
       const data = res?.data;
 
       if (!data) {
@@ -2496,6 +2326,7 @@ export default function AIPanel({
                 sourceFile: data.sourceFile,
                 targetTestFile: data.targetTestFile,
                 isExisting: data.isExisting,
+                originalCode: data.originalCode,
                 framework: data.framework || "jest",
                 explanation: data.explanation,
                 suggestedTestCode: data.suggestedTestCode,
@@ -2571,6 +2402,39 @@ export default function AIPanel({
     }
   };
 
+  const readTestFile = async (path) => {
+    try {
+      const { data } = await getFileContentApi(projectId, path, { snapshotId, forceFresh: true });
+      return data;
+    } catch (err) {
+      if (err.status === 404) return null;
+      throw err;
+    }
+  };
+
+  const writeTestFile = (path, content, current) =>
+    updateFileContentApi(projectId, path, content, {
+      snapshotId,
+      expectedVersion: current.version,
+      expectedWorkspaceRevision: current.workspaceRevision,
+    });
+
+  const revertTestFile = async (suggestion, previousContent) => {
+    const path = suggestion.targetTestFile;
+    const current = await readTestFile(path);
+    if (!current) throw new Error("The applied file no longer exists.");
+    const appliedCode = suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
+    if (current.content !== appliedCode) {
+      throw new Error("The file changed after applying this suggestion. Review it before undoing.");
+    }
+    if (suggestion.isExisting) {
+      await writeTestFile(path, previousContent, current);
+    } else {
+      await deleteProjectEntryApi(projectId, path, { snapshotId, expectedVersion: current.version, expectedWorkspaceRevision: current.workspaceRevision });
+    }
+    if (snapshotId) invalidateCoverageQueries(snapshotId);
+  };
+
   const handleApplyIdeFile = async (file, specificSuggestion = null) => {
     if (!projectId || !file) return;
     const target = specificSuggestion || file;
@@ -2591,10 +2455,14 @@ export default function AIPanel({
       const contentToWrite =
         target.fullUpdatedContent || target.suggestedTestCode;
 
-      if (file.isExisting) {
-        await updateFileContentApi(projectId, targetPath, contentToWrite);
+      const current = await readTestFile(targetPath);
+      if (current) {
+        if (current.content !== (target.originalContent ?? target.originalCode ?? file.originalContent)) {
+          throw new Error("The file changed since this suggestion was generated. Generate a fresh suggestion.");
+        }
+        await writeTestFile(targetPath, contentToWrite, current);
       } else {
-        await createProjectFileApi(projectId, targetPath, contentToWrite);
+        await createProjectFileApi(projectId, targetPath, contentToWrite, { snapshotId });
       }
 
       setMessages((prev) =>
@@ -2602,7 +2470,7 @@ export default function AIPanel({
           if (!m.ideChanges) return m;
           const updated = m.ideChanges.files.map((f) =>
             f.targetTestFile === file.targetTestFile
-              ? { ...f, applied: true, isApplying: false }
+              ? { ...f, ...target, originalContent: current?.content ?? "", isExisting: Boolean(current), applied: true, isApplying: false }
               : f
           );
           return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
@@ -2612,7 +2480,7 @@ export default function AIPanel({
       // Update modal state if open
       setReviewFiles((prev) =>
         prev.map((f) =>
-          f.targetTestFile === file.targetTestFile ? { ...f, applied: true } : f
+          f.targetTestFile === file.targetTestFile ? { ...f, ...target, originalContent: current?.content ?? "", isExisting: Boolean(current), applied: true } : f
         )
       );
 
@@ -2661,7 +2529,7 @@ export default function AIPanel({
     );
 
     try {
-      await updateFileContentApi(projectId, targetPath, orig);
+      await revertTestFile(file, orig);
 
       setMessages((prev) =>
         prev.map((m) => {
@@ -2719,6 +2587,7 @@ export default function AIPanel({
   };
 
   const handleSuggestBulk = async (arg1, arg2) => {
+    if (isTyping || isRestoring || isLoadingSession) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -2757,6 +2626,7 @@ export default function AIPanel({
           filePath: f,
           fileName: f.split("/").pop(),
           reason: "Has not reached 100% coverage",
+          linesPct: 0,
         }))
         : []);
 
@@ -2793,6 +2663,7 @@ export default function AIPanel({
       const effectiveSnapshotId = options.snapshotId || snapshotId;
       const effectiveProjectId = options.projectId || projectId;
       const fileChanges = [];
+      let failedRequests = 0;
 
       // 1. Filter out files that are already 100% or have 0 uncovered lines
       const candidateFiles = needImprovement.filter((item) => {
@@ -2827,7 +2698,7 @@ export default function AIPanel({
                 ideChanges: fileChanges.length > 0 ? {
                   totalFiles: fileChanges.length,
                   totalAdded: fileChanges.reduce((sum, f) => sum + (f.linesAdded || 0), 0),
-                  totalDeleted: 0,
+                  totalDeleted: fileChanges.reduce((sum, file) => sum + file.linesDeleted, 0),
                   files: [...fileChanges],
                 } : null,
               }
@@ -2864,38 +2735,40 @@ export default function AIPanel({
               const cleanTargetTest = cleanFilePath(
                 primary.targetTestFile || primary.filePath,
               );
+              if (!cleanTargetTest) continue;
 
-              let originalContent = primary.existingContent || "";
-              if (!originalContent && primary.isExisting) {
+              let originalContent = primary.originalCode ?? primary.existingContent;
+              if (originalContent == null && primary.isExisting) {
                 try {
                   const prevRes = await getFileContentApi(
                     effectiveProjectId,
                     cleanTargetTest,
+                    { snapshotId: effectiveSnapshotId, forceFresh: true },
                   );
                   originalContent = prevRes?.data?.content || "";
-                } catch (_) { }
+                } catch (error) {
+                  console.warn("Unable to read the existing test file:", error);
+                  return;
+                }
               }
 
               const fullUpdatedContent =
                 primary.fullUpdatedContent || primary.suggestedTestCode || "";
-              const origLines = (originalContent || "").split("\n").length;
-              const updatedLines = (fullUpdatedContent || "").split("\n").length;
-              const linesAdded =
-                Math.max(1, updatedLines - origLines) ||
-                (primary.suggestedTestCode || "").split("\n").length;
+              const { added, removed } = countDiffLines(originalContent ?? "", fullUpdatedContent);
 
+              if (fileChanges.some(file => file.targetTestFile === cleanTargetTest)) continue;
               fileChanges.push({
                 id: `fc-${item.filePath || item.sourceFile}`,
                 sourceFile: cleanSource,
                 targetTestFile: cleanTargetTest,
                 fileName: getFileName(cleanTargetTest),
                 framework: primary.framework || "vitest",
-                isExisting: primary.isExisting ?? true,
-                originalContent,
+                isExisting: Boolean(primary.isExisting),
+                originalContent: originalContent ?? "",
                 fullUpdatedContent,
                 suggestedTestCode: primary.suggestedTestCode || fullUpdatedContent,
-                linesAdded,
-                linesDeleted: 0,
+                linesAdded: added,
+                linesDeleted: removed,
                 explanation:
                   primary.explanation ||
                   "Add test cases for uncovered branches.",
@@ -2906,9 +2779,9 @@ export default function AIPanel({
                   id: s.framework || `sug-${sIdx}`,
                   sourceFile: cleanFilePath(s.sourceFile || cleanSource),
                   targetTestFile: cleanFilePath(s.targetTestFile || cleanTargetTest),
-                  originalContent: s.existingContent || originalContent,
+                  originalContent: s.originalCode ?? s.existingContent ?? originalContent ?? "",
                   fullUpdatedContent: s.fullUpdatedContent || s.suggestedTestCode,
-                  linesAdded,
+                  linesAdded: added,
                   applied: false,
                   isApplying: false,
                   isUndoing: false,
@@ -2919,6 +2792,7 @@ export default function AIPanel({
               });
             }
           } catch (itemErr) {
+            failedRequests += 1;
             console.warn(
               `[handleSuggestBulk] Error suggesting for ${item.filePath}:`,
               itemErr,
@@ -2942,7 +2816,7 @@ export default function AIPanel({
         (sum, f) => sum + (f.linesAdded || 0),
         0,
       );
-      const totalDeleted = 0;
+      const totalDeleted = fileChanges.reduce((sum, file) => sum + file.linesDeleted, 0);
 
       // 1. Overview Markdown content
       let overviewContent = "";
@@ -2955,6 +2829,12 @@ export default function AIPanel({
           `🎉 **All source files have reached comprehensive coverage!**\n\n` +
           `- All conditional branches and functions are covered.\n` +
           `- No additional testcase suggestions are needed.`;
+      }
+
+      if (failedRequests) {
+        overviewContent = fileChanges.length
+          ? overviewContent + "\n\nCould not generate suggestions for " + failedRequests + " source files."
+          : "Could not generate unit test suggestions. Please try again.";
       }
 
       const finalAssistantMsg = {
@@ -3003,18 +2883,43 @@ export default function AIPanel({
     }
   };
 
-  // Watch for external suggest trigger (e.g. from Coverage table or Editor)
+  // Watch for external suggest trigger (e.g. from Coverage table, Integration AI Fix, or Editor)
   useEffect(() => {
     if (!pendingAiSuggestion) return;
-    const { filePath, isBulk } = pendingAiSuggestion;
+    if (isRestoring || isLoadingSession || isTyping) return;
+    const {
+      filePath,
+      isBulk,
+      promptText,
+      attachments: pendingAttachments,
+      fixContext,
+    } = pendingAiSuggestion;
     onClearPendingSuggestion?.();
+    if (fixContext) {
+      setIntegrationFixContext(fixContext);
+    }
     if (isBulk) {
       // Bulk test generation is handled exclusively by UnitTestGuidedWorkflow and UnitTestTraceabilityMatrix
-      return;
+      handleSuggestBulk(pendingAiSuggestion);
     } else if (filePath) {
       handleSuggestForFile(filePath);
+    } else if (promptText) {
+      handleSend(
+        typeof promptText === "string" ? promptText : String(promptText),
+        Array.isArray(pendingAttachments) ? pendingAttachments : [],
+        null,
+        null,
+        fixContext || null,
+      );
     }
-  }, [pendingAiSuggestion]);
+  }, [pendingAiSuggestion, isRestoring, isLoadingSession, isTyping]);
+
+  const isMatchingSuggestion = (s, target) => {
+    if (!s || !target) return false;
+    if (target.suggestionId && s.suggestionId) return s.suggestionId === target.suggestionId;
+    if (target.id && s.id) return s.id === target.id;
+    return s.framework === target.framework;
+  };
 
   const handleApplySuggestion = async (msgId, suggestion) => {
     if (!projectId || !suggestion) return;
@@ -3023,105 +2928,204 @@ export default function AIPanel({
       prev.map((m) => {
         if (m.id !== msgId) return m;
         const updatedList = (m.testSuggestions || []).map((s) =>
-          s.framework === suggestion.framework ? { ...s, isApplying: true } : s,
+          isMatchingSuggestion(s, suggestion)
+            ? { ...s, isApplying: true, testRunError: null, isolatedDefects: null }
+            : s,
         );
         return {
           ...m,
           testSuggestions: updatedList,
-          testSuggestion:
-            m.testSuggestion?.framework === suggestion.framework
-              ? { ...m.testSuggestion, isApplying: true }
-              : m.testSuggestion,
+          testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+            ? { ...m.testSuggestion, isApplying: true, testRunError: null, isolatedDefects: null }
+            : m.testSuggestion,
         };
       }),
     );
 
     try {
       let previousContent = "";
-      if (suggestion.isExisting) {
-        try {
-          const prevRes = await getFileContentApi(
-            projectId,
-            suggestion.targetTestFile,
-          );
-          previousContent = prevRes?.data?.content || "";
-        } catch {
-          previousContent = "";
+      const current = await readTestFile(suggestion.targetTestFile);
+      if (current) {
+        previousContent = current.content;
+        if (suggestion.originalCode != null && previousContent !== suggestion.originalCode) {
+          throw new Error("The file changed since this suggestion was generated. Generate a fresh suggestion.");
         }
       }
 
-      const contentToWrite =
-        suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
+      let applyWarning = null;
+      let applyDefects = null;
+      let applyWasWritten = true;
+      let applyMessage = null;
 
-      if (suggestion.isExisting) {
-        await updateFileContentApi(
+      if (snapshotId) {
+        const res = await applyUnitTestSuggestion(snapshotId, {
+          suggestion: {
+            ...suggestion,
+            projectId,
+            targetTestFile: suggestion.targetTestFile,
+            suggestedTestCode: suggestion.suggestedTestCode || suggestion.code,
+            fullUpdatedContent: suggestion.fullUpdatedContent,
+            framework: suggestion.framework,
+          },
           projectId,
-          suggestion.targetTestFile,
-          contentToWrite,
-        );
+          skipBackgroundJob: true,
+        });
+
+        const evalResult = evaluateUnitTestApplyResponse(res, suggestion);
+        if (!evalResult.ok) {
+          const applyErr = new Error(evalResult.error);
+          applyErr.isolatedDefects = evalResult.isolatedDefects;
+          throw applyErr;
+        }
+
+        applyDefects = evalResult.isolatedDefects?.length ? evalResult.isolatedDefects : null;
+        applyWarning = evalResult.warning || null;
+        applyWasWritten = Boolean(evalResult.applied);
+        applyMessage = evalResult.message || null;
+
+        if (evalResult.outcome === "NO_CHANGES") {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== msgId) return m;
+              const updatedList = (m.testSuggestions || []).map((s) =>
+                isMatchingSuggestion(s, suggestion)
+                  ? {
+                      ...s,
+                      applied: false,
+                      isApplying: false,
+                      testRunError: null,
+                      isolatedDefects: applyDefects,
+                    }
+                  : s,
+              );
+              return {
+                ...m,
+                testSuggestions: updatedList,
+                testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+                  ? {
+                      ...m.testSuggestion,
+                      applied: false,
+                      isApplying: false,
+                      testRunError: null,
+                      isolatedDefects: applyDefects,
+                    }
+                  : m.testSuggestion,
+              };
+            }),
+          );
+          invalidateCoverageQueries(snapshotId);
+          showToast({
+            type: "info",
+            title: "No Changes Needed",
+            message: evalResult.message,
+          });
+          return;
+        }
       } else {
-        await createProjectFileApi(
-          projectId,
-          suggestion.targetTestFile,
-          contentToWrite,
-        );
+        const contentToWrite =
+          suggestion.fullUpdatedContent || suggestion.suggestedTestCode || suggestion.code;
+
+        if (suggestion.isExisting) {
+          await updateFileContentApi(
+            projectId,
+            suggestion.targetTestFile,
+            contentToWrite,
+          );
+        } else {
+          await createProjectFileApi(
+            projectId,
+            suggestion.targetTestFile,
+            contentToWrite,
+            { snapshotId },
+          );
+        }
       }
 
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
-              ? { ...s, applied: true, previousContent, isApplying: false }
+            isMatchingSuggestion(s, suggestion)
+              ? {
+                  ...s,
+                  applied: applyWasWritten,
+                  previousContent,
+                  isExisting: Boolean(current),
+                  isApplying: false,
+                  testRunError: null,
+                  isolatedDefects: applyDefects,
+                }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? {
-                    ...m.testSuggestion,
-                    applied: true,
-                    previousContent,
-                    isApplying: false,
-                  }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? {
+                  ...m.testSuggestion,
+                  applied: applyWasWritten,
+                  previousContent,
+                  isExisting: Boolean(current),
+                  isApplying: false,
+                  testRunError: null,
+                  isolatedDefects: applyDefects,
+                }
+              : m.testSuggestion,
           };
         }),
       );
 
-      if (snapshotId) {
+      if (snapshotId && applyWasWritten) {
         invalidateCoverageQueries(snapshotId);
       }
 
-      showToast({
-        type: "success",
-        title: "Test Applied",
-        message: `Applied ${suggestion.framework?.toUpperCase()} test case to ${suggestion.targetTestFile}`,
-      });
+      if (!applyWasWritten) {
+        showToast({
+          type: "info",
+          title: "Draft Verified (Not Applied)",
+          message:
+            applyWarning ||
+            applyMessage ||
+            `Verified ${suggestion.framework?.toUpperCase() || "test"} draft without writing ${suggestion.targetTestFile} to disk.`,
+        });
+      } else if (applyWarning) {
+        showToast({
+          type: "warning",
+          title: "Test Applied with Warnings",
+          message: applyWarning,
+        });
+      } else {
+        showToast({
+          type: "success",
+          title: "Test Applied",
+          message: `Applied ${suggestion.framework?.toUpperCase()} test case to ${suggestion.targetTestFile}`,
+        });
+      }
       // Stays in current view without redirecting
     } catch (err) {
+      const errMsg = err.message || "Unable to apply test case to file.";
+      const errDefects = Array.isArray(err.isolatedDefects) && err.isolatedDefects.length > 0
+        ? err.isolatedDefects
+        : null;
       showToast({
         type: "error",
         title: "Apply Failed",
-        message: err.message || "Unable to apply test case to file.",
+        message: errMsg,
       });
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
-              ? { ...s, isApplying: false }
+            isMatchingSuggestion(s, suggestion)
+              ? { ...s, applied: false, isApplying: false, testRunError: errMsg, isolatedDefects: errDefects }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, isApplying: false }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? { ...m.testSuggestion, applied: false, isApplying: false, testRunError: errMsg, isolatedDefects: errDefects }
+              : m.testSuggestion,
           };
         }),
       );
@@ -3144,42 +3148,35 @@ export default function AIPanel({
       prev.map((m) => {
         if (m.id !== msgId) return m;
         const updatedList = (m.testSuggestions || []).map((s) =>
-          s.framework === suggestion.framework ? { ...s, isUndoing: true } : s,
+          isMatchingSuggestion(s, suggestion) ? { ...s, isUndoing: true } : s,
         );
         return {
           ...m,
           testSuggestions: updatedList,
-          testSuggestion:
-            m.testSuggestion?.framework === suggestion.framework
-              ? { ...m.testSuggestion, isUndoing: true }
-              : m.testSuggestion,
+          testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+            ? { ...m.testSuggestion, isUndoing: true }
+            : m.testSuggestion,
         };
       }),
     );
 
     try {
-      const prevContent = suggestion.previousContent ?? "";
-      await updateFileContentApi(
-        projectId,
-        suggestion.targetTestFile,
-        prevContent,
-      );
+      await revertTestFile(suggestion, suggestion.previousContent ?? "");
 
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
+            isMatchingSuggestion(s, suggestion)
               ? { ...s, applied: false, isUndoing: false }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, applied: false, isUndoing: false }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? { ...m.testSuggestion, applied: false, isUndoing: false }
+              : m.testSuggestion,
           };
         }),
       );
@@ -3200,25 +3197,76 @@ export default function AIPanel({
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
-            s.framework === suggestion.framework
+            isMatchingSuggestion(s, suggestion)
               ? { ...s, isUndoing: false }
               : s,
           );
           return {
             ...m,
             testSuggestions: updatedList,
-            testSuggestion:
-              m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, isUndoing: false }
-                : m.testSuggestion,
+            testSuggestion: isMatchingSuggestion(m.testSuggestion, suggestion)
+              ? { ...m.testSuggestion, isUndoing: false }
+              : m.testSuggestion,
           };
         }),
       );
     }
   };
 
-  const handleSend = async (text, attachments = []) => {
-    if (sendRef.current || isRestoring || isLoadingSession || isTyping) return;
+  const extractScenarioCodeFromReply = (text = "") => {
+    const blocks = [];
+    const regex = /```(?:javascript|js|typescript|ts)?\s*\n([\s\S]*?)```/gi;
+    let m;
+    while ((m = regex.exec(text)) !== null) {
+      if (m[1]?.trim()) blocks.push(m[1].trim());
+    }
+    if (blocks.length === 0) return null;
+    const testBlock = blocks.find((b) => /\b(it|test)\s*\(/.test(b));
+    return testBlock || blocks[0];
+  };
+
+  const handleApplyIntegrationFix = useCallback(
+    async (ctx, code) => {
+      if (!ctx?.snapshotId || !ctx?.aiTestId || !ctx?.scenarioId || !code) return;
+      try {
+        const res = await mutateIntegrationScenarioApi({
+          snapshotId: ctx.snapshotId,
+          aiTestId: ctx.aiTestId,
+          scenarioId: ctx.scenarioId,
+          expectedVersion: ctx.expectedVersion ?? 1,
+          action: "UPDATE",
+          code,
+        });
+        const newVersion = res?.data?.version || res?.version;
+        if (newVersion) {
+          setIntegrationFixContext((prev) =>
+            prev ? { ...prev, expectedVersion: newVersion } : prev,
+          );
+        }
+        invalidateCoverageQueries(ctx.snapshotId);
+        window.dispatchEvent(
+          new CustomEvent("covai:integration-updated", {
+            detail: { snapshotId: ctx.snapshotId },
+          }),
+        );
+        showToast({
+          type: "success",
+          title: "Scenario Fix Applied",
+          message: `Updated "${ctx.testName}" for ${ctx.endpointLabel}. Re-run coverage to verify.`,
+        });
+      } catch (err) {
+        showToast({
+          type: "error",
+          title: "Failed to Apply Fix",
+          message: err?.message || "Could not update the integration test scenario.",
+        });
+      }
+    },
+    [showToast],
+  );
+
+  const handleSend = (text, attachments = [], retryContext = null, replaceFailedMessageId = null, activeFixCtx = integrationFixContext) => {
+    if (typeof text !== "string" || !text.trim() || sendRef.current || revisionRef.current || isRestoring || isLoadingSession || isTyping) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -3232,6 +3280,7 @@ export default function AIPanel({
       id: getNextId(),
       role: "user",
       content: text,
+      requestContext: retryContext || { sessionId: activeSessionId, snapshotId, model: selectedModel.id, useMemory: useProjectMemory, screenContext: normalizeChatScreenContext(screenContext), clientRequestId: crypto.randomUUID() },
       attachments: attachments || [],
       timestamp: new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
@@ -3242,238 +3291,271 @@ export default function AIPanel({
     const currentHistory = []; // The server reconstructs authoritative history from the session.
     sendRef.current = true;
     const requestScope = contextRequestRef.current;
-    setMessages((m) => [...m, userMsg]);
+    setMessages(previous => {
+      const failedIndex = previous.findIndex(message => message.id === replaceFailedMessageId);
+      return [...(failedIndex < 0 ? previous : previous.slice(0, failedIndex)), userMsg];
+    });
     setIsTyping(true);
 
+    return finishSend(userMsg, requestScope, currentHistory, activeFixCtx);
+  };
+
+  const finishSend = async (userMsg, requestScope, currentHistory, activeFixCtx = integrationFixContext) => {
+    const { content: text, attachments } = userMsg;
     try {
+      const resolvedAttachments = (await Promise.all((attachments || []).map(async (attachment) => {
+        if (!["file", "project_file"].includes(attachment.type) || attachment.content != null) return attachment;
+        try {
+          const { data } = await getFileContentApi(projectId, attachment.path, { snapshotId });
+          if (typeof data?.content !== "string") throw new Error("File content is unavailable.");
+          return { ...attachment, content: data.content };
+        } catch (err) {
+          console.error("Unable to load AI attachment", err);
+          showToast({ type: "error", title: "Attachment skipped", message: `Could not load ${attachment.path || attachment.name}: ${err.message}` });
+          return null;
+        }
+      }))).filter(attachment => attachment && (attachment.type !== "image" || attachment.data));
+      if (requestScope !== contextRequestRef.current) return;
       const res = await sendAiChatMessageApi(
         projectId,
         text,
         currentHistory,
         selectedModel.id,
-        attachments || [],
+        resolvedAttachments,
         activeSessionId,
-        { snapshotId, useMemory: useProjectMemory, screenContext },
+        userMsg.requestContext,
       );
       if (requestScope !== contextRequestRef.current) return;
 
       if (res?.data?.sessionId) {
+        setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, savedMessageId: res.data.userMessageId, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID(), sessionId: res.data.sessionId, screenContext: { ...userMsg.requestContext.screenContext, workspaceRevision: res.data.context?.workspaceRevision } } } : message));
         setActiveSessionId(res.data.sessionId);
-        setContextInfo(res.data.context || null);
         if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: res.data.sessionId, useMemory: useProjectMemory }));
         fetchSessions();
       }
 
-      setMessages((m) => [
-        ...m,
-        {
-          id: getNextId(),
-          role: "assistant",
-          timestamp: new Date().toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          content: res.data.reply,
-        },
-      ]);
+      const fixTarget = activeFixCtx || integrationFixContext;
+      const candidateCode =
+        fixTarget && !fixTarget.isProjectExisting && fixTarget.aiTestId && fixTarget.scenarioId
+          ? extractScenarioCodeFromReply(res.data.reply)
+          : null;
+
+      const answer = {
+        id: res.data.assistantMessageId || getNextId(),
+        role: "assistant",
+        timestamp: new Date().toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        content: res.data.reply,
+        usedContext: res.data.context?.screenContext,
+        ...(candidateCode
+          ? {
+              options: [
+                {
+                  label: "Apply Fix to Scenario",
+                  action: "apply_integration_fix",
+                  onClick: () => handleApplyIntegrationFix(fixTarget, candidateCode),
+                },
+              ],
+            }
+          : {}),
+      };
+      setMessages((m) => [...m, answer]);
+      return true;
     } catch (err) {
       if (requestScope !== contextRequestRef.current) return;
-      console.error(err);
-      const isQuotaError =
-        err.message && err.message.includes("QUOTA_EXCEEDED");
-
-      if (isQuotaError) {
-        setMessages((m) => [
-          ...m,
-          {
-            id: getNextId(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            content:
-              "🛑 **Daily Limit Reached**\n\nYou have used all free chat requests for today. Please check back tomorrow or upgrade your plan in **Settings > Billing**.",
-          },
-        ]);
-      } else {
-        showToast({
-          type: "error",
-          title: "AI Error",
-          message: err.message || "Could not complete the AI request.",
-        });
-        setMessages((m) => [
-          ...m,
-          {
-            id: getNextId(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            content:
-              `❌ **Request not completed**\n\n${err.message || "Could not complete the AI request. Please try again."}`,
-          },
-        ]);
-      }
+      // A transport failure can hide a committed reply: reuse its ID to replay it.
+      // A definite HTTP failure requires a new ID because failed requests are immutable.
+      if (err.status) setMessages(previous => previous.map(message => message.id === userMsg.id ? { ...message, requestContext: { ...userMsg.requestContext, clientRequestId: crypto.randomUUID() } } : message));
+      const isVi = detectChatLanguage(text) === "vi";
+      setMessages(previous => [...previous, {
+        id: getNextId(),
+        role: "assistant",
+        failed: true,
+        timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+        content: isVi
+          ? `Không thể phản hồi lúc này.\n\n${err.message || "Vui lòng thử lại sau giây lát."}`
+          : `I couldn’t respond just now.\n\n${err.message || "Please try again in a moment."}`,
+      }]);
+      return false;
     } finally {
       sendRef.current = false;
       setIsTyping(false);
     }
   };
 
+  const handleReviseMessage = async (message, editedText) => {
+    if (sendRef.current || revisionRef.current || isLoadingSession || !activeSessionId || !message.savedMessageId) return false;
+    revisionRef.current = true;
+    setIsRevising(true);
+    const scope = contextRequestRef.current;
+    let branch;
+    try {
+      branch = await branchAiConversation(projectId, activeSessionId, {
+        beforeMessageId: message.savedMessageId,
+        snapshotId,
+        useMemory: useProjectMemory,
+      });
+      if (scope !== contextRequestRef.current) return false;
+      if (!branch?.id) throw new Error("Could not open a revised conversation.");
+      if (!await handleSelectSession(branch.id, true, true)) return false;
+      fetchSessions();
+      if (editedText === undefined) {
+        setDraftText(message.content);
+        setDraftAttachments(message.attachments || []);
+      }
+    } catch (error) {
+      showToast({ type: "error", title: "Unable to revise message", message: error.message });
+      return false;
+    } finally {
+      revisionRef.current = false;
+      setIsRevising(false);
+    }
+    if (editedText !== undefined) {
+      handleSend(editedText, message.attachments || [], {
+        sessionId: branch.id,
+        snapshotId,
+        useMemory: useProjectMemory,
+        screenContext: normalizeChatScreenContext(screenContext),
+        clientRequestId: crypto.randomUUID(),
+      });
+    }
+    return true;
+  };
+
+  const chatBusy = isTyping || isRestoring || isLoadingSession || isRevising;
+
   return (
     <motion.div
-      className="flex flex-col h-full flex-shrink-0 relative overflow-hidden"
-      initial={{ opacity: 0, x: 20 }}
+      className="portfolio-studio flex flex-col h-full flex-shrink-0 relative overflow-hidden"
+      initial={{ opacity: 0, x: 16 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
+      transition={{ duration: 0.22, ease: "easeOut" }}
       style={{
-        background: "var(--color-surface)",
-        borderLeft: "1px solid var(--color-border)",
+        background: "var(--ps-bg)",
+        borderLeft: "1px solid var(--ps-line)",
         fontFamily: "var(--font-sans)",
       }}
     >
       {/* ── Top Header ──────────────────────────────────── */}
       <div
-        className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 flex-shrink-0"
+        className="flex items-center justify-between gap-2 flex-shrink-0 px-3.5"
         style={{
-          minHeight: 48,
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--color-border)",
-          background: "var(--color-surface)",
+          height: 48,
+          borderBottom: "1px solid var(--ps-line)",
+          background: "var(--ps-surface)",
         }}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <div
-            className="flex items-center justify-center rounded-lg flex-shrink-0"
-            style={{
-              width: 26,
-              height: 26,
-              background: "var(--color-primary)",
-              color: "#ffffff",
-            }}
-          >
-            <Bot size={14} style={{ color: "#ffffff" }} />
-          </div>
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: "var(--color-text)",
-                fontFamily: "var(--font-sans)",
-                letterSpacing: "-0.01em",
-              }}
-            >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <CovaiLogo size={20} />
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="ps-display text-[13px] font-semibold text-[var(--ps-ink)]">
               COV
             </span>
-            {activeSessionTitle ? (
+            {activeSessionTitle && (
               <span
                 title={activeSessionTitle}
-                className="truncate hidden sm:inline-block"
-                style={{
-                  fontSize: 10,
-                  color: "var(--color-text-secondary)",
-                  background: "var(--color-bg)",
-                  padding: "1px 6px",
-                  borderRadius: 4,
-                  border: "1px solid var(--color-border)",
-                  maxWidth: 130,
-                }}
+                className="truncate hidden sm:inline-block text-[11px] ps-mono text-[var(--ps-ink-muted)] bg-[var(--ps-inset)] px-1.5 py-0.5 rounded border border-[var(--ps-line)] max-w-[130px]"
               >
                 {activeSessionTitle}
-              </span>
-            ) : (
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  padding: "1px 5px",
-                  borderRadius: 4,
-                  background: "var(--color-surface)",
-                  color: "var(--color-primary)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
-                AI Agent
               </span>
             )}
           </div>
         </div>
 
         {/* Header Actions */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button type="button" aria-label="What AI knows" disabled={isTyping || isRestoring || isLoadingSession} onClick={() => setContextDialog("context")} className="px-2 py-1 rounded-md border border-[var(--color-border)] text-[11px] cursor-pointer disabled:opacity-50">What AI knows</button>
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setIsHistoryOpen((prev) => !prev)}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            type="button"
+            aria-label="What AI knows"
             disabled={isTyping || isRestoring || isLoadingSession}
-            className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
-            style={{
-              color: isHistoryOpen
-                ? "var(--color-primary)"
-                : "var(--color-text-secondary)",
-              fontSize: 11,
-              fontWeight: 500,
-              background: isHistoryOpen
-                ? "var(--color-bg)"
-                : "var(--color-surface)",
-              border: `1px solid ${
-                isHistoryOpen ? "var(--color-primary)" : "var(--color-border)"
-              }`,
+            onClick={() => setContextDialog("context")}
+            className="h-7 px-2 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-[11px] font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer disabled:opacity-45"
+          >
+            Context
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!isHistoryOpen) fetchSessions();
+              setIsHistoryOpen((prev) => !prev);
             }}
+            disabled={isTyping || isRestoring || isLoadingSession}
+            className={`h-7 px-2 rounded-md border text-[11px] font-medium inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-45 ${
+              isHistoryOpen
+                ? "border-[var(--ps-line-strong)] bg-[var(--ps-surface-2)] text-[var(--ps-ink)]"
+                : "border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)]"
+            }`}
             title="View chat history"
           >
             <History size={12} />
             <span>History</span>
             {sessions.length > 0 && (
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  padding: "0 4px",
-                  borderRadius: 6,
-                  background: "var(--color-bg)",
-                  color: "var(--color-text-secondary)",
-                  border: "1px solid var(--color-border)",
-                }}
-              >
+              <span className="text-[10px] ps-mono px-1 rounded bg-[var(--ps-inset)] border border-[var(--ps-line)] text-[var(--ps-ink-muted)]">
                 {sessions.length}
               </span>
             )}
-          </motion.button>
+          </button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          <button
+            type="button"
             onClick={() => handleNewChat()}
             disabled={isTyping || isRestoring || isLoadingSession}
-            className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
-            style={{
-              color: "var(--color-text)",
-              fontSize: 11,
-              fontWeight: 500,
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-            }}
+            className="h-7 px-2 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)] text-[11px] font-medium text-[var(--ps-ink)] inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-45"
             title="Start a new chat session"
           >
             <Plus size={12} />
             <span>New</span>
-          </motion.button>
+          </button>
+
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close AI Chatbot"
+              title="Close AI Chatbot"
+              className="w-7 h-7 rounded-md inline-flex items-center justify-center text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
+            >
+              <X size={15} />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
-        <span>{isRestoring ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
-        <span>Current screen: {screenContext?.testType ? `${({ unit: 'Unit', integration: 'Integration', system: 'System' })[screenContext.testType]} Test` : ({ explorer: 'Code', jobs: 'Run history', architecture: 'Architecture', settings: 'Settings' })[screenContext?.activity] || 'Project'}</span>
-        <label className="flex items-center gap-1" title={memoryAvailable ? 'Use saved preferences in this chat' : 'Optional: enable memory in What AI knows. AI follows your screen even when memory is off.'}><input type="checkbox" aria-label="Use memory in this chat" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Use memory</label>
-        <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>View context</button>
-        {contextInfo?.warnings?.map(warning => <span key={warning} className="w-full">{warning}</span>)}
-      </div>
+      {/* ── Active Integration AI Fix Context Banner ── */}
+      {integrationFixContext && (
+        <div className="px-3.5 py-2 border-b border-[var(--ps-line)] bg-[var(--ps-inset)] flex items-center justify-between gap-2 text-[11px]">
+          <div className="min-w-0 flex items-center gap-1.5">
+            <span
+              className="px-1.5 py-0.5 rounded ps-mono font-medium shrink-0 border"
+              style={{
+                background: "color-mix(in srgb, var(--ps-amber) 10%, transparent)",
+                color: "var(--ps-amber)",
+                borderColor: "color-mix(in srgb, var(--ps-amber) 25%, transparent)",
+              }}
+            >
+              AI Fix
+            </span>
+            <span className="ps-mono text-[var(--ps-ink)] truncate">
+              {integrationFixContext.endpointLabel}
+            </span>
+            <span className="text-[var(--ps-ink-muted)] truncate">
+              · {integrationFixContext.testName}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIntegrationFixContext(null)}
+            className="text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] cursor-pointer shrink-0"
+            title="Clear AI Fix context"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       <AnimatePresence>
         {isHistoryOpen && (
           <motion.div
@@ -3525,24 +3607,16 @@ export default function AIPanel({
               </div>
 
               <div className="flex items-center gap-1.5">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                <button
+                  type="button"
                   onClick={() => handleNewChat()}
-            disabled={isTyping || isRestoring || isLoadingSession}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 500,
-                    background: "var(--color-primary)",
-                    color: "#ffffff",
-                    border: "none",
-                  }}
+                  disabled={isTyping || isRestoring || isLoadingSession}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] ps-btn-contrast cursor-pointer disabled:opacity-45"
                   title="Start a new chat session"
                 >
                   <Plus size={12} />
                   <span>New Chat</span>
-                </motion.button>
+                </button>
                 <button
                   onClick={() => setIsHistoryOpen(false)}
                   className="p-1.5 rounded-md cursor-pointer hover:opacity-80 transition-colors"
@@ -3860,642 +3934,220 @@ export default function AIPanel({
           overflowX: "hidden",
         }}
       >
-        {/* Welcome Cards when single message */}
+        {/* Welcome View when conversation has not started */}
         {messages.length === 1 && (
-          <div className="mb-2">
-            <div
-              className="p-3.5 rounded-xl mb-3"
-              style={{
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
-              }}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <Sparkles size={14} style={{ color: "var(--color-primary)" }} />
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: "var(--color-text)",
-                  }}
-                >
-                  Quick Capabilities
-                </span>
+          <div className="my-auto py-3 space-y-5">
+            {/* Airy Typography-led Greeting (shown once) */}
+            <div className="px-1 space-y-1.5">
+              <div className="flex items-center gap-2 text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+                <CovaiLogo size={16} />
+                <span>{chatScreenLabel(screenContext)}</span>
               </div>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "var(--color-text-secondary)",
-                  margin: 0,
-                }}
-              >
-                Select an AI action below to analyze or generate tests for your
-                project.
+              <h3 className="ps-display text-[17px] font-semibold text-[var(--ps-ink)] tracking-tight leading-snug">
+                {chatGreeting(screenContext)}
+              </h3>
+              <p className="text-xs text-[var(--ps-ink-secondary)] leading-relaxed">
+                Pick a starting prompt or ask anything below. Type <span className="ps-mono text-[var(--ps-cobalt)]">@</span> to attach a source file.
               </p>
             </div>
 
-            {screenContext?.activity === "projects-portfolio" || screenContext?.testType === "portfolio" ? (
-              <div className="flex flex-col gap-2">
-                {/* Portfolio Prompt 1: Highest release risk */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() =>
-                    handleSend(
-                      "Which project in my portfolio has the highest release risk right now? Break down the critical blockers, failure layers, and missing test suites."
-                    )
-                  }
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(248, 81, 73, 0.15)",
-                      border: "1px solid rgba(248, 81, 73, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Shield size={13} style={{ color: "var(--ud-fail)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Highest release risk projects
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Identify release blockers and failing testing layers
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Portfolio Prompt 2: Summarize coverage gaps */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() =>
-                    handleSend(
-                      "Summarize coverage gaps across all my projects. Which projects have missing test layers (Unit, API, or System E2E)?"
-                    )
-                  }
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(210, 153, 34, 0.15)",
-                      border: "1px solid rgba(210, 153, 34, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Zap size={13} style={{ color: "var(--ud-warn)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Summarize portfolio coverage gaps
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Detect missing unit suites and uncovered API endpoints
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Portfolio Prompt 3: Recommend AI test generation */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() =>
-                    handleSend(
-                      "Recommend where to run AI test generation first across my account to maximize overall release quality."
-                    )
-                  }
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(163, 113, 247, 0.15)",
-                      border: "1px solid rgba(163, 113, 247, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Sparkles size={13} style={{ color: "var(--ud-integration)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Recommend AI test synthesis priority
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Prioritize AI generation by risk and layer deficit
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-              </div>
-            ) : screenContext?.activity === "overview" || screenContext?.testType === "overview" ? (
-              <div className="flex flex-col gap-2">
-                {/* Unified Overview Prompt 1: Diagnose release blockers */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => {
-                    const s = screenContext?.unifiedSummary;
-                    const contextDetails = s
-                      ? `\nCurrent Metrics:\n- Quality Gate: ${s.qualityGateStatus || "UNVERIFIED"}\n- Health Score: ${s.healthScore ?? "N/A"} (${s.healthGrade || "-"})\n- Executed Tests: ${s.totalExecutedTests || 0} (${s.passedTests || 0} passed, ${s.failedTests || 0} failed)\n- Coverage: Overall ${s.overallCoveragePct ?? 0}% (Unit Lines: ${s.unitLinesPct ?? 0}%, API Endpoints: ${s.apiCoveragePct ?? 0}%, E2E Flows: ${s.systemFlowPct ?? 0}%)\n- Uncovered APIs: ${s.uncoveredApis || 0}`
-                      : "";
-                    handleSend(
-                      `Analyze our Unified Quality Overview and diagnose all current release blockers and cross-layer failures across Unit, Integration API, and System E2E suites.${contextDetails}`
-                    );
-                  }}
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(248, 81, 73, 0.15)",
-                      border: "1px solid rgba(248, 81, 73, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Shield size={13} style={{ color: "var(--ud-fail)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Diagnose release blockers & failures
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Cross-layer root cause analysis across Unit, API, and E2E
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Unified Overview Prompt 2: Close API & Branch Coverage Gaps */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => {
-                    const s = screenContext?.unifiedSummary;
-                    handleSend(
-                      `We currently have ${s?.uncoveredApis ?? 0} uncovered API endpoint(s) (API coverage: ${s?.apiCoveragePct ?? 0}%) and Unit Line coverage at ${s?.unitLinesPct ?? 0}%. Recommend a prioritized test generation plan to pass our Quality Gate thresholds.`
-                    );
-                  }}
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(210, 153, 34, 0.15)",
-                      border: "1px solid rgba(210, 153, 34, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Zap size={13} style={{ color: "var(--ud-warn)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Close API & branch coverage gaps
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Target uncovered routes and low-branch-coverage files
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-
-                {/* Unified Overview Prompt 3: Optimize Testing Pyramid */}
-                <motion.button
-                  whileHover={{ scale: 1.01, x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => {
-                    const s = screenContext?.unifiedSummary;
-                    handleSend(
-                      `Evaluate our current Testing Pyramid distribution (${s?.pyramidShape || "current state"}) and suggest which Unit, Supertest API, or Playwright E2E suites we should add or refactor next.`
-                    );
-                  }}
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(163, 113, 247, 0.15)",
-                      border: "1px solid rgba(163, 113, 247, 0.3)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Sparkles size={13} style={{ color: "var(--ud-integration)" }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
-                      Optimize Testing Pyramid balance
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Strengthen Unit foundation and API/E2E layer ratios
-                    </div>
-                  </div>
-                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
-                </motion.button>
-              </div>
-            ) : (
-            <div className="flex flex-col gap-2">
-              {/* 1. Find edge cases */}
-              <motion.button
-                whileHover={{ scale: 1.01, x: 2 }}
-                whileTap={{ scale: 0.99 }}
-                onClick={() =>
-                  handleSend(
-                    "Analyze the project source code and identify critical edge cases, boundary conditions, and potential runtime errors.",
-                  )
+            {/* Screen-Specific Prompt Starters */}
+            <div className="rounded-[10px] border border-[var(--ps-line)] bg-[var(--ps-surface)] divide-y divide-[var(--ps-line)] overflow-hidden">
+              {(() => {
+                const activity = screenContext?.activity;
+                const testType = screenContext?.testType;
+                if (activity === "projects-portfolio" || testType === "portfolio") {
+                  return [
+                    {
+                      icon: Shield,
+                      title: "Highest risk repositories",
+                      desc: "Surface failing suites and thin testing layers across your portfolio",
+                      prompt: "Which project in my portfolio needs attention first based on current failures and coverage gaps?",
+                    },
+                    {
+                      icon: Zap,
+                      title: "Summarize portfolio coverage gaps",
+                      desc: "Compare Unit, API, and System E2E deficits across repositories",
+                      prompt: "Summarize coverage gaps across my imported repositories across Unit, API, and System testing.",
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Prioritize next test runs",
+                      desc: "Recommend which repository and layer to strengthen next",
+                      prompt: "Recommend where to focus test generation first across my portfolio.",
+                    },
+                  ];
                 }
-                className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all"
-                style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                  opacity: hasAnalysis ? 1 : 0.5,
-                  pointerEvents: hasAnalysis ? "auto" : "none",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--color-bg)";
-                  e.currentTarget.style.borderColor = "var(--color-primary)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--color-surface)";
-                  e.currentTarget.style.borderColor = "var(--color-border)";
-                }}
-              >
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 6,
-                    background: "rgba(56, 189, 248, 0.1)",
-                    border: "1px solid rgba(56, 189, 248, 0.2)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Shield size={13} style={{ color: "var(--color-primary)" }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                    }}
+                if (activity === "overview" || testType === "overview") {
+                  const s = screenContext?.unifiedSummary;
+                  return [
+                    {
+                      icon: Shield,
+                      title: "Diagnose cross-layer failures",
+                      desc: "Root-cause breakdown across Unit, API, and System E2E",
+                      prompt: s
+                        ? `Analyze our Unified Quality Overview and diagnose current failures.\n- Health Score: ${s.healthScore ?? "N/A"} (${s.healthGrade || "-"})\n- Tests: ${s.passedTests || 0}/${s.totalExecutedTests || 0} passed (${s.failedTests || 0} failed)\n- Coverage: ${s.overallCoveragePct ?? 0}% overall (Unit ${s.unitLinesPct ?? 0}%, API ${s.apiCoveragePct ?? 0}%, E2E ${s.systemFlowPct ?? 0}%)`
+                        : "Analyze our Unified Quality Overview and diagnose current failures across Unit, Integration API, and System E2E suites.",
+                    },
+                    {
+                      icon: Zap,
+                      title: "Close API & branch coverage gaps",
+                      desc: "Target uncovered routes and low-branch-coverage files",
+                      prompt: `We have ${s?.uncoveredApis ?? 0} uncovered API endpoint(s) (API coverage ${s?.apiCoveragePct ?? 0}%) and Unit Line coverage at ${s?.unitLinesPct ?? 0}%. Recommend a prioritized test plan.`,
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Balance the Testing Pyramid",
+                      desc: "Review Unit, API, and E2E ratios in the current snapshot",
+                      prompt: `Evaluate our current Testing Pyramid distribution (${s?.pyramidShape || "current state"}) and suggest what to improve next.`,
+                    },
+                  ];
+                }
+                if (testType === "system") {
+                  return [
+                    {
+                      icon: Shield,
+                      title: "Diagnose failed E2E scenarios",
+                      desc: "Inspect selector, timeout, and assertion failures on this run",
+                      prompt: "Analyze the latest System Test results and explain the root causes of any failed or flaky E2E scenarios.",
+                    },
+                    {
+                      icon: Workflow,
+                      title: "Suggest missing user journeys",
+                      desc: "Identify unverified end-to-end flows in this application",
+                      prompt: "Review this project and suggest critical end-to-end Playwright user journeys we are still missing in System Test.",
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Explain System Test summary",
+                      desc: "Break down scenario pass rate, execution mode, and stability",
+                      prompt: "Summarize what the displayed System Test numbers and current snapshot evidence tell us.",
+                    },
+                  ];
+                }
+                if (testType === "integration") {
+                  return [
+                    {
+                      icon: Layers,
+                      title: "Find uncovered API endpoints",
+                      desc: "Locate routes and HTTP handlers missing Supertest checks",
+                      prompt: "Identify uncovered API endpoints in this project and suggest integration scenarios to cover them.",
+                    },
+                    {
+                      icon: Shield,
+                      title: "Debug failed endpoint assertions",
+                      desc: "Trace route, middleware, controller, or database errors",
+                      prompt: "Diagnose any failed API integration scenarios and explain which layer is causing them.",
+                    },
+                    {
+                      icon: Sparkles,
+                      title: "Strengthen error & auth paths",
+                      desc: "Add negative status codes (400/401/403/404) for endpoints",
+                      prompt: "Suggest negative and boundary-case Supertest integration tests (auth, validation, 404/409) for our endpoints.",
+                    },
+                  ];
+                }
+                if (testType === "unit") {
+                  return [
+                    {
+                      icon: Wand2,
+                      title: "Generate tests for uncovered files",
+                      desc: "Propose unit test suites for files in this snapshot",
+                      onClick: () => {
+                        if (snapshotId && internalTree.length) {
+                          const uncoveredFiles = flattenFiles(internalTree)
+                            .map((file) => file.path)
+                            .filter((path) => /\.[cm]?[jt]sx?$/.test(path) && !isTestFile(path));
+                          handleSuggestBulk({ uncoveredFiles });
+                        } else {
+                          handleSend("Identify uncovered source files and generate unit tests for them.");
+                        }
+                      },
+                    },
+                    {
+                      icon: Zap,
+                      title: "Explain low branch coverage",
+                      desc: "Spot untested conditional paths and edge cases",
+                      prompt: "Explain the unit coverage gaps and identify which branches or functions need unit tests most.",
+                    },
+                    {
+                      icon: Shield,
+                      title: "Analyze failing unit tests",
+                      desc: "Inspect assertion errors from the latest unit run",
+                      prompt: "Analyze any failing unit tests in the latest run and explain how to fix them.",
+                    },
+                  ];
+                }
+                return [
+                  {
+                    icon: FileCode,
+                    title: screenContext?.filePath ? `Review ${getFileName(screenContext.filePath)}` : "Review active source code",
+                    desc: "Check edge cases, error handling, and boundary inputs",
+                    prompt: screenContext?.filePath
+                      ? `Review ${screenContext.filePath} for edge cases, boundary conditions, and potential bugs.`
+                      : "Analyze the project source code for critical edge cases and potential runtime bugs.",
+                  },
+                  {
+                    icon: TestTube2,
+                    title: screenContext?.filePath ? `Suggest unit tests for ${getFileName(screenContext.filePath)}` : "Suggest unit tests",
+                    desc: "Generate focused test assertions for core logic",
+                    prompt: screenContext?.filePath
+                      ? `Suggest unit tests covering normal paths and edge cases for ${screenContext.filePath}.`
+                      : "Suggest unit tests for the core functions and services in this project.",
+                  },
+                  {
+                    icon: Zap,
+                    title: "Explain workspace test status",
+                    desc: "Summarize current structure and recommended next step",
+                    prompt: "Summarize this project's structure and what tests we should run or improve next.",
+                  },
+                ];
+              })().map((item) => {
+                const IconComp = item.icon;
+                return (
+                  <button
+                    key={item.title}
+                    type="button"
+                    onClick={item.onClick || (() => handleSend(item.prompt))}
+                    className="group w-full flex items-center gap-3 px-3.5 py-2.5 text-left hover:bg-[var(--ps-surface-2)]/70 transition-colors cursor-pointer"
                   >
-                    Find edge cases
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--color-text-secondary)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    Identify boundary conditions & potential failure points
-                  </div>
-                </div>
-                <ChevronRight
-                  size={13}
-                  style={{ color: "var(--color-text-muted)" }}
-                />
-              </motion.button>
-
-              {/* 2. Generate tests (Expandable into Unit, Integration, System) */}
-              <div
-                style={{
-                  background: "var(--color-surface)",
-                  border: generateExpanded
-                    ? "1px solid var(--color-primary)"
-                    : "1px solid var(--color-border)",
-                  borderRadius: 12,
-                  overflow: "hidden",
-                  transition: "all 0.2s ease",
-                  opacity: hasAnalysis ? 1 : 0.5,
-                  pointerEvents: hasAnalysis ? "auto" : "none",
-                }}
-              >
-                <div
-                  onClick={() => setGenerateExpanded(!generateExpanded)}
-                  className="flex items-center gap-2.5 p-2.5 cursor-pointer select-none"
-                  style={{
-                    transition: "background 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!generateExpanded) {
-                      e.currentTarget.style.background = "var(--color-bg)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!generateExpanded) {
-                      e.currentTarget.style.background = "transparent";
-                    }
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      background: "rgba(52, 211, 153, 0.1)",
-                      border: "1px solid rgba(52, 211, 153, 0.2)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Wand2
-                      size={13}
-                      style={{ color: "var(--color-success)" }}
+                    <IconComp
+                      size={14}
+                      className="text-[var(--ps-ink-muted)] group-hover:text-[var(--ps-cobalt)] transition-colors shrink-0"
                     />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: "var(--color-text)",
-                        }}
-                      >
-                        Generate tests
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          padding: "1px 5px",
-                          borderRadius: 4,
-                          background: "rgba(52, 211, 153, 0.15)",
-                          color: "var(--color-success)",
-                          border: "1px solid rgba(52, 211, 153, 0.3)",
-                        }}
-                      >
-                        3 Levels
-                      </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-[var(--ps-ink)]">
+                        {item.title}
+                      </div>
+                      <div className="text-[11px] text-[var(--ps-ink-muted)] truncate">
+                        {item.desc}
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "var(--color-text-secondary)",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      Select test level: Unit, Integration, or System
-                    </div>
-                  </div>
-                  <ChevronDown
-                    size={14}
-                    style={{
-                      color: "var(--color-text-secondary)",
-                      transform: generateExpanded
-                        ? "rotate(180deg)"
-                        : "rotate(0deg)",
-                      transition: "transform 0.2s ease",
-                    }}
-                  />
-                </div>
-
-                {/* 3 Sub-items */}
-                <AnimatePresence>
-                  {generateExpanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2, ease: "easeOut" }}
-                      style={{
-                        borderTop: "1px solid var(--color-border)",
-                        background: "var(--color-bg)",
-                        padding: "6px 8px 8px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                      }}
-                    >
-                      {[
-                        {
-                          id: "unit",
-                          title: "Unit Tests",
-                          desc: "Test individual functions & component methods",
-                          icon: TestTube2,
-                          color: "var(--color-primary)",
-                          prompt:
-                            "Generate comprehensive unit tests for the core functions and classes in this project.",
-                        },
-                        {
-                          id: "integration",
-                          title: "Integration Tests",
-                          desc: "Test API endpoints & module interactions",
-                          icon: Layers,
-                          color: "var(--color-info, #38bdf8)",
-                          prompt:
-                            "Generate integration tests verifying API endpoints and module interactions in this project.",
-                        },
-                        {
-                          id: "system",
-                          title: "System Tests",
-                          desc: "End-to-end user workflows & scenarios",
-                          icon: Workflow,
-                          color: "var(--color-success)",
-                          prompt:
-                            "Generate end-to-end system tests verifying user workflows and full application behavior.",
-                        },
-                      ].map((sub) => {
-                        const SubIcon = sub.icon;
-                        return (
-                          <motion.button
-                            key={sub.id}
-                            whileHover={{ scale: 1.01, x: 2 }}
-                            whileTap={{ scale: 0.99 }}
-                            onClick={() => handleSend(sub.prompt)}
-                            className="flex items-center gap-2.5 p-2 rounded-lg text-left cursor-pointer transition-all"
-                            style={{
-                              background: "var(--color-surface)",
-                              border: "1px solid var(--color-border)",
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background =
-                                "var(--color-bg)";
-                              e.currentTarget.style.borderColor =
-                                "var(--color-primary)";
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background =
-                                "var(--color-surface)";
-                              e.currentTarget.style.borderColor =
-                                "var(--color-border)";
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: 22,
-                                height: 22,
-                                borderRadius: 5,
-                                background: "var(--color-bg)",
-                                border: "1px solid var(--color-border)",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                flexShrink: 0,
-                              }}
-                            >
-                              <SubIcon size={12} style={{ color: sub.color }} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 600,
-                                  color: "var(--color-text)",
-                                }}
-                              >
-                                {sub.title}
-                              </div>
-                              <div
-                                style={{
-                                  fontSize: 10,
-                                  color: "var(--color-text-secondary)",
-                                  whiteSpace: "nowrap",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  lineHeight: 1.3,
-                                }}
-                              >
-                                {sub.desc}
-                              </div>
-                            </div>
-                            <ChevronRight
-                              size={12}
-                              style={{ color: "var(--color-text-muted)" }}
-                            />
-                          </motion.button>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {/* 3. Explain coverage gaps */}
-              <motion.button
-                whileHover={{ scale: 1.01, x: 2 }}
-                whileTap={{ scale: 0.99 }}
-                onClick={() =>
-                  handleSend(
-                    "Explain the code coverage gaps in this project and identify which logic branches need testing most.",
-                  )
-                }
-                className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all"
-                style={{
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                  opacity: hasAnalysis ? 1 : 0.5,
-                  pointerEvents: hasAnalysis ? "auto" : "none",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--color-bg)";
-                  e.currentTarget.style.borderColor = "var(--color-primary)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--color-surface)";
-                  e.currentTarget.style.borderColor = "var(--color-border)";
-                }}
-              >
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 6,
-                    background: "rgba(251, 191, 36, 0.1)",
-                    border: "1px solid rgba(251, 191, 36, 0.2)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Zap
-                    size={13}
-                    style={{ color: "var(--color-warning, #fbbf24)" }}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: "var(--color-text)",
-                    }}
-                  >
-                    Explain coverage gaps
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--color-text-secondary)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    Analyze untested logic branches and risk areas
-                  </div>
-                </div>
-                <ChevronRight
-                  size={13}
-                  style={{ color: "var(--color-text-muted)" }}
-                />
-              </motion.button>
+                    <ChevronRight
+                      size={13}
+                      className="text-[var(--ps-ink-muted)] group-hover:text-[var(--ps-ink)] transition-colors shrink-0"
+                    />
+                  </button>
+                );
+              })}
             </div>
-            )}
           </div>
         )}
 
-        {/* Message Stream */}
+        {/* Message Stream (avoid duplicating initial greeting on empty chat) */}
         <AnimatePresence>
-          {messages.map((msg, index) => (
+          {messages.map((msg, index) => {
+            if (messages.length === 1 && msg.isGreeting) {
+              return null;
+            }
+            const canRevise = msg.role === "user" && msg.savedMessageId && access.can("chat.write");
+            return (
             <ChatMessage
               key={msg.id}
-              msg={msg}
+              msg={msg.isGreeting ? { ...msg, content: chatGreeting(screenContext) } : msg}
+              onEditMessage={canRevise ? text => handleReviseMessage(msg, text) : undefined}
+              onUndoMessage={canRevise && !draftText && !draftAttachments.length ? () => handleReviseMessage(msg) : undefined}
+              messageActionsBusy={chatBusy}
               onApplySuggestion={handleApplySuggestion}
               onUndoSuggestion={handleUndoSuggestion}
               onApplyAllSuggestions={handleApplyAllSuggestions}
@@ -4508,7 +4160,7 @@ export default function AIPanel({
               onApplyAllIdeChanges={handleApplyAllIdeChanges}
               onOpenFile={onOpenFile}
               onRetry={
-                index === messages.length - 1 && msg.role === "assistant"
+                index === messages.length - 1 && msg.role === "assistant" && !msg.testSuggestions && !msg.ideChanges
                   ? () => {
                       let userMsg = null;
                       for (let i = index - 1; i >= 0; i--) {
@@ -4518,14 +4170,15 @@ export default function AIPanel({
                         }
                       }
                       if (userMsg) {
-                        handleSend(userMsg.content);
+                        handleSend(userMsg.content, userMsg.attachments || [], userMsg.requestContext || null, msg.failed ? userMsg.id : null);
                       }
                     }
                   : null
               }
             />
-          ))}
-          {isTyping && <TypingIndicator key="typing" />}
+            );
+          })}
+          {isTyping && !messages.some(message => message.isRegenerating) && <TypingIndicator key="typing" />}
         </AnimatePresence>
         <div ref={bottomRef} />
       </div>
@@ -4533,11 +4186,13 @@ export default function AIPanel({
       {/* ── Modern Prompt Input ──────────────────────────── */}
       <ChatInput
         onSend={handleSend}
-        isTyping={isTyping || isRestoring || isLoadingSession}
-        selectedModel={selectedModel}
-        setSelectedModel={setSelectedModel}
+        isTyping={chatBusy}
+        isRevising={isRevising}
+        input={draftText}
+        setInput={setDraftText}
+        attachments={draftAttachments}
+        setAttachments={setDraftAttachments}
         fileTree={internalTree}
-        projectId={projectId}
       />
 
       {/* ── Monaco Code Review Diff Modal ────────────────── */}
@@ -4549,7 +4204,7 @@ export default function AIPanel({
           setContextDialog(null);
           fetchSessions();
           if (projectId && projectId !== "undefined") {
-            getAiContext(projectId).then(config => setMemoryAvailable(config?.automaticMemory ?? false)).catch(() => {});
+            getAiContext(projectId).then(config => setMemoryAvailable(config?.automaticMemory ?? false)).catch((err) => console.error("Unable to refresh AI context", err));
           }
         }}
       />}

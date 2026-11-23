@@ -1,313 +1,287 @@
-import { ShieldCheck, Layers, Gauge, Sparkles, ArrowDownRight, AlertTriangle } from "lucide-react";
+import { memo } from "react";
+import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
 
 export function PortfolioExecutiveKpiRow({
   kpis = {},
-  onSelectStatusFilter,
-  onFocusAttentionQueue,
+  lifecycleCounts = null,
+  scopeBadge = null,
+  excludedCount = 0,
+  isFiltered = false,
   className = "",
 }) {
   const card1 = kpis.card1Health || {};
   const card2 = kpis.card2Coverage || {};
   const card3 = kpis.card3Scale || {};
   const card4 = kpis.card4AiImpact || {};
+  const timeRoi = kpis.timeRoi || {};
 
-  const total = card1.totalProjects || 1;
-  const passed = card1.passedProjects || 0;
-  const atRisk = card1.atRiskProjects || 0;
-  const blocked = card1.blockedProjects || 0;
-  const untested = card1.untestedProjects || 0;
+  const doingCount = lifecycleCounts?.DOING ?? card1.totalProjects ?? 0;
+  const notStartedCount = lifecycleCounts?.NOT_STARTED ?? 0;
+  const completedCount = lifecycleCounts?.COMPLETED ?? 0;
+  const pausedOrCancelled =
+    (lifecycleCounts?.PAUSED ?? 0) + (lifecycleCounts?.CANCELLED ?? 0);
+  const totalCount =
+    doingCount + notStartedCount + completedCount + pausedOrCancelled;
 
-  const passedPct = Math.round((passed / total) * 100);
-  const atRiskPct = Math.round((atRisk / total) * 100);
-  const blockedPct = Math.round((blocked / total) * 100);
-  const untestedPct = Math.max(0, 100 - passedPct - atRiskPct - blockedPct);
+  const doingPct = totalCount > 0 ? Math.round((doingCount / totalCount) * 100) : 0;
+  const notStartedPct =
+    totalCount > 0 ? Math.round((notStartedCount / totalCount) * 100) : 0;
+  const completedPct =
+    totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+  const pausedPct =
+    totalCount > 0
+      ? Math.max(0, 100 - doingPct - notStartedPct - completedPct)
+      : 0;
+
+  const unitCov = card2.avgUnitCoveragePct ?? 0;
+  const intCov = card2.avgIntegrationCoveragePct ?? 0;
+  const sysCov = card2.avgSystemCoveragePct ?? 0;
+
+  const totalTests = card3.totalExecutedTests ?? 0;
+  const passRate = card3.overallPassRatePct ?? 0;
+  const speedup = timeRoi.averageSpeedupMultiplier || 0;
+  const autoDuration =
+    timeRoi.totalAutoExecutionDurationFormatted || card3.cumulativeDurationStr || "0s";
+  const manualDuration = timeRoi.totalManualExecutionDurationFormatted || "0s";
+
+  const totalQaHoursSaved = timeRoi.totalQaHoursSaved ?? 0;
+  const aiTests = card4.totalAiTests ?? 0;
+  const aiRepaired = card4.aiRepairedCount ?? 0;
+  const aiGaps = card4.uncoveredGapsCount ?? 0;
+  const aiSum = Math.max(1, aiTests + aiRepaired + aiGaps);
 
   return (
     <section
       id="portfolio-executive-kpi-row"
-      aria-label="Portfolio Executive KPIs"
-      className={`grid grid-cols-12 gap-4 ${className}`}
+      aria-label="Portfolio Metrics Overview"
+      className={`ps-panel overflow-hidden grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[var(--ps-line)] ${className}`}
     >
-      {/* ── Card 1: Portfolio Release Readiness & Health ─────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
-        <div>
-          <div className="flex items-center justify-between text-xs text-[var(--ud-text-muted)] font-mono">
-            <span className="font-semibold uppercase tracking-wider text-[var(--ud-text)]">
-              Release Readiness
+      {/* ── Col 1: Health Gauge & Lifecycle Distribution ─────────────── */}
+      <div className="p-4 sm:p-5 flex flex-col justify-between gap-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <span className="text-xs text-[var(--ps-ink-muted)]">
+              Health score
             </span>
-            <span
-              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                card1.grade === "A"
-                  ? "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)]"
-                  : card1.grade === "B"
-                  ? "bg-[var(--ud-unit)]/15 text-[var(--ud-unit)]"
-                  : card1.grade === "C"
-                  ? "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)]"
-                  : "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)]"
-              }`}
-            >
-              Grade {card1.grade || "—"}
-            </span>
+            {scopeBadge && (
+              <div className="text-[10px] ps-mono text-[var(--ps-ink-muted)] tabular-nums mt-0.5">
+                {scopeBadge}
+              </div>
+            )}
+            <div className="flex items-baseline gap-1.5 mt-1 ps-mono">
+              <span className="text-2xl font-bold text-[var(--ps-ink)]">
+                {card1.avgHealthScore ?? 0}
+              </span>
+              <span className="text-xs text-[var(--ps-ink-muted)]">/ 100</span>
+            </div>
           </div>
 
-          <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-text)]">
-              {card1.avgHealthScore}
-            </span>
-            <span className="text-xs font-mono text-[var(--ud-text-muted)]">
-              / 100 Health
-            </span>
-            <span className="ml-auto text-xs font-mono font-medium text-[var(--ud-text-muted)]">
-              {card1.totalProjects} Proj{card1.totalProjects !== 1 ? "s" : ""}
-            </span>
-          </div>
-
-          {/* Segmented Breakdown Bar */}
-          <div className="h-2 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden flex gap-0.5 mt-3 select-none">
-            {passedPct > 0 && (
-              <div
-                style={{ width: `${passedPct}%` }}
-                className="bg-[var(--ud-pass)] transition-all"
-                title={`Passed: ${passed} (${passedPct}%)`}
-              />
-            )}
-            {atRiskPct > 0 && (
-              <div
-                style={{ width: `${atRiskPct}%` }}
-                className="bg-[var(--ud-warn)] transition-all"
-                title={`At Risk: ${atRisk} (${atRiskPct}%)`}
-              />
-            )}
-            {blockedPct > 0 && (
-              <div
-                style={{ width: `${blockedPct}%` }}
-                className="bg-[var(--ud-fail)] transition-all"
-                title={`Blocked: ${blocked} (${blockedPct}%)`}
-              />
-            )}
-            {untestedPct > 0 && (
-              <div
-                style={{ width: `${untestedPct}%` }}
-                className="bg-[var(--ud-neutral)] transition-all"
-                title={`Untested: ${untested} (${untestedPct}%)`}
-              />
-            )}
-          </div>
+          <RadialHealthGauge
+            score={card1.avgHealthScore ?? 0}
+            grade={card1.grade || "—"}
+            isTested={(card1.totalProjects || 0) > 0 && (card1.avgHealthScore ?? 0) > 0}
+            size={48}
+            strokeWidth={4}
+          />
         </div>
 
-        {/* Legend counts (Clickable filters) */}
-        <div className="grid grid-cols-4 gap-1 pt-3 mt-3 border-t border-[var(--ud-border)] text-center font-mono text-[11px]">
-          <button
-            type="button"
-            onClick={() => onSelectStatusFilter?.("PASSED")}
-            className="hover:opacity-80 transition-opacity cursor-pointer"
-            title="Filter by Passed"
-          >
-            <div className="text-[var(--ud-pass)] font-bold">{passed}</div>
-            <div className="text-[10px] text-[var(--ud-text-muted)]">Passed</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectStatusFilter?.("AT_RISK")}
-            className="hover:opacity-80 transition-opacity cursor-pointer"
-            title="Filter by At Risk"
-          >
-            <div className="text-[var(--ud-warn)] font-bold">{atRisk}</div>
-            <div className="text-[10px] text-[var(--ud-text-muted)]">At Risk</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectStatusFilter?.("BLOCKED")}
-            className="hover:opacity-80 transition-opacity cursor-pointer"
-            title="Filter by Blocked"
-          >
-            <div className="text-[var(--ud-fail)] font-bold">{blocked}</div>
-            <div className="text-[10px] text-[var(--ud-text-muted)]">Blocked</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectStatusFilter?.("UNTESTED")}
-            className="hover:opacity-80 transition-opacity cursor-pointer"
-            title="Filter by Untested"
-          >
-            <div className="text-[var(--ud-neutral)] font-bold">{untested}</div>
-            <div className="text-[10px] text-[var(--ud-text-muted)]">Untested</div>
-          </button>
+        <div className="space-y-2.5">
+          <div className="h-1.5 w-full rounded-full bg-[var(--ps-surface-2)] overflow-hidden flex gap-0.5">
+            {doingPct > 0 && (
+              <div style={{ width: `${doingPct}%` }} className="bg-[var(--ps-cobalt)]" />
+            )}
+            {completedPct > 0 && (
+              <div style={{ width: `${completedPct}%` }} className="bg-[var(--ps-emerald)]" />
+            )}
+            {notStartedPct > 0 && (
+              <div style={{ width: `${notStartedPct}%` }} className="bg-[var(--ps-neutral)]" />
+            )}
+            {pausedPct > 0 && (
+              <div style={{ width: `${pausedPct}%` }} className="bg-[var(--ps-amber)]" />
+            )}
+          </div>
+
+          <div className="grid grid-cols-4 gap-1 text-center ps-mono text-[11px]">
+            {[
+              { label: "Doing", val: doingCount, dot: "bg-[var(--ps-cobalt)]" },
+              {
+                label: "Done",
+                val: completedCount,
+                dot: "bg-[var(--ps-emerald)]",
+                title:
+                  !isFiltered && excludedCount > 0
+                    ? "Excluded from Active KPIs"
+                    : undefined,
+              },
+              { label: "New", val: notStartedCount, dot: "bg-[var(--ps-neutral)]" },
+              {
+                label: "Hold",
+                val: pausedOrCancelled,
+                dot: "bg-[var(--ps-amber)]",
+                title:
+                  !isFiltered && excludedCount > 0
+                    ? "Excluded from Active KPIs"
+                    : undefined,
+              },
+            ].map((item) => (
+              <div key={item.label} title={item.title} className="py-0.5">
+                <div className="font-semibold text-[var(--ps-ink)]">{item.val}</div>
+                <div className="text-[10px] text-[var(--ps-ink-muted)] inline-flex items-center gap-1">
+                  <span className={`w-1.5 h-1.5 rounded-full ${item.dot}`} />
+                  {item.label}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* ── Card 2: Global Unified Coverage Index ─────────────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
-        <div>
-          <div className="flex items-center justify-between text-xs text-[var(--ud-text-muted)] font-mono">
-            <span className="font-semibold uppercase tracking-wider text-[var(--ud-text)]">
-              Unified Coverage Index
+      {/* ── Col 2: 3-Layer Coverage Column Diagram ───────────────────── */}
+      <div className="p-4 sm:p-5 flex flex-col justify-between gap-3">
+        <div className="flex items-start justify-between">
+          <div>
+            <span className="text-xs text-[var(--ps-ink-muted)]">
+              Unified coverage
             </span>
-            <span className="text-[10px] text-[var(--ud-pass)] font-bold">
-              Target 80%+
-            </span>
-          </div>
-
-          <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-text)]">
+            <div className="text-2xl font-bold ps-mono text-[var(--ps-ink)] mt-1">
               {card2.unifiedCoveragePct ?? 0}%
-            </span>
-            <span className="text-xs font-mono text-[var(--ud-text-muted)]">
-              Weighted Avg
-            </span>
+            </div>
           </div>
+          <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+            80% goal
+          </span>
         </div>
 
-        {/* 3 Horizontal Mini Progress Bars */}
-        <div className="space-y-2 pt-3 mt-3 border-t border-[var(--ud-border)]">
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-[var(--ud-unit)] font-medium">Unit Line Cov</span>
-              <span className="text-[var(--ud-text)] font-semibold">
-                {card2.avgUnitCoveragePct ?? 0}%
+        <div className="grid grid-cols-3 gap-3 items-end h-14 relative pt-1">
+          <div
+            style={{ bottom: "76%" }}
+            className="absolute inset-x-0 border-t border-dashed border-[var(--ps-line-strong)] pointer-events-none"
+          />
+          {[
+            { label: "Unit", val: unitCov, color: "var(--ps-cobalt)" },
+            { label: "API", val: intCov, color: "var(--ps-indigo)" },
+            { label: "E2E", val: sysCov, color: "var(--ps-teal)" },
+          ].map((col) => (
+            <div key={col.label} className="flex flex-col items-center gap-1 h-full justify-end">
+              <span className="text-[10px] ps-mono font-medium text-[var(--ps-ink-secondary)]">
+                {col.val}%
+              </span>
+              <div className="w-full max-w-[30px] h-8 rounded-sm bg-[var(--ps-surface-2)] overflow-hidden flex items-end">
+                <div
+                  style={{
+                    height: `${Math.max(5, Math.min(100, col.val))}%`,
+                    backgroundColor: col.color,
+                  }}
+                  className="w-full rounded-t-sm transition-all duration-300"
+                />
+              </div>
+              <span className="text-[10px] ps-mono text-[var(--ps-ink-muted)]">
+                {col.label}
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden">
-              <div
-                style={{ width: `${Math.min(100, card2.avgUnitCoveragePct ?? 0)}%` }}
-                className="h-full bg-[var(--ud-unit)] transition-all"
-              />
+          ))}
+        </div>
+      </div>
+
+      {/* ── Col 3: Execution Scale & Pass/Fail Ratio ─────────────────── */}
+      <div className="p-4 sm:p-5 flex flex-col justify-between gap-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <span className="text-xs text-[var(--ps-ink-muted)]">
+              Executed tests
+            </span>
+            <div className="flex items-baseline gap-2 mt-1 ps-mono">
+              <span className="text-2xl font-bold text-[var(--ps-ink)]">
+                {totalTests}
+              </span>
+              <span className="text-xs text-[var(--ps-ink-secondary)]">
+                {passRate}% pass
+              </span>
             </div>
           </div>
+          {speedup > 1 && (
+            <span className="text-[11px] ps-mono text-[var(--ps-ink-secondary)]">
+              {speedup}x faster
+            </span>
+          )}
+        </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-[var(--ud-integration)] font-medium">API Endpoint Cov</span>
-              <span className="text-[var(--ud-text)] font-semibold">
-                {card2.avgIntegrationCoveragePct ?? 0}%
-              </span>
-            </div>
-            <div className="h-1.5 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden">
+        <div className="space-y-2.5">
+          <div className="h-1.5 w-full rounded-full bg-[var(--ps-surface-2)] overflow-hidden flex">
+            <div
+              style={{ width: `${Math.min(100, passRate)}%` }}
+              className="bg-[var(--ps-emerald)]"
+            />
+            {totalTests > 0 && passRate < 100 && (
               <div
-                style={{ width: `${Math.min(100, card2.avgIntegrationCoveragePct ?? 0)}%` }}
-                className="h-full bg-[var(--ud-integration)] transition-all"
+                style={{ width: `${Math.max(0, 100 - passRate)}%` }}
+                className="bg-[var(--ps-rose)]"
               />
-            </div>
+            )}
           </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-[var(--ud-system)] font-medium">System Flow Cov</span>
-              <span className="text-[var(--ud-text)] font-semibold">
-                {card2.avgSystemCoveragePct ?? 0}%
-              </span>
-            </div>
-            <div className="h-1.5 w-full rounded-full bg-[var(--ud-surface-2)] overflow-hidden">
-              <div
-                style={{ width: `${Math.min(100, card2.avgSystemCoveragePct ?? 0)}%` }}
-                className="h-full bg-[var(--ud-system)] transition-all"
-              />
-            </div>
+          <div className="flex items-center justify-between text-[11px] ps-mono">
+            <span className="text-[var(--ps-ink-muted)]">
+              Auto <strong className="text-[var(--ps-ink)]">{autoDuration}</strong>
+            </span>
+            <span className="text-[var(--ps-ink-muted)]">
+              Manual <strong className="text-[var(--ps-ink-secondary)]">{manualDuration}</strong>
+            </span>
           </div>
         </div>
       </div>
 
-      {/* ── Card 3: Total Testing Scale & Pass Rate ───────────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
+      {/* ── Col 4: QA Time Saved & Synthesis Breakdown ───────────────── */}
+      <div className="p-4 sm:p-5 flex flex-col justify-between gap-4">
         <div>
-          <div className="flex items-center justify-between text-xs text-[var(--ud-text-muted)] font-mono">
-            <span className="font-semibold uppercase tracking-wider text-[var(--ud-text)]">
-              Execution & Scale
-            </span>
-            <span
-              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                (card3.overallPassRatePct ?? 0) >= 95
-                  ? "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)]"
-                  : (card3.overallPassRatePct ?? 0) >= 80
-                  ? "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)]"
-                  : "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)]"
-              }`}
-            >
-              {card3.overallPassRatePct ?? 0}% Pass
-            </span>
-          </div>
-
-          <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-text)]">
-              {card3.totalExecutedTests ?? 0}
-            </span>
-            <span className="text-xs font-mono text-[var(--ud-text-muted)]">
-              Executed Tests
-            </span>
+          <span className="text-xs text-[var(--ps-ink-muted)]">
+            QA time saved
+          </span>
+          <div className="text-2xl font-bold ps-mono text-[var(--ps-ink)] mt-1">
+            +{totalQaHoursSaved.toFixed(1)}h
           </div>
         </div>
 
-        {/* 2x2 Sub-metrics Grid */}
-        <div className="grid grid-cols-2 gap-2 pt-3 mt-3 border-t border-[var(--ud-border)] font-mono text-xs">
-          <div className="p-1.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
-            <div className="text-[10px] text-[var(--ud-text-muted)]">Unit Passed</div>
-            <div className="font-bold text-[var(--ud-text)]">{card3.unitPassedStr || "0/0"}</div>
-          </div>
-          <div className="p-1.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
-            <div className="text-[10px] text-[var(--ud-text-muted)]">APIs Covered</div>
-            <div className="font-bold text-[var(--ud-text)]">{card3.apiCoveredStr || "0/0"}</div>
-          </div>
-          <div className="p-1.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
-            <div className="text-[10px] text-[var(--ud-text-muted)]">E2E Verified</div>
-            <div className="font-bold text-[var(--ud-text)]">{card3.systemVerifiedStr || "0/0"}</div>
-          </div>
-          <div className="p-1.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
-            <div className="text-[10px] text-[var(--ud-text-muted)]">Total Runtime</div>
-            <div className="font-bold text-[var(--ud-text)]">{card3.cumulativeDurationStr || "0s"}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Card 4: Global AI Impact & Coverage Gaps ──────────── */}
-      <div className="col-span-12 sm:col-span-6 xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-colors">
-        <div>
-          <div className="flex items-center justify-between text-xs text-[var(--ud-text-muted)] font-mono">
-            <span className="font-semibold uppercase tracking-wider text-[var(--ud-text)]">
-              AI Impact & Gaps
-            </span>
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-primary)]">
-              <Sparkles size={11} />
-              COV AI
-            </span>
+        <div className="space-y-2.5">
+          <div className="h-1.5 w-full rounded-full bg-[var(--ps-surface-2)] overflow-hidden flex gap-0.5">
+            {aiTests > 0 && (
+              <div
+                style={{ width: `${(aiTests / aiSum) * 100}%` }}
+                className="bg-[var(--ps-cobalt)]"
+              />
+            )}
+            {aiRepaired > 0 && (
+              <div
+                style={{ width: `${(aiRepaired / aiSum) * 100}%` }}
+                className="bg-[var(--ps-emerald)]"
+              />
+            )}
+            {aiGaps > 0 && (
+              <div
+                style={{ width: `${(aiGaps / aiSum) * 100}%` }}
+                className="bg-[var(--ps-amber)]"
+              />
+            )}
           </div>
 
-          <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-3xl font-bold font-mono tracking-tight text-[var(--ud-text)]">
-              {card4.totalAiTests ?? 0}
-            </span>
-            <span className="text-xs font-mono text-[var(--ud-text-muted)]">
-              AI Synthesized
-            </span>
+          <div className="grid grid-cols-3 gap-1 text-center ps-mono text-[11px]">
+            <div>
+              <div className="font-semibold text-[var(--ps-ink)]">{aiTests}</div>
+              <div className="text-[10px] text-[var(--ps-ink-muted)]">Generated</div>
+            </div>
+            <div>
+              <div className="font-semibold text-[var(--ps-ink)]">{aiRepaired}</div>
+              <div className="text-[10px] text-[var(--ps-ink-muted)]">Healed</div>
+            </div>
+            <div>
+              <div className="font-semibold text-[var(--ps-ink)]">{aiGaps}</div>
+              <div className="text-[10px] text-[var(--ps-ink-muted)]">Gaps</div>
+            </div>
           </div>
-        </div>
-
-        {/* Sub-metrics & Focus Link */}
-        <div className="pt-3 mt-3 border-t border-[var(--ud-border)] space-y-2 text-xs font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-[var(--ud-text-muted)]">AI Repaired Tests:</span>
-            <span className="font-bold text-[var(--ud-pass)]">
-              {card4.aiRepairedCount ?? 0} healed
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[var(--ud-text-muted)]">Remaining Gaps:</span>
-            <span className="font-bold text-[var(--ud-warn)]">
-              {card4.uncoveredGapsCount ?? 0} uncovered
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => onFocusAttentionQueue?.()}
-            className="w-full mt-1 pt-1 text-center text-[11px] font-sans text-[var(--color-primary)] hover:underline flex items-center justify-center gap-1 cursor-pointer"
-          >
-            <span>View in Attention Queue</span>
-            <ArrowDownRight size={12} />
-          </button>
         </div>
       </div>
     </section>
   );
 }
 
-export default PortfolioExecutiveKpiRow;
-
+export default memo(PortfolioExecutiveKpiRow);

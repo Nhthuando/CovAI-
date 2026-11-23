@@ -1,0 +1,1 @@
+export const isVagueExpectedOutcome = value => /^(?:the asserted value|it|the element)\b/i.test(String(value).trim()) || /^(?:(?:the )?asserted value\s+)?(?:is\s+|has\s+)?(?:not\s+)?(?:visible|hidden|enabled|disabled|checked|passed|success|works|verified|true|false)[.!\s]*$/i.test(String(value).trim()) || /^review (?:the )?expected (?:result|outcome)/i.test(String(value).trim());

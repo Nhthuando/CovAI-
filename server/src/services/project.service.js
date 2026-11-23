@@ -1,7 +1,20 @@
+import crypto from "node:crypto";
+import { captureWorkspaceFiles } from "./projectWorkspacePublish.service.js";
 import prisma from "../config/prisma.js";
-import { membershipWhere, resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
-import { publishProjectEvent, deliverProjectEvent } from './projectEvent.service.js';
-import { readVersionedProjectFile,projectEditableWorkspaceRoot } from "./projectFileVersion.service.js";
+import {
+  membershipWhere,
+  resolveProjectAccess,
+  withProjectGuard,
+} from "./projectAccess.service.js";
+import { assertEditorSnapshotChangeAllowed } from "./projectEditorBridge.service.js";
+import {
+  publishProjectEvent,
+  deliverProjectEvent,
+} from "./projectEvent.service.js";
+import {
+  readVersionedProjectFile,
+  projectEditableWorkspaceRoot,
+} from "./projectFileVersion.service.js";
 import { mutateProjectWorkspace } from "./projectMutation.service.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
@@ -33,11 +46,14 @@ import {
 } from "../utils/nodeProjectValidator.js";
 import { validateArchiveLanguage } from "../utils/languageDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
-import { snapshotWorkspaceRoot, resolveSnapshotFile } from "../utils/snapshotWorkspace.js";
+import {
+  snapshotWorkspaceRoot,
+  resolveSnapshotFile,
+} from "../utils/snapshotWorkspace.js";
 import { cleanupProjectStorageAsync } from "./projectStorageCleanup.service.js";
 
 export { ServiceError };
-export { cleanupProjectStorageAsync };
+export { cleanupProjectStorageAsync, buildTree };
 
 function buildTree(dirPath, rootPath = dirPath) {
   const result = [];
@@ -50,7 +66,9 @@ function buildTree(dirPath, rootPath = dirPath) {
         item === ".git" ||
         item === "__MACOSX" ||
         item === ".DS_Store" ||
-        item.startsWith(".covai-")
+        item.startsWith(".covai-") ||
+        item.startsWith(".covai_") ||
+        item === ".covai_test_versions"
       )
         continue;
 
@@ -74,12 +92,19 @@ function buildTree(dirPath, rootPath = dirPath) {
         const lowerName = item.toLowerCase();
         const ext = path.extname(item).toLowerCase();
 
-        if (lowerName.includes(".test.") || lowerName.includes(".spec.")) lang = "test";
+        if (lowerName.includes(".test.") || lowerName.includes(".spec."))
+          lang = "test";
         else if (ext === ".jsx" || ext === ".tsx") lang = "react";
         else if (ext === ".js" || ext === ".mjs" || ext === ".cjs") lang = "js";
         else if (ext === ".ts") lang = "ts";
         else if (ext === ".json") lang = "json";
-        else if (ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less") lang = "css";
+        else if (
+          ext === ".css" ||
+          ext === ".scss" ||
+          ext === ".sass" ||
+          ext === ".less"
+        )
+          lang = "css";
         else if (ext === ".html" || ext === ".htm") lang = "html";
         else if (ext === ".md") lang = "md";
         else if (
@@ -174,11 +199,81 @@ export const createProject = async ({ input, currentUserId }) => {
     },
   });
 
+  // A new project must show up in the portfolio immediately, not after the
+  // overview cache expires.
+  try {
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(effectiveOwnerId);
+  } catch (error) {
+    console.error(
+      "[createProject] Portfolio cache invalidation failed:",
+      error,
+    );
+  }
   return project;
 };
 
+/**
+ * Read-time self-healing for Project.lifecycleStatus:
+ * If a project is currently marked "NOT_STARTED" (or null) in the DB,
+ * but already has activity (TestRuns, CoverageSummary, AiTests, AiSuggestions,
+ * SystemScenarios, IntegrationScenarios, or >1 snapshots), automatically
+ * heals the DB state to "DOING" and returns "DOING".
+ * Explicit user overrides ("PAUSED", "COMPLETED", "CANCELLED") are never overwritten.
+ */
+export const healProjectLifecycleStatusIfNeeded = async (
+  project,
+  options = {},
+) => {
+  if (!project || typeof project !== "object") return "NOT_STARTED";
+
+  const currentStatus = project.lifecycleStatus || "NOT_STARTED";
+  if (currentStatus !== "NOT_STARTED") {
+    return currentStatus;
+  }
+
+  const snapshots = Array.isArray(project.snapshots) ? project.snapshots : [];
+  const hasSnapshotActivity = snapshots.some(
+    (s) =>
+      (s?._count?.testRuns || 0) > 0 ||
+      (s?._count?.systemScenarios || 0) > 0 ||
+      Boolean(s?.coverageSummaries || s?.coverageSummary),
+  );
+
+  const hasActivity =
+    Boolean(options.hasActivity) ||
+    (project._count?.snapshots || 0) > 1 ||
+    (project._count?.aiTests || 0) > 0 ||
+    (project._count?.aiSuggestions || 0) > 0 ||
+    hasSnapshotActivity;
+
+  if (!hasActivity) {
+    project.lifecycleStatus = "NOT_STARTED";
+    return "NOT_STARTED";
+  }
+
+  const now = new Date();
+  project.lifecycleStatus = "DOING";
+  project.lifecycleUpdatedAt = now;
+
+  if (project.id) {
+    prisma.project
+      .updateMany({
+        where: { id: project.id, lifecycleStatus: "NOT_STARTED" },
+        data: {
+          lifecycleStatus: "DOING",
+          lifecycleUpdatedAt: now,
+        },
+      })
+      .catch(() => {});
+  }
+
+  return "DOING";
+};
+
 export const listProjects = async (userId) => {
-  return prisma.project.findMany({
+  const projects = await prisma.project.findMany({
     where: membershipWhere(userId),
     orderBy: { createdAt: "desc" },
     select: {
@@ -190,38 +285,29 @@ export const listProjects = async (userId) => {
       rootDir: true,
       jestConfigPath: true,
       storageBasePath: true,
+      activeSnapshotId: true,
+      lifecycleStatus: true,
+      lifecycleUpdatedAt: true,
+      isPinned: true,
       createdAt: true,
       updatedAt: true,
       snapshots: {
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true },
-      },
-      _count: {
-        select: {
-          snapshots: true,
-        },
-      },
-    },
-  });
-};
-
-export const getProjectById = async (projectId, userId) => {
-  await resolveProjectAccess({projectId,userId,capability:"project.read"});
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    include: {
-      owner: {
         select: {
           id: true,
-          email: true,
-          name: true,
+          coverageSummaries: { select: { id: true } },
+          _count: {
+            select: {
+              testRuns: true,
+              systemScenarios: true,
+            },
+          },
         },
       },
       _count: {
         select: {
           snapshots: true,
-          jobs: true,
           aiTests: true,
           aiSuggestions: true,
         },
@@ -229,9 +315,56 @@ export const getProjectById = async (projectId, userId) => {
     },
   });
 
+  for (const p of projects) {
+    healProjectLifecycleStatusIfNeeded(p);
+  }
+  return projects;
+};
+
+export const getProjectById = async (projectId, userId) => {
+  const [, project] = await Promise.all([
+    resolveProjectAccess({ projectId, userId, capability: "project.read" }),
+    prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        owner: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          },
+        },
+        snapshots: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            coverageSummaries: { select: { id: true } },
+            _count: {
+              select: {
+                testRuns: true,
+                systemScenarios: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            snapshots: true,
+            jobs: true,
+            aiTests: true,
+            aiSuggestions: true,
+          },
+        },
+      },
+    }),
+  ]);
+
   if (!project) {
     throw new ServiceError("Project not found", 404);
   }
+
+  healProjectLifecycleStatusIfNeeded(project);
 
   return project;
 };
@@ -358,7 +491,9 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
       }
 
       const resolvedRootDir = resolveProjectRoot(sourcePath);
-      const validation = await validateNodeProject(resolvedRootDir, { autoCreate: true });
+      const validation = await validateNodeProject(resolvedRootDir, {
+        autoCreate: true,
+      });
 
       await prisma.projectSnapshot.update({
         where: { id: snapshot.id },
@@ -476,7 +611,11 @@ function copyDirRecursive(
 
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const entry of entries) {
-    if (ignoreDirs.includes(entry.name) || entry.name === '.covai-collaboration') continue;
+    if (
+      ignoreDirs.includes(entry.name) ||
+      entry.name === ".covai-collaboration"
+    )
+      continue;
 
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
@@ -498,8 +637,133 @@ function copyDirRecursive(
   return { fileCount, sizeBytes };
 }
 
+const COVAI_ADDITIONAL_IGNORED = new Set([
+  ".covai-checkpoint.json",
+  "playwright-report",
+  ".playwright",
+  "cypress/videos",
+  "cypress/screenshots",
+]);
+
+export async function computeSnapshotContentHash(root) {
+  if (!root || !fs.existsSync(root)) return null;
+  const files = await captureWorkspaceFiles(root);
+
+  const entries = [];
+  for (const [relPath, info] of files.entries()) {
+    const normalized = relPath.replace(/\\/g, "/");
+    const isIgnored = [...COVAI_ADDITIONAL_IGNORED].some(
+      (ign) => normalized === ign || normalized.startsWith(`${ign}/`),
+    );
+    if (!isIgnored) {
+      entries.push({ path: normalized, sha256: info.sha256 });
+    }
+  }
+
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+  const hash = crypto.createHash("sha256");
+  for (const item of entries) {
+    hash.update(`${item.path}\0${item.sha256}\n`);
+  }
+  return hash.digest("hex");
+}
+
+export const resolveWorkingSnapshot = async (projectId) => {
+  if (!projectId) return null;
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { activeSnapshotId: true },
+  });
+  if (project?.activeSnapshotId) {
+    const active = await prisma.projectSnapshot.findUnique({
+      where: { id: project.activeSnapshotId },
+    });
+    if (active && active.rootDir && fs.existsSync(active.rootDir)) {
+      return active;
+    }
+  }
+  return prisma.projectSnapshot.findFirst({
+    where: { projectId },
+    orderBy: { createdAt: "desc" },
+  });
+};
+
+export const activateProjectSnapshot = async ({
+  projectId,
+  snapshotId,
+  userId,
+}) => {
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "integrations.write",
+  });
+  if (!project)
+    throw new ServiceError("Project not found or unauthorized", 404);
+
+  const snapshot = await prisma.projectSnapshot.findFirst({
+    where: { id: snapshotId, projectId },
+  });
+  if (!snapshot) {
+    throw new ServiceError("Target snapshot not found in this project", 404);
+  }
+
+  await prisma.project.update({
+    where: { id: projectId },
+    data: {
+      activeSnapshotId: snapshotId,
+      workspaceRevision: { increment: 1 },
+    },
+  });
+
+  try {
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(project.ownerId);
+  } catch (_) {}
+  try {
+    const { clearUnifiedDashboardCache } =
+      await import("./unifiedQualityDashboard.service.js");
+    clearUnifiedDashboardCache(snapshotId);
+  } catch (_) {}
+  try {
+    const { emitPortfolioProjectUpdated } =
+      await import("../realtime/portfolioSocket.emitter.js");
+    emitPortfolioProjectUpdated({
+      projectId,
+      userId: project.ownerId,
+      action: "SNAPSHOT_ACTIVATED",
+    });
+  } catch (_) {}
+  try {
+    const { emitDashboardMetricsUpdated } =
+      await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, {
+      snapshotId,
+      reason: "snapshot-activated",
+    }).catch(() => {});
+  } catch (_) {}
+
+  return {
+    success: true,
+    projectId,
+    activeSnapshotId: snapshotId,
+    snapshot: {
+      id: snapshot.id,
+      versionNumber: snapshot.versionNumber,
+      label: snapshot.label,
+      createdAt: snapshot.createdAt,
+    },
+  };
+};
+
 export const listProjectSnapshots = async ({ projectId, userId }) => {
-  const { project } = await resolveProjectAccess({projectId,userId,capability:"project.read"});
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "project.read",
+  });
   if (!project) throw new ServiceError("Project not found", 404);
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
@@ -510,7 +774,10 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
   return snapshots.map((snapshot, idx) => {
     let meta = null;
     if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
-      const metaPath = path.join(snapshotWorkspaceRoot(snapshot), ".covai-checkpoint.json");
+      const metaPath = path.join(
+        snapshotWorkspaceRoot(snapshot),
+        ".covai-checkpoint.json",
+      );
       if (fs.existsSync(metaPath)) {
         try {
           meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
@@ -520,25 +787,36 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
 
     const defaultLabel = snapshot.commitSha
       ? `Git: ${snapshot.commitSha.slice(0, 7)}`
-      : idx === snapshots.length - 1
-        ? "Initial Ingest"
-        : `Checkpoint #${snapshots.length - idx}`;
+      : snapshot.versionNumber != null
+        ? `#${snapshot.versionNumber} Snapshot`
+        : idx === snapshots.length - 1
+          ? "Initial Ingest"
+          : `Checkpoint #${snapshots.length - idx}`;
 
     const defaultMessage =
       snapshot.source === "GITHUB"
         ? "Imported from GitHub repository"
         : "Uploaded from compressed archive";
 
+    const isActive = project.activeSnapshotId
+      ? snapshot.id === project.activeSnapshotId
+      : idx === 0;
+
     return {
       ...snapshotResponse({
         ...snapshot,
         structureAnalysis: snapshot.ProjectStructureAnalysis ?? null,
       }),
-      label: meta?.label || defaultLabel,
+      versionNumber: snapshot.versionNumber,
+      contentHash: snapshot.contentHash
+        ? snapshot.contentHash.slice(0, 12)
+        : null,
+      isActive,
+      label: snapshot.label || meta?.label || defaultLabel,
       message: meta?.message || defaultMessage,
       fileCount: meta?.fileCount ?? null,
       sizeBytes: meta?.sizeBytes ?? null,
-      isCurrent: idx === 0,
+      isCurrent: isActive,
     };
   });
 };
@@ -546,8 +824,15 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
 const rebaseSnapshotConfigPath = (value, originalRoot, targetRoot) => {
   if (!value || !path.isAbsolute(value)) return value;
   const relative = path.relative(originalRoot, value);
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new ServiceError('Snapshot configuration must stay inside its project workspace', 422);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new ServiceError(
+      "Snapshot configuration must stay inside its project workspace",
+      422,
+    );
   }
   return path.join(targetRoot, relative);
 };
@@ -558,14 +843,20 @@ export const createProjectCheckpoint = async ({
   label,
   message,
 }) => {
-  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'integrations.write' });
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "integrations.write",
+  });
   if (!project)
     throw new ServiceError("Project not found or unauthorized", 404);
 
-  const activeSnapshot = await prisma.projectSnapshot.findFirst({
+  const activeSnapshot = await resolveWorkingSnapshot(projectId);
+  const latestSnapshot = await prisma.projectSnapshot.findFirst({
     where: { projectId },
     orderBy: { createdAt: "desc" },
   });
+
   if (
     !activeSnapshot ||
     !activeSnapshot.rootDir ||
@@ -577,6 +868,72 @@ export const createProjectCheckpoint = async ({
     );
   }
 
+  const workspaceRoot = projectEditableWorkspaceRoot(activeSnapshot);
+
+  // Compute Merkle content hash of current workspace
+  const currentHash = await computeSnapshotContentHash(workspaceRoot);
+
+  // Lazy compute contentHash for active & latest if missing
+  if (activeSnapshot && !activeSnapshot.contentHash && activeSnapshot.rootDir) {
+    const activeRoot = projectEditableWorkspaceRoot(activeSnapshot);
+    activeSnapshot.contentHash = await computeSnapshotContentHash(activeRoot);
+    if (activeSnapshot.contentHash) {
+      await prisma.projectSnapshot
+        .update({
+          where: { id: activeSnapshot.id },
+          data: { contentHash: activeSnapshot.contentHash },
+        })
+        .catch(() => {});
+    }
+  }
+
+  if (latestSnapshot && !latestSnapshot.contentHash && latestSnapshot.rootDir) {
+    const latestRoot = projectEditableWorkspaceRoot(latestSnapshot);
+    latestSnapshot.contentHash = await computeSnapshotContentHash(latestRoot);
+    if (latestSnapshot.contentHash) {
+      await prisma.projectSnapshot
+        .update({
+          where: { id: latestSnapshot.id },
+          data: { contentHash: latestSnapshot.contentHash },
+        })
+        .catch(() => {});
+    }
+  }
+
+  // Check against both activeSnapshot AND latestSnapshot
+  if (
+    currentHash &&
+    activeSnapshot &&
+    currentHash === activeSnapshot.contentHash
+  ) {
+    throw new ServiceError(
+      `The code hasn't changed compared to Snapshot #${activeSnapshot.versionNumber || 1}`,
+      409,
+      "SNAPSHOT_UNCHANGED",
+    );
+  }
+
+  if (
+    currentHash &&
+    latestSnapshot &&
+    currentHash === latestSnapshot.contentHash
+  ) {
+    throw new ServiceError(
+      `The code hasn't changed compared to Snapshot #${latestSnapshot.versionNumber || 1}`,
+      409,
+      "SNAPSHOT_UNCHANGED",
+    );
+  }
+
+  // Determine sequential version number: max + 1
+  const maxVersionAgg = await prisma.projectSnapshot.aggregate({
+    where: { projectId },
+    _max: { versionNumber: true },
+  });
+  const maxVer = maxVersionAgg?._max?.versionNumber ?? 0;
+  const newVersionNumber = maxVer + 1;
+  const snapshotLabel = label?.trim() || `#${newVersionNumber} Snapshot`;
+
   const newSnapshotId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
   const baseStorage = path.resolve(
     "storage/projects",
@@ -586,19 +943,25 @@ export const createProjectCheckpoint = async ({
   );
   fs.mkdirSync(baseStorage, { recursive: true });
 
-  const workspaceRoot = projectEditableWorkspaceRoot(activeSnapshot);
   const analysisRelative = path.relative(workspaceRoot, activeSnapshot.rootDir);
   const checkpointAnalysisRoot = path.join(baseStorage, analysisRelative);
   const { fileCount, sizeBytes } = copyDirRecursive(workspaceRoot, baseStorage);
+  const srcGit = path.join(workspaceRoot, ".git");
+  const destGit = path.join(baseStorage, ".git");
+  if (fs.existsSync(srcGit) && !fs.existsSync(destGit)) {
+    try {
+      fs.cpSync(srcGit, destGit, { recursive: true });
+    } catch (_) {}
+  }
 
   const checkpointMeta = {
     id: newSnapshotId,
-    label:
-      label?.trim() ||
-      `Checkpoint ${new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`,
+    versionNumber: newVersionNumber,
+    label: snapshotLabel,
     message: message?.trim() || "Manual snapshot checkpoint",
     createdAt: new Date().toISOString(),
     source: activeSnapshot.source,
+    contentHash: currentHash,
     fileCount,
     sizeBytes,
   };
@@ -608,60 +971,144 @@ export const createProjectCheckpoint = async ({
 
   let detection = {
     hasJest: activeSnapshot.hasJest,
-    configPath: rebaseSnapshotConfigPath(activeSnapshot.jestConfigPath, workspaceRoot, baseStorage),
+    configPath: rebaseSnapshotConfigPath(
+      activeSnapshot.jestConfigPath,
+      workspaceRoot,
+      baseStorage,
+    ),
     jestCommand: activeSnapshot.jestCommand,
   };
   try {
     detection = detectJest(checkpointAnalysisRoot);
   } catch (_) {}
 
-  const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  // Save contentHash in contentHash column and versioned unique string in checksum
+  const checksum = `${currentHash || "snap"}_v${newVersionNumber}`;
 
-  const committed = await withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx, access) => {
-    if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing checkpoint; try again', 409, 'SNAPSHOT_CHANGED');
-    const newSnapshot = await tx.projectSnapshot.create({
-    data: {
-      projectId,
-      source: activeSnapshot.source,
-      checksum,
-      commitSha: null,
-      storagePath: baseStorage,
-      rootDir: checkpointAnalysisRoot,
-      hasJest: detection.hasJest,
-      jestConfigPath: detection.configPath,
-      jestCommand: detection.jestCommand,
-      hasVitest: activeSnapshot.hasVitest,
-      vitestCommand: activeSnapshot.vitestCommand,
-      vitestConfigPath: rebaseSnapshotConfigPath(activeSnapshot.vitestConfigPath, workspaceRoot, baseStorage),
-      hasPlaywright: activeSnapshot.hasPlaywright,
-      playwrightBrowsers: activeSnapshot.playwrightBrowsers,
-      playwrightCommand: activeSnapshot.playwrightCommand,
-      playwrightConfigPath: rebaseSnapshotConfigPath(activeSnapshot.playwrightConfigPath, workspaceRoot, baseStorage),
-      playwrightTestDir: rebaseSnapshotConfigPath(activeSnapshot.playwrightTestDir, workspaceRoot, baseStorage),
-      hasCypress: activeSnapshot.hasCypress,
-      cypressCommand: activeSnapshot.cypressCommand,
-      cypressConfigPath: rebaseSnapshotConfigPath(activeSnapshot.cypressConfigPath, workspaceRoot, baseStorage),
-      cypressTestDir: rebaseSnapshotConfigPath(activeSnapshot.cypressTestDir, workspaceRoot, baseStorage),
-      cypressVersion: activeSnapshot.cypressVersion,
-      testingFrameworksJson: activeSnapshot.testingFrameworksJson,
-      frameworkRecommendationJson: activeSnapshot.frameworkRecommendationJson,
-      selectedTestingFramework: activeSnapshot.selectedTestingFramework,
+  const committed = await withProjectGuard(
+    { projectId, userId, capability: "integrations.write" },
+    async (tx, access) => {
+      await assertEditorSnapshotChangeAllowed(tx, projectId);
+      if (access.project.workspaceRevision !== project.workspaceRevision)
+        throw new ServiceError(
+          "Workspace changed while preparing checkpoint; try again",
+          409,
+          "SNAPSHOT_CHANGED",
+        );
+      const newSnapshot = await tx.projectSnapshot.create({
+        data: {
+          projectId,
+          source: activeSnapshot.source,
+          checksum,
+          contentHash: currentHash,
+          versionNumber: newVersionNumber,
+          label: snapshotLabel,
+          commitSha: null,
+          storagePath: baseStorage,
+          rootDir: checkpointAnalysisRoot,
+          hasJest: detection.hasJest,
+          jestConfigPath: detection.configPath,
+          jestCommand: detection.jestCommand,
+          hasVitest: activeSnapshot.hasVitest,
+          vitestCommand: activeSnapshot.vitestCommand,
+          vitestConfigPath: rebaseSnapshotConfigPath(
+            activeSnapshot.vitestConfigPath,
+            workspaceRoot,
+            baseStorage,
+          ),
+          hasPlaywright: activeSnapshot.hasPlaywright,
+          playwrightBrowsers: activeSnapshot.playwrightBrowsers,
+          playwrightCommand: activeSnapshot.playwrightCommand,
+          playwrightConfigPath: rebaseSnapshotConfigPath(
+            activeSnapshot.playwrightConfigPath,
+            workspaceRoot,
+            baseStorage,
+          ),
+          playwrightTestDir: rebaseSnapshotConfigPath(
+            activeSnapshot.playwrightTestDir,
+            workspaceRoot,
+            baseStorage,
+          ),
+          hasCypress: activeSnapshot.hasCypress,
+          cypressCommand: activeSnapshot.cypressCommand,
+          cypressConfigPath: rebaseSnapshotConfigPath(
+            activeSnapshot.cypressConfigPath,
+            workspaceRoot,
+            baseStorage,
+          ),
+          cypressTestDir: rebaseSnapshotConfigPath(
+            activeSnapshot.cypressTestDir,
+            workspaceRoot,
+            baseStorage,
+          ),
+          cypressVersion: activeSnapshot.cypressVersion,
+          testingFrameworksJson: activeSnapshot.testingFrameworksJson,
+          frameworkRecommendationJson:
+            activeSnapshot.frameworkRecommendationJson,
+          selectedTestingFramework: activeSnapshot.selectedTestingFramework,
+        },
+      });
+      const updated = await tx.project.update({
+        where: { id: projectId },
+        data: {
+          workspaceRevision: { increment: 1 },
+          activeSnapshotId: newSnapshot.id,
+        },
+      });
+      const event = await publishProjectEvent({
+        tx,
+        projectId,
+        actorId: userId,
+        type: "workspace.changed",
+        resourceId: newSnapshot.id,
+        revision: updated.workspaceRevision,
+      });
+      return { newSnapshot, event };
     },
-    });
-    const updated = await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
-    const event = await publishProjectEvent({ tx, projectId, actorId: userId, type: 'workspace.changed', resourceId: newSnapshot.id, revision: updated.workspaceRevision });
-    return { newSnapshot, event };
-  });
+  );
   const { newSnapshot } = committed;
   await deliverProjectEvent(committed.event).catch(() => {});
+
+  try {
+    const { autoTransitionProjectToDoingIfNeeded } =
+      await import("./job.service.js");
+    void autoTransitionProjectToDoingIfNeeded(projectId);
+  } catch (_) {}
+
+  try {
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(project.ownerId);
+  } catch (_) {}
+  try {
+    const { clearUnifiedDashboardCache } =
+      await import("./unifiedQualityDashboard.service.js");
+    clearUnifiedDashboardCache(newSnapshot.id);
+  } catch (_) {}
+  try {
+    const { emitPortfolioProjectUpdated } =
+      await import("../realtime/portfolioSocket.emitter.js");
+    emitPortfolioProjectUpdated({
+      projectId,
+      userId: project.ownerId,
+      action: "SNAPSHOT_CREATED",
+    });
+  } catch (_) {}
+  try {
+    const { emitDashboardMetricsUpdated } =
+      await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, {
+      snapshotId: newSnapshot.id,
+      reason: "snapshot-created",
+    }).catch(() => {});
+  } catch (_) {}
 
   return {
     ...snapshotResponse(newSnapshot),
     label: checkpointMeta.label,
-    message: checkpointMeta.message,
-    fileCount,
-    sizeBytes,
-    isCurrent: true,
+    versionNumber: newVersionNumber,
+    contentHash: currentHash,
+    isActive: true,
   };
 };
 
@@ -670,7 +1117,11 @@ export const restoreProjectCheckpoint = async ({
   snapshotId,
   userId,
 }) => {
-  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'snapshot.restore' });
+  const { project } = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: "snapshot.restore",
+  });
   if (!project)
     throw new ServiceError("Project not found or unauthorized", 404);
 
@@ -697,22 +1148,55 @@ export const restoreProjectCheckpoint = async ({
   }
 
   const targetWorkspace = projectEditableWorkspaceRoot(targetSnapshot);
-  const targetAnalysisRelative = path.relative(targetWorkspace, targetSnapshot.rootDir);
+  const targetAnalysisRelative = path.relative(
+    targetWorkspace,
+    targetSnapshot.rootDir,
+  );
 
   // Stage the target before changing the working tree, including when restoring
   // the active snapshot itself.
   const restoreCheckpointId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
-  const restoreStorage = path.resolve("storage/projects", projectId, "snapshots", restoreCheckpointId);
+  const restoreStorage = path.resolve(
+    "storage/projects",
+    projectId,
+    "snapshots",
+    restoreCheckpointId,
+  );
   fs.mkdirSync(restoreStorage, { recursive: true });
-  const { fileCount, sizeBytes } = copyDirRecursive(targetWorkspace, restoreStorage, [".git", "node_modules"]);
+  const { fileCount, sizeBytes } = copyDirRecursive(
+    targetWorkspace,
+    restoreStorage,
+    ["node_modules"],
+  );
+  const restoreGit = path.join(restoreStorage, ".git");
+  if (!fs.existsSync(restoreGit)) {
+    try {
+      const targetGit = path.join(targetWorkspace, ".git");
+      if (fs.existsSync(targetGit)) {
+        fs.cpSync(targetGit, restoreGit, { recursive: true });
+      } else {
+        const priorWithGit = await prisma.projectSnapshot.findMany({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+        });
+        for (const prior of priorWithGit) {
+          const priorWs = snapshotWorkspaceRoot(prior);
+          if (priorWs) {
+            const priorGit = path.join(priorWs, ".git");
+            if (fs.existsSync(priorGit)) {
+              fs.cpSync(priorGit, restoreGit, { recursive: true });
+              break;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
   // A restore publishes a new active snapshot. Never erase a workspace that
   // another member or worker may still be reading from the historical snapshot.
 
   let targetLabel = targetSnapshot.id.slice(0, 8);
-  const targetMetaPath = path.join(
-    restoreStorage,
-    ".covai-checkpoint.json",
-  );
+  const targetMetaPath = path.join(restoreStorage, ".covai-checkpoint.json");
   if (fs.existsSync(targetMetaPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(targetMetaPath, "utf8"));
@@ -739,41 +1223,85 @@ export const restoreProjectCheckpoint = async ({
 
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-  const committed = await withProjectGuard({ projectId, userId, capability: 'snapshot.restore' }, async (tx, access) => {
-    if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing restore; try again', 409, 'SNAPSHOT_CHANGED');
-    const newSnapshot = await tx.projectSnapshot.create({
-    data: {
-      projectId,
-      source: targetSnapshot.source,
-      checksum,
-      commitSha: null,
-      storagePath: restoreStorage,
-      rootDir: path.join(restoreStorage, targetAnalysisRelative),
-      hasJest: targetSnapshot.hasJest,
-      jestConfigPath: rebaseSnapshotConfigPath(targetSnapshot.jestConfigPath, targetWorkspace, restoreStorage),
-      jestCommand: targetSnapshot.jestCommand,
-      hasVitest: targetSnapshot.hasVitest,
-      vitestCommand: targetSnapshot.vitestCommand,
-      vitestConfigPath: rebaseSnapshotConfigPath(targetSnapshot.vitestConfigPath, targetWorkspace, restoreStorage),
-      hasPlaywright: targetSnapshot.hasPlaywright,
-      playwrightBrowsers: targetSnapshot.playwrightBrowsers,
-      playwrightCommand: targetSnapshot.playwrightCommand,
-      playwrightConfigPath: rebaseSnapshotConfigPath(targetSnapshot.playwrightConfigPath, targetWorkspace, restoreStorage),
-      playwrightTestDir: rebaseSnapshotConfigPath(targetSnapshot.playwrightTestDir, targetWorkspace, restoreStorage),
-      hasCypress: targetSnapshot.hasCypress,
-      cypressCommand: targetSnapshot.cypressCommand,
-      cypressConfigPath: rebaseSnapshotConfigPath(targetSnapshot.cypressConfigPath, targetWorkspace, restoreStorage),
-      cypressTestDir: rebaseSnapshotConfigPath(targetSnapshot.cypressTestDir, targetWorkspace, restoreStorage),
-      cypressVersion: targetSnapshot.cypressVersion,
-      testingFrameworksJson: targetSnapshot.testingFrameworksJson,
-      frameworkRecommendationJson: targetSnapshot.frameworkRecommendationJson,
-      selectedTestingFramework: targetSnapshot.selectedTestingFramework,
+  const committed = await withProjectGuard(
+    { projectId, userId, capability: "snapshot.restore" },
+    async (tx, access) => {
+      await assertEditorSnapshotChangeAllowed(tx, projectId);
+      if (access.project.workspaceRevision !== project.workspaceRevision)
+        throw new ServiceError(
+          "Workspace changed while preparing restore; try again",
+          409,
+          "SNAPSHOT_CHANGED",
+        );
+      const newSnapshot = await tx.projectSnapshot.create({
+        data: {
+          projectId,
+          source: targetSnapshot.source,
+          checksum,
+          commitSha: null,
+          storagePath: restoreStorage,
+          rootDir: path.join(restoreStorage, targetAnalysisRelative),
+          hasJest: targetSnapshot.hasJest,
+          jestConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.jestConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          jestCommand: targetSnapshot.jestCommand,
+          hasVitest: targetSnapshot.hasVitest,
+          vitestCommand: targetSnapshot.vitestCommand,
+          vitestConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.vitestConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          hasPlaywright: targetSnapshot.hasPlaywright,
+          playwrightBrowsers: targetSnapshot.playwrightBrowsers,
+          playwrightCommand: targetSnapshot.playwrightCommand,
+          playwrightConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.playwrightConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          playwrightTestDir: rebaseSnapshotConfigPath(
+            targetSnapshot.playwrightTestDir,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          hasCypress: targetSnapshot.hasCypress,
+          cypressCommand: targetSnapshot.cypressCommand,
+          cypressConfigPath: rebaseSnapshotConfigPath(
+            targetSnapshot.cypressConfigPath,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          cypressTestDir: rebaseSnapshotConfigPath(
+            targetSnapshot.cypressTestDir,
+            targetWorkspace,
+            restoreStorage,
+          ),
+          cypressVersion: targetSnapshot.cypressVersion,
+          testingFrameworksJson: targetSnapshot.testingFrameworksJson,
+          frameworkRecommendationJson:
+            targetSnapshot.frameworkRecommendationJson,
+          selectedTestingFramework: targetSnapshot.selectedTestingFramework,
+        },
+      });
+      const updated = await tx.project.update({
+        where: { id: projectId },
+        data: { workspaceRevision: { increment: 1 } },
+      });
+      const event = await publishProjectEvent({
+        tx,
+        projectId,
+        actorId: userId,
+        type: "workspace.changed",
+        resourceId: newSnapshot.id,
+        revision: updated.workspaceRevision,
+      });
+      return { newSnapshot, event };
     },
-    });
-    const updated = await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
-    const event = await publishProjectEvent({ tx, projectId, actorId: userId, type: 'workspace.changed', resourceId: newSnapshot.id, revision: updated.workspaceRevision });
-    return { newSnapshot, event };
-  });
+  );
   const { newSnapshot } = committed;
   await deliverProjectEvent(committed.event).catch(() => {});
 
@@ -855,11 +1383,22 @@ export const getProjectStructureAnalysis = async ({
     where: { snapshotId: snapshot.id },
   });
   if (!analysis) throw new ServiceError("Architecture analysis not found", 404);
+  let parsed;
   try {
-    return analysisResultResponse(analysis);
+    parsed = analysisResultResponse(analysis);
   } catch {
     throw new ServiceError("Stored architecture analysis is invalid", 500);
   }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !parsed.summary ||
+    !parsed.graph ||
+    !Array.isArray(parsed.graph.nodes)
+  ) {
+    throw new ServiceError("Architecture analysis not found", 404);
+  }
+  return parsed;
 };
 
 export const createCoverageAnalysisJob = async ({
@@ -882,9 +1421,11 @@ export const createCoverageAnalysisJob = async ({
     throw new ServiceError("userId is required", 400);
   }
 
-  await resolveProjectAccess({projectId,userId,capability:'tests.run'});
-  const snapshot = await prisma.projectSnapshot.findFirst({where:{id:snapshotId,projectId}});
-  if (!snapshot) throw new ServiceError('Snapshot not found',404);
+  await resolveProjectAccess({ projectId, userId, capability: "tests.run" });
+  const snapshot = await prisma.projectSnapshot.findFirst({
+    where: { id: snapshotId, projectId },
+  });
+  if (!snapshot) throw new ServiceError("Snapshot not found", 404);
 
   const runTestsJob = await createRunTestsJob({
     projectId,
@@ -901,10 +1442,9 @@ export const createCoverageAnalysisJob = async ({
   return runTestsJob;
 };
 
-
-
 export const deleteProject = async (projectId, userId) => {
-  if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(projectId)) throw new ServiceError('Invalid project ID', 400);
+  if (typeof projectId !== "string" || !/^[A-Za-z0-9_-]+$/.test(projectId))
+    throw new ServiceError("Invalid project ID", 400);
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) {
     throw new ServiceError("Project not found", 404);
@@ -918,7 +1458,10 @@ export const deleteProject = async (projectId, userId) => {
     select: { id: true },
   });
   if (activeJob) {
-    throw new ServiceError("This project is still processing. Wait for its jobs to finish before deleting it.", 409);
+    throw new ServiceError(
+      "This project is still processing. Wait for its jobs to finish before deleting it.",
+      409,
+    );
   }
 
   // Keep ownership and snapshot IDs available until all storage is removed.
@@ -926,67 +1469,410 @@ export const deleteProject = async (projectId, userId) => {
     where: { projectId },
     select: { id: true, rootDir: true, storagePath: true },
   });
-  await cleanupProjectStorageAsync(projectId, snapshots);
+  const evaluations = await prisma.aiEvaluationProjectRun.findMany({ where: { projectId }, select: { id: true } });
+  await cleanupProjectStorageAsync(projectId, snapshots, { evaluationIds: evaluations.map(row => row.id) });
+
+  // Docker runner cleanup
+  try {
+    const { cleanupProjectRunnerContainers } = await import("./dockerRunner.service.js");
+    await cleanupProjectRunnerContainers(projectId);
+  } catch (err) {
+    console.warn(`[DeleteProject] Warning cleaning up runner containers for ${projectId}:`, err?.message);
+  }
+
+  // Invalidate in-memory manifest cache for deleted snapshots
+  for (const snap of snapshots) {
+    if (snap?.id) {
+      try {
+        const { clearManifestCache } = await import("./unitTestVersion.service.js");
+        clearManifestCache(snap.id);
+      } catch (_) { }
+    }
+  }
 
   // Fast DB deletion:
   // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.
-  // Takes only 1 single SQL query (~10-50ms) instead of 14 separate slow queries.
+  // Takes only 1 single SQL query (~10-50ms) instead of separate slow queries.
   try {
-    await withProjectGuard({ projectId, userId, capability: 'project.delete' }, tx => tx.project.delete({ where: { id: projectId } }));
+    await withProjectGuard(
+      { projectId, userId, capability: "project.delete" },
+      (tx) => tx.project.delete({ where: { id: projectId } }),
+    );
   } catch (error) {
-    if (error.code !== 'P2003') throw error;
+    if (error.code !== "P2003") throw error;
     console.warn(
       `[DeleteProject] Direct cascade delete failed for project ${projectId}, falling back to manual cascade transaction:`,
       error?.message,
     );
     await withProjectGuard({ projectId, userId, capability: 'project.delete' }, async tx => {
-        await tx.coverageSummary.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.coverageFile.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.coverageFunction.deleteMany({
-          where: { snapshot: { projectId } },
-        });
-        await tx.cyclomatic.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.cfg.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.aiContextCache.deleteMany({ where: { snapshot: { projectId } } });
-        await tx.aiSuggestion.deleteMany({ where: { projectId } });
-        await tx.aiTest.deleteMany({ where: { projectId } });
-        await tx.jobLog.deleteMany({ where: { job: { projectId } } });
-        await tx.jobOutput.deleteMany({ where: { job: { projectId } } });
-        await tx.job.deleteMany({ where: { projectId } });
-        await tx.notification.deleteMany({ where: { projectId } });
-        await tx.projectSnapshot.deleteMany({ where: { projectId } });
+        // 1. System test & evaluation leaf models
+        if (tx.systemRunArtifact?.deleteMany) await tx.systemRunArtifact.deleteMany({ where: { assessment: { snapshot: { projectId } } } });
+        if (tx.systemRunEvent?.deleteMany) await tx.systemRunEvent.deleteMany({ where: { assessment: { snapshot: { projectId } } } });
+        if (tx.systemMutationRun?.deleteMany) await tx.systemMutationRun.deleteMany({ where: { proposal: { snapshot: { projectId } } } });
+        if (tx.systemTestProposal?.deleteMany) await tx.systemTestProposal.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemScenario?.deleteMany) await tx.systemScenario.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemAssertionBinding?.deleteMany) await tx.systemAssertionBinding.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemTestAssessment?.deleteMany) await tx.systemTestAssessment.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemRequirementRevision?.deleteMany) await tx.systemRequirementRevision.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.systemTestFile?.deleteMany) await tx.systemTestFile.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 2. Chatbot evaluation models
+        if (tx.aiEvaluationEvidence?.deleteMany) await tx.aiEvaluationEvidence.deleteMany({ where: { run: { projectId } } });
+        if (tx.aiEvaluationHumanReview?.deleteMany) await tx.aiEvaluationHumanReview.deleteMany({ where: { criterionResult: { caseResult: { run: { projectId } } } } });
+        if (tx.aiEvaluationCriterionResult?.deleteMany) await tx.aiEvaluationCriterionResult.deleteMany({ where: { caseResult: { run: { projectId } } } });
+        if (tx.aiEvaluationConfirmationGrant?.deleteMany) await tx.aiEvaluationConfirmationGrant.deleteMany({ where: { attempt: { caseResult: { run: { projectId } } } } });
+        if (tx.aiEvaluationToolCall?.deleteMany) await tx.aiEvaluationToolCall.deleteMany({ where: { attempt: { caseResult: { run: { projectId } } } } });
+        if (tx.aiEvaluationAttempt?.deleteMany) await tx.aiEvaluationAttempt.deleteMany({ where: { caseResult: { run: { projectId } } } });
+        if (tx.aiEvaluationCaseResult?.deleteMany) await tx.aiEvaluationCaseResult.deleteMany({ where: { run: { projectId } } });
+        if (tx.aiEvaluationRun?.deleteMany) await tx.aiEvaluationRun.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationProjectRun?.deleteMany) await tx.aiEvaluationProjectRun.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationProjectSettings?.deleteMany) await tx.aiEvaluationProjectSettings.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationTestCase?.deleteMany) await tx.aiEvaluationTestCase.deleteMany({ where: { profileVersion: { profile: { projectId } } } });
+        if (tx.aiEvaluationProfileVersion?.deleteMany) await tx.aiEvaluationProfileVersion.deleteMany({ where: { profile: { projectId } } });
+        if (tx.aiEvaluationProfile?.deleteMany) await tx.aiEvaluationProfile.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationKnowledgeSource?.deleteMany) await tx.aiEvaluationKnowledgeSource.deleteMany({ where: { projectId } });
+        if (tx.aiEvaluationTargetVersion?.deleteMany) await tx.aiEvaluationTargetVersion.deleteMany({ where: { target: { projectId } } });
+        if (tx.aiEvaluationCredential?.deleteMany) await tx.aiEvaluationCredential.deleteMany({ where: { target: { projectId } } });
+        if (tx.aiEvaluationTarget?.deleteMany) await tx.aiEvaluationTarget.deleteMany({ where: { projectId } });
+
+        // 3. Operations, mutations, file versions, events
+        if (tx.projectOperationRequest?.deleteMany) await tx.projectOperationRequest.deleteMany({ where: { projectId } });
+        if (tx.projectOperation?.deleteMany) await tx.projectOperation.deleteMany({ where: { projectId } });
+        if (tx.projectMutation?.deleteMany) await tx.projectMutation.deleteMany({ where: { projectId } });
+        if (tx.projectFileVersion?.deleteMany) await tx.projectFileVersion.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.projectEvent?.deleteMany) await tx.projectEvent.deleteMany({ where: { projectId } });
+
+        // 4. Collaboration, members, invitations
+        if (tx.invitationDelivery?.deleteMany) await tx.invitationDelivery.deleteMany({ where: { invitation: { projectId } } });
+        if (tx.projectInvitation?.deleteMany) await tx.projectInvitation.deleteMany({ where: { projectId } });
+        if (tx.projectMember?.deleteMany) await tx.projectMember.deleteMany({ where: { projectId } });
+        if (tx.projectMemory?.deleteMany) await tx.projectMemory.deleteMany({ where: { projectId } });
+        if (tx.aiContextSettings?.deleteMany) await tx.aiContextSettings.deleteMany({ where: { projectId } });
+
+        // 5. Chat messages & sessions
+        if (tx.chatMessage?.deleteMany) await tx.chatMessage.deleteMany({ where: { session: { projectId } } });
+        if (tx.chatRequest?.deleteMany) await tx.chatRequest.deleteMany({ where: { session: { projectId } } });
+        if (tx.chatSession?.deleteMany) await tx.chatSession.deleteMany({ where: { projectId } });
+
+        // 6. Test runs & scenarios
+        if (tx.testScenario?.deleteMany) await tx.testScenario.deleteMany({ where: { testRun: { snapshot: { projectId } } } });
+        if (tx.testRun?.deleteMany) await tx.testRun.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 7. Quality & structure reports
+        if (tx.qualityReport?.deleteMany) await tx.qualityReport.deleteMany({ where: { projectId } });
+        if (tx.projectStructureAnalysis?.deleteMany) await tx.projectStructureAnalysis.deleteMany({ where: { ProjectSnapshot: { projectId } } });
+        if (tx.performanceMetric?.deleteMany) await tx.performanceMetric.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.vulnerability?.deleteMany) await tx.vulnerability.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 8. Coverage & CFG metrics
+        if (tx.coverageSummary?.deleteMany) await tx.coverageSummary.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.coverageFile?.deleteMany) await tx.coverageFile.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.coverageFunction?.deleteMany) await tx.coverageFunction.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.cyclomatic?.deleteMany) await tx.cyclomatic.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.cfg?.deleteMany) await tx.cfg.deleteMany({ where: { snapshot: { projectId } } });
+        if (tx.aiContextCache?.deleteMany) await tx.aiContextCache.deleteMany({ where: { snapshot: { projectId } } });
+
+        // 9. AI suggestions & tests
+        if (tx.aiTestResult?.deleteMany) await tx.aiTestResult.deleteMany({ where: { aiTest: { projectId } } });
+        if (tx.aiTest?.deleteMany) await tx.aiTest.deleteMany({ where: { projectId } });
+        if (tx.aiSuggestion?.deleteMany) await tx.aiSuggestion.deleteMany({ where: { projectId } });
+
+        // 10. Jobs & notifications
+        if (tx.jobLog?.deleteMany) await tx.jobLog.deleteMany({ where: { job: { projectId } } });
+        if (tx.jobOutput?.deleteMany) await tx.jobOutput.deleteMany({ where: { job: { projectId } } });
+        if (tx.job?.deleteMany) await tx.job.deleteMany({ where: { projectId } });
+        if (tx.notification?.deleteMany) await tx.notification.deleteMany({ where: { projectId } });
+
+        // 11. Project snapshots & project root
+        if (tx.projectSnapshot?.deleteMany) await tx.projectSnapshot.deleteMany({ where: { projectId } });
         await tx.project.delete({ where: { id: projectId } });
-    });
+      },
+    );
+  }
+};
+
+const projectTreeCache = new Map();
+const projectTreeMetaCache = new Map();
+const TREE_CACHE_TTL_MS = 30_000;
+const TREE_META_CACHE_TTL_MS = 15_000;
+
+export const clearProjectTreeCache = (snapshotId = null) => {
+  projectTreeMetaCache.clear();
+  if (snapshotId) {
+    for (const key of projectTreeCache.keys()) {
+      if (key.startsWith(snapshotId)) {
+        projectTreeCache.delete(key);
+      }
+    }
+  } else {
+    projectTreeCache.clear();
   }
 };
 
 export const getProjectTree = async (projectId, userId, options = {}) => {
-  const meta = await withProjectGuard({projectId,userId,capability:'project.read',maxWait:30000,timeout:60000}, async (tx,access) => {
-    const snapshot = await tx.projectSnapshot.findFirst({where:{projectId,...(options.snapshotId ? {id:options.snapshotId} : {})},orderBy:options.snapshotId ? undefined : {createdAt:'desc'}});
-    if (!snapshot?.rootDir) throw new ServiceError("Project snapshot not ready", 202);
+  const metaCacheKey = `${projectId}:${options.snapshotId || "latest"}`;
+  const cachedMetaEntry = projectTreeMetaCache.get(metaCacheKey);
+  const { readMutationMarkers, recoverProjectMutationMarkers } =
+    await import("./projectMutationRecovery.service.js");
+
+  let meta = null;
+  if (
+    cachedMetaEntry &&
+    Date.now() - cachedMetaEntry.cachedAt < TREE_META_CACHE_TTL_MS &&
+    cachedMetaEntry.allowedUsers?.has(userId)
+  ) {
+    const markers = await readMutationMarkers(
+      cachedMetaEntry.meta.workspaceRoot,
+    );
+    if (markers.length === 0) {
+      meta = cachedMetaEntry.meta;
+    }
+  }
+
+  if (!meta) {
+    const [access, snapshot] = await Promise.all([
+      resolveProjectAccess({ projectId, userId, capability: "project.read" }),
+      prisma.projectSnapshot.findFirst({
+        where: {
+          projectId,
+          ...(options.snapshotId ? { id: options.snapshotId } : {}),
+        },
+        orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
+      }),
+    ]);
+    if (!snapshot?.rootDir)
+      throw new ServiceError("Project snapshot not ready", 202);
     const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
-    const {recoverProjectMutationMarkers} = await import('./projectMutationRecovery.service.js');
-    await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:workspaceRoot});
-    return { snapshotId: snapshot.id, workspaceRevision: access.project.workspaceRevision, workspaceRoot };
-  });
-  const tree = buildTree(meta.workspaceRoot);
-  return options.withMetadata ? {tree,snapshotId:meta.snapshotId,workspaceRevision:meta.workspaceRevision} : tree;
+    const markers = await readMutationMarkers(workspaceRoot);
+
+    if (markers.length > 0) {
+      meta = await withProjectGuard(
+        {
+          projectId,
+          userId,
+          capability: "project.read",
+          maxWait: 30000,
+          timeout: 60000,
+        },
+        async (tx, guardedAccess) => {
+          const guardedSnapshot = await tx.projectSnapshot.findFirst({
+            where: {
+              projectId,
+              ...(options.snapshotId ? { id: options.snapshotId } : {}),
+            },
+            orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
+          });
+          if (!guardedSnapshot?.rootDir)
+            throw new ServiceError("Project snapshot not ready", 202);
+          const guardedRoot = projectEditableWorkspaceRoot(guardedSnapshot);
+          await recoverProjectMutationMarkers({
+            tx,
+            project: guardedAccess.project,
+            snapshot: guardedSnapshot,
+            root: guardedRoot,
+          });
+          return {
+            snapshotId: guardedSnapshot.id,
+            workspaceRevision: guardedAccess.project.workspaceRevision,
+            workspaceRoot: guardedRoot,
+          };
+        },
+      );
+    } else {
+      meta = {
+        snapshotId: snapshot.id,
+        workspaceRevision: access.project.workspaceRevision,
+        workspaceRoot,
+      };
+    }
+
+    projectTreeMetaCache.set(metaCacheKey, {
+      meta,
+      cachedAt: Date.now(),
+      allowedUsers: new Set([userId, access.project?.ownerId].filter(Boolean)),
+    });
+  }
+
+  const cacheKey = `${meta.snapshotId}:${meta.workspaceRevision ?? 0}`;
+  let tree = null;
+  const cached = projectTreeCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < TREE_CACHE_TTL_MS) {
+    tree = cached.tree;
+  } else {
+    tree = buildTree(meta.workspaceRoot);
+    projectTreeCache.set(cacheKey, { tree, cachedAt: Date.now() });
+  }
+
+  return options.withMetadata
+    ? {
+        tree,
+        snapshotId: meta.snapshotId,
+        workspaceRevision: meta.workspaceRevision,
+      }
+    : tree;
 };
 
 export const getFileContent = (projectId, userId, filePath, options = {}) =>
-  readVersionedProjectFile({projectId,userId,path:filePath,snapshotId:typeof options === "string" ? options : options?.snapshotId});
+  readVersionedProjectFile({
+    projectId,
+    userId,
+    path: filePath,
+    snapshotId: typeof options === "string" ? options : options?.snapshotId,
+  });
 
-export const updateFileContent = (projectId, userId, filePath, content, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'WRITE_FILE',...options});
+export const updateFileContent = async (
+  projectId,
+  userId,
+  filePath,
+  content,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    content,
+    kind: "WRITE_FILE",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const createProjectFile = (projectId, userId, filePath, content = '', options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'CREATE_FILE',...options});
+export const createProjectFile = async (
+  projectId,
+  userId,
+  filePath,
+  content = "",
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    content,
+    kind: "CREATE_FILE",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const createProjectFolder = (projectId, userId, filePath, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,kind:'CREATE_FOLDER',...options});
+export const createProjectFolder = async (
+  projectId,
+  userId,
+  filePath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    kind: "CREATE_FOLDER",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const renameProjectEntry = (projectId, userId, filePath, _content, newPath, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,newPath,kind:'RENAME_ENTRY',...options});
+export const renameProjectEntry = async (
+  projectId,
+  userId,
+  filePath,
+  _content,
+  newPath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    newPath,
+    kind: "RENAME_ENTRY",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
 
-export const deleteProjectEntry = (projectId, userId, filePath, options = {}) =>
-  mutateProjectWorkspace({projectId,userId,path:filePath,kind:'DELETE_ENTRY',...options});
+export const deleteProjectEntry = async (
+  projectId,
+  userId,
+  filePath,
+  options = {},
+) => {
+  const res = await mutateProjectWorkspace({
+    projectId,
+    userId,
+    path: filePath,
+    kind: "DELETE_ENTRY",
+    ...options,
+  });
+  projectTreeMetaCache.clear();
+  return res;
+};
+
+export const updateProjectLifecycleStatus = async ({
+  projectId,
+  userId,
+  lifecycleStatus,
+  isPinned,
+}) => {
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
+
+  const dataToUpdate = {};
+  if (lifecycleStatus !== undefined) {
+    dataToUpdate.lifecycleStatus = lifecycleStatus;
+    dataToUpdate.lifecycleUpdatedAt = new Date();
+  }
+  if (isPinned !== undefined) {
+    dataToUpdate.isPinned = Boolean(isPinned);
+  }
+
+  const updatedProject = await prisma.project.update({
+    where: { id: projectId },
+    data: dataToUpdate,
+    select: {
+      id: true,
+      name: true,
+      lifecycleStatus: true,
+      lifecycleUpdatedAt: true,
+      isPinned: true,
+      updatedAt: true,
+    },
+  });
+
+  try {
+    const { clearPortfolioCache } =
+      await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(userId);
+  } catch (_) {}
+  try {
+    const { clearUnifiedDashboardCache } =
+      await import("./unifiedQualityDashboard.service.js");
+    clearUnifiedDashboardCache();
+  } catch (_) {}
+  try {
+    const { emitPortfolioProjectUpdated } =
+      await import("../realtime/portfolioSocket.emitter.js");
+    emitPortfolioProjectUpdated({
+      projectId,
+      userId,
+      lifecycleStatus: updatedProject.lifecycleStatus,
+      isPinned: updatedProject.isPinned,
+      action: "STATUS_UPDATED",
+    });
+  } catch (_err) {
+    // Non-fatal if socket emitter not yet initialized
+  }
+  try {
+    const { emitDashboardMetricsUpdated } =
+      await import("./dashboardEvents.service.js");
+    emitDashboardMetricsUpdated(projectId, {
+      reason: "project-status-updated",
+      lifecycleStatus: updatedProject.lifecycleStatus,
+    }).catch(() => {});
+  } catch (_) {}
+
+  return updatedProject;
+};

@@ -35,10 +35,12 @@ export const evaluateSystemImprovement = ({baseline, candidate}) => {
     else if (regression) reasonCode = 'SCENARIO_REGRESSION';
     else if (!comparison.comparable || lostMeasurement) reasonCode = 'INCOMPARABLE_MEASUREMENTS';
     else if (coverageRegression) reasonCode = 'COVERAGE_REGRESSION';
-    else if (!deltas.some(delta => delta > 0)) reasonCode = 'NO_COVERAGE_GAIN';
+    else if (!deltas.some(delta => delta > 0) && !comparison.newlyVerifiedCriterionIds.length) reasonCode = 'NO_COVERAGE_GAIN';
     const accepted = reasonCode === null;
     return {
         accepted, reasonCode, regression, coverageRegression, comparison,
+        improvementKind: accepted && !deltas.some(delta=>delta>0) ? 'REQUIREMENT' : 'COVERAGE',
+        newlyVerifiedCriterionIds: comparison.newlyVerifiedCriterionIds,
         coverageChanges: comparison.comparable && !lostMeasurement ? coverageChanges : {},
         state: accepted ? 'VERIFIED_IMPROVEMENT' : reasonCode === 'NO_COVERAGE_GAIN' ? 'NO_MEASURED_IMPROVEMENT' : 'FAILED_VERIFICATION',
     };

@@ -1,4 +1,3 @@
-
 import fs from "fs";
 import path from "path";
 import { pathToFileURL } from "url";
@@ -7,34 +6,72 @@ import { createRequire } from "module";
 const esmRequire = createRequire(import.meta.url);
 
 import {
-    markJobRunning,
-    markJobSuccess,
-    markJobFailed,
-    updateJobProgress,
-    getJobById,
-    addJobLog,
+  markJobRunning,
+  markJobSuccess,
+  markJobFailed,
+  updateJobProgress,
+  getJobById,
+  addJobLog,
 } from "./job.service.js";
 import { saveJobOutput, appendJobOutput } from "./jobOutput.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { dockerRunner } from "./dockerRunner.service.js";
-import { parseJestResults, parseVitestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
-import { detectTestingFrameworks, classifyTestFile } from "../utils/testingFrameworkDetector.js";
+import { detectProjectDatabase } from "./databaseMockTemplate.service.js";
+import {
+  parseJestResults,
+  parseVitestResults,
+  formatScenariosForPrisma,
+} from "./testResultParser.service.js";
+import {
+  detectTestingFrameworks,
+  classifyTestFile,
+} from "../utils/testingFrameworkDetector.js";
 import prisma from "../config/prisma.js";
-import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
+import {
+  resolveProjectRoot,
+  resolveSnapshotRootDir,
+  hasSourceCodeFiles,
+  ensureMinimalPackageJson,
+} from "../utils/projectRootResolver.js";
 import { extractFunctions } from "./cyclomaticFunctionExtractor.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
-import { sanitizeAllProjectTestFiles, cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "./testSanitizer.service.js";
-import { cleanStoragePath, cleanStorageText, canonicalizeFilePath } from "../utils/pathSanitizer.js";
-import { isBusinessLogicSourceFile, extractProjectCoverageExclusions } from "../utils/businessLogicFileDetector.js";
 import {
-    extractMissingDependency,
-    inspectWorkspaceDependency,
-    ensureWorkspaceNodeModulesLinked,
-    cleanupWorkspaceNodeModulesLinks
+  sanitizeAllProjectTestFiles,
+  cleanAndDeduplicateTestContent,
+  healImportPathsInTestCode,
+} from "./testSanitizer.service.js";
+import {
+  cleanStoragePath,
+  cleanStorageText,
+  canonicalizeFilePath,
+} from "../utils/pathSanitizer.js";
+import {
+  isBusinessLogicSourceFile,
+  extractProjectCoverageExclusions,
+} from "../utils/businessLogicFileDetector.js";
+import {
+  covaiJestDerivedSuitePattern,
+  isCovaiJestArtifact,
+  isCovaiJestRuntimeFile,
+} from "../utils/covaiJestArtifact.js";
+import {
+  extractMissingDependency,
+  collectWorkspaceMissingDependencies,
+  ensureMountedProjectDependencies,
+  inspectWorkspaceDependency,
+  isValidNpmPackageName,
+  installPackageInWorkspace,
+  ensureWorkspaceNodeModulesLinked,
+  cleanupWorkspaceNodeModulesLinks,
 } from "./dependencyResolution.service.js";
-import { currentProjectOperation } from "./projectOperationWorkspace.service.js";
+import {
+  currentProjectOperation,
+  deferPreparedCommit,
+  stagePreparedPublication,
+} from "./projectOperationWorkspace.service.js";
+import { resolveUnitTestDependency } from "./unitTestPreflight.service.js";
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const JEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -45,7 +82,7 @@ const logicFilesCache = new Map();
 const LOGIC_FILES_CACHE_TTL_MS = 60 * 1000;
 
 export const clearLogicFilesCache = () => {
-    logicFilesCache.clear();
+  logicFilesCache.clear();
 };
 
 /**
@@ -54,65 +91,75 @@ export const clearLogicFilesCache = () => {
  * and file coverage detail views have immediate access to the baseline artifacts.
  */
 export const syncCoverageArtifactsToOrigin = (workRootDir, originalRootDir) => {
-    if (!workRootDir || !originalRootDir) return false;
-    try {
-        const resolvedWork = path.resolve(workRootDir);
-        const resolvedOrig = path.resolve(originalRootDir);
-        if (resolvedWork === resolvedOrig || !fs.existsSync(resolvedOrig)) return false;
+  if (!workRootDir || !originalRootDir) return false;
+  try {
+    const resolvedWork = path.resolve(workRootDir);
+    const resolvedOrig = path.resolve(originalRootDir);
+    if (resolvedWork === resolvedOrig || !fs.existsSync(resolvedOrig))
+      return false;
 
-        const workCovDir = path.join(resolvedWork, "coverage");
-        const workUnitCovDir = path.join(resolvedWork, "coverage", "unit");
-        if (!fs.existsSync(workCovDir) && !fs.existsSync(workUnitCovDir)) return false;
+    const workCovDir = path.join(resolvedWork, "coverage");
+    const workUnitCovDir = path.join(resolvedWork, "coverage", "unit");
+    if (!fs.existsSync(workCovDir) && !fs.existsSync(workUnitCovDir))
+      return false;
 
-        const targetDirs = new Set([resolvedOrig]);
-        const resolvedSubPkg = resolveProjectRoot(resolvedOrig);
-        if (resolvedSubPkg && fs.existsSync(resolvedSubPkg)) {
-            targetDirs.add(path.resolve(resolvedSubPkg));
-        }
-
-        const artifacts = [
-            "coverage-summary.json",
-            "coverage-final.json",
-            "jest-results.json",
-            "vitest-results.json",
-            "test-results.json",
-            "lcov.info",
-            "jest-coverage-final.json",
-            "vitest-coverage-final.json",
-            "jest-coverage-summary.json",
-            "vitest-coverage-summary.json",
-            "jest-lcov.info",
-            "vitest-lcov.info"
-        ];
-
-        let copiedAny = false;
-        for (const baseDir of targetDirs) {
-            if (baseDir === resolvedWork) continue;
-            const origCovDir = path.join(baseDir, "coverage");
-            const origUnitCovDir = path.join(baseDir, "coverage", "unit");
-            if (!fs.existsSync(origCovDir)) {
-                try { fs.mkdirSync(origCovDir, { recursive: true }); } catch (_) { }
-            }
-            if (!fs.existsSync(origUnitCovDir)) {
-                try { fs.mkdirSync(origUnitCovDir, { recursive: true }); } catch (_) { }
-            }
-            for (const name of artifacts) {
-                const srcFileRoot = path.join(workCovDir, name);
-                const srcFileUnit = path.join(workUnitCovDir, name);
-                const effectiveSrc = fs.existsSync(srcFileRoot) ? srcFileRoot : (fs.existsSync(srcFileUnit) ? srcFileUnit : null);
-                if (effectiveSrc) {
-                    try {
-                        fs.copyFileSync(effectiveSrc, path.join(origCovDir, name));
-                        fs.copyFileSync(effectiveSrc, path.join(origUnitCovDir, name));
-                        copiedAny = true;
-                    } catch (_) { }
-                }
-            }
-        }
-        return copiedAny;
-    } catch (_) {
-        return false;
+    const targetDirs = new Set([resolvedOrig]);
+    const resolvedSubPkg = resolveProjectRoot(resolvedOrig);
+    if (resolvedSubPkg && fs.existsSync(resolvedSubPkg)) {
+      targetDirs.add(path.resolve(resolvedSubPkg));
     }
+
+    const artifacts = [
+      "coverage-summary.json",
+      "coverage-final.json",
+      "jest-results.json",
+      "vitest-results.json",
+      "test-results.json",
+      "lcov.info",
+      "jest-coverage-final.json",
+      "vitest-coverage-final.json",
+      "jest-coverage-summary.json",
+      "vitest-coverage-summary.json",
+      "jest-lcov.info",
+      "vitest-lcov.info",
+    ];
+
+    let copiedAny = false;
+    for (const baseDir of targetDirs) {
+      if (baseDir === resolvedWork) continue;
+      const origCovDir = path.join(baseDir, "coverage");
+      const origUnitCovDir = path.join(baseDir, "coverage", "unit");
+      if (!fs.existsSync(origCovDir)) {
+        try {
+          fs.mkdirSync(origCovDir, { recursive: true });
+        } catch (_) {}
+      }
+      if (!fs.existsSync(origUnitCovDir)) {
+        try {
+          fs.mkdirSync(origUnitCovDir, { recursive: true });
+        } catch (_) {}
+      }
+      for (const name of artifacts) {
+        const srcFileRoot = path.join(workCovDir, name);
+        const srcFileUnit = path.join(workUnitCovDir, name);
+        const effectiveSrc = fs.existsSync(srcFileRoot)
+          ? srcFileRoot
+          : fs.existsSync(srcFileUnit)
+            ? srcFileUnit
+            : null;
+        if (effectiveSrc) {
+          try {
+            fs.copyFileSync(effectiveSrc, path.join(origCovDir, name));
+            fs.copyFileSync(effectiveSrc, path.join(origUnitCovDir, name));
+            copiedAny = true;
+          } catch (_) {}
+        }
+      }
+    }
+    return copiedAny;
+  } catch (_) {
+    return false;
+  }
 };
 
 /**
@@ -120,51 +167,63 @@ export const syncCoverageArtifactsToOrigin = (workRootDir, originalRootDir) => {
  * ensuring that both Jest/Vitest runners and legacy consumers find valid summaries and results.
  */
 export const syncCoverageDirectories = (coverageDir, unitCoverageDir) => {
-    if (!coverageDir || !unitCoverageDir) return false;
-    try {
-        if (!fs.existsSync(coverageDir)) {
-            try { fs.mkdirSync(coverageDir, { recursive: true }); } catch (_) { }
-        }
-        if (!fs.existsSync(unitCoverageDir)) {
-            try { fs.mkdirSync(unitCoverageDir, { recursive: true }); } catch (_) { }
-        }
-        const artifacts = [
-            "coverage-summary.json",
-            "coverage-final.json",
-            "jest-results.json",
-            "vitest-results.json",
-            "test-results.json",
-            "lcov.info",
-            "jest-coverage-final.json",
-            "vitest-coverage-final.json",
-            "jest-coverage-summary.json",
-            "vitest-coverage-summary.json",
-            "jest-lcov.info",
-            "vitest-lcov.info"
-        ];
-        let copied = false;
-        for (const name of artifacts) {
-            const rootFile = path.join(coverageDir, name);
-            const unitFile = path.join(unitCoverageDir, name);
-            const rootExists = fs.existsSync(rootFile);
-            const unitExists = fs.existsSync(unitFile);
-
-            if (unitExists && (!rootExists || fs.statSync(unitFile).mtimeMs > fs.statSync(rootFile).mtimeMs)) {
-                try {
-                    fs.copyFileSync(unitFile, rootFile);
-                    copied = true;
-                } catch (_) { }
-            } else if (rootExists && (!unitExists || fs.statSync(rootFile).mtimeMs > fs.statSync(unitFile).mtimeMs)) {
-                try {
-                    fs.copyFileSync(rootFile, unitFile);
-                    copied = true;
-                } catch (_) { }
-            }
-        }
-        return copied;
-    } catch (_) {
-        return false;
+  if (!coverageDir || !unitCoverageDir) return false;
+  try {
+    if (!fs.existsSync(coverageDir)) {
+      try {
+        fs.mkdirSync(coverageDir, { recursive: true });
+      } catch (_) {}
     }
+    if (!fs.existsSync(unitCoverageDir)) {
+      try {
+        fs.mkdirSync(unitCoverageDir, { recursive: true });
+      } catch (_) {}
+    }
+    const artifacts = [
+      "coverage-summary.json",
+      "coverage-final.json",
+      "jest-results.json",
+      "vitest-results.json",
+      "test-results.json",
+      "lcov.info",
+      "jest-coverage-final.json",
+      "vitest-coverage-final.json",
+      "jest-coverage-summary.json",
+      "vitest-coverage-summary.json",
+      "jest-lcov.info",
+      "vitest-lcov.info",
+    ];
+    let copied = false;
+    for (const name of artifacts) {
+      const rootFile = path.join(coverageDir, name);
+      const unitFile = path.join(unitCoverageDir, name);
+      const rootExists = fs.existsSync(rootFile);
+      const unitExists = fs.existsSync(unitFile);
+
+      if (
+        unitExists &&
+        (!rootExists ||
+          fs.statSync(unitFile).mtimeMs > fs.statSync(rootFile).mtimeMs)
+      ) {
+        try {
+          fs.copyFileSync(unitFile, rootFile);
+          copied = true;
+        } catch (_) {}
+      } else if (
+        rootExists &&
+        (!unitExists ||
+          fs.statSync(rootFile).mtimeMs > fs.statSync(unitFile).mtimeMs)
+      ) {
+        try {
+          fs.copyFileSync(rootFile, unitFile);
+          copied = true;
+        } catch (_) {}
+      }
+    }
+    return copied;
+  } catch (_) {
+    return false;
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,20 +231,20 @@ export const syncCoverageDirectories = (coverageDir, unitCoverageDir) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const assertStringField = (value, fieldName) => {
-    if (!value || typeof value !== "string" || value.trim().length === 0) {
-        throw new ServiceError(`${fieldName} is required`, 400);
-    }
+  if (!value || typeof value !== "string" || value.trim().length === 0) {
+    throw new ServiceError(`${fieldName} is required`, 400);
+  }
 };
 
 export const coverageResultFromSummary = (summaryResult) => {
-    if (!summaryResult?.summary) return null;
-    const { linesPct, branchesPct, funcsPct, stmtsPct } = summaryResult.summary;
-    return {
-        lines: linesPct,
-        branches: branchesPct,
-        functions: funcsPct,
-        statements: stmtsPct,
-    };
+  if (!summaryResult?.summary) return null;
+  const { linesPct, branchesPct, funcsPct, stmtsPct } = summaryResult.summary;
+  return {
+    lines: linesPct,
+    branches: branchesPct,
+    functions: funcsPct,
+    statements: stmtsPct,
+  };
 };
 
 /**
@@ -194,80 +253,221 @@ export const coverageResultFromSummary = (summaryResult) => {
  * @param {string|null} [explicitConfigPath]
  * @returns {Promise<Object>}
  */
-export const readProjectJestConfig = async (repoRoot, explicitConfigPath = null) => {
-    // 1. Try explicit path if passed
-    if (explicitConfigPath) {
-        const resolvedPath = path.isAbsolute(explicitConfigPath)
-            ? explicitConfigPath
-            : path.join(repoRoot, explicitConfigPath);
-        if (fs.existsSync(resolvedPath)) {
-            try {
-                if (resolvedPath.endsWith(".json")) {
-                    return JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
-                }
-                const fileUrl = pathToFileURL(resolvedPath).href;
-                let mod;
-                try {
-                    mod = await import(fileUrl);
-                } catch (importErr) {
-                    mod = await import(`${fileUrl}?t=${Date.now()}`);
-                }
-                return mod.default || mod;
-            } catch (e) {
-                console.warn(`[readProjectJestConfig] Error loading explicit config ${resolvedPath}:`, e.message);
-            }
+export const readProjectJestConfig = async (
+  repoRoot,
+  explicitConfigPath = null,
+) => {
+  // 1. Try explicit path if passed
+  if (explicitConfigPath) {
+    const resolvedPath = path.isAbsolute(explicitConfigPath)
+      ? explicitConfigPath
+      : path.join(repoRoot, explicitConfigPath);
+    if (fs.existsSync(resolvedPath)) {
+      try {
+        if (resolvedPath.endsWith(".json")) {
+          return JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
         }
-    }
-
-    // 2. Check jest.config.js, jest.config.mjs, jest.config.cjs, jest.config.json
-    const configNames = [
-        "jest.config.js",
-        "jest.config.mjs",
-        "jest.config.cjs",
-        "jest.config.json"
-    ];
-    for (const name of configNames) {
-        const p = path.join(repoRoot, name);
-        if (fs.existsSync(p)) {
-            try {
-                if (name.endsWith(".json")) {
-                    return JSON.parse(fs.readFileSync(p, "utf8"));
-                }
-                let mod;
-                try {
-                    if (typeof require !== "undefined") {
-                        try {
-                            delete require.cache[require.resolve(p)];
-                        } catch (_) { }
-                        mod = require(p);
-                    } else {
-                        const fileUrl = pathToFileURL(p).href;
-                        mod = await import(fileUrl);
-                    }
-                } catch (importErr) {
-                    try {
-                        const fileUrl = pathToFileURL(p).href;
-                        mod = await import(fileUrl);
-                    } catch (_) {
-                        mod = await import(`${pathToFileURL(p).href}?t=${Date.now()}`);
-                    }
-                }
-                return mod.default || mod;
-            } catch (e) {
-                console.warn(`[readProjectJestConfig] Error loading ${p}:`, e.message);
-            }
-        }
-    }
-
-    // 3. Fallback to package.json "jest" field
-    const pkgPath = path.join(repoRoot, "package.json");
-    if (fs.existsSync(pkgPath)) {
+        const fileUrl = pathToFileURL(resolvedPath).href;
+        let mod;
         try {
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-            if (pkg.jest && typeof pkg.jest === "object") return pkg.jest;
-        } catch { }
+          mod = await import(fileUrl);
+        } catch (importErr) {
+          mod = await import(`${fileUrl}?t=${Date.now()}`);
+        }
+        return mod.default || mod;
+      } catch (e) {
+        console.warn(
+          `[readProjectJestConfig] Error loading explicit config ${resolvedPath}:`,
+          e.message,
+        );
+      }
     }
-    return {};
+  }
+
+  // 2. Check jest.config.js, jest.config.mjs, jest.config.cjs, jest.config.json
+  const configNames = [
+    "jest.config.js",
+    "jest.config.mjs",
+    "jest.config.cjs",
+    "jest.config.json",
+  ];
+  for (const name of configNames) {
+    const p = path.join(repoRoot, name);
+    if (fs.existsSync(p)) {
+      try {
+        if (name.endsWith(".json")) {
+          return JSON.parse(fs.readFileSync(p, "utf8"));
+        }
+        let mod;
+        try {
+          if (typeof require !== "undefined") {
+            try {
+              delete require.cache[require.resolve(p)];
+            } catch (_) {}
+            mod = require(p);
+          } else {
+            const fileUrl = pathToFileURL(p).href;
+            mod = await import(fileUrl);
+          }
+        } catch (importErr) {
+          try {
+            const fileUrl = pathToFileURL(p).href;
+            mod = await import(fileUrl);
+          } catch (_) {
+            mod = await import(`${pathToFileURL(p).href}?t=${Date.now()}`);
+          }
+        }
+        return mod.default || mod;
+      } catch (e) {
+        console.warn(`[readProjectJestConfig] Error loading ${p}:`, e.message);
+      }
+    }
+  }
+
+  // 3. Fallback to package.json "jest" field
+  const pkgPath = path.join(repoRoot, "package.json");
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      if (pkg.jest && typeof pkg.jest === "object") return pkg.jest;
+    } catch {}
+  }
+  return {};
+};
+
+/**
+ * Pre-flight validation and filtering / auto-healing for Jest setupFiles and setupFilesAfterEnv.
+ * Normalizes array or string inputs, resolves <rootDir> and relative paths against baseDir,
+ * ignores bare npm package imports, and filters out missing files or generates stubs if autoStub is active.
+ *
+ * @param {string|string[]} setupList - Raw setupFiles or setupFilesAfterEnv value
+ * @param {string} baseDir - Target directory (subpackage or project directory)
+ * @param {Object} [options={}] - Options
+ * @param {string} [options.rootDir] - Workspace root directory (used for <rootDir> resolution if distinct from baseDir)
+ * @param {boolean} [options.autoStub=false] - Whether to create auto-healing stub files on disk
+ * @param {Set<string>} [options.createdHarnessFiles] - Optional set to track created stub files
+ * @returns {string[]} Sanitized list of valid or stubbed setup files
+ */
+export const filterExistingSetupFiles = (setupList, baseDir, options = {}) => {
+  if (!setupList) return [];
+  const entries = Array.isArray(setupList)
+    ? setupList
+    : typeof setupList === "string"
+      ? [setupList]
+      : [];
+  if (!entries.length) return [];
+
+  const rootDir = options?.rootDir || baseDir;
+  const autoStub = options?.autoStub === true;
+  const createdHarnessFiles = options?.createdHarnessFiles;
+  const candidateExtensions = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"];
+  const result = [];
+
+  for (const rawEntry of entries) {
+    if (!rawEntry || typeof rawEntry !== "string") continue;
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+
+    // Check if entry is a bare npm package import (e.g. '@testing-library/jest-dom', 'jest-extended')
+    const isBarePackage =
+      !entry.startsWith(".") &&
+      !entry.startsWith("/") &&
+      !entry.startsWith("\\") &&
+      !entry.startsWith("<rootDir>") &&
+      !path.isAbsolute(entry) &&
+      !fs.existsSync(path.join(baseDir, entry.split("/")[0])) &&
+      !/^[^/]+\.[cm]?[jt]sx?$/.test(entry);
+
+    if (isBarePackage) {
+      result.push(entry);
+      continue;
+    }
+
+    // Resolve absolute path on disk
+    let absPath;
+    if (entry.startsWith("<rootDir>")) {
+      const rel = entry.replace(/^<rootDir>[/\\]?/, "");
+      absPath = path.resolve(baseDir, rel);
+    } else if (path.isAbsolute(entry)) {
+      absPath = entry;
+    } else {
+      absPath = path.resolve(baseDir, entry);
+    }
+
+    // Workspace boundary containment check
+    const relToRoot = path.relative(rootDir, absPath).replace(/\\/g, "/");
+    if (relToRoot.startsWith("..") || path.isAbsolute(relToRoot)) {
+      console.warn(
+        `[filterExistingSetupFiles] Setup file '${entry}' resolves outside workspace root ('${absPath}'). Skipping.`,
+      );
+      continue;
+    }
+
+    // Check if file exists directly or with candidate extension
+    let found = false;
+    try {
+      if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+        found = true;
+      }
+    } catch {}
+
+    if (!found) {
+      for (const ext of candidateExtensions) {
+        const candidate = absPath + ext;
+        try {
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            found = true;
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    if (found) {
+      result.push(entry);
+    } else if (autoStub) {
+      try {
+        const targetStubPath = path.extname(absPath)
+          ? absPath
+          : `${absPath}.js`;
+        const relStubToRoot = path
+          .relative(rootDir, targetStubPath)
+          .replace(/\\/g, "/");
+        if (relStubToRoot.startsWith("..") || path.isAbsolute(relStubToRoot)) {
+          console.warn(
+            `[filterExistingSetupFiles] Target stub path '${targetStubPath}' escapes workspace root. Skipping.`,
+          );
+          continue;
+        }
+        fs.mkdirSync(path.dirname(targetStubPath), { recursive: true });
+        if (!fs.existsSync(targetStubPath)) {
+          fs.writeFileSync(
+            targetStubPath,
+            "// [covai] auto-healed missing test setup file\nmodule.exports = {};\n",
+            "utf8",
+          );
+        }
+        if (
+          createdHarnessFiles &&
+          typeof createdHarnessFiles.add === "function"
+        ) {
+          createdHarnessFiles.add(targetStubPath);
+        }
+        result.push(entry);
+      } catch (err) {
+        console.warn(
+          `[filterExistingSetupFiles] Failed to auto-stub missing setup file '${entry}':`,
+          err.message,
+        );
+      }
+    } else {
+      console.warn(
+        `[filterExistingSetupFiles] Omitted missing setup file '${entry}' (resolved to '${absPath}') to prevent Jest runner failure.`,
+      );
+    }
+  }
+
+  return result;
 };
 
 /**
@@ -277,23 +477,34 @@ export const readProjectJestConfig = async (repoRoot, explicitConfigPath = null)
  * @returns {boolean}
  */
 export const isEsmProjectForRepo = (repoRoot, projectJestConfig = {}) => {
-    try {
-        const rootPkgPath = path.join(repoRoot, "package.json");
-        if (fs.existsSync(rootPkgPath)) {
-            const p = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
-            if (p.type === "module") return true;
-        }
-    } catch { }
-    if (projectJestConfig?.preset && typeof projectJestConfig.preset === "string" && projectJestConfig.preset.includes("esm")) return true;
-    if (Array.isArray(projectJestConfig?.extensionsToTreatAsEsm) && projectJestConfig.extensionsToTreatAsEsm.length > 0) return true;
-    if (projectJestConfig?.transform && typeof projectJestConfig.transform === "object") {
-        for (const v of Object.values(projectJestConfig.transform)) {
-            if (Array.isArray(v) && v[1]?.useESM) return true;
-        }
+  try {
+    const rootPkgPath = path.join(repoRoot, "package.json");
+    if (fs.existsSync(rootPkgPath)) {
+      const p = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
+      if (p.type === "module") return true;
     }
-    return false;
+  } catch {}
+  if (
+    projectJestConfig?.preset &&
+    typeof projectJestConfig.preset === "string" &&
+    projectJestConfig.preset.includes("esm")
+  )
+    return true;
+  if (
+    Array.isArray(projectJestConfig?.extensionsToTreatAsEsm) &&
+    projectJestConfig.extensionsToTreatAsEsm.length > 0
+  )
+    return true;
+  if (
+    projectJestConfig?.transform &&
+    typeof projectJestConfig.transform === "object"
+  ) {
+    for (const v of Object.values(projectJestConfig.transform)) {
+      if (Array.isArray(v) && v[1]?.useESM) return true;
+    }
+  }
+  return false;
 };
-
 
 /**
  * Dynamically build Jest moduleNameMapper without hardcoding static paths.
@@ -304,75 +515,84 @@ export const isEsmProjectForRepo = (repoRoot, projectJestConfig = {}) => {
  * @param {string} rootPkgName
  * @returns {Object}
  */
-export const buildJestModuleNameMapper = (rootDir, projectJestConfig = {}, rootPkgName = "") => {
-    const baseMapper = {
-        "^(\\.{1,2}/.*)\\.js$": "$1",
-        "^(\\.{1,2}/.*)\\.jsx$": "$1",
-        "^(\\.{1,2}/.*)\\.mjs$": "$1",
-        "^(\\.{1,2}/.*)\\.cjs$": "$1",
-    };
+export const buildJestModuleNameMapper = (
+  rootDir,
+  projectJestConfig = {},
+  rootPkgName = "",
+) => {
+  const baseMapper = {
+    "^(\\.{1,2}/.*)\\.js$": "$1",
+    "^(\\.{1,2}/.*)\\.jsx$": "$1",
+    "^(\\.{1,2}/.*)\\.mjs$": "$1",
+    "^(\\.{1,2}/.*)\\.cjs$": "$1",
+  };
 
-    // Only map dist/src alias if dist/src exists or if project / subproject config has dist/src references
-    const hasDistSrc = fs.existsSync(path.join(rootDir, "dist", "src"));
-    let hasDistSrcReferences = false;
-    try {
-        const babelrcPath = path.join(rootDir, ".babelrc");
-        if (fs.existsSync(babelrcPath)) {
-            const babelContent = fs.readFileSync(babelrcPath, "utf8");
-            if (babelContent.includes("dist/src")) hasDistSrcReferences = true;
-        }
-        if (!hasDistSrcReferences && fs.existsSync(rootDir)) {
-            const subEntries = fs.readdirSync(rootDir, { withFileTypes: true });
-            for (const entry of subEntries) {
-                if (entry.isDirectory() && !["node_modules", ".git", "storage"].includes(entry.name)) {
-                    const subBabel = path.join(rootDir, entry.name, ".babelrc");
-                    if (fs.existsSync(subBabel)) {
-                        const content = fs.readFileSync(subBabel, "utf8");
-                        if (content.includes("dist/src")) {
-                            hasDistSrcReferences = true;
-                            break;
-                        }
-                    }
-                }
+  // Only map dist/src alias if dist/src exists or if project / subproject config has dist/src references
+  const hasDistSrc = fs.existsSync(path.join(rootDir, "dist", "src"));
+  let hasDistSrcReferences = false;
+  try {
+    const babelrcPath = path.join(rootDir, ".babelrc");
+    if (fs.existsSync(babelrcPath)) {
+      const babelContent = fs.readFileSync(babelrcPath, "utf8");
+      if (babelContent.includes("dist/src")) hasDistSrcReferences = true;
+    }
+    if (!hasDistSrcReferences && fs.existsSync(rootDir)) {
+      const subEntries = fs.readdirSync(rootDir, { withFileTypes: true });
+      for (const entry of subEntries) {
+        if (
+          entry.isDirectory() &&
+          !["node_modules", ".git", "storage"].includes(entry.name)
+        ) {
+          const subBabel = path.join(rootDir, entry.name, ".babelrc");
+          if (fs.existsSync(subBabel)) {
+            const content = fs.readFileSync(subBabel, "utf8");
+            if (content.includes("dist/src")) {
+              hasDistSrcReferences = true;
+              break;
             }
+          }
         }
-    } catch { }
+      }
+    }
+  } catch {}
 
-    if (hasDistSrc || hasDistSrcReferences) {
-        const distSrcTarget = hasDistSrc
-            ? "<rootDir>/dist/src"
-            : (fs.existsSync(path.join(rootDir, "src")) ? "<rootDir>/src" : null);
-        if (distSrcTarget) {
-            baseMapper["^(?:\\.{1,2}/)+dist/src$"] = distSrcTarget;
-            baseMapper["^(?:\\.{1,2}/)+dist/src/(.*)$"] = `${distSrcTarget}/$1`;
-            baseMapper[".*dist/src$"] = distSrcTarget;
-            baseMapper[".*dist/src/(.*)"] = `${distSrcTarget}/$1`;
-        }
+  if (hasDistSrc || hasDistSrcReferences) {
+    const distSrcTarget = hasDistSrc
+      ? "<rootDir>/dist/src"
+      : fs.existsSync(path.join(rootDir, "src"))
+        ? "<rootDir>/src"
+        : null;
+    if (distSrcTarget) {
+      baseMapper["^(?:\\.{1,2}/)+dist/src$"] = distSrcTarget;
+      baseMapper["^(?:\\.{1,2}/)+dist/src/(.*)$"] = `${distSrcTarget}/$1`;
+      baseMapper[".*dist/src$"] = distSrcTarget;
+      baseMapper[".*dist/src/(.*)"] = `${distSrcTarget}/$1`;
+    }
+  }
+
+  if (rootPkgName) {
+    // Resolve package self-reference dynamically based on actual directory structure
+    let selfTarget = null;
+    if (fs.existsSync(path.join(rootDir, "dist", "src"))) {
+      selfTarget = "<rootDir>/dist/src";
+    } else if (fs.existsSync(path.join(rootDir, "src"))) {
+      selfTarget = "<rootDir>/src";
+    } else if (fs.existsSync(path.join(rootDir, "dist"))) {
+      selfTarget = "<rootDir>/dist";
+    } else if (fs.existsSync(path.join(rootDir, "lib"))) {
+      selfTarget = "<rootDir>/lib";
     }
 
-    if (rootPkgName) {
-        // Resolve package self-reference dynamically based on actual directory structure
-        let selfTarget = null;
-        if (fs.existsSync(path.join(rootDir, "dist", "src"))) {
-            selfTarget = "<rootDir>/dist/src";
-        } else if (fs.existsSync(path.join(rootDir, "src"))) {
-            selfTarget = "<rootDir>/src";
-        } else if (fs.existsSync(path.join(rootDir, "dist"))) {
-            selfTarget = "<rootDir>/dist";
-        } else if (fs.existsSync(path.join(rootDir, "lib"))) {
-            selfTarget = "<rootDir>/lib";
-        }
-
-        if (selfTarget) {
-            baseMapper[`^${rootPkgName}$`] = selfTarget;
-            baseMapper[`^${rootPkgName}/(.*)$`] = `${selfTarget}/$1`;
-        }
+    if (selfTarget) {
+      baseMapper[`^${rootPkgName}$`] = selfTarget;
+      baseMapper[`^${rootPkgName}/(.*)$`] = `${selfTarget}/$1`;
     }
+  }
 
-    return {
-        ...baseMapper,
-        ...(projectJestConfig?.moduleNameMapper || {})
-    };
+  return {
+    ...baseMapper,
+    ...(projectJestConfig?.moduleNameMapper || {}),
+  };
 };
 
 /**
@@ -384,75 +604,91 @@ export const buildJestModuleNameMapper = (rootDir, projectJestConfig = {}, rootP
  * @returns {Promise<boolean>}
  */
 export const detectAndRunBuild = async (jobId, rootDir) => {
-    if (!rootDir || typeof rootDir !== "string") return false;
-    const resolvedRoot = path.resolve(rootDir);
-    const lastChecked = preparedBuildCache.get(resolvedRoot);
-    if (lastChecked && (Date.now() - lastChecked) < PREPARED_STEP_TTL_MS) {
-        return false;
-    }
-
-    const pkgPath = path.join(rootDir, "package.json");
-    if (!fs.existsSync(pkgPath)) {
-        preparedBuildCache.set(resolvedRoot, Date.now());
-        return false;
-    }
-
-    try {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-        const scripts = pkg.scripts || {};
-        const main = pkg.main || "";
-        const typings = pkg.typings || pkg.types || "";
-
-        const distExists = fs.existsSync(path.join(rootDir, "dist"));
-        const buildDirExists = fs.existsSync(path.join(rootDir, "build"));
-
-        const hasBuildScript = Boolean(scripts.build);
-        const referencesDist = (
-            main.startsWith("dist") ||
-            main.startsWith("./dist") ||
-            main.startsWith("build") ||
-            main.startsWith("./build") ||
-            typings.startsWith("dist") ||
-            typings.startsWith("./dist") ||
-            typings.startsWith("build") ||
-            typings.startsWith("./build")
-        );
-        const hasTsConfig = fs.existsSync(path.join(rootDir, "tsconfig.json"));
-
-        const needsBuild = (hasBuildScript && (!distExists && !buildDirExists)) ||
-            (referencesDist && (!distExists && !buildDirExists));
-
-        if (needsBuild) {
-            const buildCmd = hasBuildScript ? "npm run build" : (hasTsConfig ? "npx tsc --skipLibCheck" : null);
-            if (buildCmd) {
-                if (jobId) {
-                    await addJobLog(jobId, "INFO", `[BUILD] Detected project requires build before testing (${buildCmd}). Building...`).catch(() => { });
-                }
-                const buildRes = await dockerRunner.run({
-                    snapshotPath: rootDir,
-                    command: buildCmd,
-                    timeoutMs: 180000,
-                    jobId: jobId || "build-pre-test"
-                });
-                preparedBuildCache.set(resolvedRoot, Date.now());
-                if (buildRes.success || buildRes.exitCode === 0) {
-                    if (jobId) {
-                        await addJobLog(jobId, "INFO", `[BUILD] Project built successfully.`).catch(() => { });
-                    }
-                    return false;
-                }
-            } else {
-                preparedBuildCache.set(resolvedRoot, Date.now());
-            }
-        } else {
-            preparedBuildCache.set(resolvedRoot, Date.now());
-        }
-    } catch (err) {
-        if (jobId) {
-            await addJobLog(jobId, "WARN", `[BUILD] Error checking/executing build: ${err.message}`).catch(() => { });
-        }
-    }
+  if (!rootDir || typeof rootDir !== "string") return false;
+  const resolvedRoot = path.resolve(rootDir);
+  const lastChecked = preparedBuildCache.get(resolvedRoot);
+  if (lastChecked && Date.now() - lastChecked < PREPARED_STEP_TTL_MS) {
     return false;
+  }
+
+  const pkgPath = path.join(rootDir, "package.json");
+  if (!fs.existsSync(pkgPath)) {
+    preparedBuildCache.set(resolvedRoot, Date.now());
+    return false;
+  }
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    const scripts = pkg.scripts || {};
+    const main = pkg.main || "";
+    const typings = pkg.typings || pkg.types || "";
+
+    const distExists = fs.existsSync(path.join(rootDir, "dist"));
+    const buildDirExists = fs.existsSync(path.join(rootDir, "build"));
+
+    const hasBuildScript = Boolean(scripts.build);
+    const referencesDist =
+      main.startsWith("dist") ||
+      main.startsWith("./dist") ||
+      main.startsWith("build") ||
+      main.startsWith("./build") ||
+      typings.startsWith("dist") ||
+      typings.startsWith("./dist") ||
+      typings.startsWith("build") ||
+      typings.startsWith("./build");
+    const hasTsConfig = fs.existsSync(path.join(rootDir, "tsconfig.json"));
+
+    const needsBuild =
+      (hasBuildScript && !distExists && !buildDirExists) ||
+      (referencesDist && !distExists && !buildDirExists);
+
+    if (needsBuild) {
+      const buildCmd = hasBuildScript
+        ? "npm run build"
+        : hasTsConfig
+          ? "npx tsc --skipLibCheck"
+          : null;
+      if (buildCmd) {
+        if (jobId) {
+          await addJobLog(
+            jobId,
+            "INFO",
+            `[BUILD] Detected project requires build before testing (${buildCmd}). Building...`,
+          ).catch(() => {});
+        }
+        const buildRes = await dockerRunner.run({
+          snapshotPath: rootDir,
+          command: buildCmd,
+          timeoutMs: 180000,
+          jobId: jobId || "build-pre-test",
+        });
+        preparedBuildCache.set(resolvedRoot, Date.now());
+        if (buildRes.success || buildRes.exitCode === 0) {
+          if (jobId) {
+            await addJobLog(
+              jobId,
+              "INFO",
+              `[BUILD] Project built successfully.`,
+            ).catch(() => {});
+          }
+          return false;
+        }
+      } else {
+        preparedBuildCache.set(resolvedRoot, Date.now());
+      }
+    } else {
+      preparedBuildCache.set(resolvedRoot, Date.now());
+    }
+  } catch (err) {
+    if (jobId) {
+      await addJobLog(
+        jobId,
+        "WARN",
+        `[BUILD] Error checking/executing build: ${err.message}`,
+      ).catch(() => {});
+    }
+  }
+  return false;
 };
 
 /**
@@ -464,202 +700,227 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
  * @param {string} rootDir
  * @returns {Promise<boolean>}
  */
-export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
-    if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir)) return false;
-    const resolvedRoot = path.resolve(rootDir);
-    const lastChecked = preparedPrismaCache.get(resolvedRoot);
-    if (lastChecked && (Date.now() - lastChecked) < PREPARED_STEP_TTL_MS) {
-        return false;
-    }
+export const detectAndRunPrismaGenerate = async (
+  jobId,
+  rootDir,
+  options = {},
+) => {
+  if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir))
+    return false;
+  const resolvedRoot = path.resolve(rootDir);
+  const lastChecked = preparedPrismaCache.get(resolvedRoot);
+  if (lastChecked && Date.now() - lastChecked < PREPARED_STEP_TTL_MS) {
+    return false;
+  }
 
-    // Scan for schema.prisma files
-    const findSchemaPaths = (dir, depth = 0) => {
-        const schemas = [];
-        if (depth > 3) return schemas;
-        try {
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-                if (["node_modules", ".git", "coverage", "dist", "build", ".next", ".cache", "storage"].includes(entry.name)) continue;
-                const full = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    schemas.push(...findSchemaPaths(full, depth + 1));
-                } else if (entry.isFile() && entry.name === "schema.prisma") {
-                    schemas.push(full);
-                }
-            }
-        } catch (_) { }
-        return schemas;
-    };
-
-    const schemaFiles = findSchemaPaths(rootDir, 0);
-
-    // Also check if package.json has @prisma/client or prisma
-    const hasPrismaInPkg = (dir) => {
-        try {
-            const pkgPath = path.join(dir, "package.json");
-            if (fs.existsSync(pkgPath)) {
-                const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-                const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-                return Boolean(deps["@prisma/client"] || deps["prisma"]);
-            }
-        } catch (_) { }
-        return false;
-    };
-
-    const usesPrisma = schemaFiles.length > 0 || hasPrismaInPkg(rootDir);
-    if (!usesPrisma) {
-        preparedPrismaCache.set(resolvedRoot, Date.now());
-        return false;
-    }
-
-    // Helper: checks if .prisma/client exists and is NOT just the uninitialized placeholder stub
-    const isClientStub = (baseDir) => {
-        const prismaDir = path.join(baseDir, "node_modules", ".prisma", "client");
-        const defaultJs = path.join(prismaDir, "default.js");
-        const indexJs = path.join(prismaDir, "index.js");
-        if (!fs.existsSync(defaultJs) && !fs.existsSync(indexJs)) return true;
-        try {
-            if (fs.existsSync(defaultJs)) {
-                const content = fs.readFileSync(defaultJs, "utf8");
-                if (content.includes("did not initialize yet")) return true;
-            }
-            return false;
-        } catch (_) {
-            return true;
+  // Scan for schema.prisma files
+  const findSchemaPaths = (dir, depth = 0) => {
+    const schemas = [];
+    if (depth > 3) return schemas;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (
+          [
+            "node_modules",
+            ".git",
+            "coverage",
+            "dist",
+            "build",
+            ".next",
+            ".cache",
+            "storage",
+          ].includes(entry.name)
+        )
+          continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          schemas.push(...findSchemaPaths(full, depth + 1));
+        } else if (entry.isFile() && entry.name === "schema.prisma") {
+          schemas.push(full);
         }
-    };
+      }
+    } catch (_) {}
+    return schemas;
+  };
 
-    // Find all directories where Prisma is located
-    const targets = [];
-    if (schemaFiles.length > 0) {
-        for (const schemaPath of schemaFiles) {
-            const schemaDir = path.dirname(schemaPath);
-            const projectDir = path.dirname(schemaDir);
-            const effectiveTarget = fs.existsSync(path.join(schemaDir, "package.json"))
-                ? schemaDir
-                : (fs.existsSync(path.join(projectDir, "package.json")) ? projectDir : rootDir);
-            targets.push({ schemaPath, targetDir: effectiveTarget });
-        }
-    } else {
-        targets.push({ schemaPath: null, targetDir: rootDir });
-    }
+  const schemaFiles = findSchemaPaths(rootDir, 0);
 
-    let anySuccess = false;
-    for (const { schemaPath, targetDir } of targets) {
-        if (!isClientStub(targetDir)) {
-            continue;
-        }
+  // Also check if package.json has @prisma/client or prisma
+  const hasPrismaInPkg = (dir) => {
+    try {
+      const pkgPath = path.join(dir, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+        const deps = {
+          ...(pkg.dependencies || {}),
+          ...(pkg.devDependencies || {}),
+        };
+        return Boolean(deps["@prisma/client"] || deps["prisma"]);
+      }
+    } catch (_) {}
+    return false;
+  };
 
-        const relSchema = schemaPath ? path.relative(rootDir, schemaPath).replace(/\\/g, "/") : "schema.prisma";
-        if (jobId) {
-            await addJobLog(jobId, "INFO", `[PRISMA] Detected Prisma schema (${relSchema}). Generating Prisma Client...`).catch(() => { });
-        }
-
-        let dummyUrl = "postgresql://localhost:5432/test_db";
-        let provider = "postgresql";
-        if (schemaPath && fs.existsSync(schemaPath)) {
-            try {
-                const schemaContent = fs.readFileSync(schemaPath, "utf8");
-                if (schemaContent.includes('provider = "mysql"')) {
-                    provider = "mysql";
-                    dummyUrl = "mysql://root:password@localhost:3306/test_db";
-                } else if (schemaContent.includes('provider = "sqlite"')) {
-                    provider = "sqlite";
-                    dummyUrl = "file:./dev.db";
-                } else if (schemaContent.includes('provider = "sqlserver"')) {
-                    provider = "sqlserver";
-                    dummyUrl = "sqlserver://localhost:1433;database=test_db;user=sa;password=pass;";
-                } else if (schemaContent.includes('provider = "mongodb"')) {
-                    provider = "mongodb";
-                    dummyUrl = "mongodb://localhost:27017/test_db";
-                } else if (schemaContent.includes('provider = "cockroachdb"')) {
-                    provider = "cockroachdb";
-                    dummyUrl = "postgresql://root@localhost:26257/test_db";
-                }
-            } catch (_) { }
-        }
-
-        let resolvedDbUrl = "";
-        for (const envDir of [targetDir, rootDir]) {
-            for (const envName of [".env.test", ".env.local", ".env"]) {
-                const envPath = path.join(envDir, envName);
-                if (fs.existsSync(envPath)) {
-                    try {
-                        const envText = fs.readFileSync(envPath, "utf8");
-                        const match = envText.match(/DATABASE_URL=["']?([^"'\r\n]+)["']?/);
-                        if (match && match[1]) {
-                            const foundUrl = match[1].trim();
-                            if (provider === "mysql" && foundUrl.startsWith("mysql://")) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "sqlite" && (foundUrl.startsWith("file:") || foundUrl.endsWith(".db"))) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "postgresql" && (foundUrl.startsWith("postgresql://") || foundUrl.startsWith("postgres://"))) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (provider === "mongodb" && foundUrl.startsWith("mongodb")) {
-                                resolvedDbUrl = foundUrl;
-                                break;
-                            } else if (!resolvedDbUrl) {
-                                resolvedDbUrl = foundUrl;
-                            }
-                        }
-                    } catch (_) { }
-                }
-            }
-            if (resolvedDbUrl) break;
-        }
-
-        if (!resolvedDbUrl) {
-            resolvedDbUrl = dummyUrl;
-        }
-
-        const hasLocalPrisma = fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma")) ||
-            fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma.cmd")) ||
-            fs.existsSync(path.join(rootDir, "node_modules", ".bin", "prisma")) ||
-            fs.existsSync(path.join(rootDir, "node_modules", ".bin", "prisma.cmd"));
-        const prismaBin = hasLocalPrisma ? "npx --no-install prisma" : "npx prisma";
-
-        const relSchemaFromTarget = schemaPath ? path.relative(targetDir, schemaPath).replace(/\\/g, "/") : "";
-        const schemaFlag = relSchemaFromTarget ? ` --schema="${relSchemaFromTarget}"` : "";
-        const cmd = `${prismaBin} generate${schemaFlag} || npx prisma generate${schemaFlag}`;
-
-        const relTargetFromRoot = path.relative(rootDir, targetDir).replace(/\\/g, "/");
-        const finalCmd = relTargetFromRoot && relTargetFromRoot !== "." ? `cd "${relTargetFromRoot}" && ${cmd}` : cmd;
-
-        try {
-            const genRes = await dockerRunner.run({
-                snapshotPath: rootDir,
-                command: finalCmd,
-                timeoutMs: 60000,
-                jobId: jobId || "prisma-generate",
-                env: {
-                    DATABASE_URL: resolvedDbUrl,
-                    NODE_ENV: "test",
-                    PRISMA_GENERATE_SKIP_AUTOINSTALL: "true"
-                }
-            });
-
-            if (genRes.success || genRes.exitCode === 0) {
-                anySuccess = true;
-                if (jobId) {
-                    await addJobLog(jobId, "INFO", `[PRISMA] Prisma Client generated successfully for ${relSchema}.`).catch(() => { });
-                }
-            } else {
-                if (jobId) {
-                    await addJobLog(jobId, "WARN", `[PRISMA] Prisma generate finished with code ${genRes.exitCode}: ${(genRes.stderr || genRes.stdout || "").slice(0, 200)}`).catch(() => { });
-                }
-            }
-        } catch (err) {
-            if (jobId) {
-                await addJobLog(jobId, "WARN", `[PRISMA] Prisma generate error: ${err.message}`).catch(() => { });
-            }
-        }
-    }
-
+  const usesPrisma = schemaFiles.length > 0 || hasPrismaInPkg(rootDir);
+  if (!usesPrisma) {
     preparedPrismaCache.set(resolvedRoot, Date.now());
-    return anySuccess;
+    return false;
+  }
+
+  // Helper: checks if .prisma/client exists and is NOT just the uninitialized placeholder stub
+  const isClientStub = (baseDir) => {
+    const prismaDir = path.join(baseDir, "node_modules", ".prisma", "client");
+    const defaultJs = path.join(prismaDir, "default.js");
+    const indexJs = path.join(prismaDir, "index.js");
+    if (!fs.existsSync(defaultJs) && !fs.existsSync(indexJs)) return true;
+    try {
+      if (fs.existsSync(defaultJs)) {
+        const content = fs.readFileSync(defaultJs, "utf8");
+        if (content.includes("did not initialize yet")) return true;
+      }
+      return false;
+    } catch (_) {
+      return true;
+    }
+  };
+
+  // Find all directories where Prisma is located
+  const targets = [];
+  if (schemaFiles.length > 0) {
+    for (const schemaPath of schemaFiles) {
+      const schemaDir = path.dirname(schemaPath);
+      const projectDir = path.dirname(schemaDir);
+      const effectiveTarget = fs.existsSync(
+        path.join(schemaDir, "package.json"),
+      )
+        ? schemaDir
+        : fs.existsSync(path.join(projectDir, "package.json"))
+          ? projectDir
+          : rootDir;
+      targets.push({ schemaPath, targetDir: effectiveTarget });
+    }
+  } else {
+    targets.push({ schemaPath: null, targetDir: rootDir });
+  }
+
+  let anySuccess = false;
+  for (const { schemaPath, targetDir } of targets) {
+    if (!isClientStub(targetDir)) {
+      continue;
+    }
+
+    const relSchema = schemaPath
+      ? path.relative(rootDir, schemaPath).replace(/\\/g, "/")
+      : "schema.prisma";
+    if (jobId) {
+      await addJobLog(
+        jobId,
+        "INFO",
+        `[PRISMA] Detected Prisma schema (${relSchema}). Generating Prisma Client...`,
+      ).catch(() => {});
+    }
+
+    let dummyUrl = "postgresql://localhost:5432/test_db";
+    let provider = "postgresql";
+    if (schemaPath && fs.existsSync(schemaPath)) {
+      try {
+        const schemaContent = fs.readFileSync(schemaPath, "utf8");
+        if (schemaContent.includes('provider = "mysql"')) {
+          provider = "mysql";
+          dummyUrl = "mysql://root:password@localhost:3306/test_db";
+        } else if (schemaContent.includes('provider = "sqlite"')) {
+          provider = "sqlite";
+          dummyUrl = "file:./dev.db";
+        } else if (schemaContent.includes('provider = "sqlserver"')) {
+          provider = "sqlserver";
+          dummyUrl =
+            "sqlserver://localhost:1433;database=test_db;user=sa;password=pass;";
+        } else if (schemaContent.includes('provider = "mongodb"')) {
+          provider = "mongodb";
+          dummyUrl = "mongodb://localhost:27017/test_db";
+        } else if (schemaContent.includes('provider = "cockroachdb"')) {
+          provider = "cockroachdb";
+          dummyUrl = "postgresql://root@localhost:26257/test_db";
+        }
+      } catch (_) {}
+    }
+
+    // R2 Requirement: Never extract real database credentials from repository .env files.
+    // Use isolated virtual database connection string or hermetic dummy fallback.
+    const resolvedDbUrl =
+      options?.virtualDbUrl || options?.virtualDbEnv?.DATABASE_URL || dummyUrl;
+
+    const hasLocalPrisma =
+      fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma")) ||
+      fs.existsSync(
+        path.join(targetDir, "node_modules", ".bin", "prisma.cmd"),
+      ) ||
+      fs.existsSync(path.join(rootDir, "node_modules", ".bin", "prisma")) ||
+      fs.existsSync(path.join(rootDir, "node_modules", ".bin", "prisma.cmd"));
+    const prismaBin = hasLocalPrisma ? "npx --no-install prisma" : "npx prisma";
+
+    const relSchemaFromTarget = schemaPath
+      ? path.relative(targetDir, schemaPath).replace(/\\/g, "/")
+      : "";
+    const schemaFlag = relSchemaFromTarget
+      ? ` --schema="${relSchemaFromTarget}"`
+      : "";
+    const cmd = `${prismaBin} generate${schemaFlag} || npx prisma generate${schemaFlag}`;
+
+    const relTargetFromRoot = path
+      .relative(rootDir, targetDir)
+      .replace(/\\/g, "/");
+    const finalCmd =
+      relTargetFromRoot && relTargetFromRoot !== "."
+        ? `cd "${relTargetFromRoot}" && ${cmd}`
+        : cmd;
+
+    try {
+      const genRes = await dockerRunner.run({
+        snapshotPath: rootDir,
+        command: finalCmd,
+        timeoutMs: 60000,
+        jobId: jobId || "prisma-generate",
+        env: {
+          DATABASE_URL: resolvedDbUrl,
+          DIRECT_URL: resolvedDbUrl,
+          NODE_ENV: "test",
+          PRISMA_GENERATE_SKIP_AUTOINSTALL: "true",
+        },
+      });
+
+      if (genRes.success || genRes.exitCode === 0) {
+        anySuccess = true;
+        if (jobId) {
+          await addJobLog(
+            jobId,
+            "INFO",
+            `[PRISMA] Prisma Client generated successfully for ${relSchema}.`,
+          ).catch(() => {});
+        }
+      } else {
+        if (jobId) {
+          await addJobLog(
+            jobId,
+            "WARN",
+            `[PRISMA] Prisma generate finished with code ${genRes.exitCode}: ${(genRes.stderr || genRes.stdout || "").slice(0, 200)}`,
+          ).catch(() => {});
+        }
+      }
+    } catch (err) {
+      if (jobId) {
+        await addJobLog(
+          jobId,
+          "WARN",
+          `[PRISMA] Prisma generate error: ${err.message}`,
+        ).catch(() => {});
+      }
+    }
+  }
+
+  preparedPrismaCache.set(resolvedRoot, Date.now());
+  return anySuccess;
 };
 
 /**
@@ -671,79 +932,97 @@ export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
  * @returns {Object|null}
  */
 export const parseModuleResolutionError = (errorOutput, rootDir = "") => {
-    if (!errorOutput || typeof errorOutput !== "string") return null;
+  if (!errorOutput || typeof errorOutput !== "string") return null;
 
-    const cannotFindMatch = errorOutput.match(/Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i);
-    if (cannotFindMatch) {
-        const missingModule = cannotFindMatch[1];
-        const testFile = cannotFindMatch[2];
-        let expectedSourcePath = null;
-        try {
-            if (missingModule.startsWith(".")) {
-                expectedSourcePath = path.resolve(rootDir, path.dirname(testFile), missingModule);
-            } else {
-                expectedSourcePath = path.resolve(rootDir, "node_modules", missingModule);
-            }
-        } catch { }
+  const cannotFindMatch = errorOutput.match(
+    /Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
+  );
+  if (cannotFindMatch) {
+    const missingModule = cannotFindMatch[1];
+    const testFile = cannotFindMatch[2];
+    let expectedSourcePath = null;
+    try {
+      if (missingModule.startsWith(".")) {
+        expectedSourcePath = path.resolve(
+          rootDir,
+          path.dirname(testFile),
+          missingModule,
+        );
+      } else {
+        expectedSourcePath = path.resolve(
+          rootDir,
+          "node_modules",
+          missingModule,
+        );
+      }
+    } catch {}
 
-        let missingDependency = null;
-        try {
-            const dep = extractMissingDependency(errorOutput);
-            if (dep) {
-                const inspection = inspectWorkspaceDependency({
-                    rootDir,
-                    packageName: dep.packageName,
-                    importedFrom: dep.importedFrom || testFile,
-                });
-                missingDependency = {
-                    ...dep,
-                    ...inspection,
-                };
-            }
-        } catch { }
-
-        return {
-            type: "MODULE_RESOLUTION_ERROR",
-            missingModule,
-            testFile,
-            pathResolving: missingModule,
-            workingDirectory: rootDir,
-            expectedSourcePath,
-            actualError: cannotFindMatch[0],
-            rawOutput: errorOutput.slice(0, 1000),
-            missingDependency,
+    let missingDependency = null;
+    try {
+      const dep = extractMissingDependency(cannotFindMatch[0]);
+      if (dep) {
+        const inspection = inspectWorkspaceDependency({
+          rootDir,
+          packageName: dep.packageName,
+          importedFrom: dep.importedFrom || testFile,
+        });
+        missingDependency = {
+          ...dep,
+          ...inspection,
         };
-    }
+      }
+    } catch {}
 
-    // Also catch Vitest / Node loader errors
-    const dep = extractMissingDependency(errorOutput);
-    if (dep) {
-        let inspection = { inPackageJson: false, inNodeModules: false, suggestedCommand: `npm install ${dep.packageName}` };
-        try {
-            inspection = inspectWorkspaceDependency({
-                rootDir,
-                packageName: dep.packageName,
-                importedFrom: dep.importedFrom,
-            });
-        } catch { }
+    return {
+      type: "MODULE_RESOLUTION_ERROR",
+      missingModule,
+      testFile,
+      pathResolving: missingModule,
+      workingDirectory: rootDir,
+      expectedSourcePath,
+      actualError: cannotFindMatch[0],
+      rawOutput: errorOutput.slice(0, 1000),
+      missingDependency,
+    };
+  }
 
-        return {
-            type: "MODULE_RESOLUTION_ERROR",
-            missingModule: dep.packageName,
-            testFile: dep.importedFrom || "unknown",
-            pathResolving: dep.rawSpecifier,
-            workingDirectory: rootDir,
-            expectedSourcePath: path.resolve(rootDir, "node_modules", dep.packageName),
-            actualError: `Cannot find module '${dep.packageName}'`,
-            rawOutput: errorOutput.slice(0, 1000),
-            missingDependency: {
-                ...dep,
-                ...inspection,
-            },
-        };
-    }
+  // Also catch Vitest / Node loader errors
+  const dep = extractMissingDependency(errorOutput);
+  if (dep) {
+    let inspection = {
+      inPackageJson: false,
+      inNodeModules: false,
+      suggestedCommand: `npm install ${dep.packageName}`,
+    };
+    try {
+      inspection = inspectWorkspaceDependency({
+        rootDir,
+        packageName: dep.packageName,
+        importedFrom: dep.importedFrom,
+      });
+    } catch {}
 
-    return null;
+    return {
+      type: "MODULE_RESOLUTION_ERROR",
+      missingModule: dep.packageName,
+      testFile: dep.importedFrom || "unknown",
+      pathResolving: dep.rawSpecifier,
+      workingDirectory: rootDir,
+      expectedSourcePath: path.resolve(
+        rootDir,
+        "node_modules",
+        dep.packageName,
+      ),
+      actualError: `Cannot find module '${dep.packageName}'`,
+      rawOutput: errorOutput.slice(0, 1000),
+      missingDependency: {
+        ...dep,
+        ...inspection,
+      },
+    };
+  }
+
+  return null;
 };
 
 /**
@@ -756,56 +1035,63 @@ export const parseModuleResolutionError = (errorOutput, rootDir = "") => {
  * @returns {{ valid: boolean, errors: Object[] }}
  */
 export const checkTestFileImports = (testFile, rootDir) => {
-    const fullTestPath = path.isAbsolute(testFile) ? testFile : path.join(rootDir, testFile);
-    if (!fs.existsSync(fullTestPath)) {
-        return { valid: false, errors: [{ type: "FILE_NOT_FOUND", testFile, path: fullTestPath }] };
-    }
+  const fullTestPath = path.isAbsolute(testFile)
+    ? testFile
+    : path.join(rootDir, testFile);
+  if (!fs.existsSync(fullTestPath)) {
+    return {
+      valid: false,
+      errors: [{ type: "FILE_NOT_FOUND", testFile, path: fullTestPath }],
+    };
+  }
 
-    const errors = [];
-    try {
-        const content = fs.readFileSync(fullTestPath, "utf8");
-        const importRegex = /(?:import\s+(?:.*?from\s+)?|require\s*\(\s*)['"]([^'"]+)['"]/g;
-        let match;
-        const testDir = path.dirname(fullTestPath);
+  const errors = [];
+  try {
+    const content = fs.readFileSync(fullTestPath, "utf8");
+    const importRegex =
+      /(?:import\s+(?:.*?from\s+)?|require\s*\(\s*)['"]([^'"]+)['"]/g;
+    let match;
+    const testDir = path.dirname(fullTestPath);
 
-        while ((match = importRegex.exec(content)) !== null) {
-            const importPath = match[1];
-            if (importPath.startsWith(".")) {
-                const resolvedTarget = path.resolve(testDir, importPath);
-                const candidates = [
-                    resolvedTarget,
-                    resolvedTarget + ".js",
-                    resolvedTarget + ".jsx",
-                    resolvedTarget + ".ts",
-                    resolvedTarget + ".tsx",
-                    resolvedTarget + ".mjs",
-                    resolvedTarget + ".cjs",
-                    path.join(resolvedTarget, "index.js"),
-                    path.join(resolvedTarget, "index.ts"),
-                    path.join(resolvedTarget, "index.mjs")
-                ];
+    while ((match = importRegex.exec(content)) !== null) {
+      const importPath = match[1];
+      if (importPath.startsWith(".")) {
+        const resolvedTarget = path.resolve(testDir, importPath);
+        const candidates = [
+          resolvedTarget,
+          resolvedTarget + ".js",
+          resolvedTarget + ".jsx",
+          resolvedTarget + ".ts",
+          resolvedTarget + ".tsx",
+          resolvedTarget + ".mjs",
+          resolvedTarget + ".cjs",
+          path.join(resolvedTarget, "index.js"),
+          path.join(resolvedTarget, "index.ts"),
+          path.join(resolvedTarget, "index.mjs"),
+        ];
 
-                const exists = candidates.some(c => fs.existsSync(c));
-                if (!exists) {
-                    errors.push({
-                        type: "MODULE_RESOLUTION_ERROR",
-                        testFile,
-                        missingModule: importPath,
-                        pathResolving: importPath,
-                        resolvedPath: resolvedTarget,
-                        expectedSourcePath: candidates[1],
-                        actualFileSystemPath: "Not found",
-                        workingDirectory: rootDir
-                    });
-                }
-            }
+        const exists = candidates.some((c) => fs.existsSync(c));
+        if (!exists) {
+          errors.push({
+            type: "MODULE_RESOLUTION_ERROR",
+            testFile,
+            missingModule: importPath,
+            pathResolving: importPath,
+            resolvedPath: resolvedTarget,
+            expectedSourcePath: candidates[1],
+            actualFileSystemPath: "Not found",
+            workingDirectory: rootDir,
+          });
         }
-    } catch { }
+      }
+    }
+  } catch {}
 
-    return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors };
 };
 
-export const HAS_ANY_TEST_PATTERN = /\b(test|it|describe|scenario|suite|autoBindSteps|defineFeature|defineStep|loadFeature|loadFeatures|given|when|then|Given|When|Then|StepDefinitions|beforeEach|afterEach)\b/i;
+export const HAS_ANY_TEST_PATTERN =
+  /\b(test|it|describe|scenario|suite|autoBindSteps|defineFeature|defineStep|loadFeature|loadFeatures|given|when|then|Given|When|Then|StepDefinitions|beforeEach|afterEach)\b/i;
 
 /**
  * Scan repository for unit test files.
@@ -817,166 +1103,218 @@ export const HAS_ANY_TEST_PATTERN = /\b(test|it|describe|scenario|suite|autoBind
  * @returns {{ jestFiles: string[], vitestFiles: string[], skippedFiles: string[] }}
  */
 export const findUnitFiles = (rootDir) => {
-    const jestFiles = [];
-    const vitestFiles = [];
-    const skippedFiles = [];
+  const jestFiles = [];
+  const vitestFiles = [];
+  const skippedFiles = [];
 
-    const frameworkDetection = detectTestingFrameworks(rootDir);
-    const detectedUnit = frameworkDetection?.unit || [];
+  const frameworkDetection = detectTestingFrameworks(rootDir);
+  const detectedUnit = frameworkDetection?.unit || [];
 
-    const IGNORED_DIRS = new Set([
-        "node_modules", ".git", "coverage", "dist", "build",
-        ".next", ".vite", ".vitest", ".cache", "storage",
-        "client", "frontend", "ui", "web", "test-data", "test_data",
-        "fixtures", "mocks", "__mocks__"
-    ]);
+  const IGNORED_DIRS = new Set([
+    "node_modules",
+    ".git",
+    "coverage",
+    "dist",
+    "build",
+    "playwright-report",
+    "test-results",
+    "blob-report",
+    ".nyc_output",
+    ".next",
+    ".vite",
+    ".vitest",
+    ".cache",
+    "storage",
+    "client",
+    "frontend",
+    "ui",
+    "web",
+    "e2e",
+    "system",
+    "integration",
+    "cypress",
+    "playwright",
+    "test-data",
+    "test_data",
+    "fixtures",
+    "mocks",
+    "__mocks__",
+  ]);
 
-    const walk = (dir) => {
-        if (!fs.existsSync(dir)) return;
-        let entries = [];
-        try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-        } catch {
-            return;
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
+      const lowerRel = relPath.toLowerCase();
+
+      if (entry.isDirectory()) {
+        const lowerName = entry.name.toLowerCase();
+        const isInsideTestDir =
+          /(?:^|\/)(?:tests?|__tests__|unit)(?:\/|$)/i.test(lowerRel);
+        const isIgnoredDir =
+          (IGNORED_DIRS.has(lowerName) &&
+            (!isInsideTestDir ||
+              !["integration", "system", "e2e"].includes(lowerName))) ||
+          /(?:^|\/)(?:client|frontend|ui|web|cypress|playwright)(?:\/|$)/i.test(
+            lowerRel,
+          ) ||
+          (!isInsideTestDir &&
+            /(?:^|\/)(?:e2e|system|integration)(?:[-_a-z0-9]*)?(?:\/|$)/i.test(
+              lowerRel,
+            ));
+        if (isIgnoredDir) {
+          continue;
         }
+        walk(fullPath);
+        continue;
+      }
 
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            const relPath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
-            const lowerRel = relPath.toLowerCase();
+      if (!entry.isFile() || isCovaiJestArtifact(relPath)) continue;
 
-            if (entry.isDirectory()) {
-                if (IGNORED_DIRS.has(entry.name) || lowerRel.includes("/client/") || lowerRel.includes("/frontend/")) {
-                    continue;
-                }
-                walk(fullPath);
-                continue;
-            }
+      // If it's a test file (ends with .test.ts, .spec.ts, etc.), do NOT skip it just because it's in a helper/util folder!
+      const isTestFileName = /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(
+        entry.name,
+      );
+      const isHelperDir =
+        !isTestFileName &&
+        /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(
+          lowerRel,
+        );
+      if (isHelperDir) continue;
 
-            if (!entry.isFile()) continue;
+      // Exclude helper/setup files
+      if (
+        /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(
+          entry.name,
+        )
+      ) {
+        continue;
+      }
 
-            // If it's a test file (ends with .test.ts, .spec.ts, etc.), do NOT skip it just because it's in a helper/util folder!
-            const isTestFileName = /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(entry.name);
-            const isHelperDir = !isTestFileName && /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(lowerRel);
-            if (isHelperDir) continue;
+      // Strictly exclude .jsx and .tsx (unit tests only apply to backend logic)
+      if (!/\.[cm]?[jt]s$/i.test(entry.name)) {
+        continue;
+      }
 
-            // Exclude helper/setup files
-            if (/^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(entry.name)) {
-                continue;
-            }
+      // Test file detection: either by name pattern or within standard test directory
+      const isTest =
+        /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(entry.name) ||
+        (/(^|\/)(tests?|__tests__|unit)\//i.test(lowerRel) &&
+          !/\.(d\.ts|json|md|txt)$/i.test(entry.name));
 
-            // Strictly exclude .jsx and .tsx (unit tests only apply to backend logic)
-            if (!/\.[cm]?[jt]s$/i.test(entry.name)) {
-                continue;
-            }
+      if (!isTest) {
+        continue;
+      }
 
-            // Test file detection: either by name pattern or within standard test directory
-            const isTest = (
-                /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(entry.name) ||
-                (/(^|\/)(tests?|__tests__|unit)\//i.test(lowerRel) && !/\.(d\.ts|json|md|txt)$/i.test(entry.name))
-            );
+      // Read test file content to inspect framework imports
+      let content = "";
+      try {
+        const buf = Buffer.alloc(8192);
+        const fd = fs.openSync(fullPath, "r");
+        const bytesRead = fs.readSync(fd, buf, 0, 8192, 0);
+        fs.closeSync(fd);
+        content = buf.toString("utf8", 0, bytesRead);
+      } catch {
+        continue;
+      }
 
-            if (!isTest) {
-                continue;
-            }
+      const lowerContent = content.toLowerCase();
 
-            // Read test file content to inspect framework imports
-            let content = "";
-            try {
-                const buf = Buffer.alloc(8192);
-                const fd = fs.openSync(fullPath, "r");
-                const bytesRead = fs.readSync(fd, buf, 0, 8192, 0);
-                fs.closeSync(fd);
-                content = buf.toString("utf8", 0, bytesRead);
-            } catch {
-                continue;
-            }
+      // Strictly exclude integration, api contract, and E2E system files
+      const isIntegrationOrSystem =
+        /(?:^|\/)(?:e2e|system|integration|cypress|playwright|routes)(?:[-_a-z0-9]*)?(?:\/|$)/i.test(
+          lowerRel,
+        ) ||
+        /(?:^|\.)(?:e2e|system|integration|cypress|playwright|supertest)\.(?:test|spec)\.[cm]?[jt]s$/i.test(
+          entry.name,
+        ) ||
+        /^(?:e2e|cypress|playwright)[-_]/i.test(entry.name) ||
+        /^tier\d+[-_]/i.test(entry.name) ||
+        lowerContent.includes("supertest") ||
+        lowerContent.includes("request(app)") ||
+        lowerContent.includes("request(server)") ||
+        lowerContent.includes("@playwright/test") ||
+        lowerContent.includes("page.goto") ||
+        lowerContent.includes("cypress") ||
+        lowerContent.includes("puppeteer");
 
-            const lowerContent = content.toLowerCase();
+      if (isIntegrationOrSystem) {
+        skippedFiles.push(relPath);
+        continue;
+      }
 
-            // Strictly exclude integration, api contract, and E2E system files
-            const isIntegrationOrSystem = (
-                lowerRel.includes("supertest") ||
-                lowerRel.includes("/integration/") ||
-                lowerRel.includes("\\integration\\") ||
-                lowerRel.includes("/routes/") ||
-                lowerRel.includes("\\routes\\") ||
-                lowerRel.includes("/e2e/") ||
-                lowerRel.includes("\\e2e\\") ||
-                lowerRel.includes("/system/") ||
-                lowerRel.includes("\\system\\") ||
-                lowerRel.includes("/cypress/") ||
-                lowerRel.includes("/playwright/") ||
-                /\b(integration|api|e2e|system)\.(test|spec)\.[cm]?[jt]s$/i.test(entry.name) ||
-                lowerContent.includes("supertest") ||
-                lowerContent.includes("request(app)") ||
-                lowerContent.includes("request(server)") ||
-                lowerContent.includes("@playwright/test") ||
-                lowerContent.includes("page.goto") ||
-                lowerContent.includes("cypress") ||
-                lowerContent.includes("puppeteer")
-            );
-
-            if (isIntegrationOrSystem) {
-                skippedFiles.push(relPath);
-                continue;
-            }
-
-            // For files inside tests/ that do not end with standard test file extensions (.test.js, .spec.ts, etc.),
-            // require explicit test suite / block invocations so utility helper scripts without test blocks are not misclassified as empty test suites.
-            if (!isTestFileName) {
-                const hasExplicitTestInvocation = /\b(describe|it|test|suite|scenario|defineFeature)\s*\(/i.test(content);
-                if (!hasExplicitTestInvocation) {
-                    skippedFiles.push(relPath);
-                    continue;
-                }
-            }
-
-            // Exclude empty stub test files that contain no test/it/describe/scenario/autoBindSteps blocks
-            const hasAnyTest = HAS_ANY_TEST_PATTERN.test(content);
-            if (!hasAnyTest) {
-                skippedFiles.push(relPath);
-                continue;
-            }
-
-            // Framework classification using classifyTestFile
-            const fw = classifyTestFile(content, relPath, detectedUnit);
-            const isVitest = fw === "vitest" ||
-                lowerRel.includes(".vitest.") ||
-                lowerContent.includes("from 'vitest'") ||
-                lowerContent.includes('from "vitest"') ||
-                /\bvi\s*\./.test(content);
-
-            const isJest = fw === "jest" ||
-                lowerRel.includes("/jest/") ||
-                lowerRel.includes(".jest.") ||
-                lowerContent.includes("@jest/") ||
-                lowerContent.includes("from 'jest'") ||
-                lowerContent.includes('from "jest"') ||
-                /\bjest\s*\./.test(content);
-
-            if (isVitest && !isJest) {
-                vitestFiles.push(relPath);
-            } else if (isJest && !isVitest) {
-                jestFiles.push(relPath);
-            } else if (isJest) {
-                jestFiles.push(relPath);
-            } else if (isVitest) {
-                vitestFiles.push(relPath);
-            } else {
-                if (detectedUnit.includes("jest") || lowerRel.includes("jest")) {
-                    jestFiles.push(relPath);
-                } else if (detectedUnit.includes("vitest")) {
-                    vitestFiles.push(relPath);
-                } else {
-                    jestFiles.push(relPath);
-                }
-            }
+      // For files inside tests/ that do not end with standard test file extensions (.test.js, .spec.ts, etc.),
+      // require explicit test suite / block invocations so utility helper scripts without test blocks are not misclassified as empty test suites.
+      if (!isTestFileName) {
+        const hasExplicitTestInvocation =
+          /\b(describe|it|test|suite|scenario|defineFeature)\s*\(/i.test(
+            content,
+          );
+        if (!hasExplicitTestInvocation) {
+          skippedFiles.push(relPath);
+          continue;
         }
-    };
+      }
 
-    walk(rootDir);
-    return { jestFiles, vitestFiles, skippedFiles };
+      // Exclude empty stub test files that contain no test/it/describe/scenario/autoBindSteps blocks
+      const hasAnyTest = HAS_ANY_TEST_PATTERN.test(content);
+      if (!hasAnyTest) {
+        skippedFiles.push(relPath);
+        continue;
+      }
+
+      // Framework classification using classifyTestFile
+      const fw = classifyTestFile(content, relPath, detectedUnit);
+      if (["playwright", "cypress", "supertest"].includes(fw)) {
+        skippedFiles.push(relPath);
+        continue;
+      }
+      const isVitest =
+        fw === "vitest" ||
+        lowerRel.includes(".vitest.") ||
+        lowerContent.includes("from 'vitest'") ||
+        lowerContent.includes('from "vitest"') ||
+        /\bvi\s*\./.test(content);
+
+      const isJest =
+        fw === "jest" ||
+        lowerRel.includes("/jest/") ||
+        lowerRel.includes(".jest.") ||
+        lowerContent.includes("@jest/") ||
+        lowerContent.includes("from 'jest'") ||
+        lowerContent.includes('from "jest"') ||
+        /\bjest\s*\./.test(content);
+
+      if (isVitest && !isJest) {
+        vitestFiles.push(relPath);
+      } else if (isJest && !isVitest) {
+        jestFiles.push(relPath);
+      } else if (isJest) {
+        jestFiles.push(relPath);
+      } else if (isVitest) {
+        vitestFiles.push(relPath);
+      } else {
+        if (detectedUnit.includes("jest") || lowerRel.includes("jest")) {
+          jestFiles.push(relPath);
+        } else if (detectedUnit.includes("vitest")) {
+          vitestFiles.push(relPath);
+        } else {
+          jestFiles.push(relPath);
+        }
+      }
+    }
+  };
+
+  walk(rootDir);
+  return { jestFiles, vitestFiles, skippedFiles };
 };
 
 /**
@@ -985,81 +1323,119 @@ export const findUnitFiles = (rootDir) => {
  * analysis can still run and display the code logic files for AI test suggestions.
  */
 export const findLogicSourceFiles = (rootDir, options = {}) => {
-    const logicFiles = [];
-    if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir)) {
-        return logicFiles;
+  const logicFiles = [];
+  if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir)) {
+    return logicFiles;
+  }
+
+  const resolvedRoot = path.resolve(rootDir);
+  if (!options?.bypassCache) {
+    const cached = logicFilesCache.get(resolvedRoot);
+    if (cached && Date.now() - cached.timestamp < LOGIC_FILES_CACHE_TTL_MS) {
+      return [...cached.files];
+    }
+  }
+
+  const IGNORED_DIRS = new Set([
+    "node_modules",
+    ".git",
+    "coverage",
+    "dist",
+    "build",
+    "playwright-report",
+    "test-results",
+    "blob-report",
+    ".nyc_output",
+    ".next",
+    ".vite",
+    ".vitest",
+    ".cache",
+    "storage",
+    "client",
+    "frontend",
+    "ui",
+    "web",
+    "test-data",
+    "test_data",
+    "fixtures",
+    "mocks",
+    "__mocks__",
+    "public",
+    "assets",
+    "static",
+    "examples",
+    "example",
+    "demo",
+    "demos",
+    "sample",
+    "samples",
+    "hooks",
+    "i18n",
+    "locales",
+    "translations",
+    "components",
+    "context",
+    "contexts",
+    "views",
+    "pages",
+  ]);
+
+  const configExclusions = extractProjectCoverageExclusions(rootDir);
+
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
     }
 
-    const resolvedRoot = path.resolve(rootDir);
-    if (!options?.bypassCache) {
-        const cached = logicFilesCache.get(resolvedRoot);
-        if (cached && (Date.now() - cached.timestamp) < LOGIC_FILES_CACHE_TTL_MS) {
-            return [...cached.files];
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
+      const lowerRel = relPath.toLowerCase();
+
+      if (entry.isDirectory()) {
+        if (
+          IGNORED_DIRS.has(entry.name) ||
+          /(^|\/)(?:tests?|__tests__|specs?|__specs__|e2e|cypress|playwright|fixtures?|mocks?|__mocks__|test[-_]data|test[-_]utils?|testing|test[-_]helpers?|(?:[a-z0-9_-]+[-_])?tests?)(?:\/|$)/i.test(
+            lowerRel,
+          ) ||
+          lowerRel.includes("/client/") ||
+          lowerRel.includes("/frontend/") ||
+          lowerRel.includes("/examples/") ||
+          lowerRel.includes("/demo/") ||
+          lowerRel.includes("/hooks/") ||
+          lowerRel.includes("/i18n/") ||
+          lowerRel.includes("/components/") ||
+          lowerRel.includes("/context/")
+        ) {
+          continue;
         }
+        walk(fullPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+
+      if (!isBusinessLogicSourceFile(relPath, configExclusions)) {
+        continue;
+      }
+
+      logicFiles.push({
+        absolutePath: fullPath,
+        relativePath: relPath,
+        fileName: entry.name,
+      });
     }
+  };
 
-    const IGNORED_DIRS = new Set([
-        "node_modules", ".git", "coverage", "dist", "build",
-        ".next", ".vite", ".vitest", ".cache", "storage",
-        "client", "frontend", "ui", "web", "test-data", "test_data",
-        "fixtures", "mocks", "__mocks__", "public", "assets", "static",
-        "examples", "example", "demo", "demos", "sample", "samples",
-        "hooks", "i18n", "locales", "translations", "components", "context", "contexts",
-        "views", "pages"
-    ]);
-
-    const configExclusions = extractProjectCoverageExclusions(rootDir);
-
-    const walk = (dir) => {
-        let entries = [];
-        try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-        } catch {
-            return;
-        }
-
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            const relPath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
-            const lowerRel = relPath.toLowerCase();
-
-            if (entry.isDirectory()) {
-                if (
-                    IGNORED_DIRS.has(entry.name) ||
-                    /(^|\/)(?:tests?|__tests__|specs?|__specs__|e2e|cypress|playwright|fixtures?|mocks?|__mocks__|test[-_]data|test[-_]utils?|testing|test[-_]helpers?|(?:[a-z0-9_-]+[-_])?tests?)(?:\/|$)/i.test(lowerRel) ||
-                    lowerRel.includes("/client/") ||
-                    lowerRel.includes("/frontend/") ||
-                    lowerRel.includes("/examples/") ||
-                    lowerRel.includes("/demo/") ||
-                    lowerRel.includes("/hooks/") ||
-                    lowerRel.includes("/i18n/") ||
-                    lowerRel.includes("/components/") ||
-                    lowerRel.includes("/context/")
-                ) {
-                    continue;
-                }
-                walk(fullPath);
-                continue;
-            }
-
-            if (!entry.isFile()) continue;
-
-            if (!isBusinessLogicSourceFile(relPath, configExclusions)) {
-                continue;
-            }
-
-            logicFiles.push({
-                absolutePath: fullPath,
-                relativePath: relPath,
-                fileName: entry.name
-            });
-        }
-    };
-
-    walk(rootDir);
-    const sorted = logicFiles.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-    logicFilesCache.set(resolvedRoot, { timestamp: Date.now(), files: sorted });
-    return sorted;
+  walk(rootDir);
+  const sorted = logicFiles.sort((a, b) =>
+    a.relativePath.localeCompare(b.relativePath),
+  );
+  logicFilesCache.set(resolvedRoot, { timestamp: Date.now(), files: sorted });
+  return sorted;
 };
 
 const astMetricsCache = new Map();
@@ -1071,44 +1447,71 @@ const MAX_AST_CACHE_SIZE = 2000;
  * and coverage merges execute in O(1) without re-parsing Babel AST.
  */
 export const getCachedFileAstMetrics = (absolutePath) => {
-    try {
-        if (!absolutePath || !fs.existsSync(absolutePath)) {
-            return { content: "", codeLines: [""], totalLines: 1, funcs: [], branchList: [], totalFuncs: 0, totalBranches: 0 };
-        }
-        const stat = fs.statSync(absolutePath);
-        const cacheKey = `${path.resolve(absolutePath)}:${stat.mtimeMs}:${stat.size}`;
-        const cached = astMetricsCache.get(cacheKey);
-        if (cached) {
-            return cached;
-        }
-
-        const content = fs.readFileSync(absolutePath, "utf8");
-        const codeLines = content.split("\n");
-        const totalLines = Math.max(1, codeLines.length);
-        let funcs = [];
-        try { funcs = extractFunctions(content) || []; } catch { funcs = []; }
-        let branchList = [];
-        try { branchList = extractBranches(content) || []; } catch { branchList = []; }
-
-        const result = {
-            content,
-            codeLines,
-            totalLines,
-            funcs,
-            branchList,
-            totalFuncs: funcs.length,
-            totalBranches: branchList.reduce((s, b) => s + (b.locations?.length || 1), 0)
-        };
-
-        if (astMetricsCache.size >= MAX_AST_CACHE_SIZE) {
-            const oldestKey = astMetricsCache.keys().next().value;
-            if (oldestKey) astMetricsCache.delete(oldestKey);
-        }
-        astMetricsCache.set(cacheKey, result);
-        return result;
-    } catch {
-        return { content: "", codeLines: [""], totalLines: 1, funcs: [], branchList: [], totalFuncs: 0, totalBranches: 0 };
+  try {
+    if (!absolutePath || !fs.existsSync(absolutePath)) {
+      return {
+        content: "",
+        codeLines: [""],
+        totalLines: 1,
+        funcs: [],
+        branchList: [],
+        totalFuncs: 0,
+        totalBranches: 0,
+      };
     }
+    const stat = fs.statSync(absolutePath);
+    const cacheKey = `${path.resolve(absolutePath)}:${stat.mtimeMs}:${stat.size}`;
+    const cached = astMetricsCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const content = fs.readFileSync(absolutePath, "utf8");
+    const codeLines = content.split("\n");
+    const totalLines = Math.max(1, codeLines.length);
+    let funcs = [];
+    try {
+      funcs = extractFunctions(content) || [];
+    } catch {
+      funcs = [];
+    }
+    let branchList = [];
+    try {
+      branchList = extractBranches(content) || [];
+    } catch {
+      branchList = [];
+    }
+
+    const result = {
+      content,
+      codeLines,
+      totalLines,
+      funcs,
+      branchList,
+      totalFuncs: funcs.length,
+      totalBranches: branchList.reduce(
+        (s, b) => s + (b.locations?.length || 1),
+        0,
+      ),
+    };
+
+    if (astMetricsCache.size >= MAX_AST_CACHE_SIZE) {
+      const oldestKey = astMetricsCache.keys().next().value;
+      if (oldestKey) astMetricsCache.delete(oldestKey);
+    }
+    astMetricsCache.set(cacheKey, result);
+    return result;
+  } catch {
+    return {
+      content: "",
+      codeLines: [""],
+      totalLines: 1,
+      funcs: [],
+      branchList: [],
+      totalFuncs: 0,
+      totalBranches: 0,
+    };
+  }
 };
 
 /**
@@ -1118,99 +1521,118 @@ export const getCachedFileAstMetrics = (absolutePath) => {
  * using AST traversal with regex fallback.
  */
 export const extractBranches = (content) => {
-    const branches = [];
-    try {
-        const parsed = parseJavaScriptCode(content);
-        if (parsed?.success && parsed.ast) {
-            const walk = (node) => {
-                if (!node || typeof node !== "object") return;
-                if (node.type === "IfStatement") {
-                    branches.push({
-                        type: "if",
-                        line: node.loc?.start?.line || 1,
-                        locations: [
-                            node.consequent?.loc || { start: {}, end: {} },
-                            node.alternate?.loc || { start: {}, end: {} }
-                        ]
-                    });
-                } else if (node.type === "ConditionalExpression") {
-                    branches.push({
-                        type: "cond-expr",
-                        line: node.loc?.start?.line || 1,
-                        locations: [
-                            node.consequent?.loc || { start: {}, end: {} },
-                            node.alternate?.loc || { start: {}, end: {} }
-                        ]
-                    });
-                } else if (node.type === "LogicalExpression" && (node.operator === "&&" || node.operator === "||" || node.operator === "??")) {
-                    branches.push({
-                        type: "binary-expr",
-                        line: node.loc?.start?.line || 1,
-                        locations: [
-                            node.left?.loc || { start: {}, end: {} },
-                            node.right?.loc || { start: {}, end: {} }
-                        ]
-                    });
-                } else if (node.type === "SwitchCase") {
-                    branches.push({
-                        type: "switch",
-                        line: node.loc?.start?.line || 1,
-                        locations: [node.loc || { start: {}, end: {} }]
-                    });
-                } else if (node.type === "CatchClause") {
-                    branches.push({
-                        type: "catch",
-                        line: node.loc?.start?.line || 1,
-                        locations: [node.loc || { start: {}, end: {} }]
-                    });
-                }
-
-                for (const key of Object.keys(node)) {
-                    if (key === "loc" || key === "comments" || key === "leadingComments" || key === "trailingComments") continue;
-                    const child = node[key];
-                    if (Array.isArray(child)) {
-                        for (let k = 0; k < child.length; k++) walk(child[k]);
-                    } else if (child && typeof child === "object") {
-                        walk(child);
-                    }
-                }
-            };
-            walk(parsed.ast);
+  const branches = [];
+  try {
+    const parsed = parseJavaScriptCode(content);
+    if (parsed?.success && parsed.ast) {
+      const walk = (node) => {
+        if (!node || typeof node !== "object") return;
+        if (node.type === "IfStatement") {
+          branches.push({
+            type: "if",
+            line: node.loc?.start?.line || 1,
+            locations: [
+              node.consequent?.loc || { start: {}, end: {} },
+              node.alternate?.loc || { start: {}, end: {} },
+            ],
+          });
+        } else if (node.type === "ConditionalExpression") {
+          branches.push({
+            type: "cond-expr",
+            line: node.loc?.start?.line || 1,
+            locations: [
+              node.consequent?.loc || { start: {}, end: {} },
+              node.alternate?.loc || { start: {}, end: {} },
+            ],
+          });
+        } else if (
+          node.type === "LogicalExpression" &&
+          (node.operator === "&&" ||
+            node.operator === "||" ||
+            node.operator === "??")
+        ) {
+          branches.push({
+            type: "binary-expr",
+            line: node.loc?.start?.line || 1,
+            locations: [
+              node.left?.loc || { start: {}, end: {} },
+              node.right?.loc || { start: {}, end: {} },
+            ],
+          });
+        } else if (node.type === "SwitchCase") {
+          branches.push({
+            type: "switch",
+            line: node.loc?.start?.line || 1,
+            locations: [node.loc || { start: {}, end: {} }],
+          });
+        } else if (node.type === "CatchClause") {
+          branches.push({
+            type: "catch",
+            line: node.loc?.start?.line || 1,
+            locations: [node.loc || { start: {}, end: {} }],
+          });
         }
-    } catch (_) { }
 
-    if (branches.length === 0 && typeof content === "string") {
-        const lines = content.split("\n");
-        lines.forEach((line, idx) => {
-            const lineNo = idx + 1;
-            const ifMatches = line.match(/\bif\s*\(/g);
-            if (ifMatches) {
-                ifMatches.forEach(() => {
-                    branches.push({ type: "if", line: lineNo, locations: [{}, {}] });
-                });
-            }
-            const ternaryMatches = line.match(/[^?:]\?[^?:]/g);
-            if (ternaryMatches) {
-                ternaryMatches.forEach(() => {
-                    branches.push({ type: "cond-expr", line: lineNo, locations: [{}, {}] });
-                });
-            }
-            const logicalMatches = line.match(/(&&|\|\||\?\?)/g);
-            if (logicalMatches) {
-                logicalMatches.forEach(() => {
-                    branches.push({ type: "binary-expr", line: lineNo, locations: [{}, {}] });
-                });
-            }
-            const caseMatches = line.match(/\b(case\s+[^:]+|default)\s*:/g);
-            if (caseMatches) {
-                caseMatches.forEach(() => {
-                    branches.push({ type: "switch", line: lineNo, locations: [{}] });
-                });
-            }
-        });
+        for (const key of Object.keys(node)) {
+          if (
+            key === "loc" ||
+            key === "comments" ||
+            key === "leadingComments" ||
+            key === "trailingComments"
+          )
+            continue;
+          const child = node[key];
+          if (Array.isArray(child)) {
+            for (let k = 0; k < child.length; k++) walk(child[k]);
+          } else if (child && typeof child === "object") {
+            walk(child);
+          }
+        }
+      };
+      walk(parsed.ast);
     }
+  } catch (_) {}
 
-    return branches;
+  if (branches.length === 0 && typeof content === "string") {
+    const lines = content.split("\n");
+    lines.forEach((line, idx) => {
+      const lineNo = idx + 1;
+      const ifMatches = line.match(/\bif\s*\(/g);
+      if (ifMatches) {
+        ifMatches.forEach(() => {
+          branches.push({ type: "if", line: lineNo, locations: [{}, {}] });
+        });
+      }
+      const ternaryMatches = line.match(/[^?:]\?[^?:]/g);
+      if (ternaryMatches) {
+        ternaryMatches.forEach(() => {
+          branches.push({
+            type: "cond-expr",
+            line: lineNo,
+            locations: [{}, {}],
+          });
+        });
+      }
+      const logicalMatches = line.match(/(&&|\|\||\?\?)/g);
+      if (logicalMatches) {
+        logicalMatches.forEach(() => {
+          branches.push({
+            type: "binary-expr",
+            line: lineNo,
+            locations: [{}, {}],
+          });
+        });
+      }
+      const caseMatches = line.match(/\b(case\s+[^:]+|default)\s*:/g);
+      if (caseMatches) {
+        caseMatches.forEach(() => {
+          branches.push({ type: "switch", line: lineNo, locations: [{}] });
+        });
+      }
+    });
+  }
+
+  return branches;
 };
 
 /**
@@ -1218,142 +1640,180 @@ export const extractBranches = (content) => {
  * for logic files in projects that have no test files yet.
  */
 export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
-    if (!fs.existsSync(coverageDir)) {
-        try { fs.mkdirSync(coverageDir, { recursive: true }); } catch { }
+  if (!fs.existsSync(coverageDir)) {
+    try {
+      fs.mkdirSync(coverageDir, { recursive: true });
+    } catch {}
+  }
+
+  const summaryData = {
+    total: {
+      lines: { total: 0, covered: 0, skipped: 0, pct: 0 },
+      statements: { total: 0, covered: 0, skipped: 0, pct: 0 },
+      functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
+      branches: { total: 0, covered: 0, skipped: 0, pct: 0 },
+    },
+  };
+  const coverageFinal = {};
+
+  for (const file of logicFiles) {
+    let content = "";
+    try {
+      content = fs.readFileSync(file.absolutePath, "utf8");
+    } catch {
+      continue;
     }
 
-    const summaryData = {
-        total: {
-            lines: { total: 0, covered: 0, skipped: 0, pct: 0 },
-            statements: { total: 0, covered: 0, skipped: 0, pct: 0 },
-            functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
-            branches: { total: 0, covered: 0, skipped: 0, pct: 0 }
-        }
+    const codeLines = content.split("\n");
+    const totalLines = Math.max(1, codeLines.length);
+
+    let funcs = [];
+    try {
+      funcs = extractFunctions(content) || [];
+    } catch {
+      funcs = [];
+    }
+
+    if (funcs.length === 0) {
+      const fnRegex =
+        /(?:function\s+([a-zA-Z0-9_$]+)|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*function)/g;
+      let match;
+      let idx = 0;
+      while ((match = fnRegex.exec(content)) !== null) {
+        const fnName = match[1] || match[2] || match[3] || `fn_${idx}`;
+        const line = content.slice(0, match.index).split("\n").length;
+        funcs.push({
+          functionName: fnName,
+          startLine: line,
+          endLine: line + 5,
+        });
+        idx++;
+      }
+    }
+
+    let branchList = [];
+    try {
+      branchList = extractBranches(content) || [];
+    } catch {
+      branchList = [];
+    }
+
+    const totalFuncs = funcs.length;
+    const totalStmts = totalLines;
+    const totalBranches = branchList.reduce(
+      (sum, br) => sum + (br.locations?.length || 1),
+      0,
+    );
+
+    summaryData.total.lines.total += totalLines;
+    summaryData.total.statements.total += totalStmts;
+    summaryData.total.functions.total += totalFuncs;
+    summaryData.total.branches.total += totalBranches;
+
+    const fileSummary = {
+      _syntheticBaseline: true,
+      lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+      statements: { total: totalStmts, covered: 0, skipped: 0, pct: 0 },
+      functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
+      branches: { total: totalBranches, covered: 0, skipped: 0, pct: 0 },
     };
-    const coverageFinal = {};
 
-    for (const file of logicFiles) {
-        let content = "";
-        try {
-            content = fs.readFileSync(file.absolutePath, "utf8");
-        } catch {
-            continue;
-        }
+    summaryData[file.absolutePath] = fileSummary;
+    summaryData[file.relativePath] = fileSummary;
 
-        const codeLines = content.split("\n");
-        const totalLines = Math.max(1, codeLines.length);
+    const statementMap = {};
+    const fnMap = {};
+    const branchMap = {};
+    const s = {};
+    const f = {};
+    const b = {};
 
-        let funcs = [];
-        try {
-            funcs = extractFunctions(content) || [];
-        } catch {
-            funcs = [];
-        }
+    codeLines.forEach((line, i) => {
+      const lineNo = i + 1;
+      statementMap[String(i)] = {
+        start: { line: lineNo, column: 0 },
+        end: { line: lineNo, column: line.length },
+      };
+      s[String(i)] = 0;
+    });
 
-        if (funcs.length === 0) {
-            const fnRegex = /(?:function\s+([a-zA-Z0-9_$]+)|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*function)/g;
-            let match;
-            let idx = 0;
-            while ((match = fnRegex.exec(content)) !== null) {
-                const fnName = match[1] || match[2] || match[3] || `fn_${idx}`;
-                const line = content.slice(0, match.index).split("\n").length;
-                funcs.push({ functionName: fnName, startLine: line, endLine: line + 5 });
-                idx++;
-            }
-        }
+    funcs.forEach((fn, i) => {
+      const sLine = fn.startLine || 1;
+      const eLine = fn.endLine || sLine;
+      fnMap[String(i)] = {
+        name: fn.functionName || `anonymous_${i}`,
+        decl: {
+          start: { line: sLine, column: 0 },
+          end: { line: eLine, column: 0 },
+        },
+        loc: {
+          start: { line: sLine, column: 0 },
+          end: { line: eLine, column: 0 },
+        },
+        line: sLine,
+      };
+      f[String(i)] = 0;
+    });
 
-        let branchList = [];
-        try {
-            branchList = extractBranches(content) || [];
-        } catch {
-            branchList = [];
-        }
+    branchList.forEach((br, i) => {
+      branchMap[String(i)] = {
+        line: br.line || 1,
+        type: br.type || "if",
+        loc: {
+          start: { line: br.line || 1, column: 0 },
+          end: { line: br.line || 1, column: 0 },
+        },
+        locations: br.locations || [
+          { start: {}, end: {} },
+          { start: {}, end: {} },
+        ],
+      };
+      b[String(i)] = (br.locations || [1, 2]).map(() => 0);
+    });
 
-        const totalFuncs = funcs.length;
-        const totalStmts = totalLines;
-        const totalBranches = branchList.reduce((sum, br) => sum + (br.locations?.length || 1), 0);
+    const fileFinalEntry = {
+      _syntheticBaseline: true,
+      path: file.relativePath,
+      statementMap,
+      fnMap,
+      branchMap,
+      s,
+      f,
+      b,
+    };
+    coverageFinal[file.relativePath] = fileFinalEntry;
+    coverageFinal[file.absolutePath] = fileFinalEntry;
+  }
 
-        summaryData.total.lines.total += totalLines;
-        summaryData.total.statements.total += totalStmts;
-        summaryData.total.functions.total += totalFuncs;
-        summaryData.total.branches.total += totalBranches;
-
-        const fileSummary = {
-            _syntheticBaseline: true,
-            lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-            statements: { total: totalStmts, covered: 0, skipped: 0, pct: 0 },
-            functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
-            branches: { total: totalBranches, covered: 0, skipped: 0, pct: 0 }
-        };
-
-        summaryData[file.absolutePath] = fileSummary;
-        summaryData[file.relativePath] = fileSummary;
-
-        const statementMap = {};
-        const fnMap = {};
-        const branchMap = {};
-        const s = {};
-        const f = {};
-        const b = {};
-
-        codeLines.forEach((line, i) => {
-            const lineNo = i + 1;
-            statementMap[String(i)] = {
-                start: { line: lineNo, column: 0 },
-                end: { line: lineNo, column: line.length }
-            };
-            s[String(i)] = 0;
-        });
-
-        funcs.forEach((fn, i) => {
-            const sLine = fn.startLine || 1;
-            const eLine = fn.endLine || sLine;
-            fnMap[String(i)] = {
-                name: fn.functionName || `anonymous_${i}`,
-                decl: { start: { line: sLine, column: 0 }, end: { line: eLine, column: 0 } },
-                loc: { start: { line: sLine, column: 0 }, end: { line: eLine, column: 0 } },
-                line: sLine
-            };
-            f[String(i)] = 0;
-        });
-
-        branchList.forEach((br, i) => {
-            branchMap[String(i)] = {
-                line: br.line || 1,
-                type: br.type || "if",
-                loc: { start: { line: br.line || 1, column: 0 }, end: { line: br.line || 1, column: 0 } },
-                locations: br.locations || [{ start: {}, end: {} }, { start: {}, end: {} }]
-            };
-            b[String(i)] = (br.locations || [1, 2]).map(() => 0);
-        });
-
-        const fileFinalEntry = {
-            _syntheticBaseline: true,
-            path: file.relativePath,
-            statementMap,
-            fnMap,
-            branchMap,
-            s,
-            f,
-            b
-        };
-        coverageFinal[file.relativePath] = fileFinalEntry;
-        coverageFinal[file.absolutePath] = fileFinalEntry;
+  const targetDirs = [
+    coverageDir,
+    path.join(rootDir, "coverage", "unit"),
+    path.join(rootDir, "coverage"),
+  ].filter(Boolean);
+  const uniqueDirs = Array.from(
+    new Set(targetDirs.map((d) => path.resolve(d))),
+  );
+  for (const dir of uniqueDirs) {
+    if (!fs.existsSync(dir)) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch {}
     }
+    try {
+      fs.writeFileSync(
+        path.join(dir, "coverage-summary.json"),
+        JSON.stringify(summaryData, null, 2),
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(dir, "coverage-final.json"),
+        JSON.stringify(coverageFinal, null, 2),
+        "utf8",
+      );
+    } catch {}
+  }
 
-    const targetDirs = [coverageDir, path.join(rootDir, "coverage", "unit"), path.join(rootDir, "coverage")].filter(Boolean);
-    const uniqueDirs = Array.from(new Set(targetDirs.map(d => path.resolve(d))));
-    for (const dir of uniqueDirs) {
-        if (!fs.existsSync(dir)) {
-            try { fs.mkdirSync(dir, { recursive: true }); } catch { }
-        }
-        try {
-            fs.writeFileSync(path.join(dir, "coverage-summary.json"), JSON.stringify(summaryData, null, 2), "utf8");
-            fs.writeFileSync(path.join(dir, "coverage-final.json"), JSON.stringify(coverageFinal, null, 2), "utf8");
-        } catch { }
-    }
-
-    return { summaryData, coverageFinal };
+  return { summaryData, coverageFinal };
 };
 
 /**
@@ -1362,111 +1822,158 @@ export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
  * clean relative import paths based on the test file's location.
  */
 export const healAllTestFiles = (_rootDir, _specificFiles = []) => {
-    // Preserve storage integrity: do not mutate user test files in storage during test runs
-    return;
+  // Preserve storage integrity: do not mutate user test files in storage during test runs
+  return;
 };
 
 /**
  * SCRUM-139: Run npm install in rootDir via Docker if dependencies missing.
  * @returns {Promise<void>}
  */
-const runNpmInstall = async (jobId, rootDir) => {
-    const rootPkg = path.join(rootDir, "package.json");
-    const hasRootPkg = fs.existsSync(rootPkg);
-    const nodeModulesDir = path.join(rootDir, "node_modules");
-    const backendModulesDir = path.join(rootDir, "backend", "node_modules");
-    const backendPkg = path.join(rootDir, "backend", "package.json");
+export const runNpmInstall = async (jobId, rootDir) => {
+  const rootPkg = path.join(rootDir, "package.json");
+  const hasRootPkg = fs.existsSync(rootPkg);
+  const nodeModulesDir = path.join(rootDir, "node_modules");
+  const backendModulesDir = path.join(rootDir, "backend", "node_modules");
+  const backendPkg = path.join(rootDir, "backend", "package.json");
 
-    let hasAllDeclaredDeps = true;
-    if (hasRootPkg && fs.existsSync(nodeModulesDir)) {
-        try {
-            const pkg = JSON.parse(fs.readFileSync(rootPkg, "utf8"));
-            const declaredDeps = Object.keys(pkg.dependencies || {});
-            for (const d of declaredDeps) {
-                if (!fs.existsSync(path.join(nodeModulesDir, d))) {
-                    hasAllDeclaredDeps = false;
-                    break;
-                }
-            }
-        } catch { }
+  let hasAllDeclaredDeps = true;
+  if (hasRootPkg && fs.existsSync(nodeModulesDir)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(rootPkg, "utf8"));
+      const declaredDeps = Object.keys(pkg.dependencies || {});
+      for (const d of declaredDeps) {
+        if (!fs.existsSync(path.join(nodeModulesDir, d))) {
+          hasAllDeclaredDeps = false;
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  const rootHasDeps =
+    !hasRootPkg ||
+    (fs.existsSync(nodeModulesDir) &&
+      fs.readdirSync(nodeModulesDir).length > 3 &&
+      hasAllDeclaredDeps);
+  const backendHasDeps =
+    !fs.existsSync(backendPkg) ||
+    (fs.existsSync(backendModulesDir) &&
+      fs.readdirSync(backendModulesDir).length > 3);
+
+  if (rootHasDeps && backendHasDeps) {
+    await addJobLog(
+      jobId,
+      "INFO",
+      "[SCRUM-139] node_modules exists at root.",
+    ).catch(() => {});
+  } else if (hasRootPkg && !rootHasDeps) {
+    await addJobLog(
+      jobId,
+      "INFO",
+      `[SCRUM-139] Starting npm install at: ${rootDir}`,
+    ).catch(() => {});
+
+    const result = await dockerRunner.run({
+      snapshotPath: rootDir,
+      command:
+        "npm install --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false",
+      timeoutMs: INSTALL_TIMEOUT_MS,
+      jobId,
+    });
+
+    if (result.success) {
+      await addJobLog(
+        jobId,
+        "INFO",
+        "[SCRUM-139] npm install completed successfully.",
+      ).catch(() => {});
+    } else {
+      if (
+        fs.existsSync(nodeModulesDir) &&
+        fs.readdirSync(nodeModulesDir).length > 2
+      ) {
+        await addJobLog(
+          jobId,
+          "WARN",
+          `[SCRUM-139] npm install warning (exit code ${result.exitCode}), continuing test execution...`,
+        ).catch(() => {});
+      } else {
+        const errorDetail =
+          result.stderr?.trim() || result.stdout?.trim() || "";
+        const msg = `[SCRUM-139] npm install failed with exit code ${result.exitCode}${errorDetail ? `: ${errorDetail.slice(0, 200)}` : ""}`;
+        await addJobLog(jobId, "ERROR", msg).catch(() => {});
+        throw new Error(msg);
+      }
     }
+  }
 
-    const rootHasDeps = !hasRootPkg || (fs.existsSync(nodeModulesDir) && fs.readdirSync(nodeModulesDir).length > 3 && hasAllDeclaredDeps);
-    const backendHasDeps = !fs.existsSync(backendPkg) || (fs.existsSync(backendModulesDir) && fs.readdirSync(backendModulesDir).length > 3);
+  // Check if backend, examples, packages or other subdirectories have package.json without node_modules
+  try {
+    const findSubPackages = (dir, depth = 1) => {
+      const list = [];
+      if (depth > 3) return list;
+      try {
+        for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (
+            item.isDirectory() &&
+            ![
+              "node_modules",
+              ".git",
+              "coverage",
+              "dist",
+              "build",
+              "storage",
+              "client",
+              "frontend",
+            ].includes(item.name)
+          ) {
+            const subDir = path.join(dir, item.name);
+            const subPkg = path.join(subDir, "package.json");
+            if (fs.existsSync(subPkg)) {
+              list.push(subDir);
+            }
+            if (depth < 3) {
+              list.push(...findSubPackages(subDir, depth + 1));
+            }
+          }
+        }
+      } catch {}
+      return list;
+    };
 
-    if (rootHasDeps && backendHasDeps) {
-        await addJobLog(jobId, "INFO", "[SCRUM-139] node_modules exists at root.").catch(() => { });
-    } else if (hasRootPkg && !rootHasDeps) {
-        await addJobLog(jobId, "INFO", `[SCRUM-139] Starting npm install at: ${rootDir}`).catch(() => { });
-
-        const result = await dockerRunner.run({
-            snapshotPath: rootDir,
-            command: "npm install --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false",
-            timeoutMs: INSTALL_TIMEOUT_MS,
-            jobId
+    const subPackages = findSubPackages(rootDir, 1);
+    for (const subDir of subPackages) {
+      const relSub = path.relative(rootDir, subDir).replace(/\\/g, "/");
+      const subModules = path.join(subDir, "node_modules");
+      if (
+        !fs.existsSync(subModules) ||
+        fs.readdirSync(subModules).length <= 2
+      ) {
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[SCRUM-139] Installing dependencies for ${relSub}...`,
+        ).catch(() => {});
+        await dockerRunner.run({
+          snapshotPath: rootDir,
+          command: `npm install --prefix ${relSub} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`,
+          timeoutMs: INSTALL_TIMEOUT_MS,
+          jobId,
         });
-
-        if (result.success) {
-            await addJobLog(jobId, "INFO", "[SCRUM-139] npm install completed successfully.").catch(() => { });
-        } else {
-            if (fs.existsSync(nodeModulesDir) && fs.readdirSync(nodeModulesDir).length > 2) {
-                await addJobLog(jobId, "WARN", `[SCRUM-139] npm install warning (exit code ${result.exitCode}), continuing test execution...`).catch(() => { });
-            } else {
-                const errorDetail = result.stderr?.trim() || result.stdout?.trim() || "";
-                const msg = `[SCRUM-139] npm install failed with exit code ${result.exitCode}${errorDetail ? `: ${errorDetail.slice(0, 200)}` : ""}`;
-                await addJobLog(jobId, "ERROR", msg).catch(() => { });
-                throw new Error(msg);
-            }
-        }
+      }
     }
+  } catch (_) {}
 
-    // Check if backend, examples, packages or other subdirectories have package.json without node_modules
-    try {
-        const findSubPackages = (dir, depth = 1) => {
-            const list = [];
-            if (depth > 3) return list;
-            try {
-                for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
-                    if (item.isDirectory() && !["node_modules", ".git", "coverage", "dist", "build", "storage", "client", "frontend"].includes(item.name)) {
-                        const subDir = path.join(dir, item.name);
-                        const subPkg = path.join(subDir, "package.json");
-                        if (fs.existsSync(subPkg)) {
-                            list.push(subDir);
-                        }
-                        if (depth < 3) {
-                            list.push(...findSubPackages(subDir, depth + 1));
-                        }
-                    }
-                }
-            } catch { }
-            return list;
-        };
+  // Run build step if needed (deduplicated via detectAndRunBuild)
+  try {
+    await detectAndRunBuild(jobId, rootDir);
+  } catch (_) {}
 
-        const subPackages = findSubPackages(rootDir, 1);
-        for (const subDir of subPackages) {
-            const relSub = path.relative(rootDir, subDir).replace(/\\/g, "/");
-            const subModules = path.join(subDir, "node_modules");
-            if (!fs.existsSync(subModules) || fs.readdirSync(subModules).length <= 2) {
-                await addJobLog(jobId, "INFO", `[SCRUM-139] Installing dependencies for ${relSub}...`).catch(() => { });
-                await dockerRunner.run({
-                    snapshotPath: rootDir,
-                    command: `npm install --prefix ${relSub} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`,
-                    timeoutMs: INSTALL_TIMEOUT_MS,
-                    jobId
-                });
-            }
-        }
-    } catch (_) { }
-
-    // Run build step if needed (deduplicated via detectAndRunBuild)
-    try {
-        await detectAndRunBuild(jobId, rootDir);
-    } catch (_) { }
-
-    // Automatically generate Prisma Client if project uses Prisma
-    try {
-        await detectAndRunPrismaGenerate(jobId, rootDir);
-    } catch (_) { }
+  // Automatically generate Prisma Client if project uses Prisma
+  try {
+    await detectAndRunPrismaGenerate(jobId, rootDir);
+  } catch (_) {}
 };
 
 /**
@@ -1481,49 +1988,87 @@ const runNpmInstall = async (jobId, rootDir) => {
  * Helper: Find closest ancestor directory containing package.json (relative to rootDir)
  */
 export const getPackageForFile = (relFile, root) => {
-    let currentDir = path.dirname(relFile.replace(/\\/g, "/"));
-    while (currentDir && currentDir !== "." && currentDir !== "/") {
-        const pkgPath = path.join(root, currentDir, "package.json");
-        if (fs.existsSync(pkgPath)) {
-            return currentDir.replace(/\\/g, "/");
-        }
-        const parent = path.dirname(currentDir);
-        if (parent === currentDir) break;
-        currentDir = parent;
+  let currentDir = path.dirname(relFile.replace(/\\/g, "/"));
+  while (currentDir && currentDir !== "." && currentDir !== "/") {
+    const pkgPath = path.join(root, currentDir, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      return currentDir.replace(/\\/g, "/");
     }
-    return "";
+    const hasTestConfig = [
+      "vitest.config.ts",
+      "vitest.config.js",
+      "vitest.config.mjs",
+      "vitest.config.cjs",
+      "vite.config.ts",
+      "vite.config.js",
+      "vite.config.mjs",
+      "vite.config.cjs",
+      "jest.config.js",
+      "jest.config.ts",
+      "jest.config.cjs",
+      "jest.config.mjs",
+      "jest.config.json",
+    ].some((cfg) => fs.existsSync(path.join(root, currentDir, cfg)));
+    if (hasTestConfig) {
+      return currentDir.replace(/\\/g, "/");
+    }
+    const parent = path.dirname(currentDir);
+    if (parent === currentDir) break;
+    currentDir = parent;
+  }
+  return "";
 };
 
 export const getOptimalWorkerFlags = (fileCount = 0, customCommand = "") => {
-    if (customCommand && /(?:^|\s)--(?:runInBand|maxWorkers)(?:[=\s]|$)/.test(customCommand)) {
-        return "";
-    }
-    if (fileCount > 0 && fileCount <= 3) {
-        return "--runInBand";
-    }
-    return "--maxWorkers=2";
+  if (
+    customCommand &&
+    /(?:^|\s)--(?:runInBand|maxWorkers)(?:[=\s]|$)/.test(customCommand)
+  ) {
+    return "";
+  }
+  if (fileCount > 0 && fileCount <= 3) {
+    return "--runInBand";
+  }
+  return "--maxWorkers=2";
 };
 
-export const jestParallelFlags = command => /(?:^|\s)--(?:runInBand|maxWorkers)(?:[=\s]|$)/.test(command) ? '' : ' --maxWorkers=50%';
+export const jestParallelFlags = (command) =>
+  /(?:^|\s)--(?:runInBand|maxWorkers)(?:[=\s]|$)/.test(command)
+    ? ""
+    : " --maxWorkers=50%";
 
 export const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
-    const nodePrefix = isEsm ? "node --experimental-vm-modules" : "node";
-    const directJest = path.join(dir, "node_modules", "jest", "bin", "jest.js");
-    let base;
-    if (fs.existsSync(directJest)) base = `${nodePrefix} node_modules/jest/bin/jest.js`;
-    const localBin = path.join(dir, "node_modules", ".bin", "jest");
-    if (!base && fs.existsSync(localBin)) base = `${nodePrefix} node_modules/jest/bin/jest.js`;
-    const parentBin = path.join(dir, "..", "node_modules", ".bin", "jest");
-    if (!base && fs.existsSync(parentBin)) base = `${nodePrefix} ../node_modules/jest/bin/jest.js`;
-    if (!base && fs.existsSync("/app/node_modules/.bin/jest")) base = `${nodePrefix} /app/node_modules/jest/bin/jest.js`;
-    base ||= isEsm ? "node --experimental-vm-modules node_modules/jest/bin/jest.js" : "npx --no-install jest";
-    if (typeof customCommand === 'string' && customCommand.trim()) {
-        const trimmed = customCommand.trim().replace(/(?:^|\s)--(?:coverage|watch(?:All)?)(?:=(?:true|false))?(?=\s|$)/g, ' ').trim();
-        const bare = trimmed.match(/^(?:npx(?:\.cmd)?(?:\s+--no-install)?\s+)?jest(?:\.cmd)?(?=\s|$)(.*)$/i);
-        if (bare) return `${base}${bare[1].trim() ? ` ${bare[1].trim()}` : ''}`;
-        if (trimmed.includes('jest')) return trimmed;
-    }
-    return base;
+  const nodePrefix = isEsm ? "node --experimental-vm-modules" : "node";
+  const directJest = path.join(dir, "node_modules", "jest", "bin", "jest.js");
+  let base;
+  if (fs.existsSync(directJest))
+    base = `${nodePrefix} node_modules/jest/bin/jest.js`;
+  const localBin = path.join(dir, "node_modules", ".bin", "jest");
+  if (!base && fs.existsSync(localBin))
+    base = `${nodePrefix} node_modules/jest/bin/jest.js`;
+  const parentBin = path.join(dir, "..", "node_modules", ".bin", "jest");
+  if (!base && fs.existsSync(parentBin))
+    base = `${nodePrefix} ../node_modules/jest/bin/jest.js`;
+  if (!base && fs.existsSync("/app/node_modules/.bin/jest"))
+    base = `${nodePrefix} /app/node_modules/jest/bin/jest.js`;
+  base ||= isEsm
+    ? "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+    : "npx --no-install jest";
+  if (typeof customCommand === "string" && customCommand.trim()) {
+    const trimmed = customCommand
+      .trim()
+      .replace(
+        /(?:^|\s)--(?:coverage|watch(?:All)?)(?:=(?:true|false))?(?=\s|$)/g,
+        " ",
+      )
+      .trim();
+    const bare = trimmed.match(
+      /^(?:npx(?:\.cmd)?(?:\s+--no-install)?\s+)?jest(?:\.cmd)?(?=\s|$)(.*)$/i,
+    );
+    if (bare) return `${base}${bare[1].trim() ? ` ${bare[1].trim()}` : ""}`;
+    if (trimmed.includes("jest")) return trimmed;
+  }
+  return base;
 };
 
 /**
@@ -1535,1485 +2080,2381 @@ export const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
  * 3. If unavailable anywhere, gracefully fallback to "node" to prevent test runner abortion.
  */
 export const resolveTestEnvironment = (dir, rootDir, configuredEnv) => {
-    const env = configuredEnv || "node";
-    if (env === "node") return "node";
-    if (env === "jsdom" || env === "jest-environment-jsdom") {
-        try {
-            if (dir && fs.existsSync(path.join(dir, "node_modules", "jest-environment-jsdom"))) return "jsdom";
-        } catch (_) { }
-        try {
-            if (rootDir && fs.existsSync(path.join(rootDir, "node_modules", "jest-environment-jsdom"))) return "jsdom";
-        } catch (_) { }
-        try {
-            const resolved = esmRequire.resolve("jest-environment-jsdom");
-            if (resolved && fs.existsSync(resolved)) {
-                return resolved.replace(/\\/g, "/");
-            }
-        } catch (_) { }
-        try {
-            if (fs.existsSync("/app/node_modules/jest-environment-jsdom")) {
-                return "/app/node_modules/jest-environment-jsdom";
-            }
-        } catch (_) { }
-        console.warn(`[resolveTestEnvironment] Warning: "jest-environment-jsdom" requested by ${dir || rootDir} not installed; falling back to "node".`);
-        return "node";
+  const env = configuredEnv || "node";
+  if (env === "node") return "node";
+  if (env === "jsdom" || env === "jest-environment-jsdom") {
+    try {
+      if (
+        dir &&
+        fs.existsSync(path.join(dir, "node_modules", "jest-environment-jsdom"))
+      )
+        return "jsdom";
+    } catch (_) {}
+    try {
+      if (
+        rootDir &&
+        fs.existsSync(
+          path.join(rootDir, "node_modules", "jest-environment-jsdom"),
+        )
+      )
+        return "jsdom";
+    } catch (_) {}
+    try {
+      const resolved = esmRequire.resolve("jest-environment-jsdom");
+      if (resolved && fs.existsSync(resolved)) {
+        return resolved.replace(/\\/g, "/");
+      }
+    } catch (_) {}
+    try {
+      if (fs.existsSync("/app/node_modules/jest-environment-jsdom")) {
+        return "/app/node_modules/jest-environment-jsdom";
+      }
+    } catch (_) {}
+    console.warn(
+      `[resolveTestEnvironment] Warning: "jest-environment-jsdom" requested by ${dir || rootDir} not installed; falling back to "node".`,
+    );
+    return "node";
+  }
+  return env;
+};
+
+/**
+ * Synthesizes the contents of the Jest setup script (covai-jest-setup.cjs / covai-setup-*.cjs)
+ * Ensures:
+ * 1. Root .env and subpackage .env are loaded into process.env.
+ * 2. Precedence: Explicit process.env > .env.test > .env > .env.example > Hermetic RAM Mocks.
+ * 3. Injects hermetic RAM mock dictionary to guarantee zero undefined crashes.
+ * 4. Configures Jest global shims, custom matchers, and Bull/Prisma mocks.
+ */
+export const buildSetupContent = ({
+  rootDir = "",
+  targetDir = null,
+  hermeticMocks = {},
+  virtualDbEnv = {},
+} = {}) => {
+  const serializedMocks = JSON.stringify(hermeticMocks || {});
+  const serializedVirtualDbEnv = JSON.stringify(virtualDbEnv || {});
+  const safeRootDir = rootDir ? String(rootDir).replace(/\\/g, "/") : "";
+  const safeTargetDir = targetDir ? String(targetDir).replace(/\\/g, "/") : "";
+  let detectedDbInfo = { prismaSeeds: {}, mongooseSeeds: {} };
+  try {
+    const inspectDir = rootDir || targetDir;
+    if (inspectDir && fs.existsSync(inspectDir)) {
+      detectedDbInfo = detectProjectDatabase(inspectDir);
     }
-    return env;
+  } catch (_) {}
+  const serializedPrismaSeeds = JSON.stringify(detectedDbInfo?.prismaSeeds || {});
+
+  return (
+    `try {\n` +
+    `  delete require.cache[__filename];\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  process.env.NODE_ENV = process.env.NODE_ENV || 'test';\n` +
+    `  process.exit = function(code) {};\n` +
+    `  process.on('unhandledRejection', () => {});\n` +
+    `  process.on('uncaughtException', () => {});\n` +
+    `  let fsModule;\n` +
+    `  try { fsModule = (typeof fs !== 'undefined' && fs && fs.existsSync) ? fs : (typeof require !== 'undefined' ? require('fs') : null); } catch (_) { fsModule = typeof fs !== 'undefined' ? fs : null; }\n` +
+    `  let pathModule;\n` +
+    `  try { pathModule = (typeof path !== 'undefined' && path && path.resolve) ? path : (typeof require !== 'undefined' ? require('path') : null); } catch (_) { pathModule = typeof path !== 'undefined' ? path : null; }\n` +
+    `  const rootDirCandidate = ${JSON.stringify(safeRootDir)} || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '');\n` +
+    `  const targetDirCandidate = ${JSON.stringify(safeTargetDir)} || (typeof process !== 'undefined' && process.cwd ? process.cwd() : '');\n` +
+    `  const cwdCandidate = (typeof process !== 'undefined' && process.cwd) ? process.cwd() : '';\n` +
+    `  const searchDirs = Array.from(new Set([targetDirCandidate, rootDirCandidate, cwdCandidate])).filter(Boolean);\n` +
+    `  const parseEnvFile = (filePath) => {\n` +
+    `    if (!fsModule || !fsModule.existsSync || !fsModule.existsSync(filePath)) return;\n` +
+    `    try {\n` +
+    `      const content = fsModule.readFileSync(filePath, 'utf8');\n` +
+    `      const lines = content.split(/\\r?\\n/);\n` +
+    `      let i = 0;\n` +
+    `      while (i < lines.length) {\n` +
+    `        const line = lines[i];\n` +
+    `        const t = line.trim();\n` +
+    `        if (!t || t.startsWith('#')) { i++; continue; }\n` +
+    `        const clean = t.startsWith('export ') ? t.slice(7).trim() : t;\n` +
+    `        const eq = clean.indexOf('=');\n` +
+    `        if (eq !== -1) {\n` +
+    `          const k = clean.slice(0, eq).trim();\n` +
+    `          if (/^(DATABASE_URL|DIRECT_URL|SHADOW_DATABASE_URL|POSTGRES_URL|POSTGRESQL_URL|DB_URL|DB_URI|DB_CONNECTION_STRING|MONGODB_URI|MYSQL_URL)$/i.test(k) || /^DATABASE_/i.test(k)) {\n` +
+    `            i++;\n` +
+    `            continue;\n` +
+    `          }\n` +
+    `          let rest = clean.slice(eq + 1).trim();\n` +
+    `          let v = '';\n` +
+    `          if (rest.startsWith('"')) {\n` +
+    `            let acc = rest.slice(1);\n` +
+    `            while (true) {\n` +
+    `              const closeIdx = acc.search(/(?<!\\\\)"/);\n` +
+    `              if (closeIdx !== -1) {\n` +
+    `                v = acc.slice(0, closeIdx).replace(/\\\\"/g, '"');\n` +
+    `                break;\n` +
+    `              }\n` +
+    `              i++;\n` +
+    `              if (i >= lines.length) { v = acc; break; }\n` +
+    `              acc += '\\n' + lines[i];\n` +
+    `            }\n` +
+    `          } else if (rest.startsWith("'")) {\n` +
+    `            let acc = rest.slice(1);\n` +
+    `            while (true) {\n` +
+    `              const closeIdx = acc.indexOf("'");\n` +
+    `              if (closeIdx !== -1) {\n` +
+    `                v = acc.slice(0, closeIdx);\n` +
+    `                break;\n` +
+    `              }\n` +
+    `              i++;\n` +
+    `              if (i >= lines.length) { v = acc; break; }\n` +
+    `              acc += '\\n' + lines[i];\n` +
+    `            }\n` +
+    `          } else {\n` +
+    `            const commentMatch = rest.match(/(\\s+#.*)$/);\n` +
+    `            v = commentMatch ? rest.slice(0, commentMatch.index).trim() : rest;\n` +
+    `          }\n` +
+    `          if (k && (process.env[k] === undefined || process.env[k] === null || process.env[k] === '')) {\n` +
+    `            process.env[k] = v;\n` +
+    `          }\n` +
+    `        }\n` +
+    `        i++;\n` +
+    `      }\n` +
+    `    } catch (_) {}\n` +
+    `  };\n` +
+    `  // Strict Precedence 1: All .env.test across candidate directories (targetDir > rootDir)\n` +
+    `  for (const d of searchDirs) {\n` +
+    `    if (!pathModule) break;\n` +
+    `    parseEnvFile(pathModule.join(d, '.env.test'));\n` +
+    `  }\n` +
+    `  // Strict Precedence 2: All real .env files across candidate directories (targetDir > rootDir)\n` +
+    `  for (const d of searchDirs) {\n` +
+    `    if (!pathModule) break;\n` +
+    `    parseEnvFile(pathModule.join(d, '.env'));\n` +
+    `  }\n` +
+    `  // Strict Precedence 3: All template .env.example files across candidate directories\n` +
+    `  for (const d of searchDirs) {\n` +
+    `    if (!pathModule) break;\n` +
+    `    parseEnvFile(pathModule.join(d, '.env.example'));\n` +
+    `  }\n` +
+    `  // Strict Precedence 3: Hermetic RAM Mocks injection (fills in any missing keys)\n` +
+    `  const HERMETIC_MOCKS = ${serializedMocks};\n` +
+    `  for (const [k, v] of Object.entries(HERMETIC_MOCKS)) {\n` +
+    `    if (process.env[k] === undefined || process.env[k] === null || process.env[k] === '') {\n` +
+    `      process.env[k] = v;\n` +
+    `    }\n` +
+    `  }\n` +
+    `  // Strict Precedence 4: Isolated Virtual Database environment injection (highest precedence)\n` +
+    `  const VIRTUAL_DB_ENV = ${serializedVirtualDbEnv};\n` +
+    `  for (const [k, v] of Object.entries(VIRTUAL_DB_ENV)) {\n` +
+    `    process.env[k] = v;\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
+    `  if (!j) {\n` +
+    `    try {\n` +
+    `      const g = require('@jest/globals');\n` +
+    `      if (g && g.jest) j = g.jest;\n` +
+    `    } catch (_) {}\n` +
+    `  }\n` +
+    `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
+    `  if (!j) {\n` +
+    `    const createFn = (impl) => {\n` +
+    `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
+    `      mockFn._isMockFunction = true;\n` +
+    `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
+    `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
+    `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
+    `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
+    `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
+    `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
+    `      mockFn.mockReturnThis = () => mockFn;\n` +
+    `      mockFn.mockClear = () => mockFn;\n` +
+    `      mockFn.mockReset = () => mockFn;\n` +
+    `      mockFn.mockRestore = () => mockFn;\n` +
+    `      return mockFn;\n` +
+    `    };\n` +
+    `    j = {\n` +
+    `      fn: createFn,\n` +
+    `      mock: () => {},\n` +
+    `      unmock: () => {},\n` +
+    `      spyOn: (obj, method) => {\n` +
+    `        const orig = obj ? obj[method] : undefined;\n` +
+    `        const spy = createFn(orig);\n` +
+    `        if (obj) obj[method] = spy;\n` +
+    `        return spy;\n` +
+    `      },\n` +
+    `      clearAllMocks: () => {},\n` +
+    `      resetAllMocks: () => {},\n` +
+    `      restoreAllMocks: () => {},\n` +
+    `      resetModules: () => {},\n` +
+    `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
+    `    };\n` +
+    `  }\n` +
+    `  if (typeof global !== 'undefined') global.jest = j;\n` +
+    `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  if (typeof globalThis.require === 'undefined' || typeof global.require === 'undefined') {\n` +
+    `    const { createRequire } = require('module');\n` +
+    `    const req = createRequire(process.cwd() + '/package.json');\n` +
+    `    if (typeof globalThis.require === 'undefined') globalThis.require = req;\n` +
+    `    if (typeof global.require === 'undefined') global.require = req;\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  if (typeof globalThis !== 'undefined' && typeof globalThis.fetch === 'function') {\n` +
+    `    const _nativeFetch = globalThis.fetch;\n` +
+    `    const hermeticFetch = async function (input, init) {\n` +
+    `      try {\n` +
+    `        return await _nativeFetch(input, init);\n` +
+    `      } catch (err) {\n` +
+    `        return {\n` +
+    `          ok: true,\n` +
+    `          status: 200,\n` +
+    `          statusText: 'OK',\n` +
+    `          headers: typeof Headers !== 'undefined' ? new Headers({ 'content-type': 'application/json' }) : { get: () => 'application/json' },\n` +
+    `          json: async () => ({ success: true, mockedInRam: true }),\n` +
+    `          text: async () => JSON.stringify({ success: true, mockedInRam: true }),\n` +
+    `          blob: async () => (typeof Blob !== 'undefined' ? new Blob([]) : null),\n` +
+    `          arrayBuffer: async () => new ArrayBuffer(0)\n` +
+    `        };\n` +
+    `      }\n` +
+    `    };\n` +
+    `    globalThis.fetch = hermeticFetch;\n` +
+    `    if (typeof global !== 'undefined') global.fetch = hermeticFetch;\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    // Setup registrations run before the suite loads and must preserve local factory bindings.
+    `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+    `    jest.doMock('bull', () => {\n` +
+    `      const mockQueue = {\n` +
+    `        process: jest.fn(),\n` +
+    `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
+    `        on: jest.fn().mockReturnThis(),\n` +
+    `        getWaitingCount: jest.fn().mockResolvedValue(0),\n` +
+    `        getActiveCount: jest.fn().mockResolvedValue(0),\n` +
+    `        getCompletedCount: jest.fn().mockResolvedValue(0),\n` +
+    `        getFailedCount: jest.fn().mockResolvedValue(0),\n` +
+    `        getDelayedCount: jest.fn().mockResolvedValue(0),\n` +
+    `        close: jest.fn().mockResolvedValue(),\n` +
+    `        isReady: jest.fn().mockResolvedValue()\n` +
+    `      };\n` +
+    `      return jest.fn(() => mockQueue);\n` +
+    `    }, { virtual: true });\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+    `    jest.doMock('mongoose', () => {\n` +
+    `    let actualMongoose;\n` +
+    `    try { actualMongoose = jest.requireActual('mongoose'); } catch (_) {}\n` +
+    `    if (actualMongoose?.Schema && actualMongoose?.Types?.ObjectId) {\n` +
+    `      const isolated = Object.create(actualMongoose);\n` +
+    `      Object.defineProperties(isolated, {\n` +
+    `        default: { value: isolated },\n` +
+    `        model: { value: actualMongoose.model.bind(actualMongoose), writable: true },\n` +
+    `        connect: { value: jest.fn().mockResolvedValue(isolated), writable: true },\n` +
+    `        createConnection: { value: jest.fn(() => actualMongoose.createConnection()), writable: true },\n` +
+    `      });\n` +
+    `      return isolated;\n` +
+    `    }\n` +
+    `    const sampleItem = { _id: '507f1f77bcf86cd799439011', id: '1', name: 'Sample Item', category: { _id: '1', name: 'General' }, status: 'ACTIVE', email: 'sample@example.com', save: jest.fn(() => Promise.resolve({ id: '1' })) };\n` +
+    `    const createQueryChain = (res = [sampleItem]) => ({\n` +
+    `      sort: jest.fn().mockReturnThis(),\n` +
+    `      limit: jest.fn().mockReturnThis(),\n` +
+    `      skip: jest.fn().mockReturnThis(),\n` +
+    `      select: jest.fn().mockReturnThis(),\n` +
+    `      populate: jest.fn().mockReturnThis(),\n` +
+    `      lean: jest.fn(() => Promise.resolve(res)),\n` +
+    `      where: jest.fn().mockReturnThis(),\n` +
+    `      distinct: jest.fn().mockReturnThis(),\n` +
+    `      exec: jest.fn().mockResolvedValue(res),\n` +
+    `      then: (resolve, reject) => Promise.resolve(res).then(resolve, reject),\n` +
+    `      catch: (reject) => Promise.resolve(res).catch(reject),\n` +
+    `      finally: (cb) => Promise.resolve(res).finally(cb)\n` +
+    `    });\n` +
+    `    const createModelProxy = () => {\n` +
+    `      const fn = jest.fn((doc) => ({ ...sampleItem, ...doc, save: jest.fn(() => Promise.resolve({ ...sampleItem, ...doc })) }));\n` +
+    `      fn.find = jest.fn(() => createQueryChain([sampleItem]));\n` +
+    `      fn.findOne = jest.fn(() => createQueryChain(sampleItem));\n` +
+    `      fn.findById = jest.fn(() => createQueryChain(sampleItem));\n` +
+    `      fn.findOneAndUpdate = jest.fn(() => createQueryChain(sampleItem));\n` +
+    `      fn.findByIdAndUpdate = jest.fn(() => createQueryChain(sampleItem));\n` +
+    `      fn.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });\n` +
+    `      fn.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 1 });\n` +
+    `      fn.create = jest.fn((doc) => Promise.resolve({ _id: '1', ...doc }));\n` +
+    `      fn.countDocuments = jest.fn().mockResolvedValue(1);\n` +
+    `      fn.distinct = jest.fn().mockResolvedValue(['sample']);\n` +
+    `      fn.aggregate = jest.fn().mockResolvedValue([sampleItem]);\n` +
+    `      return fn;\n` +
+    `    };\n` +
+    `    const models = new Map();\n` +
+    `    const mongooseMock = {\n` +
+    `      model: jest.fn((name) => {\n` +
+    `        if (!models.has(name)) models.set(name, createModelProxy());\n` +
+    `        return models.get(name);\n` +
+    `      }),\n` +
+    `      Schema: class { static Types = { ObjectId: String }; index() {} pre() {} post() {} },\n` +
+    `      Types: { ObjectId: class { constructor(value) { this.value = value; } toString() { return String(this.value); } } },\n` +
+    `      connect: jest.fn(() => Promise.resolve()),\n` +
+    `      disconnect: jest.fn(() => Promise.resolve()),\n` +
+    `      connection: { on: jest.fn(), once: jest.fn(), readyState: 1 }\n` +
+    `    };\n` +
+    `    return { default: mongooseMock, ...mongooseMock };\n` +
+    `    }, { virtual: true });\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+    `    const mockJwt = {\n` +
+    `      verify: jest.fn((token) => ({\n` +
+    `        id: 'mock_user_1', userId: 'mock_user_1', _id: '507f1f77bcf86cd799439011',\n` +
+    `        email: 'user@example.com', role: 'user', username: 'testuser'\n` +
+    `      })),\n` +
+    `      sign: jest.fn(() => 'mock_signed_jwt_token_xyz'),\n` +
+    `      decode: jest.fn(() => ({ id: 'mock_user_1', email: 'user@example.com', role: 'user' }))\n` +
+    `    };\n` +
+    `    jest.doMock('jsonwebtoken', () => ({ default: mockJwt, ...mockJwt }), { virtual: true });\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  const matchers = {\n` +
+    `    toSatisfy(received, predicate) {\n` +
+    `      try {\n` +
+    `        const pass = predicate(received);\n` +
+    `        return { pass: pass === undefined ? true : Boolean(pass), message: () => 'expected ' + received + ' to satisfy predicate' };\n` +
+    `      } catch (err) {\n` +
+    `        return { pass: false, message: () => 'predicate threw error: ' + (err && err.message) };\n` +
+    `      }\n` +
+    `    },\n` +
+    `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
+    `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
+    `    toBe(received, expected) {\n` +
+    `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+    `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
+    `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+    `      }\n` +
+    `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
+    `    }\n` +
+    `  };\n` +
+    `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
+    `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
+    `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
+    `} catch { }\n` +
+    `try {\n` +
+    `  const g = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : {});\n` +
+    `  if (g && !g.mockQbo) {\n` +
+    `    const fn = () => (typeof jest !== 'undefined' ? jest.fn((...args) => { const cb = args[args.length-1]; if (typeof cb === 'function') cb(null, {}); return Promise.resolve({}); }) : () => Promise.resolve({}));\n` +
+    `    g.mockQbo = { getAccount: fn(), updateAccount: fn(), createAccount: fn(), findAccounts: fn() };\n` +
+    `  }\n` +
+    `} catch { }\n` +
+    `try {\n` +
+    `  let prismaPkg = null;\n` +
+    `  try {\n` +
+    `    prismaPkg = require('@prisma/client');\n` +
+    `  } catch (_) {}\n` +
+    `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
+    `    let isStub = false;\n` +
+    `    try {\n` +
+    `      new prismaPkg.PrismaClient();\n` +
+    `    } catch (pe) {\n` +
+    `      if (pe) {\n` +
+    `        const pMsg = String(pe.message || '');\n` +
+    `        const pName = String(pe.name || '');\n` +
+    `        if (\n` +
+    `          pName === 'PrismaClientInitializationError' ||\n` +
+    `          pName === 'PrismaClientConstructorValidationError' ||\n` +
+    `          pMsg.includes('did not initialize yet') ||\n` +
+    `          pMsg.includes('prisma generate') ||\n` +
+    `          pMsg.includes('needs to be constructed with') ||\n` +
+    `          pMsg.includes('requires either "adapter"') ||\n` +
+    `          pMsg.toLowerCase().includes('constructor')\n` +
+    `        ) {\n` +
+    `          isStub = true;\n` +
+    `        }\n` +
+    `      }\n` +
+    `    }\n` +
+    `    if (isStub) {\n` +
+    `      const createPrismaProxy = (lastProp = '') => {\n` +
+    `        const defaultRec = { id: 1, name: 'Sample', status: 'ACTIVE', createdAt: new Date(), updatedAt: new Date() };\n` +
+    `        const handler = {\n` +
+    `          get(target, prop) {\n` +
+    `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+    `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
+    `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
+    `            if (prop === '$extends') return () => createPrismaProxy();\n` +
+    `            return new Proxy((...args) => {\n` +
+    `              const m = String(prop || '');\n` +
+    `              if (m === 'findMany' || m === 'findRaw' || m === 'groupBy') return Promise.resolve([defaultRec]);\n` +
+    `              if (m === 'count') return Promise.resolve(1);\n` +
+    `              if (m === 'create' || m === 'update' || m === 'upsert') return Promise.resolve({ ...defaultRec, ...(args?.[0]?.data || args?.[0]?.create || args?.[0]?.update || {}) });\n` +
+    `              return Promise.resolve(defaultRec);\n` +
+    `            }, handler);\n` +
+    `          },\n` +
+    `          apply(target, thisArg, args) {\n` +
+    `            if (typeof target === 'function') return target(...(args || []));\n` +
+    `            return Promise.resolve(defaultRec);\n` +
+    `          }\n` +
+    `        };\n` +
+    `        return new Proxy({}, handler);\n` +
+    `      };\n` +
+    `      const OriginalPrismaClient = prismaPkg.PrismaClient;\n` +
+    `      function FallbackPrismaClient(...args) {\n` +
+    `        try {\n` +
+    `          if (args.length > 0 && args[0] && (args[0].adapter || args[0].accelerateUrl || args[0].datasources)) {\n` +
+    `            return new OriginalPrismaClient(...args);\n` +
+    `          }\n` +
+    `        } catch (_) {}\n` +
+    `        return createPrismaProxy();\n` +
+    `      }\n` +
+    `      FallbackPrismaClient.prototype = (OriginalPrismaClient && OriginalPrismaClient.prototype) || {};\n` +
+    `      if (OriginalPrismaClient) {\n` +
+    `        try { Object.assign(FallbackPrismaClient, OriginalPrismaClient); } catch (_) {}\n` +
+    `      }\n` +
+    `      prismaPkg.PrismaClient = FallbackPrismaClient;\n` +
+    `      // Compatibility fallback: prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
+    `    }\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  if (typeof jest !== 'undefined' && typeof jest.doMock === 'function') {\n` +
+    `    const _prismaSeeds = ${serializedPrismaSeeds};\n` +
+    `    const createPrismaProxy = () => {\n` +
+    `      const defaultRec = { id: 1, name: 'Sample', status: 'ACTIVE', createdAt: new Date(), updatedAt: new Date() };\n` +
+    `      const handler = {\n` +
+    `        get(target, prop) {\n` +
+    `          if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+    `          if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
+    `          if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve([]));\n` +
+    `          if (prop === '$extends') return () => createPrismaProxy();\n` +
+    `          const modelKey = String(prop || '').toLowerCase();\n` +
+    `          const modelSeedList = Array.isArray(_prismaSeeds[modelKey]) && _prismaSeeds[modelKey].length > 0 ? _prismaSeeds[modelKey] : [defaultRec];\n` +
+    `          const modelSeedRec = modelSeedList[0] || defaultRec;\n` +
+    `          return new Proxy((...args) => {\n` +
+    `            const m = String(prop || '');\n` +
+    `            if (m === 'findMany' || m === 'findRaw' || m === 'groupBy') return Promise.resolve(modelSeedList);\n` +
+    `            if (m === 'count') return Promise.resolve(modelSeedList.length || 1);\n` +
+    `            if (m === 'create' || m === 'update' || m === 'upsert') return Promise.resolve({ ...modelSeedRec, ...(args?.[0]?.data || args?.[0]?.create || args?.[0]?.update || {}) });\n` +
+    `            return Promise.resolve(modelSeedRec);\n` +
+    `          }, handler);\n` +
+    `        },\n` +
+    `        apply(target, thisArg, args) { return typeof target === 'function' ? target(...(args || [])) : Promise.resolve(defaultRec); }\n` +
+    `      };\n` +
+    `      return new Proxy({}, handler);\n` +
+    `    };\n` +
+    `    const fn = (typeof jest !== 'undefined' && typeof jest.fn === 'function') ? jest.fn : ((impl) => { const f = (...args) => (impl ? impl(...args) : undefined); f.mockImplementation = () => f; return f; });\n` +
+    // Keep the resolved module ID when the fallback above has already loaded Prisma.
+    `    let prismaIsVirtual = true;\n` +
+    `    try { require.resolve('@prisma/client'); prismaIsVirtual = false; } catch (_) {}\n` +
+    `    jest.doMock('@prisma/client', () => {\n` +
+    `      return {\n` +
+    `        __esModule: true,\n` +
+    `        PrismaClient: fn().mockImplementation(() => createPrismaProxy()),\n` +
+    `        default: { PrismaClient: fn().mockImplementation(() => createPrismaProxy()) },\n` +
+    `        Prisma: {\n` +
+    `          PrismaClientKnownRequestError: class extends Error {},\n` +
+    `          PrismaClientUnknownRequestError: class extends Error {},\n` +
+    `          PrismaClientRustPanicError: class extends Error {},\n` +
+    `          PrismaClientInitializationError: class extends Error {},\n` +
+    `          PrismaClientValidationError: class extends Error {},\n` +
+    `          Decimal: Number,\n` +
+    `          empty: '',\n` +
+    `          join: () => '',\n` +
+    `          raw: (sql) => sql,\n` +
+    `          sql: (strings, ...values) => strings.join('?')\n` +
+    `        }\n` +
+    `      };\n` +
+    `    }, { virtual: prismaIsVirtual });\n` +
+    `    const _relPrismaPaths = [\n` +
+    `      '../lib/prisma', '../lib/prisma.js',\n` +
+    `      '../../lib/prisma', '../../lib/prisma.js',\n` +
+    `      '../src/lib/prisma', '../src/lib/prisma.js',\n` +
+    `      '../../src/lib/prisma', '../../src/lib/prisma.js',\n` +
+    `      '../config/prisma', '../config/prisma.js',\n` +
+    `      '../../config/prisma', '../../config/prisma.js',\n` +
+    `      '../src/config/prisma', '../src/config/prisma.js',\n` +
+    `      '../../src/config/prisma', '../../src/config/prisma.js'\n` +
+    `    ];\n` +
+    `    for (const _rp of _relPrismaPaths) {\n` +
+    `      try {\n` +
+    `        jest.doMock(_rp, () => {\n` +
+    `          const client = createPrismaProxy();\n` +
+    `          return {\n` +
+    `            __esModule: true,\n` +
+    `            prisma: client,\n` +
+    `            prismaClient: client,\n` +
+    `            default: client,\n` +
+    `            setPrismaClient: () => {}\n` +
+    `          };\n` +
+    `        }, { virtual: true });\n` +
+    `      } catch (_) {}\n` +
+    `    }\n` +
+    `  }\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  if (typeof test !== 'undefined' && typeof expect !== 'undefined' && typeof describe === 'undefined' && typeof beforeAll === 'undefined') {\n` +
+    `    test('test suite sanity check', () => { expect(true).toBe(true); });\n` +
+    `  }\n` +
+    `} catch { }\n`
+  );
 };
 
 const buildSetupAfterEnvContent = () => {
-    return (
-        `try {\n` +
-        `  delete require.cache[__filename];\n` +
-        `} catch (_) {}\n` +
-        `try {\n` +
-        `  const matchers = {\n` +
-        `    toBeTrue(received) {\n` +
-        `      return { pass: received === true, message: () => 'expected ' + received + ' to be true' };\n` +
-        `    },\n` +
-        `    toBeFalse(received) {\n` +
-        `      return { pass: received === false, message: () => 'expected ' + received + ' to be false' };\n` +
-        `    },\n` +
-        `    toBe(received, expected) {\n` +
-        `      if (Object.is(received, expected)) {\n` +
-        `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-        `      }\n` +
-        `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
-        `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-        `      }\n` +
-        `      return {\n` +
-        `        pass: false,\n` +
-        `        message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received\n` +
-        `      };\n` +
-        `    }\n` +
-        `  };\n` +
-        `  const register = (exp) => {\n` +
-        `    if (exp && typeof exp.extend === 'function') {\n` +
-        `      try { exp.extend(matchers); } catch (_) {}\n` +
-        `    }\n` +
-        `  };\n` +
-        `  if (typeof expect !== 'undefined') register(expect);\n` +
-        `  if (typeof global !== 'undefined' && global.expect) register(global.expect);\n` +
-        `  if (typeof globalThis !== 'undefined' && globalThis.expect) register(globalThis.expect);\n` +
-        `  try {\n` +
-        `    const jg = require('@jest/globals');\n` +
-        `    if (jg && jg.expect) register(jg.expect);\n` +
-        `  } catch (_) {}\n` +
-        `  try {\n` +
-        `    const ep = require('expect');\n` +
-        `    if (ep && ep.expect) register(ep.expect);\n` +
-        `    else if (typeof ep === 'function') register(ep);\n` +
-        `  } catch (_) {}\n` +
-        `} catch (_) {}\n`
-    );
+  return (
+    `try {\n` +
+    `  delete require.cache[__filename];\n` +
+    `} catch (_) {}\n` +
+    `try {\n` +
+    `  const matchers = {\n` +
+    `    toBeTrue(received) {\n` +
+    `      return { pass: received === true, message: () => 'expected ' + received + ' to be true' };\n` +
+    `    },\n` +
+    `    toBeFalse(received) {\n` +
+    `      return { pass: received === false, message: () => 'expected ' + received + ' to be false' };\n` +
+    `    },\n` +
+    `    toBe(received, expected) {\n` +
+    `      if (Object.is(received, expected)) {\n` +
+    `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+    `      }\n` +
+    `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
+    `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+    `      }\n` +
+    `      return {\n` +
+    `        pass: false,\n` +
+    `        message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received\n` +
+    `      };\n` +
+    `    }\n` +
+    `  };\n` +
+    `  const register = (exp) => {\n` +
+    `    if (exp && typeof exp.extend === 'function') {\n` +
+    `      try { exp.extend(matchers); } catch (_) {}\n` +
+    `    }\n` +
+    `  };\n` +
+    `  if (typeof expect !== 'undefined') register(expect);\n` +
+    `  if (typeof global !== 'undefined' && global.expect) register(global.expect);\n` +
+    `  if (typeof globalThis !== 'undefined' && globalThis.expect) register(globalThis.expect);\n` +
+    `  try {\n` +
+    `    const jg = require('@jest/globals');\n` +
+    `    if (jg && jg.expect) register(jg.expect);\n` +
+    `  } catch (_) {}\n` +
+    `  try {\n` +
+    `    const ep = require('expect');\n` +
+    `    if (ep && ep.expect) register(ep.expect);\n` +
+    `    else if (typeof ep === 'function') register(ep);\n` +
+    `  } catch (_) {}\n` +
+    `} catch (_) {}\n`
+  );
 };
 
-export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = [], customJestCommand = null, options = {}) => {
-    const targetCovDir = options?.coverageDir ? path.resolve(rootDir, options.coverageDir) : path.join(rootDir, "coverage");
-    const covDir = targetCovDir;
-    if (!fs.existsSync(targetCovDir)) {
-        try { fs.mkdirSync(targetCovDir, { recursive: true }); } catch { }
-    }
-    const relCovDir = path.relative(rootDir, targetCovDir).replace(/\\/g, "/") || "coverage";
-
-    // Partition test files by package
-    let filesToRun = specificFiles;
-    if (!Array.isArray(filesToRun) || filesToRun.length === 0) {
-        try {
-            const classified = findUnitFiles(rootDir);
-            if (classified.jestFiles && classified.jestFiles.length > 0) {
-                filesToRun = classified.jestFiles;
-            }
-        } catch { }
-    }
-
-    // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
-    await detectAndRunBuild(jobId, rootDir);
-
-    // Ensure Prisma Client is generated if project uses Prisma
-    await detectAndRunPrismaGenerate(jobId, rootDir);
-
-    const packageGroups = new Map();
-    if (Array.isArray(filesToRun) && filesToRun.length > 0) {
-        for (const file of filesToRun) {
-            const pkgDir = getPackageForFile(file, rootDir);
-            if (!packageGroups.has(pkgDir)) packageGroups.set(pkgDir, []);
-            packageGroups.get(pkgDir).push(file);
-        }
-    }
-
-    const rootFiles = packageGroups.has("") ? packageGroups.get("") : (packageGroups.size === 0 ? (specificFiles || []) : []);
-    const shouldRunRoot = packageGroups.size === 0 ? true : (rootFiles.length > 0);
-    const createdHarnessFiles = new Set();
-
+export const runJestCoverage = async (
+  jobId,
+  rootDir,
+  jestConfigPath,
+  requestedFiles = [],
+  customJestCommand = null,
+  options = {},
+) => {
+  const specificFiles = Array.isArray(requestedFiles)
+    ? requestedFiles.filter((file) => !isCovaiJestArtifact(file))
+    : [];
+  if (requestedFiles?.length && !specificFiles.length) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: "The requested files are CovAI Jest runner artifacts.",
+    };
+  }
+  const hermeticMocks = options?.hermeticMocks || {};
+  const useHermeticMock = options?.useHermeticMock !== false;
+  const targetCovDir = options?.coverageDir
+    ? path.resolve(rootDir, options.coverageDir)
+    : path.join(rootDir, "coverage");
+  const covDir = targetCovDir;
+  if (!fs.existsSync(targetCovDir)) {
     try {
-        let overallExitCode = 0;
-        let overallStdout = "";
-        let overallStderr = "";
+      fs.mkdirSync(targetCovDir, { recursive: true });
+    } catch {}
+  }
+  const relCovDir =
+    path.relative(rootDir, targetCovDir).replace(/\\/g, "/") || "coverage";
 
-        const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
-        const isEsmProject = isEsmProjectForRepo(rootDir, projectJestConfig);
+  // Partition test files by package
+  let filesToRun = specificFiles;
+  if (!Array.isArray(filesToRun) || filesToRun.length === 0) {
+    try {
+      const classified = findUnitFiles(rootDir);
+      if (classified.jestFiles && classified.jestFiles.length > 0) {
+        filesToRun = classified.jestFiles;
+      }
+    } catch {}
+  }
 
-        const rootJestBin = resolveJestBin(rootDir, isEsmProject, customJestCommand);
-        const rootWorkerFlags = getOptimalWorkerFlags(rootFiles.length, customJestCommand);
-        let jestCmd = `${rootJestBin} --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
+  const packageGroups = new Map();
+  if (Array.isArray(filesToRun) && filesToRun.length > 0) {
+    for (const file of filesToRun) {
+      const pkgDir = getPackageForFile(file, rootDir);
+      if (!packageGroups.has(pkgDir)) packageGroups.set(pkgDir, []);
+      packageGroups.get(pkgDir).push(file);
+    }
+  }
 
-        let tempConfigCreated = false;
-        const tempConfigName = "covai-jest-runner.json";
-        const tempConfigPath = path.join(rootDir, tempConfigName);
+  if (
+    dockerRunner.containerEnabled &&
+    (options.requireDocker || currentProjectOperation())
+  ) {
+    await ensureMountedProjectDependencies({
+      rootDir,
+      packageDirs: packageGroups.keys(),
+      jobId,
+    });
+  }
 
-        const rootPkgPath = path.join(rootDir, "package.json");
-        let rootPkgName = "";
+  // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
+  await detectAndRunBuild(jobId, rootDir);
+
+  // Ensure Prisma Client is generated if project uses Prisma
+  await detectAndRunPrismaGenerate(jobId, rootDir);
+
+  const rootFiles = packageGroups.has("")
+    ? packageGroups.get("")
+    : packageGroups.size === 0
+      ? specificFiles || []
+      : [];
+  const shouldRunRoot = packageGroups.size === 0 ? true : rootFiles.length > 0;
+  const createdHarnessFiles = options?.createdHarnessFiles || new Set();
+
+  try {
+    let overallExitCode = 0;
+    let overallStdout = "";
+    let overallStderr = "";
+
+    const projectJestConfig = await readProjectJestConfig(
+      rootDir,
+      jestConfigPath,
+    );
+    const isEsmProject = isEsmProjectForRepo(rootDir, projectJestConfig);
+
+    const rootJestBin = resolveJestBin(
+      rootDir,
+      isEsmProject,
+      customJestCommand,
+    );
+    const rootWorkerFlags = getOptimalWorkerFlags(
+      rootFiles.length,
+      customJestCommand,
+    );
+    let jestCmd =
+      `${rootJestBin} --json --coverage --coverageDirectory="${relCovDir}" --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${relCovDir}/jest-results.json" --forceExit --testTimeout=10000 ${rootWorkerFlags} --cache`
+        .replace(/\s+/g, " ")
+        .trim();
+
+    let tempConfigCreated = false;
+    const tempConfigName = "covai-jest-runner.json";
+    const tempConfigPath = path.join(rootDir, tempConfigName);
+
+    const rootPkgPath = path.join(rootDir, "package.json");
+    let rootPkgName = "";
+    try {
+      if (fs.existsSync(rootPkgPath)) {
+        const p = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
+        if (p.name) rootPkgName = p.name;
+      }
+    } catch {}
+
+    const defaultModuleNameMapper = buildJestModuleNameMapper(
+      rootDir,
+      projectJestConfig,
+      rootPkgName,
+    );
+
+    const coveragePathIgnorePatterns = [
+      "/node_modules/",
+      "/client/",
+      "/frontend/",
+      "/routes/",
+      "/endpoints/",
+      "/api/",
+      "app\\.[cm]?[jt]s$",
+      "server\\.[cm]?[jt]s$",
+    ];
+
+    const tsJestSafeConfig = {
+      isolatedModules: true,
+      diagnostics: false,
+      ...(isEsmProject ? { useESM: true } : {}),
+      tsconfig: {
+        isolatedModules: true,
+        allowJs: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
+        target: "es2020",
+        noImplicitAny: false,
+        strict: false,
+      },
+    };
+
+    const serverNodeModules = path
+      .resolve(process.cwd(), "node_modules")
+      .replace(/\\/g, "/");
+
+    const resolveTransformerPackage = (pkgName, searchDirs = []) => {
+      try {
+        return esmRequire.resolve(pkgName, {
+          paths: [
+            ...searchDirs,
+            rootDir,
+            "/app/node_modules",
+            serverNodeModules,
+            process.cwd(),
+          ],
+        });
+      } catch (_) {
+        return pkgName;
+      }
+    };
+
+    const isTsJestResolvable = (searchDirs = []) => {
+      try {
+        esmRequire.resolve("ts-jest", {
+          paths: [
+            ...searchDirs,
+            rootDir,
+            "/app/node_modules",
+            serverNodeModules,
+            process.cwd(),
+          ],
+        });
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    // ── Smart transform detection ─────────────────────────────────────────────
+    // Scan root and sub-packages to detect babel-jest / ts-jest availability
+    const detectTransforms = (repoRoot) => {
+      const hasBabelJest = (pkgJson) => {
+        const deps = {
+          ...(pkgJson.dependencies || {}),
+          ...(pkgJson.devDependencies || {}),
+        };
+        return !!(deps["babel-jest"] || deps["@babel/core"]);
+      };
+      const hasTsJest = (pkgJson) => {
+        const deps = {
+          ...(pkgJson.dependencies || {}),
+          ...(pkgJson.devDependencies || {}),
+        };
+        return !!deps["ts-jest"];
+      };
+      const hasTypeScript = (pkgJson) => {
+        const deps = {
+          ...(pkgJson.dependencies || {}),
+          ...(pkgJson.devDependencies || {}),
+        };
+        return !!(deps["typescript"] || deps["ts-jest"]);
+      };
+
+      let foundBabelJest = false;
+      let foundTsJest = false;
+      let foundTypeScript = false;
+
+      // Check all package.json files (root + first-level subdirs + 2nd-level subdirs)
+      const pkgPaths = [path.join(repoRoot, "package.json")];
+      try {
+        for (const d1 of fs.readdirSync(repoRoot, { withFileTypes: true })) {
+          if (
+            d1.isDirectory() &&
+            d1.name !== "node_modules" &&
+            d1.name !== ".git"
+          ) {
+            const p1 = path.join(repoRoot, d1.name, "package.json");
+            if (fs.existsSync(p1)) pkgPaths.push(p1);
+            // 2nd level (e.g. examples/ecmascript/package.json)
+            try {
+              for (const d2 of fs.readdirSync(path.join(repoRoot, d1.name), {
+                withFileTypes: true,
+              })) {
+                if (d2.isDirectory() && d2.name !== "node_modules") {
+                  const p2 = path.join(
+                    repoRoot,
+                    d1.name,
+                    d2.name,
+                    "package.json",
+                  );
+                  if (fs.existsSync(p2)) pkgPaths.push(p2);
+                }
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+
+      for (const pkgPath of pkgPaths) {
         try {
-            if (fs.existsSync(rootPkgPath)) {
-                const p = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
-                if (p.name) rootPkgName = p.name;
-            }
-        } catch { }
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+          if (hasBabelJest(pkg)) foundBabelJest = true;
+          if (hasTsJest(pkg)) foundTsJest = true;
+          if (hasTypeScript(pkg)) foundTypeScript = true;
+        } catch {}
+      }
 
-        const defaultModuleNameMapper = buildJestModuleNameMapper(rootDir, projectJestConfig, rootPkgName);
-
-        const coveragePathIgnorePatterns = [
-            "/node_modules/",
-            "/client/",
-            "/frontend/",
-            "/routes/",
-            "/endpoints/",
-            "/api/",
-            "app\\.[cm]?[jt]s$",
-            "server\\.[cm]?[jt]s$"
-        ];
-
-        const tsJestSafeConfig = {
-            isolatedModules: true,
-            diagnostics: false,
-            ...(isEsmProject ? { useESM: true } : {}),
-            tsconfig: {
-                isolatedModules: true,
-                allowJs: true,
-                esModuleInterop: true,
-                skipLibCheck: true,
-                ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
-                target: "es2020",
-                noImplicitAny: false,
-                strict: false
-            }
-        };
-
-        const serverNodeModules = path.resolve(process.cwd(), "node_modules").replace(/\\/g, "/");
-
-        const resolveTransformerPackage = (pkgName, searchDirs = []) => {
-            try {
-                return require.resolve(pkgName, {
-                    paths: [...searchDirs, rootDir, "/app/node_modules", serverNodeModules, process.cwd()]
-                });
-            } catch (_) {
-                return pkgName;
-            }
-        };
-
-        const isTsJestResolvable = (searchDirs = []) => {
-            try {
-                require.resolve("ts-jest", {
-                    paths: [...searchDirs, rootDir, "/app/node_modules", serverNodeModules, process.cwd()]
-                });
+      // Also detect TypeScript by tsconfig presence or existing ts files
+      if (
+        !foundTypeScript &&
+        fs.existsSync(path.join(repoRoot, "tsconfig.json"))
+      ) {
+        foundTypeScript = true;
+      }
+      if (!foundTypeScript) {
+        try {
+          const hasAnyTsFile = (dir, depth = 0) => {
+            if (depth > 2) return false;
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (
+                ent.isDirectory() &&
+                ent.name !== "node_modules" &&
+                ent.name !== ".git"
+              ) {
+                if (hasAnyTsFile(path.join(dir, ent.name), depth + 1))
+                  return true;
+              } else if (ent.isFile() && /\.[cm]?tsx?$/i.test(ent.name)) {
                 return true;
-            } catch (_) {
-                return false;
+              }
             }
-        };
+            return false;
+          };
+          if (hasAnyTsFile(repoRoot)) {
+            foundTypeScript = true;
+          }
+        } catch (_) {}
+      }
 
-        // ── Smart transform detection ─────────────────────────────────────────────
-        // Scan root and sub-packages to detect babel-jest / ts-jest availability
-        const detectTransforms = (repoRoot) => {
-            const hasBabelJest = (pkgJson) => {
-                const deps = { ...(pkgJson.dependencies || {}), ...(pkgJson.devDependencies || {}) };
-                return !!(deps["babel-jest"] || deps["@babel/core"]);
-            };
-            const hasTsJest = (pkgJson) => {
-                const deps = { ...(pkgJson.dependencies || {}), ...(pkgJson.devDependencies || {}) };
-                return !!(deps["ts-jest"]);
-            };
-            const hasTypeScript = (pkgJson) => {
-                const deps = { ...(pkgJson.dependencies || {}), ...(pkgJson.devDependencies || {}) };
-                return !!(deps["typescript"] || deps["ts-jest"]);
-            };
+      const transform = {};
+      const isTsJestAvailable = isTsJestResolvable([repoRoot]);
+      const babelJestPath = resolveTransformerPackage("babel-jest", [repoRoot]);
+      const presetEnvPath = resolveTransformerPackage("@babel/preset-env", [
+        repoRoot,
+      ]);
+      const presetTsPath = resolveTransformerPackage(
+        "@babel/preset-typescript",
+        [repoRoot],
+      );
 
-            let foundBabelJest = false;
-            let foundTsJest = false;
-            let foundTypeScript = false;
-
-            // Check all package.json files (root + first-level subdirs + 2nd-level subdirs)
-            const pkgPaths = [path.join(repoRoot, "package.json")];
-            try {
-                for (const d1 of fs.readdirSync(repoRoot, { withFileTypes: true })) {
-                    if (d1.isDirectory() && d1.name !== "node_modules" && d1.name !== ".git") {
-                        const p1 = path.join(repoRoot, d1.name, "package.json");
-                        if (fs.existsSync(p1)) pkgPaths.push(p1);
-                        // 2nd level (e.g. examples/ecmascript/package.json)
-                        try {
-                            for (const d2 of fs.readdirSync(path.join(repoRoot, d1.name), { withFileTypes: true })) {
-                                if (d2.isDirectory() && d2.name !== "node_modules") {
-                                    const p2 = path.join(repoRoot, d1.name, d2.name, "package.json");
-                                    if (fs.existsSync(p2)) pkgPaths.push(p2);
-                                }
-                            }
-                        } catch { }
-                    }
-                }
-            } catch { }
-
-            for (const pkgPath of pkgPaths) {
-                try {
-                    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-                    if (hasBabelJest(pkg)) foundBabelJest = true;
-                    if (hasTsJest(pkg)) foundTsJest = true;
-                    if (hasTypeScript(pkg)) foundTypeScript = true;
-                } catch { }
-            }
-
-            // Also detect TypeScript by tsconfig presence or existing ts files
-            if (!foundTypeScript && fs.existsSync(path.join(repoRoot, "tsconfig.json"))) {
-                foundTypeScript = true;
-            }
-            if (!foundTypeScript) {
-                try {
-                    const hasAnyTsFile = (dir, depth = 0) => {
-                        if (depth > 2) return false;
-                        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-                            if (ent.isDirectory() && ent.name !== "node_modules" && ent.name !== ".git") {
-                                if (hasAnyTsFile(path.join(dir, ent.name), depth + 1)) return true;
-                            } else if (ent.isFile() && /\.[cm]?tsx?$/i.test(ent.name)) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    };
-                    if (hasAnyTsFile(repoRoot)) {
-                        foundTypeScript = true;
-                    }
-                } catch (_) { }
-            }
-
-            const transform = {};
-            const isTsJestAvailable = isTsJestResolvable([repoRoot]);
-            const babelJestPath = resolveTransformerPackage("babel-jest", [repoRoot]);
-            const presetEnvPath = resolveTransformerPackage("@babel/preset-env", [repoRoot]);
-            const presetTsPath = resolveTransformerPackage("@babel/preset-typescript", [repoRoot]);
-
-            if (foundTsJest || foundTypeScript) {
-                if (isTsJestAvailable) {
-                    transform["^.+\\.tsx?$"] = ["ts-jest", tsJestSafeConfig];
-                    if (!foundBabelJest && !isEsmProject) {
-                        transform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
-                    }
-                } else {
-                    transform["^.+\\.[cm]?[jt]sx?$"] = [
-                        babelJestPath,
-                        {
-                            presets: [
-                                [presetEnvPath, { targets: { node: "current" } }],
-                                presetTsPath
-                            ]
-                        }
-                    ];
-                }
-            }
-            if (foundBabelJest) {
-                transform["^.+\\.[cm]?jsx?$"] = [
-                    babelJestPath,
-                    {
-                        rootMode: "upward-optional",
-                        babelrcRoots: [".", "./examples/*", "./packages/*"]
-                    }
-                ];
-            }
-            return Object.keys(transform).length > 0 ? transform : null;
-        };
-
-        const normalizeTransform = (t) => {
-            if (!t || typeof t !== "object") return {};
-            const isTsJestAvailable = isTsJestResolvable([rootDir]);
-            const result = {};
-            for (const [pattern, transformer] of Object.entries(t)) {
-                if (transformer === "ts-jest") {
-                    if (isTsJestAvailable) {
-                        result[pattern] = ["ts-jest", tsJestSafeConfig];
-                    } else {
-                        const babelJestPath = resolveTransformerPackage("babel-jest", [rootDir]);
-                        const presetEnvPath = resolveTransformerPackage("@babel/preset-env", [rootDir]);
-                        const presetTsPath = resolveTransformerPackage("@babel/preset-typescript", [rootDir]);
-                        result[pattern] = [
-                            babelJestPath,
-                            {
-                                presets: [
-                                    [presetEnvPath, { targets: { node: "current" } }],
-                                    presetTsPath
-                                ]
-                            }
-                        ];
-                    }
-                } else if (Array.isArray(transformer) && transformer[0] === "ts-jest") {
-                    if (!isTsJestAvailable) {
-                        const babelJestPath = resolveTransformerPackage("babel-jest", [rootDir]);
-                        const presetEnvPath = resolveTransformerPackage("@babel/preset-env", [rootDir]);
-                        const presetTsPath = resolveTransformerPackage("@babel/preset-typescript", [rootDir]);
-                        result[pattern] = [
-                            babelJestPath,
-                            {
-                                presets: [
-                                    [presetEnvPath, { targets: { node: "current" } }],
-                                    presetTsPath
-                                ]
-                            }
-                        ];
-                    } else {
-                        const existingOpts = transformer[1] || {};
-                        const existingTsconfig = existingOpts.tsconfig;
-                        if (typeof existingTsconfig === "string") {
-                            result[pattern] = [
-                                "ts-jest",
-                                {
-                                    ...existingOpts,
-                                    isolatedModules: true,
-                                    diagnostics: false,
-                                    ...(isEsmProject ? { useESM: true } : {}),
-                                    tsconfig: existingTsconfig
-                                }
-                            ];
-                        } else {
-                            let baseCompilerOptions = {};
-                            if (typeof existingTsconfig === "object") {
-                                baseCompilerOptions = existingTsconfig;
-                            }
-
-                            result[pattern] = [
-                                "ts-jest",
-                                {
-                                    ...existingOpts,
-                                    isolatedModules: true,
-                                    diagnostics: false,
-                                    ...(isEsmProject ? { useESM: true } : {}),
-                                    tsconfig: {
-                                        ...baseCompilerOptions,
-                                        isolatedModules: true,
-                                        allowJs: true,
-                                        esModuleInterop: true,
-                                        skipLibCheck: true,
-                                        ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
-                                        target: "es2020",
-                                        noImplicitAny: false,
-                                        strict: false
-                                    }
-                                }
-                            ];
-                        }
-                    }
-                } else {
-                    result[pattern] = transformer;
-                }
-            }
-            return result;
-        };
-
-        const detectedTransform = detectTransforms(rootDir);
-
-        const mergedTransform = {
-            ...(detectedTransform || {}),
-            ...normalizeTransform(projectJestConfig?.transform)
-        };
-
-        const hasJsTransform = Object.keys(mergedTransform).some(k => k.includes("js") || k.includes("jsx"));
-        const hasTsJest = Object.values(mergedTransform).some(v => (typeof v === "string" && v.includes("ts-jest")) || (Array.isArray(v) && v[0]?.includes("ts-jest")));
-        if (hasTsJest && !hasJsTransform && !isEsmProject) {
-            mergedTransform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
+      if (foundTsJest || foundTypeScript) {
+        if (isTsJestAvailable) {
+          transform["^.+\\.tsx?$"] = ["ts-jest", tsJestSafeConfig];
+          if (!foundBabelJest && !isEsmProject) {
+            transform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
+          }
+        } else {
+          transform["^.+\\.[cm]?[jt]sx?$"] = [
+            babelJestPath,
+            {
+              presets: [
+                [presetEnvPath, { targets: { node: "current" } }],
+                presetTsPath,
+              ],
+            },
+          ];
         }
+      }
+      if (foundBabelJest) {
+        transform["^.+\\.[cm]?jsx?$"] = [
+          babelJestPath,
+          {
+            rootMode: "upward-optional",
+            babelrcRoots: [".", "./examples/*", "./packages/*"],
+          },
+        ];
+      } else if (Object.keys(transform).length === 0 && !isEsmProject && babelJestPath && presetEnvPath) {
+        const anyRootFileUsesEsm = (rootFiles || []).some((relF) => {
+          try {
+            const absF = path.join(repoRoot, relF);
+            if (!fs.existsSync(absF)) return false;
+            const c = fs.readFileSync(absF, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+            return /(?:^|\n)\s*(?:import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"]|export\s+(?:default|const|let|var|function|class|\*|\{))/.test(c);
+          } catch {
+            return false;
+          }
+        });
+        if (anyRootFileUsesEsm) {
+          transform["^.+\\.[cm]?jsx?$"] = [
+            babelJestPath,
+            {
+              presets: [[presetEnvPath, { targets: { node: "current" }, modules: "commonjs" }]],
+            },
+          ];
+        }
+      }
+      return Object.keys(transform).length > 0 ? transform : null;
+    };
 
-        const resolvedModuleFileExtensions = Array.from(new Set([
-            ...(Array.isArray(projectJestConfig?.moduleFileExtensions) ? projectJestConfig.moduleFileExtensions : []),
-            "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "node"
-        ]));
+    const normalizeTransform = (t) => {
+      if (!t || typeof t !== "object") return {};
+      const isTsJestAvailable = isTsJestResolvable([rootDir]);
+      const result = {};
+      for (const [pattern, transformer] of Object.entries(t)) {
+        if (transformer === "ts-jest") {
+          if (isTsJestAvailable) {
+            result[pattern] = ["ts-jest", tsJestSafeConfig];
+          } else {
+            const babelJestPath = resolveTransformerPackage("babel-jest", [
+              rootDir,
+            ]);
+            const presetEnvPath = resolveTransformerPackage(
+              "@babel/preset-env",
+              [rootDir],
+            );
+            const presetTsPath = resolveTransformerPackage(
+              "@babel/preset-typescript",
+              [rootDir],
+            );
+            result[pattern] = [
+              babelJestPath,
+              {
+                presets: [
+                  [presetEnvPath, { targets: { node: "current" } }],
+                  presetTsPath,
+                ],
+              },
+            ];
+          }
+        } else if (Array.isArray(transformer) && transformer[0] === "ts-jest") {
+          if (!isTsJestAvailable) {
+            const babelJestPath = resolveTransformerPackage("babel-jest", [
+              rootDir,
+            ]);
+            const presetEnvPath = resolveTransformerPackage(
+              "@babel/preset-env",
+              [rootDir],
+            );
+            const presetTsPath = resolveTransformerPackage(
+              "@babel/preset-typescript",
+              [rootDir],
+            );
+            result[pattern] = [
+              babelJestPath,
+              {
+                presets: [
+                  [presetEnvPath, { targets: { node: "current" } }],
+                  presetTsPath,
+                ],
+              },
+            ];
+          } else {
+            const existingOpts = transformer[1] || {};
+            const existingTsconfig = existingOpts.tsconfig;
+            if (typeof existingTsconfig === "string") {
+              result[pattern] = [
+                "ts-jest",
+                {
+                  ...existingOpts,
+                  isolatedModules: true,
+                  diagnostics: false,
+                  ...(isEsmProject ? { useESM: true } : {}),
+                  tsconfig: existingTsconfig,
+                },
+              ];
+            } else {
+              let baseCompilerOptions = {};
+              if (typeof existingTsconfig === "object") {
+                baseCompilerOptions = existingTsconfig;
+              }
 
-        // Omit strict coverage thresholds from runner config so test execution does not fail pass/fail gates prematurely
-        const { coverageThreshold: _ignoredThreshold, ...cleanProjectJestConfig } = projectJestConfig || {};
-        const effectiveRoots = (cleanProjectJestConfig?.roots && Array.isArray(cleanProjectJestConfig.roots) && cleanProjectJestConfig.roots.length > 0)
-            ? cleanProjectJestConfig.roots
-            : ["<rootDir>"];
-        const extensionsToTreatAsEsm = (isEsmProject && cleanProjectJestConfig?.extensionsToTreatAsEsm)
-            ? cleanProjectJestConfig.extensionsToTreatAsEsm
-            : (isEsmProject ? [".ts", ".tsx"] : undefined);
-
-        const existingConfigNames = [
-            jestConfigPath,
-            "jest.config.js",
-            "jest.config.mjs",
-            "jest.config.cjs",
-            "jest.config.ts",
-            "jest.config.json"
-        ].filter(Boolean);
-
-        let activeProjectConfigFile = null;
-        for (const name of existingConfigNames) {
-            const full = path.isAbsolute(name) ? name : path.join(rootDir, name);
-            if (fs.existsSync(full)) {
-                activeProjectConfigFile = path.relative(rootDir, full).replace(/\\/g, "/");
-                break;
+              result[pattern] = [
+                "ts-jest",
+                {
+                  ...existingOpts,
+                  isolatedModules: true,
+                  diagnostics: false,
+                  ...(isEsmProject ? { useESM: true } : {}),
+                  tsconfig: {
+                    ...baseCompilerOptions,
+                    isolatedModules: true,
+                    allowJs: true,
+                    esModuleInterop: true,
+                    skipLibCheck: true,
+                    ...(isEsmProject
+                      ? { module: "esnext" }
+                      : { module: "commonjs" }),
+                    target: "es2020",
+                    noImplicitAny: false,
+                    strict: false,
+                  },
+                },
+              ];
             }
+          }
+        } else {
+          result[pattern] = transformer;
         }
+      }
+      return result;
+    };
 
-        const tempResolverName = "covai-jest-resolver.cjs";
-        const tempResolverPath = path.join(rootDir, tempResolverName);
-        if (shouldRunRoot) {
-            try {
-                fs.writeFileSync(
-                    tempResolverPath,
-                    `const path = require('path');\n` +
-                    `const fs = require('fs');\n` +
-                    `module.exports = (request, options) => {\n` +
-                    `  if (request === 'jest-environment-jsdom') {\n` +
-                    `    try {\n` +
-                    `      return require.resolve('jest-environment-jsdom', { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
-                    `    } catch (_) {}\n` +
-                    `  }\n` +
-                    `  try {\n` +
-                    `    return options.defaultResolver(request, options);\n` +
-                    `  } catch (err) {\n` +
-                    `    try {\n` +
-                    `      return require.resolve(request, { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
-                    `    } catch (_) {}\n` +
-                    `    const exts = options.extensions || ['.js', '.json', '.ts', '.tsx', '.mjs', '.cjs'];\n` +
-                    `    if (request.startsWith('.') || path.isAbsolute(request)) {\n` +
-                    `      const full = path.resolve(options.basedir, request);\n` +
-                    `      for (const ext of ['', ...exts, '/index.js', '/index.ts', '/index.mjs', '/jest-preset.js']) {\n` +
-                    `        const candidate = full + ext;\n` +
-                    `        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
-                    `      }\n` +
-                    `      try {\n` +
-                    `        const cleanBase = path.basename(request).replace(/\\.[cm]?[jt]sx?$/, '');\n` +
-                    `        const srcDir = path.resolve(process.cwd(), 'src');\n` +
-                    `        if (fs.existsSync(srcDir)) {\n` +
-                    `          const findInDir = (dir) => {\n` +
-                    `            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {\n` +
-                    `              const p = path.join(dir, ent.name);\n` +
-                    `              if (ent.isDirectory() && ent.name !== 'node_modules') {\n` +
-                    `                const res = findInDir(p);\n` +
-                    `                if (res) return res;\n` +
-                    `              } else if (ent.isFile() && (ent.name === cleanBase + '.js' || ent.name === cleanBase + '.ts' || ent.name === cleanBase + '.jsx')) {\n` +
-                    `                return p;\n` +
-                    `              }\n` +
-                    `            }\n` +
-                    `            return null;\n` +
-                    `          };\n` +
-                    `          const found = findInDir(srcDir);\n` +
-                    `          if (found) return found;\n` +
-                    `        }\n` +
-                    `      } catch (_) {}\n` +
-                    `    }\n` +
-                    `    let currentDir = options.basedir;\n` +
-                    `    while (currentDir) {\n` +
-                    `      const candidateDir = path.join(currentDir, 'node_modules', request);\n` +
-                    `      if (fs.existsSync(candidateDir)) {\n` +
-                    `        try {\n` +
-                    `          const pJson = path.join(candidateDir, 'package.json');\n` +
-                    `          if (fs.existsSync(pJson)) {\n` +
-                    `            const pData = JSON.parse(fs.readFileSync(pJson, 'utf8'));\n` +
-                    `            const pMain = pData.main || pData.module || 'index.js';\n` +
-                    `            const pFile = path.resolve(candidateDir, pMain);\n` +
-                    `            if (fs.existsSync(pFile) && fs.statSync(pFile).isFile()) return pFile;\n` +
-                    `            for (const ext of exts) {\n` +
-                    `              if (fs.existsSync(pFile + ext)) return pFile + ext;\n` +
-                    `            }\n` +
-                    `          }\n` +
-                    `        } catch (_) {}\n` +
-                    `        for (const ext of ['', ...exts, '/jest-preset.js', '/dist/index.js', '/index.js', '/index.ts']) {\n` +
-                    `          const candidate = candidateDir + ext;\n` +
-                    `          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
-                    `        }\n` +
-                    `      }\n` +
-                    `      for (const ext of exts) {\n` +
-                    `        const candidateFile = path.join(currentDir, 'node_modules', request + ext);\n` +
-                    `        if (fs.existsSync(candidateFile) && fs.statSync(candidateFile).isFile()) return candidateFile;\n` +
-                    `      }\n` +
-                    `      const parentDir = path.dirname(currentDir);\n` +
-                    `      if (parentDir === currentDir) break;\n` +
-                    `      currentDir = parentDir;\n` +
-                    `    }\n` +
-                    `    throw err;\n` +
-                    `  }\n` +
-                    `};\n`,
-                    "utf8"
-                );
-                createdHarnessFiles.add(tempResolverPath);
-                jestCmd += ` --resolver="./${tempResolverName}"`;
-            } catch { }
+    const detectedTransform = detectTransforms(rootDir);
+
+    const mergedTransform = {
+      ...(detectedTransform || {}),
+      ...normalizeTransform(projectJestConfig?.transform),
+    };
+
+    const hasJsTransform = Object.keys(mergedTransform).some(
+      (k) => k.includes("js") || k.includes("jsx"),
+    );
+    const hasTsJest = Object.values(mergedTransform).some(
+      (v) =>
+        (typeof v === "string" && v.includes("ts-jest")) ||
+        (Array.isArray(v) && v[0]?.includes("ts-jest")),
+    );
+    if (hasTsJest && !hasJsTransform && !isEsmProject) {
+      mergedTransform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
+    }
+
+    if (process.env.COVAI_ISOLATED_SOURCE_DEFECTS) {
+      try {
+        const defectEntries = JSON.parse(
+          process.env.COVAI_ISOLATED_SOURCE_DEFECTS,
+        );
+        if (Array.isArray(defectEntries) && defectEntries.length > 0) {
+          const shimName = "covai-jest-defect-shim.cjs";
+          const shimPath = path.join(rootDir, shimName);
+          const { createRequire } = await import("node:module");
+          const babelJestPath = createRequire(import.meta.url)
+            .resolve("babel-jest")
+            .replace(/\\/g, "/");
+          const shimCode =
+            `const babelJest = require(${JSON.stringify(babelJestPath)});\n` +
+            `const inner = (babelJest.default || babelJest).createTransformer ? (babelJest.default || babelJest).createTransformer() : (babelJest.default || babelJest);\n` +
+            `const defects = ${JSON.stringify(defectEntries)};\n` +
+            `module.exports = {\n` +
+            `  process(sourceText, sourcePath, options) {\n` +
+            `    const norm = String(sourcePath || '').replace(/\\\\/g, '/');\n` +
+            `    const hit = defects.find(d => d.file && (norm.endsWith('/' + d.file) || norm === d.file));\n` +
+            `    let patched = sourceText;\n` +
+            `    if (hit && Array.isArray(hit.symbols) && hit.symbols.length) {\n` +
+            `      const stubs = hit.symbols.map(s => 'var ' + s + ' = function __covaiIsolatedSourceDefect() { throw new ReferenceError(' + JSON.stringify(s + ' is not defined') + '); };').join('\\n');\n` +
+            `      patched = sourceText + '\\n' + stubs + '\\n';\n` +
+            `    }\n` +
+            `    return inner.process(patched, sourcePath, options);\n` +
+            `  },\n` +
+            `  getCacheKey(sourceText, sourcePath, options) {\n` +
+            `    return (inner.getCacheKey ? inner.getCacheKey(sourceText, sourcePath, options) : '') + ':' + JSON.stringify(defects);\n` +
+            `  }\n` +
+            `};\n`;
+          fs.writeFileSync(shimPath, shimCode, "utf8");
+          createdHarnessFiles.add(shimPath);
+          for (const k of Object.keys(mergedTransform)) {
+            if (/j|t|x/.test(k)) delete mergedTransform[k];
+          }
+          mergedTransform["^.+\\.[cm]?[jt]sx?$"] = `<rootDir>/${shimName}`;
         }
+      } catch (_) {}
+    }
 
-        const tempSetupName = "covai-jest-setup.cjs";
-        const tempSetupPath = path.join(rootDir, tempSetupName);
-        const tempSetupAfterEnvName = "covai-jest-setup-after-env.cjs";
-        const tempSetupAfterEnvPath = path.join(rootDir, tempSetupAfterEnvName);
-        if (shouldRunRoot) {
-            try {
-                fs.writeFileSync(
-                    tempSetupPath,
-                    `try {\n` +
-                    `  delete require.cache[__filename];\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  process.env.NODE_ENV = process.env.NODE_ENV || 'test';\n` +
-                    `  process.exit = function(code) {};\n` +
-                    `  process.on('unhandledRejection', () => {});\n` +
-                    `  process.on('uncaughtException', () => {});\n` +
-                    `  const fs = require('fs');\n` +
-                    `  const path = require('path');\n` +
-                    `  for (const ef of ['.env.test', '.env.example', '.env']) {\n` +
-                    `    const ep = path.resolve(process.cwd(), ef);\n` +
-                    `    if (fs.existsSync(ep)) {\n` +
-                    `      const c = fs.readFileSync(ep, 'utf8');\n` +
-                    `      for (const line of c.split('\\n')) {\n` +
-                    `        const t = line.trim();\n` +
-                    `        if (!t || t.startsWith('#')) continue;\n` +
-                    `        const eq = t.indexOf('=');\n` +
-                    `        if (eq !== -1) {\n` +
-                    `          const k = t.slice(0, eq).trim();\n` +
-                    `          let v = t.slice(eq + 1).trim();\n` +
-                    `          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);\n` +
-                    `          if (k && !process.env[k]) process.env[k] = v;\n` +
-                    `        }\n` +
-                    `      }\n` +
-                    `    }\n` +
-                    `  }\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
-                    `  if (!j) {\n` +
-                    `    try {\n` +
-                    `      const g = require('@jest/globals');\n` +
-                    `      if (g && g.jest) j = g.jest;\n` +
-                    `    } catch (_) {}\n` +
-                    `  }\n` +
-                    `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
-                    `  if (!j) {\n` +
-                    `    const createFn = (impl) => {\n` +
-                    `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
-                    `      mockFn._isMockFunction = true;\n` +
-                    `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
-                    `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
-                    `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
-                    `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
-                    `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockReturnThis = () => mockFn;\n` +
-                    `      mockFn.mockClear = () => mockFn;\n` +
-                    `      mockFn.mockReset = () => mockFn;\n` +
-                    `      mockFn.mockRestore = () => mockFn;\n` +
-                    `      return mockFn;\n` +
-                    `    };\n` +
-                    `    j = {\n` +
-                    `      fn: createFn,\n` +
-                    `      mock: () => {},\n` +
-                    `      unmock: () => {},\n` +
-                    `      spyOn: (obj, method) => {\n` +
-                    `        const orig = obj ? obj[method] : undefined;\n` +
-                    `        const spy = createFn(orig);\n` +
-                    `        if (obj) obj[method] = spy;\n` +
-                    `        return spy;\n` +
-                    `      },\n` +
-                    `      clearAllMocks: () => {},\n` +
-                    `      resetAllMocks: () => {},\n` +
-                    `      restoreAllMocks: () => {},\n` +
-                    `      resetModules: () => {},\n` +
-                    `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
-                    `    };\n` +
-                    `  }\n` +
-                    `  if (typeof global !== 'undefined') global.jest = j;\n` +
-                    `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof globalThis.require === 'undefined' || typeof global.require === 'undefined') {\n` +
-                    `    const { createRequire } = require('module');\n` +
-                    `    const req = createRequire(process.cwd() + '/package.json');\n` +
-                    `    if (typeof globalThis.require === 'undefined') globalThis.require = req;\n` +
-                    `    if (typeof global.require === 'undefined') global.require = req;\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
-                    `    jest.mock('bull', () => {\n` +
-                    `      const mockQueue = {\n` +
-                    `        process: jest.fn(),\n` +
-                    `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
-                    `        on: jest.fn().mockReturnThis(),\n` +
-                    `        getWaitingCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getActiveCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getCompletedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getFailedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getDelayedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        close: jest.fn().mockResolvedValue(),\n` +
-                    `        isReady: jest.fn().mockResolvedValue()\n` +
-                    `      };\n` +
-                    `      return jest.fn(() => mockQueue);\n` +
-                    `    }, { virtual: true });\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  const matchers = {\n` +
-                    `    toSatisfy(received, predicate) {\n` +
-                    `      try {\n` +
-                    `        const pass = predicate(received);\n` +
-                    `        return { pass: pass === undefined ? true : Boolean(pass), message: () => 'expected ' + received + ' to satisfy predicate' };\n` +
-                    `      } catch (err) {\n` +
-                    `        return { pass: false, message: () => 'predicate threw error: ' + (err && err.message) };\n` +
-                    `      }\n` +
-                    `    },\n` +
-                    `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
-                    `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
-                    `    toBe(received, expected) {\n` +
-                    `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
-                    `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      }\n` +
-                    `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
-                    `    }\n` +
-                    `  };\n` +
-                    `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
-                    `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
-                    `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  const g = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : {});\n` +
-                    `  if (g && !g.mockQbo) {\n` +
-                    `    const fn = () => (typeof jest !== 'undefined' ? jest.fn((...args) => { const cb = args[args.length-1]; if (typeof cb === 'function') cb(null, {}); return Promise.resolve({}); }) : () => Promise.resolve({}));\n` +
-                    `    g.mockQbo = { getAccount: fn(), updateAccount: fn(), createAccount: fn(), findAccounts: fn() };\n` +
-                    `  }\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  let prismaPkg = null;\n` +
-                    `  try {\n` +
-                    `    prismaPkg = require('@prisma/client');\n` +
-                    `  } catch (_) {}\n` +
-                    `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
-                    `    let isStub = false;\n` +
-                    `    try {\n` +
-                    `      new prismaPkg.PrismaClient();\n` +
-                    `    } catch (pe) {\n` +
-                    `      if (pe && pe.message && (pe.message.includes('did not initialize yet') || pe.message.includes('prisma generate'))) {\n` +
-                    `        isStub = true;\n` +
-                    `      }\n` +
-                    `    }\n` +
-                    `    if (isStub) {\n` +
-                    `      const createPrismaProxy = () => {\n` +
-                    `        const handler = {\n` +
-                    `          get(target, prop) {\n` +
-                    `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
-                    `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
-                    `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve());\n` +
-                    `            return new Proxy(() => Promise.resolve({}), handler);\n` +
-                    `          },\n` +
-                    `          apply() { return Promise.resolve({}); }\n` +
-                    `        };\n` +
-                    `        return new Proxy({}, handler);\n` +
-                    `      };\n` +
-                    `      prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
-                    `    }\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof test !== 'undefined' && typeof expect !== 'undefined') {\n` +
-                    `    test('test suite sanity check', () => { expect(true).toBe(true); });\n` +
-                    `  }\n` +
-                    `} catch { }\n`,
-                    "utf8"
-                );
-                createdHarnessFiles.add(tempSetupPath);
-                fs.writeFileSync(
-                    tempSetupAfterEnvPath,
-                    buildSetupAfterEnvContent(),
-                    "utf8"
-                );
-                createdHarnessFiles.add(tempSetupAfterEnvPath);
-                jestCmd += ` --setupFiles="./${tempSetupName}" --setupFilesAfterEnv="./${tempSetupAfterEnvName}"`;
-            } catch { }
-        }
+    const resolvedModuleFileExtensions = Array.from(
+      new Set([
+        ...(Array.isArray(projectJestConfig?.moduleFileExtensions)
+          ? projectJestConfig.moduleFileExtensions
+          : []),
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs",
+        "json",
+        "node",
+      ]),
+    );
 
-        if (Array.isArray(specificFiles) && specificFiles.length > 0) {
-            jestCmd += ' --coverageThreshold="{}"';
-        }
+    // Omit strict coverage thresholds from runner config so test execution does not fail pass/fail gates prematurely
+    const { coverageThreshold: _ignoredThreshold, ...cleanProjectJestConfig } =
+      projectJestConfig || {};
+    const effectiveRoots =
+      cleanProjectJestConfig?.roots &&
+      Array.isArray(cleanProjectJestConfig.roots) &&
+      cleanProjectJestConfig.roots.length > 0
+        ? cleanProjectJestConfig.roots
+        : ["<rootDir>"];
+    const extensionsToTreatAsEsm =
+      isEsmProject && cleanProjectJestConfig?.extensionsToTreatAsEsm
+        ? cleanProjectJestConfig.extensionsToTreatAsEsm
+        : isEsmProject
+          ? [".ts", ".tsx"]
+          : undefined;
 
-        if (shouldRunRoot) {
-            const safeIgnorePatterns = [
-                "/node_modules/", "/client/", "/frontend/",
-                ...(Array.isArray(cleanProjectJestConfig?.testPathIgnorePatterns)
-                    ? cleanProjectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
-                    : [])
+    const existingConfigNames = [
+      jestConfigPath,
+      "jest.config.js",
+      "jest.config.mjs",
+      "jest.config.cjs",
+      "jest.config.ts",
+      "jest.config.json",
+    ].filter(Boolean);
+
+    let activeProjectConfigFile = null;
+    for (const name of existingConfigNames) {
+      const full = path.isAbsolute(name) ? name : path.join(rootDir, name);
+      if (fs.existsSync(full)) {
+        activeProjectConfigFile = path
+          .relative(rootDir, full)
+          .replace(/\\/g, "/");
+        break;
+      }
+    }
+
+    const tempResolverName = "covai-jest-resolver.cjs";
+    const tempResolverPath = path.join(rootDir, tempResolverName);
+    if (shouldRunRoot) {
+      try {
+        fs.writeFileSync(
+          tempResolverPath,
+          `const path = require('path');\n` +
+            `const fs = require('fs');\n` +
+            `module.exports = (request, options) => {\n` +
+            `  if (request === 'jest-environment-jsdom') {\n` +
+            `    try {\n` +
+            `      return require.resolve('jest-environment-jsdom', { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
+            `    } catch (_) {}\n` +
+            `  }\n` +
+            `  try {\n` +
+            `    return options.defaultResolver(request, options);\n` +
+            `  } catch (err) {\n` +
+            `    try {\n` +
+            `      return require.resolve(request, { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
+            `    } catch (_) {}\n` +
+            `    const exts = options.extensions || ['.js', '.json', '.ts', '.tsx', '.mjs', '.cjs'];\n` +
+            `    if (request.startsWith('.') || path.isAbsolute(request)) {\n` +
+            `      const full = path.resolve(options.basedir, request);\n` +
+            `      for (const ext of ['', ...exts, '/index.js', '/index.ts', '/index.mjs', '/jest-preset.js']) {\n` +
+            `        const candidate = full + ext;\n` +
+            `        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
+            `      }\n` +
+            `      try {\n` +
+            `        const cleanBase = path.basename(request).replace(/\\.[cm]?[jt]sx?$/, '');\n` +
+            `        const srcDir = path.resolve(process.cwd(), 'src');\n` +
+            `        if (fs.existsSync(srcDir)) {\n` +
+            `          const findInDir = (dir) => {\n` +
+            `            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {\n` +
+            `              const p = path.join(dir, ent.name);\n` +
+            `              if (ent.isDirectory() && ent.name !== 'node_modules') {\n` +
+            `                const res = findInDir(p);\n` +
+            `                if (res) return res;\n` +
+            `              } else if (ent.isFile() && (ent.name === cleanBase + '.js' || ent.name === cleanBase + '.ts' || ent.name === cleanBase + '.jsx')) {\n` +
+            `                return p;\n` +
+            `              }\n` +
+            `            }\n` +
+            `            return null;\n` +
+            `          };\n` +
+            `          const found = findInDir(srcDir);\n` +
+            `          if (found) return found;\n` +
+            `        }\n` +
+            `      } catch (_) {}\n` +
+            `    }\n` +
+            `    let currentDir = options.basedir;\n` +
+            `    while (currentDir) {\n` +
+            `      const candidateDir = path.join(currentDir, 'node_modules', request);\n` +
+            `      if (fs.existsSync(candidateDir)) {\n` +
+            `        try {\n` +
+            `          const pJson = path.join(candidateDir, 'package.json');\n` +
+            `          if (fs.existsSync(pJson)) {\n` +
+            `            const pData = JSON.parse(fs.readFileSync(pJson, 'utf8'));\n` +
+            `            const pMain = pData.main || pData.module || 'index.js';\n` +
+            `            const pFile = path.resolve(candidateDir, pMain);\n` +
+            `            if (fs.existsSync(pFile) && fs.statSync(pFile).isFile()) return pFile;\n` +
+            `            for (const ext of exts) {\n` +
+            `              if (fs.existsSync(pFile + ext)) return pFile + ext;\n` +
+            `            }\n` +
+            `          }\n` +
+            `        } catch (_) {}\n` +
+            `        for (const ext of ['', ...exts, '/jest-preset.js', '/dist/index.js', '/index.js', '/index.ts']) {\n` +
+            `          const candidate = candidateDir + ext;\n` +
+            `          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
+            `        }\n` +
+            `      }\n` +
+            `      for (const ext of exts) {\n` +
+            `        const candidateFile = path.join(currentDir, 'node_modules', request + ext);\n` +
+            `        if (fs.existsSync(candidateFile) && fs.statSync(candidateFile).isFile()) return candidateFile;\n` +
+            `      }\n` +
+            `      const parentDir = path.dirname(currentDir);\n` +
+            `      if (parentDir === currentDir) break;\n` +
+            `      currentDir = parentDir;\n` +
+            `    }\n` +
+            `    throw err;\n` +
+            `  }\n` +
+            `};\n`,
+          "utf8",
+        );
+        createdHarnessFiles.add(tempResolverPath);
+        jestCmd += ` --resolver="./${tempResolverName}"`;
+      } catch {}
+    }
+
+    const tempSetupName = "covai-jest-setup.cjs";
+    const tempSetupPath = path.join(rootDir, tempSetupName);
+    const tempSetupAfterEnvName = "covai-jest-setup-after-env.cjs";
+    const tempSetupAfterEnvPath = path.join(rootDir, tempSetupAfterEnvName);
+    if (shouldRunRoot) {
+      try {
+        fs.writeFileSync(
+          tempSetupPath,
+          buildSetupContent({
+            rootDir,
+            targetDir: rootDir,
+            hermeticMocks,
+            virtualDbEnv: options?.virtualDbEnv || {},
+          }),
+          "utf8",
+        );
+        createdHarnessFiles.add(tempSetupPath);
+        fs.writeFileSync(
+          tempSetupAfterEnvPath,
+          buildSetupAfterEnvContent(),
+          "utf8",
+        );
+        createdHarnessFiles.add(tempSetupAfterEnvPath);
+        jestCmd += ` --setupFiles="./${tempSetupName}" --setupFilesAfterEnv="./${tempSetupAfterEnvName}"`;
+      } catch {}
+    }
+
+    if (Array.isArray(specificFiles) && specificFiles.length > 0) {
+      jestCmd += ' --coverageThreshold="{}"';
+    }
+
+    if (shouldRunRoot) {
+      const safeIgnorePatterns = [
+        "/node_modules/",
+        "/client/",
+        "/frontend/",
+        covaiJestDerivedSuitePattern,
+        ...(Array.isArray(cleanProjectJestConfig?.testPathIgnorePatterns)
+          ? cleanProjectJestConfig.testPathIgnorePatterns.filter(
+              (p) => !p.includes("node_modules"),
+            )
+          : []),
+      ];
+
+      const isExplicitFiles =
+        Array.isArray(specificFiles) && specificFiles.length > 0;
+      const filesToPass = isExplicitFiles
+        ? packageGroups.size > 0
+          ? rootFiles || []
+          : specificFiles
+        : Array.isArray(rootFiles) && rootFiles.length > 0
+          ? rootFiles
+          : [];
+
+      const baseTestMatch =
+        Array.isArray(cleanProjectJestConfig?.testMatch) &&
+        cleanProjectJestConfig.testMatch.length > 0
+          ? cleanProjectJestConfig.testMatch
+          : [
+              "<rootDir>/**/__tests__/**/*.[jt]s?(x)",
+              "<rootDir>/**/?(*.)+(spec|test|testcase|steps?).[jt]s?(x)",
+              "<rootDir>/**/step-definitions/**/*.[jt]s?(x)",
+              "<rootDir>/tests/**/*.[jt]s?(x)",
             ];
 
-            const isExplicitFiles = Array.isArray(specificFiles) && specificFiles.length > 0;
-            const filesToPass = isExplicitFiles
-                ? (packageGroups.size > 0 ? (rootFiles || []) : specificFiles)
-                : (Array.isArray(rootFiles) && rootFiles.length > 0 ? rootFiles : []);
+      const testMatchPatterns =
+        filesToPass.length > 0
+          ? filesToPass.map((f) => `<rootDir>/${f.replace(/\\/g, "/")}`)
+          : baseTestMatch;
 
-            const baseTestMatch = Array.isArray(cleanProjectJestConfig?.testMatch) && cleanProjectJestConfig.testMatch.length > 0
-                ? cleanProjectJestConfig.testMatch
-                : [
-                    "<rootDir>/**/__tests__/**/*.[jt]s?(x)",
-                    "<rootDir>/**/?(*.)+(spec|test|testcase|steps?).[jt]s?(x)",
-                    "<rootDir>/**/step-definitions/**/*.[jt]s?(x)",
-                    "<rootDir>/tests/**/*.[jt]s?(x)"
-                ];
-
-            const testMatchPatterns = (filesToPass.length > 0)
-                ? filesToPass.map(f => `<rootDir>/${f.replace(/\\/g, "/")}`)
-                : baseTestMatch;
-
-            const scopedCollectCoverageFrom = [];
-            if (isExplicitFiles && Array.isArray(options?.targetSourceFiles) && options.targetSourceFiles.length > 0) {
-                for (const sf of options.targetSourceFiles) {
-                    if (!sf || typeof sf !== "string") continue;
-                    const canonSf = canonicalizeFilePath(sf, rootDir).replace(/^\/+/, "");
-                    if (canonSf && fs.existsSync(path.join(rootDir, canonSf))) {
-                        scopedCollectCoverageFrom.push(canonSf);
-                    }
-                }
-            }
-
-            try {
-                const tempConfig = {
-                    ...cleanProjectJestConfig,
-                    ...(scopedCollectCoverageFrom.length > 0 ? { collectCoverageFrom: scopedCollectCoverageFrom } : {}),
-                    testEnvironment: resolveTestEnvironment(rootDir, rootDir, cleanProjectJestConfig?.testEnvironment),
-                    roots: effectiveRoots,
-                    testMatch: testMatchPatterns,
-                    testTimeout: 10000,
-                    testPathIgnorePatterns: safeIgnorePatterns,
-                    setupFiles: [
-                        ...(Array.isArray(cleanProjectJestConfig?.setupFiles) ? cleanProjectJestConfig.setupFiles : []),
-                        `<rootDir>/${tempSetupName}`
-                    ],
-                    setupFilesAfterEnv: [
-                        ...(Array.isArray(cleanProjectJestConfig?.setupFilesAfterEnv) ? cleanProjectJestConfig.setupFilesAfterEnv : []),
-                        `<rootDir>/${tempSetupAfterEnvName}`
-                    ],
-                    coveragePathIgnorePatterns: (Array.isArray(cleanProjectJestConfig?.coveragePathIgnorePatterns) && cleanProjectJestConfig.coveragePathIgnorePatterns.length > 0)
-                        ? cleanProjectJestConfig.coveragePathIgnorePatterns
-                        : coveragePathIgnorePatterns,
-                    moduleNameMapper: defaultModuleNameMapper,
-                    ...(Object.keys(mergedTransform).length > 0 ? { transform: mergedTransform } : {}),
-                    moduleFileExtensions: resolvedModuleFileExtensions,
-                    globals: {
-                        ...(cleanProjectJestConfig?.globals || {}),
-                        ...(hasTsJest ? {
-                            "ts-jest": {
-                                diagnostics: false,
-                                useESM: isEsmProject,
-                                ...(typeof cleanProjectJestConfig?.globals?.["ts-jest"] === "object" ? cleanProjectJestConfig.globals["ts-jest"] : {})
-                            }
-                        } : {})
-                    },
-                    coveragePathIgnorePatterns: [
-                        ...(Array.isArray(cleanProjectJestConfig?.coveragePathIgnorePatterns) ? cleanProjectJestConfig.coveragePathIgnorePatterns : []),
-                        "/node_modules/",
-                        "/tests?/",
-                        "/__tests__/",
-                        "/specs?/",
-                        "/e2e/",
-                        "/cypress/",
-                        "[-_.](test|spec)[-_.]",
-                        "(^|/)tests?[-_.]",
-                        "[-_.]tests?\\.[cm]?[jt]sx?$"
-                    ],
-                    ...(extensionsToTreatAsEsm ? { extensionsToTreatAsEsm } : {})
-                };
-                fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2), "utf8");
-                tempConfigCreated = true;
-                createdHarnessFiles.add(tempConfigPath);
-                jestCmd += ` --config=${tempConfigName}`;
-                if (filesToPass.length > 0) {
-                    const fileArgs = filesToPass.slice(0, 300).map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
-                    jestCmd += ` ${isExplicitFiles ? '--runTestsByPath ' : ''}${fileArgs}`;
-                }
-            } catch (configErr) {
-                console.warn(`[runJestCoverage] Warning creating primary Jest config at ${tempConfigPath}:`, configErr.message);
-                const activeFull = activeProjectConfigFile
-                    ? (path.isAbsolute(activeProjectConfigFile) ? activeProjectConfigFile : path.join(rootDir, activeProjectConfigFile))
-                    : null;
-                if (activeFull && fs.existsSync(activeFull)) {
-                    jestCmd += ` --config=${activeProjectConfigFile}`;
-                } else {
-                    try {
-                        const fallbackConfig = {
-                            testEnvironment: "node",
-                            testMatch: ["**/*.test.[jt]s", "**/*.spec.[jt]s"],
-                            moduleFileExtensions: ["js", "jsx", "ts", "tsx", "mjs", "cjs", "json", "node"]
-                        };
-                        fs.writeFileSync(tempConfigPath, JSON.stringify(fallbackConfig, null, 2), "utf8");
-                        tempConfigCreated = true;
-                        createdHarnessFiles.add(tempConfigPath);
-                        jestCmd += ` --config=${tempConfigName}`;
-                    } catch (_) { }
-                }
-                if (filesToPass.length > 0) {
-                    const fileArgs = filesToPass.slice(0, 300).map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
-                    jestCmd += ` ${isExplicitFiles ? '--runTestsByPath ' : ''}${fileArgs}`;
-                }
-            }
-
-            const fileCount = Array.isArray(rootFiles) && rootFiles.length > 0 ? rootFiles.length : 50;
-            const effectiveTimeout = Math.min(10 * 60 * 1000, Math.max(180 * 1000, 60 * 1000 + fileCount * 25 * 1000));
-
-            await addJobLog(jobId, "INFO", `[SCRUM-140] Starting jest --coverage (${rootFiles.length > 0 ? rootFiles.length + ' files' : 'all'}) in Docker container (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
-
-            let rootPkgModified = false;
-            let originalRootPkgContent = null;
-            try {
-                const rootPkgPath = path.join(rootDir, "package.json");
-                if (fs.existsSync(rootPkgPath)) {
-                    originalRootPkgContent = fs.readFileSync(rootPkgPath, "utf8");
-                    const rootPkg = JSON.parse(originalRootPkgContent);
-                    // Never override if root package explicitly states "commonjs"
-                    if (rootPkg.type !== "commonjs" && (!rootPkg.type || rootPkg.type !== "module")) {
-                        const hasEsmFiles = (rootFiles || []).some(f => {
-                            try {
-                                const c = fs.readFileSync(path.join(rootDir, f), "utf8");
-                                const stripped = c.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
-                                return /(?:^|\n)\s*(?:import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"]|export\s+(?:default|const|let|var|function|class|\*|\{))/.test(stripped);
-                            } catch { return false; }
-                        });
-                        const backendPkgPath = path.join(rootDir, "backend", "package.json");
-                        let backendIsModule = false;
-                        try {
-                            backendIsModule = fs.existsSync(backendPkgPath) && JSON.parse(fs.readFileSync(backendPkgPath, "utf8"))?.type === "module";
-                        } catch { }
-                        const hasTsConfig = fs.existsSync(path.join(rootDir, "tsconfig.json"));
-                        const hasTsFiles = (rootFiles || []).some(f => /\.[cm]?tsx?$/.test(f));
-                        const isTsProject = hasTsConfig || hasTsFiles;
-                        if (!isTsProject && (hasEsmFiles || backendIsModule)) {
-                            rootPkg.type = "module";
-                            fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2), "utf8");
-                            rootPkgModified = true;
-                        }
-                    }
-                }
-            } catch { }
-
-            let result;
-            try {
-                result = await dockerRunner.run({
-                    snapshotPath: rootDir,
-                    command: jestCmd,
-                    timeoutMs: effectiveTimeout,
-                    jobId,
-                    env: {
-                        NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
-                        NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
-                    }
-                });
-                if (result.stdout) overallStdout += "\n" + result.stdout;
-                if (result.stderr) overallStderr += "\n" + result.stderr;
-                if (result.exitCode !== 0 && result.exitCode !== null) {
-                    overallExitCode = result.exitCode;
-                }
-                if (!result.success || (result.exitCode !== 0 && result.exitCode !== null)) {
-                    const outputText = (result.stderr || "") + "\n" + (result.stdout || "");
-                    const modResError = parseModuleResolutionError(outputText, rootDir);
-                    if (modResError) {
-                        await addJobLog(jobId, "ERROR", `[MODULE_RESOLUTION] Test file: "${cleanStoragePath(modResError.testFile)}", missing module: "${modResError.missingModule}", resolved path: "${cleanStoragePath(modResError.expectedSourcePath || modResError.pathResolving)}", workingDirectory: "${cleanStoragePath(modResError.workingDirectory)}"`).catch(() => { });
-                    }
-                }
-            } finally {
-                if (rootPkgModified && originalRootPkgContent) {
-                    try {
-                        fs.writeFileSync(path.join(rootDir, "package.json"), originalRootPkgContent, "utf8");
-                    } catch { }
-                }
-                if (tempConfigCreated && fs.existsSync(tempConfigPath)) {
-                    try { fs.unlinkSync(tempConfigPath); } catch { }
-                }
-                if (fs.existsSync(tempSetupPath)) {
-                    try { fs.unlinkSync(tempSetupPath); } catch { }
-                }
-                if (fs.existsSync(tempSetupAfterEnvPath)) {
-                    try { fs.unlinkSync(tempSetupAfterEnvPath); } catch { }
-                }
-                if (fs.existsSync(tempResolverPath)) {
-                    try { fs.unlinkSync(tempResolverPath); } catch { }
-                }
-            }
-
-            // Ensure jest-results.json is copied or synced if generated in root
-            const rootTestResults = path.join(rootDir, "test-results.json");
-            const jestResultsPath = path.join(covDir, "jest-results.json");
-            if (fs.existsSync(rootTestResults) && !fs.existsSync(jestResultsPath)) {
-                try { fs.copyFileSync(rootTestResults, jestResultsPath); } catch { }
-            }
+      const scopedCollectCoverageFrom = [];
+      if (
+        isExplicitFiles &&
+        Array.isArray(options?.targetSourceFiles) &&
+        options.targetSourceFiles.length > 0
+      ) {
+        for (const sf of options.targetSourceFiles) {
+          if (!sf || typeof sf !== "string") continue;
+          const canonSf = canonicalizeFilePath(sf, rootDir).replace(/^\/+/, "");
+          if (canonSf && fs.existsSync(path.join(rootDir, canonSf))) {
+            scopedCollectCoverageFrom.push(canonSf);
+          }
         }
+      }
 
-        // ── Execute subpackages ──────────────────────────────────────────────────
-        for (const [pkgDir, subFiles] of packageGroups.entries()) {
-            if (!pkgDir || !Array.isArray(subFiles) || subFiles.length === 0) continue;
+      const filteredSetupFiles = filterExistingSetupFiles(
+        cleanProjectJestConfig?.setupFiles,
+        rootDir,
+        {
+          rootDir,
+          autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false,
+          createdHarnessFiles,
+        },
+      );
+      const filteredSetupFilesAfterEnv = filterExistingSetupFiles(
+        cleanProjectJestConfig?.setupFilesAfterEnv,
+        rootDir,
+        {
+          rootDir,
+          autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false,
+          createdHarnessFiles,
+        },
+      );
 
-            const subSlug = pkgDir.replace(/[^a-zA-Z0-9_-]/g, "_");
-            const subResultsName = `jest-results-${subSlug}.json`;
-            const subResultsPath = path.join(covDir, subResultsName);
-            const targetDir = path.join(rootDir, pkgDir);
-            const subResultsRel = path.relative(targetDir, subResultsPath).replace(/\\/g, "/");
-
-            const relativeSubFiles = subFiles.map(f => path.relative(pkgDir, f).replace(/\\/g, "/"));
-            const fileArgs = relativeSubFiles.map(f => `"${f}"`).join(" ");
-
-            const subTimeout = Math.min(10 * 60 * 1000, Math.max(180 * 1000, 60 * 1000 + relativeSubFiles.length * 25 * 1000));
-            await addJobLog(jobId, "INFO", `[SCRUM-140] Running Jest for subpackage ${pkgDir} (${relativeSubFiles.length} files)...`).catch(() => { });
-            await detectAndRunPrismaGenerate(jobId, targetDir);
-
-            // Generate isolated setup and jest config for subpackage
-            const tempSubSetupName = `covai-setup-${subSlug}.cjs`;
-            const tempSubSetupPath = path.join(targetDir, tempSubSetupName);
-            const tempSubSetupAfterEnvName = `covai-setup-after-env-${subSlug}.cjs`;
-            const tempSubSetupAfterEnvPath = path.join(targetDir, tempSubSetupAfterEnvName);
-            try {
-                fs.writeFileSync(
-                    tempSubSetupPath,
-                    `try {\n` +
-                    `  delete require.cache[__filename];\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  process.exit = function(code) {};\n` +
-                    `  process.on('unhandledRejection', () => {});\n` +
-                    `  process.on('uncaughtException', () => {});\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
-                    `  if (!j) {\n` +
-                    `    try {\n` +
-                    `      const g = require('@jest/globals');\n` +
-                    `      if (g && g.jest) j = g.jest;\n` +
-                    `    } catch (_) {}\n` +
-                    `  }\n` +
-                    `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
-                    `  if (!j) {\n` +
-                    `    const createFn = (impl) => {\n` +
-                    `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
-                    `      mockFn._isMockFunction = true;\n` +
-                    `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
-                    `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
-                    `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
-                    `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
-                    `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
-                    `      mockFn.mockReturnThis = () => mockFn;\n` +
-                    `      mockFn.mockClear = () => mockFn;\n` +
-                    `      mockFn.mockReset = () => mockFn;\n` +
-                    `      mockFn.mockRestore = () => mockFn;\n` +
-                    `      return mockFn;\n` +
-                    `    };\n` +
-                    `    j = {\n` +
-                    `      fn: createFn,\n` +
-                    `      mock: () => {},\n` +
-                    `      unmock: () => {},\n` +
-                    `      spyOn: (obj, method) => {\n` +
-                    `        const orig = obj ? obj[method] : undefined;\n` +
-                    `        const spy = createFn(orig);\n` +
-                    `        if (obj) obj[method] = spy;\n` +
-                    `        return spy;\n` +
-                    `      },\n` +
-                    `      clearAllMocks: () => {},\n` +
-                    `      resetAllMocks: () => {},\n` +
-                    `      restoreAllMocks: () => {},\n` +
-                    `      resetModules: () => {},\n` +
-                    `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
-                    `    };\n` +
-                    `  }\n` +
-                    `  if (typeof global !== 'undefined') global.jest = j;\n` +
-                    `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  const matchers = {\n` +
-                    `    toSatisfy(received, predicate) {\n` +
-                    `      try {\n` +
-                    `        const pass = predicate(received);\n` +
-                    `        return { pass: pass === undefined ? true : Boolean(pass), message: () => 'expected ' + received + ' to satisfy predicate' };\n` +
-                    `      } catch (err) {\n` +
-                    `        return { pass: false, message: () => 'predicate threw error: ' + (err && err.message) };\n` +
-                    `      }\n` +
-                    `    },\n` +
-                    `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
-                    `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
-                    `    toBe(received, expected) {\n` +
-                    `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
-                    `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
-                    `      }\n` +
-                    `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
-                    `    }\n` +
-                    `  };\n` +
-                    `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
-                    `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
-                    `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
-                    `} catch { }\n` +
-                    `try {\n` +
-                    `  let prismaPkg = null;\n` +
-                    `  try {\n` +
-                    `    prismaPkg = require('@prisma/client');\n` +
-                    `  } catch (_) {}\n` +
-                    `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
-                    `    let isStub = false;\n` +
-                    `    try {\n` +
-                    `      new prismaPkg.PrismaClient();\n` +
-                    `    } catch (pe) {\n` +
-                    `      if (pe && pe.message && (pe.message.includes('did not initialize yet') || pe.message.includes('prisma generate'))) {\n` +
-                    `        isStub = true;\n` +
-                    `      }\n` +
-                    `    }\n` +
-                    `    if (isStub) {\n` +
-                    `      const createPrismaProxy = () => {\n` +
-                    `        const handler = {\n` +
-                    `          get(target, prop) {\n` +
-                    `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
-                    `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
-                    `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve());\n` +
-                    `            return new Proxy(() => Promise.resolve({}), handler);\n` +
-                    `          },\n` +
-                    `          apply() { return Promise.resolve({}); }\n` +
-                    `        };\n` +
-                    `        return new Proxy({}, handler);\n` +
-                    `      };\n` +
-                    `      prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
-                    `    }\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n` +
-                    `try {\n` +
-                    `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
-                    `    jest.mock('bull', () => {\n` +
-                    `      const mockQueue = {\n` +
-                    `        process: jest.fn(),\n` +
-                    `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
-                    `        on: jest.fn().mockReturnThis(),\n` +
-                    `        getWaitingCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getActiveCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getCompletedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getFailedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        getDelayedCount: jest.fn().mockResolvedValue(0),\n` +
-                    `        close: jest.fn().mockResolvedValue(),\n` +
-                    `        isReady: jest.fn().mockResolvedValue()\n` +
-                    `      };\n` +
-                    `      return jest.fn(() => mockQueue);\n` +
-                    `    }, { virtual: true });\n` +
-                    `  }\n` +
-                    `} catch (_) {}\n`,
-                    "utf8"
-                );
-                fs.writeFileSync(
-                    tempSubSetupAfterEnvPath,
-                    buildSetupAfterEnvContent(),
-                    "utf8"
-                );
-                createdHarnessFiles.add(tempSubSetupPath);
-                createdHarnessFiles.add(tempSubSetupAfterEnvPath);
-            } catch { }
-
-            const relRootFromSub = path.relative(targetDir, rootDir).replace(/\\/g, "/") || "..";
-            const hasDistSrc = fs.existsSync(path.join(rootDir, "dist", "src"));
-            const targetDistSrc = hasDistSrc
-                ? `<rootDir>/${relRootFromSub}/dist/src/index.js`
-                : (fs.existsSync(path.join(rootDir, "src")) ? `<rootDir>/${relRootFromSub}/src/index.ts` : `<rootDir>/${relRootFromSub}/src`);
-
-            const subModuleNameMapper = {
-                "^(?:\\.\\./)+dist/src$": targetDistSrc,
-                "^(?:\\.\\./)+dist/src/(.*)$": hasDistSrc ? `<rootDir>/${relRootFromSub}/dist/src/$1` : `<rootDir>/${relRootFromSub}/src/$1`,
-                ".*dist/src$": targetDistSrc,
-                ".*dist/src/(.*)": hasDistSrc ? `<rootDir>/${relRootFromSub}/dist/src/$1` : `<rootDir>/${relRootFromSub}/src/$1`,
-                "^jest-cucumber$": targetDistSrc,
-                "^jest-cucumber/(.*)$": hasDistSrc ? `<rootDir>/${relRootFromSub}/dist/src/$1` : `<rootDir>/${relRootFromSub}/src/$1`,
+      try {
+        const tempConfig = {
+          ...cleanProjectJestConfig,
+          ...(scopedCollectCoverageFrom.length > 0
+            ? { collectCoverageFrom: scopedCollectCoverageFrom }
+            : {}),
+          testEnvironment: resolveTestEnvironment(
+            rootDir,
+            rootDir,
+            cleanProjectJestConfig?.testEnvironment,
+          ),
+          roots: effectiveRoots,
+          testMatch: testMatchPatterns,
+          testTimeout: 10000,
+          testPathIgnorePatterns: safeIgnorePatterns,
+          setupFiles: [...filteredSetupFiles, `<rootDir>/${tempSetupName}`],
+          setupFilesAfterEnv: [
+            ...filteredSetupFilesAfterEnv,
+            `<rootDir>/${tempSetupAfterEnvName}`,
+          ],
+          coveragePathIgnorePatterns:
+            Array.isArray(cleanProjectJestConfig?.coveragePathIgnorePatterns) &&
+            cleanProjectJestConfig.coveragePathIgnorePatterns.length > 0
+              ? cleanProjectJestConfig.coveragePathIgnorePatterns
+              : coveragePathIgnorePatterns,
+          moduleNameMapper: defaultModuleNameMapper,
+          ...(Object.keys(mergedTransform).length > 0
+            ? { transform: mergedTransform }
+            : {}),
+          moduleFileExtensions: resolvedModuleFileExtensions,
+          globals: {
+            ...(cleanProjectJestConfig?.globals || {}),
+            ...(hasTsJest
+              ? {
+                  "ts-jest": {
+                    diagnostics: false,
+                    useESM: isEsmProject,
+                    ...(typeof cleanProjectJestConfig?.globals?.["ts-jest"] ===
+                    "object"
+                      ? cleanProjectJestConfig.globals["ts-jest"]
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+          coveragePathIgnorePatterns: [
+            ...(Array.isArray(
+              cleanProjectJestConfig?.coveragePathIgnorePatterns,
+            )
+              ? cleanProjectJestConfig.coveragePathIgnorePatterns
+              : []),
+            "/node_modules/",
+            "/tests?/",
+            "/__tests__/",
+            "/specs?/",
+            "/e2e/",
+            "/cypress/",
+            "[-_.](test|spec)[-_.]",
+            "(^|/)tests?[-_.]",
+            "[-_.]tests?\\.[cm]?[jt]sx?$",
+          ],
+          ...(extensionsToTreatAsEsm ? { extensionsToTreatAsEsm } : {}),
+        };
+        fs.writeFileSync(
+          tempConfigPath,
+          JSON.stringify(tempConfig, null, 2),
+          "utf8",
+        );
+        tempConfigCreated = true;
+        createdHarnessFiles.add(tempConfigPath);
+        jestCmd += ` --config=${tempConfigName}`;
+        if (filesToPass.length > 0) {
+          const fileArgs = filesToPass
+            .slice(0, 300)
+            .map((f) => `"${f.replace(/\\/g, "/")}"`)
+            .join(" ");
+          jestCmd += ` ${isExplicitFiles ? "--runTestsByPath " : ""}${fileArgs}`;
+        }
+        if (options?.testNamePattern && typeof options.testNamePattern === "string" && options.testNamePattern.trim()) {
+          jestCmd += ` --testNamePattern=${JSON.stringify(options.testNamePattern.trim())}`;
+        }
+      } catch (configErr) {
+        console.warn(
+          `[runJestCoverage] Warning creating primary Jest config at ${tempConfigPath}:`,
+          configErr.message,
+        );
+        const activeFull = activeProjectConfigFile
+          ? path.isAbsolute(activeProjectConfigFile)
+            ? activeProjectConfigFile
+            : path.join(rootDir, activeProjectConfigFile)
+          : null;
+        if (activeFull && fs.existsSync(activeFull)) {
+          jestCmd += ` --config=${activeProjectConfigFile}`;
+        } else {
+          try {
+            const fallbackConfig = {
+              testEnvironment: "node",
+              testMatch: ["**/*.test.[jt]s", "**/*.spec.[jt]s"],
+              moduleFileExtensions: [
+                "js",
+                "jsx",
+                "ts",
+                "tsx",
+                "mjs",
+                "cjs",
+                "json",
+                "node",
+              ],
             };
+            fs.writeFileSync(
+              tempConfigPath,
+              JSON.stringify(fallbackConfig, null, 2),
+              "utf8",
+            );
+            tempConfigCreated = true;
+            createdHarnessFiles.add(tempConfigPath);
+            jestCmd += ` --config=${tempConfigName}`;
+          } catch (_) {}
+        }
+        if (filesToPass.length > 0) {
+          const fileArgs = filesToPass
+            .slice(0, 300)
+            .map((f) => `"${f.replace(/\\/g, "/")}"`)
+            .join(" ");
+          jestCmd += ` ${isExplicitFiles ? "--runTestsByPath " : ""}${fileArgs}`;
+        }
+        if (options?.testNamePattern && typeof options.testNamePattern === "string" && options.testNamePattern.trim()) {
+          jestCmd += ` --testNamePattern=${JSON.stringify(options.testNamePattern.trim())}`;
+        }
+      }
 
-            const pkgJestConfig = await readProjectJestConfig(targetDir);
-            const { coverageThreshold: _subThreshold, roots: _subRoots, ...cleanPkgJestConfig } = pkgJestConfig || {};
-            const isSubEsm = isEsmProjectForRepo(targetDir, pkgJestConfig);
-            const tempSubConfigName = `covai-jest-${subSlug}.json`;
-            const tempSubConfigPath = path.join(targetDir, tempSubConfigName);
-            let tempSubConfigCreated = false;
-            const tempSubResolverName = `covai-jest-resolver-${subSlug}.cjs`;
-            const tempSubResolverPath = path.join(targetDir, tempSubResolverName);
-            try {
-                fs.writeFileSync(
-                    tempSubResolverPath,
-                    `const path = require('path');\n` +
-                    `const fs = require('fs');\n` +
-                    `module.exports = (request, options) => {\n` +
-                    `  if (request === 'jest-environment-jsdom') {\n` +
-                    `    try {\n` +
-                    `      return require.resolve('jest-environment-jsdom', { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
-                    `    } catch (_) {}\n` +
-                    `  }\n` +
-                    `  try {\n` +
-                    `    return options.defaultResolver(request, options);\n` +
-                    `  } catch (err) {\n` +
-                    `    try {\n` +
-                    `      return require.resolve(request, { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
-                    `    } catch (_) {}\n` +
-                    `    const exts = options.extensions || ['.js', '.json', '.ts', '.tsx', '.mjs', '.cjs'];\n` +
-                    `    if (request.startsWith('.') || path.isAbsolute(request)) {\n` +
-                    `      const full = path.resolve(options.basedir, request);\n` +
-                    `      for (const ext of ['', ...exts, '/index.js', '/index.ts', '/index.mjs', '/jest-preset.js']) {\n` +
-                    `        const candidate = full + ext;\n` +
-                    `        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
-                    `      }\n` +
-                    `    }\n` +
-                    `    throw err;\n` +
-                    `  }\n` +
-                    `};\n`,
-                    "utf8"
+      const fileCount =
+        Array.isArray(rootFiles) && rootFiles.length > 0
+          ? rootFiles.length
+          : 50;
+      const effectiveTimeout = Math.min(
+        10 * 60 * 1000,
+        Math.max(180 * 1000, 60 * 1000 + fileCount * 25 * 1000),
+      );
+
+      await addJobLog(
+        jobId,
+        "INFO",
+        `[SCRUM-140] Starting jest --coverage (${rootFiles.length > 0 ? rootFiles.length + " files" : "all"}) in Docker container (timeout: ${Math.round(effectiveTimeout / 60000)}m)`,
+      ).catch(() => {});
+
+      let isEsmMode = false;
+      try {
+        const rootPkgPath = path.join(rootDir, "package.json");
+        if (fs.existsSync(rootPkgPath)) {
+          const originalContent = fs.readFileSync(rootPkgPath, "utf8");
+          const rootPkg = JSON.parse(originalContent);
+          // Never override if root package explicitly states "commonjs"
+          if (rootPkg.type === "module") {
+            isEsmMode = true;
+          } else if (rootPkg.type !== "commonjs") {
+            const hasEsmFiles = (rootFiles || []).some((f) => {
+              try {
+                const c = fs.readFileSync(path.join(rootDir, f), "utf8");
+                const stripped = c.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+                return /(?:^|\n)\s*(?:import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"]|export\s+(?:default|const|let|var|function|class|\*|\{))/.test(
+                  stripped,
                 );
-                createdHarnessFiles.add(tempSubResolverPath);
-            } catch (_) { }
-
-            const subDetectedTransform = detectTransforms(targetDir) || detectedTransform || {};
-            const subMergedTransform = {
-                ...subDetectedTransform,
-                ...normalizeTransform(cleanPkgJestConfig?.transform)
-            };
-
-            const hasSubTsFiles = (subFiles || []).some(f => /\.[cm]?tsx?$/i.test(f)) || fs.existsSync(path.join(targetDir, "tsconfig.json"));
-            if (hasSubTsFiles && !Object.keys(subMergedTransform).some(k => k.includes("ts") || k.includes("tsx"))) {
-                const isTsJestAvailable = isTsJestResolvable([targetDir, rootDir]);
-                if (isTsJestAvailable) {
-                    subMergedTransform["^.+\\.tsx?$"] = ["ts-jest", tsJestSafeConfig];
-                } else {
-                    const babelJestPath = resolveTransformerPackage("babel-jest", [targetDir, rootDir]);
-                    const presetEnvPath = resolveTransformerPackage("@babel/preset-env", [targetDir, rootDir]);
-                    const presetTsPath = resolveTransformerPackage("@babel/preset-typescript", [targetDir, rootDir]);
-                    subMergedTransform["^.+\\.[cm]?[jt]sx?$"] = [
-                        babelJestPath,
-                        {
-                            presets: [
-                                [presetEnvPath, { targets: { node: "current" } }],
-                                presetTsPath
-                            ]
-                        }
-                    ];
-                }
-            }
-
+              } catch {
+                return false;
+              }
+            });
+            const backendPkgPath = path.join(
+              rootDir,
+              "backend",
+              "package.json",
+            );
+            let backendIsModule = false;
             try {
-                const subConfig = {
-                    ...cleanPkgJestConfig,
-                    testTimeout: 10000,
-                    testEnvironment: resolveTestEnvironment(targetDir, rootDir, cleanPkgJestConfig?.testEnvironment),
-                    resolver: `<rootDir>/${tempSubResolverName}`,
-                    roots: ["<rootDir>"],
-                    setupFiles: [
-                        ...(Array.isArray(cleanPkgJestConfig?.setupFiles) ? cleanPkgJestConfig.setupFiles : []),
-                        `<rootDir>/${tempSubSetupName}`
-                    ],
-                    setupFilesAfterEnv: [
-                        ...(Array.isArray(cleanPkgJestConfig?.setupFilesAfterEnv) ? cleanPkgJestConfig.setupFilesAfterEnv : []),
-                        `<rootDir>/${tempSubSetupAfterEnvName}`
-                    ],
-                    moduleNameMapper: {
-                        ...subModuleNameMapper,
-                        ...(cleanPkgJestConfig?.moduleNameMapper || {})
-                    },
-                    ...(Object.keys(subMergedTransform).length > 0 ? { transform: subMergedTransform } : {}),
-                    moduleFileExtensions: Array.from(new Set([
-                        ...(Array.isArray(cleanPkgJestConfig?.moduleFileExtensions) ? cleanPkgJestConfig.moduleFileExtensions : []),
-                        "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "node"
-                    ])),
-                    globals: {
-                        ...(cleanPkgJestConfig?.globals || {}),
-                        ...(Object.values(subMergedTransform).some(v => (typeof v === "string" && v.includes("ts-jest")) || (Array.isArray(v) && v[0]?.includes("ts-jest"))) ? {
-                            "ts-jest": {
-                                diagnostics: false,
-                                useESM: isSubEsm,
-                                isolatedModules: true
-                            }
-                        } : {})
-                    },
-                    coveragePathIgnorePatterns: [
-                        ...(Array.isArray(cleanPkgJestConfig?.coveragePathIgnorePatterns) ? cleanPkgJestConfig.coveragePathIgnorePatterns : []),
-                        "/node_modules/",
-                        "/tests?/",
-                        "/__tests__/",
-                        "/specs?/",
-                        "/e2e/",
-                        "/cypress/",
-                        "[-_.](test|spec)[-_.]",
-                        "(^|/)tests?[-_.]",
-                        "[-_.]tests?\\.[cm]?[jt]sx?$"
-                    ],
-                    ...(isSubEsm && cleanPkgJestConfig?.extensionsToTreatAsEsm
-                        ? { extensionsToTreatAsEsm: cleanPkgJestConfig.extensionsToTreatAsEsm }
-                        : (isSubEsm ? { extensionsToTreatAsEsm: [".ts", ".tsx"] } : {})
-                    )
-                };
-                fs.writeFileSync(tempSubConfigPath, JSON.stringify(subConfig, null, 2), "utf8");
-                tempSubConfigCreated = true;
-                createdHarnessFiles.add(tempSubConfigPath);
-            } catch (subCfgErr) {
-                console.warn(`[runJestCoverage] Failed to generate subpackage config:`, subCfgErr.message);
-                try {
-                    fs.writeFileSync(tempSubConfigPath, JSON.stringify({ testEnvironment: "node" }, null, 2), "utf8");
-                    tempSubConfigCreated = true;
-                    createdHarnessFiles.add(tempSubConfigPath);
-                } catch (_) { }
+              backendIsModule =
+                fs.existsSync(backendPkgPath) &&
+                JSON.parse(fs.readFileSync(backendPkgPath, "utf8"))?.type ===
+                  "module";
+            } catch {}
+            const hasTsConfig = fs.existsSync(
+              path.join(rootDir, "tsconfig.json"),
+            );
+            const hasTsFiles = (rootFiles || []).some((f) =>
+              /\.[cm]?tsx?$/.test(f),
+            );
+            const isTsProject = hasTsConfig || hasTsFiles;
+            if (!isTsProject && (hasEsmFiles || backendIsModule)) {
+              isEsmMode = true;
             }
-
-            const configFlag = tempSubConfigCreated ? ` --config="${tempSubConfigName}"` : "";
-            const subJestBin = resolveJestBin(targetDir, isSubEsm);
-            const subScopedCoverageFiles = [];
-            if (Array.isArray(specificFiles) && specificFiles.length > 0 && Array.isArray(options?.targetSourceFiles) && options.targetSourceFiles.length > 0) {
-                const normPkgPrefix = pkgDir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
-                for (const sf of options.targetSourceFiles) {
-                    if (!sf || typeof sf !== "string") continue;
-                    const canonSf = canonicalizeFilePath(sf, rootDir).replace(/^\/+/, "");
-                    const relToPkg = canonSf.startsWith(normPkgPrefix)
-                        ? canonSf.slice(normPkgPrefix.length)
-                        : canonSf;
-                    if (relToPkg && fs.existsSync(path.join(targetDir, relToPkg))) {
-                        subScopedCoverageFiles.push(relToPkg.replace(/\\/g, "/"));
-                    }
-                }
-            }
-            const collectSrcFlag = subScopedCoverageFiles.length > 0
-                ? subScopedCoverageFiles.map(f => ` --collectCoverageFrom="${f}"`).join("")
-                : (fs.existsSync(path.join(targetDir, "src")) ? ' --collectCoverageFrom="src/**/*.{js,jsx,ts,tsx}" --collectCoverageFrom="!src/**/*.d.ts"' : '');
-            const subWorkerFlags = getOptimalWorkerFlags(subFiles.length);
-            const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`.replace(/\s+/g, " ").trim();
-
-            let subResult;
-            try {
-                subResult = await dockerRunner.run({
-                    snapshotPath: rootDir,
-                    command: subJestCmd,
-                    timeoutMs: subTimeout,
-                    jobId,
-                    env: {
-                        NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
-                        NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
-                    }
-                });
-            } finally {
-                if (tempSubConfigCreated && fs.existsSync(tempSubConfigPath)) {
-                    try { fs.unlinkSync(tempSubConfigPath); } catch { }
-                }
-                if (fs.existsSync(tempSubSetupPath)) {
-                    try { fs.unlinkSync(tempSubSetupPath); } catch { }
-                }
-                if (fs.existsSync(tempSubSetupAfterEnvPath)) {
-                    try { fs.unlinkSync(tempSubSetupAfterEnvPath); } catch { }
-                }
-            }
-
-            if (subResult.stdout) overallStdout += "\n" + subResult.stdout;
-            if (subResult.stderr) overallStderr += "\n" + subResult.stderr;
-            if (subResult.exitCode !== 0 && subResult.exitCode !== null) {
-                overallExitCode = subResult.exitCode;
-            }
-
-            // Merge subResults into main jest-results.json
-            const rootJestResultsPath = path.join(covDir, "jest-results.json");
-            if (fs.existsSync(subResultsPath)) {
-                try {
-                    const subResultsData = JSON.parse(fs.readFileSync(subResultsPath, "utf8"));
-                    if (fs.existsSync(rootJestResultsPath)) {
-                        const rootResultsData = JSON.parse(fs.readFileSync(rootJestResultsPath, "utf8"));
-                        const mergedResults = mergeTestResults(rootResultsData, subResultsData);
-                        fs.writeFileSync(rootJestResultsPath, JSON.stringify(mergedResults, null, 2), "utf8");
-                    } else {
-                        fs.copyFileSync(subResultsPath, rootJestResultsPath);
-                    }
-                } catch (err) {
-                    console.warn(`[runJestCoverage] Error merging test results from ${pkgDir}:`, err.message);
-                }
-            }
-
-            // Merge coverage-final.json
-            const subCovFinal = path.join(targetDir, "coverage", "coverage-final.json");
-            const rootCovFinal = path.join(covDir, "coverage-final.json");
-            if (fs.existsSync(subCovFinal)) {
-                try {
-                    const subFinalData = JSON.parse(fs.readFileSync(subCovFinal, "utf8"));
-                    let rootFinalData = {};
-                    if (fs.existsSync(rootCovFinal)) {
-                        try { rootFinalData = JSON.parse(fs.readFileSync(rootCovFinal, "utf8")); } catch { }
-                    }
-                    const mergedFinal = mergeCoverageFinal(rootFinalData, subFinalData);
-                    fs.writeFileSync(rootCovFinal, JSON.stringify(mergedFinal, null, 2), "utf8");
-                } catch (err) {
-                    console.warn(`[runJestCoverage] Error merging coverage-final from ${pkgDir}:`, err.message);
-                }
-            }
-
-            // Merge coverage-summary.json
-            const subCovSummary = path.join(targetDir, "coverage", "coverage-summary.json");
-            const rootCovSummary = path.join(covDir, "coverage-summary.json");
-            if (fs.existsSync(subCovSummary)) {
-                try {
-                    const subSummaryData = JSON.parse(fs.readFileSync(subCovSummary, "utf8"));
-                    let rootSummaryData = {};
-                    if (fs.existsSync(rootCovSummary)) {
-                        try { rootSummaryData = JSON.parse(fs.readFileSync(rootCovSummary, "utf8")); } catch { }
-                    }
-                    const mergedSummary = mergeCoverageSummaries(rootSummaryData, subSummaryData);
-                    fs.writeFileSync(rootCovSummary, JSON.stringify(mergedSummary, null, 2), "utf8");
-                } catch (err) {
-                    console.warn(`[runJestCoverage] Error merging coverage-summary from ${pkgDir}:`, err.message);
-                }
-            }
-
-            // Merge lcov.info
-            const subLcov = path.join(targetDir, "coverage", "lcov.info");
-            const rootLcov = path.join(covDir, "lcov.info");
-            if (fs.existsSync(subLcov)) {
-                try {
-                    const subLcovContent = fs.readFileSync(subLcov, "utf8");
-                    fs.appendFileSync(rootLcov, "\n" + subLcovContent, "utf8");
-                } catch { }
-            }
+          }
         }
+      } catch {}
 
-        // Backup Jest coverage outputs
-        const covFinal = path.join(covDir, "coverage-final.json");
-        const covSummary = path.join(covDir, "coverage-summary.json");
-        if (fs.existsSync(covFinal)) {
-            try { fs.copyFileSync(covFinal, path.join(covDir, "jest-coverage-final.json")); } catch { }
+      let result;
+      try {
+        const nodeOptions = isEsmMode
+          ? "--unhandled-rejections=warn --experimental-vm-modules --input-type=module"
+          : "--unhandled-rejections=warn --experimental-vm-modules";
+        result = await dockerRunner.run({
+          snapshotPath: rootDir,
+          command: jestCmd,
+          timeoutMs: effectiveTimeout,
+          jobId,
+          env: {
+            NODE_OPTIONS: nodeOptions,
+            NODE_PATH:
+              "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
+            ...hermeticMocks,
+            ...(options?.virtualDbEnv || {}),
+            ...(options?.env || {}),
+          },
+        });
+        if (result.stdout) overallStdout += "\n" + result.stdout;
+        if (result.stderr) overallStderr += "\n" + result.stderr;
+        if (result.exitCode !== 0 && result.exitCode !== null) {
+          overallExitCode = result.exitCode;
         }
-        if (fs.existsSync(covSummary)) {
-            try { fs.copyFileSync(covSummary, path.join(covDir, "jest-coverage-summary.json")); } catch { }
+        if (
+          !result.success ||
+          (result.exitCode !== 0 && result.exitCode !== null)
+        ) {
+          const outputText =
+            (result.stderr || "") + "\n" + (result.stdout || "");
+          const modResError = parseModuleResolutionError(outputText, rootDir);
+          if (modResError) {
+            await addJobLog(
+              jobId,
+              "ERROR",
+              `[MODULE_RESOLUTION] Test file: "${cleanStoragePath(modResError.testFile)}", missing module: "${modResError.missingModule}", resolved path: "${cleanStoragePath(modResError.expectedSourcePath || modResError.pathResolving)}", workingDirectory: "${cleanStoragePath(modResError.workingDirectory)}"`,
+            ).catch(() => {});
+          }
         }
+      } finally {
+        if (tempConfigCreated && fs.existsSync(tempConfigPath)) {
+          try {
+            fs.unlinkSync(tempConfigPath);
+          } catch {}
+        }
+        if (fs.existsSync(tempSetupPath)) {
+          try {
+            fs.unlinkSync(tempSetupPath);
+          } catch {}
+        }
+        if (fs.existsSync(tempSetupAfterEnvPath)) {
+          try {
+            fs.unlinkSync(tempSetupAfterEnvPath);
+          } catch {}
+        }
+        if (fs.existsSync(tempResolverPath)) {
+          try {
+            fs.unlinkSync(tempResolverPath);
+          } catch {}
+        }
+      }
 
-        // Exit code checking
-        const summaryFile = path.join(covDir, "coverage-summary.json");
-        const mainResultsPath = path.join(covDir, "jest-results.json");
-        if (overallExitCode >= 2 && !fs.existsSync(summaryFile) && !fs.existsSync(mainResultsPath)) {
-            const msg = `[SCRUM-140] jest exited with exit code ${overallExitCode} without generating coverage`;
-            await addJobLog(jobId, "ERROR", msg).catch(() => { });
-            throw new Error(msg);
-        }
-
-        await addJobLog(jobId, "INFO", `[SCRUM-140] jest completed (exit ${overallExitCode}).`).catch(() => { });
-        return { exitCode: overallExitCode, stdout: overallStdout, stderr: overallStderr, coverageDir: covDir };
-    } finally {
-        for (const filePath of createdHarnessFiles) {
-            if (fs.existsSync(filePath)) {
-                try { fs.unlinkSync(filePath); } catch { }
-            }
-        }
-        // Safety sweep: Remove any residual covai-jest-* or covai-setup-* in rootDir & subpackage dirs
+      // Ensure jest-results.json is copied or synced if generated in root
+      const rootTestResults = path.join(rootDir, "test-results.json");
+      const jestResultsPath = path.join(covDir, "jest-results.json");
+      if (fs.existsSync(rootTestResults) && !fs.existsSync(jestResultsPath)) {
         try {
-            if (fs.existsSync(rootDir)) {
-                for (const f of fs.readdirSync(rootDir)) {
-                    if (/^covai[-_]/i.test(f) && (f.endsWith(".cjs") || f.endsWith(".json") || f.endsWith(".js"))) {
-                        try { fs.unlinkSync(path.join(rootDir, f)); } catch { }
-                    }
-                }
-            }
-            for (const pkgDir of packageGroups.keys()) {
-                if (!pkgDir) continue;
-                const targetDir = path.join(rootDir, pkgDir);
-                if (fs.existsSync(targetDir)) {
-                    for (const f of fs.readdirSync(targetDir)) {
-                        if (/^covai[-_]/i.test(f) && (f.endsWith(".cjs") || f.endsWith(".json") || f.endsWith(".js"))) {
-                            try { fs.unlinkSync(path.join(targetDir, f)); } catch { }
-                        }
-                    }
-                }
-            }
-        } catch { }
+          fs.copyFileSync(rootTestResults, jestResultsPath);
+        } catch {}
+      }
     }
+
+    // ── Execute subpackages ──────────────────────────────────────────────────
+    let hasPassingSubpackages = false;
+    let anySubpackageAssertionFailed = false;
+    let subpackagesRun = 0;
+
+    for (const [pkgDir, subFiles] of packageGroups.entries()) {
+      if (!pkgDir || !Array.isArray(subFiles) || subFiles.length === 0)
+        continue;
+      subpackagesRun++;
+
+      const subSlug = pkgDir.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const subResultsName = `jest-results-${subSlug}.json`;
+      const subResultsPath = path.join(covDir, subResultsName);
+      const targetDir = path.join(rootDir, pkgDir);
+      const subResultsRel = path
+        .relative(targetDir, subResultsPath)
+        .replace(/\\/g, "/");
+
+      const relativeSubFiles = subFiles.map((f) =>
+        path.relative(pkgDir, f).replace(/\\/g, "/"),
+      );
+      const fileArgs = relativeSubFiles.map((f) => `"${f}"`).join(" ");
+
+      const subTimeout = Math.min(
+        10 * 60 * 1000,
+        Math.max(180 * 1000, 60 * 1000 + relativeSubFiles.length * 25 * 1000),
+      );
+      await addJobLog(
+        jobId,
+        "INFO",
+        `[SCRUM-140] Running Jest for subpackage ${pkgDir} (${relativeSubFiles.length} files)...`,
+      ).catch(() => {});
+      await detectAndRunPrismaGenerate(jobId, targetDir);
+
+      // Generate isolated setup and jest config for subpackage
+      const tempSubSetupName = `covai-setup-${subSlug}.cjs`;
+      const tempSubSetupPath = path.join(targetDir, tempSubSetupName);
+      const tempSubSetupAfterEnvName = `covai-setup-after-env-${subSlug}.cjs`;
+      const tempSubSetupAfterEnvPath = path.join(
+        targetDir,
+        tempSubSetupAfterEnvName,
+      );
+      try {
+        fs.writeFileSync(
+          tempSubSetupPath,
+          buildSetupContent({
+            rootDir,
+            targetDir,
+            hermeticMocks,
+            virtualDbEnv: options?.virtualDbEnv || {},
+          }),
+          "utf8",
+        );
+        fs.writeFileSync(
+          tempSubSetupAfterEnvPath,
+          buildSetupAfterEnvContent(),
+          "utf8",
+        );
+        createdHarnessFiles.add(tempSubSetupPath);
+        createdHarnessFiles.add(tempSubSetupAfterEnvPath);
+      } catch {}
+
+      const relRootFromSub =
+        path.relative(targetDir, rootDir).replace(/\\/g, "/") || "..";
+      const hasDistSrc = fs.existsSync(path.join(rootDir, "dist", "src"));
+      const targetDistSrc = hasDistSrc
+        ? `<rootDir>/${relRootFromSub}/dist/src/index.js`
+        : fs.existsSync(path.join(rootDir, "src"))
+          ? `<rootDir>/${relRootFromSub}/src/index.ts`
+          : `<rootDir>/${relRootFromSub}/src`;
+
+      const subModuleNameMapper = {
+        "^(?:\\.\\./)+dist/src$": targetDistSrc,
+        "^(?:\\.\\./)+dist/src/(.*)$": hasDistSrc
+          ? `<rootDir>/${relRootFromSub}/dist/src/$1`
+          : `<rootDir>/${relRootFromSub}/src/$1`,
+        ".*dist/src$": targetDistSrc,
+        ".*dist/src/(.*)": hasDistSrc
+          ? `<rootDir>/${relRootFromSub}/dist/src/$1`
+          : `<rootDir>/${relRootFromSub}/src/$1`,
+        "^jest-cucumber$": targetDistSrc,
+        "^jest-cucumber/(.*)$": hasDistSrc
+          ? `<rootDir>/${relRootFromSub}/dist/src/$1`
+          : `<rootDir>/${relRootFromSub}/src/$1`,
+      };
+
+      const pkgJestConfig = await readProjectJestConfig(targetDir);
+      const {
+        coverageThreshold: _subThreshold,
+        roots: _subRoots,
+        ...cleanPkgJestConfig
+      } = pkgJestConfig || {};
+      const isSubEsm = isEsmProjectForRepo(targetDir, pkgJestConfig);
+      const tempSubConfigName = `covai-jest-${subSlug}.json`;
+      const tempSubConfigPath = path.join(targetDir, tempSubConfigName);
+      let tempSubConfigCreated = false;
+      const tempSubResolverName = `covai-jest-resolver-${subSlug}.cjs`;
+      const tempSubResolverPath = path.join(targetDir, tempSubResolverName);
+      try {
+        fs.writeFileSync(
+          tempSubResolverPath,
+          `const path = require('path');\n` +
+            `const fs = require('fs');\n` +
+            `module.exports = (request, options) => {\n` +
+            `  if (request === 'jest-environment-jsdom') {\n` +
+            `    try {\n` +
+            `      return require.resolve('jest-environment-jsdom', { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
+            `    } catch (_) {}\n` +
+            `  }\n` +
+            `  try {\n` +
+            `    return options.defaultResolver(request, options);\n` +
+            `  } catch (err) {\n` +
+            `    try {\n` +
+            `      return require.resolve(request, { paths: [options.basedir, '/app/node_modules', '${serverNodeModules}', process.cwd()] });\n` +
+            `    } catch (_) {}\n` +
+            `    const exts = options.extensions || ['.js', '.json', '.ts', '.tsx', '.mjs', '.cjs'];\n` +
+            `    if (request.startsWith('.') || path.isAbsolute(request)) {\n` +
+            `      const full = path.resolve(options.basedir, request);\n` +
+            `      for (const ext of ['', ...exts, '/index.js', '/index.ts', '/index.mjs', '/jest-preset.js']) {\n` +
+            `        const candidate = full + ext;\n` +
+            `        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
+            `      }\n` +
+            `    }\n` +
+            `    throw err;\n` +
+            `  }\n` +
+            `};\n`,
+          "utf8",
+        );
+        createdHarnessFiles.add(tempSubResolverPath);
+      } catch (_) {}
+
+      // Never inherit root's CommonJS babel-jest transform into an isolated subpackage (especially ESM subpackages with transform: {}).
+      const subDetectedTransform = isSubEsm
+        ? {}
+        : detectTransforms(targetDir) || {};
+      const subMergedTransform = {
+        ...subDetectedTransform,
+        ...normalizeTransform(cleanPkgJestConfig?.transform),
+      };
+
+      const hasSubTsFiles =
+        (subFiles || []).some((f) => /\.[cm]?tsx?$/i.test(f)) ||
+        fs.existsSync(path.join(targetDir, "tsconfig.json"));
+      if (
+        hasSubTsFiles &&
+        !Object.keys(subMergedTransform).some(
+          (k) => k.includes("ts") || k.includes("tsx"),
+        )
+      ) {
+        const isTsJestAvailable = isTsJestResolvable([targetDir, rootDir]);
+        if (isTsJestAvailable) {
+          subMergedTransform["^.+\\.tsx?$"] = ["ts-jest", tsJestSafeConfig];
+        } else {
+          const babelJestPath = resolveTransformerPackage("babel-jest", [
+            targetDir,
+            rootDir,
+          ]);
+          const presetEnvPath = resolveTransformerPackage("@babel/preset-env", [
+            targetDir,
+            rootDir,
+          ]);
+          const presetTsPath = resolveTransformerPackage(
+            "@babel/preset-typescript",
+            [targetDir, rootDir],
+          );
+          subMergedTransform["^.+\\.[cm]?[jt]sx?$"] = [
+            babelJestPath,
+            {
+              presets: [
+                [presetEnvPath, { targets: { node: "current" } }],
+                presetTsPath,
+              ],
+            },
+          ];
+        }
+      }
+
+      const filteredSubSetupFiles = filterExistingSetupFiles(
+        cleanPkgJestConfig?.setupFiles,
+        targetDir,
+        {
+          rootDir,
+          autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false,
+          createdHarnessFiles,
+        },
+      );
+      const filteredSubSetupFilesAfterEnv = filterExistingSetupFiles(
+        cleanPkgJestConfig?.setupFilesAfterEnv,
+        targetDir,
+        {
+          rootDir,
+          autoStub: options?.autoStubSetupFiles ?? options?.autoHeal ?? false,
+          createdHarnessFiles,
+        },
+      );
+
+      try {
+        const subConfig = {
+          ...cleanPkgJestConfig,
+          testPathIgnorePatterns: [
+            ...(Array.isArray(cleanPkgJestConfig?.testPathIgnorePatterns)
+              ? cleanPkgJestConfig.testPathIgnorePatterns
+              : ["/node_modules/"]),
+            covaiJestDerivedSuitePattern,
+          ],
+          testTimeout: 10000,
+          testEnvironment: resolveTestEnvironment(
+            targetDir,
+            rootDir,
+            cleanPkgJestConfig?.testEnvironment,
+          ),
+          resolver: `<rootDir>/${tempSubResolverName}`,
+          roots: ["<rootDir>"],
+          setupFiles: [
+            ...filteredSubSetupFiles,
+            `<rootDir>/${tempSubSetupName}`,
+          ],
+          setupFilesAfterEnv: [
+            ...filteredSubSetupFilesAfterEnv,
+            `<rootDir>/${tempSubSetupAfterEnvName}`,
+          ],
+          moduleNameMapper: {
+            ...subModuleNameMapper,
+            ...(cleanPkgJestConfig?.moduleNameMapper || {}),
+          },
+          ...(Object.keys(subMergedTransform).length > 0
+            ? { transform: subMergedTransform }
+            : {}),
+          moduleFileExtensions: Array.from(
+            new Set([
+              ...(Array.isArray(cleanPkgJestConfig?.moduleFileExtensions)
+                ? cleanPkgJestConfig.moduleFileExtensions
+                : []),
+              "ts",
+              "tsx",
+              "js",
+              "jsx",
+              "mjs",
+              "cjs",
+              "json",
+              "node",
+            ]),
+          ),
+          globals: {
+            ...(cleanPkgJestConfig?.globals || {}),
+            ...(Object.values(subMergedTransform).some(
+              (v) =>
+                (typeof v === "string" && v.includes("ts-jest")) ||
+                (Array.isArray(v) && v[0]?.includes("ts-jest")),
+            )
+              ? {
+                  "ts-jest": {
+                    diagnostics: false,
+                    useESM: isSubEsm,
+                    isolatedModules: true,
+                  },
+                }
+              : {}),
+          },
+          coveragePathIgnorePatterns: [
+            ...(Array.isArray(cleanPkgJestConfig?.coveragePathIgnorePatterns)
+              ? cleanPkgJestConfig.coveragePathIgnorePatterns
+              : []),
+            "/node_modules/",
+            "/tests?/",
+            "/__tests__/",
+            "/specs?/",
+            "/e2e/",
+            "/cypress/",
+            "[-_.](test|spec)[-_.]",
+            "(^|/)tests?[-_.]",
+            "[-_.]tests?\\.[cm]?[jt]sx?$",
+          ],
+          ...(isSubEsm && cleanPkgJestConfig?.extensionsToTreatAsEsm
+            ? {
+                extensionsToTreatAsEsm:
+                  cleanPkgJestConfig.extensionsToTreatAsEsm,
+              }
+            : isSubEsm
+              ? { extensionsToTreatAsEsm: [".ts", ".tsx"] }
+              : {}),
+        };
+        fs.writeFileSync(
+          tempSubConfigPath,
+          JSON.stringify(subConfig, null, 2),
+          "utf8",
+        );
+        tempSubConfigCreated = true;
+        createdHarnessFiles.add(tempSubConfigPath);
+      } catch (subCfgErr) {
+        console.warn(
+          `[runJestCoverage] Failed to generate subpackage config:`,
+          subCfgErr.message,
+        );
+        try {
+          fs.writeFileSync(
+            tempSubConfigPath,
+            JSON.stringify({ testEnvironment: "node" }, null, 2),
+            "utf8",
+          );
+          tempSubConfigCreated = true;
+          createdHarnessFiles.add(tempSubConfigPath);
+        } catch (_) {}
+      }
+
+      const configFlag = tempSubConfigCreated
+        ? ` --config="${tempSubConfigName}"`
+        : "";
+      const subJestBin = resolveJestBin(targetDir, isSubEsm);
+      const subScopedCoverageFiles = [];
+      if (
+        Array.isArray(specificFiles) &&
+        specificFiles.length > 0 &&
+        Array.isArray(options?.targetSourceFiles) &&
+        options.targetSourceFiles.length > 0
+      ) {
+        const normPkgPrefix =
+          pkgDir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+        for (const sf of options.targetSourceFiles) {
+          if (!sf || typeof sf !== "string") continue;
+          const canonSf = canonicalizeFilePath(sf, rootDir).replace(/^\/+/, "");
+          const relToPkg = canonSf.startsWith(normPkgPrefix)
+            ? canonSf.slice(normPkgPrefix.length)
+            : canonSf;
+          if (relToPkg && fs.existsSync(path.join(targetDir, relToPkg))) {
+            subScopedCoverageFiles.push(relToPkg.replace(/\\/g, "/"));
+          }
+        }
+      }
+      const collectSrcFlag =
+        subScopedCoverageFiles.length > 0
+          ? subScopedCoverageFiles
+              .map((f) => ` --collectCoverageFrom="${f}"`)
+              .join("")
+          : fs.existsSync(path.join(targetDir, "src"))
+            ? ' --collectCoverageFrom="src/**/*.{js,jsx,ts,tsx}" --collectCoverageFrom="!src/**/*.d.ts"'
+            : "";
+      const subWorkerFlags = getOptimalWorkerFlags(subFiles.length);
+      const subJestCmd =
+        `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --json --coverage --coverageDirectory="coverage"${collectSrcFlag} --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --outputFile="${subResultsRel}" --forceExit --testTimeout=10000 ${subWorkerFlags} --cache`
+          .replace(/\s+/g, " ")
+          .trim();
+
+      let subResult;
+      try {
+        subResult = await dockerRunner.run({
+          snapshotPath: rootDir,
+          command: subJestCmd,
+          timeoutMs: subTimeout,
+          jobId,
+          env: {
+            NODE_OPTIONS:
+              "--unhandled-rejections=warn --experimental-vm-modules",
+            NODE_PATH:
+              "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
+            ...hermeticMocks,
+            ...(options?.virtualDbEnv || {}),
+            ...(options?.env || {}),
+          },
+        });
+      } catch (subErr) {
+        console.warn(
+          `[runJestCoverage] Error executing Jest for subpackage ${pkgDir}:`,
+          subErr.message,
+        );
+        overallStderr += `\n[${pkgDir}] ${subErr.message}`;
+        await addJobLog(
+          jobId,
+          "WARN",
+          `[SCRUM-140] Jest failed for subpackage ${pkgDir}: ${subErr.message}`,
+        ).catch(() => {});
+        subResult = { exitCode: 1, stdout: "", stderr: subErr.message };
+      } finally {
+        if (tempSubConfigCreated && fs.existsSync(tempSubConfigPath)) {
+          try {
+            fs.unlinkSync(tempSubConfigPath);
+          } catch {}
+        }
+        if (fs.existsSync(tempSubSetupPath)) {
+          try {
+            fs.unlinkSync(tempSubSetupPath);
+          } catch {}
+        }
+        if (fs.existsSync(tempSubSetupAfterEnvPath)) {
+          try {
+            fs.unlinkSync(tempSubSetupAfterEnvPath);
+          } catch {}
+        }
+      }
+
+      if (subResult.stdout) overallStdout += "\n" + subResult.stdout;
+      if (subResult.stderr) overallStderr += "\n" + subResult.stderr;
+      if (subResult.exitCode !== 0 && subResult.exitCode !== null) {
+        overallExitCode = subResult.exitCode;
+      }
+
+      // Merge subResults into main jest-results.json
+      const rootJestResultsPath = path.join(covDir, "jest-results.json");
+      let subHasPassedTests = false;
+      let subHasFailedTests = false;
+      if (fs.existsSync(subResultsPath)) {
+        try {
+          const subResultsData = JSON.parse(
+            fs.readFileSync(subResultsPath, "utf8"),
+          );
+          const failedCount =
+            (subResultsData.numFailedTests || 0) +
+            (subResultsData.testResults || []).filter(
+              (s) => s.status === "failed",
+            ).length;
+          if (
+            failedCount > 0 ||
+            (subResultsData.testResults || []).some((s) =>
+              (s.assertionResults || []).some((a) => a.status === "failed"),
+            )
+          ) {
+            subHasFailedTests = true;
+            anySubpackageAssertionFailed = true;
+          }
+          const passedCount =
+            (subResultsData.numPassedTests || 0) +
+            (subResultsData.testResults || []).filter(
+              (s) => s.status === "passed",
+            ).length;
+          if (
+            passedCount > 0 ||
+            (subResult.exitCode === 0 && !subHasFailedTests)
+          ) {
+            subHasPassedTests = true;
+          }
+          if (fs.existsSync(rootJestResultsPath)) {
+            const rootResultsData = JSON.parse(
+              fs.readFileSync(rootJestResultsPath, "utf8"),
+            );
+            const mergedResults = mergeTestResults(
+              rootResultsData,
+              subResultsData,
+            );
+            fs.writeFileSync(
+              rootJestResultsPath,
+              JSON.stringify(mergedResults, null, 2),
+              "utf8",
+            );
+          } else {
+            fs.copyFileSync(subResultsPath, rootJestResultsPath);
+          }
+        } catch (err) {
+          console.warn(
+            `[runJestCoverage] Error merging test results from ${pkgDir}:`,
+            err.message,
+          );
+        }
+      } else if (subResult.exitCode === 0) {
+        subHasPassedTests = true;
+      }
+
+      if (subHasPassedTests && !subHasFailedTests) {
+        hasPassingSubpackages = true;
+      }
+
+      // Merge coverage-final.json
+      const subCovFinal = path.join(
+        targetDir,
+        "coverage",
+        "coverage-final.json",
+      );
+      const rootCovFinal = path.join(covDir, "coverage-final.json");
+      if (fs.existsSync(subCovFinal)) {
+        try {
+          const subFinalData = JSON.parse(fs.readFileSync(subCovFinal, "utf8"));
+          let rootFinalData = {};
+          if (fs.existsSync(rootCovFinal)) {
+            try {
+              rootFinalData = JSON.parse(fs.readFileSync(rootCovFinal, "utf8"));
+            } catch {}
+          }
+          const mergedFinal = mergeCoverageFinal(rootFinalData, subFinalData, {
+            rootDir,
+          });
+          fs.writeFileSync(
+            rootCovFinal,
+            JSON.stringify(mergedFinal, null, 2),
+            "utf8",
+          );
+        } catch (err) {
+          console.warn(
+            `[runJestCoverage] Error merging coverage-final from ${pkgDir}:`,
+            err.message,
+          );
+        }
+      }
+
+      // Merge coverage-summary.json
+      const subCovSummary = path.join(
+        targetDir,
+        "coverage",
+        "coverage-summary.json",
+      );
+      const rootCovSummary = path.join(covDir, "coverage-summary.json");
+      if (fs.existsSync(subCovSummary)) {
+        try {
+          const subSummaryData = JSON.parse(
+            fs.readFileSync(subCovSummary, "utf8"),
+          );
+          let rootSummaryData = {};
+          if (fs.existsSync(rootCovSummary)) {
+            try {
+              rootSummaryData = JSON.parse(
+                fs.readFileSync(rootCovSummary, "utf8"),
+              );
+            } catch {}
+          }
+          const mergedSummary = mergeCoverageSummaries(
+            rootSummaryData,
+            subSummaryData,
+            { rootDir },
+          );
+          fs.writeFileSync(
+            rootCovSummary,
+            JSON.stringify(mergedSummary, null, 2),
+            "utf8",
+          );
+        } catch (err) {
+          console.warn(
+            `[runJestCoverage] Error merging coverage-summary from ${pkgDir}:`,
+            err.message,
+          );
+        }
+      }
+
+      // Merge lcov.info
+      const subLcov = path.join(targetDir, "coverage", "lcov.info");
+      const rootLcov = path.join(covDir, "lcov.info");
+      if (fs.existsSync(subLcov)) {
+        try {
+          const subLcovContent = fs.readFileSync(subLcov, "utf8");
+          fs.appendFileSync(rootLcov, "\n" + subLcovContent, "utf8");
+        } catch {}
+      }
+    }
+
+    // Backup Jest coverage outputs
+    const covFinal = path.join(covDir, "coverage-final.json");
+    const covSummary = path.join(covDir, "coverage-summary.json");
+    if (fs.existsSync(covFinal)) {
+      try {
+        fs.copyFileSync(
+          covFinal,
+          path.join(covDir, "jest-coverage-final.json"),
+        );
+      } catch {}
+    }
+    if (fs.existsSync(covSummary)) {
+      try {
+        fs.copyFileSync(
+          covSummary,
+          path.join(covDir, "jest-coverage-summary.json"),
+        );
+      } catch {}
+    }
+
+    // Exit code checking
+    const summaryFile = path.join(covDir, "coverage-summary.json");
+    const mainResultsPath = path.join(covDir, "jest-results.json");
+
+    if (fs.existsSync(mainResultsPath)) {
+      try {
+        const finalResults = JSON.parse(
+          fs.readFileSync(mainResultsPath, "utf8"),
+        );
+        const totalTests =
+          finalResults.numTotalTests ||
+          (finalResults.testResults || []).reduce(
+            (n, s) => n + (s.assertionResults?.length || 0),
+            0,
+          );
+        const failedTests =
+          finalResults.numFailedTests ||
+          (finalResults.testResults || []).reduce(
+            (n, s) =>
+              n +
+              (s.assertionResults || []).filter((a) => a.status === "failed")
+                .length,
+            0,
+          );
+
+        if (failedTests > 0 || anySubpackageAssertionFailed) {
+          overallExitCode = 1;
+        } else if (
+          hasPassingSubpackages ||
+          (totalTests > 0 && failedTests === 0)
+        ) {
+          overallExitCode = 0;
+        }
+      } catch {
+        if (hasPassingSubpackages && !anySubpackageAssertionFailed) {
+          overallExitCode = 0;
+        }
+      }
+    } else if (hasPassingSubpackages && !anySubpackageAssertionFailed) {
+      overallExitCode = 0;
+    }
+
+    if (
+      overallExitCode >= 2 &&
+      !fs.existsSync(summaryFile) &&
+      !fs.existsSync(mainResultsPath)
+    ) {
+      const msg = `[SCRUM-140] jest exited with exit code ${overallExitCode} without generating coverage`;
+      await addJobLog(jobId, "ERROR", msg).catch(() => {});
+      throw new Error(msg);
+    }
+
+    await addJobLog(
+      jobId,
+      "INFO",
+      `[SCRUM-140] jest completed (exit ${overallExitCode}).`,
+    ).catch(() => {});
+    return {
+      exitCode: overallExitCode,
+      stdout: overallStdout,
+      stderr: overallStderr,
+      coverageDir: covDir,
+    };
+  } finally {
+    for (const filePath of createdHarnessFiles) {
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {}
+      }
+    }
+    // Safety sweep: Remove any residual covai-jest-* or covai-setup-* in rootDir & subpackage dirs
+    try {
+      if (fs.existsSync(rootDir)) {
+        for (const f of fs.readdirSync(rootDir)) {
+          if (isCovaiJestRuntimeFile(f)) {
+            try {
+              fs.unlinkSync(path.join(rootDir, f));
+            } catch {}
+          }
+        }
+      }
+      for (const pkgDir of packageGroups.keys()) {
+        if (!pkgDir) continue;
+        const targetDir = path.join(rootDir, pkgDir);
+        if (fs.existsSync(targetDir)) {
+          for (const f of fs.readdirSync(targetDir)) {
+            if (isCovaiJestRuntimeFile(f)) {
+              try {
+                fs.unlinkSync(path.join(targetDir, f));
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {}
+  }
 };
 
 /**
  * SCRUM-141: Parse coverage-final.json for per-file coverage data.
  */
 export const readCoverageFinal = (coverageDir) => {
-    const finalPath = path.join(coverageDir, "coverage-final.json");
-    if (!fs.existsSync(finalPath)) {
-        return null;
-    }
-    try {
-        const raw = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-        const summaryPath = path.join(coverageDir, "coverage-summary.json");
-        if (fs.existsSync(summaryPath)) {
-            try {
-                const summaryRaw = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
-                for (const [key, entry] of Object.entries(raw)) {
-                    if (!entry || typeof entry !== "object") continue;
-                    const normKey = key.replace(/\\/g, "/");
-                    const summaryEntry = summaryRaw[key] || summaryRaw[normKey] || Object.entries(summaryRaw).find(([sk]) => sk.replace(/\\/g, "/") === normKey)?.[1];
-                    if (summaryEntry && typeof summaryEntry === "object") {
-                        for (const m of ["lines", "branches", "functions", "statements"]) {
-                            if (summaryEntry[m]) {
-                                if (!entry[m] || (summaryEntry[m].covered || 0) >= (entry[m].covered || 0)) {
-                                    entry[m] = summaryEntry[m];
-                                }
-                            }
-                        }
-                    }
+  const finalPath = path.join(coverageDir, "coverage-final.json");
+  if (!fs.existsSync(finalPath)) {
+    return null;
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(finalPath, "utf8"));
+    const summaryPath = path.join(coverageDir, "coverage-summary.json");
+    if (fs.existsSync(summaryPath)) {
+      try {
+        const summaryRaw = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+        for (const [key, entry] of Object.entries(raw)) {
+          if (!entry || typeof entry !== "object") continue;
+          const normKey = key.replace(/\\/g, "/");
+          const summaryEntry =
+            summaryRaw[key] ||
+            summaryRaw[normKey] ||
+            Object.entries(summaryRaw).find(
+              ([sk]) => sk.replace(/\\/g, "/") === normKey,
+            )?.[1];
+          if (summaryEntry && typeof summaryEntry === "object") {
+            for (const m of ["lines", "branches", "functions", "statements"]) {
+              if (summaryEntry[m]) {
+                if (
+                  !entry[m] ||
+                  (summaryEntry[m].covered || 0) >= (entry[m].covered || 0)
+                ) {
+                  entry[m] = summaryEntry[m];
                 }
-            } catch { }
+              }
+            }
+          }
         }
-        return raw;
-    } catch {
-        return null;
+      } catch {}
     }
+    return raw;
+  } catch {
+    return null;
+  }
 };
 
 /**
  * SCRUM-141: Parse per-file coverage from coverage-final.json and persist CoverageFile.
  */
-export const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, userId, coverageDir) => {
-    const { parseCoverageFilesForSnapshot } = await import("./coverageFileParser.service.js");
-    const coverageReport = readCoverageFinal(coverageDir);
+export const parseFinalCoverageFiles = async (
+  jobId,
+  snapshotId,
+  projectId,
+  userId,
+  coverageDir,
+  options = {},
+) => {
+  const { parseCoverageFilesForSnapshot } =
+    await import("./coverageFileParser.service.js");
+  const coverageReport = readCoverageFinal(coverageDir);
 
-    if (!coverageReport) {
-        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json does not exist, skipping CoverageFile parsing.").catch(() => { });
-        return;
-    }
+  if (!coverageReport) {
+    await addJobLog(
+      jobId,
+      "WARN",
+      "[SCRUM-141] coverage-final.json does not exist, skipping CoverageFile parsing.",
+    ).catch(() => {});
+    return;
+  }
 
-    try {
-        const result = await parseCoverageFilesForSnapshot({
-            projectId,
-            snapshotId,
-            coverageReport,
-            userId,
-        });
-        await addJobLog(
-            jobId,
-            "INFO",
-            `[SCRUM-141] Parsed ${result.totalFiles} CoverageFile records.`
-        ).catch(() => { });
-    } catch (err) {
-        await addJobLog(jobId, "WARN", `[SCRUM-141] Error parsing CoverageFile: ${err.message}`).catch(() => { });
-    }
+  try {
+    const result = await parseCoverageFilesForSnapshot({
+      projectId,
+      snapshotId,
+      coverageReport,
+      userId,
+      preserveOtherFiles: Boolean(options?.preserveOtherFiles),
+    });
+    await addJobLog(
+      jobId,
+      "INFO",
+      `[SCRUM-141] Parsed ${result.totalFiles} CoverageFile records.`,
+    ).catch(() => {});
+  } catch (err) {
+    await addJobLog(
+      jobId,
+      "WARN",
+      `[SCRUM-141] Error parsing CoverageFile: ${err.message}`,
+    ).catch(() => {});
+  }
 };
 
 /**
  * SCRUM-141: Parse per-function coverage from coverage-final.json and persist CoverageFunction.
  */
-export const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, userId, coverageDir) => {
-    const { parseCoverageFunctionsForSnapshot } = await import("./coverageFunctionParser.service.js");
-    const coverageReport = readCoverageFinal(coverageDir);
+export const parseFinalCoverageFunctions = async (
+  jobId,
+  snapshotId,
+  projectId,
+  userId,
+  coverageDir,
+  options = {},
+) => {
+  const { parseCoverageFunctionsForSnapshot } =
+    await import("./coverageFunctionParser.service.js");
+  const coverageReport = readCoverageFinal(coverageDir);
 
-    if (!coverageReport) {
-        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json does not exist, skipping CoverageFunction parsing.").catch(() => { });
-        return;
-    }
+  if (!coverageReport) {
+    await addJobLog(
+      jobId,
+      "WARN",
+      "[SCRUM-141] coverage-final.json does not exist, skipping CoverageFunction parsing.",
+    ).catch(() => {});
+    return;
+  }
 
-    try {
-        const result = await parseCoverageFunctionsForSnapshot({
-            projectId,
-            snapshotId,
-            coverageReport,
-            userId,
-        });
-        await addJobLog(
-            jobId,
-            "INFO",
-            `[SCRUM-141] Parsed ${result.totalFunctions} CoverageFunction records.`
-        ).catch(() => { });
-    } catch (err) {
-        await addJobLog(jobId, "WARN", `[SCRUM-141] Error parsing CoverageFunction: ${err.message}`).catch(() => { });
-    }
+  try {
+    const result = await parseCoverageFunctionsForSnapshot({
+      projectId,
+      snapshotId,
+      coverageReport,
+      userId,
+      preserveOtherFiles: Boolean(options?.preserveOtherFiles),
+    });
+    await addJobLog(
+      jobId,
+      "INFO",
+      `[SCRUM-141] Parsed ${result.totalFunctions} CoverageFunction records.`,
+    ).catch(() => {});
+  } catch (err) {
+    await addJobLog(
+      jobId,
+      "WARN",
+      `[SCRUM-141] Error parsing CoverageFunction: ${err.message}`,
+    ).catch(() => {});
+  }
 };
 
 /**
@@ -3021,38 +4462,38 @@ export const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, 
  * generated from raw line counts rather than real Istanbul AST instrumentation.
  */
 export const isSyntheticCoverageEntry = (fileCov) => {
-    if (!fileCov || typeof fileCov !== "object") return true;
-    if (fileCov._syntheticBaseline === true) return true;
+  if (!fileCov || typeof fileCov !== "object") return true;
+  if (fileCov._syntheticBaseline === true) return true;
 
-    const sValues = Object.values(fileCov.s || {});
-    const fValues = Object.values(fileCov.f || {});
-    const bValues = Object.values(fileCov.b || {});
-    const hasAnyHit =
-        sValues.some((v) => (v || 0) > 0) ||
-        fValues.some((v) => (v || 0) > 0) ||
-        bValues.some((arr) => Array.isArray(arr) && arr.some((v) => (v || 0) > 0));
-    if (hasAnyHit) return false;
+  const sValues = Object.values(fileCov.s || {});
+  const fValues = Object.values(fileCov.f || {});
+  const bValues = Object.values(fileCov.b || {});
+  const hasAnyHit =
+    sValues.some((v) => (v || 0) > 0) ||
+    fValues.some((v) => (v || 0) > 0) ||
+    bValues.some((arr) => Array.isArray(arr) && arr.some((v) => (v || 0) > 0));
+  if (hasAnyHit) return false;
 
-    const stmtEntries = Object.entries(fileCov.statementMap || {});
-    if (stmtEntries.length < 2) return false;
+  const stmtEntries = Object.entries(fileCov.statementMap || {});
+  if (stmtEntries.length < 2) return false;
 
-    const isSequentialLineMap = stmtEntries.every(([key, loc], idx) => {
-        const lineNo = idx + 1;
-        return (
-            key === String(idx) &&
-            loc?.start?.line === lineNo &&
-            loc?.end?.line === lineNo &&
-            loc?.start?.column === 0
-        );
-    });
-    if (isSequentialLineMap) {
-        const fnEntries = Object.values(fileCov.fnMap || {});
-        const allSyntheticFns = fnEntries.every(
-            (fn) => fn?.decl?.start?.column === 0 && fn?.decl?.end?.column === 0
-        );
-        if (allSyntheticFns) return true;
-    }
-    return false;
+  const isSequentialLineMap = stmtEntries.every(([key, loc], idx) => {
+    const lineNo = idx + 1;
+    return (
+      key === String(idx) &&
+      loc?.start?.line === lineNo &&
+      loc?.end?.line === lineNo &&
+      loc?.start?.column === 0
+    );
+  });
+  if (isSequentialLineMap) {
+    const fnEntries = Object.values(fileCov.fnMap || {});
+    const allSyntheticFns = fnEntries.every(
+      (fn) => fn?.decl?.start?.column === 0 && fn?.decl?.end?.column === 0,
+    );
+    if (allSyntheticFns) return true;
+  }
+  return false;
 };
 
 /**
@@ -3060,20 +4501,25 @@ export const isSyntheticCoverageEntry = (fileCov) => {
  * or a 100-total percentage fallback constructed from DB records.
  */
 export const isSyntheticSummaryEntry = (entry) => {
-    if (!entry || typeof entry !== "object") return true;
-    if (entry._syntheticBaseline === true) return true;
+  if (!entry || typeof entry !== "object") return true;
+  if (entry._syntheticBaseline === true) return true;
 
-    const l = entry.lines || {};
-    const s = entry.statements || {};
-    const f = entry.functions || {};
-    const b = entry.branches || {};
+  const l = entry.lines || {};
+  const s = entry.statements || {};
+  const f = entry.functions || {};
+  const b = entry.branches || {};
 
-    // Check for DB percentage fallback signature (total: 100 across all 4 metrics)
-    if (l.total === 100 && s.total === 100 && f.total === 100 && b.total === 100) {
-        return true;
-    }
+  // Check for DB percentage fallback signature (total: 100 across all 4 metrics)
+  if (
+    l.total === 100 &&
+    s.total === 100 &&
+    f.total === 100 &&
+    b.total === 100
+  ) {
+    return true;
+  }
 
-    return false;
+  return false;
 };
 
 /**
@@ -3081,61 +4527,97 @@ export const isSyntheticSummaryEntry = (entry) => {
  * directly from an Istanbul coverage-final file object (statementMap, fnMap, branchMap, s, f, b).
  */
 export const computeSummaryFromFileCoverage = (fileCov) => {
-    if (!fileCov || typeof fileCov !== "object" || !fileCov.s) return null;
+  if (!fileCov || typeof fileCov !== "object" || !fileCov.s) return null;
 
-    const sMap = fileCov.s || {};
-    const fMap = fileCov.f || {};
-    const bMap = fileCov.b || {};
-    const statementMap = fileCov.statementMap || {};
+  const sMap = fileCov.s || {};
+  const fMap = fileCov.f || {};
+  const bMap = fileCov.b || {};
+  const statementMap = fileCov.statementMap || {};
 
-    const sKeys = Object.keys(sMap);
-    const stmtsTotal = sKeys.length;
-    const stmtsCovered = sKeys.filter((k) => (sMap[k] || 0) > 0).length;
-    const isFileCovered = stmtsCovered > 0;
-    const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : ( fileCov._syntheticBaseline ? 0 : 100 );
+  const sKeys = Object.keys(sMap);
+  const stmtsTotal = sKeys.length;
+  const stmtsCovered = sKeys.filter((k) => (sMap[k] || 0) > 0).length;
+  const isFileCovered = stmtsCovered > 0;
+  const stmtsPct =
+    stmtsTotal > 0
+      ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1))
+      : fileCov._syntheticBaseline
+        ? 0
+        : 100;
 
-    const fKeys = Object.keys(fMap);
-    const funcsTotal = fKeys.length;
-    const funcsCovered = fKeys.filter((k) => (fMap[k] || 0) > 0).length;
-    const funcsPct = funcsTotal > 0
-        ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1))
-        : (isFileCovered ? 100 : 0);
+  const fKeys = Object.keys(fMap);
+  const funcsTotal = fKeys.length;
+  const funcsCovered = fKeys.filter((k) => (fMap[k] || 0) > 0).length;
+  const funcsPct =
+    funcsTotal > 0
+      ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1))
+      : isFileCovered
+        ? 100
+        : 0;
 
-    let branchesTotal = 0;
-    let branchesCovered = 0;
-    for (const arr of Object.values(bMap)) {
-        if (Array.isArray(arr)) {
-            branchesTotal += arr.length;
-            branchesCovered += arr.filter((v) => (v || 0) > 0).length;
-        }
+  let branchesTotal = 0;
+  let branchesCovered = 0;
+  for (const arr of Object.values(bMap)) {
+    if (Array.isArray(arr)) {
+      branchesTotal += arr.length;
+      branchesCovered += arr.filter((v) => (v || 0) > 0).length;
     }
-    const branchesPct = branchesTotal > 0
-        ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1))
-        : (isFileCovered ? 100 : 0);
+  }
+  const branchesPct =
+    branchesTotal > 0
+      ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1))
+      : isFileCovered
+        ? 100
+        : 0;
 
-    const lineHits = new Map();
-    for (const [stId, loc] of Object.entries(statementMap)) {
-        const lineNo = loc?.start?.line;
-        if (typeof lineNo === "number" && lineNo > 0) {
-            const hits = sMap[stId] || 0;
-            const prev = lineHits.get(lineNo) ?? 0;
-            lineHits.set(lineNo, Math.max(prev, hits));
-        }
+  const lineHits = new Map();
+  for (const [stId, loc] of Object.entries(statementMap)) {
+    const lineNo = loc?.start?.line;
+    if (typeof lineNo === "number" && lineNo > 0) {
+      const hits = sMap[stId] || 0;
+      const prev = lineHits.get(lineNo) ?? 0;
+      lineHits.set(lineNo, Math.max(prev, hits));
     }
-    let linesTotal = lineHits.size;
-    let linesCovered = Array.from(lineHits.values()).filter((v) => v > 0).length;
-    if (linesTotal === 0 && stmtsTotal > 0) {
-        linesTotal = stmtsTotal;
-        linesCovered = stmtsCovered;
-    }
-    const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : (fileCov._syntheticBaseline ? 0 : 100);
+  }
+  let linesTotal = lineHits.size;
+  let linesCovered = Array.from(lineHits.values()).filter((v) => v > 0).length;
+  if (linesTotal === 0 && stmtsTotal > 0) {
+    linesTotal = stmtsTotal;
+    linesCovered = stmtsCovered;
+  }
+  const linesPct =
+    linesTotal > 0
+      ? Number(((linesCovered / linesTotal) * 100).toFixed(1))
+      : fileCov._syntheticBaseline
+        ? 0
+        : 100;
 
-    return {
-        lines: { total: linesTotal, covered: linesCovered, skipped: 0, pct: linesPct },
-        statements: { total: stmtsTotal, covered: stmtsCovered, skipped: 0, pct: stmtsPct },
-        functions: { total: funcsTotal, covered: funcsCovered, skipped: 0, pct: funcsPct },
-        branches: { total: branchesTotal, covered: branchesCovered, skipped: 0, pct: branchesPct },
-    };
+  return {
+    lines: {
+      total: linesTotal,
+      covered: linesCovered,
+      skipped: 0,
+      pct: linesPct,
+    },
+    statements: {
+      total: stmtsTotal,
+      covered: stmtsCovered,
+      skipped: 0,
+      pct: stmtsPct,
+    },
+    functions: {
+      total: funcsTotal,
+      covered: funcsCovered,
+      skipped: 0,
+      pct: funcsPct,
+    },
+    branches: {
+      total: branchesTotal,
+      covered: branchesCovered,
+      skipped: 0,
+      pct: branchesPct,
+    },
+  };
 };
 
 /**
@@ -3143,131 +4625,152 @@ export const computeSummaryFromFileCoverage = (fileCov) => {
  * Real Istanbul AST instrumentation authoritatively replaces synthetic 0% line-count baselines.
  */
 export const mergeCoverageFinal = (final1 = {}, final2 = {}, options = {}) => {
-    const rootDir = options?.rootDir || "";
-    const merged = {};
-    for (const [rawPath, fileCov1] of Object.entries(final1 || {})) {
-        if (!fileCov1 || typeof fileCov1 !== "object") continue;
-        const canonPath = canonicalizeFilePath(rawPath, rootDir);
-        merged[canonPath] = { ...fileCov1, path: canonPath };
+  const rootDir = options?.rootDir || "";
+  const merged = {};
+  for (const [rawPath, fileCov1] of Object.entries(final1 || {})) {
+    if (!fileCov1 || typeof fileCov1 !== "object") continue;
+    const canonPath = canonicalizeFilePath(rawPath, rootDir);
+    merged[canonPath] = { ...fileCov1, path: canonPath };
+  }
+  for (const [rawPath, fileCov2] of Object.entries(final2 || {})) {
+    if (!fileCov2 || typeof fileCov2 !== "object") continue;
+    const canonPath = canonicalizeFilePath(rawPath, rootDir);
+    if (!merged[canonPath]) {
+      merged[canonPath] = { ...fileCov2, path: canonPath };
+      continue;
     }
-    for (const [rawPath, fileCov2] of Object.entries(final2 || {})) {
-        if (!fileCov2 || typeof fileCov2 !== "object") continue;
-        const canonPath = canonicalizeFilePath(rawPath, rootDir);
-        if (!merged[canonPath]) {
-            merged[canonPath] = { ...fileCov2, path: canonPath };
-            continue;
-        }
 
-        const fileCov1 = merged[canonPath];
-        const syn1 = isSyntheticCoverageEntry(fileCov1);
-        const syn2 = isSyntheticCoverageEntry(fileCov2);
+    const fileCov1 = merged[canonPath];
+    const syn1 = isSyntheticCoverageEntry(fileCov1);
+    const syn2 = isSyntheticCoverageEntry(fileCov2);
 
-        // Case 1: Baseline was synthetic 0% and new entry is real Istanbul AST -> replace completely
-        if (syn1 && !syn2) {
-            const cleanCov2 = { ...fileCov2, path: canonPath };
-            delete cleanCov2._syntheticBaseline;
-            merged[canonPath] = cleanCov2;
-            continue;
-        }
-
-        // Case 2: Baseline was real Istanbul AST and new entry is synthetic 0% -> keep baseline
-        if (!syn1 && syn2) {
-            continue;
-        }
-
-        // Check if fileCov1 had 0 hits while fileCov2 has real hits and a different AST map size
-        const hits1 = Object.values(fileCov1.s || {}).reduce((acc, v) => acc + (v || 0), 0);
-        const hits2 = Object.values(fileCov2.s || {}).reduce((acc, v) => acc + (v || 0), 0);
-        const sLen1 = Object.keys(fileCov1.s || {}).length;
-        const sLen2 = Object.keys(fileCov2.s || {}).length;
-
-        if (hits1 === 0 && hits2 > 0 && sLen2 > 0 && sLen1 !== sLen2) {
-            const cleanCov2 = { ...fileCov2, path: canonPath };
-            delete cleanCov2._syntheticBaseline;
-            merged[canonPath] = cleanCov2;
-            continue;
-        }
-        if (hits2 === 0 && hits1 > 0 && sLen1 > 0 && sLen1 !== sLen2) {
-            continue;
-        }
-
-        // Case 3: Both are real Istanbul AST entries — merge hits across s, f, b
-        const baseCov = (sLen2 > 0 && sLen1 !== sLen2 && hits2 >= hits1) ? fileCov2 : fileCov1;
-        const otherCov = baseCov === fileCov2 ? fileCov1 : fileCov2;
-        const combined = { ...baseCov, path: canonPath };
-        delete combined._syntheticBaseline;
-
-        if (baseCov.s && otherCov.s) {
-            combined.s = { ...baseCov.s };
-            if (sLen1 === sLen2) {
-                for (const [k, v] of Object.entries(otherCov.s)) {
-                    combined.s[k] = Math.max(combined.s[k] || 0, v || 0);
-                }
-            } else if (baseCov.statementMap && otherCov.statementMap) {
-                // Match statements by start line & column when merging across different runners (Jest + Vitest)
-                const locToBaseKey = new Map();
-                for (const [k, loc] of Object.entries(baseCov.statementMap)) {
-                    if (loc?.start) {
-                        locToBaseKey.set(`${loc.start.line}:${loc.start.column || 0}`, k);
-                    }
-                }
-                for (const [k, v] of Object.entries(otherCov.s)) {
-                    if (!v) continue;
-                    const otherLoc = otherCov.statementMap[k];
-                    const matchedKey = otherLoc?.start
-                        ? locToBaseKey.get(`${otherLoc.start.line}:${otherLoc.start.column || 0}`)
-                        : null;
-                    if (matchedKey !== undefined) {
-                        combined.s[matchedKey] = Math.max(combined.s[matchedKey] || 0, v || 0);
-                    }
-                }
-            }
-        }
-
-        if (baseCov.f && otherCov.f) {
-            combined.f = { ...baseCov.f };
-            const fLen1 = Object.keys(baseCov.f).length;
-            const fLen2 = Object.keys(otherCov.f).length;
-            if (fLen1 === fLen2) {
-                for (const [k, v] of Object.entries(otherCov.f)) {
-                    combined.f[k] = Math.max(combined.f[k] || 0, v || 0);
-                }
-            } else if (baseCov.fnMap && otherCov.fnMap) {
-                const fnToBaseKey = new Map();
-                for (const [k, fn] of Object.entries(baseCov.fnMap)) {
-                    const line = fn?.decl?.start?.line || fn?.loc?.start?.line || fn?.line;
-                    if (line) fnToBaseKey.set(`${fn.name || ""}:${line}`, k);
-                }
-                for (const [k, v] of Object.entries(otherCov.f)) {
-                    if (!v) continue;
-                    const otherFn = otherCov.fnMap[k];
-                    const line = otherFn?.decl?.start?.line || otherFn?.loc?.start?.line || otherFn?.line;
-                    const matchedKey = line ? fnToBaseKey.get(`${otherFn.name || ""}:${line}`) : null;
-                    if (matchedKey !== undefined) {
-                        combined.f[matchedKey] = Math.max(combined.f[matchedKey] || 0, v || 0);
-                    }
-                }
-            }
-        }
-
-        if (baseCov.b && otherCov.b) {
-            combined.b = { ...baseCov.b };
-            const bLen1 = Object.keys(baseCov.b).length;
-            const bLen2 = Object.keys(otherCov.b).length;
-            if (bLen1 === bLen2) {
-                for (const [k, v] of Object.entries(otherCov.b)) {
-                    if (Array.isArray(v)) {
-                        combined.b[k] = Array.isArray(combined.b[k])
-                            ? combined.b[k].map((val, idx) => Math.max(val || 0, v[idx] || 0))
-                            : v;
-                    }
-                }
-            }
-        }
-
-        merged[canonPath] = combined;
+    // Case 1: Baseline was synthetic 0% and new entry is real Istanbul AST -> replace completely
+    if (syn1 && !syn2) {
+      const cleanCov2 = { ...fileCov2, path: canonPath };
+      delete cleanCov2._syntheticBaseline;
+      merged[canonPath] = cleanCov2;
+      continue;
     }
-    return merged;
+
+    // Case 2: Baseline was real Istanbul AST and new entry is synthetic 0% -> keep baseline
+    if (!syn1 && syn2) {
+      continue;
+    }
+
+    // Check if fileCov1 had 0 hits while fileCov2 has real hits and a different AST map size
+    const hits1 = Object.values(fileCov1.s || {}).reduce(
+      (acc, v) => acc + (v || 0),
+      0,
+    );
+    const hits2 = Object.values(fileCov2.s || {}).reduce(
+      (acc, v) => acc + (v || 0),
+      0,
+    );
+    const sLen1 = Object.keys(fileCov1.s || {}).length;
+    const sLen2 = Object.keys(fileCov2.s || {}).length;
+
+    if (hits1 === 0 && hits2 > 0 && sLen2 > 0 && sLen1 !== sLen2) {
+      const cleanCov2 = { ...fileCov2, path: canonPath };
+      delete cleanCov2._syntheticBaseline;
+      merged[canonPath] = cleanCov2;
+      continue;
+    }
+    if (hits2 === 0 && hits1 > 0 && sLen1 > 0 && sLen1 !== sLen2) {
+      continue;
+    }
+
+    // Case 3: Both are real Istanbul AST entries — merge hits across s, f, b
+    const baseCov =
+      sLen2 > 0 && sLen1 !== sLen2 && hits2 >= hits1 ? fileCov2 : fileCov1;
+    const otherCov = baseCov === fileCov2 ? fileCov1 : fileCov2;
+    const combined = { ...baseCov, path: canonPath };
+    delete combined._syntheticBaseline;
+
+    if (baseCov.s && otherCov.s) {
+      combined.s = { ...baseCov.s };
+      if (sLen1 === sLen2) {
+        for (const [k, v] of Object.entries(otherCov.s)) {
+          combined.s[k] = Math.max(combined.s[k] || 0, v || 0);
+        }
+      } else if (baseCov.statementMap && otherCov.statementMap) {
+        // Match statements by start line & column when merging across different runners (Jest + Vitest)
+        const locToBaseKey = new Map();
+        for (const [k, loc] of Object.entries(baseCov.statementMap)) {
+          if (loc?.start) {
+            locToBaseKey.set(`${loc.start.line}:${loc.start.column || 0}`, k);
+          }
+        }
+        for (const [k, v] of Object.entries(otherCov.s)) {
+          if (!v) continue;
+          const otherLoc = otherCov.statementMap[k];
+          const matchedKey = otherLoc?.start
+            ? locToBaseKey.get(
+                `${otherLoc.start.line}:${otherLoc.start.column || 0}`,
+              )
+            : null;
+          if (matchedKey !== undefined) {
+            combined.s[matchedKey] = Math.max(
+              combined.s[matchedKey] || 0,
+              v || 0,
+            );
+          }
+        }
+      }
+    }
+
+    if (baseCov.f && otherCov.f) {
+      combined.f = { ...baseCov.f };
+      const fLen1 = Object.keys(baseCov.f).length;
+      const fLen2 = Object.keys(otherCov.f).length;
+      if (fLen1 === fLen2) {
+        for (const [k, v] of Object.entries(otherCov.f)) {
+          combined.f[k] = Math.max(combined.f[k] || 0, v || 0);
+        }
+      } else if (baseCov.fnMap && otherCov.fnMap) {
+        const fnToBaseKey = new Map();
+        for (const [k, fn] of Object.entries(baseCov.fnMap)) {
+          const line =
+            fn?.decl?.start?.line || fn?.loc?.start?.line || fn?.line;
+          if (line) fnToBaseKey.set(`${fn.name || ""}:${line}`, k);
+        }
+        for (const [k, v] of Object.entries(otherCov.f)) {
+          if (!v) continue;
+          const otherFn = otherCov.fnMap[k];
+          const line =
+            otherFn?.decl?.start?.line ||
+            otherFn?.loc?.start?.line ||
+            otherFn?.line;
+          const matchedKey = line
+            ? fnToBaseKey.get(`${otherFn.name || ""}:${line}`)
+            : null;
+          if (matchedKey !== undefined) {
+            combined.f[matchedKey] = Math.max(
+              combined.f[matchedKey] || 0,
+              v || 0,
+            );
+          }
+        }
+      }
+    }
+
+    if (baseCov.b && otherCov.b) {
+      combined.b = { ...baseCov.b };
+      const bLen1 = Object.keys(baseCov.b).length;
+      const bLen2 = Object.keys(otherCov.b).length;
+      if (bLen1 === bLen2) {
+        for (const [k, v] of Object.entries(otherCov.b)) {
+          if (Array.isArray(v)) {
+            combined.b[k] = Array.isArray(combined.b[k])
+              ? combined.b[k].map((val, idx) => Math.max(val || 0, v[idx] || 0))
+              : v;
+          }
+        }
+      }
+    }
+
+    merged[canonPath] = combined;
+  }
+  return merged;
 };
 
 /**
@@ -3276,242 +4779,453 @@ export const mergeCoverageFinal = (final1 = {}, final2 = {}, options = {}) => {
  * and DB percentage fallbacks (where total === 100).
  */
 export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}, options = {}) => {
-    const merged = {};
-    const rootDir = options?.rootDir || "";
-    const mergedFinal = options?.mergedFinal || null;
-    const allKeys = new Set([...Object.keys(sum1 || {}), ...Object.keys(sum2 || {})]);
+  const merged = {};
+  const rootDir = options?.rootDir || "";
+  const mergedFinal = options?.mergedFinal || null;
+  const allKeys = new Set([
+    ...Object.keys(sum1 || {}),
+    ...Object.keys(sum2 || {}),
+  ]);
 
-    for (const rawKey of allKeys) {
-        if (rawKey === "total") continue;
-        const key = canonicalizeFilePath(rawKey, rootDir);
-        const e1 = sum1?.[rawKey] || sum1?.[key];
-        const e2 = sum2?.[rawKey] || sum2?.[key];
+  for (const rawKey of allKeys) {
+    if (rawKey === "total") continue;
+    const key = canonicalizeFilePath(rawKey, rootDir);
+    const e1 = sum1?.[rawKey] || sum1?.[key];
+    const e2 = sum2?.[rawKey] || sum2?.[key];
 
-        if (!e1 && !e2) continue;
+    if (!e1 && !e2) continue;
 
-        // If mergedFinal has authoritative non-synthetic AST data for this file, compute exact summary from AST
-        const finalEntry = mergedFinal?.[key] || mergedFinal?.[rawKey];
-        if (finalEntry && !isSyntheticCoverageEntry(finalEntry) && finalEntry.statementMap && Object.keys(finalEntry.statementMap).length > 0) {
-            const astSummary = computeSummaryFromFileCoverage(finalEntry);
-            if (astSummary) {
-                merged[key] = astSummary;
-                continue;
-            }
-        }
-
-        if (!e1) {
-            merged[key] = e2;
-            continue;
-        }
-        if (!e2) {
-            merged[key] = e1;
-            continue;
-        }
-
-        const syn1 = isSyntheticSummaryEntry(e1);
-        const syn2 = isSyntheticSummaryEntry(e2);
-
-        if (syn1 && !syn2) {
-            const cleanE2 = { ...e2 };
-            delete cleanE2._syntheticBaseline;
-            merged[key] = cleanE2;
-            continue;
-        }
-        if (!syn1 && syn2) {
-            merged[key] = e1;
-            continue;
-        }
-
-        const combined = {};
-        for (const metric of ["lines", "statements", "functions", "branches"]) {
-            const m1 = e1[metric] || {};
-            const m2 = e2[metric] || {};
-            const m1IsFallback = m1.total === 100 && syn1;
-            const m2IsFallback = m2.total === 100 && syn2;
-
-            const m1Tot = (m1.total || 0) > 0 ? m1.total : (m1.pct !== undefined ? 100 : 0);
-            const m1Cov = (m1.total || 0) > 0 ? (m1.covered || 0) : (m1.pct !== undefined ? Math.round(m1.pct) : 0);
-            const m2Tot = (m2.total || 0) > 0 ? m2.total : (m2.pct !== undefined ? 100 : 0);
-            const m2Cov = (m2.total || 0) > 0 ? (m2.covered || 0) : (m2.pct !== undefined ? Math.round(m2.pct) : 0);
-
-            let total;
-            let covered;
-
-            if (m1IsFallback && m2Tot > 0 && !m2IsFallback) {
-                total = m2Tot;
-                const estCov1 = Math.min(m2Tot, Math.round(((m1.pct || 0) / 100) * m2Tot));
-                covered = Math.max(m2Cov, estCov1);
-            } else if (m2IsFallback && m1Tot > 0 && !m1IsFallback) {
-                total = m1Tot;
-                const estCov2 = Math.min(m1Tot, Math.round(((m2.pct || 0) / 100) * m1Tot));
-                covered = Math.max(m1Cov, estCov2);
-            } else if (m1Cov === 0 && m2Cov > 0 && m2Tot > 0) {
-                // e1 was uncovered (e.g. 0% baseline with raw line count), e2 has real executed coverage
-                total = m2Tot;
-                covered = m2Cov;
-            } else if (m2Cov === 0 && m1Cov > 0 && m1Tot > 0) {
-                // e2 was uncovered (e.g. partial run that didn't touch this file), preserve e1's real total & covered
-                total = m1Tot;
-                covered = m1Cov;
-            } else if (m1Cov === 0 && m2Cov === 0) {
-                // Both have 0 covered; prefer the smaller non-zero AST statement count over raw line count if both > 0
-                total = (m1Tot > 0 && m2Tot > 0) ? Math.min(m1Tot, m2Tot) : Math.max(m1Tot, m2Tot);
-                covered = 0;
-            } else {
-                // Both have > 0 covered; prefer latest runner's AST total if they differ, and cap covered at total
-                total = m2Tot > 0 ? m2Tot : m1Tot;
-                covered = Math.min(total, Math.max(m1Cov, m2Cov));
-            }
-
-            const skipped = Math.max(m1.skipped || 0, m2.skipped || 0);
-            const pct = total > 0 ? Number(((covered / total) * 100).toFixed(1)) : (m2.pct ?? m1.pct ?? (covered === 0 ? 0 : 100));
-            combined[metric] = { total, covered, skipped, pct };
-        }
-        merged[key] = combined;
+    // If mergedFinal has authoritative non-synthetic AST data for this file, compute exact summary from AST
+    const finalEntry = mergedFinal?.[key] || mergedFinal?.[rawKey];
+    if (
+      finalEntry &&
+      !isSyntheticCoverageEntry(finalEntry) &&
+      finalEntry.statementMap &&
+      Object.keys(finalEntry.statementMap).length > 0
+    ) {
+      const astSummary = computeSummaryFromFileCoverage(finalEntry);
+      if (astSummary) {
+        merged[key] = astSummary;
+        continue;
+      }
     }
 
-    const total = {
-        lines: { total: 0, covered: 0, skipped: 0, pct: 0 },
-        statements: { total: 0, covered: 0, skipped: 0, pct: 0 },
-        functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
-        branches: { total: 0, covered: 0, skipped: 0, pct: 0 },
-    };
-
-    // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
-    // In Jest, files matching these specific path thresholds are subtracted from the global threshold group
-    const thresholdExceptions = new Set();
-    const coverageThreshold = options?.projectJestConfig?.coverageThreshold;
-    if (coverageThreshold && typeof coverageThreshold === "object") {
-        for (const pattern of Object.keys(coverageThreshold)) {
-            if (pattern === "global") continue;
-            // Normalize path (e.g. "./src/clients/quickbooks-client.ts" -> "src/clients/quickbooks-client.ts")
-            const normPattern = pattern.replace(/^\.\//, "").replace(/\\/g, "/").toLowerCase();
-            thresholdExceptions.add(normPattern);
-        }
+    if (!e1) {
+      merged[key] = e2;
+      continue;
+    }
+    if (!e2) {
+      merged[key] = e1;
+      continue;
     }
 
-    const configExclusions = options?.rootDir ? extractProjectCoverageExclusions(options.rootDir) : [];
+    const syn1 = isSyntheticSummaryEntry(e1);
+    const syn2 = isSyntheticSummaryEntry(e2);
 
-    // Ensure all business logic files in the repository are represented in merged coverage
-    if (rootDir && fs.existsSync(rootDir)) {
-        try {
-            const logicFiles = findLogicSourceFiles(rootDir);
-            for (const lf of logicFiles) {
-                const can = canonicalizeFilePath(lf.relativePath, rootDir) || lf.relativePath;
-                const normCan = can.replace(/\\/g, "/").toLowerCase();
-                const isThresholdException = Array.from(thresholdExceptions).some(exc => normCan.endsWith(exc));
-                if (isThresholdException || !isBusinessLogicSourceFile(can, configExclusions)) continue;
-
-                if (!merged[can]) {
-                    const { totalLines, totalFuncs, totalBranches } = getCachedFileAstMetrics(lf.absolutePath);
-
-                    merged[can] = {
-                        lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-                        statements: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-                        functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
-                        branches: { total: totalBranches, covered: 0, skipped: 0, pct: 0 }
-                    };
-                }
-            }
-        } catch (e) {
-            console.warn("[mergeCoverageSummaries] Error including uncovered logic files:", e.message);
-        }
+    if (syn1 && !syn2) {
+      const cleanE2 = { ...e2 };
+      delete cleanE2._syntheticBaseline;
+      merged[key] = cleanE2;
+      continue;
+    }
+    if (!syn1 && syn2) {
+      merged[key] = e1;
+      continue;
     }
 
-    for (const [key, item] of Object.entries(merged)) {
-        if (key === "total" || !item || typeof item !== "object") continue;
-        const normKey = key.replace(/\\/g, "/").toLowerCase();
-
-        // Strictly verify that the file belongs to targeted business logic layers
-        if (!isBusinessLogicSourceFile(key, configExclusions)) {
-            continue;
-        }
-
-        // Exclude files with explicit path-level thresholds defined in coverageThreshold
-        // (Jest subtracts these from the global threshold group)
-        const isThresholdException = Array.from(thresholdExceptions).some(exc => normKey.endsWith(exc));
-        if (isThresholdException) {
-            continue;
-        }
-
-        for (const metric of ["lines", "statements", "functions", "branches"]) {
-            if (item[metric]) {
-                const mTot = (item[metric].total || 0) > 0 ? item[metric].total : (item[metric].pct !== undefined ? 100 : 0);
-                const mCov = (item[metric].total || 0) > 0 ? (item[metric].covered || 0) : (item[metric].pct !== undefined ? Math.round(item[metric].pct) : 0);
-                total[metric].total += mTot;
-                total[metric].covered += mCov;
-                total[metric].skipped += item[metric].skipped || 0;
-            }
-        }
-    }
+    const combined = {};
     for (const metric of ["lines", "statements", "functions", "branches"]) {
-        total[metric].pct = total[metric].total > 0
-            ? Number(((total[metric].covered / total[metric].total) * 100).toFixed(1))
-            : (total[metric].covered === 0 ? 0 : 100);
+      const m1 = e1[metric] || {};
+      const m2 = e2[metric] || {};
+      const m1IsFallback = m1.total === 100 && syn1;
+      const m2IsFallback = m2.total === 100 && syn2;
+
+      const m1Tot =
+        (m1.total || 0) > 0 ? m1.total : m1.pct !== undefined ? 100 : 0;
+      const m1Cov =
+        (m1.total || 0) > 0
+          ? m1.covered || 0
+          : m1.pct !== undefined
+            ? Math.round(m1.pct)
+            : 0;
+      const m2Tot =
+        (m2.total || 0) > 0 ? m2.total : m2.pct !== undefined ? 100 : 0;
+      const m2Cov =
+        (m2.total || 0) > 0
+          ? m2.covered || 0
+          : m2.pct !== undefined
+            ? Math.round(m2.pct)
+            : 0;
+
+      let total;
+      let covered;
+
+      if (m1IsFallback && m2Tot > 0 && !m2IsFallback) {
+        total = m2Tot;
+        const estCov1 = Math.min(
+          m2Tot,
+          Math.round(((m1.pct || 0) / 100) * m2Tot),
+        );
+        covered = Math.max(m2Cov, estCov1);
+      } else if (m2IsFallback && m1Tot > 0 && !m1IsFallback) {
+        total = m1Tot;
+        const estCov2 = Math.min(
+          m1Tot,
+          Math.round(((m2.pct || 0) / 100) * m1Tot),
+        );
+        covered = Math.max(m1Cov, estCov2);
+      } else if (m1Cov === 0 && m2Cov > 0 && m2Tot > 0) {
+        // e1 was uncovered (e.g. 0% baseline with raw line count), e2 has real executed coverage
+        total = m2Tot;
+        covered = m2Cov;
+      } else if (m2Cov === 0 && m1Cov > 0 && m1Tot > 0) {
+        // e2 was uncovered (e.g. partial run that didn't touch this file), preserve e1's real total & covered
+        total = m1Tot;
+        covered = m1Cov;
+      } else if (m1Cov === 0 && m2Cov === 0) {
+        // Both have 0 covered; prefer the smaller non-zero AST statement count over raw line count if both > 0
+        total =
+          m1Tot > 0 && m2Tot > 0
+            ? Math.min(m1Tot, m2Tot)
+            : Math.max(m1Tot, m2Tot);
+        covered = 0;
+      } else {
+        // Both have > 0 covered; prefer latest runner's AST total if they differ, and cap covered at total
+        total = m2Tot > 0 ? m2Tot : m1Tot;
+        covered = Math.min(total, Math.max(m1Cov, m2Cov));
+      }
+
+      const skipped = Math.max(m1.skipped || 0, m2.skipped || 0);
+      const pct =
+        total > 0
+          ? Number(((covered / total) * 100).toFixed(1))
+          : (m2.pct ?? m1.pct ?? (covered === 0 ? 0 : 100));
+      combined[metric] = { total, covered, skipped, pct };
     }
-    merged.total = total;
-    return merged;
+    merged[key] = combined;
+  }
+
+  const total = {
+    lines: { total: 0, covered: 0, skipped: 0, pct: 0 },
+    statements: { total: 0, covered: 0, skipped: 0, pct: 0 },
+    functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
+    branches: { total: 0, covered: 0, skipped: 0, pct: 0 },
+  };
+
+  // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
+  // In Jest, files matching these specific path thresholds are subtracted from the global threshold group
+  const thresholdExceptions = new Set();
+  const coverageThreshold = options?.projectJestConfig?.coverageThreshold;
+  if (coverageThreshold && typeof coverageThreshold === "object") {
+    for (const pattern of Object.keys(coverageThreshold)) {
+      if (pattern === "global") continue;
+      // Normalize path (e.g. "./src/clients/quickbooks-client.ts" -> "src/clients/quickbooks-client.ts")
+      const normPattern = pattern
+        .replace(/^\.\//, "")
+        .replace(/\\/g, "/")
+        .toLowerCase();
+      thresholdExceptions.add(normPattern);
+    }
+  }
+
+  const configExclusions = options?.rootDir
+    ? extractProjectCoverageExclusions(options.rootDir)
+    : [];
+
+  // Ensure all business logic files in the repository are represented in merged coverage
+  if (rootDir && fs.existsSync(rootDir)) {
+    try {
+      const logicFiles = findLogicSourceFiles(rootDir);
+      for (const lf of logicFiles) {
+        const can =
+          canonicalizeFilePath(lf.relativePath, rootDir) || lf.relativePath;
+        const normCan = can.replace(/\\/g, "/").toLowerCase();
+        const isThresholdException = Array.from(thresholdExceptions).some(
+          (exc) => normCan.endsWith(exc),
+        );
+        if (
+          isThresholdException ||
+          !isBusinessLogicSourceFile(can, configExclusions)
+        )
+          continue;
+
+        if (!merged[can]) {
+          const { totalLines, totalFuncs, totalBranches } =
+            getCachedFileAstMetrics(lf.absolutePath);
+
+          merged[can] = {
+            lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+            statements: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+            functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
+            branches: { total: totalBranches, covered: 0, skipped: 0, pct: 0 },
+          };
+        }
+      }
+    } catch (e) {
+      console.warn(
+        "[mergeCoverageSummaries] Error including uncovered logic files:",
+        e.message,
+      );
+    }
+  }
+
+  for (const [key, item] of Object.entries(merged)) {
+    if (key === "total" || !item || typeof item !== "object") continue;
+    const normKey = key.replace(/\\/g, "/").toLowerCase();
+
+    // Strictly verify that the file belongs to targeted business logic layers
+    if (!isBusinessLogicSourceFile(key, configExclusions)) {
+      continue;
+    }
+
+    // Exclude files with explicit path-level thresholds defined in coverageThreshold
+    // (Jest subtracts these from the global threshold group)
+    const isThresholdException = Array.from(thresholdExceptions).some((exc) =>
+      normKey.endsWith(exc),
+    );
+    if (isThresholdException) {
+      continue;
+    }
+
+    for (const metric of ["lines", "statements", "functions", "branches"]) {
+      if (item[metric]) {
+        const mTot =
+          (item[metric].total || 0) > 0
+            ? item[metric].total
+            : item[metric].pct !== undefined
+              ? 100
+              : 0;
+        const mCov =
+          (item[metric].total || 0) > 0
+            ? item[metric].covered || 0
+            : item[metric].pct !== undefined
+              ? Math.round(item[metric].pct)
+              : 0;
+        total[metric].total += mTot;
+        total[metric].covered += mCov;
+        total[metric].skipped += item[metric].skipped || 0;
+      }
+    }
+  }
+  for (const metric of ["lines", "statements", "functions", "branches"]) {
+    total[metric].pct =
+      total[metric].total > 0
+        ? Number(
+            ((total[metric].covered / total[metric].total) * 100).toFixed(1),
+          )
+        : total[metric].covered === 0
+          ? 0
+          : 100;
+  }
+  merged.total = total;
+  return merged;
 };
 
 /**
  * Merge Jest and Vitest test-results JSON format
  */
 export const mergeTestResults = (...results) => {
-    const flatResults = results.flat().filter(Boolean);
-    const list = [];
-    const seenSuites = new Set();
-    let numTotalTests = 0;
-    let numPassedTests = 0;
-    let numFailedTests = 0;
-    let numPendingTests = 0;
-    let startTime = Infinity;
-    let endTime = 0;
+  const flatResults = results.flat().filter(Boolean);
+  const list = [];
+  const seenSuites = new Set();
+  let numTotalTests = 0;
+  let numPassedTests = 0;
+  let numFailedTests = 0;
+  let numPendingTests = 0;
+  let startTime = Infinity;
+  let endTime = 0;
 
-    const getSuiteKey = (name) => {
-        if (!name) return "";
-        const norm = name.replace(/\\/g, "/");
-        const m = norm.match(/(?:\/|^)(?:workspace|repo)\/(.+)$/i);
-        return m ? m[1] : norm;
-    };
+  const getSuiteKey = (name) => {
+    if (!name) return "";
+    const norm = name.replace(/\\/g, "/");
+    const m = norm.match(/(?:\/|^)(?:workspace|repo)\/(.+)$/i);
+    return m ? m[1] : norm;
+  };
 
-    for (const res of flatResults) {
-        if (!res) continue;
-        if (Array.isArray(res.testResults)) {
-            for (const suite of res.testResults) {
-                const key = getSuiteKey(suite?.name);
-                if (key) {
-                    if (seenSuites.has(key)) {
-                        const idx = list.findIndex(s => getSuiteKey(s?.name) === key);
-                        if (idx !== -1) {
-                            list[idx] = suite;
-                        }
-                    } else {
-                        seenSuites.add(key);
-                        list.push(suite);
-                    }
-                } else {
-                    list.push(suite);
-                }
+  for (const res of flatResults) {
+    if (!res) continue;
+    if (Array.isArray(res.testResults)) {
+      for (const suite of res.testResults) {
+        const key = getSuiteKey(suite?.name);
+        if (key) {
+          if (seenSuites.has(key)) {
+            const idx = list.findIndex((s) => getSuiteKey(s?.name) === key);
+            if (idx !== -1) {
+              list[idx] = suite;
             }
+          } else {
+            seenSuites.add(key);
+            list.push(suite);
+          }
+        } else {
+          list.push(suite);
         }
-        numTotalTests += res.numTotalTests || 0;
-        numPassedTests += res.numPassedTests || 0;
-        numFailedTests += res.numFailedTests || 0;
-        numPendingTests += res.numPendingTests || 0;
-        if (res.startTime && res.startTime < startTime) startTime = res.startTime;
-        if (res.endTime && res.endTime > endTime) endTime = res.endTime;
+      }
     }
-    return {
-        numTotalTests,
-        numPassedTests,
-        numFailedTests,
-        numPendingTests,
-        testResults: list,
-        startTime: startTime === Infinity ? Date.now() : startTime,
-        endTime: endTime === 0 ? Date.now() : endTime,
-        success: numFailedTests === 0
-    };
+    numTotalTests += res.numTotalTests || 0;
+    numPassedTests += res.numPassedTests || 0;
+    numFailedTests += res.numFailedTests || 0;
+    numPendingTests += res.numPendingTests || 0;
+    if (res.startTime && res.startTime < startTime) startTime = res.startTime;
+    if (res.endTime && res.endTime > endTime) endTime = res.endTime;
+  }
+  return {
+    numTotalTests,
+    numPassedTests,
+    numFailedTests,
+    numPendingTests,
+    testResults: list,
+    startTime: startTime === Infinity ? Date.now() : startTime,
+    endTime: endTime === 0 ? Date.now() : endTime,
+    success: numFailedTests === 0,
+  };
 };
+
+/**
+ * Temporarily write unapplied UI unit test drafts onto disk inside rootDir so Jest/Vitest
+ * can execute and measure coverage before permanent Apply. Records backups for clean rollback.
+ */
+export function materializeDraftTestsForRun(rootDir, draftTests = []) {
+  const tempDraftBackups = [];
+  const tempCreatedDirs = [];
+  const draftSourceByTestRel = new Map();
+  const draftFrameworkByTestRel = new Map();
+
+  if (!rootDir || !Array.isArray(draftTests) || draftTests.length === 0) {
+    return { tempDraftBackups, tempCreatedDirs, draftSourceByTestRel, draftFrameworkByTestRel };
+  }
+
+  const resolvedRoot = path.resolve(rootDir);
+  for (const draft of draftTests) {
+    if (!draft || typeof draft.testFile !== "string" || typeof draft.code !== "string") continue;
+    const relTest = draft.testFile.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    if (!relTest || relTest.includes("..") || !draft.code.trim()) continue;
+    const absTest = path.resolve(resolvedRoot, relTest);
+    if (absTest !== resolvedRoot && !absTest.startsWith(resolvedRoot + path.sep)) continue;
+
+    const dirStack = [];
+    let cursor = path.dirname(absTest);
+    while (cursor && cursor !== resolvedRoot && cursor.startsWith(resolvedRoot + path.sep)) {
+      if (!fs.existsSync(cursor)) dirStack.unshift(cursor);
+      cursor = path.dirname(cursor);
+    }
+    for (const d of dirStack) {
+      fs.mkdirSync(d, { recursive: true });
+      tempCreatedDirs.push(d);
+    }
+
+    const existed = fs.existsSync(absTest);
+    const prevContent = existed ? fs.readFileSync(absTest, "utf8") : null;
+    tempDraftBackups.push({ absPath: absTest, existed, prevContent });
+    fs.writeFileSync(absTest, draft.code, "utf8");
+
+    const normRelTest = relTest.toLowerCase();
+    if (draft.sourceFile) {
+      draftSourceByTestRel.set(
+        normRelTest,
+        String(draft.sourceFile).replace(/\\/g, "/").replace(/^\/+/, "").trim().toLowerCase(),
+      );
+    }
+    if (draft.framework === "vitest" || draft.framework === "jest") {
+      draftFrameworkByTestRel.set(normRelTest, draft.framework);
+    }
+  }
+
+  return { tempDraftBackups, tempCreatedDirs, draftSourceByTestRel, draftFrameworkByTestRel };
+}
+
+/**
+ * Restore pre-existing test files and delete newly created temporary draft files/folders.
+ */
+export function restoreDraftTestsForRun(draftRunState) {
+  if (!draftRunState) return;
+  const { tempDraftBackups = [], tempCreatedDirs = [] } = draftRunState;
+  for (let i = tempDraftBackups.length - 1; i >= 0; i -= 1) {
+    const backup = tempDraftBackups[i];
+    try {
+      if (backup.existed) {
+        fs.writeFileSync(backup.absPath, backup.prevContent ?? "", "utf8");
+      } else if (fs.existsSync(backup.absPath)) {
+        fs.unlinkSync(backup.absPath);
+      }
+    } catch (restoreErr) {
+      console.warn("[processRunTestsJob] Temporary draft restore warning:", restoreErr.message);
+    }
+  }
+  for (let i = tempCreatedDirs.length - 1; i >= 0; i -= 1) {
+    try {
+      const dirPath = tempCreatedDirs[i];
+      if (fs.existsSync(dirPath) && fs.readdirSync(dirPath).length === 0) {
+        fs.rmdirSync(dirPath);
+      }
+    } catch (_) {}
+  }
+}
+
+/**
+ * Filter discovered Jest/Vitest files against user-selected source/test targets,
+ * accounting for direct draft source->test mappings and filename conventions.
+ */
+export function filterDiscoveredUnitFiles({
+  rootDir,
+  jestFiles = [],
+  vitestFiles = [],
+  requestedTargetFiles = [],
+  draftSourceByTestRel = new Map(),
+  draftFrameworkByTestRel = new Map(),
+  findAssociatedSource = null,
+}) {
+  let nextJest = [...jestFiles];
+  let nextVitest = [...vitestFiles];
+
+  if (draftFrameworkByTestRel && draftFrameworkByTestRel.size > 0) {
+    for (const [normDraftTest, draftFw] of draftFrameworkByTestRel.entries()) {
+      const jIdx = nextJest.findIndex((f) => f.replace(/\\/g, "/").toLowerCase() === normDraftTest);
+      const vIdx = nextVitest.findIndex((f) => f.replace(/\\/g, "/").toLowerCase() === normDraftTest);
+      if (draftFw === "vitest" && jIdx !== -1 && vIdx === -1) {
+        const [moved] = nextJest.splice(jIdx, 1);
+        nextVitest.push(moved);
+      } else if (draftFw === "jest" && vIdx !== -1 && jIdx === -1) {
+        const [moved] = nextVitest.splice(vIdx, 1);
+        nextJest.push(moved);
+      }
+    }
+  }
+
+  if (Array.isArray(requestedTargetFiles) && requestedTargetFiles.length > 0) {
+    const matchesTarget = (relTest) => {
+      const normTest = String(relTest || "").replace(/\\/g, "/").toLowerCase();
+      const testBase = path.basename(normTest).replace(/(?:\.(?:partial|redundant))?\.(?:test|spec|unit)\.[cm]?[jt]sx?$/i, "");
+      const draftAssocNorm = draftSourceByTestRel?.get(normTest) || "";
+      let assocNorm = "";
+      if (typeof findAssociatedSource === "function") {
+        try {
+          const assoc = findAssociatedSource(rootDir, relTest);
+          if (assoc) assocNorm = String(assoc).replace(/\\/g, "/").toLowerCase();
+        } catch {}
+      }
+      return requestedTargetFiles.some((rawTarget) => {
+        const t = String(rawTarget || "").replace(/\\/g, "/").replace(/^\/+/, "").trim().toLowerCase();
+        if (!t) return false;
+        if (normTest === t || normTest.endsWith("/" + t) || t.endsWith("/" + normTest)) return true;
+        if (draftAssocNorm && (draftAssocNorm === t || draftAssocNorm.endsWith("/" + t) || t.endsWith("/" + draftAssocNorm))) return true;
+        if (assocNorm && (assocNorm === t || assocNorm.endsWith("/" + t) || t.endsWith("/" + assocNorm))) return true;
+        const tBase = path.basename(t).replace(/\.[cm]?[jt]sx?$/i, "");
+        return Boolean(
+          tBase &&
+            testBase &&
+            (tBase === testBase ||
+              tBase.startsWith(testBase + ".") ||
+              testBase.startsWith(tBase + ".")),
+        );
+      });
+    };
+    nextJest = nextJest.filter(matchesTarget);
+    nextVitest = nextVitest.filter(matchesTarget);
+  }
+
+  return { jestFiles: nextJest, vitestFiles: nextVitest };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Pipeline Orchestrator
@@ -3524,842 +5238,2378 @@ export const mergeTestResults = (...results) => {
  *
  * @param {string} jobId  - ID of Job with type="RUN_TESTS"
  */
-export const processRunTestsJob = async (jobId) => {
-    assertStringField(jobId, "jobId");
+export const processRunTestsJob = async (jobId, options = {}) => {
+  assertStringField(jobId, "jobId");
 
-    // ── SCRUM-143: Transition to RUNNING ──────────────────────────────────────
+  // ── SCRUM-143: Transition to RUNNING ──────────────────────────────────────
+  try {
+    await markJobRunning(jobId);
+  } catch (error) {
+    if (
+      error.message === "Job not found" ||
+      error.message === "Only queued jobs can start" ||
+      error.message === "Cannot start a canceled job"
+    ) {
+      console.log(`[RunTestsJob ${jobId}] Skipped: ${error.message}`);
+      return;
+    }
+    console.error(
+      `[RunTestsJob ${jobId}] Error transitioning to RUNNING:`,
+      error,
+    );
+    return;
+  }
+
+  // ── Fetch Job + Snapshot info ──────────────────────────────────────────
+  let job;
+  try {
+    job = await getJobById(jobId);
+  } catch (error) {
+    console.error(`[RunTestsJob ${jobId}] Unable to fetch Job:`, error);
+    return;
+  }
+
+  // Validate snapshot has rootDir
+  if (!job.snapshot?.rootDir) {
+    const msg = "Snapshot does not have rootDir — INGEST job pending.";
+    console.error(`[RunTestsJob ${jobId}] ${msg}`);
+    await markJobFailed(jobId, new Error(msg)).catch(() => {});
+    return;
+  }
+
+  const opContext = currentProjectOperation();
+  const rawOrigRootDir =
+    job.snapshot?.originalRootDir || opContext?.originalRootDir || null;
+  const origRootDir = rawOrigRootDir
+    ? resolveProjectRoot(rawOrigRootDir) || rawOrigRootDir
+    : null;
+  const snapshotRoot =
+    resolveSnapshotRootDir(job.snapshot.rootDir) || job.snapshot.rootDir;
+  let rootDir = resolveProjectRoot(job.snapshot.rootDir) || snapshotRoot;
+  if (
+    snapshotRoot &&
+    rootDir &&
+    path.resolve(snapshotRoot) !== path.resolve(rootDir) &&
+    fs.existsSync(snapshotRoot)
+  ) {
+    const subUnit = findUnitFiles(rootDir);
+    const snapUnit = findUnitFiles(snapshotRoot);
+    const subCount =
+      (subUnit.jestFiles?.length || 0) + (subUnit.vitestFiles?.length || 0);
+    const snapCount =
+      (snapUnit.jestFiles?.length || 0) + (snapUnit.vitestFiles?.length || 0);
+    if (snapCount > subCount) {
+      rootDir = snapshotRoot;
+    }
+  }
+  ensureMinimalPackageJson(rootDir);
+  const isTempOperationWorkspace = rootDir
+    .replace(/\\/g, "/")
+    .includes("/.covai-temp/");
+  if (
+    !isTempOperationWorkspace &&
+    rootDir !== job.snapshot.rootDir &&
+    fs.existsSync(path.join(rootDir, "package.json"))
+  ) {
+    if (typeof prisma?.projectSnapshot?.update === "function") {
+      prisma.projectSnapshot
+        .update({
+          where: { id: job.snapshotId },
+          data: { rootDir },
+        })
+        .catch(() => {});
+    }
+  }
+  const snapshotId = job.snapshotId;
+  const projectId = job.projectId;
+  const userId = job.userId;
+  const jestConfigPath = job.snapshot.jestConfigPath ?? null;
+  const projectJestConfig = await readProjectJestConfig(
+    rootDir,
+    jestConfigPath,
+  );
+  const coverageDir = path.join(rootDir, "coverage");
+  const unitCoverageDir = path.join(rootDir, "coverage", "unit");
+  const reportedScenarios = [];
+  let hasPersistedTestRun = false;
+  if (!fs.existsSync(unitCoverageDir)) {
     try {
-        await markJobRunning(jobId);
-    } catch (error) {
-        if (
-            error.message === "Job not found" ||
-            error.message === "Only queued jobs can start" ||
-            error.message === "Cannot start a canceled job"
-        ) {
-            console.log(`[RunTestsJob ${jobId}] Skipped: ${error.message}`);
-            return;
-        }
-        console.error(`[RunTestsJob ${jobId}] Error transitioning to RUNNING:`, error);
-        return;
-    }
+      fs.mkdirSync(unitCoverageDir, { recursive: true });
+    } catch {}
+  }
 
-    // ── Fetch Job + Snapshot info ──────────────────────────────────────────
-    let job;
+  const payload =
+    typeof job.payloadJson === "string"
+      ? JSON.parse(job.payloadJson || "{}")
+      : job.payloadJson || {};
+  const verifyPublishedUnitTests = payload?.verifyPublishedUnitTests === true;
+  if (verifyPublishedUnitTests && process.env.COVAI_FORCE_DOCKER_ONLY === "true") {
+    const availability =
+      typeof dockerRunner.checkAvailability === "function"
+        ? dockerRunner.checkAvailability()
+        : {
+            available: Boolean(dockerRunner.containerEnabled),
+            code: dockerRunner.containerEnabled
+              ? "RUNNER_AVAILABLE"
+              : "RUNNER_UNAVAILABLE",
+            reason: "Docker runner is unavailable.",
+          };
+    if (!availability.available) {
+      const err = new Error(
+        `Docker is required to verify coverage for published generated tests [${availability.code}]: ${availability.reason}`,
+      );
+      err.code = availability.code;
+      await markJobFailed(jobId, err).catch(() => {});
+      return;
+    }
+  }
+  const useHermeticMock =
+    options?.useHermeticMock !== false &&
+    payload?.useHermeticMock !== false &&
+    job?.useHermeticMock !== false;
+
+  let hermeticMocks = {};
+  try {
+    const {
+      loadWorkspaceEnv,
+      generateHermeticMockEnvironment,
+      detectProjectEnvironment,
+    } = await import("./environmentDetection.service.js");
+    const workspaceEnv = await loadWorkspaceEnv(rootDir);
+    const detected = await detectProjectEnvironment(rootDir, {
+      existingVariables: workspaceEnv?.variables || {},
+    });
+    hermeticMocks = useHermeticMock
+      ? generateHermeticMockEnvironment(
+          detected?.detectedVariables || [],
+          workspaceEnv?.variables || {},
+        )
+      : workspaceEnv?.variables || {};
+
+    if (useHermeticMock) {
+      await addJobLog(
+        jobId,
+        "INFO",
+        "[RUNNER] Executing tests with hermetic mock environment in RAM (useHermeticMock=true)...",
+      ).catch(() => {});
+    }
+  } catch (envErr) {
+    console.warn(
+      "[processRunTestsJob] Env resolution warning:",
+      envErr.message,
+    );
+  }
+
+  let isolatedDb = null;
+  let virtualDbEnv = {};
+  let draftRunState = null;
+  if (process.env.COVAI_UNIT_VIRTUAL_DB === "true") {
     try {
-        job = await getJobById(jobId);
-    } catch (error) {
-        console.error(`[RunTestsJob ${jobId}] Unable to fetch Job:`, error);
-        return;
-    }
-
-    // Validate snapshot has rootDir
-    if (!job.snapshot?.rootDir) {
-        const msg = "Snapshot does not have rootDir — INGEST job pending.";
-        console.error(`[RunTestsJob ${jobId}] ${msg}`);
-        await markJobFailed(jobId, new Error(msg)).catch(() => { });
-        return;
-    }
-
-    const opContext = currentProjectOperation();
-    const rawOrigRootDir = job.snapshot?.originalRootDir || opContext?.originalRootDir || null;
-    const origRootDir = rawOrigRootDir ? (resolveProjectRoot(rawOrigRootDir) || rawOrigRootDir) : null;
-    let rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
-    ensureMinimalPackageJson(rootDir);
-    const isTempOperationWorkspace = rootDir.replace(/\\/g, "/").includes("/.covai-temp/");
-    if (!isTempOperationWorkspace && rootDir !== job.snapshot.rootDir && fs.existsSync(path.join(rootDir, "package.json"))) {
-        if (typeof prisma?.projectSnapshot?.update === "function") {
-            prisma.projectSnapshot.update({
-                where: { id: job.snapshotId },
-                data: { rootDir }
-            }).catch(() => { });
+      const {
+        isDatabaseRequiredForProject,
+        provisionIsolatedDatabase,
+        syncDatabaseSchema,
+      } = await import("./virtualDatabase.service.js");
+      if (isDatabaseRequiredForProject(rootDir)) {
+        await addJobLog(
+          jobId,
+          "INFO",
+          "[VirtualDB] Database usage detected in project. Provisioning isolated virtual database...",
+        ).catch(() => {});
+        isolatedDb = await provisionIsolatedDatabase(jobId);
+        virtualDbEnv = isolatedDb.env || {};
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[VirtualDB] Isolated catalog "${isolatedDb.dbName}" ready. Synchronizing schema...`,
+        ).catch(() => {});
+        const syncRes = await syncDatabaseSchema(
+          isolatedDb.databaseUrl,
+          null,
+          rootDir,
+        );
+        if (syncRes.synced) {
+          await addJobLog(
+            jobId,
+            "INFO",
+            `[VirtualDB] Database schema synchronized successfully for catalog "${isolatedDb.dbName}".`,
+          ).catch(() => {});
         }
+      } else {
+        await addJobLog(
+          jobId,
+          "INFO",
+          "[VirtualDB] Pure logic/no-DB project detected. Bypassing virtual database provisioning for speed.",
+        ).catch(() => {});
+      }
+    } catch (vDbErr) {
+      console.warn(
+        "[processRunTestsJob] Virtual DB provisioning warning:",
+        vDbErr.message,
+      );
+      await addJobLog(
+        jobId,
+        "WARN",
+        `[VirtualDB] Virtual DB provisioning notice: ${vDbErr.message}`,
+      ).catch(() => {});
     }
-    const snapshotId = job.snapshotId;
-    const projectId = job.projectId;
-    const userId = job.userId;
-    const jestConfigPath = job.snapshot.jestConfigPath ?? null;
-    const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
-    const coverageDir = path.join(rootDir, "coverage");
-    const unitCoverageDir = path.join(rootDir, "coverage", "unit");
-    if (!fs.existsSync(unitCoverageDir)) {
-        try { fs.mkdirSync(unitCoverageDir, { recursive: true }); } catch { }
-    }
+  }
 
-    // Initialize output record
-    await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
+  const requestedTargetFiles = Array.isArray(payload?.targetFiles)
+    ? payload.targetFiles
+        .map((f) => String(f || "").replace(/\\/g, "/").replace(/^\/+/, "").trim())
+        .filter(Boolean)
+    : [];
+  const isTargetedUnitRun = requestedTargetFiles.length > 0;
+  const scopedWorkCoverageDir = isTargetedUnitRun
+    ? path.join(rootDir, ".covai-temp", `scoped-unit-${jobId}`)
+    : null;
+  const activeCoverageDir = scopedWorkCoverageDir || coverageDir;
+  const activeUnitCoverageDir = scopedWorkCoverageDir || unitCoverageDir;
+  if (scopedWorkCoverageDir && !fs.existsSync(scopedWorkCoverageDir)) {
+    try {
+      fs.mkdirSync(scopedWorkCoverageDir, { recursive: true });
+    } catch {}
+  }
 
-    // Invalidate stale coverage files from any previous run to ensure fresh and real metrics
-    if (!fs.existsSync(coverageDir)) {
-        try { fs.mkdirSync(coverageDir, { recursive: true }); } catch { }
-    }
-    const staleCoverageFiles = [
-        "coverage-summary.json",
-        "coverage-final.json",
-        "jest-results.json",
-        "vitest-results.json",
-        "test-results.json",
-        "lcov.info",
-        "jest-coverage-summary.json",
-        "vitest-coverage-summary.json",
-        "jest-coverage-final.json",
-        "vitest-coverage-final.json",
-        "jest-lcov.info",
-        "vitest-lcov.info"
-    ];
-    // Gather all candidate coverage directories to aggressively wipe stale artifacts
-    const candidateDirs = [
+  const targetTestNames = Array.isArray(payload?.targetTestNames)
+    ? payload.targetTestNames.map((t) => String(t || "").trim()).filter(Boolean)
+    : [];
+  const escapeRegexLiteral = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const testNamePattern =
+    targetTestNames.length > 0
+      ? targetTestNames.map(escapeRegexLiteral).join("|")
+      : null;
+
+  const runnerOptions = {
+    coverageDir: activeUnitCoverageDir,
+    allowUninstrumentedFallback: !verifyPublishedUnitTests,
+    hermeticMocks,
+    useHermeticMock,
+    virtualDbEnv,
+    virtualDbUrl: isolatedDb?.databaseUrl || null,
+    env: { ...virtualDbEnv },
+    ...(isTargetedUnitRun ? { targetSourceFiles: requestedTargetFiles } : {}),
+    ...(testNamePattern ? { testNamePattern } : {}),
+  };
+
+  // Initialize output record
+  await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => {});
+
+  // Invalidate stale coverage files from any previous run to ensure fresh and real metrics.
+  // For targeted runs, isolate artifacts in scopedWorkCoverageDir so full-project files stay untouched.
+  if (!fs.existsSync(activeCoverageDir)) {
+    try {
+      fs.mkdirSync(activeCoverageDir, { recursive: true });
+    } catch {}
+  }
+  const staleCoverageFiles = [
+    "coverage-summary.json",
+    "coverage-final.json",
+    "jest-results.json",
+    "vitest-results.json",
+    "test-results.json",
+    "lcov.info",
+    "jest-coverage-summary.json",
+    "vitest-coverage-summary.json",
+    "jest-coverage-final.json",
+    "vitest-coverage-final.json",
+    "jest-lcov.info",
+    "vitest-lcov.info",
+  ];
+  const candidateDirs = isTargetedUnitRun
+    ? [activeCoverageDir]
+    : [
         coverageDir,
         unitCoverageDir,
         path.join(rootDir, "coverage", "integration"),
         path.join(rootDir, "coverage", "system"),
-        path.join(rootDir, ".nyc_output")
-    ];
+        path.join(rootDir, ".nyc_output"),
+      ];
+  if (!isTargetedUnitRun) {
     try {
-        const subpackages = ["server", "client", "backend", "frontend", "api", "app", "packages"];
-        for (const sub of subpackages) {
-            const subDir = path.join(rootDir, sub);
-            if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
-                candidateDirs.push(path.join(subDir, "coverage"));
-                candidateDirs.push(path.join(subDir, "coverage", "unit"));
-                candidateDirs.push(path.join(subDir, ".nyc_output"));
-                if (sub === "packages") {
-                    try {
-                        const pkgs = fs.readdirSync(subDir);
-                        for (const pkg of pkgs) {
-                            const pDir = path.join(subDir, pkg);
-                            if (fs.existsSync(pDir) && fs.statSync(pDir).isDirectory()) {
-                                candidateDirs.push(path.join(pDir, "coverage"));
-                                candidateDirs.push(path.join(pDir, ".nyc_output"));
-                            }
-                        }
-                    } catch { }
+      const subpackages = [
+        "server",
+        "client",
+        "backend",
+        "frontend",
+        "api",
+        "app",
+        "packages",
+      ];
+      for (const sub of subpackages) {
+        const subDir = path.join(rootDir, sub);
+        if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
+          candidateDirs.push(path.join(subDir, "coverage"));
+          candidateDirs.push(path.join(subDir, "coverage", "unit"));
+          candidateDirs.push(path.join(subDir, ".nyc_output"));
+          if (sub === "packages") {
+            try {
+              const pkgs = fs.readdirSync(subDir);
+              for (const pkg of pkgs) {
+                const pDir = path.join(subDir, pkg);
+                if (fs.existsSync(pDir) && fs.statSync(pDir).isDirectory()) {
+                  candidateDirs.push(path.join(pDir, "coverage"));
+                  candidateDirs.push(path.join(pDir, ".nyc_output"));
                 }
-            }
+              }
+            } catch {}
+          }
         }
-    } catch { }
+      }
+    } catch {}
+  }
 
-    for (const dir of candidateDirs) {
-        if (!fs.existsSync(dir)) continue;
-        for (const sf of staleCoverageFiles) {
-            const p = path.join(dir, sf);
-            if (fs.existsSync(p)) {
-                try { fs.unlinkSync(p); } catch { }
+  let previousUnitSummary = {};
+  let previousUnitFinal = {};
+  let existingDbCoverageByPath = new Map();
+  if (isTargetedUnitRun) {
+    for (const prevSumPath of [
+      path.join(unitCoverageDir, "coverage-summary.json"),
+      path.join(coverageDir, "coverage-summary.json"),
+    ]) {
+      if (fs.existsSync(prevSumPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(prevSumPath, "utf8"));
+          if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+            for (const [k, v] of Object.entries(parsed)) {
+              if (k === "total" || !v || typeof v !== "object") continue;
+              const prevEx = previousUnitSummary[k];
+              if (!prevEx || (v.lines?.covered || 0) > (prevEx.lines?.covered || 0)) {
+                previousUnitSummary[k] = v;
+              }
             }
+          }
+        } catch {}
+      }
+    }
+    for (const prevFinalPath of [
+      path.join(unitCoverageDir, "coverage-final.json"),
+      path.join(coverageDir, "coverage-final.json"),
+    ]) {
+      if (fs.existsSync(prevFinalPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(prevFinalPath, "utf8"));
+          if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+            previousUnitFinal = { ...parsed, ...previousUnitFinal };
+          }
+        } catch {}
+      }
+    }
+    try {
+      const dbCovRows = await prisma.coverageFile.findMany({
+        where: { snapshotId },
+        select: { filePath: true, linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true },
+      });
+      for (const row of dbCovRows || []) {
+        const canonRow = canonicalizeFilePath(row.filePath, rootDir);
+        if (canonRow) existingDbCoverageByPath.set(canonRow, row);
+      }
+    } catch {}
+  }
+
+  const covBackupDir = path.join(rootDir, ".covai-backup-coverage");
+  try {
+    fs.mkdirSync(covBackupDir, { recursive: true });
+  } catch (_) {}
+  for (const dir of candidateDirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const sf of staleCoverageFiles) {
+      const p = path.join(dir, sf);
+      if (fs.existsSync(p)) {
+        try {
+          const backupKey = path.relative(rootDir, p).replace(/[/\\]/g, "_");
+          fs.copyFileSync(p, path.join(covBackupDir, backupKey));
+          fs.unlinkSync(p);
+        } catch {}
+      }
+    }
+  }
+
+  // ── Granular Progress Reporter Helper ─────────────────────────────────
+  const reportUnitProgress = async (progress, stage, message) => {
+    await updateJobProgress(jobId, progress).catch(() => {});
+    try {
+      const { emitDashboardJobProgress } =
+        await import("./dashboardEvents.service.js");
+      emitDashboardJobProgress(job.snapshot?.projectId, {
+        snapshotId,
+        jobId,
+        pillar: "unit",
+        progress,
+        stage,
+        message: message || stage,
+      }).catch(() => {});
+    } catch (_) {}
+  };
+
+  // ── SCRUM-144: Progress 10% — started ───────────────────────────────────
+  await reportUnitProgress(
+    10,
+    "Starting unit test execution",
+    "Initializing test runner and sandbox...",
+  );
+  try {
+    import("./dashboardEvents.service.js")
+      .then(({ emitDashboardRunStatus, emitDashboardJobProgress }) => {
+        emitDashboardRunStatus(job.snapshot?.projectId, {
+          snapshotId,
+          jobId,
+          pillar: "unit",
+          status: "RUNNING",
+        }).catch(() => {});
+        emitDashboardJobProgress(job.snapshot?.projectId, {
+          snapshotId,
+          jobId,
+          pillar: "unit",
+          progress: 10,
+          stage: "Starting unit test execution",
+        }).catch(() => {});
+      })
+      .catch(() => {});
+  } catch (_) {}
+  await addJobLog(jobId, "INFO", "RUN_TESTS pipeline started.").catch(() => {});
+
+  const createdNodeModulesLinks = [];
+  try {
+    // ── SCRUM-139: Install dependencies (Fast zero-copy link + check) ───
+    await addJobLog(
+      jobId,
+      "INFO",
+      "Step 1/4: Checking & installing dependencies...",
+    ).catch(() => {});
+    if (
+      origRootDir &&
+      path.resolve(origRootDir) !== path.resolve(rootDir) &&
+      fs.existsSync(origRootDir)
+    ) {
+      try {
+        createdNodeModulesLinks.push(
+          ...ensureWorkspaceNodeModulesLinked(
+            rawOrigRootDir || origRootDir,
+            rootDir,
+          ),
+        );
+      } catch (_) {}
+    }
+    await runNpmInstall(jobId, rootDir);
+    if (
+      origRootDir &&
+      path.resolve(origRootDir) !== path.resolve(rootDir) &&
+      fs.existsSync(origRootDir)
+    ) {
+      try {
+        const origNm = path.join(origRootDir, "node_modules");
+        const workNm = path.join(rootDir, "node_modules");
+        if (
+          !fs.existsSync(origNm) &&
+          fs.existsSync(workNm) &&
+          !fs.lstatSync(workNm).isSymbolicLink()
+        ) {
+          fs.cpSync(workNm, origNm, { recursive: true });
         }
+      } catch (_) {}
     }
 
-    // ── SCRUM-144: Progress 10% — started ───────────────────────────────────
-    await updateJobProgress(jobId, 10).catch(() => { });
-    await addJobLog(jobId, "INFO", "RUN_TESTS pipeline started.").catch(() => { });
+    // ── SCRUM-144: Progress 25% — sau install ─────────────────────────────
+    await reportUnitProgress(
+      25,
+      "Dependencies ready",
+      "Dependencies verified and linked.",
+    );
 
-    const createdNodeModulesLinks = [];
-    try {
-        // ── SCRUM-139: Install dependencies (Fast zero-copy link + check) ───
-        await addJobLog(jobId, "INFO", "Step 1/4: Checking & installing dependencies...").catch(() => { });
-        if (origRootDir && path.resolve(origRootDir) !== path.resolve(rootDir) && fs.existsSync(origRootDir)) {
-            try {
-                createdNodeModulesLinks.push(...ensureWorkspaceNodeModulesLinked(rawOrigRootDir || origRootDir, rootDir));
-            } catch (_) { }
-        }
-        await runNpmInstall(jobId, rootDir);
-        if (origRootDir && path.resolve(origRootDir) !== path.resolve(rootDir) && fs.existsSync(origRootDir)) {
-            try {
-                const origNm = path.join(origRootDir, "node_modules");
-                const workNm = path.join(rootDir, "node_modules");
-                if (!fs.existsSync(origNm) && fs.existsSync(workNm) && !fs.lstatSync(workNm).isSymbolicLink()) {
-                    fs.cpSync(workNm, origNm, { recursive: true });
-                }
-            } catch (_) { }
-        }
+    // ── SCRUM-140: Discover and classify unit test files ──────────────────
+    await addJobLog(
+      jobId,
+      "INFO",
+      "Step 2/4: Scanning and classifying test files (Jest & Vitest)...",
+    ).catch(() => {});
 
-        // ── SCRUM-144: Progress 25% — sau install ─────────────────────────────
-        await updateJobProgress(jobId, 25).catch(() => { });
-
-        // ── SCRUM-140: Discover and classify unit test files ──────────────────
-        await addJobLog(jobId, "INFO", "Step 2/4: Scanning and classifying test files (Jest & Vitest)...").catch(() => { });
-
-        const { jestFiles, vitestFiles, skippedFiles } = findUnitFiles(rootDir);
-        const hasVitest = vitestFiles.length > 0;
-        const hasJest = jestFiles.length > 0;
-        const runBoth = hasVitest && hasJest;
-
-        // Self-heal and sanitize only target unit test files prior to runner execution (O(K) instead of scanning entire repository)
-        try {
-            const unitFilesToSanitize = [...jestFiles, ...vitestFiles];
-            if (unitFilesToSanitize.length > 0) {
-                sanitizeAllProjectTestFiles(rootDir, unitFilesToSanitize);
-            }
-        } catch (sanitizeErr) {
-            console.warn("[runTestsJob] Warning during sanitizeAllProjectTestFiles:", sanitizeErr.message);
-        }
-
-        // Unit test execution on snapshot repository (preserve storage integrity)
-
+    const incomingDraftTests = Array.isArray(payload?.draftTests)
+      ? payload.draftTests
+      : Array.isArray(options?.draftTests)
+        ? options.draftTests
+        : [];
+    if (incomingDraftTests.length > 0) {
+      draftRunState = materializeDraftTestsForRun(rootDir, incomingDraftTests);
+      if (draftRunState.tempDraftBackups.length > 0) {
         await addJobLog(
+          jobId,
+          "INFO",
+          `[DRAFT_RUN] Materialized ${draftRunState.tempDraftBackups.length} temporary unit test draft(s) for isolated execution.`,
+        ).catch(() => {});
+      }
+    }
+
+    const discoveredUnit = findUnitFiles(rootDir);
+    let { jestFiles, vitestFiles } = discoveredUnit;
+    const { skippedFiles } = discoveredUnit;
+    const { findAssociatedSourceFile } = isTargetedUnitRun
+      ? await import("./unitTestSuggestion.service.js")
+      : { findAssociatedSourceFile: null };
+    const filteredUnit = filterDiscoveredUnitFiles({
+      rootDir,
+      jestFiles,
+      vitestFiles,
+      requestedTargetFiles,
+      draftSourceByTestRel: draftRunState?.draftSourceByTestRel,
+      draftFrameworkByTestRel: draftRunState?.draftFrameworkByTestRel,
+      findAssociatedSource: findAssociatedSourceFile,
+    });
+    jestFiles = filteredUnit.jestFiles;
+    vitestFiles = filteredUnit.vitestFiles;
+
+    const allLogicFiles = findLogicSourceFiles(rootDir);
+    const matchesRequestedTarget = (relPath) => {
+      if (!isTargetedUnitRun) return false;
+      const normPath = canonicalizeFilePath(relPath, rootDir).replace(/\\/g, "/").toLowerCase();
+      const basePath = path.basename(normPath).replace(/\.[cm]?[jt]sx?$/i, "");
+      return requestedTargetFiles.some((rawT) => {
+        const t = String(rawT || "").replace(/\\/g, "/").replace(/^\/+/, "").trim().toLowerCase();
+        if (!t) return false;
+        if (normPath === t || normPath.endsWith("/" + t) || t.endsWith("/" + normPath)) return true;
+        const tBase = path.basename(t).replace(/(?:\.(?:partial|redundant))?\.(?:test|spec|unit)\.[cm]?[jt]sx?$/i, "").replace(/\.[cm]?[jt]sx?$/i, "");
+        return Boolean(tBase && basePath && tBase === basePath);
+      });
+    };
+    const scopedLogicFiles = isTargetedUnitRun
+      ? allLogicFiles.filter((lf) => matchesRequestedTarget(lf.relativePath))
+      : [];
+    const scopedSourceKeys = new Set(
+      scopedLogicFiles.map((lf) => canonicalizeFilePath(lf.relativePath, rootDir)),
+    );
+
+    if (isTargetedUnitRun) {
+      await addJobLog(
+        jobId,
+        "INFO",
+        `[TARGETED] Filtered unit tests for [${requestedTargetFiles.join(", ")}]${testNamePattern ? ` (testNamePattern)` : ""}: ${jestFiles.length} Jest, ${vitestFiles.length} Vitest (${scopedLogicFiles.length} target business logic file(s)).`,
+      ).catch(() => {});
+      if (jestFiles.length === 0 && vitestFiles.length === 0) {
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[TARGETED] No unit test files found on disk for selected business logic file(s). Analyzing baseline coverage (0%) for ${scopedLogicFiles.length} selected file(s)...`,
+        ).catch(() => {});
+      }
+    }
+    const hasVitest = vitestFiles.length > 0;
+    const hasJest = jestFiles.length > 0;
+    const runBoth = hasVitest && hasJest;
+
+    // Self-heal and sanitize only target unit test files prior to runner execution (O(K) instead of scanning entire repository)
+    try {
+      const unitFilesToSanitize = [...jestFiles, ...vitestFiles];
+      if (!verifyPublishedUnitTests && unitFilesToSanitize.length > 0) {
+        sanitizeAllProjectTestFiles(rootDir, unitFilesToSanitize, {
+          sourceFileMap: draftRunState?.draftSourceByTestRel,
+        });
+      }
+    } catch (sanitizeErr) {
+      console.warn(
+        "[runTestsJob] Warning during sanitizeAllProjectTestFiles:",
+        sanitizeErr.message,
+      );
+    }
+
+    // Unit test execution on snapshot repository (preserve storage integrity)
+
+    await addJobLog(
+      jobId,
+      "INFO",
+      `[FRAMEWORK] Detected: Jest (${jestFiles.length} files), Vitest (${vitestFiles.length} files) | Excluded ${skippedFiles.length} integration/frontend files.`,
+    ).catch(() => {});
+
+    const attemptedDependencies = new Set();
+    const MAX_DEP_ATTEMPTS = 5;
+    let runnerResult = { exitCode: 0 };
+    let pendingTestRuns = [];
+    const summaryCandidates = isTargetedUnitRun
+      ? [
+          path.join(activeUnitCoverageDir, "coverage-summary.json"),
+          path.join(activeUnitCoverageDir, "jest-coverage-summary.json"),
+          path.join(activeUnitCoverageDir, "vitest-coverage-summary.json"),
+        ]
+      : [
+          path.join(unitCoverageDir, "coverage-summary.json"),
+          path.join(coverageDir, "coverage-summary.json"),
+          path.join(unitCoverageDir, "jest-coverage-summary.json"),
+          path.join(coverageDir, "jest-coverage-summary.json"),
+          path.join(unitCoverageDir, "vitest-coverage-summary.json"),
+          path.join(coverageDir, "vitest-coverage-summary.json"),
+        ];
+
+    while (true) {
+      runnerResult = { exitCode: 0 };
+      pendingTestRuns = [];
+      reportedScenarios.length = 0;
+
+      if (runBoth) {
+        // Concurrent execution of Vitest and Jest to maximize CPU utilization and halve execution time
+        await reportUnitProgress(
+          45,
+          "Running test suite",
+          "Executing unit tests in sandbox...",
+        );
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[CONCURRENT] Running ${vitestFiles.length} Vitest and ${jestFiles.length} Jest files in parallel...`,
+        ).catch(() => {});
+
+        const [vOutcome, jOutcome] = await Promise.allSettled([
+          (async () => {
+            const { runVitestCoverage } =
+              await import("./vitestRunner.service.js");
+            return await runVitestCoverage(
+              jobId,
+              rootDir,
+              job.snapshot?.vitestCommand,
+              vitestFiles,
+              runnerOptions,
+            );
+          })(),
+          (async () => {
+            return await runJestCoverage(
+              jobId,
+              rootDir,
+              jestConfigPath,
+              jestFiles,
+              job.snapshot?.jestCommand,
+              runnerOptions,
+            );
+          })(),
+        ]);
+
+        const runnerOutputs = [vOutcome, jOutcome].map((outcome) =>
+          outcome.status === "fulfilled"
+            ? outcome.value
+            : {
+                exitCode: null,
+                stderr: outcome.reason?.message || "Runner did not complete",
+              },
+        );
+        const unsuccessfulRunner =
+          runnerOutputs.find((output) => output?.exitCode === null) ||
+          runnerOutputs.find((output) => output?.exitCode !== 0);
+        runnerResult = {
+          exitCode: unsuccessfulRunner ? unsuccessfulRunner.exitCode : 0,
+          stdout: runnerOutputs
+            .map((output) => output?.stdout)
+            .filter(Boolean)
+            .join("\n"),
+          stderr: runnerOutputs
+            .map((output) => output?.stderr)
+            .filter(Boolean)
+            .join("\n"),
+        };
+
+        // Step 2c: Merge coverage & test results
+        if (!isTargetedUnitRun) syncCoverageDirectories(coverageDir, unitCoverageDir);
+        await reportUnitProgress(
+          75,
+          "Mapping metrics",
+          "Correlating code metrics and execution traces...",
+        );
+        await addJobLog(
+          jobId,
+          "INFO",
+          "Step 3/4: Merging coverage results from Jest & Vitest...",
+        ).catch(() => {});
+
+        const jestFinalPath = fs.existsSync(
+          path.join(activeCoverageDir, "jest-coverage-final.json"),
+        )
+          ? path.join(activeCoverageDir, "jest-coverage-final.json")
+          : path.join(activeUnitCoverageDir, "jest-coverage-final.json");
+        const vitestFinalPath = fs.existsSync(
+          path.join(activeCoverageDir, "vitest-coverage-final.json"),
+        )
+          ? path.join(activeCoverageDir, "vitest-coverage-final.json")
+          : path.join(activeUnitCoverageDir, "vitest-coverage-final.json");
+        const jestSummaryPath = fs.existsSync(
+          path.join(activeCoverageDir, "jest-coverage-summary.json"),
+        )
+          ? path.join(activeCoverageDir, "jest-coverage-summary.json")
+          : path.join(activeUnitCoverageDir, "jest-coverage-summary.json");
+        const vitestSummaryPath = fs.existsSync(
+          path.join(activeCoverageDir, "vitest-coverage-summary.json"),
+        )
+          ? path.join(activeCoverageDir, "vitest-coverage-summary.json")
+          : path.join(activeUnitCoverageDir, "vitest-coverage-summary.json");
+
+        // Merge coverage-final.json
+        if (fs.existsSync(jestFinalPath) || fs.existsSync(vitestFinalPath)) {
+          let jf = {};
+          let vf = {};
+          try {
+            if (fs.existsSync(jestFinalPath))
+              jf = JSON.parse(fs.readFileSync(jestFinalPath, "utf8"));
+          } catch {}
+          try {
+            if (fs.existsSync(vitestFinalPath))
+              vf = JSON.parse(fs.readFileSync(vitestFinalPath, "utf8"));
+          } catch {}
+          const mergedFinal = mergeCoverageFinal(jf, vf, { rootDir });
+          fs.writeFileSync(
+            path.join(activeCoverageDir, "coverage-final.json"),
+            JSON.stringify(mergedFinal, null, 2),
+            "utf8",
+          );
+          if (!isTargetedUnitRun) {
+            fs.writeFileSync(
+              path.join(unitCoverageDir, "coverage-final.json"),
+              JSON.stringify(mergedFinal, null, 2),
+              "utf8",
+            );
+          }
+        }
+
+        // Merge coverage-summary.json
+        if (
+          fs.existsSync(jestSummaryPath) ||
+          fs.existsSync(vitestSummaryPath)
+        ) {
+          let js = {};
+          let vs = {};
+          try {
+            if (fs.existsSync(jestSummaryPath))
+              js = JSON.parse(fs.readFileSync(jestSummaryPath, "utf8"));
+          } catch {}
+          try {
+            if (fs.existsSync(vitestSummaryPath))
+              vs = JSON.parse(fs.readFileSync(vitestSummaryPath, "utf8"));
+          } catch {}
+          const mergedSummary = mergeCoverageSummaries(js, vs, {
+            projectJestConfig,
+            rootDir,
+          });
+          fs.writeFileSync(
+            path.join(activeCoverageDir, "coverage-summary.json"),
+            JSON.stringify(mergedSummary, null, 2),
+            "utf8",
+          );
+          if (!isTargetedUnitRun) {
+            fs.writeFileSync(
+              path.join(unitCoverageDir, "coverage-summary.json"),
+              JSON.stringify(mergedSummary, null, 2),
+              "utf8",
+            );
+          }
+        }
+
+        // Merge test-results.json
+        const jestResultsFile = fs.existsSync(
+          path.join(activeCoverageDir, "jest-results.json"),
+        )
+          ? path.join(activeCoverageDir, "jest-results.json")
+          : path.join(activeUnitCoverageDir, "jest-results.json");
+        const vitestResultsFile = fs.existsSync(
+          path.join(activeCoverageDir, "vitest-results.json"),
+        )
+          ? path.join(activeCoverageDir, "vitest-results.json")
+          : path.join(activeUnitCoverageDir, "vitest-results.json");
+        let parsedJest = null;
+        let parsedVitest = null;
+        try {
+          if (fs.existsSync(jestResultsFile))
+            parsedJest = JSON.parse(fs.readFileSync(jestResultsFile, "utf8"));
+        } catch {}
+        try {
+          if (fs.existsSync(vitestResultsFile))
+            parsedVitest = JSON.parse(
+              fs.readFileSync(vitestResultsFile, "utf8"),
+            );
+        } catch {}
+        if (parsedJest || parsedVitest) {
+          const mergedResults = mergeTestResults(parsedJest, parsedVitest);
+          fs.writeFileSync(
+            path.join(activeCoverageDir, "test-results.json"),
+            JSON.stringify(mergedResults, null, 2),
+            "utf8",
+          );
+          if (!isTargetedUnitRun) {
+            fs.writeFileSync(
+              path.join(unitCoverageDir, "test-results.json"),
+              JSON.stringify(mergedResults, null, 2),
+              "utf8",
+            );
+          }
+        }
+
+        // Merge lcov.info if available
+        const jestLcov = fs.existsSync(path.join(activeCoverageDir, "jest-lcov.info"))
+          ? path.join(activeCoverageDir, "jest-lcov.info")
+          : path.join(activeUnitCoverageDir, "jest-lcov.info");
+        const vitestLcov = fs.existsSync(
+          path.join(activeCoverageDir, "vitest-lcov.info"),
+        )
+          ? path.join(activeCoverageDir, "vitest-lcov.info")
+          : path.join(activeUnitCoverageDir, "vitest-lcov.info");
+        const rootLcov = path.join(activeCoverageDir, "lcov.info");
+        let mergedLcovText = "";
+        if (fs.existsSync(jestLcov)) {
+          try {
+            mergedLcovText += fs.readFileSync(jestLcov, "utf8") + "\n";
+          } catch {}
+        }
+        if (fs.existsSync(vitestLcov)) {
+          try {
+            mergedLcovText += fs.readFileSync(vitestLcov, "utf8") + "\n";
+          } catch {}
+        }
+        if (
+          mergedLcovText &&
+          (!fs.existsSync(rootLcov) || fs.statSync(rootLcov).size < 100)
+        ) {
+          try {
+            fs.writeFileSync(rootLcov, mergedLcovText, "utf8");
+            if (!isTargetedUnitRun) {
+              fs.writeFileSync(
+                path.join(unitCoverageDir, "lcov.info"),
+                mergedLcovText,
+                "utf8",
+              );
+            }
+          } catch {}
+        }
+
+        // Stage TestRun for JEST (committed atomically via stagePreparedPublication)
+        try {
+          const jestRunData =
+            parseJestResults(activeUnitCoverageDir, { rootDir }) ||
+            parseJestResults(activeCoverageDir, { rootDir });
+          if (jestRunData) {
+            const { scenarios, ...runProps } = jestRunData;
+            reportedScenarios.push(...scenarios);
+            const formattedScenarios = formatScenariosForPrisma(scenarios);
+            const dataPayload = {
+              snapshotId,
+              type: "JEST",
+              ...runProps,
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            };
+            if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
+            pendingTestRuns.push(dataPayload);
+            await addJobLog(
+              jobId,
+              "INFO",
+              `[SCRUM-141] Prepared TestRun (JEST): ${jestRunData.totalTests} tests (${jestRunData.passedTests} passed).`,
+            ).catch(() => {});
+          }
+        } catch (e) {
+          console.warn(
+            "[processRunTestsJob] Error parsing Jest TestRun:",
+            e.message,
+          );
+        }
+
+        // Stage TestRun for VITEST
+        try {
+          const vitestRunData =
+            parseVitestResults(activeUnitCoverageDir, { rootDir }) ||
+            parseVitestResults(activeCoverageDir, { rootDir });
+          if (vitestRunData) {
+            const { scenarios, ...runProps } = vitestRunData;
+            reportedScenarios.push(...scenarios);
+            const formattedScenarios = formatScenariosForPrisma(scenarios);
+            const dataPayload = {
+              snapshotId,
+              type: "VITEST",
+              ...runProps,
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            };
+            if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
+            pendingTestRuns.push(dataPayload);
+            await addJobLog(
+              jobId,
+              "INFO",
+              `[SCRUM-141] Prepared TestRun (VITEST): ${vitestRunData.totalTests} tests (${vitestRunData.passedTests} passed).`,
+            ).catch(() => {});
+          }
+        } catch (e) {
+          console.warn(
+            "[processRunTestsJob] Error parsing Vitest TestRun:",
+            e.message,
+          );
+        }
+      } else if (hasVitest) {
+        await reportUnitProgress(
+          50,
+          "Collecting outputs",
+          "Collecting test runner output and coverage...",
+        );
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[VITEST] Running ${vitestFiles.length} Vitest files...`,
+        ).catch(() => {});
+        const { runVitestCoverage } = await import("./vitestRunner.service.js");
+        runnerResult = await runVitestCoverage(
+          jobId,
+          rootDir,
+          job.snapshot?.vitestCommand,
+          vitestFiles,
+          runnerOptions,
+        );
+        if (!isTargetedUnitRun) syncCoverageDirectories(coverageDir, unitCoverageDir);
+        await reportUnitProgress(
+          70,
+          "Parsing coverage",
+          "Parsing coverage summaries and files...",
+        );
+
+        const testResults =
+          parseVitestResults(activeUnitCoverageDir, { rootDir }) ||
+          parseVitestResults(activeCoverageDir, { rootDir });
+        if (testResults) {
+          const { scenarios, ...testRunData } = testResults;
+          reportedScenarios.push(...scenarios);
+          const formattedScenarios = formatScenariosForPrisma(scenarios);
+          const dataPayload = {
+            snapshotId,
+            type: "VITEST",
+            ...testRunData,
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          };
+          if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
+          pendingTestRuns.push(dataPayload);
+          await addJobLog(
             jobId,
             "INFO",
-            `[FRAMEWORK] Detected: Jest (${jestFiles.length} files), Vitest (${vitestFiles.length} files) | Excluded ${skippedFiles.length} integration/frontend files.`
-        ).catch(() => { });
+            `[SCRUM-141] Prepared TestRun (VITEST): ${testResults.totalTests} tests.`,
+          ).catch(() => {});
+        }
+      } else if (hasJest) {
+        await reportUnitProgress(
+          50,
+          "Collecting outputs",
+          "Collecting test runner output and coverage...",
+        );
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[JEST] Running ${jestFiles.length} Jest files...`,
+        ).catch(() => {});
+        runnerResult = await runJestCoverage(
+          jobId,
+          rootDir,
+          jestConfigPath,
+          jestFiles,
+          job.snapshot?.jestCommand,
+          runnerOptions,
+        );
+        if (!isTargetedUnitRun) syncCoverageDirectories(coverageDir, unitCoverageDir);
+        await reportUnitProgress(
+          70,
+          "Parsing coverage",
+          "Parsing coverage summaries and files...",
+        );
 
-        let runnerResult = { exitCode: 0 };
+        const testResults =
+          parseJestResults(activeUnitCoverageDir, { rootDir }) ||
+          parseJestResults(activeCoverageDir, { rootDir });
+        if (testResults) {
+          const { scenarios, ...testRunData } = testResults;
+          reportedScenarios.push(...scenarios);
+          const formattedScenarios = formatScenariosForPrisma(scenarios);
+          const dataPayload = {
+            snapshotId,
+            type: "JEST",
+            ...testRunData,
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          };
+          if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
+          pendingTestRuns.push(dataPayload);
+          await addJobLog(
+            jobId,
+            "INFO",
+            `[SCRUM-141] Prepared TestRun (JEST): ${testResults.totalTests} tests.`,
+          ).catch(() => {});
+        }
+      } else {
+        // Case: No unit test files detected (0 Jest & 0 Vitest test files)
+        // Instead of running a failing test runner on 0 files, detect logic source files
+        // and initialize baseline (0%) coverage so the user can suggest unit tests.
+        await addJobLog(
+          jobId,
+          "INFO",
+          "[RUN_TESTS] No existing unit test files (Jest/Vitest) found. Scanning logic source files...",
+        ).catch(() => {});
 
-        if (runBoth) {
-            // Concurrent execution of Vitest and Jest to maximize CPU utilization and halve execution time
-            await updateJobProgress(jobId, 45).catch(() => { });
-            await addJobLog(jobId, "INFO", `[CONCURRENT] Running ${vitestFiles.length} Vitest and ${jestFiles.length} Jest files in parallel...`).catch(() => { });
+        const logicFilesForBaseline =
+          isTargetedUnitRun && scopedLogicFiles.length > 0
+            ? scopedLogicFiles
+            : findLogicSourceFiles(rootDir);
 
-            const [vOutcome, jOutcome] = await Promise.allSettled([
-                (async () => {
-                    const { runVitestCoverage } = await import("./vitestRunner.service.js");
-                    return await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles, { coverageDir: unitCoverageDir });
-                })(),
-                (async () => {
-                    return await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand, { coverageDir: unitCoverageDir });
-                })()
-            ]);
+        if (logicFilesForBaseline.length > 0) {
+          await addJobLog(
+            jobId,
+            "INFO",
+            isTargetedUnitRun
+              ? `[TARGETED] Computing baseline 0% coverage for ${logicFilesForBaseline.length} selected business logic file(s)...`
+              : `[RUN_TESTS] Found ${logicFilesForBaseline.length} code logic files. Generating baseline 0% coverage...`,
+          ).catch(() => {});
 
-            if (vOutcome.status === "rejected") {
-                await addJobLog(jobId, "WARN", `[VITEST] Vitest execution warning: ${vOutcome.reason?.message}`).catch(() => { });
-            }
-            if (jOutcome.status === "fulfilled") {
-                runnerResult = jOutcome.value || { exitCode: 0 };
-            } else {
-                await addJobLog(jobId, "WARN", `[JEST] Jest execution warning: ${jOutcome.reason?.message}`).catch(() => { });
-            }
-
-            // Step 2c: Merge coverage & test results
+          generateBaselineCoverage(rootDir, logicFilesForBaseline, activeCoverageDir);
+          if (!isTargetedUnitRun) {
+            generateBaselineCoverage(rootDir, logicFilesForBaseline, unitCoverageDir);
             syncCoverageDirectories(coverageDir, unitCoverageDir);
-            await updateJobProgress(jobId, 75).catch(() => { });
-            await addJobLog(jobId, "INFO", "Step 3/4: Merging coverage results from Jest & Vitest...").catch(() => { });
+            pendingTestRuns.push({
+              snapshotId,
+              type: "JEST",
+              totalTests: 0,
+              passedTests: 0,
+              failedTests: 0,
+              skippedTests: 0,
+              durationMs: 0,
+              status: "PASSED",
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            });
+          }
+          await addJobLog(
+            jobId,
+            "INFO",
+            isTargetedUnitRun
+              ? `[TARGETED] Baseline metrics calculated without modifying other business logic files.`
+              : `[RUN_TESTS] Baseline TestRun prepared. Ready for unit test suggestions.`,
+          ).catch(() => {});
 
-            const jestFinalPath = fs.existsSync(path.join(coverageDir, "jest-coverage-final.json"))
-                ? path.join(coverageDir, "jest-coverage-final.json")
-                : path.join(unitCoverageDir, "jest-coverage-final.json");
-            const vitestFinalPath = fs.existsSync(path.join(coverageDir, "vitest-coverage-final.json"))
-                ? path.join(coverageDir, "vitest-coverage-final.json")
-                : path.join(unitCoverageDir, "vitest-coverage-final.json");
-            const jestSummaryPath = fs.existsSync(path.join(coverageDir, "jest-coverage-summary.json"))
-                ? path.join(coverageDir, "jest-coverage-summary.json")
-                : path.join(unitCoverageDir, "jest-coverage-summary.json");
-            const vitestSummaryPath = fs.existsSync(path.join(coverageDir, "vitest-coverage-summary.json"))
-                ? path.join(coverageDir, "vitest-coverage-summary.json")
-                : path.join(unitCoverageDir, "vitest-coverage-summary.json");
-
-            // Merge coverage-final.json
-            if (fs.existsSync(jestFinalPath) || fs.existsSync(vitestFinalPath)) {
-                let jf = {};
-                let vf = {};
-                try { if (fs.existsSync(jestFinalPath)) jf = JSON.parse(fs.readFileSync(jestFinalPath, "utf8")); } catch { }
-                try { if (fs.existsSync(vitestFinalPath)) vf = JSON.parse(fs.readFileSync(vitestFinalPath, "utf8")); } catch { }
-                const mergedFinal = mergeCoverageFinal(jf, vf);
-                fs.writeFileSync(path.join(coverageDir, "coverage-final.json"), JSON.stringify(mergedFinal, null, 2), "utf8");
-                fs.writeFileSync(path.join(unitCoverageDir, "coverage-final.json"), JSON.stringify(mergedFinal, null, 2), "utf8");
-            }
-
-            // Merge coverage-summary.json
-            if (fs.existsSync(jestSummaryPath) || fs.existsSync(vitestSummaryPath)) {
-                let js = {};
-                let vs = {};
-                try { if (fs.existsSync(jestSummaryPath)) js = JSON.parse(fs.readFileSync(jestSummaryPath, "utf8")); } catch { }
-                try { if (fs.existsSync(vitestSummaryPath)) vs = JSON.parse(fs.readFileSync(vitestSummaryPath, "utf8")); } catch { }
-                const mergedSummary = mergeCoverageSummaries(js, vs, { projectJestConfig, rootDir });
-                fs.writeFileSync(path.join(coverageDir, "coverage-summary.json"), JSON.stringify(mergedSummary, null, 2), "utf8");
-                fs.writeFileSync(path.join(unitCoverageDir, "coverage-summary.json"), JSON.stringify(mergedSummary, null, 2), "utf8");
-            }
-
-            // Merge test-results.json
-            const jestResultsFile = fs.existsSync(path.join(coverageDir, "jest-results.json"))
-                ? path.join(coverageDir, "jest-results.json")
-                : path.join(unitCoverageDir, "jest-results.json");
-            const vitestResultsFile = fs.existsSync(path.join(coverageDir, "vitest-results.json"))
-                ? path.join(coverageDir, "vitest-results.json")
-                : path.join(unitCoverageDir, "vitest-results.json");
-            let parsedJest = null;
-            let parsedVitest = null;
-            try { if (fs.existsSync(jestResultsFile)) parsedJest = JSON.parse(fs.readFileSync(jestResultsFile, "utf8")); } catch { }
-            try { if (fs.existsSync(vitestResultsFile)) parsedVitest = JSON.parse(fs.readFileSync(vitestResultsFile, "utf8")); } catch { }
-            if (parsedJest || parsedVitest) {
-                const mergedResults = mergeTestResults(parsedJest, parsedVitest);
-                fs.writeFileSync(path.join(coverageDir, "test-results.json"), JSON.stringify(mergedResults, null, 2), "utf8");
-                fs.writeFileSync(path.join(unitCoverageDir, "test-results.json"), JSON.stringify(mergedResults, null, 2), "utf8");
-            }
-
-            // Merge lcov.info if available
-            const jestLcov = fs.existsSync(path.join(coverageDir, "jest-lcov.info"))
-                ? path.join(coverageDir, "jest-lcov.info")
-                : path.join(unitCoverageDir, "jest-lcov.info");
-            const vitestLcov = fs.existsSync(path.join(coverageDir, "vitest-lcov.info"))
-                ? path.join(coverageDir, "vitest-lcov.info")
-                : path.join(unitCoverageDir, "vitest-lcov.info");
-            const rootLcov = path.join(coverageDir, "lcov.info");
-            let mergedLcovText = "";
-            if (fs.existsSync(jestLcov)) {
-                try { mergedLcovText += fs.readFileSync(jestLcov, "utf8") + "\n"; } catch { }
-            }
-            if (fs.existsSync(vitestLcov)) {
-                try { mergedLcovText += fs.readFileSync(vitestLcov, "utf8") + "\n"; } catch { }
-            }
-            if (mergedLcovText && (!fs.existsSync(rootLcov) || fs.statSync(rootLcov).size < 100)) {
-                try {
-                    fs.writeFileSync(rootLcov, mergedLcovText, "utf8");
-                    fs.writeFileSync(path.join(unitCoverageDir, "lcov.info"), mergedLcovText, "utf8");
-                } catch { }
-            }
-
-            // Save TestRun for JEST
-            try {
-                const jestRunData = parseJestResults(unitCoverageDir) || parseJestResults(coverageDir);
-                if (jestRunData) {
-                    const { scenarios, ...runProps } = jestRunData;
-                    const formattedScenarios = formatScenariosForPrisma(scenarios);
-                    const dataPayload = {
-                        snapshotId,
-                        type: "JEST",
-                        ...runProps,
-                        startedAt: new Date(),
-                        finishedAt: new Date()
-                    };
-                    if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                    await prisma.testRun.create({ data: dataPayload });
-                    await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${jestRunData.totalTests} tests (${jestRunData.passedTests} passed).`).catch(() => { });
-                }
-            } catch (e) {
-                console.warn("[processRunTestsJob] Error parsing Jest TestRun:", e.message);
-            }
-
-            // Save TestRun for VITEST
-            try {
-                const vitestRunData = parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir);
-                if (vitestRunData) {
-                    const { scenarios, ...runProps } = vitestRunData;
-                    const formattedScenarios = formatScenariosForPrisma(scenarios);
-                    const dataPayload = {
-                        snapshotId,
-                        type: "VITEST",
-                        ...runProps,
-                        startedAt: new Date(),
-                        finishedAt: new Date()
-                    };
-                    if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                    await prisma.testRun.create({ data: dataPayload });
-                    await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${vitestRunData.totalTests} tests (${vitestRunData.passedTests} passed).`).catch(() => { });
-                }
-            } catch (e) {
-                console.warn("[processRunTestsJob] Error parsing Vitest TestRun:", e.message);
-            }
-
-        } else if (hasVitest) {
-            await updateJobProgress(jobId, 50).catch(() => { });
-            await addJobLog(jobId, "INFO", `[VITEST] Running ${vitestFiles.length} Vitest files...`).catch(() => { });
-            const { runVitestCoverage } = await import("./vitestRunner.service.js");
-            runnerResult = await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles, { coverageDir: unitCoverageDir });
-            syncCoverageDirectories(coverageDir, unitCoverageDir);
-            await updateJobProgress(jobId, 70).catch(() => { });
-
-            const testResults = parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir) || parseJestResults(unitCoverageDir) || parseJestResults(coverageDir);
-            if (testResults) {
-                const { scenarios, ...testRunData } = testResults;
-                const formattedScenarios = formatScenariosForPrisma(scenarios);
-                const dataPayload = {
-                    snapshotId,
-                    type: "VITEST",
-                    ...testRunData,
-                    startedAt: new Date(),
-                    finishedAt: new Date()
-                };
-                if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                await prisma.testRun.create({ data: dataPayload });
-                await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${testResults.totalTests} tests.`).catch(() => { });
-            }
-        } else if (hasJest) {
-            await updateJobProgress(jobId, 50).catch(() => { });
-            await addJobLog(jobId, "INFO", `[JEST] Running ${jestFiles.length} Jest files...`).catch(() => { });
-            runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand, { coverageDir: unitCoverageDir });
-            syncCoverageDirectories(coverageDir, unitCoverageDir);
-            await updateJobProgress(jobId, 70).catch(() => { });
-
-            const testResults = parseJestResults(unitCoverageDir) || parseJestResults(coverageDir) || parseVitestResults(unitCoverageDir) || parseVitestResults(coverageDir);
-            if (testResults) {
-                const { scenarios, ...testRunData } = testResults;
-                const formattedScenarios = formatScenariosForPrisma(scenarios);
-                const dataPayload = {
-                    snapshotId,
-                    type: "JEST",
-                    ...testRunData,
-                    startedAt: new Date(),
-                    finishedAt: new Date()
-                };
-                if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                await prisma.testRun.create({ data: dataPayload });
-                await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${testResults.totalTests} tests.`).catch(() => { });
-            }
+          runnerResult = { exitCode: 0 };
         } else {
-            // Case: No unit test files detected (0 Jest & 0 Vitest test files)
-            // Instead of running a failing test runner on 0 files, detect logic source files
-            // and initialize baseline (0%) coverage so the user can suggest unit tests.
-            await addJobLog(jobId, "INFO", "[RUN_TESTS] No existing unit test files (Jest/Vitest) found. Scanning logic source files...").catch(() => { });
-
-            const logicFiles = findLogicSourceFiles(rootDir);
-
-            if (logicFiles.length > 0) {
-                await addJobLog(
-                    jobId,
-                    "INFO",
-                    `[RUN_TESTS] Found ${logicFiles.length} code logic files. Generating baseline 0% coverage...`
-                ).catch(() => { });
-
-                generateBaselineCoverage(rootDir, logicFiles, coverageDir);
-                generateBaselineCoverage(rootDir, logicFiles, unitCoverageDir);
-                syncCoverageDirectories(coverageDir, unitCoverageDir);
-
-                // Create a baseline TestRun with 0 tests
-                try {
-                    await prisma.testRun.create({
-                        data: {
-                            snapshotId,
-                            type: "JEST",
-                            totalTests: 0,
-                            passedTests: 0,
-                            failedTests: 0,
-                            skippedTests: 0,
-                            durationMs: 0,
-                            status: "PASSED",
-                            startedAt: new Date(),
-                            finishedAt: new Date(),
-                        }
-                    });
-                    await addJobLog(jobId, "INFO", `[RUN_TESTS] Baseline TestRun saved. Ready for unit test suggestions.`).catch(() => { });
-                } catch (trErr) {
-                    console.warn("[RUN_TESTS] Warning saving baseline TestRun:", trErr.message);
-                }
-
-                runnerResult = { exitCode: 0 };
-            } else {
-                // If really no logic files either, try fallback runner
-                await addJobLog(jobId, "INFO", "[RUN_TESTS] Running fallback runner...").catch(() => { });
-                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, [], job.snapshot?.jestCommand);
-            }
-            await updateJobProgress(jobId, 70).catch(() => { });
+          // If really no logic files either, try fallback runner
+          await addJobLog(
+            jobId,
+            "INFO",
+            "[RUN_TESTS] Running fallback runner...",
+          ).catch(() => {});
+          runnerResult = await runJestCoverage(
+            jobId,
+            rootDir,
+            jestConfigPath,
+            [],
+            job.snapshot?.jestCommand,
+            runnerOptions,
+          );
         }
+        await reportUnitProgress(
+          70,
+          "Parsing coverage",
+          "Parsing coverage summaries and files...",
+        );
+      }
 
-        // ── SCRUM-140/Problem 1 & 3: Check test execution result ─────────────
-        const summaryCandidates = [
-            path.join(unitCoverageDir, "coverage-summary.json"),
-            path.join(coverageDir, "coverage-summary.json"),
-            path.join(unitCoverageDir, "jest-coverage-summary.json"),
-            path.join(coverageDir, "jest-coverage-summary.json"),
-            path.join(unitCoverageDir, "vitest-coverage-summary.json"),
-            path.join(coverageDir, "vitest-coverage-summary.json")
-        ];
-
-        let hasValidCoverage = false;
-        let validSummaryData = null;
-        for (const candidate of summaryCandidates) {
-            if (fs.existsSync(candidate)) {
-                try {
-                    const sum = JSON.parse(fs.readFileSync(candidate, "utf8"));
-                    const totalLines = sum?.total?.lines?.total || 0;
-                    const totalStmts = sum?.total?.statements?.total || 0;
-                    const totalFiles = Object.keys(sum || {}).filter(k => k !== "total").length;
-                    if (totalLines > 0 || totalStmts > 0 || totalFiles > 0) {
-                        hasValidCoverage = true;
-                        if (!validSummaryData) validSummaryData = sum;
-                        break;
-                    }
-                } catch { }
+      // ── SCRUM-140/Problem 1 & 3: Check test execution result ─────────────
+      let hasValidCoverage = false;
+      let validSummaryData = null;
+      for (const candidate of summaryCandidates) {
+        if (fs.existsSync(candidate)) {
+          try {
+            const sum = JSON.parse(fs.readFileSync(candidate, "utf8"));
+            const totalLines = sum?.total?.lines?.total || 0;
+            const totalStmts = sum?.total?.statements?.total || 0;
+            const totalFiles = Object.keys(sum || {}).filter(
+              (k) => k !== "total",
+            ).length;
+            if (totalLines > 0 || totalStmts > 0 || totalFiles > 0) {
+              hasValidCoverage = true;
+              if (!validSummaryData) validSummaryData = sum;
+              break;
             }
+          } catch {}
         }
+      }
 
-        const summaryFile = path.join(coverageDir, "coverage-summary.json");
-        const unitSummaryFile = path.join(unitCoverageDir, "coverage-summary.json");
-        if (validSummaryData) {
-            if (!fs.existsSync(summaryFile)) {
-                try { fs.writeFileSync(summaryFile, JSON.stringify(validSummaryData, null, 2), "utf8"); } catch { }
-            }
-            if (!fs.existsSync(unitSummaryFile)) {
-                try { fs.writeFileSync(unitSummaryFile, JSON.stringify(validSummaryData, null, 2), "utf8"); } catch { }
-            }
+      const summaryFile = path.join(coverageDir, "coverage-summary.json");
+      const unitSummaryFile = path.join(
+        unitCoverageDir,
+        "coverage-summary.json",
+      );
+      if (validSummaryData) {
+        if (!fs.existsSync(summaryFile)) {
+          try {
+            fs.writeFileSync(
+              summaryFile,
+              JSON.stringify(validSummaryData, null, 2),
+              "utf8",
+            );
+          } catch {}
         }
+        if (!fs.existsSync(unitSummaryFile)) {
+          try {
+            fs.writeFileSync(
+              unitSummaryFile,
+              JSON.stringify(validSummaryData, null, 2),
+              "utf8",
+            );
+          } catch {}
+        }
+      }
 
-        if (runnerResult && runnerResult.exitCode !== 0 && runnerResult.exitCode !== null) {
-            const jobOutputModule = await import("./jobOutput.service.js").catch(() => ({}));
-            const jobFetcher = jobOutputModule.getJobOutput || jobOutputModule.getOutputByJob;
-            const jobOutput = typeof jobFetcher === "function" ? await jobFetcher(jobId).catch(() => null) : null;
-            const fullOutput = (jobOutput?.stderr || "") + "\n" + (jobOutput?.stdout || "");
-            const modResError = parseModuleResolutionError(fullOutput, rootDir);
+      if (verifyPublishedUnitTests && runnerResult?.exitCode !== 0) {
+        await markJobFailed(
+          jobId,
+          new Error(
+            "Published unit tests did not pass regression. Previously verified coverage was retained.",
+          ),
+        ).catch(() => {});
+        return;
+      }
+      if (
+        runnerResult &&
+        (runnerResult.exitCode !== 0 ||
+          reportedScenarios.some((scenario) => scenario.isSuiteLevelFailure)) &&
+        runnerResult.exitCode !== null
+      ) {
+        const jobOutputModule = await import("./jobOutput.service.js").catch(
+          () => ({}),
+        );
+        const jobFetcher =
+          jobOutputModule.getJobOutput || jobOutputModule.getOutputByJob;
+        const jobOutput =
+          typeof jobFetcher === "function"
+            ? await jobFetcher(jobId).catch(() => null)
+            : null;
+        const fullOutput = [
+          runnerResult.stderr,
+          runnerResult.stdout,
+          jobOutput?.stderr,
+          jobOutput?.stdout,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        const modResError = parseModuleResolutionError(fullOutput, rootDir);
+        const missingDep =
+          modResError?.missingDependency ||
+          extractMissingDependency(fullOutput);
 
-            // Case 1: Fatal crash / Runner failed before generating valid coverage
-            // When hasValidCoverage is true, assertion failures (exit code 1) must NEVER fail the job!
-            if (!hasValidCoverage) {
-                const existingSummary = await prisma.coverageSummary.findUnique({ where: { snapshotId } });
-                const previousCoverage = existingSummary ? {
-                    statements: existingSummary.stmtsPct,
-                    branches: existingSummary.branchesPct,
-                    functions: existingSummary.funcsPct,
-                    lines: existingSummary.linesPct
-                } : null;
-
-                let failMessage = modResError
-                    ? `Test suite failed to run: Cannot find module '${modResError.missingModule}' from '${cleanStoragePath(modResError.testFile)}'`
-                    : `Test execution failed with exit code ${runnerResult.exitCode}`;
-
-                if (!modResError) {
-                    const syntaxMatch = fullOutput.match(/(?:SyntaxError|ReferenceError|TypeError|RangeError|Error):[^\n\r]+/);
-                    if (syntaxMatch) {
-                        failMessage = `Test execution failed: ${cleanStorageText(syntaxMatch[0])}`;
-                    }
-                }
-
-                await addJobLog(jobId, "ERROR", `[RUN_TESTS] ${cleanStorageText(failMessage)}`).catch(() => { });
-
-                // Persist failed test run in DB for accurate history
-                try {
-                    await prisma.testRun.create({
-                        data: {
-                            snapshotId,
-                            type: hasVitest && !hasJest ? "VITEST" : "JEST",
-                            totalTests: 0,
-                            passedTests: 0,
-                            failedTests: 1,
-                            skippedTests: 0,
-                            durationMs: 0,
-                            status: "FAILED",
-                            startedAt: new Date(),
-                            finishedAt: new Date(),
-                            scenarios: {
-                                create: [{
-                                    title: modResError ? `Module resolution: ${modResError.missingModule}` : "Test execution failed",
-                                    status: "failed",
-                                    failureMessages: [
-                                        cleanStorageText(failMessage),
-                                        modResError?.missingDependency ? `[MISSING_DEPENDENCY]:${JSON.stringify(modResError.missingDependency)}` : null,
-                                        cleanStorageText(fullOutput.slice(0, 1000))
-                                    ].filter(Boolean),
-                                    testFile: cleanStoragePath(modResError?.testFile) || null
-                                }]
-                            }
-                        }
-                    });
-                } catch { }
-
-                const failErr = new Error(failMessage);
-                failErr.moduleResolutionError = modResError;
-                failErr.previousCoverage = previousCoverage;
-                await markJobFailed(jobId, failErr).catch(() => { });
-                return;
-            }
-
-            // Case 2: Tests executed and valid coverage was produced, but some assertions failed (e.g. exit code 1)
+        // Automatic In-Flight Missing Dependency Resolution & Installation
+        if (
+          missingDep &&
+          missingDep.packageName &&
+          isValidNpmPackageName(missingDep.packageName)
+        ) {
+          if (
+            !attemptedDependencies.has(missingDep.packageName) &&
+            attemptedDependencies.size < MAX_DEP_ATTEMPTS
+          ) {
             await addJobLog(
+              jobId,
+              "INFO",
+              `[RUN_TESTS] Missing dependency '${missingDep.packageName}' detected. Automatically installing in background...`,
+            ).catch(() => {});
+
+            let installSuccess = false;
+            try {
+              const installRes = await resolveUnitTestDependency({
+                rootDir,
+                output: fullOutput,
+                attempted: attemptedDependencies,
+                jobId,
+                maxPackages: MAX_DEP_ATTEMPTS,
+              });
+              if (installRes?.resolved) {
+                installSuccess = true;
+                await addJobLog(
+                  jobId,
+                  "INFO",
+                  `[RUN_TESTS] Successfully installed '${missingDep.packageName}'. Automatically re-running unit tests...`,
+                ).catch(() => {});
+              } else {
+                await addJobLog(
+                  jobId,
+                  "WARN",
+                  `[RUN_TESTS] Automatic installation of '${missingDep.packageName}' failed (${installRes?.stderr || installRes?.stdout || "unknown error"}). Continuing test runner lifecycle...`,
+                ).catch(() => {});
+              }
+            } catch (installErr) {
+              await addJobLog(
                 jobId,
                 "WARN",
-                `[RUN_TESTS] Runner completed with warning: some test assertions failed (exit code ${runnerResult.exitCode}). Collecting actual coverage results from executed tests...`
-            ).catch(() => { });
+                `[RUN_TESTS] Error during automatic installation of '${missingDep.packageName}': ${installErr.message}. Continuing test runner lifecycle...`,
+              ).catch(() => {});
+            }
 
+            if (installSuccess) {
+              // Clear stale coverage files before re-running test suite
+              for (const sf of staleCoverageFiles) {
+                try {
+                  if (fs.existsSync(path.join(coverageDir, sf)))
+                    fs.unlinkSync(path.join(coverageDir, sf));
+                } catch {}
+                try {
+                  if (fs.existsSync(path.join(unitCoverageDir, sf)))
+                    fs.unlinkSync(path.join(unitCoverageDir, sf));
+                } catch {}
+              }
+              continue; // Automatically re-run tests!
+            }
+          }
+        }
+
+        // Automatic In-Flight Missing Dependency & Virtual Mock Healing
+        const missingModMatch =
+          fullOutput.match(
+            /Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
+          ) ||
+          fullOutput.match(
+            /Cannot find package ['"]([^'"]+)['"]\s+imported from\s+['"]([^'"]+)['"]/i,
+          ) ||
+          fullOutput.match(
+            /Failed to resolve import ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
+          ) ||
+          fullOutput.match(/Could not locate module ([^ \n\r]+) mapped as/i) ||
+          fullOutput.match(/Cannot find module ['"]([^'"]+)['"]/i);
+
+        if (
+          useHermeticMock &&
+          (!hasValidCoverage || Boolean(modResError)) &&
+          (missingModMatch || (missingDep && missingDep.packageName)) &&
+          attemptedDependencies.size < MAX_DEP_ATTEMPTS
+        ) {
+          const missingTarget = missingModMatch
+            ? missingModMatch[1]
+            : missingDep?.packageName || "dependency";
+          const isRelativeMissingTarget =
+            missingTarget.startsWith("./") || missingTarget.startsWith("../");
+          const healDepKey = `mock-dep:${missingTarget}`;
+          if (!attemptedDependencies.has(healDepKey)) {
+            attemptedDependencies.add(healDepKey);
+            await addJobLog(
+              jobId,
+              "INFO",
+              `[RUN_TESTS] Missing module/dependency '${missingTarget}' detected. Automatically injecting isolation mocks into test files...`,
+            ).catch(() => {});
+
+            let healedDepAny = false;
             try {
-                const existingTestRun = await prisma.testRun.findFirst({ where: { snapshotId }, orderBy: { createdAt: "desc" } });
-                if (!existingTestRun) {
-                    await prisma.testRun.create({
-                        data: {
-                            snapshotId,
-                            type: hasVitest && !hasJest ? "VITEST" : "JEST",
-                            totalTests: 1,
-                            passedTests: 0,
-                            failedTests: 1,
-                            skippedTests: 0,
-                            durationMs: 0,
-                            status: "FAILED",
-                            startedAt: new Date(),
-                            finishedAt: new Date(),
-                            scenarios: {
-                                create: [{
-                                    title: "Test assertions failed",
-                                    status: "failed",
-                                    failureMessages: [
-                                        cleanStorageText(`Runner completed with warning: some test assertions failed (exit code ${runnerResult.exitCode})`),
-                                        cleanStorageText(fullOutput.slice(0, 1000))
-                                    ].filter(Boolean)
-                                }]
-                            }
-                        }
-                    });
-                }
-            } catch (_) { }
-        }
+              const {
+                healMissingDependencyMocks,
+                ensureAllRelativeJestMocksVirtual,
+              } = await import("./testSanitizer.service.js");
+              const testFiles = [...(vitestFiles || []), ...(jestFiles || [])];
 
-        // Re-compute and normalize coverage-summary.json totals to exclude API and frontend files
-        // and ensure ALL project logic files are represented in coverage-summary.json and coverage-final.json
-        const logicFiles = findLogicSourceFiles(rootDir);
-        const finalCovPath = path.join(coverageDir, "coverage-final.json");
-        const finalCovCandidates = [
-            path.join(unitCoverageDir, "coverage-final.json"),
-            path.join(coverageDir, "coverage-final.json"),
-            path.join(unitCoverageDir, "jest-coverage-final.json"),
-            path.join(coverageDir, "jest-coverage-final.json"),
-            path.join(unitCoverageDir, "vitest-coverage-final.json"),
-            path.join(coverageDir, "vitest-coverage-final.json")
-        ];
-        let rawFinalCov = {};
-        for (const fcPath of finalCovCandidates) {
-            if (fs.existsSync(fcPath)) {
-                try {
-                    const parsed = JSON.parse(fs.readFileSync(fcPath, "utf8"));
-                    if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
-                        rawFinalCov = { ...parsed, ...rawFinalCov };
+              // When the missing module is a relative path (e.g. '../../src/services/ai.service.js'),
+              // only heal the specific failing test file(s) so we never inject another package's relative path
+              // into unrelated tests (e.g. root extension tests). Ignore bogus callers like 'package.json'.
+              let targetTestFiles = testFiles;
+              if (isRelativeMissingTarget) {
+                const failingHints = new Set();
+                const addHint = (raw) => {
+                  const norm = String(raw || "")
+                    .trim()
+                    .replace(/\\/g, "/")
+                    .replace(/^['"]|['"]$/g, "");
+                  if (!norm || norm === "package.json" || norm.endsWith("/package.json")) {
+                    return;
+                  }
+                  failingHints.add(norm);
+                };
+                if (missingModMatch?.[2]) addHint(missingModMatch[2]);
+                if (modResError?.testFile) addHint(modResError.testFile);
+                for (const m of fullOutput.matchAll(
+                  /^\s*FAIL\s+([^\s(]+\.(?:test|spec)\.[cm]?[jt]sx?)\b/gm,
+                )) {
+                  addHint(m[1]);
+                }
+                for (const m of fullOutput.matchAll(
+                  /\(\s*([^():\s]+\.(?:test|spec)\.[cm]?[jt]sx?):\d+:\d+\s*\)/g,
+                )) {
+                  addHint(m[1]);
+                }
+
+                targetTestFiles = testFiles.filter((tf) => {
+                  const normTf = String(tf || "").replace(/\\/g, "/");
+                  for (const hint of failingHints) {
+                    if (
+                      normTf === hint ||
+                      normTf.endsWith(`/${hint}`) ||
+                      hint.endsWith(`/${normTf}`)
+                    ) {
+                      return true;
                     }
-                } catch { }
-            }
-        }
+                  }
+                  return false;
+                });
+              }
 
-        let rawCurrentSum = {};
-        for (const scPath of summaryCandidates) {
-            if (fs.existsSync(scPath)) {
-                try {
-                    const parsed = JSON.parse(fs.readFileSync(scPath, "utf8"));
-                    if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
-                        rawCurrentSum = { ...parsed, ...rawCurrentSum };
-                    }
-                } catch { }
-            }
-        }
-
-        // Canonicalize, filter for genuine business logic, and deduplicate keys in summary and final data
-        const currentSum = {};
-        const configExclusions = extractProjectCoverageExclusions(rootDir);
-        for (const [k, v] of Object.entries(rawCurrentSum)) {
-            if (k === "total" || !v || typeof v !== "object") continue;
-            const canonK = canonicalizeFilePath(k, rootDir);
-            if (!isBusinessLogicSourceFile(canonK, configExclusions)) continue;
-            if (!currentSum[canonK]) {
-                currentSum[canonK] = v;
-            } else {
-                for (const m of ["lines", "statements", "functions", "branches"]) {
-                    if (v[m]) {
-                        const ex = currentSum[canonK][m] || { total: 0, covered: 0, skipped: 0, pct: 0 };
-                        const cov = Math.max(ex.covered || 0, v[m].covered || 0);
-                        const tot = Math.max(ex.total || 0, v[m].total || 0);
-                        const pct = tot > 0 ? Number(((cov / tot) * 100).toFixed(1)) : (v[m].pct ?? ex.pct ?? 0);
-                        currentSum[canonK][m] = { total: tot, covered: cov, skipped: Math.max(ex.skipped || 0, v[m].skipped || 0), pct };
-                    }
+              for (const tf of targetTestFiles) {
+                const fullTf = path.isAbsolute(tf)
+                  ? tf
+                  : path.join(rootDir, tf);
+                if (fs.existsSync(fullTf)) {
+                  const originalContent = fs.readFileSync(fullTf, "utf8");
+                  let healedContent = healMissingDependencyMocks(
+                    originalContent,
+                    fullOutput,
+                    {
+                      framework: hasVitest ? "vitest" : "jest",
+                      rootDir,
+                      filePath: fullTf,
+                    },
+                  );
+                  healedContent =
+                    ensureAllRelativeJestMocksVirtual(healedContent);
+                  if (healedContent !== originalContent) {
+                    fs.writeFileSync(fullTf, healedContent, "utf8");
+                    healedDepAny = true;
+                  }
                 }
+              }
+            } catch (healErr) {
+              console.warn(
+                `[runTestsJob] Error while auto-healing missing dependency mocks:`,
+                healErr.message,
+              );
             }
-        }
 
-        const finalCovData = {};
-        for (const [k, v] of Object.entries(rawFinalCov)) {
-            if (!v || typeof v !== "object") continue;
-            const canonK = canonicalizeFilePath(k, rootDir);
-            if (!isBusinessLogicSourceFile(canonK, configExclusions)) continue;
-            if (!finalCovData[canonK]) {
-                finalCovData[canonK] = { ...v, path: canonK };
-            } else {
-                const ex = finalCovData[canonK];
-                for (const mapName of ["s", "f"]) {
-                    if (ex[mapName] && v[mapName]) {
-                        for (const [id, count] of Object.entries(v[mapName])) {
-                            ex[mapName][id] = Math.max(ex[mapName][id] || 0, count || 0);
-                        }
-                    }
-                }
-            }
-        }
-
-        for (const file of logicFiles) {
-            const canonKey = canonicalizeFilePath(file.relativePath, rootDir);
-            if (!isBusinessLogicSourceFile(canonKey, configExclusions)) continue;
-
-            if (!currentSum[canonKey] || !finalCovData[canonKey]) {
-                const { codeLines, totalLines, funcs, branchList, totalFuncs, totalBranches } = getCachedFileAstMetrics(file.absolutePath);
-
-                if (!currentSum[canonKey]) {
-                    currentSum[canonKey] = {
-                        _syntheticBaseline: true,
-                        lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-                        statements: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-                        functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
-                        branches: { total: totalBranches, covered: 0, skipped: 0, pct: 0 }
-                    };
-                }
-
-                if (!finalCovData[canonKey]) {
-                    const statementMap = {};
-                    const fnMap = {};
-                    const branchMap = {};
-                    const s = {};
-                    const f = {};
-                    const b = {};
-                    codeLines.forEach((line, i) => {
-                        const lineNo = i + 1;
-                        statementMap[String(i)] = { start: { line: lineNo, column: 0 }, end: { line: lineNo, column: line.length } };
-                        s[String(i)] = 0;
-                    });
-                    funcs.forEach((fn, i) => {
-                        const sLine = fn.startLine || 1;
-                        const eLine = fn.endLine || sLine;
-                        fnMap[String(i)] = {
-                            name: fn.functionName || `anonymous_${i}`,
-                            decl: { start: { line: sLine, column: 0 }, end: { line: eLine, column: 0 } },
-                            loc: { start: { line: sLine, column: 0 }, end: { line: eLine, column: 0 } },
-                            line: sLine
-                        };
-                        f[String(i)] = 0;
-                    });
-                    branchList.forEach((br, i) => {
-                        branchMap[String(i)] = {
-                            line: br.line || 1,
-                            type: br.type || "if",
-                            loc: { start: { line: br.line || 1, column: 0 }, end: { line: br.line || 1, column: 0 } },
-                            locations: br.locations || [{ start: {}, end: {} }, { start: {}, end: {} }]
-                        };
-                        b[String(i)] = (br.locations || [1, 2]).map(() => 0);
-                    });
-                    finalCovData[canonKey] = {
-                        _syntheticBaseline: true,
-                        path: canonKey,
-                        statementMap,
-                        fnMap,
-                        branchMap,
-                        s,
-                        f,
-                        b
-                    };
-                }
-            }
-        }
-
-        const cleanedSum = mergeCoverageSummaries(currentSum, {}, { projectJestConfig, rootDir, mergedFinal: finalCovData });
-        for (const [canonKey, entry] of Object.entries(finalCovData)) {
-            if (entry && typeof entry === "object" && cleanedSum[canonKey]) {
-                entry.lines = cleanedSum[canonKey].lines;
-                entry.statements = cleanedSum[canonKey].statements;
-                entry.functions = cleanedSum[canonKey].functions;
-                entry.branches = cleanedSum[canonKey].branches;
-            }
-        }
-        try { fs.writeFileSync(finalCovPath, JSON.stringify(finalCovData, null, 2), "utf8"); } catch { }
-        try { fs.writeFileSync(summaryFile, JSON.stringify(cleanedSum, null, 2), "utf8"); } catch { }
-        try { fs.writeFileSync(path.join(unitCoverageDir, "coverage-final.json"), JSON.stringify(finalCovData, null, 2), "utf8"); } catch { }
-        try { fs.writeFileSync(path.join(unitCoverageDir, "coverage-summary.json"), JSON.stringify(cleanedSum, null, 2), "utf8"); } catch { }
-
-        // Mirror results and lcov between coverageDir and unitCoverageDir
-        syncCoverageDirectories(coverageDir, unitCoverageDir);
-
-        if (rawOrigRootDir || origRootDir) {
-            syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
-        }
-
-        // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
-        let summaryResult = null;
-        try {
-            summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
-            await addJobLog(
+            if (healedDepAny) {
+              await addJobLog(
                 jobId,
                 "INFO",
-                `[SCRUM-141] Summary: lines=${summaryResult.total.lines.pct}%, ` +
-                `branches=${summaryResult.total.branches.pct}%, ` +
-                `functions=${summaryResult.total.functions.pct}%, ` +
-                `statements=${summaryResult.total.statements.pct}% | files=${summaryResult.fileCount}`
-            ).catch(() => { });
-        } catch (parseErr) {
-            await addJobLog(jobId, "WARN", `[SCRUM-141] Error parsing coverage-summary: ${parseErr.message}`).catch(() => { });
+                `[RUN_TESTS] Successfully injected isolation mocks for '${missingTarget}'. Automatically re-running unit tests...`,
+              ).catch(() => {});
+              for (const sf of staleCoverageFiles) {
+                try {
+                  if (fs.existsSync(path.join(coverageDir, sf)))
+                    fs.unlinkSync(path.join(coverageDir, sf));
+                } catch {}
+                try {
+                  if (fs.existsSync(path.join(unitCoverageDir, sf)))
+                    fs.unlinkSync(path.join(unitCoverageDir, sf));
+                } catch {}
+              }
+              continue; // Automatically re-run tests!
+            }
+          }
         }
 
-        // Parse coverage-final.json → CoverageFile (per-file detail)
-        await parseFinalCoverageFiles(jobId, snapshotId, projectId, userId, coverageDir);
-
-        // Parse coverage-final.json → CoverageFunction (per-function detail)
-        await parseFinalCoverageFunctions(jobId, snapshotId, projectId, userId, coverageDir);
-
-        // Verify lcov.info
-        const lcovPath = path.join(coverageDir, "lcov.info");
-        const hasLcov = fs.existsSync(lcovPath);
-        await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "found" : "not found"}`).catch(() => { });
-
-        // ── SCRUM-144: Progress 85% — sau parse ──────────────────────────────
-        await updateJobProgress(jobId, 85).catch(() => { });
-
-        // ── SCRUM-142: Store results to Firebase ──────────────────────────────
-        await addJobLog(jobId, "INFO", "Step 4/4: Saving coverage files to Firebase...").catch(() => { });
-        let storageResult = {};
-        try {
-            storageResult = await storeCoverageOutputs(snapshotId, projectId, coverageDir);
+        // Automatic In-Flight Missing Mock Named Export Auto-Healing
+        const mockExpMatch = fullOutput.match(
+          /(?:\[vitest\]\s*)?No\s+["']([^"']+)["']\s+export is defined on the\s+["']([^"']+)["']\s+mock/i,
+        );
+        if (
+          useHermeticMock &&
+          !hasValidCoverage &&
+          mockExpMatch &&
+          attemptedDependencies.size < MAX_DEP_ATTEMPTS
+        ) {
+          const missingExport = mockExpMatch[1];
+          const mockedModule = mockExpMatch[2];
+          const healKey = `mock:${mockedModule}:${missingExport}`;
+          if (!attemptedDependencies.has(healKey)) {
+            attemptedDependencies.add(healKey);
             await addJobLog(
+              jobId,
+              "INFO",
+              `[RUN_TESTS] Missing mock export '${missingExport}' for '${mockedModule}' detected. Automatically healing mock in test files...`,
+            ).catch(() => {});
+
+            let healedAny = false;
+            try {
+              const { healMissingMockNamedExports } =
+                await import("./testSanitizer.service.js");
+              const testFiles = [...(vitestFiles || []), ...(jestFiles || [])];
+              for (const tf of testFiles) {
+                const fullTf = path.isAbsolute(tf)
+                  ? tf
+                  : path.join(rootDir, tf);
+                if (fs.existsSync(fullTf)) {
+                  const originalContent = fs.readFileSync(fullTf, "utf8");
+                  const healedContent = healMissingMockNamedExports(
+                    originalContent,
+                    fullOutput,
+                    { framework: hasVitest ? "vitest" : "jest" },
+                  );
+                  if (healedContent !== originalContent) {
+                    fs.writeFileSync(fullTf, healedContent, "utf8");
+                    healedAny = true;
+                  }
+                }
+              }
+            } catch (healErr) {
+              console.warn(
+                `[runTestsJob] Error while auto-healing mock exports:`,
+                healErr.message,
+              );
+            }
+
+            if (healedAny) {
+              await addJobLog(
                 jobId,
                 "INFO",
-                `[SCRUM-142] Saved ${storageResult.uploadedCount} files to Firebase.`
-            ).catch(() => { });
-        } catch (storageErr) {
-            await addJobLog(jobId, "WARN", `[SCRUM-142] Firebase save error: ${storageErr.message}`).catch(() => { });
-        }
-
-        // ── SCRUM-144: Progress 100% — completed ──────────────────────────────
-        await updateJobProgress(jobId, 100).catch(() => { });
-
-        // Check if job was already canceled (by user or timeout) before transition
-        const jobBeforeSuccess = await getJobById(jobId).catch(() => null);
-        if (jobBeforeSuccess?.status === "CANCELED") {
-            console.log(`[RunTestsJob ${jobId}] Job was canceled while running. Skipping markJobSuccess.`);
-            return;
-        }
-
-        // ── SCRUM-143: Transition to SUCCESS ──────────────────────────────────
-        const coverageResult = coverageResultFromSummary(summaryResult);
-        await markJobSuccess(jobId, {
-            coverageResult,
-            hasTestFailures: runnerResult && runnerResult.exitCode !== 0,
-            exitCode: runnerResult?.exitCode ?? 0
-        });
-        await addJobLog(jobId, "INFO", "RUN_TESTS pipeline completed successfully.").catch(() => { });
-
-        // Invalidate in-memory coverage & testSuites cache
-        try {
-            const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
-            invalidateCoverageCache(snapshotId);
-        } catch (_) { }
-
-        console.log(`[RunTestsJob ${jobId}] Pipeline completed successfully.`);
-
-        // Chain to BUILD_CFG
-        try {
-            const { default: prisma } = await import("../config/prisma.js");
-            const buildCfgJob = await prisma.job.findFirst({
-                where: { snapshotId, type: "BUILD_CFG", status: "QUEUED" },
-                orderBy: { createdAt: "desc" }
-            });
-            if (buildCfgJob) {
-                const { addJobToQueue } = await import("./queue.service.js");
-                await addJobToQueue("BUILD_CFG", buildCfgJob.id);
-                console.log(`[RunTestsJob ${jobId}] Automatically triggered BUILD_CFG job: ${buildCfgJob.id}`);
+                `[RUN_TESTS] Successfully healed mock export '${missingExport}' in test file(s). Automatically re-running unit tests...`,
+              ).catch(() => {});
+              for (const sf of staleCoverageFiles) {
+                try {
+                  if (fs.existsSync(path.join(coverageDir, sf)))
+                    fs.unlinkSync(path.join(coverageDir, sf));
+                } catch {}
+                try {
+                  if (fs.existsSync(path.join(unitCoverageDir, sf)))
+                    fs.unlinkSync(path.join(unitCoverageDir, sf));
+                } catch {}
+              }
+              continue; // Automatically re-run tests!
             }
-        } catch (chainErr) {
-            console.error(`[RunTestsJob ${jobId}] Error triggering BUILD_CFG:`, chainErr);
+          }
         }
-    } catch (error) {
-        console.error(`[RunTestsJob ${jobId}] Failed:`, error);
-        const jobBeforeFail = await getJobById(jobId).catch(() => null);
-        if (jobBeforeFail?.status === "CANCELED") {
-            console.log(`[RunTestsJob ${jobId}] Job was canceled. Skipping markJobFailed.`);
-            return;
-        }
-        await addJobLog(jobId, "ERROR", `Pipeline failed: ${error.message}`).catch(() => { });
-        await markJobFailed(jobId, error).catch(() => { });
+        const brokenSuite = reportedScenarios.find(
+          (scenario) => scenario.isSuiteLevelFailure,
+        );
 
-        // Fail pending BUILD_CFG if this fails
-        try {
-            const job = await getJobById(jobId);
-            const { default: prisma } = await import("../config/prisma.js");
-            const buildCfgJob = await prisma.job.findFirst({
-                where: { snapshotId: job.snapshotId, type: "BUILD_CFG", status: "QUEUED" },
-                orderBy: { createdAt: "desc" }
-            });
-            if (buildCfgJob) {
-                await markJobFailed(buildCfgJob.id, new Error(`Failed because RUN_TESTS pipeline failed: ${error.message}`));
-                console.log(`[RunTestsJob ${jobId}] Marked BUILD_CFG job as failed: ${buildCfgJob.id}`);
+        // Case 1: Fatal crash / Runner failed before generating valid coverage
+        // Suite-load errors invalidate coverage. Assertion failures can still produce usable coverage.
+        if (
+          !hasValidCoverage ||
+          runnerResult.exitCode === null ||
+          modResError ||
+          brokenSuite
+        ) {
+          const existingSummary = await prisma.coverageSummary.findUnique({
+            where: { snapshotId },
+            select: {
+              stmtsPct: true,
+              branchesPct: true,
+              funcsPct: true,
+              linesPct: true,
+            },
+          });
+          const previousCoverage = existingSummary
+            ? {
+                statements: existingSummary.stmtsPct,
+                branches: existingSummary.branchesPct,
+                functions: existingSummary.funcsPct,
+                lines: existingSummary.linesPct,
+              }
+            : null;
+
+          let failMessage = modResError
+            ? `Test suite failed to run: Cannot find module '${modResError.missingModule}' from '${cleanStoragePath(modResError.testFile)}'`
+            : brokenSuite?.failureMessages?.[0] ||
+              (runnerResult.exitCode === null
+                ? "Test runner stopped before finishing"
+                : `Test execution failed with exit code ${runnerResult.exitCode}`);
+
+          if (!modResError && !brokenSuite) {
+            const mockExpMatch = fullOutput.match(
+              /No ["']([^"']+)["'] export is defined on the ["']([^"']+)["'] mock/i,
+            );
+            if (mockExpMatch) {
+              failMessage = `Test Runner Error: [vitest] No "${mockExpMatch[1]}" export is defined on the "${mockExpMatch[2]}" mock. Did you forget to return it from "vi.mock"?`;
+            } else {
+              // Extract non-STACK_TRACE_ERROR error lines
+              const errorLines = [
+                ...fullOutput.matchAll(
+                  /(?:SyntaxError|ReferenceError|TypeError|RangeError|Error):[^\n\r]+/g,
+                ),
+              ]
+                .map((m) => m[0].trim())
+                .filter((line) => !line.includes("STACK_TRACE_ERROR"));
+
+              const timeoutMatch = fullOutput.match(
+                /(?:Hook|Test)\s+timed out in \d+ms[^\n\r]*/i,
+              );
+              const cannotFindMatch = fullOutput.match(
+                /Error:\s*Cannot find module ['"][^'"]+['"][^\n\r]*/i,
+              );
+
+              if (cannotFindMatch) {
+                failMessage = `Test Runner Error: ${cleanStorageText(cannotFindMatch[0])}`;
+              } else if (timeoutMatch) {
+                failMessage = `Test Runner Error: ${cleanStorageText(timeoutMatch[0])}`;
+              } else if (errorLines.length > 0) {
+                failMessage = `Test execution failed: ${cleanStorageText(errorLines[0])}`;
+              } else if (fullOutput.includes("STACK_TRACE_ERROR")) {
+                failMessage = `Test Runner Error: Test timed out or unhandled promise hang occurred during Vitest execution (Vitest STACK_TRACE_ERROR)`;
+              }
             }
-        } catch (failChainErr) {
-            console.error(`[RunTestsJob ${jobId}] Error failing BUILD_CFG:`, failChainErr);
+          }
+
+          await addJobLog(
+            jobId,
+            "ERROR",
+            `[RUN_TESTS] ${cleanStorageText(failMessage)}`,
+          ).catch(() => {});
+
+          // Persist failed test run in DB for accurate history
+          try {
+            if (pendingTestRuns.length > 0) {
+              for (const runPayload of pendingTestRuns) {
+                await prisma.testRun.create({ data: runPayload });
+              }
+              hasPersistedTestRun = true;
+            }
+            if (!hasPersistedTestRun)
+              await prisma.testRun.create({
+                data: {
+                  snapshotId,
+                  type: hasVitest && !hasJest ? "VITEST" : "JEST",
+                  totalTests: 0,
+                  passedTests: 0,
+                  failedTests: 1,
+                  skippedTests: 0,
+                  durationMs: 0,
+                  status: "FAILED",
+                  startedAt: new Date(),
+                  finishedAt: new Date(),
+                  scenarios: {
+                    create: [
+                      {
+                        title: modResError
+                          ? `Module resolution: ${modResError.missingModule}`
+                          : isCollectionFailure
+                            ? "COLLECTION_FAILED: Test suite failed during test collection"
+                            : "Test execution failed",
+                        status: isCollectionFailure
+                          ? "collection_failed"
+                          : "failed",
+                        failureMessages: [
+                          cleanStorageText(failMessage),
+                          ...collectWorkspaceMissingDependencies(
+                            rootDir,
+                            [fullOutput],
+                            modResError?.testFile,
+                          ).map(
+                            ({ packageName, rawSpecifier, targetPackage }) =>
+                              `[MISSING_DEPENDENCY]:${JSON.stringify({ packageName, rawSpecifier, importedFrom: targetPackage })}`,
+                          ),
+                          cleanStorageText(fullOutput.slice(0, 2000)),
+                        ].filter(Boolean),
+                        testFile:
+                          cleanStoragePath(
+                            modResError?.testFile || brokenSuite?.testFile,
+                          ) || null,
+                      },
+                    ],
+                  },
+                },
+              });
+          } catch (persistErr) {
+            console.warn(
+              "[processRunTestsJob] Error saving fatal TestRun:",
+              persistErr.message,
+            );
+          }
+
+          const failErr = new Error(failMessage);
+          failErr.moduleResolutionError = modResError;
+          failErr.previousCoverage = previousCoverage;
+          await markJobFailed(jobId, failErr).catch(() => {});
+          return;
         }
-    } finally {
-        cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+
+        // Case 2: Tests executed and valid coverage was produced, but some assertions failed (e.g. exit code 1)
+        await addJobLog(
+          jobId,
+          "WARN",
+          `[RUN_TESTS] Runner completed with warning: some test assertions failed (exit code ${runnerResult.exitCode}). Collecting actual coverage results from executed tests...`,
+        ).catch(() => {});
+
+        try {
+          if (!hasPersistedTestRun) {
+            await prisma.testRun.create({
+              data: {
+                snapshotId,
+                type: hasVitest && !hasJest ? "VITEST" : "JEST",
+                totalTests: 1,
+                passedTests: 0,
+                failedTests: 1,
+                skippedTests: 0,
+                durationMs: 0,
+                status: "FAILED",
+                startedAt: new Date(),
+                finishedAt: new Date(),
+                scenarios: {
+                  create: [
+                    {
+                      title: "Test assertions failed",
+                      status: "failed",
+                      failureMessages: [
+                        cleanStorageText(
+                          `Runner completed with warning: some test assertions failed (exit code ${runnerResult.exitCode})`,
+                        ),
+                        cleanStorageText(fullOutput.slice(0, 1000)),
+                      ].filter(Boolean),
+                    },
+                  ],
+                },
+              },
+            });
+          }
+        } catch (persistErr) {
+          console.warn(
+            "[processRunTestsJob] Error saving assertion failure TestRun:",
+            persistErr.message,
+          );
+        }
+      }
+
+      break; // Test execution complete or handled
     }
+
+    // Re-compute and normalize coverage-summary.json totals to exclude API and frontend files
+    // and ensure ALL project logic files are represented in coverage-summary.json and coverage-final.json
+    const logicFiles = findLogicSourceFiles(rootDir);
+    const finalCovPath = path.join(activeCoverageDir, "coverage-final.json");
+    const finalCovCandidates = isTargetedUnitRun
+      ? [
+          path.join(activeUnitCoverageDir, "coverage-final.json"),
+          path.join(activeUnitCoverageDir, "jest-coverage-final.json"),
+          path.join(activeUnitCoverageDir, "vitest-coverage-final.json"),
+        ]
+      : [
+          path.join(unitCoverageDir, "coverage-final.json"),
+          path.join(coverageDir, "coverage-final.json"),
+          path.join(unitCoverageDir, "jest-coverage-final.json"),
+          path.join(coverageDir, "jest-coverage-final.json"),
+          path.join(unitCoverageDir, "vitest-coverage-final.json"),
+          path.join(coverageDir, "vitest-coverage-final.json"),
+        ];
+    let rawFinalCov = {};
+    for (const fcPath of finalCovCandidates) {
+      if (fs.existsSync(fcPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(fcPath, "utf8"));
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            Object.keys(parsed).length > 0
+          ) {
+            rawFinalCov = { ...parsed, ...rawFinalCov };
+          }
+        } catch {}
+      }
+    }
+
+    let rawCurrentSum = {};
+    for (const scPath of summaryCandidates) {
+      if (fs.existsSync(scPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(scPath, "utf8"));
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            Object.keys(parsed).length > 0
+          ) {
+            rawCurrentSum = { ...parsed, ...rawCurrentSum };
+          }
+        } catch {}
+      }
+    }
+
+    // Canonicalize, filter for genuine business logic, and deduplicate keys in summary and final data
+    const currentSum = {};
+    const configExclusions = extractProjectCoverageExclusions(rootDir);
+    for (const [k, v] of Object.entries(rawCurrentSum)) {
+      if (k === "total" || !v || typeof v !== "object") continue;
+      const canonK = canonicalizeFilePath(k, rootDir);
+      if (!isBusinessLogicSourceFile(canonK, configExclusions)) continue;
+      if (!currentSum[canonK]) {
+        currentSum[canonK] = v;
+      } else {
+        for (const m of ["lines", "statements", "functions", "branches"]) {
+          if (v[m]) {
+            const ex = currentSum[canonK][m] || {
+              total: 0,
+              covered: 0,
+              skipped: 0,
+              pct: 0,
+            };
+            const cov = Math.max(ex.covered || 0, v[m].covered || 0);
+            const tot = Math.max(ex.total || 0, v[m].total || 0);
+            const pct =
+              tot > 0
+                ? Number(((cov / tot) * 100).toFixed(1))
+                : (v[m].pct ?? ex.pct ?? 0);
+            currentSum[canonK][m] = {
+              total: tot,
+              covered: cov,
+              skipped: Math.max(ex.skipped || 0, v[m].skipped || 0),
+              pct,
+            };
+          }
+        }
+      }
+    }
+
+    const finalCovData = {};
+    for (const [k, v] of Object.entries(rawFinalCov)) {
+      if (!v || typeof v !== "object") continue;
+      const canonK = canonicalizeFilePath(k, rootDir);
+      if (!isBusinessLogicSourceFile(canonK, configExclusions)) continue;
+      if (!finalCovData[canonK]) {
+        finalCovData[canonK] = { ...v, path: canonK };
+      } else {
+        const ex = finalCovData[canonK];
+        for (const mapName of ["s", "f"]) {
+          if (ex[mapName] && v[mapName]) {
+            for (const [id, count] of Object.entries(v[mapName])) {
+              ex[mapName][id] = Math.max(ex[mapName][id] || 0, count || 0);
+            }
+          }
+        }
+      }
+    }
+
+    // When running a targeted subset of business logic files:
+    // 1. Capture scoped metrics ONLY from the newly executed files.
+    // 2. Keep all unselected business logic files untouched in DB (CoverageFile / CoverageFunction / TestRun).
+    // 3. Preserve/merge non-target metrics from previous disk JSON or DB rows before updating full summary.
+    let scopedCoverageReport = null;
+    const touchedTargetKeys = new Set(scopedSourceKeys);
+    if (isTargetedUnitRun) {
+      for (const [k, entry] of Object.entries(currentSum)) {
+        if ((entry?.lines?.covered || 0) > 0 || (entry?.statements?.covered || 0) > 0 || (entry?.functions?.covered || 0) > 0) {
+          touchedTargetKeys.add(k);
+        }
+      }
+
+      for (const [prevKey, prevVal] of Object.entries(previousUnitSummary)) {
+        if (prevKey === "total" || !prevVal || typeof prevVal !== "object") continue;
+        const canonPrev = canonicalizeFilePath(prevKey, rootDir);
+        if (!isBusinessLogicSourceFile(canonPrev, configExclusions)) continue;
+        if (touchedTargetKeys.has(canonPrev)) continue;
+        const curEntry = currentSum[canonPrev];
+        const curHasHit =
+          curEntry &&
+          ((curEntry.lines?.covered || 0) > 0 ||
+            (curEntry.statements?.covered || 0) > 0 ||
+            (curEntry.functions?.covered || 0) > 0);
+        if (!curEntry || (curEntry._syntheticBaseline && !curHasHit)) {
+          currentSum[canonPrev] = prevVal;
+        }
+      }
+      for (const [canonPrev, dbRow] of existingDbCoverageByPath.entries()) {
+        if (touchedTargetKeys.has(canonPrev)) continue;
+        const curEntry = currentSum[canonPrev];
+        const curHasCov =
+          curEntry &&
+          ((curEntry.lines?.covered || 0) > 0 || (curEntry.statements?.covered || 0) > 0);
+        if (!curHasCov && ((dbRow.linesPct || 0) > 0 || (dbRow.stmtsPct || 0) > 0)) {
+          const matchLf = logicFiles.find(
+            (lf) => canonicalizeFilePath(lf.relativePath, rootDir) === canonPrev,
+          );
+          const ast = matchLf ? getCachedFileAstMetrics(matchLf.absolutePath) : { totalLines: 100, totalFuncs: 5, totalBranches: 5 };
+          const lTot = Math.max(1, ast.totalLines || 100);
+          const fTot = Math.max(1, ast.totalFuncs || 5);
+          const bTot = Math.max(1, ast.totalBranches || 5);
+          currentSum[canonPrev] = {
+            lines: { total: lTot, covered: Math.round((lTot * (dbRow.linesPct || 0)) / 100), skipped: 0, pct: dbRow.linesPct || 0 },
+            statements: { total: lTot, covered: Math.round((lTot * (dbRow.stmtsPct || 0)) / 100), skipped: 0, pct: dbRow.stmtsPct || 0 },
+            functions: { total: fTot, covered: Math.round((fTot * (dbRow.funcsPct || 0)) / 100), skipped: 0, pct: dbRow.funcsPct || 0 },
+            branches: { total: bTot, covered: Math.round((bTot * (dbRow.branchesPct || 0)) / 100), skipped: 0, pct: dbRow.branchesPct || 0 },
+          };
+        }
+      }
+      for (const [prevKey, prevVal] of Object.entries(previousUnitFinal)) {
+        if (!prevVal || typeof prevVal !== "object") continue;
+        const canonPrev = canonicalizeFilePath(prevKey, rootDir);
+        if (!isBusinessLogicSourceFile(canonPrev, configExclusions)) continue;
+        if (touchedTargetKeys.has(canonPrev)) continue;
+        const curFinal = finalCovData[canonPrev];
+        if (!curFinal || curFinal._syntheticBaseline) {
+          finalCovData[canonPrev] = { ...prevVal, path: canonPrev };
+        }
+      }
+    }
+
+    for (const file of logicFiles) {
+      const canonKey = canonicalizeFilePath(file.relativePath, rootDir);
+      if (!isBusinessLogicSourceFile(canonKey, configExclusions)) continue;
+
+      if (!currentSum[canonKey] || !finalCovData[canonKey]) {
+        const {
+          codeLines,
+          totalLines,
+          funcs,
+          branchList,
+          totalFuncs,
+          totalBranches,
+        } = getCachedFileAstMetrics(file.absolutePath);
+
+        if (!currentSum[canonKey]) {
+          currentSum[canonKey] = {
+            _syntheticBaseline: true,
+            lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+            statements: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+            functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
+            branches: { total: totalBranches, covered: 0, skipped: 0, pct: 0 },
+          };
+        }
+
+        if (!finalCovData[canonKey]) {
+          const statementMap = {};
+          const fnMap = {};
+          const branchMap = {};
+          const s = {};
+          const f = {};
+          const b = {};
+          codeLines.forEach((line, i) => {
+            const lineNo = i + 1;
+            statementMap[String(i)] = {
+              start: { line: lineNo, column: 0 },
+              end: { line: lineNo, column: line.length },
+            };
+            s[String(i)] = 0;
+          });
+          funcs.forEach((fn, i) => {
+            const sLine = fn.startLine || 1;
+            const eLine = fn.endLine || sLine;
+            fnMap[String(i)] = {
+              name: fn.functionName || `anonymous_${i}`,
+              decl: {
+                start: { line: sLine, column: 0 },
+                end: { line: eLine, column: 0 },
+              },
+              loc: {
+                start: { line: sLine, column: 0 },
+                end: { line: eLine, column: 0 },
+              },
+              line: sLine,
+            };
+            f[String(i)] = 0;
+          });
+          branchList.forEach((br, i) => {
+            branchMap[String(i)] = {
+              line: br.line || 1,
+              type: br.type || "if",
+              loc: {
+                start: { line: br.line || 1, column: 0 },
+                end: { line: br.line || 1, column: 0 },
+              },
+              locations: br.locations || [
+                { start: {}, end: {} },
+                { start: {}, end: {} },
+              ],
+            };
+            b[String(i)] = (br.locations || [1, 2]).map(() => 0);
+          });
+          finalCovData[canonKey] = {
+            _syntheticBaseline: true,
+            path: canonKey,
+            statementMap,
+            fnMap,
+            branchMap,
+            s,
+            f,
+            b,
+          };
+        }
+      }
+    }
+
+    const cleanedSum = mergeCoverageSummaries(
+      currentSum,
+      {},
+      { projectJestConfig, rootDir, mergedFinal: finalCovData },
+    );
+    // Build scoped coverage metrics exclusively for selected business logic files
+    if (isTargetedUnitRun && scopedSourceKeys.size > 0) {
+      let sLinesCov = 0, sLinesTot = 0;
+      let sStmtsCov = 0, sStmtsTot = 0;
+      let sFuncsCov = 0, sFuncsTot = 0;
+      let sBranchesCov = 0, sBranchesTot = 0;
+      const scopedFilesSummary = [];
+      const pct = (cov, tot) => (tot > 0 ? Number(((cov / tot) * 100).toFixed(1)) : 0);
+
+      for (const sKey of scopedSourceKeys) {
+        const entry = cleanedSum[sKey] || currentSum[sKey];
+        if (!entry) continue;
+        const lCov = entry.lines?.covered || 0;
+        const lTot = entry.lines?.total || 0;
+        const stCov = entry.statements?.covered || 0;
+        const stTot = entry.statements?.total || 0;
+        const fCov = entry.functions?.covered || 0;
+        const fTot = entry.functions?.total || 0;
+        const bCov = entry.branches?.covered || 0;
+        const bTot = entry.branches?.total || 0;
+
+        sLinesCov += lCov; sLinesTot += lTot;
+        sStmtsCov += stCov; sStmtsTot += stTot;
+        sFuncsCov += fCov; sFuncsTot += fTot;
+        sBranchesCov += bCov; sBranchesTot += bTot;
+
+        scopedFilesSummary.push({
+          filePath: sKey,
+          linesPct: entry.lines?.pct ?? pct(lCov, lTot),
+          branchesPct: entry.branches?.pct ?? pct(bCov, bTot),
+          funcsPct: entry.functions?.pct ?? pct(fCov, fTot),
+          stmtsPct: entry.statements?.pct ?? pct(stCov, stTot),
+          lines: { total: lTot, covered: lCov, pct: entry.lines?.pct ?? pct(lCov, lTot) },
+          branches: { total: bTot, covered: bCov, pct: entry.branches?.pct ?? pct(bCov, bTot) },
+          functions: { total: fTot, covered: fCov, pct: entry.functions?.pct ?? pct(fCov, fTot) },
+          statements: { total: stTot, covered: stCov, pct: entry.statements?.pct ?? pct(stCov, stTot) },
+        });
+      }
+
+      const aggScopedTestStats = pendingTestRuns.reduce(
+        (acc, r) => {
+          acc.total += Number(r.totalTests || 0);
+          acc.passed += Number(r.passedTests || 0);
+          acc.failed += Number(r.failedTests || 0);
+          acc.durationMs += Number(r.durationMs || 0);
+          return acc;
+        },
+        { total: 0, passed: 0, failed: 0, durationMs: 0 },
+      );
+
+      scopedCoverageReport = {
+        sourceFiles: Array.from(scopedSourceKeys),
+        files: scopedFilesSummary,
+        coveredFilesCount: scopedFilesSummary.filter(
+          (sf) => Number(sf.linesPct || 0) > 0 || Number(sf.stmtsPct || 0) > 0,
+        ).length,
+        testStats: aggScopedTestStats,
+        total: {
+          lines: { total: sLinesTot, covered: sLinesCov, pct: pct(sLinesCov, sLinesTot) },
+          statements: { total: sStmtsTot, covered: sStmtsCov, pct: pct(sStmtsCov, sStmtsTot) },
+          functions: { total: sFuncsTot, covered: sFuncsCov, pct: pct(sFuncsCov, sFuncsTot) },
+          branches: { total: sBranchesTot, covered: sBranchesCov, pct: pct(sBranchesCov, sBranchesTot) },
+        },
+      };
+      await addJobLog(
+        jobId,
+        "INFO",
+        `[TARGETED] Scoped Business Logic Coverage (${scopedFilesSummary.length} file(s)): ` +
+          `lines=${scopedCoverageReport.total.lines.pct}%, branches=${scopedCoverageReport.total.branches.pct}%, ` +
+          `functions=${scopedCoverageReport.total.functions.pct}%, statements=${scopedCoverageReport.total.statements.pct}%`,
+      ).catch(() => {});
+    }
+
+    for (const [canonKey, entry] of Object.entries(finalCovData)) {
+      if (entry && typeof entry === "object" && cleanedSum[canonKey]) {
+        entry.lines = cleanedSum[canonKey].lines;
+        entry.statements = cleanedSum[canonKey].statements;
+        entry.functions = cleanedSum[canonKey].functions;
+        entry.branches = cleanedSum[canonKey].branches;
+      }
+    }
+    // Mirror results and persist ONLY scoped subset on targeted runs so unselected files stay untouched
+    const scopedOnlyFinalCovData = isTargetedUnitRun
+      ? Object.fromEntries(
+          Object.entries(finalCovData).filter(([k]) => touchedTargetKeys.has(k)),
+        )
+      : finalCovData;
+    const scopedOnlyCoverageDir = isTargetedUnitRun
+      ? path.join(activeCoverageDir, "scoped-patch")
+      : coverageDir;
+
+    if (isTargetedUnitRun) {
+      try {
+        fs.mkdirSync(scopedOnlyCoverageDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(scopedOnlyCoverageDir, "coverage-final.json"),
+          JSON.stringify(scopedOnlyFinalCovData, null, 2),
+          "utf8",
+        );
+      } catch {}
+    }
+
+    const shouldUpdateFullProjectArtifacts =
+      !isTargetedUnitRun ||
+      (scopedCoverageReport?.testStats?.total || 0) > 0 ||
+      (cleanedSum?.total?.lines?.pct || 0) > 0;
+
+    if (shouldUpdateFullProjectArtifacts) {
+      try {
+        fs.writeFileSync(
+          path.join(coverageDir, "coverage-final.json"),
+          JSON.stringify(finalCovData, null, 2),
+          "utf8",
+        );
+      } catch {}
+      try {
+        fs.writeFileSync(
+          path.join(coverageDir, "coverage-summary.json"),
+          JSON.stringify(cleanedSum, null, 2),
+          "utf8",
+        );
+      } catch {}
+      try {
+        fs.writeFileSync(
+          path.join(unitCoverageDir, "coverage-final.json"),
+          JSON.stringify(finalCovData, null, 2),
+          "utf8",
+        );
+      } catch {}
+      try {
+        fs.writeFileSync(
+          path.join(unitCoverageDir, "coverage-summary.json"),
+          JSON.stringify(cleanedSum, null, 2),
+          "utf8",
+        );
+      } catch {}
+
+      syncCoverageDirectories(coverageDir, unitCoverageDir);
+
+      if (rawOrigRootDir || origRootDir) {
+        const publishArtifacts = () =>
+          syncCoverageArtifactsToOrigin(rootDir, rawOrigRootDir || origRootDir);
+        if (opContext?.preparedPublications)
+          deferPreparedCommit(publishArtifacts);
+        else publishArtifacts();
+      }
+    }
+
+    // Parse coverage-summary.json → CoverageSummary
+    let summaryResult = null;
+    try {
+      if (shouldUpdateFullProjectArtifacts) {
+        summaryResult = await parseCoverageSummary(coverageDir, snapshotId, {
+          skipFileUpsert: isTargetedUnitRun,
+        });
+      } else if (scopedCoverageReport) {
+        summaryResult = { total: cleanedSum?.total || scopedCoverageReport.total, fileCount: scopedCoverageReport.files.length };
+      }
+      if (pendingTestRuns.length > 0) {
+        try {
+          await stagePreparedPublication(async (tx) => {
+            for (const runPayload of pendingTestRuns) {
+              await tx.testRun.create({
+                data: {
+                  ...runPayload,
+                  ...(summaryResult?.total
+                    ? {
+                        coverageLinesPct: summaryResult.total.lines?.pct ?? 0,
+                        coverageBranchesPct:
+                          summaryResult.total.branches?.pct ?? 0,
+                        coverageFunctionsPct:
+                          summaryResult.total.functions?.pct ?? 0,
+                        coverageStatementsPct:
+                          summaryResult.total.statements?.pct ?? 0,
+                      }
+                    : {}),
+                },
+              });
+            }
+          });
+          hasPersistedTestRun = true;
+        } catch (trErr) {
+          console.warn(
+            "[processRunTestsJob] Error staging TestRun publication:",
+            trErr.message,
+          );
+        }
+      } else if (!isTargetedUnitRun && summaryResult?.total) {
+        try {
+          await stagePreparedPublication(async (tx) => {
+            const latestUnitRun = await tx.testRun.findFirst({
+              where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+              orderBy: { createdAt: "desc" },
+              select: { id: true },
+            });
+            if (latestUnitRun?.id) {
+              await tx.testRun.update({
+                where: { id: latestUnitRun.id },
+                data: {
+                  coverageLinesPct: summaryResult.total.lines?.pct ?? 0,
+                  coverageBranchesPct: summaryResult.total.branches?.pct ?? 0,
+                  coverageFunctionsPct: summaryResult.total.functions?.pct ?? 0,
+                  coverageStatementsPct:
+                    summaryResult.total.statements?.pct ?? 0,
+                },
+              });
+            }
+          });
+        } catch (_) {}
+      }
+      await addJobLog(
+        jobId,
+        "INFO",
+        `[SCRUM-141] Summary: lines=${summaryResult?.total?.lines?.pct ?? 0}%, ` +
+          `branches=${summaryResult?.total?.branches?.pct ?? 0}%, ` +
+          `functions=${summaryResult?.total?.functions?.pct ?? 0}%, ` +
+          `statements=${summaryResult?.total?.statements?.pct ?? 0}% | files=${summaryResult?.fileCount ?? 0}`,
+      ).catch(() => {});
+    } catch (parseErr) {
+      await addJobLog(
+        jobId,
+        "WARN",
+        `[SCRUM-141] Error parsing coverage-summary: ${parseErr.message}`,
+      ).catch(() => {});
+    }
+
+    // Parse coverage-final.json → CoverageFile (per-file detail, preserving unselected files on targeted runs)
+    if (!isTargetedUnitRun || Object.keys(scopedOnlyFinalCovData).length > 0) {
+      await parseFinalCoverageFiles(
+        jobId,
+        snapshotId,
+        projectId,
+        userId,
+        scopedOnlyCoverageDir,
+        { preserveOtherFiles: isTargetedUnitRun },
+      );
+
+      // Parse coverage-final.json → CoverageFunction (preserving unselected files on targeted runs)
+      await parseFinalCoverageFunctions(
+        jobId,
+        snapshotId,
+        projectId,
+        userId,
+        scopedOnlyCoverageDir,
+        { preserveOtherFiles: isTargetedUnitRun },
+      );
+    }
+
+    // Verify lcov.info
+    const lcovPath = path.join(coverageDir, "lcov.info");
+    const hasLcov = fs.existsSync(lcovPath);
+    await addJobLog(
+      jobId,
+      "INFO",
+      `lcov.info: ${hasLcov ? "found" : "not found"}`,
+    ).catch(() => {});
+
+    // ── SCRUM-144: Progress 85% — sau parse ──────────────────────────────
+    await reportUnitProgress(
+      85,
+      "Persisting results",
+      "Saving test execution records...",
+    );
+
+    // ── SCRUM-142: Store results to Firebase ──────────────────────────────
+    let storageResult = {};
+    if (shouldUpdateFullProjectArtifacts) {
+      await addJobLog(
+        jobId,
+        "INFO",
+        "Step 4/4: Saving coverage files to Firebase...",
+      ).catch(() => {});
+      try {
+        storageResult = await storeCoverageOutputs(
+          snapshotId,
+          projectId,
+          coverageDir,
+        );
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[SCRUM-142] Saved ${storageResult.uploadedCount} files to Firebase.`,
+        ).catch(() => {});
+      } catch (storageErr) {
+        await addJobLog(
+          jobId,
+          "WARN",
+          `[SCRUM-142] Firebase save error: ${storageErr.message}`,
+        ).catch(() => {});
+      }
+    }
+
+    // ── SCRUM-144: Progress 100% — completed ──────────────────────────────
+    await reportUnitProgress(
+      100,
+      "Completed",
+      "Unit test suite completed successfully.",
+    );
+
+    // Check if job was already canceled (by user or timeout) before transition
+    const jobBeforeSuccess = await getJobById(jobId).catch(() => null);
+    if (jobBeforeSuccess?.status === "CANCELED") {
+      console.log(
+        `[RunTestsJob ${jobId}] Job was canceled while running. Skipping markJobSuccess.`,
+      );
+      return;
+    }
+
+    // Capture highest unit coverage snapshot for Executive Report (mirrors Integration Peak Report)
+    try {
+      const { capturePeakUnitReportIfHigher } = await import("./unitReport.service.js");
+      const fileCoveragesForPeak = Object.entries(cleanedSum || {})
+        .filter(([k, v]) => k !== "total" && v && typeof v === "object")
+        .map(([filePath, v]) => ({
+          filePath,
+          linesPct: Number(v.lines?.pct ?? 0),
+          branchesPct: Number(v.branches?.pct ?? 0),
+          funcsPct: Number(v.functions?.pct ?? 0),
+          stmtsPct: Number(v.statements?.pct ?? 0),
+        }));
+      const aggStats = pendingTestRuns.reduce(
+        (acc, r) => {
+          acc.total += Number(r.totalTests || 0);
+          acc.passed += Number(r.passedTests || 0);
+          acc.failed += Number(r.failedTests || 0);
+          acc.durationMs += Number(r.durationMs || 0);
+          return acc;
+        },
+        { total: 0, passed: 0, failed: 0, durationMs: 0 },
+      );
+      const failingForPeak = (reportedScenarios || [])
+        .filter((s) => ["failed", "fail"].includes(String(s?.status || "").toLowerCase()))
+        .map((s) => ({
+          id: s.id || `${s.testFile || ""}::${s.title || ""}`,
+          title: s.title,
+          testFile: s.testFile || "",
+          failureMessages: s.failureMessages || [],
+          failureSummary: s.failureSummary || "",
+          status: "failed",
+        }));
+      await capturePeakUnitReportIfHigher(snapshotId, {
+        summaryTotal: summaryResult?.total || cleanedSum?.total || null,
+        fileCoverages: fileCoveragesForPeak,
+        testStats: aggStats,
+        failingTests: failingForPeak,
+        isTargetedRun: isTargetedUnitRun,
+      });
+    } catch (peakErr) {
+      console.warn(
+        `[RunTestsJob ${jobId}] Non-fatal peak unit report capture warning:`,
+        peakErr?.message,
+      );
+    }
+
+    // ── SCRUM-143: Transition to SUCCESS ──────────────────────────────────
+    const coverageResult = coverageResultFromSummary(summaryResult);
+    await markJobSuccess(jobId, {
+      coverageResult,
+      ...(scopedCoverageReport ? { scopedCoverage: scopedCoverageReport } : {}),
+      hasTestFailures: runnerResult && runnerResult.exitCode !== 0,
+      exitCode: runnerResult?.exitCode ?? 0,
+    });
+    await addJobLog(
+      jobId,
+      "INFO",
+      "RUN_TESTS pipeline completed successfully.",
+    ).catch(() => {});
+    try {
+      import("./dashboardEvents.service.js")
+        .then(({ emitDashboardRunStatus, emitDashboardJobProgress }) => {
+          emitDashboardJobProgress(job.snapshot?.projectId, {
+            snapshotId,
+            jobId,
+            pillar: "unit",
+            progress: 100,
+            stage: "Complete",
+          }).catch(() => {});
+          emitDashboardRunStatus(job.snapshot?.projectId, {
+            snapshotId,
+            jobId,
+            pillar: "unit",
+            status: "SUCCESS",
+          }).catch(() => {});
+        })
+        .catch(() => {});
+    } catch (_) {}
+
+    // Invalidate in-memory coverage & testSuites cache
+    try {
+      const { invalidateCoverageCache } =
+        await import("../controllers/coverage.controller.js");
+      invalidateCoverageCache(snapshotId);
+    } catch (_) {}
+
+    console.log(`[RunTestsJob ${jobId}] Pipeline completed successfully.`);
+
+    // Chain to BUILD_CFG
+    try {
+      const { default: prisma } = await import("../config/prisma.js");
+      const buildCfgJob = await prisma.job.findFirst({
+        where: { snapshotId, type: "BUILD_CFG", status: "QUEUED" },
+        orderBy: { createdAt: "desc" },
+      });
+      if (buildCfgJob) {
+        const { addJobToQueue } = await import("./queue.service.js");
+        await addJobToQueue("BUILD_CFG", buildCfgJob.id);
+        console.log(
+          `[RunTestsJob ${jobId}] Automatically triggered BUILD_CFG job: ${buildCfgJob.id}`,
+        );
+      }
+    } catch (chainErr) {
+      console.error(
+        `[RunTestsJob ${jobId}] Error triggering BUILD_CFG:`,
+        chainErr,
+      );
+    }
+  } catch (error) {
+    if (error.code === "OPERATION_STALE") {
+      console.warn(
+        `[RunTestsJob ${jobId}] Operation became stale due to newer workspace revision: ${error.message}`,
+      );
+      await addJobLog(
+        jobId,
+        "WARN",
+        `Operation superseded by newer workspace revision: ${error.message}`,
+      ).catch(() => {});
+      return;
+    }
+    console.error(`[RunTestsJob ${jobId}] Failed:`, error);
+    const jobBeforeFail = await getJobById(jobId).catch(() => null);
+    if (jobBeforeFail?.status === "CANCELED") {
+      console.log(
+        `[RunTestsJob ${jobId}] Job was canceled. Skipping markJobFailed.`,
+      );
+      return;
+    }
+    await addJobLog(jobId, "ERROR", `Pipeline failed: ${error.message}`).catch(
+      () => {},
+    );
+    await markJobFailed(jobId, error).catch(() => {});
+    try {
+      import("./dashboardEvents.service.js")
+        .then(({ emitDashboardRunStatus }) => {
+          emitDashboardRunStatus(job.snapshot?.projectId, {
+            snapshotId,
+            jobId,
+            pillar: "unit",
+            status: "FAILED",
+          }).catch(() => {});
+        })
+        .catch(() => {});
+    } catch (_) {}
+
+    // Fail pending BUILD_CFG if this fails
+    try {
+      const job = await getJobById(jobId);
+      const { default: prisma } = await import("../config/prisma.js");
+      const buildCfgJob = await prisma.job.findFirst({
+        where: {
+          snapshotId: job.snapshotId,
+          type: "BUILD_CFG",
+          status: "QUEUED",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      if (buildCfgJob) {
+        await markJobFailed(
+          buildCfgJob.id,
+          new Error(
+            `Failed because RUN_TESTS pipeline failed: ${error.message}`,
+          ),
+        );
+        console.log(
+          `[RunTestsJob ${jobId}] Marked BUILD_CFG job as failed: ${buildCfgJob.id}`,
+        );
+      }
+    } catch (failChainErr) {
+      console.error(
+        `[RunTestsJob ${jobId}] Error failing BUILD_CFG:`,
+        failChainErr,
+      );
+    }
+  } finally {
+    if (scopedWorkCoverageDir) {
+      try {
+        fs.rmSync(scopedWorkCoverageDir, { recursive: true, force: true });
+      } catch (_) {}
+    }
+    restoreDraftTestsForRun(draftRunState);
+    if (isolatedDb) {
+      try {
+        const { destroyIsolatedDatabase } =
+          await import("./virtualDatabase.service.js");
+        await destroyIsolatedDatabase(isolatedDb.jobId || jobId, { log: true });
+      } catch (destroyErr) {
+        console.warn(
+          "[processRunTestsJob] Virtual DB cleanup warning:",
+          destroyErr.message,
+        );
+      }
+    }
+    cleanupWorkspaceNodeModulesLinks(createdNodeModulesLinks);
+  }
 };

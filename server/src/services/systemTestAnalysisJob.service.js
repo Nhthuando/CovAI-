@@ -22,6 +22,7 @@ import { calculateSystemCoverage } from "./systemCoverageEngine.service.js";
 import { collectSystemGenerationContext } from "./systemGenerationContext.service.js";
 import crypto from "node:crypto";
 import {prepareFullSystemExecution,resolveSystemTestFile} from './fullSystemExecutionPreparation.service.js';
+import { resolveSnapshotRootDir } from "../utils/snapshotWorkspace.js";
 
 const readPayload = (payloadJson) => {
   if (!payloadJson) return {};
@@ -143,6 +144,16 @@ const broadcastJobProgress = async (
         global.io.to(`snapshot:${snapshotId}`).emit("job:progress", payload);
       }
       global.io.to(`job:${jobId}`).emit("job:progress", payload);
+      try {
+        import("./dashboardEvents.service.js").then(({ emitDashboardJobProgress, emitDashboardRunStatus }) => {
+          if (progress !== undefined) {
+            emitDashboardJobProgress(null, { snapshotId, jobId, pillar: "system", progress, stage: stage || message }).catch(() => {});
+          }
+          if (status) {
+            emitDashboardRunStatus(null, { snapshotId, jobId, pillar: "system", status }).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch (_) {}
     }
   } catch (err) {
     console.warn(`[broadcastJobProgress] Error for job ${jobId}:`, err.message);
@@ -155,6 +166,10 @@ export const processSystemTestAnalysisJob = async (jobId) => {
   try {
     await markJobRunning(jobId);
     const job = await getJobById(jobId);
+    if (job?.snapshot?.rootDir) {
+      job.snapshot.rootDir =
+        resolveSnapshotRootDir(job.snapshot.rootDir) || job.snapshot.rootDir;
+    }
     if (!job.snapshotId || !job.snapshot?.rootDir || !job.userId) {
       throw new ServiceError(
         "System test job requires a ready snapshot and owner.",
@@ -193,6 +208,20 @@ export const processSystemTestAnalysisJob = async (jobId) => {
           : execution.command.slice(0, redirection) + specArg + execution.command.slice(redirection);
       }
     }
+    if (Array.isArray(payload.selectedFiles) && payload.selectedFiles.length > 0) {
+      execution.selectedFiles = payload.selectedFiles.map((f) =>
+        resolveSystemTestFile(job.snapshot.rootDir, execution.rootDir || job.snapshot.rootDir, f),
+      );
+      if (!execution.testFile && execution.selectedFiles.length === 1) {
+        execution.testFile = execution.selectedFiles[0];
+      }
+    }
+    if (Array.isArray(payload.selectedTitles) && payload.selectedTitles.length > 0) {
+      execution.selectedTitles = payload.selectedTitles;
+    }
+    if (payload.headed) {
+      execution.headed = true;
+    }
 
     await broadcastJobProgress(jobId, {
       progress: 15,
@@ -204,18 +233,54 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     });
     const onPreparing = (progress,message) => broadcastJobProgress(jobId,{progress,stage:'Preparing Full Stack',message,userId:job.userId,snapshotId:jobSnapshotId,runner:execution.runner});
     if(executionMode === 'full' && execution.runner === 'playwright') {
+      const { scanSystemTestFiles } = await import('../utils/testFileParser.js');
+      const scanResult = scanSystemTestFiles(job.snapshot.rootDir);
+      const totalSpecs = (scanResult.playwrightFiles?.length || 0) + (scanResult.cypressFiles?.length || 0);
+      if (totalSpecs === 0 && !payload?.allowAutoGenerate) {
+        throw new ServiceError("No system E2E test files or approved scenarios found. Please generate scenarios in System Test Workspace first.", 422);
+      }
       const prepared=await prepareFullSystemExecution({rootDir:job.snapshot.rootDir,execution,jobId,onProgress:onPreparing});
       execution=prepared.execution;
       if(prepared.generated) await stagePreparedPublication(tx=>tx.aiTest.create({data:{projectId:job.projectId,snapshotId:job.snapshotId,filePath:prepared.generated.filePath,content:prepared.generated.code,mode:'PLAYWRIGHT_E2E',status:'VERIFIED',metaJson:JSON.stringify({executionMode:'full',verificationRuns:prepared.generated.verificationRuns,attempts:prepared.generated.attempts,contextHash:prepared.generated.contextHash,quality:prepared.generated.quality})}}));
     }
 
     const startedAt = new Date();
+    let completedScenarioCount = 0;
+    const totalExpectedScenarios = Math.max(1, (await prisma.systemScenario.count({ where: { snapshotId: jobSnapshotId } }).catch(() => 0)) || 5);
+
+    const onLiveEvent = async (safeEvent) => {
+      if (!safeEvent) return;
+      if (safeEvent.type === 'SCENARIO_STARTED') {
+        const currentPct = Math.min(85, 35 + Math.round((completedScenarioCount / totalExpectedScenarios) * 45));
+        await broadcastJobProgress(jobId, {
+          progress: currentPct,
+          stage: `Running scenario: ${safeEvent.title || 'In progress'}`,
+          message: `Executing ${safeEvent.title || 'system scenario'}...`,
+          userId: job.userId,
+          snapshotId: jobSnapshotId,
+          runner: execution.runner,
+        });
+      } else if (safeEvent.type === 'SCENARIO_ENDED') {
+        completedScenarioCount++;
+        const currentPct = Math.min(85, 35 + Math.round((completedScenarioCount / totalExpectedScenarios) * 45));
+        await broadcastJobProgress(jobId, {
+          progress: currentPct,
+          stage: `Completed (${completedScenarioCount}/${totalExpectedScenarios}): ${safeEvent.title || 'Scenario'}`,
+          message: `${safeEvent.title || 'Scenario'}: ${safeEvent.status || 'finished'}`,
+          userId: job.userId,
+          snapshotId: jobSnapshotId,
+          runner: execution.runner,
+        });
+      }
+    };
+
     const executionResult = await runSystemTests({
       jobId,
       rootDir: job.snapshot.rootDir,
       execution,
       executionMode,
       onPreparing,
+      onEvent: onLiveEvent,
       onReady: () =>
         broadcastJobProgress(jobId, {
           progress: 35,
@@ -385,6 +450,10 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     }
 
     await markJobSuccess(jobId, result);
+    try {
+      const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+      invalidateCoverageCache(jobSnapshotId);
+    } catch (_) { }
     await broadcastJobProgress(jobId, {
       progress: 100,
       stage: "Completed",

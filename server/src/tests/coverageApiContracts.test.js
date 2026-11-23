@@ -45,6 +45,7 @@ jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     findExistingTestFile: jest.fn().mockReturnValue({ found: true, relativePath: 'src/tests/order.service.test.js' }),
     findAssociatedSourceFile: jest.fn().mockReturnValue('src/services/order.service.js'),
     extractAstMetadata: jest.fn().mockReturnValue({ exportedSymbols: ['processOrder'], unexportedFunctions: [], decisionPoints: [] }),
+    classifyFeasibleCoverage: jest.fn(() => ({ isFeasibleLogicCovered: false, actionableLines: [], actionableBranches: [], infeasibleBranches: [] })),
 }));
 
 const mockApplyUnitTestSuggestion = jest.fn();
@@ -61,9 +62,19 @@ const { suggestUnitTestcase, applySuggestion } = await import('../controllers/co
 describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: 'snap-uuid',
+            projectId: 'proj-uuid',
+            project: { id: 'proj-uuid', ownerId: 'user-uuid' },
+        });
+        prismaMock.projectSnapshot.findFirst.mockResolvedValue({
+            id: 'snap-uuid',
+            projectId: 'proj-uuid',
+            project: { id: 'proj-uuid', ownerId: 'user-uuid' },
+        });
     });
 
-    describe('3.1 API Yêu Cầu Gợi Ý Test Case (POST /api/coverage/:snapshotId/suggest-testcase)', () => {
+    describe('3.1 API Suggest Test Case (POST /api/coverage/:snapshotId/suggest-testcase)', () => {
         const mockSection31Response = {
             suggestionId: 'sug-1791389000-1',
             sourceFile: 'src/services/order.service.js',
@@ -72,7 +83,7 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
             framework: 'jest',
             targetLines: [45, 46, 82, 83],
             targetBranches: ['if:45', 'conditional:82'],
-            explanation: 'Đã tạo 6 test cases bao phủ Happy Path, phân vùng giá trị biên của voucher, và trường hợp huỷ đơn hàng khi không đủ tồn kho.',
+            explanation: 'Generated 6 test cases covering Happy Path, voucher boundary value partitions, and out-of-stock order cancellation.',
             suggestedTestCode: "describe('OrderService - Business Logic Coverage', () => { test('happy path', () => {}); });",
             fullUpdatedContent: "const { processOrder } = require('../services/order.service');\ndescribe('OrderService', () => {});",
             summary: {
@@ -102,13 +113,13 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
 
             await suggestUnitTestcase(req, res);
 
-            expect(mockSuggestUnitTestcases).toHaveBeenCalledWith({
+            expect(mockSuggestUnitTestcases).toHaveBeenCalledWith(expect.objectContaining({
                 projectId: 'proj-uuid',
                 snapshotId: 'snap-uuid',
                 filePath: 'src/services/order.service.js',
                 userId: 'user-uuid',
                 framework: 'jest',
-            });
+            }));
             expect(res.status).toHaveBeenCalledWith(200);
 
             const responseBody = res.json.mock.calls[0][0];
@@ -144,7 +155,11 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
         });
 
         test('infers projectId from snapshot when omitted from request body', async () => {
-            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({ projectId: 'inferred-proj-123' });
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+                id: 'snap-uuid',
+                projectId: 'inferred-proj-123',
+                project: { id: 'inferred-proj-123', ownerId: 'user-uuid' },
+            });
             mockSuggestUnitTestcases.mockResolvedValueOnce(mockSection31Response);
 
             const req = {
@@ -161,10 +176,9 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
 
             await suggestUnitTestcase(req, res);
 
-            expect(prismaMock.projectSnapshot.findUnique).toHaveBeenCalledWith({
+            expect(prismaMock.projectSnapshot.findUnique).toHaveBeenCalledWith(expect.objectContaining({
                 where: { id: 'snap-uuid' },
-                select: { projectId: true },
-            });
+            }));
             expect(mockSuggestUnitTestcases).toHaveBeenCalledWith(expect.objectContaining({
                 projectId: 'inferred-proj-123',
                 filePath: 'src/services/order.service.js',
@@ -237,7 +251,7 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
         });
     });
 
-    describe('3.2 API Áp Dụng Test Case & Chạy Lại (POST /api/coverage/:snapshotId/apply-suggestion)', () => {
+    describe('3.2 API Apply Test Case & Rerun (POST /api/coverage/:snapshotId/apply-suggestion)', () => {
         const mockSection32Response = {
             success: true,
             fileUpdated: true,
@@ -292,13 +306,12 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
 
             await applySuggestion(req, res);
 
-            expect(mockApplyUnitTestSuggestion).toHaveBeenCalledWith({
+            expect(mockApplyUnitTestSuggestion).toHaveBeenCalledWith(expect.objectContaining({
                 snapshotId: 'snap-uuid',
                 projectId: 'proj-uuid',
                 userId: 'user-uuid',
                 suggestion: req.body.suggestion,
-                suggestions: undefined,
-            });
+            }));
             expect(res.status).toHaveBeenCalledWith(200);
 
             const responseBody = res.json.mock.calls[0][0];

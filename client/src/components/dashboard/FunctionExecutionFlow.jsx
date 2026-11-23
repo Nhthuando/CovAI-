@@ -315,11 +315,11 @@ export default function FunctionExecutionFlow({
       >
         <div style={{ display: "flex", gap: 6 }}>
           {[
-            { id: "all", label: `All (${totalFns})` },
-            { id: "called", label: `✓ Called (${calledFns})`, color: "#38bdf8" },
+            { id: "all", label: `All · ${totalFns}` },
+            { id: "called", label: `✓ Called · ${calledFns}`, color: "#38bdf8" },
             {
               id: "uncalled",
-              label: `⚑ Uncalled (${uncalledFns})`,
+              label: `⚑ Uncalled (0 hits) · ${uncalledFns}`,
               color: "#fbbf24",
             },
           ].map((tab) => (
@@ -410,7 +410,7 @@ export default function FunctionExecutionFlow({
         >
           {cleanedFunctions.length === 0
             ? "No function data available. Click 'Run Analysis Unit' to analyze Jest/Vitest."
-            : "No functions match the selected filter."}
+            : "No matching functions found for the filter."}
         </div>
       )}
 

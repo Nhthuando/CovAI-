@@ -1,5 +1,10 @@
 import crypto from 'crypto';
 import { extractTestRequests } from './testSourceParser.service.js';
+import {
+    convertJestMocksAndStaticImportsToEsm,
+    repairSupertestAppImport,
+    resolveRelativeSpecifier,
+} from './esmTestRepair.service.js';
 
 /**
  * Supertest Post Processor Service
@@ -83,11 +88,17 @@ export const processSingleSupertestTest = (rawTest, { projectId, snapshotId }) =
     const requests = testBlocks.map(block => ({
         scenarioId: crypto.randomUUID(),
         testName: block.testName,
+        suiteName: block.suiteName || "",
         enabled: true,
         userEdited: false,
         origin: "AI_GENERATED",
         method: block.method,
         path: block.path,
+        ...(block.expectedStatus != null ? { expectedStatus: block.expectedStatus } : {}),
+        ...(Array.isArray(block.expectedStatuses) && block.expectedStatuses.length > 0
+            ? { expectedStatuses: block.expectedStatuses }
+            : {}),
+        line: block.line || 1,
         createdAt: new Date().toISOString()
     }));
 
@@ -137,41 +148,107 @@ export const processSupertestTests = (responseText, context) => {
         }
     }
 
+    const rawModuleType = context?.moduleType === "commonjs" || context?.moduleType === "esm"
+        ? context.moduleType
+        : null;
+    const sourceCode = Array.isArray(context?.sourceCode) ? context.sourceCode : [];
+    const rootDir = context?.rootDir || null;
+    const backendSubdir = context?.backendSubdir ? String(context.backendSubdir).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "";
+
     for (const rawTest of parsedData.tests) {
         const processed = processSingleSupertestTest(rawTest, context);
         if (processed) {
+            // Relocate root "tests/integration/..." into "<backendSubdir>/tests/integration/..." for monorepos
+            if (backendSubdir && /^tests\/integration\//i.test(processed.filePath)) {
+                processed.filePath = `${backendSubdir}/${processed.filePath}`;
+            }
+
             let fileContent = processed.content;
-            
-            // Ensure test files use import if needed (hotfix for Gemini hallucinating require in ESM)
-            if (fileContent.includes("require('supertest')")) {
-                fileContent = fileContent.replace(/const (\w+) = require\('supertest'\);?/g, "import $1 from 'supertest';");
-            }
-            if (fileContent.includes("require(")) {
-                fileContent = fileContent.replace(/const (\w+) = require\((['"])([^'"]+)(['"])\);?/g, "import $1 from $2$3$4;");
+
+            // Detect hybrid CJS/ESM when rawModuleType is unspecified
+            const moduleType = rawModuleType || (
+                /\brequire\s*\(\s*['"]/.test(fileContent) && !/from\s+['"]@jest\/globals['"]/.test(fileContent)
+                    ? "commonjs"
+                    : "esm"
+            );
+
+            if (moduleType === "commonjs") {
+                // Target project uses CommonJS Jest: convert any ES module imports emitted by AI to require()
+                fileContent = fileContent.replace(
+                    /^\s*import\s+\{\s*jest[^}]*\}\s+from\s+['"]@jest\/globals['"];?\s*\r?\n?/gm,
+                    ""
+                );
+                fileContent = fileContent.replace(
+                    /^\s*import\s+(\w+)\s+from\s+(['"][^'"]+['"]);?/gm,
+                    "const $1 = require($2);"
+                );
+                fileContent = fileContent.replace(
+                    /^\s*import\s+\*\s+as\s+(\w+)\s+from\s+(['"][^'"]+['"]);?/gm,
+                    "const $1 = require($2);"
+                );
+                fileContent = fileContent.replace(
+                    /^\s*import\s+\{([^}]+)\}\s+from\s+(['"][^'"]+['"]);?/gm,
+                    "const {$1} = require($2);"
+                );
+                fileContent = repairSupertestAppImport(fileContent, {
+                    testFilePath: processed.filePath,
+                    moduleType: "commonjs",
+                    sourceCode,
+                    rootDir,
+                });
+            } else {
+                // ESM or default: convert stray CJS require('...') and fix app import / ESM mock hoisting
+                if (fileContent.includes("require(")) {
+                    fileContent = fileContent.replace(/const\s+(\w+)\s*=\s*require\(\s*(['"][^'"]+['"])\s*\)\s*;?/g, "import $1 from $2;");
+                    fileContent = fileContent.replace(/const\s+\{([^}]+)\}\s*=\s*require\(\s*(['"][^'"]+['"])\s*\)\s*;?/g, "import { $1 } from $2;");
+                }
+
+                // Fix relative path depth (e.g. "../../server/src/index.js" -> "../../src/index.js") & compose routes if entry doesn't export app
+                fileContent = repairSupertestAppImport(fileContent, {
+                    testFilePath: processed.filePath,
+                    moduleType: "esm",
+                    sourceCode,
+                    rootDir,
+                });
+
+                // Convert static local/mocked imports into `await import(...)` AFTER `await jest.unstable_mockModule(...)`
+                // and auto-inject ESM Prisma / `@google/generative-ai` stubs if needed
+                fileContent = convertJestMocksAndStaticImportsToEsm(fileContent, {
+                    testFilePath: processed.filePath,
+                    sourceCode,
+                    rootDir,
+                });
+
+                // Ensure any leftover relative specifiers carry valid extensions
+                fileContent = fileContent.replace(
+                    /(\bimport\s*\(\s*)(['"])(\.[^'"]+)\2(\s*\))/g,
+                    (m, p1, q, spec, p4) => `${p1}${q}${resolveRelativeSpecifier(spec, processed.filePath, sourceCode, rootDir)}${q}${p4}`
+                );
             }
 
-            // ESM compatibility: jest global is not available in ESM mode.
-            // Add `import { jest } from '@jest/globals'` if jest.mock/jest.fn/etc is used without importing jest.
-            if (fileContent.match(/\bjest\.(mock|fn|spyOn|clearAllMocks|resetAllMocks|restoreAllMocks)\b/) &&
-                !fileContent.includes("from '@jest/globals'") &&
-                !fileContent.includes('from "@jest/globals"')) {
-                // Find the position after the last import statement to insert the jest import
-                const lines = fileContent.split('\n');
-                let lastImportIndex = -1;
-                for (let i = 0; i < lines.length; i++) {
-                    if (lines[i].trimStart().startsWith('import ')) {
-                        lastImportIndex = i;
-                    }
-                }
-                const jestImport = "import { jest } from '@jest/globals';";
-                if (lastImportIndex >= 0) {
-                    lines.splice(lastImportIndex + 1, 0, jestImport);
-                } else {
-                    lines.unshift(jestImport);
-                }
-                fileContent = lines.join('\n');
+            // Re-extract requests from finalized file content so stored metadata stays accurate
+            const finalizedBlocks = extractTestRequests(fileContent, processed.filePath);
+            if (finalizedBlocks.length > 0) {
+                const existingMeta = JSON.parse(processed.metaJson || "{}");
+                const prevRequests = Array.isArray(existingMeta.requests) ? existingMeta.requests : [];
+                existingMeta.requests = finalizedBlocks.map((block, idx) => ({
+                    scenarioId: prevRequests[idx]?.scenarioId || crypto.randomUUID(),
+                    testName: block.testName,
+                    suiteName: block.suiteName || "",
+                    enabled: true,
+                    userEdited: false,
+                    origin: "AI_GENERATED",
+                    method: block.method,
+                    path: block.path,
+                    ...(block.expectedStatus != null ? { expectedStatus: block.expectedStatus } : {}),
+                    ...(Array.isArray(block.expectedStatuses) && block.expectedStatuses.length > 0
+                        ? { expectedStatuses: block.expectedStatuses }
+                        : {}),
+                    line: block.line || 1,
+                    createdAt: prevRequests[idx]?.createdAt || new Date().toISOString(),
+                }));
+                processed.metaJson = JSON.stringify(existingMeta);
             }
-
             processed.content = fileContent;
             allTests.push(processed);
         }

@@ -4,6 +4,7 @@ import path from "path";
 import { ServiceError } from "../utils/serviceError.js";
 import { generateInputHash, reuseCachedContext, saveCacheRecord } from "./aiContextCache.service.js";
 import { currentProjectOperation, operationSnapshot } from "./projectOperationWorkspace.service.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 // Helper to collect files recursively
 function collectFiles(dir, isMatch, rootDir = dir) {
@@ -16,10 +17,15 @@ function collectFiles(dir, isMatch, rootDir = dir) {
                 item === "node_modules" ||
                 item === ".git" ||
                 item === "coverage" ||
+                item === "coverage-report" ||
                 item === "dist" ||
                 item === "build" ||
                 item === ".covai-temp" ||
-                item === "test-results"
+                item === "test-results" ||
+                item === "playwright-report" ||
+                item === ".nyc_output" ||
+                item === ".next" ||
+                item === ".nuxt"
             ) continue;
 
             const itemPath = path.join(dir, item);
@@ -28,6 +34,7 @@ function collectFiles(dir, isMatch, rootDir = dir) {
             if (stat.isDirectory()) {
                 results = results.concat(collectFiles(itemPath, isMatch, rootDir));
             } else {
+                if (/\.min\.[cm]?js$|\.bundle\.[cm]?js$/i.test(item)) continue;
                 if (isMatch(item, itemPath)) {
                     // Limit file size to avoid loading huge minified or generated files
                     if (stat.size <= 500 * 1024) { // max 500KB per file
@@ -50,11 +57,29 @@ function collectFiles(dir, isMatch, rootDir = dir) {
 /**
  * SCRUM-380: Load source code
  */
-export const loadSourceCode = async (snapshotId) => {
-    const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } }));
-    if (!snapshot || !snapshot.rootDir) {
-        throw new ServiceError("Snapshot root directory not found", 404);
+const sourceCodeMemoryCache = new Map();
+
+export const clearSourceCodeCache = (snapshotId = null) => {
+    if (snapshotId) {
+        sourceCodeMemoryCache.delete(snapshotId);
+    } else {
+        sourceCodeMemoryCache.clear();
     }
+};
+
+export const loadSourceCode = async (snapshotId, knownRootDir = null) => {
+    if (snapshotId && sourceCodeMemoryCache.has(snapshotId)) {
+        return sourceCodeMemoryCache.get(snapshotId);
+    }
+    let rootDirToUse = knownRootDir;
+    if (!rootDirToUse) {
+        const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } }));
+        if (!snapshot || !snapshot.rootDir) {
+            throw new ServiceError("Snapshot root directory not found", 404);
+        }
+        rootDirToUse = snapshot.rootDir;
+    }
+    const effectiveRootDir = resolveProjectRoot(rootDirToUse) || rootDirToUse;
 
     const isSourceMatch = (fileName, filePath) => {
         const ext = path.extname(fileName).toLowerCase();
@@ -63,7 +88,11 @@ export const loadSourceCode = async (snapshotId) => {
         return validExts.includes(ext) && !isTest;
     };
 
-    return collectFiles(snapshot.rootDir, isSourceMatch);
+    const files = collectFiles(effectiveRootDir, isSourceMatch);
+    if (snapshotId) {
+        sourceCodeMemoryCache.set(snapshotId, files);
+    }
+    return files;
 };
 
 /**
@@ -74,6 +103,7 @@ export const loadTestFiles = async (snapshotId) => {
     if (!snapshot || !snapshot.rootDir) {
         throw new ServiceError("Snapshot root directory not found", 404);
     }
+    const effectiveRootDir = resolveProjectRoot(snapshot.rootDir) || snapshot.rootDir;
 
     const isTestMatch = (fileName, filePath) => {
         const ext = path.extname(fileName).toLowerCase();
@@ -82,7 +112,7 @@ export const loadTestFiles = async (snapshotId) => {
         return validExts.includes(ext) && isTest;
     };
 
-    return collectFiles(snapshot.rootDir, isTestMatch);
+    return collectFiles(effectiveRootDir, isTestMatch);
 };
 
 /**

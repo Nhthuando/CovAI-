@@ -22,4 +22,31 @@ export const canCompareAssessments = (before, after) => {
     if (!before?.sourceHash || !before?.scopeHash || !before?.configHash) reasonCodes.push('MISSING_IDENTITY');
     return { comparable: !reasonCodes.length, reasonCodes };
 };
-export const coverageSummaryFor = measurement => ({ status: measurement?.status || 'LEGACY_UNVERIFIED', linesPct: null, branchesPct: null, statementsPct: null, functionsPct: null, tiers: measurement?.tiers || {} });
+export const coverageSummaryFor = measurement => {
+    const tiers = measurement?.tiers || {};
+    const metricKeys = ['lines', 'branches', 'statements', 'functions'];
+    const totals = Object.fromEntries(metricKeys.map(k => [k, { covered: 0, total: 0 }]));
+    let hasCounters = false;
+    for (const tier of Object.values(tiers)) {
+        if (!tier?.counters) continue;
+        for (const k of metricKeys) {
+            const c = tier.counters[k];
+            if (c && Number.isFinite(c.total) && c.total > 0) {
+                hasCounters = true;
+                totals[k].covered += Number(c.covered || 0);
+                totals[k].total += Number(c.total || 0);
+            }
+        }
+    }
+    const pctFor = (k) => hasCounters && totals[k].total > 0
+        ? Number(((totals[k].covered * 100) / totals[k].total).toFixed(1))
+        : null;
+    return {
+        status: measurement?.status || 'LEGACY_UNVERIFIED',
+        linesPct: pctFor('lines'),
+        branchesPct: pctFor('branches'),
+        statementsPct: pctFor('statements'),
+        functionsPct: pctFor('functions'),
+        tiers,
+    };
+};

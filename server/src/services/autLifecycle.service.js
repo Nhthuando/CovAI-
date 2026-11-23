@@ -14,7 +14,9 @@ import { selectFrontendPackage } from './projectRuntimePlan.service.js';
 import { prepareProjectDependencies, redactRuntimeOutput } from './projectDependencies.service.js';
 import { dockerRunner } from './dockerRunner.service.js';
 import { ServiceError } from '../utils/serviceError.js';
-import { autStartupCommand } from "../utils/autStartupCommand.js";
+import { autStartupCommand, inferNodeEntryFile } from "../utils/autStartupCommand.js";
+import { isolatedProcessEnvironment } from '../utils/isolatedProcessEnvironment.js';
+import { isOwnedIsolatedDatabaseHost } from './systemRuntimeResources.service.js';
 
 const safeAddJobLog = async (jobId, level, message) => {
   if (!jobId) return;
@@ -62,7 +64,7 @@ export const isPortInUse = async (port, host = "localhost", timeoutMs = 1000) =>
 };
 
 /**
- * Tầng 1: Socket Check.
+ * Tier 1: Socket Check.
  * Polls the port until it opens or times out.
  */
 export const waitForPortOpen = async (port, timeoutMs = 45000, host = "localhost", intervalMs = 500, isExited = () => false) => {
@@ -77,7 +79,7 @@ export const waitForPortOpen = async (port, timeoutMs = 45000, host = "localhost
 };
 
 /**
- * Tầng 2: HTTP Verification.
+ * Tier 2: HTTP Verification.
  * Sends a GET request to verify server responsiveness.
  */
 export const verifyHttpHealth = (port, pathName = "/", host = "127.0.0.1", timeoutMs = 5000) => {
@@ -121,7 +123,7 @@ export const verifyHttpHealth = (port, pathName = "/", host = "127.0.0.1", timeo
 /** Wait for HTTP readiness after the port opens (dev servers may still be compiling). */
 export const waitForHttpHealthy = async ({
   port, healthPath = "/", timeoutMs = 45000, intervalMs = 500,
-  probeTimeoutMs = 5000, isExited = () => false, onRetry = async () => {}, allowHttpNotFound = false,
+  probeTimeoutMs = 5000, isExited = () => false, onRetry = async () => {}, allowHttpNotFound = false, allowHttpClientError = false,
 }) => {
   const deadline = Date.now() + timeoutMs;
   let result = { healthy: false, status: 0, error: "HTTP readiness timeout" };
@@ -130,7 +132,7 @@ export const waitForHttpHealthy = async ({
     if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
     result = await verifyHttpHealth(port, healthPath, "127.0.0.1", Math.max(1, Math.min(probeTimeoutMs, deadline - Date.now())));
     if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
-    if (result.healthy && (result.status < 400 || allowHttpNotFound && result.status===404)) return result;
+    if (result.healthy && (result.status < 400 || allowHttpNotFound && result.status===404 || allowHttpClientError && ![408,429].includes(result.status))) return result;
     if (result.status >= 400 && result.status < 500 && ![408, 429].includes(result.status)) break;
     if (attempts++ === 0) await onRetry(result);
     const remaining = deadline - Date.now();
@@ -270,11 +272,14 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
     await safeAddJobLog(jobId,'INFO','[AUT Seed] Database seed is reserved for the isolated Full Stack database; frontend execution does not run it.');
     return {executed:false,reason:'ISOLATED_DATABASE_REQUIRED'};
   }
-  let database;
-  try{database=new URL(env.DATABASE_URL);}catch{throw new ServiceError('Seed requires the isolated test database URL',422);}
-  const sqlite=database.protocol==='file:' && env.SQLITE_DB_PATH && env.DATABASE_URL==='file:'+env.SQLITE_DB_PATH.replaceAll('\\','/') && path.basename(env.SQLITE_DB_PATH)==='covai_test.db';
-  if(sqlite)containedPath(repositoryRoot,path.relative(repositoryRoot,env.SQLITE_DB_PATH));
-  else if(!['mysql:','postgres:','postgresql:','mongodb:'].includes(database.protocol)||!['127.0.0.1','localhost','[::1]'].includes(database.hostname)||database.pathname!=='/covai_test')throw new ServiceError('Seed requires the isolated test database',422);
+  const isMockDb = env.COVAI_MOCK_DB === 'true';
+  if (!isMockDb) {
+    let database;
+    try{database=new URL(env.DATABASE_URL);}catch{throw new ServiceError('Seed requires the isolated test database URL',422);}
+    const sqlite=database.protocol==='file:' && env.SQLITE_DB_PATH && env.DATABASE_URL==='file:'+env.SQLITE_DB_PATH.replaceAll('\\','/') && path.basename(env.SQLITE_DB_PATH)==='covai_test.db';
+    if(sqlite)containedPath(repositoryRoot,path.relative(repositoryRoot,env.SQLITE_DB_PATH));
+    else if(!['mysql:','postgres:','postgresql:','mongodb:'].includes(database.protocol)||!isOwnedIsolatedDatabaseHost(database.hostname)||database.pathname!=='/covai_test')throw new ServiceError('Seed requires the isolated test database',422);
+  }
   const runtime=await (dependencies.prepare || prepareProjectDependencies)({directory:chosenDir,repositoryRoot,jobId,signal,env});
   let command=`${runtime.command} run ${seedScript}`;
   if(seedScript==='prisma db seed') {
@@ -282,7 +287,7 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
     command=`"${process.execPath}" "${cli}" db seed`;
   }
   await safeAddJobLog(jobId,'INFO',`[AUT Seed] Running ${seedScript} against the isolated test database...`);
-  const result=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command,forceHost:true,timeoutMs:60000,jobId,signal,env:{...runtime.env,...env,NODE_ENV:'test'}});
+  const result=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command,forceHost:true,isolatedEnv:true,timeoutMs:60000,jobId,signal,env:{...runtime.env,...env,NODE_ENV:'test'}});
   if(!result.success)throw new ServiceError(`Application seed failed. ${redactRuntimeOutput(result.stderr || result.stdout,env)}`,422);
   return {executed:true,success:true,script:seedScript};
 };
@@ -290,13 +295,30 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
 /**
  * Starts the application under test (AUT) web server and performs 2-tier healthcheck.
  */
-export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false }) => {
+// Imported projects often pin tooling that no longer runs on the host's Node.js
+// version. Name the cause up front instead of leaving users with a stack trace.
+export const autRuntimeCompatibilityHint = (output = "") => {
+  const text = String(output);
+  const node = process.versions.node;
+  if (/No such module: http_parser|process\.binding\(['"]http_parser/.test(text)) {
+    return `Cause: the project's dev server uses a legacy package (for example an old react-scripts / webpack-dev-server) that does not run on Node.js ${node}. Upgrade the project's build tooling, or run CovAI's server on an older Node.js version supported by the project.`;
+  }
+  if (/ERR_OSSL_EVP_UNSUPPORTED|digital envelope routines::unsupported/.test(text)) {
+    return `Cause: the project's build tooling (webpack 4 or older) is not compatible with the OpenSSL 3 used by Node.js ${node}. Upgrade the project's tooling or set NODE_OPTIONS=--openssl-legacy-provider in the System Test environment.`;
+  }
+  if (/The engine "node" is incompatible|Unsupported engine|requires Node\.?js? (?:version )?[<>=~^]/i.test(text)) {
+    return `Cause: the project declares a Node.js engine range that excludes the host version ${node}.`;
+  }
+  return "";
+};
+
+export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, allowNodeEntry = preferStart, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false, allowHttpClientError = false }) => {
   if (signal?.aborted) throw new ServiceError('AUT startup canceled',409);
   const selected = !preferStart ? selectFrontendPackage({rootDir:snapshotDir}) : null;
   const candidateDirs = selected ? [path.relative(snapshotDir,selected)] : ["", "client", "frontend", "web", "ui", "app"];
   let chosenScript, chosenMetadata;
   let chosenDir = null;
-  let command = null;
+  let entryFallback;
 
   for (const cand of candidateDirs) {
     const targetDir = cand ? path.join(snapshotDir, cand) : snapshotDir;
@@ -314,33 +336,42 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     const names=preferStart ? ['start','dev','serve','preview'] : ['dev','serve','start','preview'];
     const name=names.find(value=>typeof scripts[value]==='string');
     if (name) {chosenDir=targetDir;chosenScript=name;chosenMetadata=pkg;break;}
+    if (allowNodeEntry && !entryFallback) {
+      const entry=inferNodeEntryFile(targetDir,pkg);
+      if (entry) entryFallback={directory:targetDir,entry};
+    }
   }
 
+  const entry=chosenScript?null:entryFallback?.entry;
+  if (entry) chosenDir=entryFallback.directory;
   if (!chosenDir) {
-    await safeAddJobLog(jobId, "INFO", "[AUT Lifecycle] No web server script found in package.json.");
-    return { started: false, port };
+    await safeAddJobLog(jobId, "INFO", allowNodeEntry ? "[AUT Lifecycle] No web server script or Node server entry file found." : "[AUT Lifecycle] No web server script found in package.json.");
+    return { started: false, port, recentOutput: () => '' };
   }
   const dirLabel = chosenDir === snapshotDir ? "root" : path.relative(snapshotDir, chosenDir).replace(/\\/g, "/");
   const runtime=await (dependencies.prepare || prepareProjectDependencies)({directory:chosenDir,repositoryRoot,jobId,signal,env});
-  command=autStartupCommand(chosenScript,chosenMetadata.scripts[chosenScript],port,runtime);
+  const script=chosenMetadata?.scripts[chosenScript];
+  const command=entry?'node':autStartupCommand(chosenScript,script,port,runtime);
   const startupEnv={...runtime.env,...env};
-  const needsBuild=chosenScript==='preview' || /\bnext\s+start\b|\bnode\s+["']?(?:\.\/)?(?:dist|build)[/\\]/.test(chosenMetadata.scripts[chosenScript]);
+  const needsBuild=chosenScript==='preview' || /\bnext\s+start\b|\bnode\s+["']?(?:\.\/)?(?:dist|build)[/\\]/.test(script);
   if(needsBuild) {
     if(typeof chosenMetadata.scripts.build!=='string')throw new ServiceError('The application starts from build output but has no build script. Include a build script or a development server script.',422);
     await safeAddJobLog(jobId,'INFO','[AUT Lifecycle] Building application before preview/production startup...');
-    const built=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command:`${runtime.command} run build`,jobId,forceHost:true,timeoutMs:600000,signal,env:{...startupEnv,NODE_ENV:'development'}});
+    const built=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command:`${runtime.command} run build`,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,env:{...startupEnv,NODE_ENV:'development'}});
     if(!built.success)throw new ServiceError(`Application build failed. ${redactRuntimeOutput(built.stderr || built.stdout,startupEnv)}`,422);
   }
   if(signal?.aborted)throw new ServiceError('AUT startup canceled',409);
 
-  await safeAddJobLog(jobId, "INFO", `[AUT Lifecycle] Starting AUT server (Command: "${command}" in ${dirLabel}) on port ${port}...`);
+  const args=entry?['./'+entry]:[];
+  const commandLabel=[command,...args].join(' ');
+  await safeAddJobLog(jobId, "INFO", `[AUT Lifecycle] Starting AUT server (Command: "${commandLabel}" in ${dirLabel}) on port ${port}...`);
 
-  const child = spawn(command, {
-    shell: true,
+  const child = spawn(command, args, {
+    shell: !entry,
     windowsHide: true,
     cwd: chosenDir,
     env: {
-      ...process.env,
+      ...isolatedProcessEnvironment(),
       PORT: String(port),
       NODE_ENV: "development",
       BROWSER: "none",
@@ -372,7 +403,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     exitCode = code;
   });
 
-  // Tầng 1: Socket Check (polling waitForPortOpen)
+  // Tier 1: Socket Check (polling waitForPortOpen)
   const readinessDeadline = Date.now() + healthTimeoutMs;
   try {
     await waitForPortOpen(port, healthTimeoutMs, "127.0.0.1", 500, () => serverExited);
@@ -380,19 +411,20 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     await stopAutServer(child.pid, port, jobId);
     if (serverExited) {
       const details = formatAutStartupFailure(stderrBuffer || stdoutBuffer, env);
-      const msg = `AUT server process exited prematurely with code ${exitCode}.${details ? ` Details: ${details}` : ""}`;
+      const hint = autRuntimeCompatibilityHint(stderrBuffer || stdoutBuffer);
+      const msg = `AUT server process exited prematurely with code ${exitCode}.${hint ? ` ${hint}` : ""}${details ? ` Details: ${details}` : ""}`;
       await safeAddJobLog(jobId, "ERROR", `[AUT Lifecycle] ${msg}`);
       throw new Error(msg);
     }
     throw error;
   }
 
-  // Tầng 2: HTTP Verification
+  // Tier 2: HTTP Verification
   let httpResult;
   try {
     httpResult = requireHealthy
       ? await waitForHttpHealthy({
-          port, healthPath, timeoutMs: Math.max(1, readinessDeadline - Date.now()), allowHttpNotFound,
+          port, healthPath, timeoutMs: Math.max(1, readinessDeadline - Date.now()), allowHttpNotFound, allowHttpClientError,
           isExited: () => serverExited,
           onRetry: result => safeAddJobLog(jobId, "INFO", `[AUT Healthcheck] Port ${port} is open; waiting for HTTP readiness (${result.error || `HTTP ${result.status}`})...`),
         })
@@ -417,6 +449,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     port,
     command,
     httpStatus: httpResult.status,
+    recentOutput: (maxChars = 1200) => redactRuntimeOutput(`${stdoutBuffer}\n${stderrBuffer}`.trim(), env).slice(-maxChars),
   };
 };
 
@@ -427,7 +460,7 @@ export const formatAutStartupFailure = (output, env = {}) => {
   }
   clean = clean.replace(/(?:mysql|postgres(?:ql)?):\/\/[^\s'"`]+/gi, '[redacted database URL]');
   if (/Neither apiKey nor config.authenticator provided/.test(clean)) {
-    return 'Stripe could not start because its test API key is missing. Set STRIPE_SECRET_KEY to a Stripe test key in the backend .env.test file and retry Full Stack. Choose Frontend Dev Server to test the UI without the payment service.';
+    return 'Stripe could not start because its test API key is missing. Set STRIPE_SECRET_KEY to a Stripe test key in the backend .env.test file and retry Full Stack. Configure this test-only credential before running Full Stack tests.';
   }
   const error = clean.search(/(?:^|\n)(?:Error|\w+Error)(?:\s*\[[^\]]+\])?:/);
   return (error >= 0 ? clean.slice(error).trim() : clean).slice(0, 2000);

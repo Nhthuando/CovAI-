@@ -1,3 +1,5 @@
+import { systemTestEnvironmentDirectory } from './systemTestEnvironmentRoot.service.js';
+import { containedPath } from './fullSystemConfig.service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { dockerRunner } from './dockerRunner.service.js';
@@ -5,8 +7,11 @@ import { ServiceError } from '../utils/serviceError.js';
 import { parse } from 'dotenv';
 import { prepareProjectDependencies } from './projectDependencies.service.js';
 import {resolveProjectPrismaCli} from '../utils/projectPrismaCli.js';
+import { isOwnedIsolatedDatabaseHost } from './systemRuntimeResources.service.js';
 
 export const readApplicationEnvironment = directory => {
+    const original=systemTestEnvironmentDirectory(directory);
+    if(original!==directory)return readAssessmentTestEnvironment(directory);
     const env = {};
     for (const name of ['.env','.env.test']) {
         const file=path.join(directory,name);
@@ -18,21 +23,27 @@ export const readApplicationEnvironment = directory => {
 // Measurement copies exclude credential files. Read the explicitly configured
 // test environment from the owned original snapshot into process memory only.
 export const readAssessmentTestEnvironment = directory => {
-    const file = path.join(directory, '.env.test');
-    return fs.existsSync(file) ? parse(fs.readFileSync(file, 'utf8')) : {};
+    directory=systemTestEnvironmentDirectory(directory);
+    const file = containedPath(directory, '.env.test');
+    if(!fs.existsSync(file))return {};
+    if(!fs.statSync(file).isFile() || fs.statSync(file).size>64*1024)throw new ServiceError('The test environment file must be a text file up to 64 KiB.',422);
+    return parse(fs.readFileSync(file,'utf8'));
 };
 
 export const prepareFullSystemPackage = async ({directory, repositoryRoot=directory, env={}, jobId, database = false, signal, schemaStrategy, prismaSchema}) => {
-    if(database && schemaStrategy==='push') {
+    const isMockDb = env.COVAI_MOCK_DB === 'true';
+    if(database && schemaStrategy==='push' && !isMockDb) {
         let url;try{url=new URL(env.DATABASE_URL);}catch{}
         const sqlite=url?.protocol==='file:' && env.SQLITE_DB_PATH && env.DATABASE_URL==='file:'+env.SQLITE_DB_PATH.replaceAll('\\','/') && path.resolve(env.SQLITE_DB_PATH).startsWith(path.resolve(repositoryRoot)+path.sep) && path.basename(env.SQLITE_DB_PATH)==='covai_test.db';
-        const mongo=url?.protocol==='mongodb:' && ['127.0.0.1','localhost'].includes(url.hostname) && url.pathname==='/covai_test';
-        if(!sqlite && !mongo && (!url || !['127.0.0.1','localhost'].includes(url.hostname) || url.pathname!=='/covai_test' || url.username!=='covai'))throw new ServiceError('Schema synchronization requires the owned isolated test database',422);
+        const mongo=url?.protocol==='mongodb:' && isOwnedIsolatedDatabaseHost(url.hostname) && url.pathname==='/covai_test';
+        if(!sqlite && !mongo && (!url || !isOwnedIsolatedDatabaseHost(url.hostname) || url.pathname!=='/covai_test' || url.username!=='covai'))throw new ServiceError('Schema synchronization requires the owned isolated test database',422);
     }
     const pkg = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
     const run = async (command, label) => {
-        const result = await dockerRunner.run({snapshotPath:directory,command,jobId,forceHost:true,timeoutMs:600000,signal,
-            env:{...env,NODE_ENV:'development',PATH:process.env.PATH || '',NODE_PATH:''}});
+        const cleanEnv = { ...env };
+        delete cleanEnv.NODE_OPTIONS;
+        const result = await dockerRunner.run({snapshotPath:directory,command,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,
+            env:{...cleanEnv,NODE_ENV:'development',PATH:process.env.PATH || '',NODE_PATH:''}});
         if (!result.success) {
             let detail = [result.stderr,result.stdout].filter(Boolean).join('\n').replace(/\x1b\[[0-9;]*m/g,'').trim();
             for (const [key,value] of Object.entries(env)) if (value && /PASSWORD|SECRET|TOKEN|KEY|URL/.test(key)) detail=detail.replaceAll(value,'[redacted]');
@@ -58,8 +69,9 @@ export const prepareFullSystemPackage = async ({directory, repositoryRoot=direct
     const content=fs.readFileSync(schema,'utf8');
     const datasource=content.match(/datasource\s+\w+\s*\{([\s\S]*?)\}/)?.[1] || '';
     const variable=datasource.match(/\burl\s*=\s*env\("([A-Za-z_]\w*)"\)/)?.[1];
-    if (!variable) throw new ServiceError('Automatic Prisma database setup requires the datasource URL to use an environment variable, such as env("DATABASE_URL"). Configure the schema for the isolated test database.',422);
-    env[variable]=env.DATABASE_URL;
+    if (!variable && !isMockDb) throw new ServiceError('Automatic Prisma database setup requires the datasource URL to use an environment variable, such as env("DATABASE_URL"). Configure the schema for the isolated test database.',422);
+    if (variable) env[variable]=env.DATABASE_URL;
+    if (isMockDb) return;
     const cli=resolveProjectPrismaCli(directory,repositoryRoot);
     const command=`"${process.execPath}" "${cli}"`;
     await run(`${command} generate --schema "${schema}"`,'Prisma Client generation');

@@ -1,53 +1,82 @@
 import {
-  DEMO_PORTFOLIO_PROJECTS,
-  DEMO_CROSS_PROJECT_ATTENTION_QUEUE,
-  DEMO_PORTFOLIO_ACTIVITY_FEED,
-} from "./portfolioDashboard.mock.js";
-import {
   computePortfolioExecutiveKpis,
   computeBenchmarkAndQuadrantData,
 } from "./portfolioDashboard.selectors.js";
 import { PORTFOLIO_CONFIG } from "./portfolioDashboard.config.js";
 
 /**
- * Normalizes raw API projects or Demo Showcase dataset into PortfolioVM
+ * Normalizes real backend API projects into PortfolioVM
  */
 export function adaptPortfolioDashboard({
   rawProjects = [],
   perProjectSummaries = {},
+  liveOverviewData = null,
   favorites = [],
-  dataMode = "live",
 } = {}) {
-  // ── 1. Demo Mode Showcase ────────────────────────────────────────────────
-  if (dataMode === "demo") {
-    const projects = DEMO_PORTFOLIO_PROJECTS.map((p) => ({
-      ...p,
-      isPinned: favorites.includes(p.id) || p.isPinned,
-    }));
+  const payload = liveOverviewData?.data || liveOverviewData;
 
-    const kpis = computePortfolioExecutiveKpis(projects);
-    const analytics = computeBenchmarkAndQuadrantData(projects);
-    const totalSnapshotsCount = projects.reduce(
-      (acc, p) => acc + (p.snapshotId ? 1 : 0),
-      14 // Account baseline snapshots
-    );
+  // ── 1. Full-Stack Live Overview API ─────────────────────────────────────
+  if (payload && Array.isArray(payload.projects)) {
+    const projects = payload.projects.map((p) => {
+      const lifecycleStatus = p.lifecycleStatus || "NOT_STARTED";
+      return {
+        ...p,
+        lifecycleStatus,
+        isExcludedFromActiveKpis:
+          p.isExcludedFromActiveKpis !== undefined
+            ? Boolean(p.isExcludedFromActiveKpis)
+            : lifecycleStatus !== "DOING",
+        isPinned: favorites.includes(p.id) || Boolean(p.isPinned),
+      };
+    });
+
+    const doingProjects = projects.filter((p) => p.lifecycleStatus === "DOING");
+    const kpis = payload.activeKpis || computePortfolioExecutiveKpis(doingProjects);
+    const analytics = payload.analytics || computeBenchmarkAndQuadrantData(doingProjects);
+    const attentionQueue = payload.attentionQueue || [];
+    const activityFeed = payload.activityFeed || [];
+    const runnerInfrastructure = payload.runnerInfrastructure || {
+      activeWorkers: 0,
+      runningJobsCount: 0,
+      queuedJobsCount: 0,
+      isRedisConnected: false,
+    };
+    const timeRoiAnalytics = payload.timeRoiAnalytics || kpis?.timeRoi || null;
+    const lifecycleCounts = payload.lifecycleCounts || {
+      DOING: 0,
+      NOT_STARTED: 0,
+      PAUSED: 0,
+      COMPLETED: 0,
+      CANCELLED: 0,
+    };
+    const provenance = payload.provenance || {
+      dataSource: "POSTGRESQL_LIVE",
+      aggregatedAt: new Date().toISOString(),
+    };
+
+    const activeProjectsCount =
+      payload.activeProjectsCount ??
+      projects.filter((p) => p.lifecycleStatus === "DOING").length;
 
     return {
-      dataMode: "demo",
       projects,
       kpis,
       analytics,
-      attentionQueue: DEMO_CROSS_PROJECT_ATTENTION_QUEUE,
-      activityFeed: DEMO_PORTFOLIO_ACTIVITY_FEED,
+      timeRoiAnalytics,
+      attentionQueue,
+      activityFeed,
+      runnerInfrastructure,
+      lifecycleCounts,
+      provenance,
       metadata: {
-        activeProjectsCount: projects.length,
-        totalSnapshotsCount,
-        lastSyncedAt: new Date().toISOString(),
+        activeProjectsCount,
+        totalSnapshotsCount: projects.filter((p) => p.snapshotId).length,
+        lastSyncedAt: provenance.aggregatedAt || payload.aggregatedAt || new Date().toISOString(),
       },
     };
   }
 
-  // ── 2. Live State Mode ───────────────────────────────────────────────────
+  // ── 2. Fallback Live State (Empty or rawProjects) ────────────────────────
   const projects = (rawProjects || []).map((rp) => {
     const summary = perProjectSummaries[rp.id] || {};
     const unitSummary = summary.unit || {};
@@ -57,20 +86,28 @@ export function adaptPortfolioDashboard({
     const unitTotal = Number(unitSummary.totalTests || 0);
     const unitPassed = Number(unitSummary.passedTests || 0);
     const unitFailed = Number(unitSummary.failedTests || 0);
-    const unitCov = Number(unitSummary.coverageMetrics?.lines ?? 0);
+    const unitCov = unitTotal > 0 ? Number(unitSummary.coverageMetrics?.lines ?? 0) : 0;
 
     const intTotal = Number(intSummary.totalTests || 0);
     const intPassed = Number(intSummary.passedTests || 0);
     const intFailed = Number(intSummary.failedTests || 0);
-    const intCov = Number(intSummary.coverageMetrics?.apiEndpoint ?? 0);
     const intTotalApis = Number(intSummary.coverageMetrics?.totalApis || intSummary.totalApis || 0);
-    const intCoveredApis = Number(intSummary.coverageMetrics?.coveredApis || intPassed || 0);
-    const intUncoveredApis = Number(intSummary.coverageMetrics?.uncoveredApis || Math.max(0, intTotalApis - intCoveredApis));
+    const intCov =
+      intTotal > 0 && intTotalApis > 0
+        ? Number(intSummary.coverageMetrics?.apiEndpoint ?? 0)
+        : 0;
+    const intCoveredApis =
+      intTotal > 0 && intTotalApis > 0
+        ? Number(intSummary.coverageMetrics?.coveredApis || intPassed || 0)
+        : 0;
+    const intUncoveredApis = Number(
+      intSummary.coverageMetrics?.uncoveredApis || Math.max(0, intTotalApis - intCoveredApis)
+    );
 
     const sysTotal = Number(sysSummary.totalTests || 0);
     const sysPassed = Number(sysSummary.passedTests || 0);
     const sysFailed = Number(sysSummary.failedTests || 0);
-    const sysCov = Number(sysSummary.coverageMetrics?.flow ?? 0);
+    const sysCov = sysTotal > 0 ? Number(sysSummary.coverageMetrics?.flow ?? 0) : 0;
 
     const totalExecuted = unitTotal + intTotal + sysTotal;
     const totalPassed = unitPassed + intPassed + sysPassed;
@@ -81,7 +118,6 @@ export function adaptPortfolioDashboard({
         ? Number(((totalPassed / totalExecuted) * 100).toFixed(1))
         : null;
 
-    // Detect frameworks
     const detectedFrameworks = [];
     if (rp.repoUrl) detectedFrameworks.push("GitHub");
     if (unitTotal > 0 || unitSummary.framework) {
@@ -97,7 +133,6 @@ export function adaptPortfolioDashboard({
       detectedFrameworks.push("Node.js");
     }
 
-    // Health Score calculation
     let healthScore = 0;
     let gateStatus = "UNTESTED";
     let gateLabel = "UNTESTED";
@@ -137,27 +172,8 @@ export function adaptPortfolioDashboard({
           )
         : 0;
 
-    let bottleneckCallout = "✓ All testing layers verified";
-    if (totalExecuted === 0) {
-      bottleneckCallout = intTotalApis > 0
-        ? `⚠️ ${intTotalApis} APIs discovered • 0 test suites executed`
-        : "⚠️ No test suites executed yet. Run tests to generate metrics.";
-    } else if (totalFailed > 0) {
-      bottleneckCallout = `🛑 ${totalFailed} test failure(s) detected across active suites`;
-    } else if (intUncoveredApis > 0) {
-      bottleneckCallout = `⚠️ ${intUncoveredApis} uncovered API endpoints require test suites`;
-    }
-
     const isPinned = favorites.includes(rp.id);
-    const sparkline = healthScore > 0
-      ? [
-          Math.max(0, healthScore - 6),
-          Math.max(0, healthScore - 4),
-          Math.max(0, healthScore - 5),
-          Math.max(0, healthScore - 2),
-          healthScore,
-        ]
-      : [0, 0, 0, 0, 0];
+    const sparkline = healthScore > 0 ? [healthScore, healthScore, healthScore, healthScore, healthScore] : [0, 0, 0, 0, 0];
 
     return {
       id: rp.id,
@@ -165,7 +181,9 @@ export function adaptPortfolioDashboard({
       description: rp.description || "Project Workspace",
       repoUrl: rp.repoUrl || null,
       branch: rp.branch || "main",
-      snapshotId: rp.latestSnapshotId || rp.snapshots?.[0]?.id || null,
+      snapshotId: rp.snapshotId || rp.activeSnapshotId || rp.latestSnapshotId || rp.snapshots?.[0]?.id || null,
+      snapshotLabel: rp.snapshotLabel || null,
+      lifecycleStatus: rp.lifecycleStatus || "NOT_STARTED",
       updatedAt: rp.updatedAt || rp.createdAt || new Date().toISOString(),
       createdAt: rp.createdAt || new Date().toISOString(),
       frameworks: detectedFrameworks,
@@ -178,7 +196,6 @@ export function adaptPortfolioDashboard({
       unifiedCoveragePct: unifiedCov,
       passRatePct: passRate,
       sparkline,
-      bottleneckCallout,
       pillars: {
         unit: {
           framework: unitSummary.framework || "Jest",
@@ -221,42 +238,9 @@ export function adaptPortfolioDashboard({
     };
   });
 
-  const kpis = computePortfolioExecutiveKpis(projects);
-  const analytics = computeBenchmarkAndQuadrantData(projects);
-
-  // Synthesize live attention queue from projects
-  const liveAttentionQueue = [];
-  for (const p of projects) {
-    if (p.gateStatus === "BLOCKED") {
-      liveAttentionQueue.push({
-        id: `attn-${p.id}-blocked`,
-        projectId: p.id,
-        projectName: p.name,
-        severity: "CRITICAL",
-        category: "failures",
-        pillar: p.pillars.integration.failedTests > 0 ? "integration" : "unit",
-        title: `Active test failures detected in ${p.name}`,
-        description: `Project has failing suites blocking release gate verification.`,
-        ctaLabel: "Diagnose ↗",
-        targetPillar: p.pillars.integration.failedTests > 0 ? "integration" : "unit",
-        targetFocus: {},
-      });
-    } else if (p.gateStatus === "UNTESTED") {
-      liveAttentionQueue.push({
-        id: `attn-${p.id}-untested`,
-        projectId: p.id,
-        projectName: p.name,
-        severity: "MEDIUM",
-        category: "zero-test",
-        pillar: "unit",
-        title: `No test suites executed for ${p.name}`,
-        description: `Project repository is imported but lacks baseline automated test suites.`,
-        ctaLabel: "Generate Suites ↗",
-        targetPillar: "unit",
-        targetFocus: {},
-      });
-    }
-  }
+  const doingProjects = projects.filter((p) => p.lifecycleStatus === "DOING");
+  const kpis = computePortfolioExecutiveKpis(doingProjects);
+  const analytics = computeBenchmarkAndQuadrantData(doingProjects);
 
   const totalSnapshotsCount = projects.reduce(
     (acc, p) => acc + (p.snapshotId ? 1 : 0),
@@ -264,17 +248,15 @@ export function adaptPortfolioDashboard({
   );
 
   return {
-    dataMode: "live",
     projects,
     kpis,
     analytics,
-    attentionQueue: liveAttentionQueue,
+    attentionQueue: [],
     activityFeed: [],
     metadata: {
-      activeProjectsCount: projects.length,
-      totalSnapshotsCount: Math.max(projects.length, totalSnapshotsCount),
+      activeProjectsCount: doingProjects.length,
+      totalSnapshotsCount,
       lastSyncedAt: new Date().toISOString(),
     },
   };
 }
-

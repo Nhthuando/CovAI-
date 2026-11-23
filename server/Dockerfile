@@ -8,11 +8,13 @@ RUN apt-get update -y && apt-get install -y openssl git procps && rm -rf /var/li
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies with retry and network resiliency
+# Install dependencies with retry and network resiliency (includes Playwright Chromium for in-process System Tests without Docker-in-Docker)
 RUN npm config set fetch-retries 5 && \
     npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
-    npm install --no-audit --no-fund
+    npm install --no-audit --no-fund && \
+    npx playwright install --with-deps chromium && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy source code
 COPY . .

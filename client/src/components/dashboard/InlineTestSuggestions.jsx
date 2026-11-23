@@ -11,6 +11,7 @@ import {
     ArrowRight,
     FileCode,
     Zap,
+    Clock,
     AlertCircle
 } from "lucide-react";
 
@@ -303,7 +304,7 @@ export default function InlineTestSuggestions({
     };
 
     const handleResetCode = (sug, sugId) => {
-        const original = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";
+        const original = sug.originalGeneratedCode ?? sug.suggestedTestCode ?? sug.generatedCode ?? "";
         setEditedCode((prev) => ({
             ...prev,
             [sugId]: original,
@@ -372,6 +373,35 @@ export default function InlineTestSuggestions({
                     >
                         {activeSuggestions.length} suggestion{activeSuggestions.length > 1 ? "s" : ""}
                     </span>
+
+                    {suggestions[0]?.telemetry && (
+                        <span
+                            style={{
+                                fontSize: 11,
+                                background: "rgba(99, 102, 241, 0.12)",
+                                border: "1px solid rgba(99, 102, 241, 0.25)",
+                                color: "#a5b4fc",
+                                padding: "2px 8px",
+                                borderRadius: 12,
+                                fontWeight: 600,
+                                fontFamily: "monospace",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                            }}
+                            title={`AI Generation Telemetry: ${suggestions[0].telemetry.durationSeconds || (suggestions[0].telemetry.durationMs / 1000).toFixed(1)}s, ${suggestions[0].telemetry.tokens?.total || 0} tokens`}
+                        >
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                <Clock size={11} className="text-indigo-400" />
+                                <span>{suggestions[0].telemetry.durationSeconds || (suggestions[0].telemetry.durationMs / 1000).toFixed(1)}s</span>
+                            </span>
+                            <span style={{ opacity: 0.4 }}>•</span>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#fbbf24" }}>
+                                <Zap size={11} />
+                                <span>{(suggestions[0].telemetry.tokens?.total || 0).toLocaleString()} tok</span>
+                            </span>
+                        </span>
+                    )}
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -463,21 +493,24 @@ export default function InlineTestSuggestions({
             )}
 
             {/* Before / After Coverage comparison banner if recent apply occurred */}
-            {lastApplyResult && lastApplyResult.oldCoverage && lastApplyResult.newCoverage && (() => {
-                const isFail = lastApplyResult.status === "FAILED" || lastApplyResult.isPassed === false;
+            {lastApplyResult && (() => {
+                const isFail = lastApplyResult.testStatus === "FAILED" || lastApplyResult.status === "FAILED" || lastApplyResult.isPassed === false;
                 const oldCov = lastApplyResult.oldCoverage;
                 const newCov = lastApplyResult.newCoverage;
 
                 const renderMetric = (label, oldVal, newVal) => {
-                    const o = Number(oldVal ?? 0);
-                    const n = Number(newVal ?? 0);
+                    const o = oldVal == null ? null : Number(oldVal);
+                    const n = newVal == null ? null : Number(newVal);
+                    if (o == null || n == null) {
+                        return <span key={label}>{label}: {o == null ? "—" : o + "%"} → {n == null ? "—" : n + "%"}</span>;
+                    }
                     const diff = Math.round((n - o) * 10) / 10;
-                    const increased = diff > 0;
+                    const changed = diff !== 0;
 
                     return (
                         <div key={label}>
                             <span style={{ color: "#94a3b8", marginRight: 4 }}>{label}:</span>
-                            {increased ? (
+                            {changed ? (
                                 <>
                                     <span style={{ textDecoration: "line-through", color: "#94a3b8", marginRight: 4 }}>
                                         {o}%
@@ -487,7 +520,7 @@ export default function InlineTestSuggestions({
                                         {n}%
                                     </span>
                                     <span style={{ fontSize: 10, fontWeight: 700, color: "#86efac", marginLeft: 4 }}>
-                                        (+{diff}%)
+                                        ({diff > 0 ? "+" : ""}{diff}%)
                                     </span>
                                 </>
                             ) : (
@@ -526,9 +559,12 @@ export default function InlineTestSuggestions({
                         </div>
 
                         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                            {renderMetric("Statements", oldCov.statements, newCov.statements)}
-                            {renderMetric("Branches", oldCov.branches, newCov.branches)}
-                            {renderMetric("Lines", oldCov.lines, newCov.lines)}
+                            {renderMetric("Statements", oldCov?.statements, isFail ? null : newCov?.statements)}
+                            {renderMetric("Branches", oldCov?.branches, isFail ? null : newCov?.branches)}
+                            {renderMetric("Functions", oldCov?.functions, isFail ? null : newCov?.functions)}
+                            {renderMetric("Lines", oldCov?.lines, isFail ? null : newCov?.lines)}
+                            {isFail && <span>New coverage: unavailable (run failed)</span>}
+                            {isFail && <span>{lastApplyResult.errorDetail || lastApplyResult.testRunError || lastApplyResult.message || "Test execution failed."}</span>}
                         </div>
                     </div>
                 );
@@ -542,8 +578,8 @@ export default function InlineTestSuggestions({
                     const status = isApplying ? "APPLYING" : (sug.status === "APPLYING" ? (sug.testRunError ? "FAILED" : "GENERATED") : (sug.status || "GENERATED"));
                     const badge = getStatusBadge(status);
 
-                    const originalCode = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";
-                    const currentCode = editedCode[sugId] !== undefined ? editedCode[sugId] : originalCode;
+                    const originalCode = sug.originalGeneratedCode ?? sug.suggestedTestCode ?? sug.generatedCode ?? "";
+                    const currentCode = editedCode[sugId] !== undefined ? editedCode[sugId] : (sug.suggestedTestCode ?? sug.generatedCode ?? originalCode);
 
                     return (
                         <div
@@ -632,6 +668,27 @@ export default function InlineTestSuggestions({
                             </div>
 
                             {/* Reason / Explanation */}
+                            {sug.testRepairs?.edits?.length > 0 && <details style={{ fontSize: 12, marginBottom: 8 }}>
+                                <summary>Repair existing tests ({sug.testRepairs.edits.length})</summary>
+                                {sug.testRepairs.edits.map((repair,index) => <div key={index} style={{ marginTop: 6 }}><strong>{repair.testName}</strong><div>{repair.reason}</div></div>)}
+                            </details>}
+                            {sug.changeSet?.needsReview?.length > 0 && <div role="status" style={{ fontSize: 12, marginBottom: 8 }}>Existing cases were preserved. {sug.changeSet.needsReview.length} proposed changes need review.</div>}
+                            {sug.validation && <div role="status" style={{ padding: '8px 10px', marginBottom: 8, border: '1px solid #64748b40', borderRadius: 6, fontSize: 12 }}>
+                                <strong>{sug.validation.status === 'VERIFIED_DRAFT' ? 'Batch verified by the test runner' : sug.validation.status === 'DRAFT' ? 'Draft ready for review' : 'Draft verification is incomplete'}</strong>
+                                {sug.validation.draftCoverage && <div>{Object.entries(sug.validation.draftCoverage).map(([key, value]) => `${key}: ${Number(value).toFixed(1)}%`).join(' · ')}</div>}
+                                <div>{sug.validation.coverageGoalStatus === 'MET' ? 'The measured scope meets the 100% coverage goal.' : sug.validation.message || 'Coverage is confirmed only after an actual test run.'}</div>
+                                {sug.validation.expectationRepairs?.length > 0 && <details style={{ marginTop: 6 }}>
+                                    <summary>Generated expectations reviewed against source ({sug.validation.expectationRepairs.length})</summary>
+                                    {sug.validation.expectationRepairs.map((repair, index) => <div key={index} style={{ marginTop: 6 }}>
+                                        <strong>{repair.testName}</strong> · {repair.status === 'VERIFIED' ? 'Verified by rerun' : 'Verification incomplete'}
+                                        <div>{repair.reason}</div>
+                                    </div>)}
+                                </details>}
+                                {sug.validation.inputContractRepairs?.length > 0 && <details style={{ marginTop: 6 }}>
+                                    <summary>Generated input contract repairs ({sug.validation.inputContractRepairs.length})</summary>
+                                    {sug.validation.inputContractRepairs.map((repair,index)=><div key={index} style={{ marginTop: 6 }}><strong>{repair.testName}</strong> · {repair.status === 'VERIFIED' ? 'Verified by rerun' : 'Verification incomplete'}<div>{repair.reason}</div></div>)}
+                                </details>}
+                            </div>}
                             {(sug.reason || sug.explanation) && (
                                 <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.4 }}>
                                     <span style={{ color: "#94a3b8", fontWeight: 500 }}>Reason: </span>
@@ -688,6 +745,9 @@ export default function InlineTestSuggestions({
                                                 ...sug,
                                                 generatedCode: currentCode,
                                                 suggestedTestCode: currentCode,
+                                                fullUpdatedContent: currentCode,
+                                                testCode: currentCode,
+                                                status: currentCode !== originalCode ? "EDITED" : sug.status,
                                             })
                                         }
                                         disabled={isApplying || status === "PASSED"}

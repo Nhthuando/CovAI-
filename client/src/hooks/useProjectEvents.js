@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { queryClient } from "../lib/queryClient";
 import { collaborationRequest, projectPath } from "../services/collaborationHttp";
+import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 export function useProjectEvents(projectId, userId, onEvent) {
@@ -10,6 +11,7 @@ export function useProjectEvents(projectId, userId, onEvent) {
   useEffect(() => {
     if (!projectId || !userId) return;
     let sequence = 0;
+    let hasConnectedOnce = false;
     let alive = true;
     let replaying = false;
     let invalidateTimeout = null;
@@ -64,15 +66,19 @@ export function useProjectEvents(projectId, userId, onEvent) {
     };
 
     const socket = io(SOCKET_URL, {
-      auth: { token: localStorage.getItem("token") },
+      auth: socketAuth,
       transports: ["websocket", "polling"],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     });
+    attachSocketAuthRecovery(socket);
 
     socket.on("connect", async () => {
       socket.emit("project:subscribe", { projectId });
-      invalidate();
+      if (hasConnectedOnce) {
+        invalidate();
+      }
+      hasConnectedOnce = true;
       await replay(sequence);
     });
     socket.on("project:event", receive);

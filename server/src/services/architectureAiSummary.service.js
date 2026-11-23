@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { generateText } from "./gemini.service.js";
+import { withGeminiChannel } from "./geminiTokenTracker.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { extractFunctions } from "./functionExtraction.service.js";
@@ -121,9 +122,11 @@ Strictly return valid JSON only in the following format (no markdown, no extra c
 `;
 
   try {
-    const rawResponse = await generateText(
-      prompt,
-      "You are a software architect analyzing code modules. Always output valid JSON only.",
+    const rawResponse = await withGeminiChannel("UNIT_TEST", () =>
+      generateText(
+        prompt,
+        "You are a software architect analyzing code modules. Always output valid JSON only.",
+      )
     );
 
     const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);

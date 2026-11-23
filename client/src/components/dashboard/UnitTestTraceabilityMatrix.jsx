@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   FileCode,
+  Clock,
   FileCode2,
   GitBranch,
   Cpu,
@@ -33,6 +34,8 @@ import {
   Info,
   Minimize2,
   Maximize2,
+  RotateCcw,
+  Play,
 } from "lucide-react";
 import { cleanDisplayPath, isTestFile } from "./CoverageTypeDashboard.jsx";
 import { getFileCoverage } from "../../services/coverage.service.js";
@@ -162,494 +165,210 @@ export const isCallbackOrAnonymousName = (name) => {
  * 1. 4-Metric Coverage Anatomy & Calculation Proof:
  *    Explains why each function and file passed 100% across Statements, Branches, Functions, and Lines,
  *    along with exact mathematical calculation formulas and Istanbul execution counts.
- * 2. 4-Category Strategy Matrix: Breakdown across Happy Path, Boundary Values, Branch Toggling, Error Handling.
- * 3. Bi-directional Traceability: Maps Business Logic functions to specific test cases and testing techniques.
-
-
-/**
- * 4-Category Decision Table Matrix with Resizable & Draggable Columns
+ * 2. Bi-directional Traceability: Maps Business Logic functions to specific test cases and testing techniques.
  */
-function CategoryMatrix4Cards({
-  fn,
-  isLight,
-  onOpenFile,
-  colWidths,
-  setColWidths,
-  collapsedCols,
-  setCollapsedCols,
+function MatrixPaginationControl({
+  currentPage,
+  totalItems,
+  pageSize = 25,
+  onPageChange,
+  onPageSizeChange,
+  isLight = false,
+  itemLabel = "source files",
 }) {
-  const containerRef = useRef(null);
-  const dragRef = useRef({ startX: 0, startWidths: [25, 25, 25, 25], containerWidth: 1000 });
-  const [draggingDivider, setDraggingDivider] = useState(null);
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  if (totalItems === 0) return null;
 
-  // Category specifications
-  const categories = useMemo(() => [
-    {
-      key: "HAPPY_PATH",
-      label: "🟢 A. Happy Path",
-      countLabel: "A. Happy",
-      tests: fn.testsByCategory?.HAPPY_PATH || [],
-      hasCategory: fn.hasHappyPath,
-      color: "#10b981",
-      borderActive: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies standard valid inputs, normal workflow, and expected return values.",
-      missingMsg: "⚠️ Uncovered: No test verifies standard execution flow with valid arguments.",
-    },
-    {
-      key: "BOUNDARY_VALUES",
-      label: "🟡 B. Boundary Values",
-      countLabel: "B. Boundary",
-      tests: fn.testsByCategory?.BOUNDARY_VALUES || [],
-      hasCategory: fn.hasBoundary,
-      color: "#f59e0b",
-      borderActive: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies boundary limits (0, -1, MAX values, empty arrays [], empty strings, null/undefined).",
-      missingMsg: "⚠️ Uncovered: Edge cases like empty inputs, zero, or max limits are not yet tested.",
-    },
-    {
-      key: "BRANCH_TOGGLING",
-      label: "🔵 C. Branch Toggling",
-      countLabel: "C. Branch",
-      tests: fn.testsByCategory?.BRANCH_TOGGLING || [],
-      hasCategory: fn.hasBranch,
-      color: "#0284c7",
-      borderActive: isLight ? "1px solid #bae6fd" : "1px solid rgba(2, 132, 199, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies conditional branches (True vs False paths, fallback ??, logical || operators).",
-      missingMsg: "⚠️ Uncovered: Missing tests for alternate condition branches or fallback logic.",
-    },
-    {
-      key: "ERROR_HANDLING",
-      label: "🔴 D. Error Handling",
-      countLabel: "D. Error",
-      tests: fn.testsByCategory?.ERROR_HANDLING || [],
-      hasCategory: fn.hasError,
-      color: "#ef4444",
-      borderActive: isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.3)",
-      borderInactive: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.15)",
-      desc: "Verifies thrown exceptions (throw Error), catch blocks, rejected promises, mock failures.",
-      missingMsg: "⚠️ Uncovered: No test verifies exception throwing or error handling.",
-    },
-  ], [fn, isLight]);
+  const startItem = (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
 
-  // Dragging handler
-  const handleStartDrag = (dividerIndex, e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!containerRef.current) return;
-    const containerRect = containerRef.current.getBoundingClientRect();
-    dragRef.current = {
-      startX: e.clientX,
-      startWidths: [...colWidths],
-      containerWidth: Math.max(containerRect.width, 400),
-    };
-    setDraggingDivider(dividerIndex);
+  const getPageNumbers = () => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const pages = [1];
+    let left = Math.max(2, currentPage - 1);
+    let right = Math.min(totalPages - 1, currentPage + 1);
 
-    const handleMouseMove = (moveEvt) => {
-      moveEvt.preventDefault();
-      const deltaX = moveEvt.clientX - dragRef.current.startX;
-      const deltaPct = (deltaX / dragRef.current.containerWidth) * 100;
-      const leftIdx = dividerIndex;
-      const rightIdx = dividerIndex + 1;
-      const startW = dragRef.current.startWidths;
+    if (currentPage <= 3) right = 4;
+    else if (currentPage >= totalPages - 2) left = totalPages - 3;
 
-      const minPct = 12;
-      const maxPct = 70;
-
-      let newLeft = Math.max(minPct, Math.min(maxPct, startW[leftIdx] + deltaPct));
-      let newRight = Math.max(minPct, Math.min(maxPct, startW[rightIdx] - deltaPct));
-
-      const pairSum = startW[leftIdx] + startW[rightIdx];
-      if (newLeft + newRight !== pairSum) {
-        if (deltaPct > 0) {
-          newLeft = pairSum - newRight;
-        } else {
-          newRight = pairSum - newLeft;
-        }
-      }
-
-      setColWidths((prev) => {
-        const next = [...prev];
-        next[leftIdx] = Math.round(newLeft * 10) / 10;
-        next[rightIdx] = Math.round(newRight * 10) / 10;
-        return next;
-      });
-    };
-
-    const handleMouseUp = () => {
-      setDraggingDivider(null);
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      setColWidths((latest) => {
-        try {
-          localStorage.setItem("covai_matrix_4col_widths", JSON.stringify(latest));
-        } catch (_) {}
-        return latest;
-      });
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
+    if (left > 2) pages.push("...");
+    for (let i = left; i <= right; i++) pages.push(i);
+    if (right < totalPages - 1) pages.push("...");
+    pages.push(totalPages);
+    return pages;
   };
 
-  const handleResetColumns = () => {
-    const resetWidths = [25, 25, 25, 25];
-    setColWidths(resetWidths);
-    setCollapsedCols({});
-    try {
-      localStorage.setItem("covai_matrix_4col_widths", JSON.stringify(resetWidths));
-    } catch (_) {}
-  };
+  const pages = getPageNumbers();
 
-  const handleToggleCollapse = (idx, e) => {
-    e?.stopPropagation?.();
-    setCollapsedCols((prev) => ({
-      ...prev,
-      [idx]: !prev[idx],
-    }));
-  };
-
-  const hasAnyCollapsed = Object.values(collapsedCols).some(Boolean);
+  const buttonStyle = (active, disabled) => ({
+    padding: "4px 8px",
+    borderRadius: 5,
+    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
+    background: active
+      ? (isLight ? "#6366f1" : "#4f46e5")
+      : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
+    color: active
+      ? "#ffffff"
+      : disabled
+      ? (isLight ? "#cbd5e1" : "#475569")
+      : (isLight ? "#334155" : "#e2e8f0"),
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: 11.5,
+    fontWeight: active ? 700 : 500,
+    fontFamily: "var(--font-mono, monospace)",
+    transition: "background 0.15s ease",
+  });
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Top Helper Bar with Reset & Uncollapse actions */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6, padding: "2px 4px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: isLight ? "#64748b" : "#94a3b8" }}>
-          <span>Resize columns by dragging the dividers between them</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {hasAnyCollapsed && (
-            <button
-              onClick={() => setCollapsedCols({})}
-              style={{
-                background: "transparent",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.15)",
-                borderRadius: 4,
-                padding: "2px 7px",
-                fontSize: 10.5,
-                color: isLight ? "#475569" : "#cbd5e1",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 3,
-              }}
-              title="Expand all collapsed columns"
-            >
-              <Maximize2 size={10} />
-              <span>Expand all</span>
-            </button>
-          )}
+    <div
+      style={{
+        padding: "12px 18px",
+        borderTop: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+        background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 12,
+        fontSize: 12,
+      }}
+    >
+      <div style={{ color: isLight ? "#64748b" : "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>Showing</span>
+        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9", fontFamily: "var(--font-mono)" }}>{startItem} – {endItem}</b>
+        <span>of</span>
+        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9", fontFamily: "var(--font-mono)" }}>{totalItems}</b>
+        <span>{itemLabel} (Page {currentPage} / {totalPages})</span>
+
+        {onPageSizeChange && (
+          <div style={{ marginLeft: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 11 }}>Per page:</span>
+            {[25, 50, 100].map((sz) => (
+              <button
+                key={sz}
+                onClick={() => onPageSizeChange(sz)}
+                style={{
+                  padding: "2px 6px",
+                  fontSize: 10.5,
+                  borderRadius: 4,
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+                  background: pageSize === sz ? (isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.15)") : "transparent",
+                  color: pageSize === sz ? (isLight ? "#0f172a" : "#ffffff") : (isLight ? "#64748b" : "#94a3b8"),
+                  cursor: "pointer",
+                }}
+              >
+                {sz}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <button
-            onClick={handleResetColumns}
-            style={{
-              background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
-              borderRadius: 4,
-              padding: "2px 8px",
-              fontSize: 10.5,
-              fontWeight: 650,
-              color: isLight ? "#334155" : "#e2e8f0",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-            }}
-            title="Reset 4 columns to equal 25%"
+            onClick={() => onPageChange(1)}
+            disabled={currentPage === 1}
+            style={buttonStyle(false, currentPage === 1)}
           >
-            <span>⚖️ Balance 25%</span>
+            « First
+          </button>
+          <button
+            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+            disabled={currentPage === 1}
+            style={buttonStyle(false, currentPage === 1)}
+          >
+            ‹ Prev
+          </button>
+
+          {pages.map((p, idx) =>
+            p === "..." ? (
+              <span key={`ell-${idx}`} style={{ padding: "0 4px", color: isLight ? "#94a3b8" : "#64748b" }}>…</span>
+            ) : (
+              <button
+                key={`page-${p}`}
+                onClick={() => onPageChange(p)}
+                style={buttonStyle(p === currentPage, false)}
+              >
+                {p}
+              </button>
+            )
+          )}
+
+          <button
+            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+            disabled={currentPage === totalPages}
+            style={buttonStyle(false, currentPage === totalPages)}
+          >
+            Next ›
+          </button>
+          <button
+            onClick={() => onPageChange(totalPages)}
+            disabled={currentPage === totalPages}
+            style={buttonStyle(false, currentPage === totalPages)}
+          >
+            Last »
           </button>
         </div>
-      </div>
-
-      {/* Resizable 4 Columns Flex Container */}
-      <div
-        ref={containerRef}
-        style={{
-          display: "flex",
-          alignItems: "stretch",
-          width: "100%",
-          overflowX: "auto",
-          position: "relative",
-          minHeight: 220,
-          borderRadius: 8,
-          gap: 0,
-        }}
-      >
-        {categories.map((cat, idx) => {
-          const isCollapsed = Boolean(collapsedCols[idx]);
-          const widthPct = colWidths[idx] || 25;
-
-          return (
-            <React.Fragment key={cat.key}>
-              {/* Card Container */}
-              {isCollapsed ? (
-                /* Collapsed Column Ribbon */
-                <div
-                  onClick={() => handleToggleCollapse(idx)}
-                  style={{
-                    flex: "0 0 38px",
-                    width: 38,
-                    minWidth: 38,
-                    padding: "10px 4px",
-                    borderRadius: 8,
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                    border: cat.borderActive,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                    position: "relative",
-                  }}
-                  title={`Click to expand ${cat.label} column`}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 13 }}>{cat.label.substring(0, 2)}</span>
-                    <button
-                      onClick={(e) => handleToggleCollapse(idx, e)}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: cat.color,
-                        cursor: "pointer",
-                        padding: 0,
-                        display: "flex",
-                      }}
-                      title="Expand column"
-                    >
-                      <Maximize2 size={12} />
-                    </button>
-                  </div>
-
-                  <div
-                    style={{
-                      writingMode: "vertical-rl",
-                      transform: "rotate(180deg)",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: cat.color,
-                      letterSpacing: 0.5,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {cat.label.substring(3)}
-                  </div>
-
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 750,
-                      padding: "2px 4px",
-                      borderRadius: 3,
-                      background: cat.hasCategory ? "rgba(16, 185, 129, 0.15)" : (isLight ? "#f1f5f9" : "rgba(255,255,255,0.05)"),
-                      color: cat.hasCategory ? cat.color : "#94a3b8",
-                    }}
-                  >
-                    {cat.hasCategory ? (cat.tests?.length || 0) : "0"}
-                  </span>
-                </div>
-              ) : (
-                /* Expanded Column Card */
-                <div
-                  style={{
-                    flex: `${widthPct} 0 0%`,
-                    width: `${widthPct}%`,
-                    minWidth: 170,
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                    border: cat.hasCategory ? cat.borderActive : cat.borderInactive,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                    transition: draggingDivider !== null ? "none" : "flex 0.15s ease",
-                    position: "relative",
-                  }}
-                >
-                  {/* Card Header */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 750, color: cat.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {cat.label}
-                    </span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: "1px 5px",
-                          borderRadius: 3,
-                          background: cat.hasCategory
-                            ? (cat.key === "ERROR_HANDLING" ? "rgba(239, 68, 68, 0.15)" : cat.key === "BOUNDARY_VALUES" ? "rgba(245, 158, 11, 0.15)" : cat.key === "BRANCH_TOGGLING" ? "rgba(2, 132, 199, 0.15)" : "rgba(16, 185, 129, 0.15)")
-                            : (isLight ? "#f1f5f9" : "rgba(255,255,255,0.05)"),
-                          color: cat.hasCategory ? cat.color : "#94a3b8",
-                        }}
-                      >
-                        {cat.hasCategory ? `${cat.tests?.length || 0} tests` : "Missing"}
-                      </span>
-                      <button
-                        onClick={(e) => handleToggleCollapse(idx, e)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: isLight ? "#94a3b8" : "#64748b",
-                          cursor: "pointer",
-                          padding: "1px 3px",
-                          borderRadius: 3,
-                          display: "flex",
-                          alignItems: "center",
-                        }}
-                        title="Collapse column"
-                      >
-                        <Minimize2 size={11} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Card Description */}
-                  <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
-                    {cat.desc}
-                  </div>
-
-                  {/* Tests List or Missing Notice */}
-                  {cat.hasCategory ? (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        marginTop: 4,
-                        maxHeight: 280,
-                        overflowY: "auto",
-                        paddingRight: 2,
-                      }}
-                    >
-                      {cat.tests.map((t, testIdx) => (
-                        <div
-                          key={testIdx}
-                          onClick={() => onOpenFile?.(
-                            fn.filePath,
-                            fn.startLine,
-                            fn.cleanName,
-                            fn.endLine,
-                            {
-                              testFilePath: t.suiteFilePath,
-                              testTitle: t.title || t.name,
-                              testLine: t.line || t.location?.line || t.startLine || null,
-                            }
-                          )}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            fontSize: 11,
-                            padding: "4px 7px",
-                            background: isLight ? "#f8fafc" : "rgba(255,255,255,0.025)",
-                            borderRadius: 5,
-                            cursor: "pointer",
-                            border: "1px solid transparent",
-                            transition: "all 0.12s ease",
-                            gap: 6,
-                          }}
-                          className="hover:border-indigo-500/40 hover:bg-indigo-500/5 group"
-                          title={`Click to view function ${fn.cleanName}() and test case: ${t.title}`}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 5, flex: 1, minWidth: 0, overflow: "hidden" }}>
-                            <span style={{ color: t.status === "passed" ? "#10b981" : "#ef4444", fontWeight: 700, flexShrink: 0 }}>
-                              {t.status === "passed" ? "✓" : "✗"}
-                            </span>
-                            <span
-                              style={{
-                                fontFamily: "var(--font-mono)",
-                                color: isLight ? "#1e293b" : "#e2e8f0",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                flex: 1,
-                                minWidth: 0,
-                              }}
-                              title={t.title}
-                            >
-                              {t.title}
-                            </span>
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenFile?.(
-                                fn.filePath,
-                                fn.startLine,
-                                fn.cleanName,
-                                fn.endLine,
-                                {
-                                  testFilePath: t.suiteFilePath,
-                                  testTitle: t.title || t.name,
-                                  testLine: t.line || t.location?.line || t.startLine || null,
-                                }
-                              );
-                            }}
-                            style={{
-                              background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.16)",
-                              border: "none",
-                              color: "#6366f1",
-                              cursor: "pointer",
-                              fontSize: 10,
-                              padding: "2px 6px",
-                              borderRadius: 4,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 3,
-                              flexShrink: 0,
-                            }}
-                            title={`Open test suite: ${t.suiteFileName}`}
-                          >
-                            <span style={{ maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {t.suiteFileName}
-                            </span>
-                            <ExternalLink size={9} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        fontSize: 10.5,
-                        color: isLight ? "#b45309" : "#fbbf24",
-                        background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
-                        padding: "4px 8px",
-                        borderRadius: 4,
-                        marginTop: 4,
-                      }}
-                    >
-                      {cat.missingMsg}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Draggable Divider between columns (0, 1, 2) */}
-              {idx < 3 && (
-                <MatrixColumnDivider
-                  index={idx}
-                  isDragging={draggingDivider === idx}
-                  onMouseDown={(e) => handleStartDrag(idx, e)}
-                  onDoubleClick={handleResetColumns}
-                  isLight={isLight}
-                />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
+      )}
     </div>
+  );
+}
+
+function UnitTestQualityReport({ report }) {
+  const cases = report.cases || [];
+  const attempts = report.attempts || [];
+  const findings = [...(report.findings || []), ...(attempts.at(-1)?.failures || [])];
+  const blocked = new Set(findings.map(item => item.testCaseId).filter(Boolean));
+  const rejected = findings.some(item => !item.testCaseId) || report.coverage?.some(item => !item.verified)
+    ? cases.length : blocked.size;
+  const count = code => findings.filter(item => item.code === code).length;
+  const stats = [
+    ['Generated', cases.length], ['Passed gate', Math.max(0, cases.length - rejected)], ['Rejected', rejected],
+    ['Expectations', count('A')], ['Fixtures', count('B')], ['Source defects', count('C')],
+    ['Requirements', count('D')], ['Mock or environment', count('E')], ['Unknown', count('F')],
+    ['Repair attempts', report.repairs?.length ?? Math.max(0, attempts.length - 1)], ['Accepted', report.accepted || 0],
+  ];
+  return (
+    <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs">
+      <summary className="cursor-pointer font-medium text-[var(--color-text)]">AI Test Quality Gate · {report.status?.replaceAll('_', ' ')}</summary>
+      <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[var(--color-text-secondary)]">
+        {stats.map(([label, value]) => (
+          <div key={label} className="flex gap-1"><dt>{label}</dt><dd className="font-mono tabular-nums">{value}</dd></div>
+        ))}
+      </dl>
+      {report.coverageError && <p className="mt-2 text-[var(--color-warning)]">{report.coverageError}</p>}
+      {report.coverage?.filter(item => !item.verified).map(item => (
+        <p key={item.testFile} className="mt-2 text-[var(--color-warning)]">No verified target coverage gain for {item.sourceFile}.</p>
+      ))}
+      {findings.map((item, index) => (
+        <div key={index} className="mt-2 border-t border-[var(--color-border)] pt-2 text-[var(--color-text-secondary)]">
+          <p className="font-medium text-[var(--color-text)]">{item.classification?.replaceAll('_', ' ')} · {item.testCaseId || item.testFile || 'Runner'}</p>
+          <p>{item.reason} {item.correction}</p>
+          {(item.sourceFile || item.sourceLocation) && (
+            <p className="font-mono">{item.sourceLocation || [item.sourceFile, item.sourceLine, item.functionName].filter(Boolean).join(':')}</p>
+          )}
+          {(item.expected != null || item.actual != null) && (
+            <p className="font-mono break-all">Expected {JSON.stringify(item.expected)} · Actual {JSON.stringify(item.actual)}</p>
+          )}
+          {item.evidence?.length > 0 && <pre className="mt-1 whitespace-pre-wrap break-words font-mono">{item.evidence.join('\n')}</pre>}
+        </div>
+      ))}
+      {attempts.length > 0 && (
+        <ol className="mt-2 text-[var(--color-text-muted)]">
+          {attempts.map(attempt => (
+            <li key={attempt.iteration}>Run {attempt.iteration + 1} · exit {attempt.exitCode} · {attempt.failures.length} findings</li>
+          ))}
+        </ol>
+      )}
+      {report.repairs?.map((repair, index) => (
+        <p key={index} className="mt-1 text-[var(--color-text-muted)]">
+          Repair {repair.iteration} · {repair.action.replaceAll('_', ' ')} · {repair.packageName} · {repair.status}
+        </p>
+      ))}
+    </details>
   );
 }
 
@@ -668,20 +387,38 @@ export default function UnitTestTraceabilityMatrix({
   onSuggestTestcase,
   inlineSuggestions = {},
   loadingSuggestions = {},
+  suggestionErrors = {},
   applyingSuggestionIds = new Set(),
   applyResultsByFile = {},
   onApplySuggestion,
   onApplyAllFileSuggestions,
+  onDryRunFileSuggestions,
   onReviewDiff,
   onInstallDependency = null,
   installingDependencyName = null,
   isLight = false,
+  unitTestVersions = {},
+  onSwitchVersion = null,
+  isSwitchingVersion = false,
+  switchingVersionFile = null,
+  isBulkApplying = false,
+  bulkApplyStep = "",
+  bulkApplyPhase = "",
+  bulkApplyProgress = null,
+  applyProgressSteps = {},
+  onOpenSimulation = null,
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("ALL"); // "ALL" | "HAPPY_PATH" | "BOUNDARY_VALUES" | "BRANCH_TOGGLING" | "ERROR_HANDLING"
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [expandedFunctions, setExpandedFunctions] = useState(new Set());
   const [expandedFiles, setExpandedFiles] = useState(new Set());
   const [expandedCallbacksByFile, setExpandedCallbacksByFile] = useState(new Set());
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedCategory]);
 
 
   // File inspection modal: filePath of file being inspected for 4-metric calculation proof
@@ -692,11 +429,18 @@ export default function UnitTestTraceabilityMatrix({
   const [fileCoverageCache, setFileCoverageCache] = useState({});
   const [loadingFiles, setLoadingFiles] = useState(new Set());
   const prevRunningRef = useRef(running);
+  const inFlightFilesRef = useRef(new Set());
+  const failedFilesRef = useRef(new Map());
+  const preloadQueueRef = useRef([]);
+  const activeFetchesRef = useRef(0);
 
   // Invalidate file coverage cache when job completes so newly generated metrics update immediately
   useEffect(() => {
     if (prevRunningRef.current && !running) {
       setFileCoverageCache({});
+      inFlightFilesRef.current.clear();
+      failedFilesRef.current.clear();
+      preloadQueueRef.current = [];
     }
     prevRunningRef.current = running;
   }, [running]);
@@ -704,15 +448,20 @@ export default function UnitTestTraceabilityMatrix({
   // Invalidate file coverage cache when snapshotId changes
   useEffect(() => {
     setFileCoverageCache({});
+    inFlightFilesRef.current.clear();
+    failedFilesRef.current.clear();
+    preloadQueueRef.current = [];
   }, [snapshotId]);
 
-  // Fetch detailed file coverage from backend on demand
-  const fetchFileCoverage = async (filePath) => {
-    if (!snapshotId || !filePath || fileCoverageCache[filePath] || loadingFiles.has(filePath)) return;
+  // Fetch detailed file coverage from backend on demand with bounded concurrency (max 2 concurrent requests)
+  const executeFileCoverageFetch = async (filePath) => {
+    if (!snapshotId || !filePath) return;
+    activeFetchesRef.current += 1;
     setLoadingFiles((prev) => new Set(prev).add(filePath));
     try {
       const res = await getFileCoverage(snapshotId, filePath);
       if (res?.data) {
+        failedFilesRef.current.delete(filePath);
         const clean = cleanDisplayPath(filePath);
         const norm = filePath.replace(/\\/g, "/");
         const resPath = res.data.filePath;
@@ -731,21 +480,46 @@ export default function UnitTestTraceabilityMatrix({
         }));
       }
     } catch (err) {
+      failedFilesRef.current.set(filePath, Date.now());
       console.warn("Failed to load file coverage details for", filePath, err);
     } finally {
+      inFlightFilesRef.current.delete(filePath);
+      activeFetchesRef.current = Math.max(0, activeFetchesRef.current - 1);
       setLoadingFiles((prev) => {
         const next = new Set(prev);
         next.delete(filePath);
         return next;
       });
+      while (activeFetchesRef.current < 2 && preloadQueueRef.current.length > 0) {
+        const nextPath = preloadQueueRef.current.shift();
+        if (nextPath) {
+          void executeFileCoverageFetch(nextPath);
+        }
+      }
+    }
+  };
+
+  const fetchFileCoverage = (filePath, { priority = true } = {}) => {
+    if (!snapshotId || !filePath || fileCoverageCache[filePath] || inFlightFilesRef.current.has(filePath)) return;
+    if (!priority) {
+      const lastFailedAt = failedFilesRef.current.get(filePath);
+      if (lastFailedAt && Date.now() - lastFailedAt < 30000) return;
+    }
+    inFlightFilesRef.current.add(filePath);
+    if (activeFetchesRef.current < 2) {
+      void executeFileCoverageFetch(filePath);
+    } else if (priority) {
+      preloadQueueRef.current.unshift(filePath);
+    } else {
+      preloadQueueRef.current.push(filePath);
     }
   };
 
   // Auto-fetch file coverage for any expanded files
   useEffect(() => {
     expandedFiles.forEach((fPath) => {
-      if (fPath && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
-        fetchFileCoverage(fPath);
+      if (fPath && !fileCoverageCache[fPath] && !inFlightFilesRef.current.has(fPath)) {
+        fetchFileCoverage(fPath, { priority: true });
       }
     });
   }, [expandedFiles, snapshotId]);
@@ -791,84 +565,159 @@ export default function UnitTestTraceabilityMatrix({
   };
 
   // Build mapping: For each business function, find all test assertions that target it
+  // OPTIMIZED (F5): Precomputed assertion token sets, inverted word index, O(1) Maps, zero dynamic regexes
   const functionTraceability = useMemo(() => {
-    // 1. Group all assertions by targetFunction key
+    // 1. Group assertions by targetFunction key & suite file base, and build inverted word index
     const assertionsByFuncKey = new Map();
-    // 2. Group assertions by suite file base
     const assertionsBySuiteBase = new Map();
+    const invertedWordIndex = new Map();
 
-    for (const a of allAssertions) {
+    const preparedAssertions = (allAssertions || []).map((a) => {
+      const fullTitle = `${a.title || ""} ${a.fullName || ""} ${(a.ancestorTitles || []).join(" ")}`;
+      const fullTitleLower = fullTitle.toLowerCase();
+      const rawTokens = fullTitleLower.match(/[a-z0-9_$]+/g) || [];
+      const tokenSet = new Set(rawTokens);
+      const key = `${a.suiteFilePath || ""}::${a.title || ""}`;
+
+      const item = {
+        assertion: a,
+        fullTitleLower,
+        tokenSet,
+        key,
+      };
+
+      // Index tokens in inverted index
+      for (const tok of tokenSet) {
+        let list = invertedWordIndex.get(tok);
+        if (!list) {
+          list = [];
+          invertedWordIndex.set(tok, list);
+        }
+        list.push(item);
+      }
+
       if (a.targetFunction) {
-        const key = a.targetFunction.toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (!assertionsByFuncKey.has(key)) assertionsByFuncKey.set(key, []);
-        assertionsByFuncKey.get(key).push(a);
+        const fnK = a.targetFunction.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!assertionsByFuncKey.has(fnK)) assertionsByFuncKey.set(fnK, []);
+        assertionsByFuncKey.get(fnK).push(a);
       }
+
       if (a.suiteFilePath) {
-        const suiteBase = getSourceBaseKey(a.suiteFilePath);
-        if (!assertionsBySuiteBase.has(suiteBase)) assertionsBySuiteBase.set(suiteBase, []);
-        assertionsBySuiteBase.get(suiteBase).push(a);
+        const sBase = getSourceBaseKey(a.suiteFilePath);
+        if (!assertionsBySuiteBase.has(sBase)) assertionsBySuiteBase.set(sBase, []);
+        assertionsBySuiteBase.get(sBase).push(item);
       }
-    }
 
-    // Build map of source file to its coverage metadata
+      return item;
+    });
+
+    // 2. Pre-index sourceFiles into Maps to eliminate O(N^2) sourceFiles.find
     const sourceMetaMap = new Map();
+    const sourceFilesByPath = new Map();
     for (const s of (sourceFiles || [])) {
-      if (s.filePath) {
-        sourceMetaMap.set(s.filePath, s);
-        sourceMetaMap.set(s.filePath.replace(/\\/g, "/"), s);
+      if (s?.filePath) {
+        sourceFilesByPath.set(s.filePath, s);
+        sourceFilesByPath.set(s.filePath.replace(/\\/g, "/"), s);
         const cleaned = cleanDisplayPath(s.filePath);
-        if (cleaned) sourceMetaMap.set(cleaned, s);
+        if (cleaned) sourceFilesByPath.set(cleaned, s);
+
+        const setSafe = (key) => {
+          const ex = sourceMetaMap.get(key);
+          if (!ex || ((ex.linesPct || 0) === 0 && (s.linesPct || 0) > 0)) {
+            sourceMetaMap.set(key, s);
+          }
+        };
+        setSafe(s.filePath);
+        setSafe(s.filePath.replace(/\\/g, "/"));
+        if (cleaned) setSafe(cleaned);
       }
     }
 
-    // Combine functionsList with matching sourceFiles
-    return functionsList
+    // 3. Map functionsList with O(1) lookups
+    return (functionsList || [])
       .filter((fn) => !isTestFile(fn.filePath))
       .map((fn) => {
-      const fnName = fn.displayName || fn.functionName || fn.name || "anonymous";
-      const fnKey = fnName.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const fPath = fn.filePath || "";
-      const srcBase = getSourceBaseKey(fPath);
-      const srcMeta = sourceMetaMap.get(fPath) || sourceMetaMap.get(fPath.replace(/\\/g, "/")) || sourceMetaMap.get(cleanDisplayPath(fPath)) || null;
+        const fnName = fn.displayName || fn.functionName || fn.name || "anonymous";
+        const fnKey = fnName.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const fnNameLower = fnName.toLowerCase();
+        const fPath = fn.filePath || "";
+        const srcBase = getSourceBaseKey(fPath);
+        const srcMeta = sourceMetaMap.get(fPath) || sourceMetaMap.get(fPath.replace(/\\/g, "/")) || sourceMetaMap.get(cleanDisplayPath(fPath)) || null;
 
-      const isSrcFullyCovered = srcMeta
-        ? ((srcMeta.stmtsPct ?? srcMeta.statementsPct ?? 0) >= 100 &&
-           (srcMeta.branchesPct != null ? Number(srcMeta.branchesPct) >= 100 : (srcMeta.branchesTotal === 0)) &&
-           (srcMeta.funcsPct ?? 0) >= 100 &&
-           (srcMeta.linesPct ?? 0) >= 100)
-        : false;
+        const isSrcFullyCovered = srcMeta
+          ? ((srcMeta.stmtsPct ?? srcMeta.statementsPct ?? 0) >= 100 &&
+             (srcMeta.branchesPct != null ? Number(srcMeta.branchesPct) >= 100 : (srcMeta.branchesTotal === 0)) &&
+             (srcMeta.funcsPct ?? 0) >= 100 &&
+             (srcMeta.linesPct ?? 0) >= 100)
+          : false;
 
-      // Tier 1: Direct targetFunction match
-      let matchedTests = assertionsByFuncKey.get(fnKey) ? [...assertionsByFuncKey.get(fnKey)] : [];
+        const matchedTests = [];
+        const matchedKeys = new Set();
 
-      // Tier 2: Check assertion titles or ancestors mentioning this function
-      const suiteCandidates = assertionsBySuiteBase.get(srcBase) || allAssertions;
-      const fnRegex = new RegExp(`\\b${fnName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-
-      for (const a of suiteCandidates) {
-        if (matchedTests.some((m) => m.title === a.title && m.suiteFilePath === a.suiteFilePath)) continue;
-        const fullTitle = `${a.title || ""} ${a.fullName || ""} ${(a.ancestorTitles || []).join(" ")}`;
-        if (fnRegex.test(fullTitle) || fullTitle.toLowerCase().includes(fnName.toLowerCase())) {
-          matchedTests.push(a);
+        // Tier 1: Direct targetFunction match
+        const directMatches = assertionsByFuncKey.get(fnKey);
+        if (directMatches) {
+          for (const a of directMatches) {
+            const key = `${a.suiteFilePath || ""}::${a.title || ""}`;
+            if (!matchedKeys.has(key)) {
+              matchedKeys.add(key);
+              matchedTests.push(a);
+            }
+          }
         }
-      }
 
-      // Tier 3: If no specific function matched, but the file has a dedicated test suite and function was hit
-      const fnHit = Number(fn.hit || fn.execCount || 0);
-      const isExecuted = fnHit > 0 || isSrcFullyCovered;
-
-      if (matchedTests.length === 0 && isExecuted) {
-        const fileSuiteTests = assertionsBySuiteBase.get(srcBase);
-        if (Array.isArray(fileSuiteTests) && fileSuiteTests.length > 0) {
-          matchedTests = [...fileSuiteTests];
+        // Tier 2: Check assertion titles or ancestors mentioning this function
+        const suiteCandidates = assertionsBySuiteBase.get(srcBase);
+        if (suiteCandidates) {
+          // Dedicated suite match: check assertions in matching file suite (typically 10-30 items)
+          for (const item of suiteCandidates) {
+            if (matchedKeys.has(item.key)) continue;
+            if (item.tokenSet.has(fnKey) || item.tokenSet.has(fnNameLower) || item.fullTitleLower.includes(fnNameLower)) {
+              matchedKeys.add(item.key);
+              matchedTests.push(item.assertion);
+            }
+          }
+        } else {
+          // No dedicated suite: O(1) inverted index lookup replaces 1,000 regex scans
+          const candidateItems = invertedWordIndex.get(fnKey) || invertedWordIndex.get(fnNameLower);
+          if (candidateItems) {
+            for (const item of candidateItems) {
+              if (matchedKeys.has(item.key)) continue;
+              matchedKeys.add(item.key);
+              matchedTests.push(item.assertion);
+            }
+          } else if (fnNameLower.length >= 3 && fnNameLower !== "anonymous") {
+            // Fallback for compound function names
+            for (const item of preparedAssertions) {
+              if (matchedKeys.has(item.key)) continue;
+              if (item.fullTitleLower.includes(fnNameLower)) {
+                matchedKeys.add(item.key);
+                matchedTests.push(item.assertion);
+              }
+            }
+          }
         }
-      }
 
-      // Tier 4: If still empty but function is proven executed by Istanbul
-      if (matchedTests.length === 0 && isExecuted) {
-        const candidateSuite = (testSuites || []).find((s) => getSourceBaseKey(s.filePath) === srcBase) || testSuites[0] || null;
-        matchedTests = [
-          {
+        // Tier 3: If no specific function matched, but the file has a dedicated test suite and function was hit
+        const fnHit = Number(fn.hit || fn.execCount || 0);
+        const isExecuted = fnHit > 0 || isSrcFullyCovered;
+
+        if (matchedTests.length === 0 && isExecuted) {
+          const fileSuiteTests = assertionsBySuiteBase.get(srcBase);
+          if (Array.isArray(fileSuiteTests) && fileSuiteTests.length > 0) {
+            for (const item of fileSuiteTests) {
+              if (!matchedKeys.has(item.key)) {
+                matchedKeys.add(item.key);
+                matchedTests.push(item.assertion);
+              }
+            }
+          }
+        }
+
+        // Tier 4: If still empty but function is proven executed by Istanbul
+        if (matchedTests.length === 0 && isExecuted) {
+          const candidateSuite = (testSuites || []).find((s) => getSourceBaseKey(s.filePath) === srcBase) || testSuites[0] || null;
+          matchedTests.push({
             title: `${cleanDisplayPath(fPath)} · ${fnName}() standard execution (${fnHit || 1} hits)`,
             status: "passed",
             category: "HAPPY_PATH",
@@ -879,95 +728,80 @@ export default function UnitTestTraceabilityMatrix({
             suiteFileName: candidateSuite?.fileName || "Unit Test Suite",
             suiteFilePath: candidateSuite?.filePath || fPath,
             isExecutionProof: true,
-          },
-        ];
-        if (isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) {
-          matchedTests.push({
-            title: `${cleanDisplayPath(fPath)} · ${fnName}() condition branches verified (100% path coverage)`,
-            status: "passed",
-            category: "BRANCH_TOGGLING",
-            categoryName: "C. Branch Toggling",
-            badge: "Branch Toggling",
-            color: "#0284c7",
-            duration: 1,
-            suiteFileName: candidateSuite?.fileName || "Unit Test Suite",
-            suiteFilePath: candidateSuite?.filePath || fPath,
-            isExecutionProof: true,
           });
+          if (isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) {
+            matchedTests.push({
+              title: `${cleanDisplayPath(fPath)} · ${fnName}() condition branches verified (100% path coverage)`,
+              status: "passed",
+              category: "BRANCH_TOGGLING",
+              categoryName: "C. Branch Toggling",
+              badge: "Branch Toggling",
+              color: "#0284c7",
+              duration: 1,
+              suiteFileName: candidateSuite?.fileName || "Unit Test Suite",
+              suiteFilePath: candidateSuite?.filePath || fPath,
+              isExecutionProof: true,
+            });
+          }
         }
-      }
 
-      // Check categories present for this function
-      const testsByCategory = {
-        HAPPY_PATH: matchedTests.filter((t) => t.category === "HAPPY_PATH"),
-        BOUNDARY_VALUES: matchedTests.filter((t) => t.category === "BOUNDARY_VALUES"),
-        BRANCH_TOGGLING: matchedTests.filter((t) => t.category === "BRANCH_TOGGLING"),
-        ERROR_HANDLING: matchedTests.filter((t) => t.category === "ERROR_HANDLING"),
-      };
+        // Single-pass categorization (replaces 4 .filter passes)
+        const testsByCategory = {
+          HAPPY_PATH: [],
+          BOUNDARY_VALUES: [],
+          BRANCH_TOGGLING: [],
+          ERROR_HANDLING: [],
+        };
+        for (const t of matchedTests) {
+          if (testsByCategory[t.category]) {
+            testsByCategory[t.category].push(t);
+          }
+        }
 
-      const hasHappyPath = (testsByCategory?.HAPPY_PATH?.length || 0) > 0 || isExecuted;
-      const hasBoundary = (testsByCategory?.BOUNDARY_VALUES?.length || 0) > 0 || (isSrcFullyCovered && isExecuted);
-      const hasBranch = (testsByCategory?.BRANCH_TOGGLING?.length || 0) > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) && isExecuted);
-      const hasError = (testsByCategory?.ERROR_HANDLING?.length || 0) > 0 || (isSrcFullyCovered && isExecuted);
-      const coveredCategoriesCount = [hasHappyPath, hasBoundary, hasBranch, hasError].filter(Boolean).length;
+        // O(1) file coverage lookup (replaces sourceFiles.find)
+        const fileCoverageObj = sourceFilesByPath.get(fPath) || sourceFilesByPath.get(cleanDisplayPath(fPath)) || srcMeta;
+        const isSrcFeasibleCovered = Boolean(fileCoverageObj?.isFeasibleLogicCovered || srcMeta?.isFeasibleLogicCovered);
 
-      // Calculate missing categories for guidance
-      const missingCategories = [];
-      if (!hasHappyPath) missingCategories.push("A. Happy Path");
-      if (!hasBoundary) missingCategories.push("B. Boundary Values");
-      if (!hasBranch) missingCategories.push("C. Branch Toggling");
-      if (!hasError) missingCategories.push("D. Error Handling");
+        const hasHappyPath = (testsByCategory?.HAPPY_PATH?.length || 0) > 0 || isExecuted;
+        const hasBoundary = (testsByCategory?.BOUNDARY_VALUES?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
+        const hasBranch = (testsByCategory?.BRANCH_TOGGLING?.length || 0) > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100 || isSrcFeasibleCovered) && isExecuted);
+        const hasError = (testsByCategory?.ERROR_HANDLING?.length || 0) > 0 || ((isSrcFullyCovered || isSrcFeasibleCovered) && isExecuted);
+        const coveredCategoriesCount = [hasHappyPath, hasBoundary, hasBranch, hasError].filter(Boolean).length;
 
-      const complexity = Number(fn.complexity || 1);
-      const meetsBasisPaths = (matchedTests?.length || 0) >= complexity;
-      const missingBasisPaths = Math.max(0, complexity - (matchedTests?.length || 0));
+        // Calculate missing categories for guidance
+        const missingCategories = [];
+        if (!hasHappyPath) missingCategories.push("A. Happy Path");
+        if (!hasBoundary && !isSrcFeasibleCovered) missingCategories.push("B. Boundary Values");
+        if (!hasBranch && !isSrcFeasibleCovered) missingCategories.push("C. Branch Toggling");
+        if (!hasError && !isSrcFeasibleCovered) missingCategories.push("D. Error Handling");
 
-      return {
-        ...fn,
-        cleanName: fnName,
-        tests: matchedTests,
-        testCount: matchedTests?.length || 0,
-        testsByCategory,
-        coveredCategoriesCount,
-        hasHappyPath,
-        hasBoundary,
-        hasBranch,
-        hasError,
-        missingCategories,
-        isFullyCovered: isSrcFullyCovered && isExecuted,
-        complexity,
-        complexityStatus: fn.complexityStatus || (complexity > 10 ? "HIGH" : complexity > 5 ? "MEDIUM" : "LOW"),
-        meetsBasisPaths,
-        missingBasisPaths,
-        cfgId: fn.cfgId || null,
-        hasCfg: Boolean(fn.hasCfg || fn.cfgId),
-      };
-    });
+        const complexity = Number(fn.complexity || 1);
+        const meetsBasisPaths = (matchedTests?.length || 0) >= complexity;
+        const missingBasisPaths = Math.max(0, complexity - (matchedTests?.length || 0));
+
+        return {
+          ...fn,
+          cleanName: fnName,
+          tests: matchedTests,
+          testCount: matchedTests?.length || 0,
+          testsByCategory,
+          coveredCategoriesCount,
+          hasHappyPath,
+          hasBoundary,
+          hasBranch,
+          hasError,
+          missingCategories,
+          isFullyCovered: isSrcFullyCovered && isExecuted,
+          isFeasibleLogicCovered: isSrcFeasibleCovered && isExecuted,
+          complexity,
+          complexityStatus: fn.complexityStatus || (complexity > 10 ? "HIGH" : complexity > 5 ? "MEDIUM" : "LOW"),
+          meetsBasisPaths,
+          missingBasisPaths,
+          cfgId: fn.cfgId || null,
+          hasCfg: Boolean(fn.hasCfg || fn.cfgId),
+        };
+      });
   }, [functionsList, allAssertions, sourceFiles, testSuites]);
-
-  // 4-Category Strategy Distribution counts (Happy Path, Boundary Values, Branch Toggling, Error Handling)
-  const categoryCounts = useMemo(() => {
-    const counts = {
-      HAPPY_PATH: 0,
-      BOUNDARY_VALUES: 0,
-      BRANCH_TOGGLING: 0,
-      ERROR_HANDLING: 0,
-      total: 0,
-    };
-    const targetList = (allAssertions?.length || 0) > 0
-      ? allAssertions
-      : (functionTraceability || []).flatMap((fn) => fn.tests || []);
-
-    counts.total = targetList?.length || 0;
-    for (const a of targetList) {
-      if (counts[a.category] !== undefined) {
-        counts[a.category]++;
-      } else {
-        counts.HAPPY_PATH++;
-      }
-    }
-    return counts;
-  }, [allAssertions, functionTraceability]);
 
   // Aggregate Cyclomatic Complexity & Basis Path statistics
   const { avgComplexity, maxComplexity, highestComplexityFn, basisPathsMetCount, highComplexityCount } = useMemo(() => {
@@ -1004,7 +838,11 @@ export default function UnitTestTraceabilityMatrix({
     const sourceMetaByNorm = new Map();
     for (const s of (sourceFiles || [])) {
       if (!s?.filePath) continue;
-      sourceMetaByNorm.set(norm(s.filePath), s);
+      const key = norm(s.filePath);
+      const existing = sourceMetaByNorm.get(key);
+      if (!existing || ((existing.linesPct || 0) === 0 && (s.linesPct || 0) > 0)) {
+        sourceMetaByNorm.set(key, s);
+      }
     }
 
     for (const fn of (functionTraceability || [])) {
@@ -1050,21 +888,40 @@ export default function UnitTestTraceabilityMatrix({
     return Array.from(map.values());
   }, [functionTraceability, sourceFiles]);
 
-  // Auto-preload file coverage for files with coverage gaps (< 100%) after groupedByFile is initialized
+  // Bounded & debounced auto-preload for top files with coverage gaps (< 100%) (F8)
+  // Defers execution by 2,000ms so initial dashboard rendering & network settle first.
+  // Bounded to at most 2 files (instead of 8) to eliminate request storms.
   useEffect(() => {
-    if (running) return; // Do not fetch coverage while analysis is actively in-flight
-    (groupedByFile || []).forEach((group) => {
-      const fPath = group?.filePath;
-      if (!fPath) return;
-      const meta = group?.sourceMeta;
-      const bPct = meta?.branchesPct ?? 100;
-      const lPct = meta?.linesPct ?? 100;
-      const sPct = meta?.stmtsPct ?? 100;
-      const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
-      if (hasGap && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
-        fetchFileCoverage(fPath);
+    if (running || !groupedByFile || groupedByFile.length === 0) return;
+
+    const timer = setTimeout(() => {
+      let queuedCount = 0;
+      const MAX_PRELOAD = 2; // Bounded to 2 files maximum
+
+      for (const group of groupedByFile) {
+        if (queuedCount >= MAX_PRELOAD) break;
+        const fPath = group?.filePath;
+        if (!fPath) continue;
+
+        // Skip if already in cache, in-flight, or failed recently
+        if (fileCoverageCache[fPath] || inFlightFilesRef.current.has(fPath)) continue;
+        const lastFailedAt = failedFilesRef.current?.get(fPath);
+        if (lastFailedAt && Date.now() - lastFailedAt < 30000) continue;
+
+        const meta = group?.sourceMeta;
+        const bPct = meta?.branchesPct ?? 100;
+        const lPct = meta?.linesPct ?? 100;
+        const sPct = meta?.stmtsPct ?? 100;
+        const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
+
+        if (hasGap) {
+          fetchFileCoverage(fPath, { priority: false });
+          queuedCount += 1;
+        }
       }
-    });
+    }, 2000);
+
+    return () => clearTimeout(timer);
   }, [groupedByFile, snapshotId, running]);
 
   // Filtered files & functions based on search and category filter
@@ -1109,13 +966,23 @@ export default function UnitTestTraceabilityMatrix({
       .filter(Boolean);
   }, [groupedByFile, searchQuery, selectedCategory]);
 
+  // Traceability Matrix pagination (F6)
+  const totalFilesCount = filteredFiles?.length || 0;
+  const totalMatrixPages = Math.max(1, Math.ceil(totalFilesCount / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalMatrixPages);
+
+  const paginatedFiles = useMemo(() => {
+    const start = (safeCurrentPage - 1) * pageSize;
+    return (filteredFiles || []).slice(start, start + pageSize);
+  }, [filteredFiles, safeCurrentPage, pageSize]);
+
   const toggleExpandFunction = (id, filePath) => {
     setExpandedFunctions((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else {
         next.add(id);
-        if (filePath) fetchFileCoverage(filePath);
+        if (filePath) fetchFileCoverage(filePath, { priority: true });
       }
       return next;
     });
@@ -1127,7 +994,7 @@ export default function UnitTestTraceabilityMatrix({
       if (next.has(fPath)) next.delete(fPath);
       else {
         next.add(fPath);
-        fetchFileCoverage(fPath);
+        fetchFileCoverage(fPath, { priority: true });
       }
       return next;
     });
@@ -1239,9 +1106,16 @@ export default function UnitTestTraceabilityMatrix({
     if (fileCov?.lines) {
       for (let l = startLine; l <= endLine; l++) {
         if (fileCov.lines[l]) {
-          linesInRange.push({ line: l, hits: fileCov.lines[l].hits || 0, status: fileCov.lines[l].status });
+          const lineInfo = fileCov.lines[l];
+          linesInRange.push({
+            line: l,
+            hits: lineInfo.hits || 0,
+            status: lineInfo.status,
+            reason: lineInfo.uncoverageReason || lineInfo.reason || "",
+            reasonCategory: lineInfo.reasonCategory || "",
+          });
           linesTotalCount++;
-          if (fileCov.lines[l].hits > 0) linesCoveredCount++;
+          if (lineInfo.hits > 0) linesCoveredCount++;
         }
       }
     }
@@ -1261,6 +1135,67 @@ export default function UnitTestTraceabilityMatrix({
     const uncoveredLines = linesInRange.filter((l) => (l.hits || 0) === 0 || l.status === "uncovered" || l.status === "failed");
     const uncoveredBranches = branchesInRange.filter((b) => b.status === "uncovered" || b.status === "partially_covered" || (Array.isArray(b.counts) && b.counts.some((c) => (c || 0) === 0)));
 
+    // Build function-scoped uncoverage diagnostics
+    const rawDiagItems = Array.isArray(fileCov?.uncoverageDiagnostics?.items)
+      ? fileCov.uncoverageDiagnostics.items.filter((d) => d.line >= startLine && d.line <= endLine)
+      : [];
+    const uncoverageDiagnostics = rawDiagItems.length > 0
+      ? rawDiagItems
+      : [
+          ...uncoveredBranches.map((b) => {
+            const bCounts = Array.isArray(b.counts) ? b.counts : [];
+            const tHits = bCounts[0] ?? 0;
+            const fHits = bCounts[1] ?? 0;
+            return {
+              kind: "branch",
+              line: b.line,
+              condition: b.condition || "",
+              reasonCategory: b.reasonCategory || (b.isInfeasible ? "UNREACHABLE_CODE" : "UNEXERCISED_BRANCH"),
+              reason:
+                b.uncoverageReason ||
+                b.reason ||
+                (tHits > 0 && fHits === 0
+                  ? `False branch of '${b.condition || "condition"}' was never executed (inputs always satisfied the condition or triggered an early return).`
+                  : tHits === 0 && fHits > 0
+                    ? `True branch of '${b.condition || "condition"}' was never executed (inputs never satisfied the condition).`
+                    : `Branch condition '${b.condition || "condition"}' was not reached by test inputs.`),
+            };
+          }),
+          ...uncoveredLines
+            .filter((l) => !uncoveredBranches.some((b) => b.line === l.line))
+            .map((l) => {
+              const matchingStmt = stmtsInRange.find((s) => s.startLine === l.line && (s.hits || 0) === 0);
+              return {
+                kind: "line",
+                line: l.line,
+                snippet: matchingStmt?.codeSnippet || "",
+                reasonCategory: l.reasonCategory || matchingStmt?.reasonCategory || (fnHit === 0 ? "UNEXERCISED_FUNCTION" : "DEFENSIVE_EARLY_EXIT"),
+                reason:
+                  l.reason ||
+                  matchingStmt?.uncoverageReason ||
+                  matchingStmt?.reason ||
+                  (fnHit === 0
+                    ? `Line ${l.line} was not executed because function '${fn.cleanName || fn.name}()' was never called.`
+                    : `Line ${l.line} was bypassed because preceding branch/guard returned early before reaching this statement.`),
+              };
+            }),
+        ];
+
+    // Infeasible branch and statement detection
+    const infeasibleBranches = branchesInRange.filter((b) => Boolean(
+      b.isInfeasible ||
+      b.infeasibleMeta ||
+      fileCov?.infeasibleBranches?.some(ib => (ib.line === b.line || ib.branchId === b.id || ib.branchId === b.branchId))
+    ));
+    const infeasibleStatements = stmtsInRange.filter((s) => Boolean(
+      s.isInfeasible ||
+      s.infeasibleMeta ||
+      fileCov?.infeasibleCode?.some(ic => ic.line === s.startLine || (ic.loc && s.startLine >= ic.loc.start?.line && s.startLine <= ic.loc.end?.line))
+    ));
+
+    const actionableUncoveredBranches = uncoveredBranches.filter((b) => !b.isInfeasible && !fileCov?.infeasibleBranches?.some(ib => (ib.line === b.line || ib.branchId === b.id || ib.branchId === b.branchId)));
+    const actionableUncoveredLines = uncoveredLines.filter((l) => !fileCov?.infeasibleCode?.some(ic => ic.line === l.line || (ic.loc && l.line >= ic.loc.start?.line && l.line <= ic.loc.end?.line)));
+
     const isFullyCovered =
       !isFileZeroFuncs &&
       fnHit > 0 &&
@@ -1271,6 +1206,15 @@ export default function UnitTestTraceabilityMatrix({
       (uncoveredLines?.length || 0) === 0 &&
       (uncoveredBranches?.length || 0) === 0 &&
       (!fileCov ? (!isFileBranchGap || !isComplexityBranchGap) : true);
+
+    const isFeasibleLogicCovered =
+      !isFullyCovered &&
+      !isFileZeroFuncs &&
+      fnHit > 0 &&
+      funcsPct >= 100 &&
+      actionableUncoveredBranches.length === 0 &&
+      actionableUncoveredLines.length === 0 &&
+      infeasibleBranches.length > 0;
 
     return {
       startLine,
@@ -1294,7 +1238,13 @@ export default function UnitTestTraceabilityMatrix({
       linesInRange,
       uncoveredLines,
       uncoveredBranches,
+      uncoverageDiagnostics,
+      infeasibleBranches,
+      infeasibleStatements,
+      actionableUncoveredBranches,
+      actionableUncoveredLines,
       isFullyCovered,
+      isFeasibleLogicCovered,
     };
   };
 
@@ -1302,36 +1252,22 @@ export default function UnitTestTraceabilityMatrix({
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* ── Bi-directional Traceability Matrix Explorer ── */}
       <div
-        style={{
-          background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-          border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-          borderRadius: 10,
-          overflow: "hidden",
-          boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.05)" : "none",
-        }}
+        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden"
       >
         {/* Explorer Header with Search & Controls */}
         <div
-          style={{
-            padding: "14px 18px",
-            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.06)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 12,
-          }}
+          className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between flex-wrap gap-3"
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
+            <span className="text-[13px] font-semibold text-[var(--color-text)]">
               Business Logic ↔ Test Case Traceability Matrix
             </span>
-            <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 500 }}>
+            <span className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
               ({filteredFiles?.length || 0} source files · {(functionTraceability?.length || 0)} business functions)
             </span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {/* CFG & Cyclomatic Complexity summary badge */}
             <div
               onClick={() => {
@@ -1341,46 +1277,32 @@ export default function UnitTestTraceabilityMatrix({
                   onOpenCFG?.();
                 }
               }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "4px 10px",
-                borderRadius: 6,
-                background: selectedCategory === "HIGH_CC" ? "rgba(239, 68, 68, 0.15)" : "rgba(168, 85, 247, 0.12)",
-                border: selectedCategory === "HIGH_CC" ? "1.5px solid #ef4444" : "1px solid rgba(168, 85, 247, 0.3)",
-                color: selectedCategory === "HIGH_CC" ? "#ef4444" : (isLight ? "#7e22ce" : "#c084fc"),
-                fontSize: 11.5,
-                fontWeight: 650,
-                cursor: "pointer",
-              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium cursor-pointer transition-colors duration-150 ${
+                selectedCategory === "HIGH_CC"
+                  ? "border-rose-500/40 bg-rose-500/[0.08] text-rose-400"
+                  : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]"
+              }`}
               title={`Cyclomatic Complexity (CC): Avg ${avgComplexity.toFixed(1)} | Max ${maxComplexity} (${highestComplexityFn?.cleanName || "peak function"}). Click to filter ${highComplexityCount} functions with CC > 10.`}
             >
-              <GitBranch size={13} />
-              <span>CFG & CC:</span>
-              <span style={{ fontWeight: 700 }}>
-                Avg: <b>{avgComplexity.toFixed(1)}</b>
+              <GitBranch size={12} className="text-[var(--color-text-muted)]" />
+              <span>CFG &amp; CC:</span>
+              <span className="font-mono tabular-nums font-semibold text-[var(--color-text)]">
+                Avg {avgComplexity.toFixed(1)}
               </span>
-              <span style={{ opacity: 0.4 }}>·</span>
+              <span className="opacity-40">·</span>
               <span
-                style={{ fontWeight: 700 }}
+                className="font-mono tabular-nums font-semibold"
                 title={`Peak Complexity = ${maxComplexity} in function ${highestComplexityFn?.cleanName || ""}`}
               >
-                Max: <b style={{ color: maxComplexity > 10 ? "#ef4444" : "inherit" }}>{maxComplexity}</b>
+                Max <span className={maxComplexity > 10 ? (isLight ? "text-rose-600" : "text-rose-300/90") : "text-[var(--color-text)]"}>{maxComplexity}</span>
               </span>
               {highComplexityCount > 0 && (
                 <span
-                  style={{
-                    fontSize: 10,
-                    background: selectedCategory === "HIGH_CC" ? "#ef4444" : "rgba(239, 68, 68, 0.2)",
-                    color: selectedCategory === "HIGH_CC" ? "#ffffff" : "#ef4444",
-                    padding: "1px 6px",
-                    borderRadius: 4,
-                    fontWeight: 700,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 3,
-                  }}
+                  className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded font-semibold inline-flex items-center gap-1 ${
+                    selectedCategory === "HIGH_CC"
+                      ? isLight ? "bg-rose-600 text-white" : "bg-rose-500/25 text-rose-200"
+                      : isLight ? "bg-rose-50 text-rose-700 border border-rose-200" : "bg-rose-500/[0.08] text-rose-300/90 border border-rose-500/20"
+                  }`}
                   title={`${highComplexityCount} functions have high complexity (CC > 10, defect risk). Click to filter.`}
                 >
                   <AlertTriangle size={10} />
@@ -1389,168 +1311,20 @@ export default function UnitTestTraceabilityMatrix({
               )}
             </div>
 
-            {/* 4 Decision Table Category Statistics Badges */}
-            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-              {/* Happy Path */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "HAPPY_PATH" ? "ALL" : "HAPPY_PATH")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "HAPPY_PATH"
-                    ? "rgba(16, 185, 129, 0.22)"
-                    : (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.08)"),
-                  border: selectedCategory === "HAPPY_PATH"
-                    ? "1.5px solid #10b981"
-                    : "1px solid rgba(16, 185, 129, 0.25)",
-                  color: isLight ? "#047857" : "#34d399",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Happy Path: ${categoryCounts.HAPPY_PATH} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0 }} />
-                <span>Happy Path:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.HAPPY_PATH}</span>
-              </div>
-
-              {/* Boundary Value */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "BOUNDARY_VALUES" ? "ALL" : "BOUNDARY_VALUES")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "BOUNDARY_VALUES"
-                    ? "rgba(245, 158, 11, 0.22)"
-                    : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)"),
-                  border: selectedCategory === "BOUNDARY_VALUES"
-                    ? "1.5px solid #f59e0b"
-                    : "1px solid rgba(245, 158, 11, 0.25)",
-                  color: isLight ? "#b45309" : "#fbbf24",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Boundary Values: ${categoryCounts.BOUNDARY_VALUES} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
-                <span>Boundary Value:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.BOUNDARY_VALUES}</span>
-              </div>
-
-              {/* Branch Toggling */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "BRANCH_TOGGLING" ? "ALL" : "BRANCH_TOGGLING")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "BRANCH_TOGGLING"
-                    ? "rgba(2, 132, 199, 0.22)"
-                    : (isLight ? "#f0f9ff" : "rgba(2, 132, 199, 0.08)"),
-                  border: selectedCategory === "BRANCH_TOGGLING"
-                    ? "1.5px solid #0284c7"
-                    : "1px solid rgba(2, 132, 199, 0.25)",
-                  color: isLight ? "#0369a1" : "#38bdf8",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Branch Toggling: ${categoryCounts.BRANCH_TOGGLING} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#0284c7", flexShrink: 0 }} />
-                <span>Branch Toggling:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.BRANCH_TOGGLING}</span>
-              </div>
-
-              {/* Error */}
-              <div
-                onClick={() => setSelectedCategory(selectedCategory === "ERROR_HANDLING" ? "ALL" : "ERROR_HANDLING")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  background: selectedCategory === "ERROR_HANDLING"
-                    ? "rgba(239, 68, 68, 0.22)"
-                    : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.08)"),
-                  border: selectedCategory === "ERROR_HANDLING"
-                    ? "1.5px solid #ef4444"
-                    : "1px solid rgba(239, 68, 68, 0.25)",
-                  color: isLight ? "#b91c1c" : "#f87171",
-                  fontSize: 11,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                title={`Error Handling: ${categoryCounts.ERROR_HANDLING} assertions. Click to filter.`}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#ef4444", flexShrink: 0 }} />
-                <span>Error:</span>
-                <span style={{ fontWeight: 800 }}>{categoryCounts.ERROR_HANDLING}</span>
-              </div>
-            </div>
-
-            {selectedCategory !== "ALL" && (
-              <button
-                onClick={() => setSelectedCategory("ALL")}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: isLight ? "#4f46e5" : "#a5b4fc",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                Clear Filter ({selectedCategory === "HIGH_CC" ? "CC > 10" : selectedCategory === "HAPPY_PATH" ? "Happy Path" : selectedCategory === "BOUNDARY_VALUES" ? "Boundary Value" : selectedCategory === "BRANCH_TOGGLING" ? "Branch Toggling" : selectedCategory === "ERROR_HANDLING" ? "Error" : selectedCategory})
-              </button>
-            )}
-
             {/* Search Input */}
             <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-                borderRadius: 6,
-                padding: "4px 8px",
-                fontSize: 12,
-              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)]/60 transition-colors duration-150"
             >
-              <Search size={13} style={{ color: isLight ? "#64748b" : "#8b949e" }} />
+              <Search size={13} className="text-[var(--color-text-muted)]" />
               <input
                 type="text"
                 placeholder="Search function or source file..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  outline: "none",
-                  color: isLight ? "#0f172a" : "#e6edf3",
-                  fontSize: 12,
-                  width: 200,
-                }}
+                className="bg-transparent border-0 outline-none text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] w-[200px]"
               />
               {searchQuery && (
-                <X size={12} style={{ cursor: "pointer", color: "#8b949e" }} onClick={() => setSearchQuery("")} />
+                <X size={12} className="cursor-pointer text-[var(--color-text-muted)] hover:text-[var(--color-text)]" onClick={() => setSearchQuery("")} />
               )}
             </div>
           </div>
@@ -1558,16 +1332,16 @@ export default function UnitTestTraceabilityMatrix({
 
         {/* Traceability List */}
         {(filteredFiles?.length || 0) === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", color: isLight ? "#64748b" : "#8b949e" }}>
-            <FileCode size={28} style={{ margin: "0 auto 10px", opacity: 0.5 }} />
-            <div style={{ fontSize: 13, fontWeight: 600 }}>No matching business functions found</div>
-            <div style={{ fontSize: 11.5, marginTop: 4 }}>
-              Try searching with different keywords or switch to "All Categories".
+          <div className="p-10 text-center text-[var(--color-text-muted)]">
+            <FileCode size={26} className="mx-auto mb-2.5 opacity-45" />
+            <div className="text-[13px] font-semibold text-[var(--color-text-secondary)]">No matching business functions found</div>
+            <div className="text-[11.5px] mt-1">
+              Try searching with different keywords or switch to &quot;All Categories&quot;.
             </div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column" }}>
-            {filteredFiles.map((group) => {
+            {paginatedFiles.map((group) => {
               const isFileLoading = loadingFiles.has(group.filePath);
               const isFileExpanded = expandedFiles.has(group.filePath);
               const isCallbacksExpanded = expandedCallbacksByFile.has(group.filePath);
@@ -1605,7 +1379,12 @@ export default function UnitTestTraceabilityMatrix({
                 (displayBranches >= 100 || (branchesTotalCount != null ? branchesTotalCount === 0 : false)) &&
                 (displayFuncs >= 100 || (group?.functions?.length || 0) === 0) &&
                 displayStmts >= 100;
-              const getColor = (pct) => pct >= 100 ? "#10b981" : pct > 0 ? "#f59e0b" : "#ef4444";
+              const getColor = (pct) =>
+                pct >= 100
+                  ? "var(--color-text-secondary)"
+                  : pct > 0
+                    ? (isLight ? "#b45309" : "#d97706")
+                    : (isLight ? "#be123c" : "#fb7185");
 
               // Separate genuine business functions from internal anonymous callbacks
               const businessFunctions = (group?.functions || []).filter((fn) => !isCallbackOrAnonymousName(fn.cleanName));
@@ -1617,39 +1396,22 @@ export default function UnitTestTraceabilityMatrix({
               return (
                 <div
                   key={group.filePath}
-                  style={{
-                    borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.04)",
-                  }}
+                  className="border-b border-[var(--color-border)] last:border-b-0"
                 >
                   {/* File Row Header */}
                   <div
                     onClick={() => toggleExpandFile(group.filePath)}
-                    style={{
-                      padding: "10px 18px",
-                      background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      cursor: "pointer",
-                      userSelect: "none",
-                      transition: "background 0.15s ease",
-                    }}
-                    className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.04]"}
+                    className="px-4 py-2.5 bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] flex items-center justify-between cursor-pointer select-none transition-colors duration-150 gap-3 flex-wrap"
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {isFileExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      <FileCode size={14} style={{ color: "#6366f1" }} />
+                      {isFileExpanded ? <ChevronDown size={14} className="text-[var(--color-text-muted)]" /> : <ChevronRight size={14} className="text-[var(--color-text-muted)]" />}
+                      <FileCode size={14} className="text-[var(--color-text-muted)]" />
                       <span
-                        style={{
-                          fontSize: 12.5,
-                          fontFamily: "var(--font-mono)",
-                          fontWeight: 700,
-                          color: isLight ? "#0f172a" : "#f8fafc",
-                        }}
+                        className="text-[12.5px] font-mono font-semibold text-[var(--color-text)]"
                       >
                         {cleanPath}
                       </span>
-                      <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e" }}>
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
                         {(businessFunctions?.length || 0) > 0
                         ? `(${businessFunctions.length} business function${businessFunctions.length > 1 ? "s" : ""}${(secondaryCallbacks?.length || 0) > 0 ? ` · ${secondaryCallbacks.length} callback${secondaryCallbacks.length > 1 ? "s" : ""}` : ""})`
                         : (callbackFunctions?.length || 0) > 0
@@ -1658,22 +1420,22 @@ export default function UnitTestTraceabilityMatrix({
                       </span>
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       {/* File Coverage Badges */}
                       {running ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: isLight ? "#4f46e5" : "#818cf8" }}>
+                        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-primary)]">
                           <Loader2 size={12} className="animate-spin" />
-                          <span style={{ fontWeight: 600 }}>Analyzing...</span>
+                          <span className="font-medium">Analyzing...</span>
                         </div>
                       ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: "var(--font-mono)" }}>
+                        <div className="flex items-center gap-2.5 text-[11px] font-mono tabular-nums">
                           <span style={{ color: getColor(displayStmts) }}>
                             Stmts: {displayStmts}%
                           </span>
                           <span style={{ color: getColor(displayBranches) }}>
                             Branches: {displayBranches}%
                           </span>
-                          <span style={{ color: ((group?.functions?.length || 0) === 0) ? (isLight ? "#64748b" : "#94a3b8") : getColor(displayFuncs) }}>
+                          <span style={{ color: ((group?.functions?.length || 0) === 0) ? "var(--color-text-muted)" : getColor(displayFuncs) }}>
                             Funcs: {(group?.functions?.length || 0) === 0 ? "N/A (0 fns)" : `${displayFuncs}%`}
                           </span>
                           <span style={{ color: getColor(displayLines) }}>
@@ -1682,114 +1444,111 @@ export default function UnitTestTraceabilityMatrix({
                         </div>
                       )}
 
-                      {/* File Action Center: Suggest tests / Diff / Apply / Status */}
+                      {/* File Action Center: Diff / Apply / Status */}
                       {isSuggesting ? (
                         <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "3px 10px",
-                            borderRadius: 5,
-                            background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)",
-                            border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)",
-                            color: isLight ? "#6d28d9" : "#c4b5fd",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] text-[11px] font-medium"
                         >
-                          <Loader2 size={12} className="animate-spin text-purple-500" />
+                          <Loader2 size={12} className="animate-spin text-[var(--color-primary)]" />
                           <span>Generating...</span>
                         </div>
                       ) : isApplying ? (
                         <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "3px 10px",
-                            borderRadius: 5,
-                            background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)",
-                            border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
-                            color: isLight ? "#15803d" : "#86efac",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] text-[11px] font-medium"
                         >
-                          <Loader2 size={12} className="animate-spin text-green-500" />
-                          <span>Applying & Running...</span>
+                          <Loader2 size={12} className="animate-spin text-[var(--color-primary)]" />
+                          <span>
+                            {applyProgressSteps?.[group.filePath]
+                              ? (applyProgressSteps[group.filePath].includes("Running")
+                                  ? "Verifying Tests..."
+                                  : "Merging Tests...")
+                              : isBulkApplying
+                                ? (bulkApplyPhase === "merge"
+                                    ? "Merging Tests..."
+                                    : bulkApplyPhase === "verify"
+                                      ? "Verifying in RAM..."
+                                      : bulkApplyPhase === "sync"
+                                        ? "Updating Coverage..."
+                                        : "Applying Tests...")
+                                : "Applying & Running..."}
+                          </span>
                         </div>
                       ) : hasPending ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          {fileSugs[0]?.telemetry && (
+                            <span
+                              className="text-[10px] font-mono tabular-nums text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                              title={`Generation: ${fileSugs[0].telemetry.durationSeconds || (fileSugs[0].telemetry.durationMs / 1000).toFixed(1)}s · ${fileSugs[0].telemetry.tokens?.total || 0} tokens`}
+                            >
+                              <Clock size={10} />
+                              <span>{fileSugs[0].telemetry.durationSeconds || (fileSugs[0].telemetry.durationMs / 1000).toFixed(1)}s</span>
+                              <span className="opacity-40">•</span>
+                              <Zap size={10} />
+                              <span>{(fileSugs[0].telemetry.tokens?.total || 0).toLocaleString()} tok</span>
+                            </span>
+                          )}
+                          {fileSugs.some((s) => s.dryRunStatus === "VERIFIED") && (
+                            <span
+                              className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-500/[0.08] text-emerald-400 border border-emerald-500/25 inline-flex items-center gap-1"
+                              title="Verified in Dry-Run sandbox"
+                            >
+                              <CheckCircle2 size={10} />
+                              <span>Verified</span>
+                            </span>
+                          )}
                           {onReviewDiff && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onReviewDiff(group.filePath);
                               }}
-                              style={{
-                                padding: "3px 9px",
-                                borderRadius: 5,
-                                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.2)",
-                                color: isLight ? "#1e293b" : "#f1f5f9",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                              }}
-                              title="Review generated test code diff before applying"
+                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
+                              title="Select individual test cases, inspect diff, and test before applying"
                             >
-                              <FileDiff size={12} style={{ color: "#6366f1" }} />
-                              <span>Review Diff</span>
+                              <FileDiff size={12} className="text-[var(--color-text-muted)]" />
+                              <span>Select &amp; Review</span>
                             </button>
                           )}
-                          {onApplyAllFileSuggestions && (
+                        </div>
+                      ) : (hasPassed || isFileFullyCovered) ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "#16a34a",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 3,
+                              padding: "2px 8px",
+                              borderRadius: 5,
+                              background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.12)",
+                              border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
+                            }}
+                          >
+                            <Check size={12} strokeWidth={3} />
+                            <span>{isFileFullyCovered ? "100% Covered" : "v2: Merged"}</span>
+                          </span>
+
+                          {onReviewDiff && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onApplyAllFileSuggestions(group.filePath, fileSugs);
+                                onReviewDiff(group.filePath);
                               }}
-                              style={{
-                                padding: "3px 10px",
-                                borderRadius: 5,
-                                background: "#16a34a",
-                                border: "1px solid #15803d",
-                                color: "#ffffff",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                boxShadow: "0 1px 3px rgba(22, 163, 74, 0.35)",
-                              }}
-                              title="Apply generated tests for this file and run verification"
+                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
+                              title="Review diff with original version"
                             >
-                              <Zap size={12} />
-                              <span>Apply Tests</span>
+                              <FileDiff size={11} className="text-[var(--color-primary)]" />
+                              <span>Diff</span>
                             </button>
                           )}
                         </div>
                       ) : (hasPassed || isFileFullyCovered) ? (
                         <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color: "#16a34a",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                            padding: "2px 8px",
-                            borderRadius: 5,
-                            background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.12)",
-                            border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
-                          }}
+                          className="text-[11px] font-medium text-[var(--color-text-secondary)] bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center gap-1 px-2 py-0.5 rounded-md"
                         >
-                          <Check size={12} strokeWidth={3} />
+                          <Check size={12} strokeWidth={2.5} className="text-emerald-500/80" />
                           <span>{isFileFullyCovered ? "100% Covered" : "Merged"}</span>
                         </span>
                       ) : hasFailed ? (
@@ -1801,15 +1560,11 @@ export default function UnitTestTraceabilityMatrix({
                           return (
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                               <span
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  color: "#dc2626",
-                                  padding: "2px 7px",
-                                  borderRadius: 4,
-                                  background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-                                  border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
-                                }}
+                                className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${
+                                  isLight
+                                    ? "bg-rose-50 border-rose-200 text-rose-700"
+                                    : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90"
+                                }`}
                               >
                                 {detectedMissingPkg?.packageName ? `Missing '${detectedMissingPkg.packageName}'` : "Failed"}
                               </span>
@@ -1825,19 +1580,11 @@ export default function UnitTestTraceabilityMatrix({
                                     );
                                   }}
                                   disabled={installingDependencyName === detectedMissingPkg.packageName}
-                                  style={{
-                                    padding: "3px 8px",
-                                    borderRadius: 5,
-                                    background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
-                                    border: "none",
-                                    color: "#ffffff",
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    cursor: installingDependencyName === detectedMissingPkg.packageName ? "not-allowed" : "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                  }}
+                                  className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold flex items-center gap-1 transition-colors duration-150 ${
+                                    installingDependencyName === detectedMissingPkg.packageName
+                                      ? "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)] cursor-not-allowed"
+                                      : "bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-primary-foreground)] cursor-pointer"
+                                  }`}
                                   title={`Install missing library '${detectedMissingPkg.packageName}' and retry test suite`}
                                 >
                                   {installingDependencyName === detectedMissingPkg.packageName ? (
@@ -1859,19 +1606,11 @@ export default function UnitTestTraceabilityMatrix({
                                     e.stopPropagation();
                                     onSuggestTestcase(group.filePath);
                                   }}
-                                  style={{
-                                    padding: "3px 8px",
-                                    borderRadius: 5,
-                                    background: isLight ? "#fee2e2" : "rgba(239, 68, 68, 0.2)",
-                                    border: isLight ? "1px solid #fca5a5" : "1px solid rgba(239, 68, 68, 0.4)",
-                                    color: isLight ? "#b91c1c" : "#fca5a5",
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 3,
-                                  }}
+                                  className={`px-2 py-1 rounded-md border text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150 ${
+                                    isLight
+                                      ? "bg-white hover:bg-rose-50 border-rose-200 text-rose-700"
+                                      : "bg-[var(--color-surface)] hover:bg-rose-500/10 border-rose-500/25 text-rose-300/90"
+                                  }`}
                                 >
                                   <FileCode2 size={11} />
                                   <span>Re-generate</span>
@@ -1886,93 +1625,36 @@ export default function UnitTestTraceabilityMatrix({
                             e.stopPropagation();
                             onSuggestTestcase(group.filePath);
                           }}
-                          style={{
-                            padding: "3px 10px",
-                            borderRadius: 5,
-                            background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.2)",
-                            border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)",
-                            color: isLight ? "#4f46e5" : "#a5b4fc",
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            boxShadow: "0 1px 2px rgba(99, 102, 241, 0.1)",
-                          }}
+                          className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1.5 transition-colors duration-150"
                           title="Suggest unit tests for uncovered logic and branches in this file"
                         >
-                          <FileCode2 size={11} />
+                          <FileCode2 size={11} className="text-[var(--color-primary)]" />
                           <span>Suggest tests</span>
                         </button>
                       ) : null}
-
-                      {/* Prominent File-Level 4-Metric Proof Button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setInspectingFileProof(group.filePath);
-                          fetchFileCoverage(group.filePath);
-                        }}
-                        style={{
-                          padding: "3px 9px",
-                          borderRadius: 4,
-                          background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)",
-                          border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
-                          color: isLight ? "#2563eb" : "#60a5fa",
-                          fontSize: 11,
-                          fontWeight: 650,
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 4,
-                        }}
-                        title="View mathematical 4-metric calculation and Istanbul execution proof for this file"
-                      >
-                        <Calculator size={11} />
-                        <span>4-Metric Proof</span>
-                      </button>
 
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenFile?.(group.filePath);
                         }}
-                        style={{
-                          padding: "3px 8px",
-                          borderRadius: 4,
-                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
-                          border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-                          color: isLight ? "#475569" : "#cbd5e1",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                        }}
+                        className="px-2 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[11px] font-medium cursor-pointer transition-colors duration-150"
                         title="Open source file in editor"
                       >
                         Open file
                       </button>
+                      
                     </div>
                   </div>
 
                   {/* Functions in this file */}
                   {isFileExpanded && (
-                    <div style={{ padding: "8px 18px 14px 34px", display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div className="pt-2 px-4 pb-3.5 pl-8 flex flex-col gap-2.5 bg-[var(--color-surface)]">
                       {(group?.functions?.length || 0) === 0 ? (
                         <div
-                          style={{
-                            padding: "12px 16px",
-                            borderRadius: 6,
-                            background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)",
-                            border: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.12)",
-                            fontSize: 12,
-                            color: isLight ? "#64748b" : "#94a3b8",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
+                          className="px-4 py-3 rounded-md bg-[var(--color-bg)] border border-dashed border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)] flex items-center gap-2"
                         >
-                          <Info size={14} style={{ color: "#3b82f6", flexShrink: 0 }} />
+                          <Info size={14} className="text-[var(--color-text-muted)] shrink-0" />
                           <span>
                             No business functions declared in this file. Function traceability, category checklists, and unit test suggestions apply to executable business functions.
                           </span>
@@ -1983,50 +1665,33 @@ export default function UnitTestTraceabilityMatrix({
                           const isFnExpanded = expandedFunctions.has(fnId);
                           const isCovered = (fn.hit || 0) > 0 || (Array.isArray(fn.tests) && fn.tests.length > 0);
 
-                        const activeTab = "proof"; // always show 4-metric execution proof
-                        const proofData = computeFunctionProof(fn, fileCov, meta);
+                                                const proofData = computeFunctionProof(fn, fileCov, meta);
                         const isAnon = isAnonymousName(fn.cleanName);
                         const displayFnName = isAnon ? ((businessFunctions?.length || 0) === 0 ? `${fileBaseName} [default]` : fn.cleanName) : fn.cleanName;
 
                         return (
                           <div
                             key={fnId}
-                            style={{
-                              borderRadius: 8,
-                              background: isLight ? "#ffffff" : "rgba(15, 23, 42, 0.5)",
-                              border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.07)",
-                              overflow: "hidden",
-                            }}
+                            className="rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] overflow-hidden"
                           >
                             {/* Function Header Row */}
                             <div
                               onClick={() => toggleExpandFunction(fnId, fn.filePath)}
-                              style={{
-                                padding: "9px 14px",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                cursor: "pointer",
-                                userSelect: "none",
-                                background: isFnExpanded
-                                  ? (isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)")
-                                  : "transparent",
-                              }}
+                              className={`px-3.5 py-2 flex items-center justify-between cursor-pointer select-none transition-colors duration-150 ${
+                                isFnExpanded
+                                  ? "bg-[var(--color-surface-secondary)]"
+                                  : "hover:bg-[var(--color-surface-secondary)]/60"
+                              }`}
                             >
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                {isFnExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                                <Code2 size={14} style={{ color: isCovered ? "#0284c7" : "#f59e0b" }} />
+                                {isFnExpanded ? <ChevronDown size={13} className="text-[var(--color-text-muted)]" /> : <ChevronRight size={13} className="text-[var(--color-text-muted)]" />}
+                                <Code2 size={14} className={isCovered ? "text-[var(--color-text-secondary)]" : "text-amber-500/80"} />
                                 <span
-                                  style={{
-                                    fontSize: 13,
-                                    fontWeight: 700,
-                                    fontFamily: "var(--font-mono)",
-                                    color: isLight ? "#0f172a" : "#f8fafc",
-                                  }}
+                                  className="text-[12.5px] font-semibold font-mono text-[var(--color-text)]"
                                 >
                                   {displayFnName}()
                                 </span>
-                                <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontFamily: "var(--font-mono)" }}>
+                                <span className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
                                   L{fn.startLine || fn.line || 1}
                                   {fn.endLine ? ` - L${fn.endLine}` : ""}
                                 </span>
@@ -2050,19 +1715,7 @@ export default function UnitTestTraceabilityMatrix({
                                       : null;
                                     onOpenFile?.(fn.filePath, fn.startLine, fn.cleanName, fn.endLine, testInfo);
                                   }}
-                                  style={{
-                                    background: "transparent",
-                                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
-                                    borderRadius: 4,
-                                    color: isLight ? "#4f46e5" : "#a5b4fc",
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 3,
-                                    fontSize: 10,
-                                    fontWeight: 650,
-                                    padding: "2px 5px",
-                                  }}
+                                  className="bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer flex items-center gap-1 transition-colors duration-150"
                                   title={`View ${fn.cleanName} code and corresponding unit test in-place at L${fn.startLine}`}
                                 >
                                   <FileCode size={10} />
@@ -2071,52 +1724,56 @@ export default function UnitTestTraceabilityMatrix({
 
                                 {/* Cyclomatic Complexity (CC) Badge */}
                                 <span
-                                  style={{
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    padding: "2px 6px",
-                                    borderRadius: 4,
-                                    background: fn.complexity > 10 ? "rgba(239, 68, 68, 0.12)" : fn.complexity > 5 ? "rgba(245, 158, 11, 0.12)" : "rgba(16, 185, 129, 0.12)",
-                                    color: fn.complexity > 10 ? "#ef4444" : fn.complexity > 5 ? "#f59e0b" : "#10b981",
-                                    border: `1px solid ${fn.complexity > 10 ? "rgba(239, 68, 68, 0.35)" : fn.complexity > 5 ? "rgba(245, 158, 11, 0.35)" : "rgba(16, 185, 129, 0.35)"}`,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 3,
-                                  }}
+                                  className={`text-[10px] font-mono tabular-nums font-medium px-1.5 py-0.5 rounded border flex items-center gap-1 ${
+                                    fn.complexity > 10
+                                      ? (isLight ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90")
+                                      : fn.complexity > 5
+                                        ? (isLight ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-amber-500/[0.07] border-amber-500/20 text-amber-300/90")
+                                        : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)]"
+                                  }`}
                                   title={`Cyclomatic Complexity (McCabe): CC = ${fn.complexity || 1}`}
                                 >
                                   <GitBranch size={10} />
                                   <span>CC: {fn.complexity || 1}</span>
                                 </span>
+
+                                {/* Explanation Badge for Justified Infeasible Code */}
+                                {proofData.infeasibleBranches?.length > 0 && (
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.12)",
+                                      color: isLight ? "#b45309" : "#fbbf24",
+                                      border: "1px solid rgba(245, 158, 11, 0.35)",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 3,
+                                      cursor: "help",
+                                    }}
+                                    title={proofData.infeasibleBranches.map(b => `Line ${b.line}: ${b.infeasibleMeta?.justification || b.infeasibleMeta?.reason || b.condition || "Infeasible guard"}`).join("\n")}
+                                  >
+                                    <ShieldCheck size={10} />
+                                    <span>{proofData.infeasibleBranches.length} Guard Justified</span>
+                                  </span>
+                                )}
                               </div>
 
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 {/* Function Status Pill */}
                                 <span
-                                  style={{
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    padding: "2px 8px",
-                                    borderRadius: 4,
-                                    background: (proofData.fnHit || 0) === 0
-                                      ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
+                                  className={`text-[11px] font-medium font-mono tabular-nums px-2 py-0.5 rounded border flex items-center gap-1 ${
+                                    (proofData.fnHit || 0) === 0
+                                      ? (isLight ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90")
                                       : proofData.isFullyCovered
-                                        ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
-                                        : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)"),
-                                    color: (proofData.fnHit || 0) === 0
-                                      ? (isLight ? "#dc2626" : "#f87171")
-                                      : proofData.isFullyCovered
-                                        ? (isLight ? "#059669" : "#4ade80")
-                                        : (isLight ? "#b45309" : "#fbbf24"),
-                                    border: (proofData.fnHit || 0) === 0
-                                      ? (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.3)")
-                                      : proofData.isFullyCovered
-                                        ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)")
-                                        : (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)"),
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                  }}
+                                        ? "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                                        : proofData.isFeasibleLogicCovered
+                                          ? (isLight ? "bg-violet-50 border-violet-200 text-violet-700" : "bg-[#8B7CFD]/10 border-[#8B7CFD]/30 text-[#c4b5fd]")
+                                          : (isLight ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-amber-500/[0.07] border-amber-500/20 text-amber-300/90")
+                                  }`}
+                                  title={proofData.isFeasibleLogicCovered ? "All executable logic covered. Remaining gaps are verified environment safeguards." : undefined}
                                 >
                                   {(proofData.fnHit || 0) === 0 ? (
                                     <>
@@ -2125,8 +1782,13 @@ export default function UnitTestTraceabilityMatrix({
                                     </>
                                   ) : proofData.isFullyCovered ? (
                                     <>
-                                      <CheckCircle2 size={11} />
+                                      <CheckCircle2 size={11} className="text-emerald-500/80" />
                                       <span>100% Covered ({(fn.tests?.length || 0)} tests)</span>
+                                    </>
+                                  ) : proofData.isFeasibleLogicCovered ? (
+                                    <>
+                                      <ShieldCheck size={11} />
+                                      <span>✓ Feasible Logic Covered ({proofData.infeasibleBranches.length} Guard{proofData.infeasibleBranches.length > 1 ? "s" : ""} Justified)</span>
                                     </>
                                   ) : (
                                     <>
@@ -2135,72 +1797,40 @@ export default function UnitTestTraceabilityMatrix({
                                     </>
                                   )}
                                 </span>
-                                </div>
                               </div>
+                            </div>
 
                             {/* ── EXPANDED 4-METRIC EXECUTION PROOF & DECISION TABLE ── */}
                             {isFnExpanded && (
                               <div
-                                style={{
-                                  padding: "14px 16px",
-                                  borderTop: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.05)",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  gap: 14,
-                                  background: isLight ? "#fbfcfe" : "rgba(0, 0, 0, 0.2)",
-                                }}
+                                className="p-3.5 border-t border-[var(--color-border)] flex flex-col gap-3.5 bg-[var(--color-surface)]"
                               >
-                                {/* Tab selector inside expanded function: 4-Metric Proof vs 4-Category Decision Table */}
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     <div
-                                      style={{
-                                        padding: "4px 10px",
-                                        borderRadius: 6,
-                                        fontSize: 11.5,
-                                        fontWeight: 700,
-                                        background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)",
-                                        color: isLight ? "#2563eb" : "#60a5fa",
-                                        border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 5,
-                                      }}
+                                      className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] flex items-center gap-1.5"
                                     >
-                                      <Calculator size={12} />
+                                      <Calculator size={12} className="text-[var(--color-primary)]" />
                                       <span>4-Metric Execution Proof</span>
                                     </div>
 
                                     <button
                                       onClick={() => onOpenCFG?.(fn.filePath, fn.cleanName, fn.startLine)}
-                                      style={{
-                                        padding: "4px 10px",
-                                        borderRadius: 6,
-                                        fontSize: 11.5,
-                                        fontWeight: 700,
-                                        cursor: "pointer",
-                                        background: isLight ? "rgba(147, 51, 234, 0.08)" : "rgba(168, 85, 247, 0.15)",
-                                        color: isLight ? "#7e22ce" : "#c084fc",
-                                        border: isLight ? "1px solid rgba(147, 51, 234, 0.3)" : "1px solid rgba(168, 85, 247, 0.35)",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 5,
-                                      }}
+                                      className="px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] flex items-center gap-1.5 transition-colors duration-150"
                                       title="Open Control Flow Graph (CFG) and inspect Cyclomatic Complexity (CC)"
                                     >
-                                      <GitBranch size={12} />
-                                      <span>View CFG Flow Graph & CC Analysis</span>
+                                      <GitBranch size={12} className="text-[var(--color-text-muted)]" />
+                                      <span>View CFG Flow Graph &amp; CC Analysis</span>
                                     </button>
                                   </div>
 
-                                  <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8" }}>
-                                    Target function: <code style={{ color: "#6366f1" }}>{fn.cleanName}()</code> · Lines {proofData.startLine}–{proofData.endLine}
+                                  <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
+                                    Target function: <code className="text-[var(--color-text)]">{fn.cleanName}()</code> · Lines {proofData.startLine}–{proofData.endLine}
                                   </span>
                                 </div>
 
-                                {/* TAB 1: 4-METRIC EXECUTION PROOF & MATHEMATICAL CALCULATION */}
-                                {activeTab === "proof" && (
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                                {/* 4-METRIC EXECUTION PROOF & MATHEMATICAL CALCULATION */}
+                                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                                     {/* 4 Invariant Dimension Breakdown Cards */}
                                     <div
                                       style={{
@@ -2211,60 +1841,70 @@ export default function UnitTestTraceabilityMatrix({
                                     >
                                       {/* Statements */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: "#6366f1" }}>
-                                            📝 Statements Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <FileText size={12} className="text-[var(--color-text-muted)]" />
+                                            Statements Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.stmtsPct >= 100 ? "#10b981" : "#f59e0b" }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.stmtsPct >= 100
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : isLight ? "text-amber-700" : "text-amber-400/90"
+                                            }`}
+                                          >
                                             {proofData.stmtsPct}% ({proofData.stmtsCoveredCount}/{proofData.stmtsTotalCount})
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           <b>Formula:</b> ({proofData.stmtsCoveredCount} / {proofData.stmtsTotalCount}) × 100% = {proofData.stmtsPct}%. {proofData.stmtsCoveredCount >= proofData.stmtsTotalCount ? "All AST statements in function executed." : `${proofData.stmtsTotalCount - proofData.stmtsCoveredCount} statement(s) not executed.`}
                                         </div>
                                         {proofData?.stmtsInRange?.length > 0 && (
-                                          <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
-                                            {proofData.stmtsInRange.slice(0, 5).map((s, idx) => (
-                                              <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
-                                                <span style={{ color: isLight ? "#334155" : "#cbd5e1" }}>L{s.startLine}: {s.codeSnippet || s.type}</span>
-                                                <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>{s.hits}×</span>
-                                              </div>
-                                            ))}
+                                          <div style={{ maxHeight: 110, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                                            {proofData.stmtsInRange.slice(0, 8).map((s, idx) => {
+                                              const stmtReason = s.uncoverageReason || s.reason || (s.hits === 0 ? "Bypassed by earlier return/branch guard" : "");
+                                              return (
+                                                <div key={idx} title={stmtReason || undefined} className="flex flex-col gap-0.5 bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
+                                                  <div className="flex items-center justify-between gap-1.5">
+                                                    <span className="text-[var(--color-text-secondary)]">L{s.startLine}: {s.codeSnippet || s.type}</span>
+                                                    <span className={`font-semibold tabular-nums shrink-0 ${s.hits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>{s.hits}×</span>
+                                                  </div>
+                                                  {s.hits === 0 && stmtReason && (
+                                                    <div className={`text-[9px] font-sans ${isLight ? "text-amber-700" : "text-amber-300/85"}`}>
+                                                      ↳ Why uncovered: {stmtReason}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
                                           </div>
                                         )}
                                       </div>
 
                                       {/* Branches */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: "#0284c7" }}>
-                                            🔀 Branches Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <GitBranch size={12} className="text-[var(--color-text-muted)]" />
+                                            Branches Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.branchesPct >= 100 ? "#10b981" : (proofData.branchesPct > 0 ? "#f59e0b" : "#ef4444") }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.branchesPct >= 100
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : proofData.branchesPct > 0
+                                                  ? (isLight ? "text-amber-700" : "text-amber-400/90")
+                                                  : (isLight ? "text-rose-700" : "text-rose-300/90")
+                                            }`}
+                                          >
                                             {proofData.branchesPct}% {proofData.hasNoBranches ? (proofData.fnHit > 0 ? "(Straight-line)" : "(Unexecuted)") : `(${proofData.branchPathsCovered}/${proofData.branchPathsTotal})`}
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           {proofData.hasNoBranches ? (
                                             proofData.fnHit > 0 ? (
                                               <span><b>Formula:</b> 100% (No conditional branches in this function). Straight-line sequential logic fully executed.</span>
@@ -2272,9 +1912,33 @@ export default function UnitTestTraceabilityMatrix({
                                               <span><b>Formula:</b> 0% (No conditional branches). Straight-line logic not yet executed (0 test hits recorded).</span>
                                             )
                                           ) : (
-                                            <span><b>Formula:</b> ({proofData.branchPathsCovered} / {proofData.branchPathsTotal} paths) × 100% = {proofData.branchesPct}%. Both True & False paths traversed.</span>
+                                            <span><b>Formula:</b> ({proofData.branchPathsCovered} / {proofData.branchPathsTotal} paths) × 100% = {proofData.branchesPct}%. Both True &amp; False paths traversed.</span>
                                           )}
                                         </div>
+                                        {proofData?.infeasibleBranches?.length > 0 && (
+                                          <div
+                                            style={{
+                                              marginTop: 6,
+                                              padding: "6px 8px",
+                                              borderRadius: 5,
+                                              background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
+                                              border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.25)",
+                                              fontSize: 10.5,
+                                              color: isLight ? "#92400e" : "#fde68a",
+                                              lineHeight: 1.4,
+                                            }}
+                                          >
+                                            <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                                              <Info size={11} />
+                                              <span>Actionable Justification (Statistical Integrity Preserved):</span>
+                                            </div>
+                                            {proofData.infeasibleBranches.map((b, idx) => (
+                                              <div key={idx} style={{ marginLeft: 15 }}>
+                                                • <b>L{b.line}</b>: <code>{b.condition}</code> — {b.infeasibleMeta?.actionableJustification || b.infeasibleMeta?.justification || "Guarded in hermetic unit testing; genuine coverage statistics unaltered."}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
                                         {proofData?.branchesInRange?.length > 0 && (
                                           <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
                                             {proofData.branchesInRange.map((b, idx) => {
@@ -2288,13 +1952,20 @@ export default function UnitTestTraceabilityMatrix({
                                               const isFullyCovered = b.status === "fully_covered" || (trueHits > 0 && falseHits > 0) || (meta?.branchesPct ?? 0) >= 100;
 
                                               return (
-                                                <div key={idx} style={{ background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
-                                                  <div style={{ color: isLight ? "#334155" : "#cbd5e1" }}>L{b.line}: <code>{b.condition}</code></div>
-                                                  <div style={{ display: "flex", gap: 8, fontSize: 9.5, marginTop: 1 }}>
-                                                    <span style={{ color: trueHits > 0 ? "#10b981" : "#ef4444" }}>True: {trueHits}×</span>
-                                                    <span style={{ color: falseHits > 0 ? "#10b981" : "#ef4444" }}>False: {falseHits}×</span>
-                                                    <span style={{ color: isFullyCovered ? "#10b981" : "#f59e0b" }}>{isFullyCovered ? "✓ Fully Covered" : "⚠️ Partial"}</span>
+                                                <div key={idx} className="bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
+                                                  <div className="text-[var(--color-text-secondary)]">L{b.line}: <code>{b.condition}</code></div>
+                                                  <div style={{ display: "flex", gap: 8, fontSize: 9.5, marginTop: 1, flexWrap: "wrap" }}>
+                                                    <span className={trueHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>True: {trueHits}×</span>
+                                                    <span className={falseHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>False: {falseHits}×</span>
+                                                    <span className={b.isInfeasible ? "text-[#8B7CFD]" : isFullyCovered ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-amber-700" : "text-amber-400/90")}>
+                                                      {b.isInfeasible ? "[Guard Justified]" : isFullyCovered ? "Covered" : "Partial"}
+                                                    </span>
                                                   </div>
+                                                  {!isFullyCovered && !b.isInfeasible && (
+                                                    <div style={{ fontSize: 9, fontFamily: "var(--font-sans)", color: isLight ? "#b45309" : "#fcd34d", marginTop: 2 }}>
+                                                      ↳ {b.uncoverageReason || b.reason || (trueHits > 0 && falseHits === 0 ? `False branch not taken: all test inputs satisfied '${b.condition}'` : trueHits === 0 && falseHits > 0 ? `True branch not taken: no test input satisfied '${b.condition}'` : `Branch not reached by test inputs`)}
+                                                    </div>
+                                                  )}
                                                 </div>
                                               );
                                             })}
@@ -2304,25 +1975,24 @@ export default function UnitTestTraceabilityMatrix({
 
                                       {/* Functions */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: proofData.fnHit > 0 ? "#10b981" : "#ef4444" }}>
-                                            ⚙️ Functions Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <Cpu size={12} className="text-[var(--color-text-muted)]" />
+                                            Functions Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.fnHit > 0 ? "#10b981" : "#ef4444" }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.fnHit > 0
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : (isLight ? "text-rose-700" : "text-rose-300/90")
+                                            }`}
+                                          >
                                             {proofData.fnHit > 0 ? "100% (1/1)" : "0% (0/1)"}
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           {proofData.fnHit > 0 ? (
                                             <span><b>Formula:</b> (1 / 1 declared) × 100% = 100%. Function entry executed <b>{proofData.fnHit} times</b> during test suite run.</span>
                                           ) : (
@@ -2330,45 +2000,51 @@ export default function UnitTestTraceabilityMatrix({
                                           )}
                                         </div>
                                         {proofData.fnHit > 0 ? (
-                                          <div style={{ fontSize: 10, color: isLight ? "#059669" : "#4ade80", background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.1)", padding: "4px 8px", borderRadius: 4, marginTop: 4 }}>
-                                            ✓ Function <code>{fn.cleanName}()</code> entered and exercised in RAM sandbox.
+                                          <div className="text-[10px] text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)] px-2 py-1 rounded mt-1">
+                                            Function <code>{fn.cleanName}()</code> entered and exercised in RAM sandbox.
                                           </div>
                                         ) : (
-                                          <div style={{ fontSize: 10, color: isLight ? "#dc2626" : "#f87171", background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.1)", padding: "4px 8px", borderRadius: 4, marginTop: 4 }}>
-                                            ❌ Function <code>{fn.cleanName}()</code> not yet exercised by unit test suite.
+                                          <div className={`text-[10px] px-2 py-1 rounded mt-1 ${isLight ? "text-rose-700 bg-rose-50" : "text-rose-300/90 bg-rose-500/[0.07]"}`}>
+                                            Function <code>{fn.cleanName}()</code> not yet exercised by unit test suite.
                                           </div>
                                         )}
                                       </div>
 
                                       {/* Lines */}
                                       <div
-                                        style={{
-                                          padding: "10px 12px",
-                                          borderRadius: 8,
-                                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                          display: "flex",
-                                          flexDirection: "column",
-                                          gap: 6,
-                                        }}
+                                        className="p-2.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-1.5"
                                       >
                                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 750, color: "#f59e0b" }}>
-                                            📄 Lines Coverage
+                                          <span className="text-[11.5px] font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                                            <ListChecks size={12} className="text-[var(--color-text-muted)]" />
+                                            Lines Coverage
                                           </span>
-                                          <span style={{ fontSize: 11, fontWeight: 800, color: proofData.linesPct >= 100 ? "#10b981" : "#f59e0b" }}>
+                                          <span
+                                            className={`text-[11px] font-mono tabular-nums font-semibold ${
+                                              proofData.linesPct >= 100
+                                                ? "text-[var(--color-text-secondary)]"
+                                                : isLight ? "text-amber-700" : "text-amber-400/90"
+                                            }`}
+                                          >
                                             {proofData.linesPct}% ({proofData.linesCoveredCount}/{proofData.linesTotalCount})
                                           </span>
                                         </div>
-                                        <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
+                                        <div className="text-[10.5px] text-[var(--color-text-muted)] leading-relaxed">
                                           <b>Formula:</b> ({proofData.linesCoveredCount} / {proofData.linesTotalCount}) × 100% = {proofData.linesPct}%. {proofData.linesCoveredCount >= proofData.linesTotalCount ? "All executable lines received hits." : `${proofData.linesTotalCount - proofData.linesCoveredCount} line(s) missing hits.`}
                                         </div>
                                         {proofData?.linesInRange?.length > 0 && (
-                                          <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
-                                            {proofData.linesInRange.slice(0, 6).map((l, idx) => (
-                                              <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
-                                                <span>Line {l.line}</span>
-                                                <span style={{ color: l.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>{l.hits} hits</span>
+                                          <div style={{ maxHeight: 110, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                                            {proofData.linesInRange.slice(0, 8).map((l, idx) => (
+                                              <div key={idx} title={l.hits === 0 ? (l.reason || "Line not reached by current tests") : undefined} className="flex flex-col gap-0.5 bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
+                                                <div className="flex items-center justify-between">
+                                                  <span className="text-[var(--color-text-secondary)]">Line {l.line}</span>
+                                                  <span className={`font-semibold tabular-nums ${l.hits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>{l.hits} hits</span>
+                                                </div>
+                                                {l.hits === 0 && l.reason && (
+                                                  <div className={`text-[9px] font-sans ${isLight ? "text-amber-700" : "text-amber-300/85"}`}>
+                                                    ↳ {l.reason}
+                                                  </div>
+                                                )}
                                               </div>
                                             ))}
                                           </div>
@@ -2378,32 +2054,24 @@ export default function UnitTestTraceabilityMatrix({
 
                                     {/* Test Suite Attribution Proof ("Which tests executed this function?") */}
                                     <div
-                                      style={{
-                                        borderRadius: 8,
-                                        background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                                        border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                        padding: "12px 14px",
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: 8,
-                                      }}
+                                      className="rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] px-3.5 py-3 flex flex-col gap-2"
                                     >
                                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
-                                          <Target size={14} style={{ color: "#6366f1" }} />
-                                          <span>Unit Test Suites Exercising <code>{fn.cleanName}()</code> ({(fn.tests?.length || 0)} tests)</span>
+                                        <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text)]">
+                                          <Target size={13} className="text-[var(--color-text-muted)]" />
+                                          <span>Unit Test Suites Exercising <code className="font-mono">{fn.cleanName}()</code> ({(fn.tests?.length || 0)} tests)</span>
                                         </div>
                                         {(fn.tests?.length || 0) > 0 && fn.tests.every(t => t.status === "passed") &&
                                           !fileSugs.some(s => s.status === "FAILED" || s.testRunError) && (
-                                            <span style={{ fontSize: 11, color: isLight ? "#15803d" : "#4ade80", fontWeight: 650 }}>
-                                              ✓ Matched tests passed
+                                            <span className={`text-[11px] font-medium flex items-center gap-1 ${isLight ? "text-emerald-700" : "text-emerald-400/80"}`}>
+                                              <Check size={11} /> Matched tests passed
                                             </span>
                                           )}
                                       </div>
 
                                       {(!fn.tests || (fn.tests?.length || 0) === 0) ? (
-                                        <div style={{ fontSize: 11, color: isLight ? "#b45309" : "#fbbf24", background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)", padding: "6px 10px", borderRadius: 4 }}>
-                                          No dedicated test assertion specifically named <code>{fn.cleanName}</code> found in suite results.
+                                        <div className="text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] px-2.5 py-1.5 rounded">
+                                          No dedicated test assertion specifically named <code className="text-[var(--color-text)]">{fn.cleanName}</code> found in suite results.
                                           {proofData.fnHit > 0
                                             ? ` Function was traversed indirectly (${proofData.fnHit} hits recorded).`
                                             : " No function execution hits recorded."}
@@ -2426,55 +2094,28 @@ export default function UnitTestTraceabilityMatrix({
                                                   }
                                                 )
                                               }
-                                              style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                justifyContent: "space-between",
-                                                padding: "5px 8px",
-                                                borderRadius: 4,
-                                                background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
-                                                fontSize: 11,
-                                                gap: 8,
-                                                cursor: "pointer",
-                                                border: "1px solid transparent",
-                                                transition: "all 0.12s ease",
-                                              }}
-                                              className="hover:border-indigo-500/40 hover:bg-indigo-500/5 group"
+                                              className="flex items-center justify-between px-2 py-1.5 rounded bg-[var(--color-surface)] border border-transparent hover:border-[var(--color-border-strong)] text-[11px] gap-2 cursor-pointer transition-colors duration-150"
                                               title={`Click to view function ${fn.cleanName}() and test case: ${t.title}`}
                                             >
                                               <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                                                <span style={{ color: t.status === "passed" ? "#10b981" : "#ef4444", fontWeight: 700 }}>
+                                                <span className={`font-semibold ${t.status === "passed" ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>
                                                   {t.status === "passed" ? "✓" : "✗"}
                                                 </span>
                                                 <span
-                                                  style={{
-                                                    fontFamily: "var(--font-mono)",
-                                                    color: isLight ? "#1e293b" : "#e2e8f0",
-                                                    overflow: "hidden",
-                                                    textOverflow: "ellipsis",
-                                                    whiteSpace: "nowrap",
-                                                    maxWidth: 340,
-                                                  }}
+                                                  className="font-mono text-[var(--color-text)] truncate max-w-[340px]"
                                                   title={t.title}
                                                 >
                                                   {t.title}
                                                 </span>
                                                 <span
-                                                  style={{
-                                                    fontSize: 9.5,
-                                                    fontWeight: 700,
-                                                    padding: "1px 5px",
-                                                    borderRadius: 3,
-                                                    background: t.bg || "rgba(16, 185, 129, 0.12)",
-                                                    color: t.color || "#10b981",
-                                                  }}
+                                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] shrink-0"
                                                 >
                                                   {t.badge || "Happy Path"}
                                                 </span>
                                               </div>
 
                                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                                                <span style={{ fontSize: 10, color: isLight ? "#64748b" : "#8b949e" }}>
+                                                <span className="text-[10px] font-mono tabular-nums text-[var(--color-text-muted)]">
                                                   {t.duration || 0}ms
                                                 </span>
                                                 <button
@@ -2492,18 +2133,7 @@ export default function UnitTestTraceabilityMatrix({
                                                       }
                                                     );
                                                   }}
-                                                  style={{
-                                                    background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.16)",
-                                                    border: "none",
-                                                    color: "#6366f1",
-                                                    cursor: "pointer",
-                                                    fontSize: 10.5,
-                                                    padding: "2px 6px",
-                                                    borderRadius: 4,
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 3,
-                                                  }}
+                                                  className="bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer text-[10.5px] px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors duration-150"
                                                   title={`Open function ${fn.cleanName}() and test suite: ${t.suiteFileName}`}
                                                 >
                                                   <span>{t.suiteFileName}</span>
@@ -2516,29 +2146,90 @@ export default function UnitTestTraceabilityMatrix({
                                       )}
                                     </div>
                                   </div>
-                                )}
 
                                 {/* Guidance & Suggest Action Footer */}
-                                {!proofData.isFullyCovered ? (
+                                {!proofData.isFullyCovered && !proofData.isFeasibleLogicCovered ? (
                                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                    {proofData.uncoverageDiagnostics?.length > 0 && (
+                                      <div
+                                        style={{
+                                          padding: "10px 12px",
+                                          borderRadius: 6,
+                                          background: isLight ? "#f8fafc" : "rgba(15, 23, 42, 0.45)",
+                                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                          fontSize: 11,
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          gap: 6,
+                                        }}
+                                      >
+                                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                          <span style={{ fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc", display: "flex", alignItems: "center", gap: 5 }}>
+                                            <Info size={13} style={{ color: "#0284c7" }} />
+                                            Uncoverage Diagnostics — Why Lines / Branches / Statements Were Not Covered ({proofData.uncoverageDiagnostics.length})
+                                          </span>
+                                        </div>
+                                        <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                                          {proofData.uncoverageDiagnostics.slice(0, 12).map((diag, dIdx) => {
+                                            const cat = diag.reasonCategory || "UNEXERCISED_BRANCH";
+                                            const badgeColor =
+                                              cat === "DEFENSIVE_EARLY_EXIT"
+                                                ? { fg: "#d97706", bg: "rgba(245, 158, 11, 0.14)" }
+                                                : cat === "UNREACHABLE_CODE"
+                                                  ? { fg: "#7c3aed", bg: "rgba(139, 92, 246, 0.14)" }
+                                                  : cat === "EXCEPTION_PATH"
+                                                    ? { fg: "#dc2626", bg: "rgba(239, 68, 68, 0.14)" }
+                                                    : { fg: "#0284c7", bg: "rgba(2, 132, 199, 0.14)" };
+                                            return (
+                                              <div
+                                                key={dIdx}
+                                                style={{
+                                                  padding: "5px 8px",
+                                                  borderRadius: 4,
+                                                  background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
+                                                  border: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.05)",
+                                                  display: "flex",
+                                                  flexDirection: "column",
+                                                  gap: 2,
+                                                }}
+                                              >
+                                                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 750, fontSize: 10, color: isLight ? "#334155" : "#e2e8f0" }}>
+                                                    L{diag.line}
+                                                  </span>
+                                                  <span
+                                                    style={{
+                                                      fontSize: 9.5,
+                                                      fontWeight: 700,
+                                                      padding: "1px 6px",
+                                                      borderRadius: 4,
+                                                      background: badgeColor.bg,
+                                                      color: badgeColor.fg,
+                                                    }}
+                                                  >
+                                                    {cat.replace(/_/g, " ")}
+                                                  </span>
+                                                  {(diag.condition || diag.snippet) && (
+                                                    <code style={{ fontSize: 10, color: isLight ? "#475569" : "#94a3b8" }}>
+                                                      {diag.condition || diag.snippet}
+                                                    </code>
+                                                  )}
+                                                </div>
+                                                <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1", lineHeight: 1.35 }}>
+                                                  {diag.reason}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
                                     <div
-                                      style={{
-                                        padding: "8px 12px",
-                                        borderRadius: 6,
-                                        background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
-                                        border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.25)",
-                                        fontSize: 11.5,
-                                        color: isLight ? "#92400e" : "#fde68a",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        flexWrap: "wrap",
-                                        gap: 8,
-                                      }}
+                                      className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-amber-500/70 text-[11.5px] text-[var(--color-text-secondary)] flex items-center justify-between flex-wrap gap-2"
                                     >
                                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                        <AlertCircle size={13} style={{ color: "#f59e0b", flexShrink: 0 }} />
-                                        <span style={{ fontWeight: 700 }}>Coverage Gap:</span>
+                                        <AlertCircle size={13} className="text-amber-500/80 shrink-0" />
+                                        <span className="font-semibold text-[var(--color-text)]">Coverage Gap:</span>
                                         <span>
                                           {proofData.uncoveredLines?.length > 0 ? `${proofData.uncoveredLines.length} uncovered lines` : ""}
                                           {proofData.uncoveredBranches?.length > 0 ? ` (${proofData.uncoveredBranches.length} uncovered branches)` : ""}
@@ -2551,65 +2242,19 @@ export default function UnitTestTraceabilityMatrix({
                                       {hasPending ? (
                                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                            <CheckCircle2 size={12} style={{ color: isLight ? "#15803d" : "#4ade80" }} />
-                                            <span style={{ fontSize: 11.5, fontWeight: 700, color: isLight ? "#15803d" : "#4ade80" }}>
+                                            <CheckCircle2 size={12} className="text-emerald-500/80" />
+                                            <span className="text-[11.5px] font-medium text-[var(--color-text)]">
                                               {(fileSugs?.length || 0)} test suggestion{(fileSugs?.length || 0) > 1 ? "s" : ""} ready
                                             </span>
                                           </div>
                                           {onReviewDiff && (
                                             <button
                                               onClick={() => onReviewDiff(fn.filePath)}
-                                              style={{
-                                                padding: "3px 10px",
-                                                borderRadius: 5,
-                                                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
-                                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.2)",
-                                                color: isLight ? "#1e293b" : "#f1f5f9",
-                                                fontSize: 11,
-                                                fontWeight: 650,
-                                                cursor: "pointer",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 4,
-                                              }}
-                                              className="hover:opacity-90"
-                                              title="Inspect side-by-side Monaco diff"
+                                              className="px-2.5 py-1 rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-[11px] font-medium cursor-pointer flex items-center gap-1 transition-colors duration-150"
+                                              title="Select individual test cases, inspect diff, and test before applying"
                                             >
-                                              <FileDiff size={12} style={{ color: "#6366f1" }} />
-                                              <span>Review Diff</span>
-                                            </button>
-                                          )}
-                                          {onApplyAllFileSuggestions && (
-                                            <button
-                                              onClick={() => onApplyAllFileSuggestions(fn.filePath, fileSugs)}
-                                              disabled={isApplying}
-                                              style={{
-                                                padding: "3px 12px",
-                                                borderRadius: 5,
-                                                background: "#16a34a",
-                                                border: "1px solid #15803d",
-                                                color: "#ffffff",
-                                                fontSize: 11,
-                                                fontWeight: 700,
-                                                cursor: isApplying ? "wait" : "pointer",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 5,
-                                              }}
-                                              className="hover:opacity-90"
-                                              title="Safely merge tests into suite and run verification"
-                                            >
-                                              {isApplying ? (
-                                                <>
-                                                  <Loader2 size={12} className="animate-spin" />
-                                                  <span>Applying & Verifying...</span>
-                                                </>
-                                              ) : (
-                                                <>
-                                                  <Zap size={12} />
-                                                  <span>Apply Tests</span>
-                                                </>
-                                              )}
+                                              <FileDiff size={12} className="text-[var(--color-text-muted)]" />
+                                              <span>Select &amp; Review</span>
                                             </button>
                                           )}
                                         </div>
@@ -2618,21 +2263,11 @@ export default function UnitTestTraceabilityMatrix({
                                           <button
                                             onClick={() => onSuggestTestcase(fn.filePath, fn.functionName || fn.name)}
                                             disabled={isSuggesting}
-                                            style={{
-                                              padding: "4px 12px",
-                                              borderRadius: 5,
-                                              background: isSuggesting
-                                                ? (isLight ? "#fef3c7" : "rgba(245, 158, 11, 0.2)")
-                                                : "#f59e0b",
-                                              border: "1px solid #d97706",
-                                              color: "#ffffff",
-                                              fontSize: 11,
-                                              fontWeight: 700,
-                                              cursor: isSuggesting ? "wait" : "pointer",
-                                              display: "flex",
-                                              alignItems: "center",
-                                              gap: 5,
-                                            }}
+                                            className={`px-3 py-1 rounded-md border text-[11px] font-semibold flex items-center gap-1.5 transition-colors duration-150 ${
+                                              isSuggesting
+                                                ? "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)] cursor-wait"
+                                                : "bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-primary-foreground)] cursor-pointer"
+                                            }`}
                                             title={`Generate unit tests for ${cleanPath} covering uncovered branches and logic`}
                                           >
                                             {isSuggesting ? (
@@ -2651,6 +2286,12 @@ export default function UnitTestTraceabilityMatrix({
                                       )}
                                     </div>
 
+                                    {(() => {
+                                      const item = fileSugs.find(s => s.validation?.qualityGate || s.qualityGate);
+                                      const report = item?.qualityGate?.attempts ? item.qualityGate : item?.validation?.qualityGate || item?.qualityGate;
+                                      return report ? <UnitTestQualityReport report={report} /> : null;
+                                    })()}
+
                                     {/* Test Execution Failure Diagnostic Notice */}
                                     {hasFailed && (() => {
                                       const errSug = fileSugs.find((s) => s.testRunError || s.missingDependency?.packageName);
@@ -2658,24 +2299,16 @@ export default function UnitTestTraceabilityMatrix({
                                       const missingPkg = errSug?.missingDependency || extractMissingPackageFromError(errText);
                                       return (
                                         <div
-                                          style={{
-                                            padding: "8px 12px",
-                                            borderRadius: 6,
-                                            background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-                                            border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.35)",
-                                            color: isLight ? "#991b1b" : "#fca5a5",
-                                            fontSize: 11,
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            gap: 8,
-                                            flexWrap: "wrap",
-                                          }}
+                                          className={`px-3 py-2 rounded-md border border-l-2 text-[11px] flex items-center justify-between gap-2 flex-wrap ${
+                                            isLight
+                                              ? "bg-rose-50/70 border-rose-200 border-l-rose-500 text-rose-800"
+                                              : "bg-[var(--color-bg)] border-[var(--color-border)] border-l-rose-400/75 text-[var(--color-text-secondary)]"
+                                          }`}
                                         >
                                           <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 220 }}>
-                                            <AlertCircle size={13} style={{ color: "#ef4444", flexShrink: 0 }} />
+                                            <AlertCircle size={13} className="text-rose-400 shrink-0" />
                                             <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                                              <b>Test Runner Error:</b> {errText}
+                                              <b className="text-[var(--color-text)]">Test Runner Error:</b> {errText}
                                             </span>
                                           </div>
                                           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
@@ -2690,20 +2323,11 @@ export default function UnitTestTraceabilityMatrix({
                                                   )
                                                 }
                                                 disabled={installingDependencyName === missingPkg.packageName}
-                                                style={{
-                                                  padding: "4px 10px",
-                                                  borderRadius: 5,
-                                                  background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
-                                                  color: "#ffffff",
-                                                  border: "none",
-                                                  cursor: installingDependencyName === missingPkg.packageName ? "not-allowed" : "pointer",
-                                                  fontSize: 11,
-                                                  fontWeight: 700,
-                                                  display: "flex",
-                                                  alignItems: "center",
-                                                  gap: 4,
-                                                  boxShadow: "0 1px 4px rgba(245, 158, 11, 0.3)",
-                                                }}
+                                                className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold flex items-center gap-1 transition-colors duration-150 ${
+                                                  installingDependencyName === missingPkg.packageName
+                                                    ? "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)] cursor-not-allowed"
+                                                    : "bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] border-[var(--color-primary)] text-[var(--color-primary-foreground)] cursor-pointer"
+                                                }`}
                                                 title={`Install missing npm package '${missingPkg.packageName}' and automatically re-run tests`}
                                               >
                                                 {installingDependencyName === missingPkg.packageName ? (
@@ -2722,16 +2346,11 @@ export default function UnitTestTraceabilityMatrix({
                                             {onApplyAllFileSuggestions && (
                                               <button
                                                 onClick={() => onApplyAllFileSuggestions(fn.filePath, fileSugs)}
-                                                style={{
-                                                  padding: "4px 10px",
-                                                  borderRadius: 5,
-                                                  background: "#ef4444",
-                                                  color: "#ffffff",
-                                                  border: "none",
-                                                  cursor: "pointer",
-                                                  fontSize: 10.5,
-                                                  fontWeight: 700,
-                                                }}
+                                                className={`px-2.5 py-1 rounded-md border text-[10.5px] font-semibold cursor-pointer transition-colors duration-150 ${
+                                                  isLight
+                                                    ? "bg-white hover:bg-rose-50 border-rose-300 text-rose-700"
+                                                    : "bg-[var(--color-surface)] hover:bg-rose-500/10 border-rose-500/30 text-rose-300/90"
+                                                }`}
                                               >
                                                 Retry
                                               </button>
@@ -2741,23 +2360,32 @@ export default function UnitTestTraceabilityMatrix({
                                       );
                                     })()}
                                   </div>
-                                ) : (
+                                ) : proofData.isFeasibleLogicCovered ? (
                                   <div
                                     style={{
                                       padding: "8px 12px",
                                       borderRadius: 6,
-                                      background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.08)",
-                                      border: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.25)",
+                                      background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.08)",
+                                      border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.25)",
                                       fontSize: 11.5,
-                                      color: isLight ? "#065f46" : "#6ee7b7",
+                                      color: isLight ? "#6d28d9" : "#c4b5fd",
                                       display: "flex",
                                       alignItems: "center",
                                       gap: 6,
                                     }}
                                   >
-                                    <CheckCircle2 size={14} style={{ color: "#10b981", flexShrink: 0 }} />
+                                    <ShieldCheck size={14} style={{ color: "#8b5cf6", flexShrink: 0 }} />
                                     <span>
-                                      <strong>100% Covered:</strong> This function is fully exercised across statements, branches, and lines with verified execution.
+                                      <strong>✓ Feasible Logic Covered:</strong> All executable statements and branches are tested ({proofData.branchesPct}% raw branches). The remaining {proofData.infeasibleBranches.length} branch gap{proofData.infeasibleBranches.length > 1 ? "s are" : " is a"} verified environment safeguard. Fake assertions suppressed.
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div
+                                    className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-emerald-500/60 text-[11.5px] text-[var(--color-text-secondary)] flex items-center gap-1.5"
+                                  >
+                                    <CheckCircle2 size={14} className="text-emerald-500/80 shrink-0" />
+                                    <span>
+                                      <strong className="text-[var(--color-text)]">100% Covered:</strong> This function is fully exercised across statements, branches, and lines with verified execution.
                                     </span>
                                   </div>
                                 )}
@@ -2769,7 +2397,7 @@ export default function UnitTestTraceabilityMatrix({
 
                       {/* Secondary Internal Callbacks & Arrow Functions Section */}
                       {secondaryCallbacks?.length > 0 && (
-                        <div style={{ marginTop: 6, paddingTop: 8, borderTop: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255, 255, 255, 0.08)" }}>
+                        <div className="mt-1.5 pt-2 border-t border-dashed border-[var(--color-border)]">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2780,24 +2408,13 @@ export default function UnitTestTraceabilityMatrix({
                                 return next;
                               });
                             }}
-                            style={{
-                              background: "transparent",
-                              border: "none",
-                              cursor: "pointer",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              fontSize: 11,
-                              fontWeight: 650,
-                              color: isLight ? "#64748b" : "#94a3b8",
-                              padding: "4px 2px",
-                            }}
+                            className="bg-transparent border-0 cursor-pointer flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] py-1 px-0.5 transition-colors duration-150"
                           >
                             {isCallbacksExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                            <span>{isCallbacksExpanded ? "Hide" : "Show"} {secondaryCallbacks?.length || 0} internal callback{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""} & arrow function{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""}</span>
+                            <span>{isCallbacksExpanded ? "Hide" : "Show"} {secondaryCallbacks?.length || 0} internal callback{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""} &amp; arrow function{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""}</span>
                           </button>
                           {isCallbacksExpanded && (
-                            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 10 }}>
+                            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
                               {secondaryCallbacks.map((fn) => {
                                 const fnId = `${fn.filePath}:${fn.cleanName}`;
                                 const isFnExpanded = expandedFunctions.has(fnId);
@@ -2805,34 +2422,22 @@ export default function UnitTestTraceabilityMatrix({
                                 return (
                                   <div
                                     key={fnId}
-                                    style={{
-                                      borderRadius: 8,
-                                      background: isLight ? "#fbfcfe" : "rgba(15, 23, 42, 0.35)",
-                                      border: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.1)",
-                                      overflow: "hidden",
-                                    }}
+                                    className="rounded-lg bg-[var(--color-bg)] border border-dashed border-[var(--color-border)] overflow-hidden"
                                   >
                                     <div
                                       onClick={() => toggleExpandFunction(fnId, fn.filePath)}
-                                      style={{
-                                        padding: "8px 14px",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        cursor: "pointer",
-                                        userSelect: "none",
-                                      }}
+                                      className="px-3.5 py-2 flex items-center justify-between cursor-pointer select-none hover:bg-[var(--color-surface-secondary)]/60 transition-colors duration-150"
                                     >
                                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                        {isFnExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                        <Code2 size={13} style={{ color: isCovered ? "#0284c7" : "#f59e0b" }} />
-                                        <span style={{ fontSize: 12, fontWeight: 650, fontFamily: "var(--font-mono)", color: isLight ? "#475569" : "#cbd5e1" }}>
+                                        {isFnExpanded ? <ChevronDown size={12} className="text-[var(--color-text-muted)]" /> : <ChevronRight size={12} className="text-[var(--color-text-muted)]" />}
+                                        <Code2 size={13} className={isCovered ? "text-[var(--color-text-secondary)]" : "text-amber-500/80"} />
+                                        <span className="text-[12px] font-medium font-mono text-[var(--color-text-secondary)]">
                                           {fn.cleanName}()
                                         </span>
-                                        <span style={{ fontSize: 10, color: isLight ? "#64748b" : "#94a3b8", background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)", padding: "1px 5px", borderRadius: 4 }}>
+                                        <span className="text-[10px] text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded">
                                           callback
                                         </span>
-                                        <span style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", fontFamily: "var(--font-mono)" }}>
+                                        <span className="text-[10.5px] text-[var(--color-text-muted)] font-mono tabular-nums">
                                           L{fn.startLine || 1}{fn.endLine ? ` - L${fn.endLine}` : ""}
                                         </span>
                                         <button
@@ -2840,51 +2445,24 @@ export default function UnitTestTraceabilityMatrix({
                                             e.stopPropagation();
                                             onOpenFile?.(fn.filePath, fn.startLine, fn.cleanName, fn.endLine);
                                           }}
-                                          style={{
-                                            background: "transparent",
-                                            border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
-                                            borderRadius: 4,
-                                            color: isLight ? "#4f46e5" : "#a5b4fc",
-                                            cursor: "pointer",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 3,
-                                            fontSize: 10,
-                                            fontWeight: 650,
-                                            padding: "1px 5px",
-                                          }}
+                                          className="bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 transition-colors duration-150"
                                         >
                                           <FileCode size={9} />
                                           <span>View</span>
                                         </button>
                                         <span
-                                          style={{
-                                            fontSize: 9.5,
-                                            fontWeight: 700,
-                                            padding: "1px 5px",
-                                            borderRadius: 4,
-                                            background: "rgba(16, 185, 129, 0.1)",
-                                            color: "#10b981",
-                                            border: "1px solid rgba(16, 185, 129, 0.3)",
-                                          }}
+                                          className="text-[9.5px] font-mono tabular-nums font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
                                         >
                                           CC: {fn.complexity || 1}
                                         </span>
                                       </div>
                                       <div>
                                         <span
-                                          style={{
-                                            fontSize: 10.5,
-                                            fontWeight: 650,
-                                            padding: "2px 7px",
-                                            borderRadius: 4,
-                                            background: (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
-                                              ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
-                                              : (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)"),
-                                            color: (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
-                                              ? (isLight ? "#dc2626" : "#f87171")
-                                              : (isLight ? "#059669" : "#4ade80"),
-                                          }}
+                                          className={`text-[10.5px] font-mono tabular-nums font-medium px-2 py-0.5 rounded border ${
+                                            (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
+                                              ? (isLight ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-rose-500/[0.07] border-rose-500/20 text-rose-300/90")
+                                              : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                                          }`}
                                         >
                                           {(!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0 ? "Uncovered" : `${fn.hit || fn.tests?.length || 1} hits`}
                                         </span>
@@ -2904,57 +2482,37 @@ export default function UnitTestTraceabilityMatrix({
             })}
           </div>
         )}
+        <MatrixPaginationControl
+          currentPage={safeCurrentPage}
+          totalItems={totalFilesCount}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          isLight={isLight}
+        />
       </div>
 
       {/* ── SECTION 3: FILE 4-METRIC CALCULATION & EXECUTION PROOF MODAL ── */}
       {inspectingFileProof && (
         <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1000,
-            background: "rgba(0, 0, 0, 0.75)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-          }}
+          className="fixed inset-0 z-[1000] bg-black/65 flex items-center justify-center p-5"
           onClick={() => setInspectingFileProof(null)}
         >
           <div
-            style={{
-              width: "100%",
-              maxWidth: 960,
-              maxHeight: "90vh",
-              background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-              border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-              borderRadius: 12,
-              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.4)",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-            }}
+            className="w-full max-w-[960px] max-h-[90vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
             <div
-              style={{
-                padding: "16px 20px",
-                borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
+              className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3"
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Calculator size={18} style={{ color: "#6366f1" }} />
+                <Calculator size={17} className="text-[var(--color-primary)] shrink-0" />
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
-                    4-Metric Calculation & Execution Proof: <span style={{ fontFamily: "var(--font-mono)", color: "#6366f1" }}>{cleanDisplayPath(inspectingFileProof)}</span>
+                  <div className="text-[13.5px] font-semibold text-[var(--color-text)]">
+                    4-Metric Calculation &amp; Execution Proof: <span className="font-mono text-[var(--color-text-secondary)]">{cleanDisplayPath(inspectingFileProof)}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8" }}>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
                     Mathematical formulation, Istanbul counter traces, and execution proof for this file
                   </div>
                 </div>
@@ -2963,26 +2521,14 @@ export default function UnitTestTraceabilityMatrix({
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button
                   onClick={() => onOpenFile?.(inspectingFileProof)}
-                  style={{
-                    padding: "4px 10px",
-                    borderRadius: 5,
-                    background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)",
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.15)",
-                    color: isLight ? "#334155" : "#e2e8f0",
-                    fontSize: 11.5,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
+                  className="px-2.5 py-1 rounded-md bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[11.5px] font-medium cursor-pointer flex items-center gap-1.5 transition-colors duration-150"
                 >
-                  <FileCode size={11} />
+                  <FileCode size={12} />
                   <span>View File Code</span>
                 </button>
                 <button
                   onClick={() => setInspectingFileProof(null)}
-                  style={{ background: "transparent", border: "none", color: isLight ? "#64748b" : "#94a3b8", cursor: "pointer", padding: 4 }}
+                  className="bg-transparent border-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer p-1 transition-colors duration-150"
                 >
                   <X size={18} />
                 </button>
@@ -2990,7 +2536,7 @@ export default function UnitTestTraceabilityMatrix({
             </div>
 
             {/* Modal Content */}
-            <div style={{ padding: "16px 20px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="p-5 overflow-y-auto flex flex-col gap-4">
               {(() => {
                 const targetGroup = groupedByFile.find((g) => g.filePath === inspectingFileProof);
                 const meta = targetGroup?.sourceMeta;
@@ -3025,56 +2571,54 @@ export default function UnitTestTraceabilityMatrix({
 
                 return (
                   <>
-                    {/* Top 4 Metrics Summary Cards */}
+                    {/* Unified Top 4 Metrics Summary Strip */}
                     <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                        gap: 10,
-                      }}
+                      className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[var(--color-border)] border border-[var(--color-border)] rounded-lg overflow-hidden"
                     >
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>1. Statements Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: Number(stmtsPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{stmtsPct}%</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{stmtsCovered} / {stmtsTotal} statements covered</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">1. Statements Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${Number(stmtsPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{stmtsPct}%</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{stmtsCovered} / {stmtsTotal} statements covered</div>
                       </div>
 
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>2. Branches Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: Number(branchesPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{branchesPct}%</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{branchesTotal === 0 ? "0 branches (straight-line flow)" : `${branchesCovered} / ${branchesTotal} paths taken`}</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">2. Branches Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${Number(branchesPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{branchesPct}%</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{branchesTotal === 0 ? "0 branches (straight-line flow)" : `${branchesCovered} / ${branchesTotal} paths taken`}</div>
                       </div>
 
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>3. Functions Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: funcsTotal === 0 ? (isLight ? "#64748b" : "#94a3b8") : Number(funcsPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{funcsTotal === 0 ? "N/A (0 fns)" : `${funcsPct}%`}</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{funcsTotal === 0 ? "0 declared functions (N/A)" : `${funcsCovered} / ${funcsTotal} functions invoked`}</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">3. Functions Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${funcsTotal === 0 ? "bg-[var(--color-text-muted)]/50" : Number(funcsPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{funcsTotal === 0 ? "N/A (0 fns)" : `${funcsPct}%`}</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{funcsTotal === 0 ? "0 declared functions (N/A)" : `${funcsCovered} / ${funcsTotal} functions invoked`}</div>
                       </div>
 
-                      <div style={{ padding: "12px 14px", borderRadius: 8, background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)", border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)" }}>
-                        <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 650 }}>4. Lines Metric</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: Number(linesPct) >= 100 ? "#10b981" : "#f59e0b", marginTop: 2 }}>{linesPct}%</div>
-                        <div style={{ fontSize: 10.5, color: isLight ? "#475569" : "#cbd5e1" }}>{linesCovered} / {linesTotal} executable lines hit</div>
+                      <div className="px-3.5 py-3 bg-[var(--color-bg)]">
+                        <div className="text-[11px] text-[var(--color-text-muted)] font-medium">4. Lines Metric</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${Number(linesPct) >= 100 ? "bg-emerald-500/70" : "bg-amber-500/70"}`} />
+                          <span className="text-[20px] font-semibold font-mono tabular-nums text-[var(--color-text)]">{linesPct}%</span>
+                        </div>
+                        <div className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-secondary)] mt-0.5">{linesCovered} / {linesTotal} executable lines hit</div>
                       </div>
                     </div>
 
                     {/* Mathematical Proof Statement */}
                     <div
-                      style={{
-                        padding: "12px 16px",
-                        borderRadius: 8,
-                        background: isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.08)",
-                        border: isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.25)",
-                        fontSize: 12,
-                        color: isLight ? "#065f46" : "#6ee7b7",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                      }}
+                      className="px-3.5 py-2.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] border-l-2 border-l-emerald-500/60 text-[12px] text-[var(--color-text-secondary)] flex items-center gap-2.5"
                     >
-                      <CheckCheck size={16} style={{ color: "#10b981", flexShrink: 0 }} />
+                      <CheckCheck size={16} className="text-emerald-500/80 shrink-0" />
                       <div>
-                        <strong>Mathematical Proof of 100% Passing Status:</strong> This source file reached 100% across all 4 criteria because:
+                        <strong className="text-[var(--color-text)]">Mathematical Proof of 100% Passing Status:</strong> This source file reached 100% across all 4 criteria because:
                         (1) Every statement in AST was executed;
                         (2) All conditional branches had both truthy and falsy paths traversed by test assertions;
                         (3) All business functions were called in hermetic RAM sandbox; and
@@ -3083,7 +2627,7 @@ export default function UnitTestTraceabilityMatrix({
                     </div>
 
                     {/* Modal Subtabs */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)", paddingBottom: 8 }}>
+                    <div className="flex items-center gap-4 border-b border-[var(--color-border)]">
                       {[
                         { id: "overview", label: "Overview & Formulas" },
                         { id: "statements", label: `Statements (${fileCov?.statements?.length || stmtsTotal})` },
@@ -3094,16 +2638,11 @@ export default function UnitTestTraceabilityMatrix({
                         <button
                           key={tab.id}
                           onClick={() => setFileModalTab(tab.id)}
-                          style={{
-                            padding: "4px 10px",
-                            borderRadius: 5,
-                            fontSize: 11.5,
-                            fontWeight: fileModalTab === tab.id ? 700 : 550,
-                            cursor: "pointer",
-                            background: fileModalTab === tab.id ? (isLight ? "#6366f1" : "#4f46e5") : "transparent",
-                            color: fileModalTab === tab.id ? "#ffffff" : (isLight ? "#475569" : "#cbd5e1"),
-                            border: "none",
-                          }}
+                          className={`pb-2 px-0.5 text-[12px] cursor-pointer bg-transparent border-x-0 border-t-0 border-b-2 transition-colors duration-150 ${
+                            fileModalTab === tab.id
+                              ? "border-b-[var(--color-primary)] text-[var(--color-text)] font-semibold"
+                              : "border-b-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium"
+                          }`}
                         >
                           {tab.label}
                         </button>
@@ -3112,46 +2651,53 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 1: Overview & Formulas */}
                     {fileModalTab === "overview" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 11.5, color: isLight ? "#334155" : "#cbd5e1" }}>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#6366f1" }}>Statements Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>Statements = ({stmtsCovered} / {stmtsTotal}) × 100% = {stmtsPct}%</div>
+                      <div className="flex flex-col gap-2.5 text-[11.5px] text-[var(--color-text-secondary)]">
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Statements Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">Statements = ({stmtsCovered} / {stmtsTotal}) × 100% = {stmtsPct}%</div>
                         </div>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#0284c7" }}>Branches Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Branches Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">
                             {branchesTotal === 0
                               ? "Branches = 100.0% (Straight-line execution flow: No conditional branches in file)"
                               : `Branches = (${branchesCovered} / ${branchesTotal}) × 100% = ${branchesPct}%`}
                           </div>
                         </div>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#10b981" }}>Functions Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>Functions = ({funcsCovered} / {funcsTotal}) × 100% = {funcsPct}%</div>
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Functions Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">Functions = ({funcsCovered} / {funcsTotal}) × 100% = {funcsPct}%</div>
                         </div>
-                        <div style={{ background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", padding: 12, borderRadius: 6, border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)" }}>
-                          <span style={{ fontWeight: 700, color: "#f59e0b" }}>Lines Formula:</span>
-                          <div style={{ fontFamily: "var(--font-mono)", marginTop: 2 }}>Lines = ({linesCovered} / {linesTotal}) × 100% = {linesPct}%</div>
+                        <div className="bg-[var(--color-bg)] p-3 rounded-md border border-[var(--color-border)]">
+                          <span className="font-semibold text-[var(--color-text)]">Lines Formula:</span>
+                          <div className="font-mono tabular-nums mt-1">Lines = ({linesCovered} / {linesTotal}) × 100% = {linesPct}%</div>
                         </div>
                       </div>
                     )}
 
                     {/* Tab 2: Statements Map */}
                     {fileModalTab === "statements" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {fileCov?.statements?.length ? (
                           fileCov.statements.map((s, idx) => (
-                            <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
-                              <span style={{ fontFamily: "var(--font-mono)", color: isLight ? "#1e293b" : "#e2e8f0" }}>
-                                L{s.startLine}: {s.codeSnippet || s.type}
-                              </span>
-                              <span style={{ color: s.hits > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
-                                {s.hits} hits ({s.hits > 0 ? "✓ Covered" : "Uncovered"})
-                              </span>
+                            <div key={idx} className="flex flex-col gap-0.5 px-2.5 py-1.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono text-[var(--color-text)]">
+                                  L{s.startLine}: {s.codeSnippet || s.type}
+                                </span>
+                                <span className={`font-mono tabular-nums font-semibold ${s.hits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}`}>
+                                  {s.hits} hits ({s.hits > 0 ? "Covered" : "Uncovered"})
+                                </span>
+                              </div>
+                              {s.hits === 0 && (s.uncoverageReason || s.reason) && (
+                                <div className={`text-[10px] ${isLight ? "text-amber-700" : "text-amber-300/85"}`}>
+                                  <b>Reason:</b> {s.uncoverageReason || s.reason}
+                                </div>
+                              )}
                             </div>
                           ))
                         ) : (
-                          <div style={{ padding: 20, textAlign: "center", color: isLight ? "#64748b" : "#8b949e" }}>
+                          <div className="p-5 text-center text-[var(--color-text-muted)]">
                             {isLoading ? "Loading detailed statement map..." : "All statements in file executed cleanly."}
                           </div>
                         )}
@@ -3160,16 +2706,16 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 3: Branches Decision Table */}
                     {fileModalTab === "branches" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {fileCov?.branches?.length ? (
                           fileCov.branches.map((b, idx) => (
-                            <div key={idx} style={{ padding: "6px 10px", borderRadius: 6, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: isLight ? "#0f172a" : "#f8fafc" }}>
+                            <div key={idx} className="px-2.5 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono font-semibold text-[var(--color-text)]">
                                   L{b.line}: <code>{b.condition}</code>
                                 </span>
-                                <span style={{ color: b.status === "fully_covered" ? "#10b981" : "#f59e0b", fontWeight: 700 }}>
-                                  {b.status === "fully_covered" ? "✓ Both Paths Traversed (100%)" : "⚠️ Partial Branch"}
+                                <span className={`font-medium ${b.isInfeasible ? "text-[#8B7CFD]" : b.status === "fully_covered" ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-amber-700" : "text-amber-400/90")}`}>
+                                  {b.isInfeasible ? `Infeasible Guard Justified (${b.infeasibleMeta?.badge || b.infeasibleMeta?.type || "Environment Guard"})` : b.status === "fully_covered" ? "Both Paths Traversed (100%)" : "Partial Branch"}
                                 </span>
                               </div>
                               {(() => {
@@ -3181,18 +2727,27 @@ export default function UnitTestTraceabilityMatrix({
                                 const trueHits = bCounts[0] ?? (b.paths?.[0]?.hits ?? (b.status === "fully_covered" ? 1 : 0));
                                 const falseHits = bCounts[1] ?? (b.paths?.[1]?.hits ?? (b.status === "fully_covered" ? 1 : 0));
                                 return (
-                                  <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: 10.5, color: isLight ? "#64748b" : "#94a3b8" }}>
-                                    <span>True Path: <b style={{ color: trueHits > 0 ? "#10b981" : "#ef4444" }}>{trueHits} hits</b></span>
-                                    <span>False Path: <b style={{ color: falseHits > 0 ? "#10b981" : "#ef4444" }}>{falseHits} hits</b></span>
+                                  <div className="flex gap-3 mt-1 text-[10.5px] font-mono tabular-nums text-[var(--color-text-muted)]">
+                                    <span>True Path: <b className={trueHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>{trueHits} hits</b></span>
+                                    <span>False Path: <b className={falseHits > 0 ? (isLight ? "text-emerald-700" : "text-emerald-400/80") : (isLight ? "text-rose-700" : "text-rose-300/90")}>{falseHits} hits</b></span>
                                     <span>Type: {b.type || "if"}</span>
                                   </div>
                                 );
                               })()}
+                              {b.isInfeasible ? (
+                                <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 4, background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.1)", color: isLight ? "#6d28d9" : "#c4b5fd", fontSize: 10 }}>
+                                  <b>Justification:</b> {b.infeasibleMeta?.actionableJustification || b.infeasibleMeta?.justification || "Production or environment guard. Authentic statistics preserved without fake assertions."}
+                                </div>
+                              ) : b.status !== "fully_covered" && (b.uncoverageReason || b.reason) ? (
+                                <div style={{ marginTop: 4, padding: "3px 6px", borderRadius: 4, background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.1)", color: isLight ? "#b45309" : "#fcd34d", fontSize: 10 }}>
+                                  <b>Uncoverage Reason ({b.reasonCategory || "UNEXERCISED_BRANCH"}):</b> {b.uncoverageReason || b.reason}
+                                </div>
+                              ) : null}
                             </div>
                           ))
                         ) : (
-                          <div style={{ padding: 20, textAlign: "center", color: isLight ? "#10b981" : "#4ade80" }}>
-                            ✓ This file contains 0 conditional branches (`if`, `? :`, `switch`, `||`, `??`). 100% straight-line logic verified!
+                          <div className="p-5 text-center text-[var(--color-text-secondary)]">
+                            This file contains 0 conditional branches (`if`, `? :`, `switch`, `||`, `??`). 100% straight-line logic verified.
                           </div>
                         )}
                       </div>
@@ -3200,15 +2755,15 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 4: Functions Call Graph */}
                     {fileModalTab === "functions" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {targetGroup?.functions?.map((f, idx) => (
-                          <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
+                          <div key={idx} className="flex items-center justify-between px-2.5 py-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
                             <div>
-                              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "#6366f1" }}>{f.cleanName}()</span>
-                              <span style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", marginLeft: 6 }}>L{f.startLine || 1}–{f.endLine || (f.startLine + 30)}</span>
+                              <span className="font-mono font-semibold text-[var(--color-text)]">{f.cleanName}()</span>
+                              <span className="text-[10.5px] font-mono tabular-nums text-[var(--color-text-muted)] ml-1.5">L{f.startLine || 1}–{f.endLine || (f.startLine + 30)}</span>
                             </div>
-                            <span style={{ color: "#10b981", fontWeight: 700 }}>
-                              {f.hit || f.tests?.length || 1} invocations (✓ 100% Covered)
+                            <span className="font-mono tabular-nums font-medium text-[var(--color-text-secondary)]">
+                              {f.hit || f.tests?.length || 1} invocations (100% Covered)
                             </span>
                           </div>
                         ))}
@@ -3217,23 +2772,23 @@ export default function UnitTestTraceabilityMatrix({
 
                     {/* Tab 5: Test Suites Traceability */}
                     {fileModalTab === "tests" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                      <div className="flex flex-col gap-1.5 max-h-[300px] overflow-y-auto">
                         {linkedSuites?.length ? (
                           linkedSuites.map((s, idx) => (
-                            <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 4, background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)", fontSize: 11 }}>
-                              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 650, color: isLight ? "#1e293b" : "#e2e8f0" }}>
+                            <div key={idx} className="flex items-center justify-between px-2.5 py-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px]">
+                              <span className="font-mono font-medium text-[var(--color-text)]">
                                 {s.fileName || s.filePath}
                               </span>
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ color: "#10b981", fontWeight: 700 }}>{s.framework || "JEST"}</span>
-                                <button onClick={() => onOpenFile?.(s.filePath)} style={{ background: "transparent", border: "none", color: "#6366f1", cursor: "pointer", fontSize: 10.5 }}>
+                                <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">{s.framework || "JEST"}</span>
+                                <button onClick={() => onOpenFile?.(s.filePath)} className="bg-transparent border-0 text-[var(--color-primary)] hover:underline cursor-pointer text-[10.5px] font-medium">
                                   Open
                                 </button>
                               </div>
                             </div>
                           ))
                         ) : (
-                          <div style={{ padding: 20, textAlign: "center", color: isLight ? "#64748b" : "#8b949e" }}>
+                          <div className="p-5 text-center text-[var(--color-text-muted)]">
                             Executed via hermetic test runner and integrated unit test suites.
                           </div>
                         )}

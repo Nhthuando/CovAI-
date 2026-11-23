@@ -1,3 +1,14 @@
+import dns from 'node:dns';
+dns.setDefaultResultOrder('ipv4first');
+
+import projectEditorRoutes from './src/routes/projectEditor.route.js';
+let attachProjectEditorGateway;
+try {
+  const mod = await import('./src/realtime/projectEditor.gateway.js');
+  attachProjectEditorGateway = mod.attachProjectEditorGateway;
+} catch (err) {
+  console.warn('[Server] Project editor gateway deferred (run npm install):', err.message);
+}
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -17,11 +28,13 @@ import userRoute from "./src/routes/user.route.js";
 import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
 import aiEvaluationRoutes from './src/routes/aiEvaluation.route.js';
+import aiAgentRoutes from './src/routes/aiAgent.route.js';
 import aiEvaluationGatewayRoutes from './src/routes/aiEvaluationGateway.route.js';
 import { reconcileEvaluations } from './src/services/aiEvaluation/runner.service.js';
 import projectMemberRoutes from './src/routes/projectMember.route.js';
 import projectInvitationRoutes from './src/routes/projectInvitation.route.js';
 import { startInvitationDeliveryWorker } from './src/services/invitationDelivery.service.js';
+import { sweepOrphanedSystemContainers } from './src/services/systemRuntimeResources.service.js';
 import projectEventRoutes from './src/routes/projectEvent.route.js';
 import { attachProjectSubscriptions } from './src/services/projectSubscription.service.js';
 import { isCollaborationLocalTest } from './src/config/collaborationLocal.js';
@@ -48,6 +61,8 @@ import fileManagerRoute from "./src/routes/fileManager.route.js";
 import webhookRoute from "./src/routes/webhook.route.js";
 import reportRoute from "./src/routes/report.route.js";
 import gitRoute from "./src/routes/git.route.js";
+import portfolioRoute from "./src/routes/portfolio.route.js";
+import aiQuotaSettingsRoute from "./src/routes/aiQuotaSettings.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -58,6 +73,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
+  maxHttpBufferSize: 2 * 1024 * 1024 + 65536,
   cors: {
     origin: [
       process.env.CLIENT_URL || "http://localhost:5173",
@@ -86,6 +102,19 @@ app.use(
 
 app.use(cookieParser());
 
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (res.statusCode >= 400) {
+      console.error(`[HTTP ${res.statusCode}] ${req.method} ${req.originalUrl} (${duration}ms)`);
+    } else {
+      console.log(`[HTTP ${res.statusCode}] ${req.method} ${req.originalUrl} (${duration}ms)`);
+    }
+  });
+  next();
+});
+
 app.use('/api/ai-evaluation-gateway', aiEvaluationGatewayRoutes);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -97,6 +126,8 @@ app.use(globalLimiter);
 app.use("/api/auth", authRoute);
 app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
+app.use('/api/ai-agents', aiAgentRoutes);
+app.use('/api/projects', projectEditorRoutes);
 app.use('/api/projects', projectMemberRoutes);
 app.use('/api/projects', projectEventRoutes);
 app.use('/api/invitations', projectInvitationRoutes);
@@ -108,11 +139,18 @@ app.use('/api/projects/:projectId/ai-evaluations', aiEvaluationRoutes);
 app.use("/api/projects", projectRoutes);
 if (process.env.AI_EVALUATION_ENABLED === 'true') {
   let recoveringEvaluation = false;
+  let startupReconciled = false;
   const recover = async () => {
     if (recoveringEvaluation) return;
     recoveringEvaluation = true;
-    try { await reconcileEvaluations(); } catch { console.error('[Evaluation] Recovery failed; check database and migration status'); }
-    finally { recoveringEvaluation = false; }
+    try {
+      await reconcileEvaluations(prisma, { startup: !startupReconciled });
+      startupReconciled = true;
+    } catch (err) {
+      console.error('[Evaluation] Recovery failed; check database and migration status:', err?.message || err);
+    } finally {
+      recoveringEvaluation = false;
+    }
   };
   void recover();
   setInterval(recover, 30000).unref();
@@ -132,8 +170,22 @@ app.use("/api/analytics", analyticsRoute);
 app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/file-manager", fileManagerRoute);
 app.use("/api/git", gitRoute);
+app.use("/api/portfolio", portfolioRoute);
+app.use("/api/settings/ai-quotas", aiQuotaSettingsRoute);
 app.use("/api/reports", reportRoute);
 app.use("/webhook", webhookRoute);
+
+// Centralized API Error Handler
+app.use((err, req, res, next) => {
+  console.error(`[EXPRESS UNHANDLED ERROR] ${req.method} ${req.originalUrl}:`, err);
+  if (res.headersSent) return next(err);
+  const status = err.statusCode || err.status || 500;
+  res.status(status).json({
+    success: false,
+    message: err.message || "Internal server error",
+    code: err.code,
+  });
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -160,14 +212,22 @@ io.on("connection", (socket) => {
 // Make io available globally for services
 global.io = io;
 attachProjectSubscriptions(io);
+if (typeof attachProjectEditorGateway === 'function') {
+  attachProjectEditorGateway(io);
+}
 
 async function startServer() {
   try {
     if (process.env.COLLABORATION_E2E_ENABLED === 'true' && !isCollaborationLocalTest()) throw new Error('Collaboration E2E profile requires isolated localhost database and non-production mode');
     await prisma.$connect();
+    if (process.env.COVAI_USE_DOCKER_DB === 'true') {
+      sweepOrphanedSystemContainers()
+        .then(r => r.removed.length && console.log('[System Test] Removed', r.removed.length, 'orphaned test container(s)'))
+        .catch(error => console.warn('[System Test] Orphan sweep failed:', error.message));
+    }
     startInvitationDeliveryWorker();
     const recover = () => recoverQueuedProjectOperations().catch(() => console.error('[operations] Queue recovery unavailable; retrying'));
-    const recoveryTimer = setInterval(recover, 10000);
+    const recoveryTimer = setInterval(recover, 30000);
     recoveryTimer.unref();
     void recover();
     console.log("Database connected successfully.");

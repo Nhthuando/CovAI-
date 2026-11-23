@@ -1,10 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, memo } from "react";
+import ContextualMetricTooltip from "../primitives/ContextualMetricTooltip.jsx";
 
 /**
  * Deterministic bounding-box label placement solver so scatter plot node labels
  * never collide with each other, with other dots, with plot edges, or with watermarks.
  */
-function computeCollisionFreeLabels(nodes, { toX, toY, padLeft, padRight, padTop, padBottom, width, height, target80X }) {
+function computeCollisionFreeLabels(nodes, { toX, toY, padLeft, padTop, padBottom, width, height, target80X }) {
   const placedBoxes = [
     // Reserve the "80% Target" header label box so node labels don't overlap it
     { x1: target80X - 28, y1: padTop - 16, x2: target80X + 28, y2: padTop - 1 },
@@ -127,6 +128,20 @@ function computeCollisionFreeLabels(nodes, { toX, toY, padLeft, padRight, padTop
   return placements;
 }
 
+// SVG Chart Dimensions
+const CHART_WIDTH = 520;
+const CHART_HEIGHT = 310;
+const PAD_LEFT = 45;
+const PAD_RIGHT = 24;
+const PAD_TOP = 28;
+const PAD_BOTTOM = 36;
+const PLOT_WIDTH = CHART_WIDTH - PAD_LEFT - PAD_RIGHT;
+const PLOT_HEIGHT = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM;
+
+const toX = (val) => PAD_LEFT + (Math.max(0, Math.min(100, val)) / 100) * PLOT_WIDTH;
+const toY = (val) => PAD_TOP + PLOT_HEIGHT - (Math.max(0, Math.min(100, val)) / 100) * PLOT_HEIGHT;
+const TARGET_80_X = toX(80);
+
 export function RiskQuadrantScatterPlot({
   quadrantNodes = [],
   coverageCutoff = 70,
@@ -137,61 +152,54 @@ export function RiskQuadrantScatterPlot({
 }) {
   const [hoveredNode, setHoveredNode] = useState(null);
 
-  // SVG Chart Dimensions
-  const width = 520;
-  const height = 310;
-  const padLeft = 45;
-  const padRight = 24;
-  const padTop = 28;
-  const padBottom = 36;
-
-  const plotWidth = width - padLeft - padRight;
-  const plotHeight = height - padTop - padBottom;
-
-  // Coordinate transforms (X: 0 - 100%, Y: 0 - 100%)
-  const toX = (val) => padLeft + (Math.max(0, Math.min(100, val)) / 100) * plotWidth;
-  const toY = (val) => padTop + plotHeight - (Math.max(0, Math.min(100, val)) / 100) * plotHeight;
+  const width = CHART_WIDTH;
+  const height = CHART_HEIGHT;
+  const padLeft = PAD_LEFT;
+  const padRight = PAD_RIGHT;
+  const padTop = PAD_TOP;
+  const padBottom = PAD_BOTTOM;
+  const plotWidth = PLOT_WIDTH;
+  const plotHeight = PLOT_HEIGHT;
+  const target80X = TARGET_80_X;
 
   const cutoffX = toX(coverageCutoff);
   const cutoffY = toY(passRateCutoff);
-  const target80X = toX(80);
 
-  const labelPlacements = useMemo(
-    () =>
-      computeCollisionFreeLabels(quadrantNodes, {
-        toX,
-        toY,
-        padLeft,
-        padRight,
-        padTop,
-        padBottom,
-        width,
-        height,
-        target80X,
-      }),
-    [quadrantNodes, coverageCutoff, passRateCutoff]
-  );
+  const labelPlacements = useMemo(() => {
+    return computeCollisionFreeLabels(quadrantNodes, {
+      toX,
+      toY,
+      padLeft: PAD_LEFT,
+      padTop: PAD_TOP,
+      padBottom: PAD_BOTTOM,
+      width: CHART_WIDTH,
+      height: CHART_HEIGHT,
+      target80X: TARGET_80_X,
+    });
+  }, [quadrantNodes]);
 
   return (
-    <div className={`relative space-y-3 font-sans ${className}`}>
-      {/* Quadrant Legend Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono tabular-nums">
-        <div className="p-1.5 rounded bg-[var(--ud-pass)]/10 border border-[var(--ud-pass)]/30 text-[var(--ud-pass)]">
-          <div className="font-bold">★ Healthy Stars</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov ≥{coverageCutoff}% • Pass ≥{passRateCutoff}%</div>
-        </div>
-        <div className="p-1.5 rounded bg-[var(--ud-warn)]/10 border border-[var(--ud-warn)]/30 text-[var(--ud-warn)]">
-          <div className="font-bold">▲ Blind Spot / Low Cov</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov &lt;{coverageCutoff}% • Pass ≥{passRateCutoff}%</div>
-        </div>
-        <div className="p-1.5 rounded bg-[#fb8500]/10 border border-[#fb8500]/30 text-[#fb8500]">
-          <div className="font-bold">▼ Active Regressions</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov ≥{coverageCutoff}% • Pass &lt;{passRateCutoff}%</div>
-        </div>
-        <div className="p-1.5 rounded bg-[var(--ud-fail)]/10 border border-[var(--ud-fail)]/30 text-[var(--ud-fail)]">
-          <div className="font-bold">✖ Critical Risk</div>
-          <div className="text-[9px] text-[var(--ud-text-muted)]">Cov &lt;{coverageCutoff}% • Pass &lt;{passRateCutoff}%</div>
-        </div>
+    <div className={`relative space-y-2 font-sans ${className}`}>
+      {/* Minimal Header with Contextual Quadrant Guide */}
+      <div className="flex items-center justify-between text-xs px-1">
+        <span className="text-[11px] font-mono text-[var(--ud-text-muted)]">
+          Correlation: Unified Coverage vs. Test Pass Rate
+        </span>
+        <ContextualMetricTooltip
+          title="Risk Quadrant Guide"
+          meaning="Segments active projects into 4 quality maturity quadrants."
+          formula={`★ Healthy Stars: Cov ≥ ${coverageCutoff}% & Pass ≥ ${passRateCutoff}%\n▲ Blind Spot: Cov < ${coverageCutoff}% & Pass ≥ ${passRateCutoff}%\n▼ Regressions: Cov ≥ ${coverageCutoff}% & Pass < ${passRateCutoff}%\n✖ Critical Risk: Cov < ${coverageCutoff}% & Pass < ${passRateCutoff}%`}
+          provenance="Live TestRun & CoverageSummary aggregates"
+          tip="Click on any circle or label to highlight that project card."
+          placement="bottom-right"
+        >
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[10px] text-[var(--ud-text-muted)] hover:text-[var(--ud-unit)] hover:border-[var(--ud-unit)]/40 transition-colors cursor-pointer"
+          >
+            <span>ⓘ Quadrant Guide</span>
+          </button>
+        </ContextualMetricTooltip>
       </div>
 
       {/* SVG Canvas */}
@@ -208,7 +216,7 @@ export function RiskQuadrantScatterPlot({
             width={width - padRight - cutoffX}
             height={cutoffY - padTop}
             fill="var(--ud-pass)"
-            fillOpacity="0.04"
+            fillOpacity="0.025"
           />
           {/* Top-Left: Blind Spot / Low Coverage */}
           <rect
@@ -217,7 +225,7 @@ export function RiskQuadrantScatterPlot({
             width={cutoffX - padLeft}
             height={cutoffY - padTop}
             fill="var(--ud-warn)"
-            fillOpacity="0.04"
+            fillOpacity="0.025"
           />
           {/* Bottom-Right: Active Regressions */}
           <rect
@@ -225,8 +233,8 @@ export function RiskQuadrantScatterPlot({
             y={cutoffY}
             width={width - padRight - cutoffX}
             height={height - padBottom - cutoffY}
-            fill="#fb8500"
-            fillOpacity="0.04"
+            fill="var(--ud-warn)"
+            fillOpacity="0.025"
           />
           {/* Bottom-Left: Critical Risk */}
           <rect
@@ -235,15 +243,15 @@ export function RiskQuadrantScatterPlot({
             width={cutoffX - padLeft}
             height={height - padBottom - cutoffY}
             fill="var(--ud-fail)"
-            fillOpacity="0.04"
+            fillOpacity="0.025"
           />
 
-          {/* Subtle Quadrant Watermarks — positioned in safe zones away from (0%,0%) and (100%,100%) data points */}
+          {/* Subtle Quadrant Watermarks */}
           <text
             x={width - padRight - 6}
             y={cutoffY - 5}
             textAnchor="end"
-            className="text-[8px] font-mono fill-[var(--ud-pass)] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ★ Healthy Stars
           </text>
@@ -251,7 +259,7 @@ export function RiskQuadrantScatterPlot({
             x={padLeft + 8}
             y={padTop + 13}
             textAnchor="start"
-            className="text-[8px] font-mono fill-[var(--ud-warn)] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ▲ Blind Spot / Low Coverage
           </text>
@@ -259,7 +267,7 @@ export function RiskQuadrantScatterPlot({
             x={width - padRight - 6}
             y={height - padBottom - 8}
             textAnchor="end"
-            className="text-[8px] font-mono fill-[#fb8500] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ▼ Active Regressions
           </text>
@@ -267,7 +275,7 @@ export function RiskQuadrantScatterPlot({
             x={padLeft + 8}
             y={cutoffY + 14}
             textAnchor="start"
-            className="text-[8px] font-mono fill-[var(--ud-fail)] opacity-45 pointer-events-none"
+            className="text-[8px] font-mono fill-[var(--ud-text-muted)] opacity-50 pointer-events-none"
           >
             ✖ Critical Risk
           </text>
@@ -384,6 +392,17 @@ export function RiskQuadrantScatterPlot({
             Pass Rate % →
           </text>
 
+          {quadrantNodes.length === 0 && (
+            <text
+              x={padLeft + plotWidth / 2}
+              y={padTop + plotHeight / 2}
+              textAnchor="middle"
+              className="text-[11px] font-mono fill-[var(--ud-text-muted)] pointer-events-none"
+            >
+              No matching projects for current filters
+            </text>
+          )}
+
           {/* Project Scatter Nodes & Collision-Free Labels */}
           {quadrantNodes.map((node) => {
             const isHovered = hoveredNode?.projectId === node.projectId;
@@ -473,21 +492,8 @@ export function RiskQuadrantScatterPlot({
             className="absolute bottom-3 right-3 p-2.5 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] text-[var(--ud-text)] shadow-lg z-20 font-mono text-[11px] tabular-nums pointer-events-none min-w-[205px]"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-bold text-xs font-sans text-[var(--ud-text)] truncate max-w-[130px]">
+              <span className="font-bold text-xs font-sans text-[var(--ud-text)] truncate max-w-[180px]">
                 {hoveredNode.name}
-              </span>
-              <span
-                className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${
-                  hoveredNode.gateStatus === "PASSED"
-                    ? "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)] border-[var(--ud-pass)]/30"
-                    : hoveredNode.gateStatus === "BLOCKED"
-                    ? "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)] border-[var(--ud-fail)]/30"
-                    : hoveredNode.gateStatus === "UNTESTED"
-                    ? "bg-[var(--ud-neutral)]/15 text-[var(--ud-neutral)] border-[var(--ud-neutral)]/30"
-                    : "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border-[var(--ud-warn)]/30"
-                }`}
-              >
-                {hoveredNode.gateLabel || hoveredNode.gateStatus}
               </span>
             </div>
             <div className="mt-1 text-[10px] text-[var(--ud-text-muted)]">
@@ -519,5 +525,5 @@ export function RiskQuadrantScatterPlot({
   );
 }
 
-export default RiskQuadrantScatterPlot;
+export default memo(RiskQuadrantScatterPlot);
 

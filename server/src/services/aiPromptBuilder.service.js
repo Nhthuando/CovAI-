@@ -1,4 +1,5 @@
 import { SYSTEM_TEST_QUALITY_RULES } from './systemTestQuality.service.js';
+import { withAgentContext } from '../agents/registry.js';
 import { PLAYWRIGHT_EXECUTION_STEP_RULES } from './playwrightExecutionSteps.service.js';
 
 /**
@@ -217,7 +218,7 @@ export const buildFinalPrompt = (payload, options = {}) => {
     
     finalPrompt += "---\n\nPlease review the provided code, metrics, and CFG data carefully. Output the requested JSON object containing `suggestions` and `tests` in a markdown code block.";
     
-    return finalPrompt;
+    return withAgentContext(finalPrompt, 'unit-test');
 };
 
 /**
@@ -296,11 +297,11 @@ export const buildPlaywrightPrompt = (payload = {}, { executionMode = "frontend"
     prompt += "```json\n";
     prompt += JSON.stringify({ tests: [{
         filePath: "tests/e2e/ai-generated.spec.js",
-        content: "import { test, expect } from '@playwright/test';\n\ntest('homepage smoke test', async ({ page }) => {\n  await test.step('Action: NAVIGATION - open homepage', async () => { await page.goto('/'); });\n  await test.step('Assert: homepage is visible', async () => { await expect(page.locator('body')).toBeVisible(); });\n  await test.step('Evidence: verified outcome', async () => { await test.info().attach('evidence', { body: await page.screenshot(), contentType: 'image/png' }); });\n});",
+        content: "Complete runnable Playwright test code derived from the supplied source. Include awaited business-outcome assertions and supported preconditions. Navigation or body visibility alone is insufficient.",
     }] }, null, 2) + "\n";
     prompt += "```\n\n";
     prompt += "Do not include any commentary outside the markdown code block.";
 
-    return prompt;
+    return withAgentContext(prompt, 'system-test');
 };
 

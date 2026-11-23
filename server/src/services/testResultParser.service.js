@@ -1,7 +1,45 @@
 import fs from "fs";
 import path from "path";
-import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import { canonicalizeFilePath, cleanStoragePath, cleanStorageText, stripAnsi } from "../utils/pathSanitizer.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
+import { summarizeUnitFailure } from "../../../shared/unitTestCaseCoverage.js";
+
+/**
+ * Helper to extract real duration from test execution results JSON
+ */
+export const extractExecutionDurationMs = (raw, runnerElapsedMs = 0) => {
+    if (!raw || typeof raw !== "object") return Math.max(0, Math.round(runnerElapsedMs));
+    if (Number(raw.durationMs) > 0) return Math.round(Number(raw.durationMs));
+    if (Number(raw.duration) > 0) return Math.round(Number(raw.duration));
+
+    let duration = 0;
+    if (Array.isArray(raw.testResults)) {
+        for (const suite of raw.testResults) {
+            const perf = Number(suite?.perfStats?.runtime || suite?.perfStats?.duration || 0);
+            if (perf > 0) {
+                duration += perf;
+            } else if (suite.endTime && suite.startTime && suite.endTime > suite.startTime) {
+                duration += (suite.endTime - suite.startTime);
+            } else if (Array.isArray(suite.assertionResults)) {
+                for (const a of suite.assertionResults) {
+                    const d = Number(a?.duration || 0);
+                    if (d > 0) duration += d;
+                }
+            }
+        }
+    }
+
+    if (duration <= 0 && Number(raw.startTime) > 0 && Array.isArray(raw.testResults)) {
+        const maxEnd = raw.testResults.reduce((max, s) => Math.max(max, Number(s.endTime || 0)), 0);
+        if (maxEnd > raw.startTime) duration = maxEnd - raw.startTime;
+    }
+
+    if (duration <= 0 && runnerElapsedMs > 0) {
+        duration = runnerElapsedMs;
+    }
+
+    return Math.max(0, Math.round(duration));
+};
 
 /**
  * Helper to find a file by candidate names in either dir or dir's parent
@@ -33,29 +71,60 @@ export const parseJestResults = (coverageDir, options = {}) => {
         return null;
     }
     try {
-        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        let raw;
+        try {
+            raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        } catch (jsonErr) {
+            console.warn(`[TEST-RESULT] Partial or malformed Jest JSON in ${resultsPath}, attempting recovery:`, jsonErr.message);
+            try {
+                const content = fs.readFileSync(resultsPath, "utf8");
+                const match = content.match(/(\{[\s\S]*\})/);
+                if (match) raw = JSON.parse(match[1]);
+            } catch (_) {}
+            if (!raw) {
+                return {
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 1,
+                    skippedTests: 0,
+                    durationMs: 0,
+                    status: "FAILED",
+                    scenarios: [{
+                        title: "Test Execution Output Unreadable",
+                        suiteName: path.basename(resultsPath),
+                        status: "failed",
+                        duration: 0,
+                        failureMessages: [`Failed to parse runner output: ${jsonErr.message}`],
+                        testFile: null
+                    }]
+                };
+            }
+        }
 
         // Calculate duration
-        const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
+        const duration = extractExecutionDurationMs(raw, options.runnerElapsedMs);
 
         const scenarios = [];
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
-                const cleanedSuiteFile = cleanStoragePath(suite.name);
+                const suiteFile = suite.testFilePath || suite.name;
+                const cleanedSuiteFile = canonicalizeFilePath(suiteFile, options.rootDir) || cleanStoragePath(suiteFile);
                 if (suite.assertionResults && suite.assertionResults.length > 0) {
                     suite.assertionResults.forEach(assertion => {
+                        const cleanedMsgs = (assertion.failureMessages || []).map(m => stripAnsi(cleanStorageText(m)));
                         scenarios.push({
                             title: assertion.title,
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status, // "passed", "failed", "pending"
                             duration: assertion.duration || 0,
-                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            failureMessages: cleanedMsgs,
+                            ...(assertion.status === "failed" && cleanedMsgs.length > 0 ? { failureSummary: summarizeUnitFailure(cleanedMsgs) } : {}),
                             testFile: cleanedSuiteFile
                         });
                     });
-                } else if (suite.status === "failed" || suite.message) {
+                } else if (suite.status === "failed" || suite.message || suite.failureMessage || suite.testExecError) {
                     // Test suite failed at module load or syntax phase
-                    const suiteFailMsg = suite.message ? cleanStorageText(suite.message) : "Test suite failed to run";
+                    const suiteFailMsg = stripAnsi(cleanStorageText(suite.failureMessage || suite.message || suite.testExecError?.stack || suite.testExecError?.message || "Test suite failed to run"));
                     
                     // Recover registered scenarios for this test file
                     let registeredScenarios = [];
@@ -152,15 +221,15 @@ export const parseJestResults = (coverageDir, options = {}) => {
 
         const results = {
             totalTests,
-            passedTests: raw.numPassedTests || 0,
+            passedTests: Math.max(raw.numPassedTests || 0, scenarios.filter(s => s.status === 'passed').length),
             failedTests,
-            skippedTests: raw.numPendingTests || 0,
+            skippedTests: Math.max(raw.numPendingTests || 0, scenarios.filter(s => ['pending', 'skipped', 'todo'].includes(s.status)).length),
             durationMs: duration,
-            status: raw.success ? "PASSED" : "FAILED",
+            status: failedTests > 0 || raw.numRuntimeErrorTestSuites > 0 || raw.success === false ? "FAILED" : "PASSED",
             scenarios
         };
 
-        const scenariosPath = path.join(coverageDir, "integration-scenarios.json");
+        const scenariosPath = path.join(coverageDir, "unit-scenarios.json");
         fs.writeFileSync(scenariosPath, JSON.stringify(scenarios, null, 2), "utf8");
 
         console.log(`[TEST-RESULT] parsed ${scenarios.length} scenarios.`, {
@@ -170,8 +239,42 @@ export const parseJestResults = (coverageDir, options = {}) => {
         return results;
     } catch (err) {
         console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
-        throw new Error(`Jest execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+        return {
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 1,
+            skippedTests: 0,
+            durationMs: 0,
+            status: "FAILED",
+            scenarios: [{
+                title: "Test Result Parse Error",
+                suiteName: path.basename(resultsPath || "Jest"),
+                status: "failed",
+                duration: 0,
+                failureMessages: [err.message],
+                testFile: null
+            }]
+        };
     }
+};
+
+/** Derive dashboard notices without reading coverage artifacts or querying the database. */
+export const deriveRunStatusNotices = (testRun, latestJob = null) => {
+    const scenarios = testRun?.scenarios || [];
+    const failedScenarios = scenarios.filter(s => String(s.status).toLowerCase() === "failed");
+    const failedSuites = [...new Set(failedScenarios.map(s => cleanStoragePath(s.testFile)).filter(Boolean))];
+    const isFatalFailure = latestJob?.status === "FAILED" || scenarios.some(s => s.isSuiteLevelFailure) ||
+        [latestJob?.errorMessage, ...scenarios.flatMap(s => s.failureMessages || [])]
+            .some(m => /Cannot find (?:module|package)|Test suite failed to run/i.test(m || ""));
+    const hasTestFailures = (testRun?.failedTests || 0) > 0 || failedScenarios.length > 0;
+    return {
+        isFatalFailure,
+        hasTestFailures,
+        failedSuites,
+        failedSuite: failedSuites[0] || null,
+        latestRunStatus: isFatalFailure ? "failed" : hasTestFailures ? "passed_with_failures" :
+            testRun?.status === "PASSED" ? "passed" : !testRun && !latestJob ? "not_run" : "success",
+    };
 };
 
 /**
@@ -203,9 +306,12 @@ export const formatScenariosForPrisma = (scenarios) => {
 /**
  * Parse Vitest JSON output file
  * @param {string} coverageDir
+ * @param {Object} [options]
+ * @param {Array} [options.aiTests] List of AiTest records with filePath and metaJson
+ * @param {string} [options.rootDir] Root directory of project snapshot
  * @return {Object|null}
  */
-export const parseVitestResults = (coverageDir) => {
+export const parseVitestResults = (coverageDir, options = {}) => {
     const resultsPath = findExistingFile(coverageDir, ["vitest-results.json", "test-results.json", "test-result.json"]);
     console.log(`[TEST-RESULT] parsing Vitest results from: ${resultsPath || coverageDir}`);
 
@@ -214,45 +320,191 @@ export const parseVitestResults = (coverageDir) => {
         return null;
     }
     try {
-        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        let raw;
+        try {
+            raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+        } catch (jsonErr) {
+            console.warn(`[TEST-RESULT] Partial or malformed Vitest JSON in ${resultsPath}, attempting recovery:`, jsonErr.message);
+            try {
+                const content = fs.readFileSync(resultsPath, "utf8");
+                const match = content.match(/(\{[\s\S]*\})/);
+                if (match) raw = JSON.parse(match[1]);
+            } catch (_) {}
+            if (!raw) {
+                return {
+                    totalTests: 0,
+                    passedTests: 0,
+                    failedTests: 1,
+                    skippedTests: 0,
+                    durationMs: 0,
+                    status: "FAILED",
+                    scenarios: [{
+                        title: "Vitest Execution Output Unreadable",
+                        suiteName: path.basename(resultsPath),
+                        status: "failed",
+                        duration: 0,
+                        failureMessages: [`Failed to parse Vitest output: ${jsonErr.message}`],
+                        testFile: null
+                    }]
+                };
+            }
+        }
 
         // Vitest JSON output format is highly compatible with Jest
-        const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
+        const duration = extractExecutionDurationMs(raw, options.runnerElapsedMs);
 
         const scenarios = [];
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
-                const cleanedSuiteFile = cleanStoragePath(suite.name);
-                if (suite.assertionResults) {
+                const cleanedSuiteFile = canonicalizeFilePath(suite.name, options.rootDir);
+                if (suite.assertionResults?.length) {
                     suite.assertionResults.forEach(assertion => {
+                        const cleanedMsgs = (assertion.failureMessages || []).map(m => stripAnsi(cleanStorageText(m)));
                         scenarios.push({
                             title: assertion.title,
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status,
                             duration: assertion.duration || 0,
-                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            failureMessages: cleanedMsgs,
+                            ...(assertion.status === "failed" && cleanedMsgs.length > 0 ? { failureSummary: summarizeUnitFailure(cleanedMsgs) } : {}),
                             testFile: cleanedSuiteFile
                         });
                     });
+                } else if (suite.status === "failed" || suite.message) {
+                    // Test suite failed at module load or syntax phase
+                    const suiteFailMsg = suite.message ? stripAnsi(cleanStorageText(suite.message)) : "Test suite failed to run";
+
+                    // Recover registered scenarios for this test file
+                    let registeredScenarios = [];
+
+                    // 1. Match against options.aiTests if available
+                    if (Array.isArray(options.aiTests)) {
+                        const matchedAiTest = options.aiTests.find(t => {
+                            if (!t.filePath) return false;
+                            const normT = t.filePath.replace(/\\/g, '/');
+                            const normSuite = (cleanedSuiteFile || "").replace(/\\/g, '/');
+                            return normSuite.endsWith(normT) || normT.endsWith(normSuite);
+                        });
+
+                        if (matchedAiTest) {
+                            if (matchedAiTest.metaJson) {
+                                try {
+                                    const meta = typeof matchedAiTest.metaJson === 'string' ? JSON.parse(matchedAiTest.metaJson) : matchedAiTest.metaJson;
+                                    if (Array.isArray(meta.requests) && meta.requests.length > 0) {
+                                        registeredScenarios = meta.requests.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+
+                            if (registeredScenarios.length === 0 && matchedAiTest.content) {
+                                try {
+                                    const reqs = extractTestRequests(matchedAiTest.content, cleanedSuiteFile);
+                                    if (Array.isArray(reqs) && reqs.length > 0) {
+                                        registeredScenarios = reqs.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId || null,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+                        }
+                    }
+
+                    // 2. Fallback: Parse test file directly from disk if not yet recovered
+                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                        try {
+                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            if (Array.isArray(reqs) && reqs.length > 0) {
+                                registeredScenarios = reqs.map(r => ({
+                                    title: r.testName,
+                                    suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                    scenarioId: r.scenarioId || null,
+                                    testId: null
+                                }));
+                            }
+                        } catch (_) {}
+                    }
+
+                    // 3. Emit registered scenarios with TEST_SCRIPT_ERROR failure details
+                    if (registeredScenarios.length > 0) {
+                        for (const sc of registeredScenarios) {
+                            scenarios.push({
+                                title: sc.title,
+                                suiteName: sc.suiteName,
+                                status: "failed",
+                                duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                                failureMessages: [suiteFailMsg],
+                                testFile: cleanedSuiteFile || null,
+                                scenarioId: sc.scenarioId || null,
+                                testId: sc.testId || null,
+                                isSuiteLevelFailure: true
+                            });
+                        }
+                    } else {
+                        // Fallback: suite-level placeholder only if no scenarios could be identified
+                        scenarios.push({
+                            title: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            suiteName: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            status: "failed",
+                            duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                            failureMessages: [suiteFailMsg],
+                            testFile: cleanedSuiteFile || null,
+                            isSuiteLevelFailure: true
+                        });
+                    }
                 }
             });
         }
 
+        const totalTests = Math.max(raw.numTotalTests || 0, scenarios.length);
+        const failedTests = Math.max(raw.numFailedTests || 0, scenarios.filter(s => s.status === 'failed').length);
+        const passedTests = raw.numPassedTests || scenarios.filter(s => s.status === 'passed').length;
+        const skippedTests = raw.numPendingTests || scenarios.filter(s => s.status === 'pending').length;
+
         const results = {
-            totalTests: raw.numTotalTests || 0,
-            passedTests: raw.numPassedTests || 0,
-            failedTests: raw.numFailedTests || 0,
-            skippedTests: raw.numPendingTests || 0,
+            totalTests,
+            passedTests,
+            failedTests,
+            skippedTests,
             durationMs: duration,
-            status: raw.success ? "PASSED" : "FAILED",
+            status: (raw.success && failedTests === 0) ? "PASSED" : "FAILED",
             scenarios
         };
+
+        try {
+            const targetDir = fs.existsSync(coverageDir) && fs.statSync(coverageDir).isDirectory() ? coverageDir : path.dirname(resultsPath);
+            const scenariosPath = path.join(targetDir, "integration-scenarios.json");
+            fs.writeFileSync(scenariosPath, JSON.stringify(scenarios, null, 2), "utf8");
+        } catch (_) {}
 
         console.log(`[TEST-RESULT] parsed:`, results);
         return results;
     } catch (err) {
         console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
-        throw new Error(`Vitest execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+        return {
+            totalTests: 0,
+            passedTests: 0,
+            failedTests: 1,
+            skippedTests: 0,
+            durationMs: 0,
+            status: "FAILED",
+            scenarios: [{
+                title: "Vitest Result Parse Error",
+                suiteName: path.basename(resultsPath || "Vitest"),
+                status: "failed",
+                duration: 0,
+                failureMessages: [err.message],
+                testFile: null
+            }]
+        };
     }
 };
 

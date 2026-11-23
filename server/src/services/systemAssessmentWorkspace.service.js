@@ -1,3 +1,4 @@
+import { SYSTEM_ARTIFACT_RETENTION_MS } from './systemArtifactRetention.service.js';
 import { operationAbortReason } from './systemOperationError.service.js';
 import { registerDependencyWorkspace } from './projectDependencyCache.service.js';
 import fs from 'node:fs';
@@ -65,10 +66,13 @@ export const createAssessmentWorkspace = ({ rootDir, operationId = crypto.random
     } catch (error) { fs.rmSync(target, { recursive: true, force: true }); throw error; }
     registerDependencyWorkspace(target);
     return { rootDir: target, originalRoot: rootDir, operationId, ...identity, files: [...identity.files, ...extraFiles], release: () => {
+        if (!fs.existsSync(target)) return;
         const real = fs.realpathSync(target);
         const rel = path.relative(fs.realpathSync(base), real);
         if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new ServiceError('Invalid cleanup workspace', 500);
-        fs.rmSync(real, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        try {
+            fs.rmSync(real, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
+        } catch {}
     } };
 };
 
@@ -107,6 +111,6 @@ export const purgeExpiredAssessmentArtifacts = (rootDir, now = Date.now()) => {
     for(const entry of fs.readdirSync(directory,{withFileTypes:true})) {
         if(!entry.isDirectory() || entry.isSymbolicLink() || !/^[0-9a-f-]{36}$/i.test(entry.name)) continue;
         const target=containedPath(directory,entry.name);
-        if(now-fs.statSync(target).mtimeMs > 14*24*60*60*1000) fs.rmSync(target,{recursive:true,force:true});
+        if(now-fs.statSync(target).mtimeMs > SYSTEM_ARTIFACT_RETENTION_MS) fs.rmSync(target,{recursive:true,force:true});
     }
 };

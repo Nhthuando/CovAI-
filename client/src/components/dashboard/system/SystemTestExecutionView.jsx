@@ -5,7 +5,7 @@ import { buildExecutionTimeline, executionDuration, executionScenarios, filterEx
 const attemptColor = status => ['failed', 'timedOut', 'interrupted'].includes(status) ? 'bg-[var(--color-danger)]'
   : status === 'passed' ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-muted)]';
 
-export default function SystemTestExecutionView({ summary, testFiles, snapshotId, onInspect, onOpenEditor }) {
+export default function SystemTestExecutionView({ summary, testFiles, snapshotId, onInspect, onOpenEditor, onOpenSetup }) {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
@@ -49,7 +49,7 @@ export default function SystemTestExecutionView({ summary, testFiles, snapshotId
               </div>
               {rows.map(({ scenario, attempt, offsetMs, leftPct, widthPct, durationMs }) => <button type="button" key={`${scenario.id}:${attempt.index}`} onClick={() => select(scenario.id)} aria-pressed={selectedId === scenario.id}
                 className={`grid w-full grid-cols-[240px_1fr] items-center gap-0 border-b border-[var(--color-border)] px-4 py-3 text-left hover:bg-[var(--color-surface-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${selectedId === scenario.id ? 'bg-[var(--color-surface-secondary)]' : ''}`}>
-                <div className="pr-4 text-xs"><span className="block truncate" title={scenario.title}>{scenario.title}</span><span className="text-[var(--color-text-muted)]">Attempt {attempt.index + 1} · </span><ExecutionStatus status={attempt.status} /></div>
+                <div className="pr-4 text-xs"><span className="block truncate" title={scenario.title}>{scenario.title}</span><span className="text-[var(--color-text-muted)]">Attempt {attempt.index + 1} · </span><ExecutionStatus status={attempt.status} dependency={['failed', 'timedOut', 'interrupted'].includes(attempt.status) ? scenario.externalDependency : undefined} /></div>
                 <div className="relative h-10 border-l border-[var(--color-border)]">
                   <div className={`absolute top-1 h-3 rounded-sm ${attemptColor(attempt.status)}`} style={{ left: `${leftPct}%`, width: `${widthPct}%`, minWidth: 2, transform: leftPct >= 100 ? 'translateX(-2px)' : undefined }} />
                   <span className="absolute bottom-0 left-1 text-[10px] text-[var(--color-text-muted)]">+{executionDuration(offsetMs)} · {executionDuration(durationMs)}{durationMs === null ? ' duration (start marker only)' : ''}</span>
@@ -61,11 +61,11 @@ export default function SystemTestExecutionView({ summary, testFiles, snapshotId
             <h5 className="text-xs font-semibold">Timing / execution detail unavailable</h5>
             <p className="text-xs text-[var(--color-text-muted)]">These scenarios have attempts without timestamps or historical results without execution detail. No position is estimated.</p>
             {unavailable.map(scenario => <button type="button" key={scenario.id} onClick={() => select(scenario.id)} aria-pressed={selectedId === scenario.id} className={`flex w-full items-center justify-between gap-3 rounded border border-[var(--color-border)] px-3 py-2 text-left text-xs focus-visible:outline-2 ${selectedId === scenario.id ? 'bg-[var(--color-surface-secondary)]' : ''}`}>
-              <span className="min-w-0 break-words">{scenario.title}</span><span className="shrink-0"><ExecutionStatus status={scenario.status?.toLowerCase()} /> · {executionDuration(scenario.durationMs)}</span>
+              <span className="min-w-0 break-words">{scenario.title}</span><span className="shrink-0"><ExecutionStatus status={scenario.status?.toLowerCase()} dependency={scenario.externalDependency} /> · {executionDuration(scenario.durationMs)}</span>
             </button>)}
           </div>}
         </section>
-        {selected ? <SystemTestExecutionDetail key={selected.id} scenario={selected} snapshotId={snapshotId} onInspect={onInspect} onOpenEditor={onOpenEditor} />
+        {selected ? <SystemTestExecutionDetail key={selected.id} scenario={selected} snapshotId={snapshotId} onInspect={onInspect} onOpenEditor={onOpenEditor} onOpenSetup={onOpenSetup} />
           : <p className="text-xs text-[var(--color-text-muted)]">Select a scenario to see attempts, reported steps and screenshot evidence.</p>}
       </div>}
   </div>;

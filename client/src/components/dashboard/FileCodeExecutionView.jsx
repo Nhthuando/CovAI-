@@ -20,7 +20,7 @@ import {
   ChevronRight,
   Layers,
 } from "lucide-react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor from "./editor/CollaborativeCodeEditor";
 import { updateFileContentApi } from "../../services/project.service.js";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 import TestFileViewerPanel from "./TestFileViewerPanel.jsx";
@@ -187,7 +187,7 @@ export default function FileCodeExecutionView({
           hits = typeof rawLine.hits === "number" ? rawLine.hits : (rawLine.status === "covered" ? 1 : 0);
           status = rawLine.status || (hits > 0 ? "covered" : "uncovered");
           error = rawLine.error;
-          reason = rawLine.reason;
+          reason = rawLine.uncoverageReason || rawLine.reason;
         }
       } else if (stmtsOnLine.length > 0) {
         hits = Math.max(...stmtsOnLine.map((s) => s.hits ?? 0));
@@ -795,7 +795,7 @@ export default function FileCodeExecutionView({
       >
         {viewMode === "editor" ? (
           <div style={{ flex: 1, minHeight: 0, height: "100%", width: "100%" }}>
-            <MonacoEditor
+            <MonacoEditor projectId={projectId} snapshotId={snapshotId} filePath={filePath}
               height="100%"
               minHeight="100%"
               language={lang}
@@ -1006,6 +1006,26 @@ export default function FileCodeExecutionView({
                               ? `✓ ${hits} hit${hits > 1 ? "s" : ""}`
                               : "⚑ 0 hits"}
                         </span>
+
+                        {isMissed && reason && (
+                          <span
+                            title={reason}
+                            style={{
+                              fontSize: 9.5,
+                              padding: "1px 6px",
+                              borderRadius: 4,
+                              maxWidth: 280,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.12)",
+                              color: isLight ? "#b45309" : "#fcd34d",
+                              border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)",
+                            }}
+                          >
+                            {reason}
+                          </span>
+                        )}
 
                         {isMissed && onSuggestTestcase && (
                           <button

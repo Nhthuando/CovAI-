@@ -51,7 +51,7 @@ const {
 
 const { parseJavaScriptCode } = await import("../services/babelParser.service.js");
 
-describe("6.2 Kịch Bản Kiểm Thử Kiểm Định Thực Tế (Verification Test Cases)", () => {
+describe("6.2 Verification Test Cases", () => {
     let tempDir;
 
     beforeEach(() => {
@@ -66,9 +66,9 @@ describe("6.2 Kịch Bản Kiểm Thử Kiểm Định Thực Tế (Verification
     });
 
     // =========================================================================
-    // 6.2.1 TEST CASE 1: MODULE CHỨA HELPER NỘI BỘ (INDIRECT TESTING)
+    // 6.2.1 TEST CASE 1: MODULE WITH INTERNAL HELPER (INDIRECT TESTING)
     // =========================================================================
-    describe("Test Case 1: Module Chứa Helper Nội Bộ (Indirect Testing)", () => {
+    describe("Test Case 1: Module With Internal Helper (Indirect Testing)", () => {
         const indirectModuleCode = `
 // Internal Helper 1: Coupon validation with multiple branches
 function validateCoupon(coupon) {
@@ -103,28 +103,28 @@ export function calculateFinalDiscount(basePrice, user) {
 }
 `;
 
-        test("AST Analyzer nhận diện đúng 1 hàm export và 3 helper nội bộ với cảnh báo Indirect Testing", () => {
+        test("AST Analyzer identifies 1 exported function and 3 internal helpers with Indirect Testing warning", () => {
             const astMetadata = analyzeSourceAst(indirectModuleCode);
 
-            // 1. Phải nhận diện chính xác 1 hàm export
+            // 1. Accurately identify 1 exported function
             expect(astMetadata.exportedSymbolNames).toEqual(["calculateFinalDiscount"]);
             expect(astMetadata.exportedSymbols).toHaveLength(1);
             expect(astMetadata.exportedSymbols[0].name).toBe("calculateFinalDiscount");
 
-            // 2. Phải nhận diện chính xác 3 hàm helper nội bộ (unexported)
+            // 2. Accurately identify 3 internal helpers (unexported)
             expect(astMetadata.unexportedFunctions).toHaveLength(3);
             expect(astMetadata.unexportedFunctions).toContain("validateCoupon");
             expect(astMetadata.unexportedFunctions).toContain("computeTierBonus");
             expect(astMetadata.unexportedFunctions).toContain("applyCap");
 
-            // 3. Mỗi helper nội bộ phải ghi nhận caller là calculateFinalDiscount và kèm cảnh báo nghiêm ngặt
+            // 3. Each internal helper records calculateFinalDiscount as caller with strict warning
             for (const helper of astMetadata.internalFunctions) {
                 expect(helper.callers).toContain("calculateFinalDiscount");
                 expect(helper.warning).toContain("DO NOT IMPORT DIRECTLY - TEST INDIRECTLY VIA EXPORTED CALLER");
             }
         });
 
-        test("Indirect Testing Strategy sinh chỉ dẫn kích hoạt toàn bộ 3 helper qua các tham số của hàm export", () => {
+        test("Indirect Testing Strategy generates guidance exercising all 3 helpers via exported function arguments", () => {
             const astMetadata = analyzeSourceAst(indirectModuleCode);
             const indirect = buildIndirectTestingStrategy({
                 astMetadata,
@@ -140,8 +140,8 @@ export function calculateFinalDiscount(basePrice, user) {
             expect(indirect.indirectGuidancePrompt).toContain("applyCap");
         });
 
-        test("Thực thi bộ test gọi hàm export kích hoạt đủ 3 helper nội bộ, đạt 100% Lines và 100% Branches", () => {
-            // Định nghĩa logic thực tế để chạy và đo lường độ bao phủ các nhánh
+        test("Executes test suite calling exported function to exercise all 3 helpers, achieving 100% Lines and Branches", () => {
+            // Define real logic to execute and measure branch coverage
             function validateCoupon(coupon) {
                 if (!coupon) return 0;
                 if (coupon.code === 'VIP50') return 0.5;
@@ -167,15 +167,15 @@ export function calculateFinalDiscount(basePrice, user) {
                 return applyCap(totalDiscount, user?.maxCap);
             }
 
-            // Theo dõi nhánh đã được kích hoạt
+            // Track triggered branches
             const coveredBranches = new Set();
 
-            // Kịch bản 1: basePrice <= 0
+            // Scenario 1: basePrice <= 0
             expect(calculateFinalDiscount(0, {})).toBe(0);
             expect(calculateFinalDiscount(-10, {})).toBe(0);
             coveredBranches.add("basePrice_falsy");
 
-            // Kịch bản 2: Helper 1 - validateCoupon (coupon falsy, VIP50, SAVE20, other code)
+            // Scenario 2: Helper 1 - validateCoupon (coupon falsy, VIP50, SAVE20, other code)
             expect(calculateFinalDiscount(100, { coupon: null })).toBe(0); // coupon falsy
             coveredBranches.add("coupon_falsy");
 
@@ -188,7 +188,7 @@ export function calculateFinalDiscount(basePrice, user) {
             expect(calculateFinalDiscount(100, { coupon: { code: 'OTHER' } })).toBe(5); // 5% default
             coveredBranches.add("coupon_default");
 
-            // Kịch bản 3: Helper 2 - computeTierBonus (loyaltyYears > 5, 2..5, < 2)
+            // Scenario 3: Helper 2 - computeTierBonus (loyaltyYears > 5, 2..5, < 2)
             expect(calculateFinalDiscount(100, { loyaltyYears: 6 })).toBe(15); // > 5
             coveredBranches.add("loyalty_gt_5");
 
@@ -198,7 +198,7 @@ export function calculateFinalDiscount(basePrice, user) {
             expect(calculateFinalDiscount(100, { loyaltyYears: 1 })).toBe(0); // < 2
             coveredBranches.add("loyalty_lt_2");
 
-            // Kịch bản 4: Helper 3 - applyCap (maxCap exceeded vs maxCap not exceeded vs undefined)
+            // Scenario 4: Helper 3 - applyCap (maxCap exceeded vs maxCap not exceeded vs undefined)
             expect(calculateFinalDiscount(200, { coupon: { code: 'VIP50' }, maxCap: 50 })).toBe(50); // amount 100 > cap 50
             coveredBranches.add("cap_exceeded");
 
@@ -208,10 +208,10 @@ export function calculateFinalDiscount(basePrice, user) {
             expect(calculateFinalDiscount(200, { coupon: { code: 'VIP50' }, maxCap: undefined })).toBe(100); // maxCap undefined
             coveredBranches.add("cap_undefined");
 
-            // Đảm bảo 100% tất cả các nhánh của 3 helper nội bộ đã được kích hoạt đầy đủ
+            // Assert 100% of all branches across 3 internal helpers are fully triggered
             expect(coveredBranches.size).toBe(11);
 
-            // Kiểm tra nghiệm thu định lượng đạt tuyệt đối 100%
+            // Check quantitative acceptance criteria achieves 100%
             const dodCheck = verifyQuantitativeDoD({
                 coverage: { statements: 100, branches: 100, functions: 100, lines: 100 },
                 testResults: { totalTests: 10, passedTests: 10, failedTests: 0, status: "passed" },
@@ -226,9 +226,9 @@ export function calculateFinalDiscount(basePrice, user) {
     });
 
     // =========================================================================
-    // 6.2.2 TEST CASE 2: MODULE CHỨA DATABASE QUERY & TRANSACTION (PRISMA MOCKING)
+    // 6.2.2 TEST CASE 2: MODULE WITH DATABASE QUERY & TRANSACTION (PRISMA MOCKING)
     // =========================================================================
-    describe("Test Case 2: Module Chứa Database Query & Transaction (Prisma Mocking)", () => {
+    describe("Test Case 2: Module With Database Query & Transaction (Prisma Mocking)", () => {
         const prismaServiceCode = `
 import { prisma } from '../config/prisma.js';
 
@@ -254,7 +254,7 @@ export async function createOrderForUser(userId, orderData) {
 }
 `;
 
-        test("Hợp đồng Mocking tự động phát hiện prisma-db và sinh Universal Prisma Proxy Mock", () => {
+        test("Mock contract auto-detects prisma-db and generates Universal Prisma Proxy Mock", () => {
             const mockContracts = buildIsolationMockContracts({
                 sourceCode: prismaServiceCode,
                 existingTestCode: "",
@@ -269,8 +269,8 @@ export async function createOrderForUser(userId, orderData) {
             expect(mockContracts.mockInstructions).toContain("Re-use the Prisma Proxy Mock. Never connect to a real database.");
         });
 
-        test("Thực thi service trong RAM với Prisma Proxy Mock: kiểm thử cả trường hợp tìm thấy user và không tìm thấy user", async () => {
-            // Triển khai Universal Prisma Proxy Mock chạy thuần trên RAM
+        test("Executes service in RAM with Prisma Proxy Mock: tests both user found and user not found", async () => {
+            // Deploy Universal Prisma Proxy Mock running purely in RAM
             const _createPrismaProxyMock = (mockUser = null) => {
                 const createdOrders = [];
                 const modelProxy = {
@@ -301,7 +301,7 @@ export async function createOrderForUser(userId, orderData) {
                 return { clientProxy, createdOrders };
             };
 
-            // Implementation của Service
+            // Service implementation
             async function createOrderForUser(prismaClient, userId, orderData) {
                 const user = await prismaClient.user.findUnique({
                     where: { id: userId }
@@ -323,7 +323,7 @@ export async function createOrderForUser(userId, orderData) {
                 });
             }
 
-            // Trường hợp 1: User tìm thấy (userId = 1) -> Transaction chạy thành công -> Order được tạo
+            // Case 1: User found (userId = 1) -> Transaction succeeds -> Order created
             const { clientProxy: prismaWithUser, createdOrders } = _createPrismaProxyMock({ id: 1, name: "Alice" });
             const resultOrder = await createOrderForUser(prismaWithUser, 1, { amount: 250 });
 
@@ -335,7 +335,7 @@ export async function createOrderForUser(userId, orderData) {
             expect(resultOrder).toMatchObject({ id: 101, userId: 1, amount: 250, status: "CONFIRMED" });
             expect(createdOrders).toHaveLength(1);
 
-            // Trường hợp 2: User KHÔNG tìm thấy (userId = 999) -> Quăng lỗi "User not found" -> $transaction không được gọi
+            // Case 2: User NOT found (userId = 999) -> Throws "User not found" -> $transaction not invoked
             const { clientProxy: prismaWithoutUser } = _createPrismaProxyMock(null);
             await expect(createOrderForUser(prismaWithoutUser, 999, { amount: 250 }))
                 .rejects.toThrow("User not found");
@@ -343,7 +343,7 @@ export async function createOrderForUser(userId, orderData) {
             expect(prismaWithoutUser.user.findUnique).toHaveBeenCalledWith({ where: { id: 999 } });
             expect(prismaWithoutUser.$transaction).not.toHaveBeenCalled();
 
-            // Cả hai test case đều chạy mượt mà trên RAM mà không cần kết nối database thật
+            // Both test cases execute purely in RAM without requiring a real database
             const dodEvaluation = verifyQuantitativeDoD({
                 coverage: { statements: 100, branches: 100, functions: 100, lines: 100 },
                 testResults: { totalTests: 2, passedTests: 2, failedTests: 0, status: "passed" },
@@ -355,9 +355,9 @@ export async function createOrderForUser(userId, orderData) {
     });
 
     // =========================================================================
-    // 6.2.3 TEST CASE 3: MODULE CHỨA LOGIC XỬ LÝ LỖI (ERROR HANDLING)
+    // 6.2.3 TEST CASE 3: MODULE WITH ERROR HANDLING LOGIC (ERROR HANDLING)
     // =========================================================================
-    describe("Test Case 3: Module Chứa Logic Xử Lý Lỗi (Error Handling)", () => {
+    describe("Test Case 3: Module With Error Handling Logic (Error Handling)", () => {
         const errorHandlingServiceCode = `
 import { logger } from '../utils/logger.js';
 
@@ -382,10 +382,10 @@ export async function processPayment(paymentGateway, payload) {
 }
 `;
 
-        test("AST Analyzer & Decision Table nhận diện chính xác các exceptionPoints trong try-catch", () => {
+        test("AST Analyzer & Decision Table accurately identify exceptionPoints in try-catch", () => {
             const astMetadata = analyzeSourceAst(errorHandlingServiceCode);
 
-            // Phải nhận diện được 2 exception points: throw trong try và catch + re-throw trong catch
+            // Must identify 2 exception points: throw in try and catch + re-throw in catch
             expect(astMetadata.exceptionPoints.length).toBeGreaterThanOrEqual(2);
             const catchPoint = astMetadata.exceptionPoints.find(ep => ep.type === "catch");
             expect(catchPoint).toBeDefined();
@@ -394,7 +394,7 @@ export async function processPayment(paymentGateway, payload) {
             const throwPoints = astMetadata.exceptionPoints.filter(ep => ep.type === "throw");
             expect(throwPoints.length).toBeGreaterThanOrEqual(2);
 
-            // Decision Table sinh test scenarios thuộc Category D: Error & Exception Handling
+            // Decision Table generates test scenarios in Category D: Error & Exception Handling
             const decisionTable = buildDecisionTableMatrix({
                 astMetadata,
                 sourceCode: errorHandlingServiceCode
@@ -406,8 +406,8 @@ export async function processPayment(paymentGateway, payload) {
             expect(errorEntries.some(e => e.condition.includes("throw"))).toBe(true);
         });
 
-        test("AI test case giả lập lỗi bao phủ toàn bộ các dòng trong khối catch (logger.error và throw new AppError)", async () => {
-            // Định nghĩa AppError và Service trong môi trường kiểm thử
+        test("AI test case mocks error to cover all lines in catch block (logger.error and throw new AppError)", async () => {
+            // Define AppError and Service in test environment
             class AppError extends Error {
                 constructor(statusCode, message) {
                     super(message);
@@ -433,10 +433,10 @@ export async function processPayment(paymentGateway, payload) {
                 }
             }
 
-            // Theo dõi các dòng/câu lệnh được thực thi
+            // Track executed lines/statements
             const executedStatements = new Set();
 
-            // Kịch bản A: Giả lập lỗi validation bên trong try -> ném vào catch
+            // Scenario A: Simulate validation error inside try -> jumps to catch
             try {
                 await processPayment({ charge: jest.fn() }, mockLogger, { amount: -50 });
             } catch (err) {
@@ -451,7 +451,7 @@ export async function processPayment(paymentGateway, payload) {
             );
             executedStatements.add("logger_error_executed");
 
-            // Kịch bản B: Giả lập downstream paymentGateway.charge ném lỗi mạng hoặc timeout
+            // Scenario B: Simulate downstream paymentGateway.charge throwing network error or timeout
             const failingGateway = {
                 charge: jest.fn().mockRejectedValue(new Error("Connection timeout to bank"))
             };
@@ -469,12 +469,12 @@ export async function processPayment(paymentGateway, payload) {
                 expect.stringContaining("Payment processing failed: Connection timeout to bank")
             );
 
-            // Khẳng định toàn bộ các dòng trong khối catch đã được bao phủ hoàn toàn
+            // Assert all lines in catch block are fully covered
             expect(executedStatements.has("catch_validation_error")).toBe(true);
             expect(executedStatements.has("logger_error_executed")).toBe(true);
             expect(executedStatements.has("catch_gateway_error")).toBe(true);
 
-            // Kiểm tra nghiệm thu định lượng
+            // Check quantitative acceptance criteria
             const dodCheck = verifyQuantitativeDoD({
                 coverage: { statements: 100, branches: 100, functions: 100, lines: 100 },
                 testResults: { totalTests: 2, passedTests: 2, failedTests: 0, status: "passed" },
@@ -486,10 +486,10 @@ export async function processPayment(paymentGateway, payload) {
     });
 
     // =========================================================================
-    // 6.2.4 TEST CASE 4: ÁP DỤNG LẶP (MULTI-ROUND REFINEMENT)
+    // 6.2.4 TEST CASE 4: MULTI-ROUND REFINEMENT
     // =========================================================================
-    describe("Test Case 4: Áp Dụng Lặp (Multi-round Refinement)", () => {
-        test("Lần chạy 1 đạt 75% coverage -> hệ thống tự động phát hiện thiếu nhánh -> gửi prompt vòng 2 sinh bổ sung test -> đẩy coverage lên > 90%", async () => {
+    describe("Test Case 4: Multi-Round Refinement", () => {
+        test("Run 1 achieves 75% coverage -> system detects missing branches -> round 2 prompt generates incremental tests -> coverage reaches > 90%", async () => {
             const srcDir = path.join(tempDir, "src", "services");
             const testsDir = path.join(tempDir, "src", "tests");
             const covDir = path.join(tempDir, "coverage");
@@ -527,7 +527,7 @@ describe('determineBenefits', () => {
             const relativeTest = "src/tests/membership.service.test.js";
             const modifiedFiles = new Set([relativeTest]);
 
-            // Trạng thái ban đầu: Lần chạy 1 đạt 75% coverage (< 90%)
+            // Initial state: Run 1 achieves 75% coverage (< 90%)
             let currentSummary = {
                 [relativeSrc]: {
                     statements: { total: 100, covered: 75, skipped: 0, pct: 75 },
@@ -568,7 +568,7 @@ describe('determineBenefits', () => {
                 runCoverageFn: async ({ pass }) => {
                     executedPasses++;
                     if (pass === 1) {
-                        // Vòng 1 kết thúc nhưng vẫn thiếu một số nhánh
+                        // Round 1 ends with some uncovered branches
                         currentSummary = {
                             [relativeSrc]: {
                                 statements: { total: 100, covered: 82, skipped: 0, pct: 82 },
@@ -578,7 +578,7 @@ describe('determineBenefits', () => {
                             }
                         };
                     } else if (pass >= 2) {
-                        // Vòng 2 sinh bổ sung delta test thành công và đẩy coverage lên trên 90%!
+                        // Round 2 generates incremental delta tests and pushes coverage above 90%!
                         currentSummary = {
                             [relativeSrc]: {
                                 statements: { total: 100, covered: 96, skipped: 0, pct: 96 },
@@ -592,28 +592,28 @@ describe('determineBenefits', () => {
                 }
             });
 
-            // 1. Kiểm chứng hệ thống đã chạy ít nhất 2 vòng lặp (vòng 1: 75% -> vòng 2: >90%)
+            // 1. Verify system ran at least 2 refinement loops (round 1: 75% -> round 2: >90%)
             expect(executedPasses).toBeGreaterThanOrEqual(2);
             expect(refinementResult.passesRun).toBeGreaterThanOrEqual(2);
             expect(refinementResult.refined).toBe(true);
 
-            // 2. Kiểm chứng độ bao phủ cuối cùng sau tinh chỉnh vượt ngưỡng 90%
+            // 2. Verify final coverage after refinement exceeds 90% threshold
             const finalCov = refinementResult.currentSum[relativeSrc];
             expect(finalCov.statements.pct).toBeGreaterThanOrEqual(90);
             expect(finalCov.branches.pct).toBeGreaterThanOrEqual(90);
             expect(finalCov.functions.pct).toBeGreaterThanOrEqual(90);
             expect(finalCov.lines.pct).toBeGreaterThanOrEqual(90);
 
-            // 3. Kiểm chứng file test được bổ sung thêm delta test code
+            // 3. Verify test file is augmented with delta test code
             const updatedTestCode = fs.readFileSync(testFile, "utf8");
             expect(updatedTestCode).toContain("Gap Closing Delta Tests");
-            expect(updatedTestCode).toContain("tier PLATINUM with 1000 points"); // Test gốc được bảo toàn 100%
+            expect(updatedTestCode).toContain("tier PLATINUM with 1000 points"); // Original tests 100% preserved
 
-            // 4. Kiểm chứng AST của file test hoàn toàn hợp lệ, không lỗi cú pháp
+            // 4. Verify AST of test file is valid without syntax errors
             const parseAst = parseJavaScriptCode(updatedTestCode);
             expect(parseAst.success).toBe(true);
 
-            // 5. Kiểm chứng nghiệm thu định lượng (Quantitative DoD) được thỏa mãn hoàn toàn
+            // 5. Verify quantitative DoD is completely satisfied
             const dodCheck = verifyQuantitativeDoD({
                 coverage: {
                     statements: finalCov.statements.pct,

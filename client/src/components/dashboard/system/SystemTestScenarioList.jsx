@@ -1,5 +1,7 @@
 import SystemTestEvidencePreview from "./SystemTestEvidencePreview.jsx";
 import SystemTestProgress from "./SystemTestProgress.jsx";
+import { ExternalDependencyBadge, ExternalDependencyNotice } from "./ExternalTestKeyNotices.jsx";
+import { stripAnsi } from "../../../utils/stripAnsi.js";
 import { Fragment, useState, useMemo } from "react";
 import {
   FileCode2,
@@ -11,6 +13,7 @@ import {
   AlertOctagon,
   Edit3,
   Search,
+  Zap,
 } from "lucide-react";
 import Button from "../../common/Button.jsx";
 
@@ -24,30 +27,30 @@ function StatusBadge({ status }) {
   const norm = String(status || "").toUpperCase();
   if (norm === "PASSED") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-success)]/10 text-[var(--color-success)] border border-[var(--color-success)]/30">
-        <CheckCircle2 size={12} />
+      <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+        <CheckCircle2 size={11} className="text-emerald-500/80" />
         <span>PASSED</span>
       </span>
     );
   }
   if (norm === "FAILED") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 text-[var(--color-danger)] border border-[var(--color-danger)]/30">
-        <XCircle size={12} />
+      <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-rose-500/[0.07] text-rose-300/90 border border-rose-500/25">
+        <XCircle size={11} />
         <span>FAILED</span>
       </span>
     );
   }
   if (norm === "FLAKY") {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/30">
-        <AlertTriangle size={12} />
+      <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-amber-500/[0.08] text-amber-400 border border-amber-500/25">
+        <AlertTriangle size={11} />
         <span>FLAKY</span>
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+    <span className="inline-flex items-center gap-1 text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
       <span>{norm || "UNKNOWN"}</span>
     </span>
   );
@@ -57,6 +60,7 @@ export default function SystemTestScenarioList({
   testFiles = [],
   snapshotId,
   onInspectBreakpoint,
+  onOpenSetup,
   onOpenEditor,
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState({});
@@ -119,9 +123,9 @@ export default function SystemTestScenarioList({
                 key={filter}
                 type="button"
                 onClick={() => setStatusFilter(filter)}
-                className={`text-[11px] font-medium px-2.5 py-1 rounded-[var(--radius-sm)] border cursor-pointer transition-colors ${
+                className={`text-[11px] font-medium px-2.5 py-1 rounded-md border cursor-pointer transition-colors duration-150 ${
                   active
-                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
+                    ? "bg-[var(--color-primary)]/90 text-[var(--color-primary-foreground)] border-[var(--color-primary)]"
                     : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
                 }`}
               >
@@ -210,7 +214,7 @@ export default function SystemTestScenarioList({
                     {!scenarios.length && <p className="px-4 py-3 text-xs text-[var(--color-text-muted)]">No executed scenarios for this file in the selected results. Open Edit Test to run this file directly.</p>}
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-[var(--color-border)] text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface)] uppercase tracking-wider">
+                        <tr className="border-b border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-muted)] bg-[var(--color-bg)]">
                           <th className="py-2 px-4 font-medium">Scenario Title</th>
                           <th className="py-2 px-4 font-medium w-28">Status</th>
                           <th className="py-2 px-4 font-medium w-24">Duration</th>
@@ -231,22 +235,32 @@ export default function SystemTestScenarioList({
                             <Fragment key={sc.id || sc.title}>
                             <tr
                               className={`hover:bg-[var(--color-surface-secondary)]/40 transition-colors ${
-                                isFailed ? "bg-[var(--color-danger)]/5" : ""
+                                sc.externalDependency ? "bg-amber-500/5" : isFailed ? "bg-[var(--color-danger)]/5" : ""
                               }`}
                             >
                               <td className="py-2.5 px-4 font-medium text-[var(--color-text)] max-w-md truncate">
                                 <div>{sc.title}</div>
-                                {isFailed && sc.errorMessage && (
+                                {sc.externalDependency ? (
+                                  <ExternalDependencyNotice dependency={sc.externalDependency} onOpenSetup={onOpenSetup}>
+                          {sc.errorMessage && <pre className="whitespace-pre-wrap break-words">{stripAnsi(sc.errorMessage)}</pre>}
+                                  </ExternalDependencyNotice>
+                                ) : isFailed && sc.errorMessage && (
                                   <div className="text-[11px] text-[var(--color-danger)] truncate font-mono mt-0.5 max-w-sm">
-                                    {sc.errorMessage}
+                            {stripAnsi(sc.errorMessage)}
                                   </div>
                                 )}
                               </td>
                               <td className="py-2.5 px-4">
-                                <StatusBadge status={sc.status} />
+                                {sc.externalDependency ? <ExternalDependencyBadge dependency={sc.externalDependency} /> : <StatusBadge status={sc.status} />}
                               </td>
                               <td className="py-2.5 px-4 text-[var(--color-text-secondary)] font-mono text-[11px]">
-                                {formatMs(sc.executionTimeMs || sc.durationMs)}
+                                <div>{formatMs(sc.executionTimeMs || sc.durationMs)}</div>
+                                {(sc.tokens || sc.telemetry?.tokens) && (
+                                  <div className="text-[10px] text-amber-400 font-mono flex items-center gap-1 mt-0.5">
+                                    <Zap size={9} />
+                                    <span>{(sc.tokens || sc.telemetry?.tokens?.total || sc.telemetry?.tokens).toLocaleString()} tok</span>
+                                  </div>
+                                )}
                               </td>
                               <td className="py-2.5 px-4 text-right font-mono text-[11px] text-[var(--color-primary)] font-medium">
                                 <SystemTestProgress scenario={sc} compact />
@@ -287,7 +301,7 @@ export default function SystemTestScenarioList({
                             </tr>
                             <tr>
                               <td colSpan={5}>
-                                {isFailed && <div className="px-4 py-3"><SystemTestProgress scenario={sc} showErrors /></div>}
+                                {isFailed && <div className="px-4 py-3"><SystemTestProgress scenario={sc} showErrors={!sc.externalDependency} /></div>}
                                 <SystemTestEvidencePreview
                                   key={`${snapshotId}:${sc.id}`}
                                   snapshotId={snapshotId}

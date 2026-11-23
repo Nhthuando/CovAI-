@@ -14,6 +14,7 @@ describe('System Test owned artifacts', () => {
             fs.writeFileSync(file, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]));
             const artifact = { kind: 'SCREENSHOT', ...inspectRunArtifact({ rootDir, relativePath, kind: 'SCREENSHOT' }) };
             expect(readOwnedRunArtifact({ rootDir, artifact }).bytes.length).toBe(9);
+            expect(()=>readOwnedRunArtifact({rootDir,artifact:{...artifact,expiredAt:new Date()}})).toThrow('expired');
             fs.appendFileSync(file, Buffer.from([1]));
             expect(() => readOwnedRunArtifact({ rootDir, artifact })).toThrow(/hash mismatch/i);
             expect(() => inspectRunArtifact({ rootDir, relativePath: '../other.png', kind: 'SCREENSHOT' })).toThrow(/Unsupported/);

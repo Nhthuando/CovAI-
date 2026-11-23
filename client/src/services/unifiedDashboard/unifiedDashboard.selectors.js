@@ -12,7 +12,9 @@ export function getPassRate(passed = 0, failed = 0) {
 
 /**
  * Compute Executive Quality Health Score (0 - 100) and letter grade (A/B/C/D).
- * Gracefully normalizes weights when 1 or 2 pillars lack data.
+ * Uses fixed 50% Unit / 30% Integration / 20% System weights across all 3 layers
+ * (unexecuted layers contribute 0 to avoid artificial score inflation) minus a failure
+ * penalty up to 15 pts. Returns null score/grade when no pillars have tests or coverage.
  */
 export function computeHealth(pillars = {}, customWeights = null, qualityGate = null) {
   const cfgWeights = customWeights || UNIFIED_DASHBOARD_CONFIG.weights;
@@ -21,6 +23,7 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
   const layerScores = [];
   let totalAvailableWeight = 0;
   let totalFailedTests = 0;
+  let hasAnyData = false;
 
   for (const key of pillarKeys) {
     const p = pillars[key];
@@ -36,9 +39,13 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
     const coverage = p.coverageMetrics?.lines ?? p.coverageMetrics?.apiEndpoint ?? p.coverageMetrics?.flow ?? 0;
     const hasMeaningfulCoverage = coverage !== null && Number(coverage) > 0;
 
+    if (hasTests || hasMeaningfulCoverage) {
+      hasAnyData = true;
+    }
+
     totalFailedTests += Number(p.failedTests || 0);
 
-    let pillarScore = 0;
+    let pillarScore;
     if (hasTests || hasMeaningfulCoverage) {
       const passRate = getPassRate(p.passedTests, p.failedTests) ?? (hasTests ? 0 : Number(coverage) || 0);
       const cov = coverage !== null ? Number(coverage) : passRate;
@@ -52,7 +59,7 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
     totalAvailableWeight += weight;
   }
 
-  if (totalAvailableWeight <= 0) {
+  if (!hasAnyData || totalAvailableWeight <= 0) {
     return { score: null, grade: null, delta: null };
   }
 
@@ -68,11 +75,12 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
   }
 
   const roundedScore = Math.round(finalScore);
+  const grades = UNIFIED_DASHBOARD_CONFIG.grades;
 
   let grade = "D";
-  if (roundedScore >= 80) grade = "A";
-  else if (roundedScore >= 65) grade = "B";
-  else if (roundedScore >= 50) grade = "C";
+  if (roundedScore >= grades.A) grade = "A";
+  else if (roundedScore >= grades.B) grade = "B";
+  else if (roundedScore >= grades.C) grade = "C";
 
   // If Quality Gate failed or is warning, health grade cannot be A
   if ((qualityGate?.status === "WARNING" || qualityGate?.status === "FAILED") && grade === "A") {
@@ -215,17 +223,15 @@ export function computeQualityGate(pillars = {}, matrixRows = []) {
     Number(unit?.totalTests || 0) +
     Number(integration?.totalTests || 0) +
     sysTotal;
-  const hasAnyCoverage =
-    Number(unit?.coverageMetrics?.lines || 0) > 0 ||
-    Number(integration?.coverageMetrics?.apiEndpoint || 0) > 0 ||
-    Number(system?.coverageMetrics?.flow || 0) > 0;
 
   let status = "PASSED";
   let label = "READY TO RELEASE";
 
-  if (totalExecutedAcrossLayers === 0 && !hasAnyCoverage) {
+  if (totalExecutedAcrossLayers === 0) {
     status = "UNVERIFIED";
-    label = "UNVERIFIED";
+    label = "UNVERIFIED • NOT RUN";
+    reasons.length = 0;
+    reasons.push("No test suites have been executed for this snapshot yet. Run suites to establish a quality baseline.");
   } else if (isFailed) {
     status = "FAILED";
     label = "BLOCKED";
@@ -278,25 +284,43 @@ export function computeExecutionTotals(pillars = {}) {
 }
 
 /**
- * Aggregates multi-layer coverage metrics.
+ * Aggregates multi-layer coverage metrics using the standardized weighted formula:
+ * 50% Unit + 30% Integration + 20% System (strictly 0% when 0 tests are executed).
  */
 export function computeCoverageIndex(pillars = {}) {
-  const codePct = pillars.unit?.coverageMetrics?.lines ?? null;
-  const branchPct = pillars.unit?.coverageMetrics?.branches ?? null;
-  const apiPct = pillars.integration?.coverageMetrics?.apiEndpoint ?? null;
-  const flowPct = pillars.system?.coverageMetrics?.flow ?? null;
+  const unitTotal = Number(pillars.unit?.totalTests || 0);
+  const intTotal = Number(pillars.integration?.totalTests || 0);
+  const sysTotal = Number(pillars.system?.totalTests || 0);
+  const totalExecuted = unitTotal + intTotal + sysTotal;
 
-  const available = [codePct, apiPct, flowPct].filter((v) => v !== null && !Number.isNaN(v));
-  const overall = available.length > 0
-    ? Number((available.reduce((a, b) => a + Number(b), 0) / available.length).toFixed(1))
-    : null;
+  const totalApis = Number(pillars.integration?.coverageMetrics?.totalApis ?? 0);
+
+  const codePct = unitTotal > 0 ? Number(pillars.unit?.coverageMetrics?.lines ?? 0) : 0;
+  const branchPct = unitTotal > 0 ? Number(pillars.unit?.coverageMetrics?.branches ?? 0) : 0;
+  const apiPct =
+    intTotal > 0 && totalApis > 0
+      ? Number(pillars.integration?.coverageMetrics?.apiEndpoint ?? 0)
+      : 0;
+  const flowPct = sysTotal > 0 ? Number(pillars.system?.coverageMetrics?.flow ?? 0) : 0;
+
+  const weights = UNIFIED_DASHBOARD_CONFIG.weights;
+  const overall =
+    totalExecuted > 0
+      ? Number(
+          (
+            codePct * weights.unit +
+            apiPct * weights.integration +
+            flowPct * weights.system
+          ).toFixed(1)
+        )
+      : 0;
 
   return {
     overall,
-    codePct: codePct !== null ? Number(codePct) : null,
-    branchPct: branchPct !== null ? Number(branchPct) : null,
-    apiPct: apiPct !== null ? Number(apiPct) : null,
-    flowPct: flowPct !== null ? Number(flowPct) : null,
+    codePct,
+    branchPct,
+    apiPct,
+    flowPct,
   };
 }
 
@@ -678,12 +702,18 @@ export function buildActionItems(pillars = {}, traceRows = [], limit = 8) {
     const uncovEndpoints = (pillars.integration?.lowCoverageItems || [])
       .map((item) => item.name)
       .filter(Boolean);
-    const endpointPreview = uncovEndpoints.length > 0 ? uncovEndpoints.slice(0, 3).join(", ") : `${uncovCount} Uncovered API(s)`;
-    const firstUncovEndpoint = uncovEndpoints[0] || "";
+    const traceUncovEndpoints = traceRows
+      .filter((r) => r.integration?.status === "untested" || r.integration?.status === "warn" || r.integration?.status === "none")
+      .map((r) => r.moduleName || r.id)
+      .filter(Boolean);
+    const resolvedEndpoints = uncovEndpoints.length > 0 ? uncovEndpoints : traceUncovEndpoints;
+    const endpointPreview = resolvedEndpoints.length > 0 ? resolvedEndpoints.slice(0, 3).join(", ") : `${uncovCount} Uncovered API(s)`;
+    const firstUncovEndpoint = resolvedEndpoints[0] || "";
+    const isZeroIntegration = (Number(pillars.integration?.totalTests) || 0) === 0;
 
     actions.push({
       id: "act-int-uncovered",
-      priority: "MEDIUM",
+      priority: isZeroIntegration ? "HIGH" : "MEDIUM",
       pillar: "integration",
       failureCategory: "uncovered",
       title: `Cover ${uncovCount} untested API endpoint(s)`,
@@ -702,7 +732,7 @@ export function buildActionItems(pillars = {}, traceRows = [], limit = 8) {
         scenarioName: "API Endpoint Discovery Audit",
         failedStep: "0 integration assertions executed for discovered route handlers",
         stackTrace: `Endpoint Coverage Audit:\n  Total Discovered Endpoints: ${pillars.integration.coverageMetrics.totalApis || uncovCount}\n  Covered Endpoints: ${pillars.integration.passedTests || 0}\n  Uncovered Endpoints: ${uncovCount}\n  Sample Uncovered Routes: ${endpointPreview}`,
-        testCases: uncovEndpoints.map((epName) => ({
+        testCases: resolvedEndpoints.map((epName) => ({
           name: `${epName} (Uncovered)`,
           status: "untested",
           durationMs: 0,

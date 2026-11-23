@@ -1,9 +1,8 @@
+import { authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
-  const user = localStorage.getItem("user");
-  const userToken = user ? JSON.parse(user).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = getAccessToken();
 
   return {
     "Content-Type": "application/json",
@@ -18,11 +17,7 @@ async function handleResponse(res) {
 
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("userName");
-      localStorage.removeItem("userEmail");
-      window.location.href = "/login";
+      await handleUnauthorizedResponse();
     }
 
     throw new Error(data.message || "Failed API call");
@@ -44,7 +39,8 @@ export async function getIntegrationVersionHistory(snapshotId, options = {}) {
   }
   const params = new URLSearchParams(cleanOptions);
   const queryString = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(
+  const res = await authAwareFetch(
+    fetch,
     `${BASE_URL}/coverage/${snapshotId}/integration/version-history${queryString}`,
     {
       headers: getAuthHeaders(),
@@ -55,7 +51,8 @@ export async function getIntegrationVersionHistory(snapshotId, options = {}) {
 
 export async function compareIntegrationVersions(snapshotId, versionAId, versionBId, type = "ANALYZE") {
   const params = new URLSearchParams({ versionAId, versionBId, type });
-  const res = await fetch(
+  const res = await authAwareFetch(
+    fetch,
     `${BASE_URL}/coverage/${snapshotId}/integration/version-compare?${params.toString()}`,
     {
       headers: getAuthHeaders(),
@@ -66,7 +63,8 @@ export async function compareIntegrationVersions(snapshotId, versionAId, version
 
 export async function getHistoricalWorkspaceVersion(snapshotId, versionId, type = "ANALYZE") {
   const params = new URLSearchParams({ type });
-  const res = await fetch(
+  const res = await authAwareFetch(
+    fetch,
     `${BASE_URL}/coverage/${snapshotId}/integration/version/${versionId}?${params.toString()}`,
     {
       headers: getAuthHeaders(),
@@ -82,7 +80,8 @@ export async function getBeforeAfterComparison(projectId, options = {}) {
   }
   const params = new URLSearchParams(cleanOptions);
   const queryString = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(
+  const res = await authAwareFetch(
+    fetch,
     `${BASE_URL}/coverage/project/${projectId}/comparison${queryString}`,
     {
       headers: getAuthHeaders(),
@@ -93,7 +92,8 @@ export async function getBeforeAfterComparison(projectId, options = {}) {
 
 export async function getSourceFileDiff(projectId, options = {}) {
   const params = new URLSearchParams(options);
-  const res = await fetch(
+  const res = await authAwareFetch(
+    fetch,
     `${BASE_URL}/coverage/project/${projectId}/comparison/source-file?${params.toString()}`,
     {
       headers: getAuthHeaders(),

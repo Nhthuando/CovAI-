@@ -1,7 +1,10 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
-import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
+import {
+  isBusinessLogicSourceFile,
+  isTestFilePath,
+} from "../utils/businessLogicFileDetector.js";
 import path from "node:path";
 import { resolveProjectAccess } from "./projectAccess.service.js";
 import { operationSnapshot, currentProjectOperation, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
@@ -52,7 +55,7 @@ const calculatePct = (section, isFileCovered = false) => {
   return null;
 };
 
-const extractFilePath = (entry, key, rootDir = "") => {
+export const extractFilePath = (entry, key, rootDir = "") => {
   let raw = null;
   if (entry.path && typeof entry.path === "string") {
     raw = entry.path;
@@ -66,10 +69,12 @@ const extractFilePath = (entry, key, rootDir = "") => {
   if (!raw || typeof raw !== "string") return null;
   if (rootDir && path.isAbsolute(raw)) {
     const relative = path.relative(rootDir, raw);
-    if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) raw = relative;
+    if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+      raw = relative;
+    }
   }
 
-  return canonicalizeFilePath(raw, rootDir);
+  return canonicalizeFilePath(raw, rootDir) || raw;
 };
 
 const calculateIstanbulPct = (map, isFileCovered = false) => {
@@ -108,7 +113,11 @@ const getCoverageRecords = (coverageReport, rootDir = "") => {
   } else {
     entries = Object.entries(coverageReport)
       .filter(
-        ([key]) => key !== "total" && key !== "summary" && key !== "metadata",
+        ([key]) =>
+          key !== "total" &&
+          key !== "summary" &&
+          key !== "metadata" &&
+          key !== "testType",
       )
       .map(([key, value]) => ({ ...value, filePath: key }));
   }
@@ -191,6 +200,8 @@ export const parseCoverageFilesForSnapshot = async ({
   snapshotId,
   coverageReport,
   userId,
+  testType: explicitTestType,
+  preserveOtherFiles = false,
 }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
@@ -223,12 +234,20 @@ export const parseCoverageFilesForSnapshot = async ({
 
   const coverageRows = getCoverageRecords(coverageReport, snapshot.rootDir);
 
-  const testType = coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
+  const testType = explicitTestType || coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
+  const isIgnoredArtifactPath = (filePath) =>
+    /(^|\/)(node_modules|coverage|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(
+      filePath.replace(/\\/g, "/"),
+    );
 
   const dedupedMap = new Map();
   for (const row of coverageRows) {
     if (!row.filePath) continue;
-    if (testType === "UNIT" && !isBusinessLogicSourceFile(row.filePath)) continue;
+    if (testType === "UNIT") {
+      if (!isBusinessLogicSourceFile(row.filePath)) continue;
+    } else if (isTestFilePath(row.filePath) || isIgnoredArtifactPath(row.filePath)) {
+      continue;
+    }
     if (!dedupedMap.has(row.filePath)) {
       dedupedMap.set(row.filePath, {
         snapshotId,
@@ -266,18 +285,39 @@ export const parseCoverageFilesForSnapshot = async ({
   };
 
   const persist = async tx => {
-    await tx.coverageFile.deleteMany({
-      where: { snapshotId },
-    });
-
-    if (formattedRows.length > 0) {
-      await tx.coverageFile.createMany({
-        data: formattedRows,
-        skipDuplicates: true,
+    if (testType === "INTEGRATION" || preserveOtherFiles) {
+      // Preserve previously parsed CoverageFile rows while upserting updated files
+      for (const row of formattedRows) {
+        await tx.coverageFile.upsert({
+          where: {
+            snapshotId_filePath: {
+              snapshotId: row.snapshotId,
+              filePath: row.filePath,
+            },
+          },
+          create: row,
+          update: {
+            linesPct: row.linesPct,
+            branchesPct: row.branchesPct,
+            funcsPct: row.funcsPct,
+            stmtsPct: row.stmtsPct,
+          },
+        });
+      }
+    } else {
+      await tx.coverageFile.deleteMany({
+        where: { snapshotId },
       });
+
+      if (formattedRows.length > 0) {
+        await tx.coverageFile.createMany({
+          data: formattedRows,
+          skipDuplicates: true,
+        });
+      }
     }
 
-    if (rawSummary) {
+    if (rawSummary && testType !== "INTEGRATION") {
       await tx.coverageSummary.upsert({
         where: { snapshotId },
         update: {
@@ -297,7 +337,7 @@ export const parseCoverageFilesForSnapshot = async ({
     }
   };
   if (currentProjectOperation()?.preparedPublications) await stagePreparedPublication(persist);
-  else await prisma.$transaction(persist);
+  else await prisma.$transaction(persist, { maxWait: 15000, timeout: 30000 });
 
   return {
     totalFiles: formattedRows.length,

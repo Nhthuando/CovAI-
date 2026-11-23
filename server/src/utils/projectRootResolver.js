@@ -85,13 +85,12 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
         }
     };
 
-    // Try resolving as standard local path first
-    const resolved = path.resolve(snapshotRoot);
-
-    // If local resolved path exists AND has package.json or source code, it's valid
-    if (hasCodeOrConfig(resolved)) {
-        return resolved;
-    }
+    // Strip any Windows drive letter prefix (e.g. D:\, C:/) on non-Windows platforms
+    const normalized = snapshotRoot.replace(/\\/g, '/');
+    const strippedDrive = normalized.replace(/^[a-zA-Z]:(?:\/|$)/, '/');
+    const isWindowsContainerPath =
+        process.platform === 'win32' &&
+        /^\/?app\/(?:storage|uploads|\.?covai-temp)\//i.test(strippedDrive);
 
     // Determine current server root directory and potential base roots
     const serverRoot = process.cwd();
@@ -101,12 +100,30 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
             fileServerDir = path.resolve(__dirname, '../..');
         }
     } catch (_) {}
-    const baseCandidates = [serverRoot, path.resolve(serverRoot, 'server'), fileServerDir];
+    const baseCandidates = [fileServerDir, serverRoot, path.resolve(serverRoot, 'server')];
+
+    // On non-Windows platforms, always work with strippedDrive
+    const cleanRoot = process.platform !== 'win32' ? strippedDrive : snapshotRoot;
+
+    // Try resolving as standard local path if it contains real code/config (never short-circuit on phantom E:\app\storage\... empty dirs)
+    if (!isWindowsContainerPath) {
+        if (process.platform === 'win32' && (cleanRoot.startsWith('/') || cleanRoot.startsWith('\\'))) {
+            const withoutRoot = strippedDrive.replace(/^\/+/, '');
+            for (const base of baseCandidates) {
+                const cand = path.resolve(base, withoutRoot);
+                if (hasCodeOrConfig(cand) || fs.existsSync(cand)) return cand;
+            }
+        } else {
+            const resolved = path.resolve(cleanRoot);
+            if (hasCodeOrConfig(resolved)) {
+                return resolved;
+            }
+        }
+    }
 
     // Check if snapshotRoot is a Docker container path (/app/storage/... or /app/uploads/...)
-    const normalized = snapshotRoot.replace(/\\/g, '/');
-    if (normalized.startsWith('/app/') || normalized.startsWith('app/')) {
-        const sub = normalized.replace(/^\/?app\//, '');
+    if (strippedDrive.startsWith('/app/') || strippedDrive.startsWith('app/')) {
+        const sub = strippedDrive.replace(/^\/?app\//, '');
         for (const base of baseCandidates) {
             const candidate = path.resolve(base, sub);
             if (hasCodeOrConfig(candidate) || fs.existsSync(candidate)) {
@@ -115,11 +132,11 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
         }
     }
 
-    // Check if snapshotRoot contains 'storage' or 'uploads'
-    for (const marker of ['storage', 'uploads']) {
-        const idx = normalized.indexOf(marker);
+    // Check if snapshotRoot contains 'storage', 'uploads', or '.covai-temp'
+    for (const marker of ['storage', 'uploads', '.covai-temp']) {
+        const idx = strippedDrive.indexOf(marker);
         if (idx !== -1) {
-            const sub = normalized.slice(idx);
+            const sub = strippedDrive.slice(idx);
             for (const base of baseCandidates) {
                 const candidate = path.resolve(base, sub);
                 if (hasCodeOrConfig(candidate) || fs.existsSync(candidate)) {
@@ -129,7 +146,11 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
         }
     }
 
-    return resolved;
+    if (process.platform !== 'win32') {
+        return path.resolve(strippedDrive);
+    }
+    const clean = strippedDrive.replace(/^\/+/, '');
+    return path.resolve(fileServerDir, clean);
 };
 
 export const resolveProjectRoot = (snapshotRoot) => {

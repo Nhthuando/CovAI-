@@ -14,14 +14,105 @@ import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
 import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import { ZonePanel } from "../primitives/ZonePanel.jsx";
+import { TraceChain } from "../primitives/charts/TraceChain.jsx";
+
+
+function getShortDiagnosis(row) {
+  if (row.unit?.status === "fail") return "Unit test failing";
+  if (row.integration?.status === "fail") return "API test failing";
+  if (row.system?.status === "fail") return "E2E flow failing";
+
+  const isUnitUntested = !row.unit?.status || row.unit?.status === "untested" || row.unit?.status === "neutral";
+  const isIntUntested = !row.integration?.status || row.integration?.status === "untested" || row.integration?.status === "neutral";
+  const isSysUntested = !row.system?.status || row.system?.status === "untested" || row.system?.status === "neutral";
+
+  if (isUnitUntested && isIntUntested && isSysUntested) {
+    return row.integration?.endpoint ? "Untested APIs" : "Not tested yet";
+  }
+
+  if (row.integration?.status === "untested" || row.integration?.status === "warn") return "API untested";
+  if (row.unit?.status === "untested") return "Unit untested";
+  if (row.system?.status === "untested" || row.system?.status === "warn") return "E2E not run";
+
+  if (row.unit?.status === "warn") return "Low code coverage";
+
+  if (row.rootCause?.summary) {
+    const words = row.rootCause.summary.trim().split(/\s+/);
+    if (words.length <= 4) return row.rootCause.summary;
+    return words.slice(0, 4).join(" ") + "…";
+  }
+  return "All layers healthy";
+}
+
+function getPrimaryActionConfig(row) {
+  if (row.unit?.status === "fail") {
+    return {
+      label: "Diagnose Unit",
+      action: "workspace",
+      pillar: "unit",
+      focusParams: row.unit?.path ? { focusFile: row.unit.path } : {},
+    };
+  }
+  if (row.integration?.status === "fail") {
+    return {
+      label: "Diagnose API",
+      action: "workspace",
+      pillar: "integration",
+      focusParams: row.integration?.endpoint ? { focusEndpoint: row.integration.endpoint } : {},
+    };
+  }
+  if (row.system?.status === "fail") {
+    return {
+      label: "Diagnose E2E",
+      action: "workspace",
+      pillar: "system",
+      focusParams: row.system?.scenarioId ? { focusScenario: row.system.scenarioId } : {},
+    };
+  }
+  if (row.integration?.status === "untested" || row.integration?.status === "warn") {
+    return {
+      label: "Generate API",
+      action: "workspace",
+      pillar: "integration",
+      focusParams: row.integration?.endpoint ? { focusEndpoint: row.integration.endpoint } : {},
+    };
+  }
+  if (row.system?.status === "untested" || row.system?.status === "warn") {
+    return {
+      label: "Run E2E",
+      action: "workspace",
+      pillar: "system",
+      focusParams: row.system?.scenarioId ? { focusScenario: row.system.scenarioId } : {},
+    };
+  }
+  return {
+    label: "Inspect",
+    action: "inspect",
+    pillar: "unit",
+    focusParams: {},
+  };
+}
 
 function matchesCrossFilter(row, cf) {
   if (!cf) return true;
 
   if (cf.file) {
-    const fileName = cf.file.toLowerCase();
+    const rawTarget = cf.file.toLowerCase();
+    const baseTarget = rawTarget.split(/[/\\]/).pop() || rawTarget;
     const unitFile = (row.layerDetails?.unit?.file || row.unit?.path || "").toLowerCase();
-    if (unitFile.includes(fileName)) return true;
+    if (
+      unitFile &&
+      (unitFile.includes(rawTarget) ||
+        rawTarget.includes(unitFile) ||
+        unitFile.split(/[/\\]/).pop() === baseTarget)
+    ) {
+      return true;
+    }
+    const items = Array.isArray(row.items) ? row.items : [];
+    return items.some((it) => {
+      const p = String(it.path || it.name || "").toLowerCase();
+      return p.includes(rawTarget) || p.includes(baseTarget);
+    });
   }
 
   if (cf.category) {
@@ -46,7 +137,8 @@ function matchesCrossFilter(row, cf) {
     const p = cf.pillar;
     if (row.rootCause?.suspectLayer === p) return true;
     if (row[p]?.status === "fail" || row[p]?.status === "warn") return true;
-    return true;
+    if ((row[p]?.total || 0) > 0 && row[p]?.status && row[p]?.status !== "untested") return true;
+    return false;
   }
 
   return true;
@@ -54,6 +146,7 @@ function matchesCrossFilter(row, cf) {
 
 export function CrossLayerTraceMatrix({
   matrixData,
+  loading = false,
   onNavigateWorkspace,
   onInspectItem,
   onAskAi,
@@ -77,6 +170,31 @@ export function CrossLayerTraceMatrix({
   };
 
   // Filter rows
+  const filterCounts = useMemo(() => {
+    let failure = 0;
+    let gap = 0;
+    for (const r of rows) {
+      if (
+        r.unit.status === "fail" ||
+        r.integration.status === "fail" ||
+        r.system.status === "fail"
+      ) {
+        failure++;
+      }
+      if (
+        r.unit.status === "warn" ||
+        r.unit.status === "untested" ||
+        r.integration.status === "warn" ||
+        r.integration.status === "untested" ||
+        r.system.status === "warn" ||
+        r.system.status === "untested"
+      ) {
+        gap++;
+      }
+    }
+    return { all: rows.length, failure, gap };
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
       // Cross-filter from Zone 3
@@ -132,7 +250,7 @@ export function CrossLayerTraceMatrix({
       onAskAi(promptText);
     } else if (typeof window !== "undefined") {
       window.dispatchEvent(
-        new CustomEvent("covai:prefill-prompt", { detail: { prompt: promptText } })
+        new CustomEvent("covai:prefill-prompt", { detail: { promptText } })
       );
     }
   };
@@ -140,37 +258,91 @@ export function CrossLayerTraceMatrix({
   const handleOpenInspector = (row, e) => {
     e.stopPropagation();
     if (!onInspectItem) return;
+    const ld = row.layerDetails || {};
+    const hasFailure =
+      row.unit?.status === "fail" ||
+      row.integration?.status === "fail" ||
+      row.system?.status === "fail";
+    const hasWarn =
+      row.integration?.status === "warn" ||
+      row.unit?.status === "warn" ||
+      row.system?.status === "warn" ||
+      row.unit?.status === "untested" ||
+      row.integration?.status === "untested";
+    const moduleStatus = hasFailure ? "fail" : hasWarn ? "warn" : "pass";
+    const suspectLayer =
+      row.rootCause?.suspectLayer && row.rootCause.suspectLayer !== "none"
+        ? row.rootCause.suspectLayer
+        : row.integration?.endpoint
+          ? "integration"
+          : "unit";
+    const endpoint =
+      row.integration?.endpoint ||
+      (ld.integration?.endpoint
+        ? `${ld.integration.method || "GET"} ${ld.integration.endpoint}`
+        : null);
+    const filePath = row.unit?.path || ld.unit?.file || null;
+    const httpStatus = ld.integration?.httpStatus || null;
+    const failedStep = ld.system?.failedStep || null;
+    const failureCategory =
+      ld.integration?.stuckLayer ||
+      ld.integration?.failureLayer ||
+      ld.system?.failureKind ||
+      row.rootCause?.summary ||
+      "Cross-Layer Diagnostic";
+    const diagnosisText = row.rootCause?.diagnosis || row.description || "";
+    const fallbackStackTrace = [
+      `Module: ${row.moduleName}`,
+      `Unit Layer: ${row.unit?.label || "N/A"}${filePath && filePath !== "N/A" ? ` (${filePath})` : ""}`,
+      `Integration Layer: ${row.integration?.label || "N/A"}${endpoint ? ` [${endpoint}]` : ""}${httpStatus ? ` -> HTTP ${httpStatus}` : ""}`,
+      `System E2E Layer: ${row.system?.label || "N/A"}${failedStep && failedStep !== "None" ? ` (Step: ${failedStep})` : ""}`,
+      `Root Cause: ${row.rootCause?.summary || "N/A"} — ${diagnosisText}`,
+    ].join("\n");
+    const mappedTestCases =
+      Array.isArray(row.diagnostics?.testCases) && row.diagnostics.testCases.length > 0
+        ? row.diagnostics.testCases
+        : (row.items || []).map((it) => ({
+            name: it.name,
+            status: it.status === "pass" || it.status === "fail" ? it.status : "skip",
+            durationMs: 0,
+            step: String(it.type || "layer").toUpperCase(),
+          }));
+
     onInspectItem({
       id: row.id,
       title: `${row.moduleName} — Cross-Layer Diagnostic`,
-      pillar:
-        row.rootCause?.suspectLayer && row.rootCause.suspectLayer !== "none"
-          ? row.rootCause.suspectLayer
-          : "integration",
-      status:
-        row.unit.status === "fail" ||
-        row.integration.status === "fail" ||
-        row.system.status === "fail"
-          ? "fail"
-          : row.integration.status === "warn" || row.unit.status === "untested"
-          ? "warn"
-          : "pass",
-      targetName: row.integration?.endpoint || row.unit?.path || row.moduleName,
-      summary: row.rootCause?.diagnosis || row.description,
-      failureLayer:
-        row.diagnostics?.failureLayer ||
-        row.layerDetails?.integration?.stuckLayer ||
-        "Cross-Layer Trace",
-      httpStatus: row.layerDetails?.integration?.httpStatus,
+      pillar: suspectLayer,
+      status: moduleStatus,
+      priority: moduleStatus === "fail" ? "HIGH" : moduleStatus === "warn" ? "MEDIUM" : null,
+      targetName: endpoint || filePath || row.moduleName,
+      summary: diagnosisText,
+      description: diagnosisText,
+      failureLayer: row.diagnostics?.failureLayer || failureCategory,
+      httpStatus,
       durationMs: row.diagnostics?.durationMs || null,
-      stackTrace: row.diagnostics?.stackTrace || null,
-      testCases: row.diagnostics?.testCases || [],
-      focusParams: row.unit?.path
-        ? { focusFile: row.unit.path }
-        : row.integration?.endpoint
-        ? { focusEndpoint: row.integration.endpoint }
+      stackTrace: row.diagnostics?.stackTrace || fallbackStackTrace,
+      testCases: mappedTestCases,
+      focusParams: filePath
+        ? { focusFile: filePath }
+        : endpoint
+        ? { focusEndpoint: endpoint }
+        : row.system?.scenarioId
+        ? { focusScenario: row.system.scenarioId }
         : {},
       aiPrompt: row.diagnostics?.aiPrompt,
+      diagnostics: {
+        suspectLayer,
+        failureCategory,
+        failureLayer: row.diagnostics?.failureLayer || failureCategory,
+        endpoint: endpoint || "N/A",
+        filePath: filePath || "N/A",
+        httpStatus,
+        failedStep,
+        summary: row.rootCause?.summary || diagnosisText,
+        stackTrace: row.diagnostics?.stackTrace || fallbackStackTrace,
+        testCases: mappedTestCases,
+        aiPrompt: row.diagnostics?.aiPrompt,
+      },
     });
   };
 
@@ -203,27 +375,16 @@ export function CrossLayerTraceMatrix({
           <SegmentedFilter
             idPrefix="ud-matrix-filter"
             options={[
-              { label: "All", value: "all", count: rows.length },
+              { label: "All", value: "all", count: filterCounts.all },
               {
                 label: "Has Failure",
                 value: "failure",
-                count: rows.filter(
-                  (r) =>
-                    r.unit.status === "fail" ||
-                    r.integration.status === "fail" ||
-                    r.system.status === "fail"
-                ).length,
+                count: filterCounts.failure,
               },
               {
                 label: "Coverage Gap",
                 value: "low_coverage",
-                count: rows.filter(
-                  (r) =>
-                    r.unit.status === "untested" ||
-                    r.integration.status === "warn" ||
-                    r.integration.status === "untested" ||
-                    r.system.status === "untested"
-                ).length,
+                count: filterCounts.gap,
               },
             ]}
             value={filterState}
@@ -267,31 +428,17 @@ export function CrossLayerTraceMatrix({
             <tr className="border-b border-[var(--ud-border)] bg-[var(--ud-surface-2)]/60 text-[var(--ud-text-muted)] font-medium select-none sticky top-0 z-10">
               <th className="py-2.5 px-3 w-9 text-center"></th>
               <th className="py-2.5 px-3 min-w-[180px]">Module / Feature</th>
-              <th className="py-2.5 px-3 min-w-[135px]">
-                <div className="flex items-center gap-1.5">
-                  <PillarBadge pillar="unit" size="sm" />
-                  <span>Functions</span>
-                </div>
-              </th>
-              <th className="py-2.5 px-3 min-w-[140px]">
-                <div className="flex items-center gap-1.5">
-                  <PillarBadge pillar="integration" size="sm" />
-                  <span>API / DB</span>
-                </div>
-              </th>
-              <th className="py-2.5 px-3 min-w-[135px]">
-                <div className="flex items-center gap-1.5">
-                  <PillarBadge pillar="system" size="sm" />
-                  <span>UI Flow</span>
-                </div>
-              </th>
-              <th className="py-2.5 px-4 min-w-[220px]">Root Cause Diagnosis</th>
+              <th className="py-2.5 px-3 min-w-[200px]">3-Tier Trace Flow</th>
+              <th className="py-2.5 px-3 min-w-[160px]">Diagnosis</th>
+              <th className="py-2.5 px-4 min-w-[180px] text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--ud-border)]">
             {filteredRows.length > 0 ? (
               filteredRows.map((row) => {
-                const isExpanded = expandedRows.has(row.id) || Boolean(activeCrossFilter);
+                const isExpanded =
+                  expandedRows.has(row.id) ||
+                  (Boolean(activeCrossFilter) && filteredRows.length <= 3);
                 const ld = row.layerDetails || {
                   unit: {
                     file: row.unit?.path || "Unmapped service file",
@@ -366,72 +513,78 @@ export function CrossLayerTraceMatrix({
                         </div>
                       </td>
 
-                      {/* Unit Cell */}
-                      <td className="py-3 px-3 align-top">
-                        <StatusPill
-                          status={row.unit.status}
-                          label={row.unit.label}
-                          size="sm"
+                      {/* 3-Tier Trace Flow Chain */}
+                      <td className="py-3 px-3 align-middle">
+                        <TraceChain
+                          unitStatus={row.unit?.status}
+                          integrationStatus={row.integration?.status}
+                          systemStatus={row.system?.status}
                         />
-                        {row.unit.path && (
-                          <div className="text-[10px] font-mono text-[var(--ud-text-muted)] truncate max-w-[130px] mt-1">
-                            {row.unit.path.split("/").pop()}
-                          </div>
-                        )}
                       </td>
 
-                      {/* Integration Cell */}
-                      <td className="py-3 px-3 align-top">
-                        <StatusPill
-                          status={row.integration.status}
-                          label={row.integration.label}
-                          size="sm"
-                        />
-                        {row.integration.endpoint && (
-                          <div className="text-[10px] font-mono text-[var(--ud-text-muted)] truncate max-w-[140px] mt-1">
-                            {row.integration.endpoint}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* System Cell */}
-                      <td className="py-3 px-3 align-top">
-                        <StatusPill
-                          status={row.system.status}
-                          label={row.system.label}
-                          size="sm"
-                        />
-                        {row.system.scenarioId && (
-                          <div className="text-[10px] font-mono text-[var(--ud-text-muted)] truncate max-w-[130px] mt-1">
-                            {row.system.scenarioId}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Root Cause Diagnosis */}
-                      <td className="py-3 px-4 align-top">
-                        <div className="flex items-start gap-1.5">
-                          {row.rootCause.suspectLayer !== "none" && (
+                      {/* Concise Diagnosis (≤ 4 words) */}
+                      <td className="py-3 px-3 align-middle">
+                        <div className="flex items-center gap-1.5">
+                          {row.rootCause?.suspectLayer && row.rootCause.suspectLayer !== "none" && (
                             <PillarBadge
                               pillar={row.rootCause.suspectLayer}
                               size="sm"
                               showIcon={false}
                             />
                           )}
-                          <span className="font-semibold text-[var(--ud-text)] font-sans">
-                            {row.rootCause.summary}
+                          <span className="font-medium text-[var(--ud-text)] font-sans">
+                            {getShortDiagnosis(row)}
                           </span>
                         </div>
-                        <p className="text-[11px] text-[var(--ud-text-muted)] mt-1 font-sans leading-relaxed">
-                          {row.rootCause.diagnosis}
-                        </p>
+                      </td>
+
+                      {/* Inline Actions */}
+                      <td className="py-3 px-4 align-middle text-right">
+                        <div className="inline-flex items-center gap-1.5 justify-end" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const cfg = getPrimaryActionConfig(row);
+                              if (cfg.action === "inspect") {
+                                handleOpenInspector(row, e);
+                              } else if (onNavigateWorkspace) {
+                                onNavigateWorkspace(cfg.pillar, cfg.focusParams);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] hover:border-[var(--ud-unit)] hover:text-[var(--ud-unit)] transition-colors cursor-pointer"
+                          >
+                            <span>{getPrimaryActionConfig(row).label}</span>
+                            <ArrowRight size={11} />
+                          </button>
+
+                          {onInspectItem && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleOpenInspector(row, e)}
+                              className="p-1 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] transition-colors cursor-pointer"
+                              title="Inspect Diagnostics"
+                            >
+                              <FileSearch size={13} />
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={(e) => handleAskAiForModule(row, e)}
+                            className="p-1 rounded-[var(--radius-sm)] border border-[var(--ud-unit)]/40 bg-[var(--ud-unit)]/10 text-[var(--ud-unit)] hover:bg-[var(--ud-unit)]/20 transition-colors cursor-pointer"
+                            title="Ask COV AI to Diagnose"
+                          >
+                            <Sparkles size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
 
                     {/* Expanded 3-Tier Cross-Layer Traceability Drill-Down Panel */}
                     {isExpanded && (
                       <tr className="bg-[var(--ud-bg)]/70 border-b border-[var(--ud-border)]">
-                        <td colSpan={6} className="p-4">
+                        <td colSpan={5} className="p-4">
                           <div className="rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 space-y-3.5">
                             {/* Top Header & Quick Actions */}
                             <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[var(--ud-border)]">
@@ -706,15 +859,19 @@ export function CrossLayerTraceMatrix({
               })
             ) : (
               <tr>
-                <td colSpan={6} className="py-10 px-4 text-center">
+                <td colSpan={5} className="py-10 px-4 text-center">
                   <div className="max-w-sm mx-auto space-y-2.5">
                     <p className="text-xs font-semibold text-[var(--ud-text)]">
-                      {rows.length === 0
+                      {loading && rows.length === 0
+                        ? "Loading cross-layer domain modules..."
+                        : rows.length === 0
                         ? "No Cross-Layer Domain Modules Discovered Yet"
                         : "No modules match the active filter criteria"}
                     </p>
                     <p className="text-[11px] text-[var(--ud-text-muted)] font-sans leading-relaxed">
-                      {rows.length === 0
+                      {loading && rows.length === 0
+                        ? "Mapping Unit, Integration, and System E2E telemetry for this snapshot."
+                        : rows.length === 0
                         ? "Execute Unit, Integration, or System test suites to populate 3-tier cross-layer traceability and automated root-cause diagnostics."
                         : "Try clearing the search query or removing the active cross-filter."}
                     </p>

@@ -1,32 +1,32 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import {
   Star,
   GitBranch,
   ArrowRight,
   MoreVertical,
-  ArrowLeftRight,
-  Play,
-  Download,
   Trash2,
-  ExternalLink,
-  MessageSquare,
   Sparkles,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  Loader2,
 } from "lucide-react";
 import { ProjectSparkline } from "../primitives/ProjectSparkline.jsx";
 import { PillarMiniProgressRow } from "../primitives/PillarMiniProgressRow.jsx";
+import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
+import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
 
-export function ProjectQualityCard({
+function ProjectQualityCardComponent({
   project,
   isPinned = false,
-  isSelectedForCompare = false,
   isHighlighted = false,
   onTogglePin,
-  onToggleCompare,
   onOpenOverview,
   onNavigateWorkspace,
   onDeleteProject,
-  onExportProject,
   onAskAiAboutProject,
+  onLifecycleStatusChange = null,
+  onLifecycleStatusCommitted = null,
   className = "",
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -48,56 +48,74 @@ export function ProjectQualityCard({
     id,
     name,
     branch = "main",
-    snapshotId = "",
-    frameworks = [],
     healthScore = 0,
     grade = "—",
     delta = 0,
-    gateStatus = "UNTESTED",
-    gateLabel = "UNTESTED",
     unifiedCoveragePct = 0,
     sparkline = [0, 0, 0, 0, 0],
-    bottleneckCallout = "",
+    lifecycleStatus = "NOT_STARTED",
     pillars = {},
+    timeRoi = null,
+    activeJob = null,
   } = project;
 
   const unit = pillars.unit || {};
   const int = pillars.integration || {};
   const sys = pillars.system || {};
 
-  // Gate Badge Variant Styling
-  let gateBadgeColor = "bg-[var(--ud-pass)]/15 text-[var(--ud-pass)] border-[var(--ud-pass)]/30";
-  if (gateStatus === "BLOCKED") {
-    gateBadgeColor = "bg-[var(--ud-fail)]/15 text-[var(--ud-fail)] border-[var(--ud-fail)]/30";
-  } else if (gateStatus === "AT_RISK") {
-    gateBadgeColor = "bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border-[var(--ud-warn)]/30";
-  } else if (gateStatus === "UNTESTED") {
-    gateBadgeColor = "bg-[var(--ud-neutral)]/15 text-[var(--ud-neutral)] border-[var(--ud-neutral)]/30";
-  }
+  const totalTests =
+    (unit.totalTests || 0) + (int.totalTests || 0) + (sys.totalTests || 0);
+  const totalFailed =
+    (unit.failedTests || 0) + (int.failedTests || 0) + (sys.failedTests || 0);
+  const hasRuns = totalTests > 0 || healthScore > 0;
 
-  // Sparkline stroke color based on health
   const sparklineStroke =
     healthScore >= 80
-      ? "var(--ud-pass)"
-      : healthScore >= 60
-      ? "var(--ud-warn)"
-      : healthScore > 0
-      ? "var(--ud-fail)"
-      : "var(--ud-neutral)";
+      ? "var(--ps-emerald)"
+      : healthScore >= 50
+        ? "var(--ps-amber)"
+        : healthScore > 0
+          ? "var(--ps-rose)"
+          : "var(--ps-neutral)";
+
+  const isRunning = Boolean(activeJob && activeJob.status === "RUNNING");
+  let statusIcon = (
+    <Clock className="w-3.5 h-3.5 text-[var(--ps-ink-muted)] shrink-0" />
+  );
+  let statusText = "No runs yet";
+
+  if (isRunning) {
+    statusIcon = (
+      <Loader2 className="w-3.5 h-3.5 text-[var(--ps-cobalt)] animate-spin shrink-0" />
+    );
+    statusText = `${activeJob.pillar || "Running"} ${activeJob.progress || 0}%`;
+  } else if (totalFailed > 0) {
+    statusIcon = (
+      <AlertCircle className="w-3.5 h-3.5 text-[var(--ps-rose)] shrink-0" />
+    );
+    statusText = `${totalFailed} failed`;
+  } else if (totalTests > 0) {
+    statusIcon = (
+      <CheckCircle2 className="w-3.5 h-3.5 text-[var(--ps-emerald)] shrink-0" />
+    );
+    statusText = `${totalTests} tests passing`;
+  }
+
+  const speedup = timeRoi?.speedupMultiplier || 0;
+  const hoursSaved = timeRoi?.totalHoursSaved || 0;
 
   return (
     <article
       id={`project-card-${id}`}
-      className={`rounded-[var(--radius-lg)] border bg-[var(--ud-surface)] p-4 flex flex-col justify-between shadow-xs transition-all relative group ${
+      className={`ps-panel p-4 flex flex-col justify-between transition-all relative group ${
         isHighlighted
-          ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20"
-          : "border-[var(--ud-border)] hover:border-[var(--ud-border-strong)]"
+          ? "border-[var(--ps-cobalt)] ring-2 ring-[var(--ps-cobalt)]/20"
+          : "hover:border-[var(--ps-line-strong)]"
       } ${className}`}
     >
       <div>
-        {/* ── Layer 1: Card Header ────────────────────────────────────────── */}
-        <div className="flex items-start justify-between gap-2 mb-2">
-          {/* Left: Star + Title + Branch */}
+        {/* Header */}
+        <div className="flex items-start justify-between gap-2 mb-3.5">
           <div className="flex items-start gap-2 min-w-0 flex-1">
             <button
               type="button"
@@ -105,118 +123,73 @@ export function ProjectQualityCard({
                 e.stopPropagation();
                 onTogglePin?.(id);
               }}
-              className={`p-1 rounded cursor-pointer transition-colors mt-0.5 shrink-0 ${
+              className={`p-1 rounded-md cursor-pointer transition-colors mt-0.5 shrink-0 ${
                 isPinned
-                  ? "text-amber-500 bg-amber-500/10"
-                  : "text-[var(--ud-text-muted)] hover:text-amber-500 hover:bg-[var(--ud-surface-2)]"
+                  ? "text-[var(--ps-amber)] bg-[var(--ps-amber)]/10"
+                  : "text-[var(--ps-ink-muted)] hover:text-[var(--ps-amber)] hover:bg-[var(--ps-surface-2)]"
               }`}
-              title={isPinned ? "Unpin project" : "Pin project"}
               aria-label={isPinned ? "Unpin project" : "Pin project"}
             >
               <Star size={13} fill={isPinned ? "currentColor" : "none"} />
             </button>
 
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <button
-                  type="button"
-                  onClick={() => onOpenOverview?.(id)}
-                  className="text-sm font-bold text-[var(--ud-text)] hover:text-[var(--color-primary)] transition-colors truncate text-left cursor-pointer tracking-tight"
-                  title={name}
-                >
-                  {name}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => onOpenOverview?.(id, project)}
+                className="ps-display text-sm font-bold text-[var(--ps-ink)] hover:text-[var(--ps-cobalt)] transition-colors truncate text-left cursor-pointer block w-full"
+                title={name}
+              >
+                {name}
+              </button>
 
-              {/* Source/Branch & Snapshot Badge */}
-              <div className="flex flex-wrap items-center gap-1.5 mt-1 font-mono text-[10px] text-[var(--ud-text-muted)]">
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
-                  <GitBranch size={10} className="text-[var(--color-primary)]" />
-                  {branch}
-                </span>
-                {snapshotId && (
-                  <span className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
-                    {snapshotId.slice(0, 7)}
-                  </span>
-                )}
-                {/* Detected Framework Tags */}
-                {frameworks.slice(0, 3).map((fw) => (
-                  <span
-                    key={fw}
-                    className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] border border-[var(--ud-border)]"
-                  >
-                    {fw}
-                  </span>
-                ))}
+              <div className="flex items-center gap-1.5 mt-0.5 ps-mono text-[11px] text-[var(--ps-ink-muted)]">
+                <GitBranch size={10} className="text-[var(--ps-cobalt)] shrink-0" />
+                <span className="truncate">{branch}</span>
               </div>
             </div>
           </div>
 
-          {/* Right: Quality Gate Badge + Grade + Context Menu */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <span
-              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border uppercase tracking-wider ${gateBadgeColor}`}
-            >
-              {gateLabel}
-            </span>
-            <span className="w-5 h-5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)] border border-[var(--ud-border)] font-mono text-[10px] font-bold text-[var(--ud-text)] flex items-center justify-center">
-              {grade}
-            </span>
+            <LifecycleStatusSelect
+              projectId={id}
+              currentStatus={lifecycleStatus}
+              onStatusChange={(newStatus) =>
+                onLifecycleStatusChange?.(id, newStatus)
+              }
+              onStatusCommitted={(newStatus) =>
+                onLifecycleStatusCommitted?.(id, newStatus)
+              }
+            />
 
-            {/* Context Menu Dropdown */}
             <div className="relative" ref={menuRef}>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setMenuOpen((prev) => !prev)}
-                }
-                className="p-1 rounded text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer"
-                title="Project Actions"
-                aria-label="Project Actions"
+                  setMenuOpen((prev) => !prev);
+                }}
+                className="p-1 rounded-md text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
+                aria-label="Project actions"
               >
                 <MoreVertical size={14} />
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-48 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] text-[var(--ud-text)] shadow-lg z-30 py-1 text-xs font-sans animate-in fade-in zoom-in-95 duration-100">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onToggleCompare?.(id);
-                    }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] cursor-pointer"
-                  >
-                    <ArrowLeftRight size={13} />
-                    <span>{isSelectedForCompare ? "Deselect Comparison" : "Select for Comparison"}</span>
-                  </button>
-
+                <div className="absolute right-0 top-full mt-1 w-44 rounded-lg border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] text-[var(--ps-ink)] shadow-xl z-30 py-1 text-xs">
                   <button
                     type="button"
                     onClick={() => {
                       setMenuOpen(false);
                       onAskAiAboutProject?.(project);
                     }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] cursor-pointer text-[var(--color-primary)]"
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ps-surface-2)] cursor-pointer text-[var(--ps-cobalt)]"
                   >
                     <Sparkles size={13} />
-                    <span>Ask COV AI Diagnostics</span>
+                    <span>Analyze with AI</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onExportProject?.(project);
-                    }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] cursor-pointer"
-                  >
-                    <Download size={13} />
-                    <span>Export Project Report</span>
-                  </button>
-
-                  <div className="my-1 border-t border-[var(--ud-border)]" />
+                  <div className="my-1 border-t border-[var(--ps-line)]" />
 
                   <button
                     type="button"
@@ -224,10 +197,10 @@ export function ProjectQualityCard({
                       setMenuOpen(false);
                       onDeleteProject?.(project);
                     }}
-                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ud-surface-2)] text-[var(--ud-fail)] cursor-pointer"
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ps-surface-2)] text-[var(--ps-rose)] cursor-pointer"
                   >
                     <Trash2 size={13} />
-                    <span>Delete Workspace</span>
+                    <span>Delete workspace</span>
                   </button>
                 </div>
               )}
@@ -235,129 +208,118 @@ export function ProjectQualityCard({
           </div>
         </div>
 
-        {/* ── Layer 2: Core Health & Trend Strip ───────────────────────────── */}
-        <div className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-[var(--ud-surface-2)]/60 border border-[var(--ud-border)] my-3">
-          <div className="flex items-baseline gap-1.5 font-mono">
-            <span className="text-xl font-bold text-[var(--ud-text)]">
-              {healthScore}
-            </span>
-            <span className="text-[10px] text-[var(--ud-text-muted)]">/100 Health</span>
-            {delta !== 0 && (
-              <span
-                className={`text-[10px] font-bold ml-1 ${
-                  delta > 0 ? "text-[var(--ud-pass)]" : "text-[var(--ud-fail)]"
-                }`}
-              >
-                {delta > 0 ? `+${delta}%` : `${delta}%`}
-              </span>
-            )}
+        {/* Health Gauge + Sparkline Strip */}
+        <div className="flex items-center justify-between p-2.5 rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] mb-3.5">
+          <div className="flex items-center gap-3">
+            <RadialHealthGauge
+              score={healthScore}
+              grade={grade}
+              isTested={hasRuns}
+              size={44}
+              strokeWidth={4}
+            />
+            <div className="ps-mono">
+              <div className="text-[10px] text-[var(--ps-ink-muted)]">Health</div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-sm font-bold text-[var(--ps-ink)]">
+                  {healthScore}
+                </span>
+                <span className="text-[11px] text-[var(--ps-ink-muted)]">/100</span>
+                {delta !== 0 && (
+                  <span
+                    className={`text-[10px] font-semibold ${
+                      delta > 0 ? "text-[var(--ps-emerald)]" : "text-[var(--ps-rose)]"
+                    }`}
+                  >
+                    {delta > 0 ? `+${delta}%` : `${delta}%`}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="text-right font-mono">
-              <div className="text-[10px] text-[var(--ud-text-muted)]">Unified Cov</div>
-              <div className="text-xs font-bold text-[var(--ud-text)]">
+            <div className="text-right ps-mono">
+              <div className="text-[10px] text-[var(--ps-ink-muted)]">Coverage</div>
+              <div className="text-xs font-bold text-[var(--ps-ink)]">
                 {unifiedCoveragePct}%
               </div>
             </div>
-
             <ProjectSparkline
               data={sparkline}
               strokeColor={sparklineStroke}
-              width={56}
+              width={50}
               height={18}
             />
           </div>
         </div>
 
-        {/* ── Layer 3: 3-Pillar Mini Progress Bars ─────────────────────────── */}
-        <div className="space-y-2 my-3">
-          {/* Unit Pillar */}
+        {/* 3-Layer Progress Bars */}
+        <div className="space-y-2 mb-3.5">
           <PillarMiniProgressRow
             label="Unit"
-            subLabel=""
-            accentColor="var(--ud-unit)"
+            accentColor="var(--ps-cobalt)"
             coveragePct={unit.coveragePct ?? 0}
-            tooltipText={`${unit.framework || "Jest"}: ${unit.coveragePct ?? 0}% line coverage • ${unit.passedTests ?? 0}/${unit.totalTests ?? 0} passed`}
+            tooltipText={`${unit.passedTests ?? 0}/${unit.totalTests ?? 0} passed`}
           />
-
-          {/* Integration Pillar */}
           <PillarMiniProgressRow
-            label="Integration"
-            subLabel={`${int.coveredApis ?? 0}/${int.totalApis ?? 0} APIs`}
-            accentColor="var(--ud-integration)"
+            label="API"
+            subLabel={`${int.coveredApis ?? 0}/${int.totalApis ?? 0}`}
+            accentColor="var(--ps-indigo)"
             coveragePct={int.coveragePct ?? 0}
-            tooltipText={`Integration APIs: ${int.coveredApis ?? 0}/${int.totalApis ?? 0} covered (${int.coveragePct ?? 0}%) • ${int.passedTests ?? 0} passed, ${int.failedTests ?? 0} failed`}
+            tooltipText={`${int.coveredApis ?? 0}/${int.totalApis ?? 0} endpoints`}
           />
-
-          {/* System E2E Pillar */}
           <PillarMiniProgressRow
-            label="System E2E"
-            subLabel={`${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0} Flows`}
-            accentColor="var(--ud-system)"
+            label="E2E"
+            subLabel={`${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0}`}
+            accentColor="var(--ps-teal)"
             coveragePct={sys.coveragePct ?? 0}
-            tooltipText={`System E2E: ${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0} flows verified (${sys.coveragePct ?? 0}%) • ${sys.passedTests ?? 0} passed, ${sys.failedTests ?? 0} failed`}
+            tooltipText={`${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0} flows`}
           />
-        </div>
-
-        {/* ── Layer 4: Quick Diagnostics Callout (2-line clamp) ────────────── */}
-        <div
-          className={`p-2 rounded-[var(--radius-sm)] border text-xs font-mono my-3 ${
-            gateStatus === "BLOCKED"
-              ? "bg-[var(--ud-fail)]/10 border-[var(--ud-fail)]/30 text-[var(--ud-fail)]"
-              : gateStatus === "AT_RISK"
-              ? "bg-[var(--ud-warn)]/10 border-[var(--ud-warn)]/30 text-[var(--ud-warn)]"
-              : gateStatus === "UNTESTED"
-              ? "bg-[var(--ud-neutral)]/10 border-[var(--ud-neutral)]/30 text-[var(--ud-text-muted)]"
-              : "bg-[var(--ud-pass)]/10 border-[var(--ud-pass)]/30 text-[var(--ud-pass)]"
-          }`}
-        >
-          <div
-            className="line-clamp-2 min-h-[2.25rem] leading-snug break-words"
-            title={bottleneckCallout}
-          >
-            {bottleneckCallout}
-          </div>
         </div>
       </div>
 
-      {/* ── Layer 5: Direct Deep-Links Footer ──────────────────────────────── */}
-      <div className="pt-3 border-t border-[var(--ud-border)] flex items-center justify-between gap-2 mt-auto">
-        {/* Primary CTA: Open Unified Overview */}
-        <button
-          type="button"
-          onClick={() => onOpenOverview?.(id)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-primary)] hover:opacity-85 transition-opacity cursor-pointer group-hover:translate-x-0.5 transition-transform"
-        >
-          <span>Open Unified Overview</span>
-          <ArrowRight size={13} />
-        </button>
+      {/* Footer */}
+      <div className="pt-2.5 border-t border-[var(--ps-line)] flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 ps-mono text-[11px] text-[var(--ps-ink-muted)] min-w-0">
+          {statusIcon}
+          <span className="truncate text-[var(--ps-ink-secondary)]">{statusText}</span>
+          {speedup > 1 && (
+            <span className="text-[var(--ps-emerald)] font-semibold shrink-0">
+              · +{hoursSaved}h
+            </span>
+          )}
+        </div>
 
-        {/* 3 Quick Jump Pills into Test Workspaces */}
-        <div className="flex items-center gap-1 font-mono text-[10px]">
+        <div className="flex items-center gap-1 ps-mono text-[10px] shrink-0">
+          <button
+            type="button"
+            onClick={() => onOpenOverview?.(id, project)}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--ps-surface-2)] hover:bg-[var(--ps-line)] text-[var(--ps-ink)] border border-[var(--ps-line)] transition-colors cursor-pointer"
+          >
+            <span>Open</span>
+            <ArrowRight size={11} />
+          </button>
           <button
             type="button"
             onClick={() => onNavigateWorkspace?.(id, "unit")}
-            className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] hover:bg-[var(--ud-unit)]/20 text-[var(--ud-unit)] border border-[var(--ud-border)] transition-colors cursor-pointer"
-            title="Jump to Unit Test Workspace"
+            className="px-1.5 py-1 rounded-md hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer"
           >
-            Unit ↗
+            Unit
           </button>
           <button
             type="button"
             onClick={() => onNavigateWorkspace?.(id, "integration")}
-            className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] hover:bg-[var(--ud-integration)]/20 text-[var(--ud-integration)] border border-[var(--ud-border)] transition-colors cursor-pointer"
-            title="Jump to Integration Test Workspace"
+            className="px-1.5 py-1 rounded-md hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer"
           >
-            Int ↗
+            API
           </button>
           <button
             type="button"
             onClick={() => onNavigateWorkspace?.(id, "system")}
-            className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] hover:bg-[var(--ud-system)]/20 text-[var(--ud-system)] border border-[var(--ud-border)] transition-colors cursor-pointer"
-            title="Jump to System Test Workspace"
+            className="px-1.5 py-1 rounded-md hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] transition-colors cursor-pointer"
           >
-            Sys ↗
+            E2E
           </button>
         </div>
       </div>
@@ -365,5 +327,58 @@ export function ProjectQualityCard({
   );
 }
 
-export default ProjectQualityCard;
+export const ProjectQualityCard = memo(
+  ProjectQualityCardComponent,
+  (prev, next) => {
+    if (
+      prev.isPinned !== next.isPinned ||
+      prev.isHighlighted !== next.isHighlighted ||
+      prev.className !== next.className ||
+      prev.onLifecycleStatusChange !== next.onLifecycleStatusChange ||
+      prev.onLifecycleStatusCommitted !== next.onLifecycleStatusCommitted
+    ) {
+      return false;
+    }
+    const a = prev.project;
+    const b = next.project;
+    if (a === b) return true;
+    if (!a || !b) return false;
+    return (
+      a.id === b.id &&
+      a.name === b.name &&
+      a.branch === b.branch &&
+      a.snapshotId === b.snapshotId &&
+      a.activeSnapshotId === b.activeSnapshotId &&
+      a.healthScore === b.healthScore &&
+      a.grade === b.grade &&
+      a.delta === b.delta &&
+      a.unifiedCoveragePct === b.unifiedCoveragePct &&
+      a.lifecycleStatus === b.lifecycleStatus &&
+      a.activeJob?.id === b.activeJob?.id &&
+      a.activeJob?.status === b.activeJob?.status &&
+      a.activeJob?.progress === b.activeJob?.progress &&
+      a.activeJob?.pillar === b.activeJob?.pillar &&
+      a.timeRoi?.speedupMultiplier === b.timeRoi?.speedupMultiplier &&
+      a.timeRoi?.totalHoursSaved === b.timeRoi?.totalHoursSaved &&
+      a.pillars?.unit?.coveragePct === b.pillars?.unit?.coveragePct &&
+      a.pillars?.unit?.passedTests === b.pillars?.unit?.passedTests &&
+      a.pillars?.unit?.failedTests === b.pillars?.unit?.failedTests &&
+      a.pillars?.unit?.totalTests === b.pillars?.unit?.totalTests &&
+      a.pillars?.integration?.coveragePct === b.pillars?.integration?.coveragePct &&
+      a.pillars?.integration?.coveredApis === b.pillars?.integration?.coveredApis &&
+      a.pillars?.integration?.totalApis === b.pillars?.integration?.totalApis &&
+      a.pillars?.integration?.passedTests === b.pillars?.integration?.passedTests &&
+      a.pillars?.integration?.failedTests === b.pillars?.integration?.failedTests &&
+      a.pillars?.integration?.totalTests === b.pillars?.integration?.totalTests &&
+      a.pillars?.system?.coveragePct === b.pillars?.system?.coveragePct &&
+      a.pillars?.system?.coveredJourneys === b.pillars?.system?.coveredJourneys &&
+      a.pillars?.system?.totalJourneys === b.pillars?.system?.totalJourneys &&
+      a.pillars?.system?.passedTests === b.pillars?.system?.passedTests &&
+      a.pillars?.system?.failedTests === b.pillars?.system?.failedTests &&
+      a.pillars?.system?.totalTests === b.pillars?.system?.totalTests &&
+      (a.sparkline || []).join(",") === (b.sparkline || []).join(",")
+    );
+  }
+);
 
+export default ProjectQualityCard;

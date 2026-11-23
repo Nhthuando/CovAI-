@@ -14,7 +14,11 @@ import {
     approveIntegrationTests,
     getFileCoverage,
     suggestUnitTestcase,
+    suggestUnitTestcaseAll,
     applySuggestion,
+    getUnitTestVersionsController,
+    switchUnitTestVersionController,
+    saveUnitTestVersionsController,
     getCoverageTestSuites,
     getIntegrationHistory,
     getIntegrationVersionHistory,
@@ -41,6 +45,20 @@ import {
     installMissingDependencyController,
     getUnifiedQualityDashboardController,
     getUnifiedTestRunInspectionController,
+    getSimulationSources,
+    getSimulationTrace,
+    getSuitesReadinessController,
+    confirmBatchSystemScenariosController,
+    getUnitTestCaseController,
+    addUnitTestCaseController,
+    updateUnitTestCaseController,
+    deleteUnitTestCaseController,
+    aiFixUnitTestCaseController,
+    getSystemTestCaseController,
+    addSystemTestCaseController,
+    updateSystemTestCaseController,
+    deleteSystemTestCaseController,
+    aiFixSystemTestCaseController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -49,6 +67,8 @@ router.use(authMiddleware, enforceProjectEndpointPolicy('coverage'));
 // Unified Quality Overview Dashboard (Single-Project Multi-Layer Aggregation)
 router.get("/:snapshotId/unified-dashboard", authMiddleware, getUnifiedQualityDashboardController);
 router.get("/:snapshotId/unified-dashboard/runs/:runId", authMiddleware, getUnifiedTestRunInspectionController);
+router.get("/:snapshotId/suites-readiness", authMiddleware, getSuitesReadinessController);
+router.post("/:snapshotId/system/scenarios/confirm-batch", authMiddleware, confirmBatchSystemScenariosController);
 
 // GET /api/coverage/:snapshotId/summary — fetch coverage summary result
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);
@@ -66,6 +86,13 @@ router.put("/:snapshotId/system/tests/content", authMiddleware, updateSystemTest
 router.post("/:snapshotId/system/tests/run-single", authMiddleware, runSingleSystemTest);
 router.post("/:snapshotId/system/optimize-test", authMiddleware, optimizeSystemTestController);
 
+// System test case CRUD & AI Fix routes (Integration-aligned Cockpit operations)
+router.get("/:snapshotId/system/test-case", authMiddleware, getSystemTestCaseController);
+router.post("/:snapshotId/system/test-case", authMiddleware, addSystemTestCaseController);
+router.put("/:snapshotId/system/test-case", authMiddleware, updateSystemTestCaseController);
+router.delete("/:snapshotId/system/test-case", authMiddleware, deleteSystemTestCaseController);
+router.post("/:snapshotId/system/test-case/ai-fix", authMiddleware, aiFixSystemTestCaseController);
+
 // GET /api/coverage/:snapshotId/files — fetch CoverageFile list
 // Query: ?sortBy=filePath|linesPct|branchesPct|funcsPct|stmtsPct&order=asc|desc&page=1&limit=50
 router.get("/:snapshotId/files", authMiddleware, getCoverageFiles);
@@ -76,12 +103,38 @@ router.get("/:snapshotId/file-coverage", authMiddleware, getFileCoverage);
 // POST /api/coverage/:snapshotId/suggest-testcase — suggest AI unit testcases for source file
 router.post("/:snapshotId/suggest-testcase", authMiddleware, suggestUnitTestcase);
 
+// POST /api/coverage/:snapshotId/suggest-testcase-all — suggest AI unit testcases for all candidate business logic files
+router.post("/:snapshotId/suggest-testcase-all", authMiddleware, suggestUnitTestcaseAll);
+
 // POST /api/coverage/:snapshotId/apply-suggestion — write testcase to disk, rerun test, collect new coverage
 router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
+router.post("/:snapshotId/apply-test-suggestion", authMiddleware, applySuggestion);
+router.post("/:snapshotId/apply-all-test-suggestions", authMiddleware, applySuggestion);
+
+// Unit test environment variable detection & workspace persistence routes (Non-blocking stubs under R1 zero-.env architecture)
+router.get("/:snapshotId/unit/env-check", authMiddleware, (req, res) => res.status(200).json({ success: true, data: { requiresPrompt: false, missingRequired: [], detectedVariables: [], existingVariables: {} } }));
+router.post("/:snapshotId/unit/env", authMiddleware, (req, res) => res.status(200).json({ success: true, message: "Hermetic in-memory mocks active." }));
+
+// Unit test versioning & rollback routes
+router.get("/:snapshotId/unit-test-versions", authMiddleware, getUnitTestVersionsController);
+router.post("/:snapshotId/unit-test-versions/switch", authMiddleware, switchUnitTestVersionController);
+router.post("/:snapshotId/unit-test-versions/save", authMiddleware, saveUnitTestVersionsController);
+
+// Unit test execution simulation routes
+router.get("/:snapshotId/simulation/sources", authMiddleware, getSimulationSources);
+router.post("/:snapshotId/simulation/trace", authMiddleware, getSimulationTrace);
+
+// Unit test case CRUD & AI Fix routes (Integration-aligned Cockpit operations)
+router.get("/:snapshotId/unit/test-case", authMiddleware, getUnitTestCaseController);
+router.post("/:snapshotId/unit/test-case", authMiddleware, addUnitTestCaseController);
+router.put("/:snapshotId/unit/test-case", authMiddleware, updateUnitTestCaseController);
+router.delete("/:snapshotId/unit/test-case", authMiddleware, deleteUnitTestCaseController);
+router.post("/:snapshotId/unit/test-case/ai-fix", authMiddleware, aiFixUnitTestCaseController);
 
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);
 
+router.post("/:snapshotId/integration/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType);
 

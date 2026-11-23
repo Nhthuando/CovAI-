@@ -54,3 +54,19 @@ export const update = async (req, res) => {
       .json({ message: "Server error!", error: error.message });
   }
 };
+
+export const getQuota = async (req, res) => {
+  try {
+    const { id } = req.user;
+    const user = await getUserById(id);
+    return res.status(200).json(user.aiQuota || {
+      dailyLimit: 50,
+      usedToday: 0,
+      remainingRequests: 50,
+      totalTokens: 0,
+    });
+  } catch (error) {
+    console.error("Quota error:", error);
+    return res.status(500).json({ message: "Failed to fetch AI quota", error: error.message });
+  }
+};

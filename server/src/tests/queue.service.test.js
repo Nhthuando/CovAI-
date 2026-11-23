@@ -62,6 +62,8 @@ await jest.unstable_mockModule('../services/supertestCoverageJob.service.js', ()
 await jest.unstable_mockModule('../services/qualityAnalysisJob.service.js', () => ({ processQualityAnalysisJob: jest.fn() }));
 await jest.unstable_mockModule('../services/securityScanJob.service.js', () => ({ processSecurityAnalysisJob: jest.fn() }));
 await jest.unstable_mockModule('../services/runVitestJob.service.js', () => ({ processRunVitestJob: jest.fn() }));
+await jest.unstable_mockModule('../services/vitestCoverageJob.service.js', () => ({ processVitestCoverageJob: jest.fn() }));
+await jest.unstable_mockModule('../services/unitTestQueueJob.service.js', () => ({ processUnitTestSuggestJob: jest.fn(), processUnitTestApplyJob: jest.fn() }));
 await jest.unstable_mockModule('../services/systemTestAnalysisJob.service.js', () => ({ processSystemTestAnalysisJob: mockProcessSystemTestAnalysisJob }));
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     getJobById: mockGetJobById,
@@ -85,6 +87,10 @@ await jest.unstable_mockModule('../services/projectOperationWorkspace.service.js
     runJobInOperationWorkspace: async (_jobId, run) => run(),
 }));
 const { addJobToQueue, addSupertestCoveragePipeline } = await import('../services/queue.service.js');
+
+test.each(['AI_EVALUATION', 'AI_EVALUATION_PREPARE'])('%s refuses disconnected Redis instead of executing directly', async type => {
+    await expect(addJobToQueue(type, 'evaluation-offline')).rejects.toMatchObject({ statusCode: 503 });
+});
 
 describe('queue.service supertest pipeline', () => {
     beforeEach(() => {
@@ -217,7 +223,7 @@ describe('addSupertestCoveragePipeline - FlowProducer-based pipeline with correc
         expect(mockFlowProducerAdd).toHaveBeenCalledWith(
             expect.objectContaining({
                 name: 'SUPERTEST_COVERAGE_PIPELINE',
-                queueName: 'covai-jobs',
+                queueName: 'covai-jobs-main',
                 data: expect.objectContaining({
                     type: 'SUPERTEST_COVERAGE_PIPELINE',
                     installJobId: 'install-1',
@@ -226,7 +232,7 @@ describe('addSupertestCoveragePipeline - FlowProducer-based pipeline with correc
                 children: expect.arrayContaining([
                     expect.objectContaining({
                         name: 'INSTALL_DEPS',
-                        queueName: 'covai-jobs',
+                        queueName: 'covai-jobs-main',
                         data: expect.objectContaining({
                             type: 'INSTALL_DEPS',
                             jobId: 'install-1',

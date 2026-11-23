@@ -28,11 +28,12 @@ import {
   Code2,
   Terminal,
 } from "lucide-react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor from "./editor/CollaborativeCodeEditor";
 import { useTheme } from "../../contexts/ThemeContext";
 import { GitPanel } from "./GitPanel";
 import {
   getFileContentApi,
+  getFileContentFromCache,
   updateFileContentApi,
 } from "../../services/project.service";
 import { getFileCoverage } from "../../services/coverage.service";
@@ -42,6 +43,7 @@ import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useAuth } from "../../hooks/useAuth";
 import FileConflictDialog from "./FileConflictDialog";
 import { downloadEditorDraft } from "../../lib/editorDraft";
+import CovaiLogo from "../common/CovaiLogo";
 
 /* ── Smart File Icon Resolver ────────────────────────────── */
 function getFileIcon(fileName = "") {
@@ -56,25 +58,22 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".spec.jsx") ||
     lower.endsWith(".test.jsx")
   ) {
-    return <TestTube2 size={13} style={{ color: "#c084fc", flexShrink: 0 }} />;
+    return <TestTube2 size={13} style={{ color: "var(--ps-indigo)", flexShrink: 0 }} />;
   }
 
   // React & TypeScript
-  if (lower.endsWith(".tsx")) {
-    return <FileCode2 size={13} style={{ color: "#67e8f9", flexShrink: 0 }} />;
-  }
-  if (lower.endsWith(".jsx")) {
-    return <FileCode2 size={13} style={{ color: "#22d3ee", flexShrink: 0 }} />;
+  if (lower.endsWith(".tsx") || lower.endsWith(".jsx")) {
+    return <FileCode2 size={13} style={{ color: "var(--ps-teal)", flexShrink: 0 }} />;
   }
   if (lower.endsWith(".ts")) {
-    return <Braces size={13} style={{ color: "#38bdf8", flexShrink: 0 }} />;
+    return <Braces size={13} style={{ color: "var(--ps-cobalt)", flexShrink: 0 }} />;
   }
   if (
     lower.endsWith(".js") ||
     lower.endsWith(".mjs") ||
     lower.endsWith(".cjs")
   ) {
-    return <FileCode2 size={13} style={{ color: "#fbbf24", flexShrink: 0 }} />;
+    return <FileCode2 size={13} style={{ color: "var(--ps-amber)", flexShrink: 0 }} />;
   }
 
   // Config files
@@ -85,15 +84,15 @@ function getFileIcon(fileName = "") {
     lower.startsWith("tailwind") ||
     lower.startsWith("eslint")
   ) {
-    return <Sliders size={13} style={{ color: "#facc15", flexShrink: 0 }} />;
+    return <Sliders size={13} style={{ color: "var(--ps-amber)", flexShrink: 0 }} />;
   }
 
   // Package & JSON
   if (lower === "package.json" || lower === "package-lock.json") {
-    return <Box size={13} style={{ color: "#fb923c", flexShrink: 0 }} />;
+    return <Box size={13} style={{ color: "var(--ps-amber)", flexShrink: 0 }} />;
   }
   if (lower.endsWith(".json") || lower.endsWith(".jsonc")) {
-    return <FileJson size={13} style={{ color: "#4ade80", flexShrink: 0 }} />;
+    return <FileJson size={13} style={{ color: "var(--ps-emerald)", flexShrink: 0 }} />;
   }
 
   // Styles
@@ -103,12 +102,12 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".sass") ||
     lower.endsWith(".less")
   ) {
-    return <FileText size={13} style={{ color: "#f472b6", flexShrink: 0 }} />;
+    return <FileText size={13} style={{ color: "var(--ps-rose)", flexShrink: 0 }} />;
   }
 
   // HTML
   if (lower.endsWith(".html") || lower.endsWith(".htm")) {
-    return <FileCode2 size={13} style={{ color: "#fb923c", flexShrink: 0 }} />;
+    return <FileCode2 size={13} style={{ color: "var(--ps-rose)", flexShrink: 0 }} />;
   }
 
   // Markdown & Docs
@@ -117,7 +116,7 @@ function getFileIcon(fileName = "") {
     lower.endsWith(".markdown") ||
     lower.endsWith(".txt")
   ) {
-    return <FileText size={13} style={{ color: "#38bdf8", flexShrink: 0 }} />;
+    return <FileText size={13} style={{ color: "var(--ps-ink-muted)", flexShrink: 0 }} />;
   }
 
   // Git / Env / Lock
@@ -126,10 +125,10 @@ function getFileIcon(fileName = "") {
     lower.startsWith(".env") ||
     lower.endsWith(".lock")
   ) {
-    return <Lock size={13} style={{ color: "#86efac", flexShrink: 0 }} />;
+    return <Lock size={13} style={{ color: "var(--ps-emerald)", flexShrink: 0 }} />;
   }
 
-  return <File size={13} style={{ color: "#94a3b8", flexShrink: 0 }} />;
+  return <File size={13} style={{ color: "var(--ps-ink-muted)", flexShrink: 0 }} />;
 }
 
 /* ── Extension to Language Mapping ───────────────────────── */
@@ -234,11 +233,11 @@ function ReorderableTab({ tab, isActive, onSelect, onClose }) {
               e.stopPropagation();
               onClose(tab.id);
             }}
-            whileHover={{ scale: 1.15, background: "rgba(255,255,255,0.12)" }}
-            whileTap={{ scale: 0.9 }}
+            whileHover={{ scale: 1.08, background: "var(--ps-surface-2)" }}
+            whileTap={{ scale: 0.92 }}
             className="p-0.5 rounded cursor-pointer flex items-center justify-center"
             style={{
-              color: "#8b949e",
+              color: "var(--ps-ink-muted)",
               background: "transparent",
               border: "none",
             }}
@@ -496,13 +495,30 @@ export default function Editor({
     }
   }, [draftUserId, projectId, snapshotId, fileContents]);
 
-  // Invalidate cache and reload current file when external sync occurs (e.g. Git pull / checkout)
+  // When an external sync occurs (e.g. Git pull / checkout), refresh the current active file
   useEffect(() => {
-    if (refreshTrigger) {
-      fetchedRef.current.clear();
-      setFileContents(previous => Object.fromEntries(Object.entries(previous).filter(([, file]) => file.draft !== undefined && file.draft !== file.content)));
+    if (refreshTrigger && activeTabId && projectId) {
+      fetchedRef.current.delete(activeTabId);
+      getFileContentApi(projectId, activeTabId, { snapshotId, forceFresh: true })
+        .then((res) => {
+          if (res?.data) {
+            setFileContents((prev) => ({
+              ...prev,
+              [activeTabId]: {
+                ...prev[activeTabId],
+                content: res.data.content,
+                version: res.data.version,
+                snapshotId: res.data.snapshotId,
+                workspaceRevision: res.data.workspaceRevision,
+                loading: false,
+                error: null,
+              },
+            }));
+          }
+        })
+        .catch(() => {});
     }
-  }, [refreshTrigger]);
+  }, [refreshTrigger, activeTabId, projectId, snapshotId]);
 
   // Coverage state
   const [fileCoverage, setFileCoverage] = useState(null);
@@ -636,11 +652,36 @@ export default function Editor({
   useEffect(() => {
     if (!activeTabId || !projectId) return;
 
-    if (
-      fileContents[activeTabId]?.content !== undefined ||
-      fileContents[activeTabId]?.loading
-    )
+    // 1. If already loaded in state, nothing to do
+    if (fileContents[activeTabId]?.content !== undefined) return;
+
+    // 2. Synchronous cache check: instantaneous 0ms display without spinner
+    const cached = getFileContentFromCache(projectId, activeTabId, snapshotId);
+    if (cached && typeof cached.content === "string") {
+      let recovered = null;
+      try {
+        recovered = JSON.parse(
+          sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"
+        );
+      } catch {
+        /* ignore */
+      }
+      setFileContents((prev) => ({
+        ...prev,
+        [activeTabId]: {
+          content: cached.content,
+          version: recovered?.version || cached.version,
+          draft: typeof recovered?.draft === "string" ? recovered.draft : undefined,
+          snapshotId: cached.snapshotId,
+          workspaceRevision: cached.workspaceRevision,
+          loading: false,
+          error: null,
+        },
+      }));
       return;
+    }
+
+    if (fileContents[activeTabId]?.loading) return;
     if (fetchedRef.current.has(activeTabId)) return;
 
     fetchedRef.current.add(activeTabId);
@@ -653,7 +694,13 @@ export default function Editor({
     getFileContentApi(projectId, activeTabId, { snapshotId })
       .then((res) => {
         let recovered = null;
-        try { recovered = JSON.parse(sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"); } catch { /* Invalid local recovery data is ignored. */ }
+        try {
+          recovered = JSON.parse(
+            sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"
+          );
+        } catch {
+          /* ignore */
+        }
         setFileContents((prev) => ({
           ...prev,
           [activeTabId]: {
@@ -668,6 +715,7 @@ export default function Editor({
         }));
       })
       .catch((err) => {
+        fetchedRef.current.delete(activeTabId);
         setFileContents((prev) => ({
           ...prev,
           [activeTabId]: {
@@ -677,7 +725,7 @@ export default function Editor({
           },
         }));
       });
-  }, [activeTabId, projectId, snapshotId, fileContents, draftStorageKey]);
+  }, [activeTabId, projectId, snapshotId, draftStorageKey]);
 
   const currentFile = fileContents[activeTabId] || {};
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -794,7 +842,7 @@ export default function Editor({
         },
       }));
     } catch (err) {
-      if (err.status === 409) setConflict({ path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
+      if (err.status === 409) setConflict({ projectId, original: file.content, path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
       setSaveError(err.message || "Could not save file");
     } finally {
       setSaving(false);
@@ -804,7 +852,7 @@ export default function Editor({
   saveHandlerRef.current = handleSave;
 
   const handleCopyCurrentCode = () => {
-    const code = currentFile.draft ?? currentFile.content ?? "";
+    const code = editorRef.current?.getValue() ?? currentFile.draft ?? currentFile.content ?? "";
     if (!code) return;
     navigator.clipboard.writeText(code);
     setCopiedCode(true);
@@ -949,78 +997,38 @@ export default function Editor({
         className="flex flex-col flex-1 h-full min-w-0 items-center justify-center p-6 text-center select-none"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        style={{ background: "var(--color-bg)" }}
+        style={{
+          backgroundColor: "var(--ps-bg)",
+          backgroundImage: "radial-gradient(var(--ps-line) 1px, transparent 1px)",
+          backgroundSize: "22px 22px",
+        }}
       >
-        <div
-          className="flex items-center justify-center w-14 h-14 rounded-xl mb-4"
-          style={{
-            background: "var(--color-surface)",
-            border: "1px solid var(--color-border)",
-          }}
-        >
-          <Sparkles size={24} style={{ color: "var(--color-primary)" }} />
-        </div>
-
-        <div
-          style={{ color: "var(--color-text)", fontSize: 18, fontWeight: 600 }}
-        >
-          Welcome to TestCovAI Editor
-        </div>
-        <div
-          style={{
-            color: "var(--color-text-secondary)",
-            fontSize: 13,
-            marginTop: 6,
-            maxWidth: 380,
-            lineHeight: 1.6,
-          }}
-        >
-          Select a file from the explorer on the left to start viewing, editing,
-          or generating comprehensive tests.
-        </div>
-
-        {/* Shortcut Hints */}
-        <div
-          className="flex items-center gap-4 mt-6 text-xs"
-          style={{ color: "var(--color-text-secondary)" }}
-        >
-          <div
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border"
-            style={{
-              background: "var(--color-surface)",
-              borderColor: "var(--color-border)",
-            }}
-          >
-            <kbd
-              className="px-1.5 py-0.5 rounded font-mono text-[11px]"
-              style={{
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-primary)",
-              }}
-            >
-              Ctrl + S
-            </kbd>
-            <span>Save file</span>
+        <div className="max-w-md w-full rounded-xl border border-[var(--ps-line)] bg-[var(--ps-surface)] px-7 py-8 flex flex-col items-center">
+          <div className="flex items-center justify-center w-11 h-11 rounded-lg mb-4 bg-[var(--ps-inset)] border border-[var(--ps-line-strong)]">
+            <CovaiLogo size={24} />
           </div>
-          <div
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border"
-            style={{
-              background: "var(--color-surface)",
-              borderColor: "var(--color-border)",
-            }}
-          >
-            <kbd
-              className="px-1.5 py-0.5 rounded font-mono text-[11px]"
-              style={{
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-primary)",
-              }}
-            >
-              Alt + Z
-            </kbd>
-            <span>Toggle wrap</span>
+
+          <h2 className="ps-display text-base font-semibold text-[var(--ps-ink)] tracking-tight">
+            CovAI Workspace Editor
+          </h2>
+          <p className="text-xs text-[var(--ps-ink-secondary)] mt-2 max-w-xs leading-relaxed">
+            Select a file from the explorer to inspect source code, review coverage metrics, or generate tests.
+          </p>
+
+          {/* Shortcut Hints */}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 mt-6 text-xs text-[var(--ps-ink-secondary)]">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-[var(--ps-line)] bg-[var(--ps-inset)]">
+              <kbd className="px-1.5 py-0.5 rounded-[4px] ps-mono text-[11px] bg-[var(--ps-surface-2)] border border-[var(--ps-line-strong)] text-[var(--ps-ink)]">
+                Ctrl + S
+              </kbd>
+              <span className="text-[11px]">Save file</span>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-[var(--ps-line)] bg-[var(--ps-inset)]">
+              <kbd className="px-1.5 py-0.5 rounded-[4px] ps-mono text-[11px] bg-[var(--ps-surface-2)] border border-[var(--ps-line-strong)] text-[var(--ps-ink)]">
+                Alt + Z
+              </kbd>
+              <span className="text-[11px]">Toggle wrap</span>
+            </div>
           </div>
         </div>
       </motion.div>
@@ -1237,17 +1245,10 @@ export default function Editor({
               type="button"
               onClick={() => { if (projectAccess.can("ai.use")) onSuggestTestcase?.(activeTabId); }}
               disabled={!projectAccess.can("ai.use")}
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold"
-              style={{
-                background: "rgba(168, 85, 247, 0.15)",
-                color: "#c084fc",
-                border: "1px solid rgba(168, 85, 247, 0.35)",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium border border-[var(--ps-line-strong)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-cobalt)] text-[var(--ps-ink)] transition-colors duration-150 cursor-pointer"
               title="Request AI Agent to suggest Jest/Vitest testcase in chat"
             >
-              <Sparkles size={12} style={{ color: "#c084fc" }} />
+              <Sparkles size={12} className="text-[var(--ps-cobalt)]" />
               <span>Suggest testcase</span>
             </button>
           )}
@@ -1261,26 +1262,22 @@ export default function Editor({
             type="button"
             onClick={handleSave}
             disabled={!canEdit || !hasUnsavedChanges || saving}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-all"
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors duration-150 ${
+              hasUnsavedChanges
+                ? "ps-btn-contrast border border-transparent"
+                : "text-[var(--ps-ink-secondary)] bg-transparent border border-[var(--ps-line)]"
+            }`}
             style={{
-              color: hasUnsavedChanges ? "#fff" : "var(--color-text-secondary)",
-              background: hasUnsavedChanges
-                ? "var(--color-primary)"
-                : "transparent",
-              border: hasUnsavedChanges
-                ? "1px solid transparent"
-                : "1px solid var(--color-border)",
-              boxShadow: "none",
               cursor: hasUnsavedChanges && !saving ? "pointer" : "default",
             }}
             title="Save changes (Ctrl/Cmd + S)"
           >
             {saving ? (
-              <Loader2 size={12} className="animate-spin text-white" />
+              <Loader2 size={12} className="animate-spin" />
             ) : hasUnsavedChanges ? (
               <Save size={12} />
             ) : (
-              <Check size={12} style={{ color: "var(--color-success)" }} />
+              <Check size={12} className="text-[var(--ps-emerald)]" />
             )}
             <span>
               {saving ? "Saving..." : hasUnsavedChanges ? "Save" : "Saved"}
@@ -1399,7 +1396,7 @@ export default function Editor({
           ) : previewMode && isMarkdown ? (
             <MarkdownPreview key="md-preview" content={codeContent} />
           ) : (
-            <MonacoEditor
+            <MonacoEditor projectId={projectId} snapshotId={snapshotId} filePath={activeTabId}
               key={`${activeTabId}-${resolvedTheme}`}
               height="100%"
               language={lang}
@@ -1487,7 +1484,11 @@ export default function Editor({
           <span>Spaces: 2</span>
         </div>
       </div>
-      <FileConflictDialog conflict={conflict} loading={saving} onClose={() => setConflict(null)} onReload={async () => {
+      <FileConflictDialog conflict={conflict} loading={saving} onMerged={async (content, latest) => {
+        const result = await updateFileContentApi(projectId, conflict.path, content, {snapshotId:conflict.snapshotId, expectedVersion:latest.version});
+        setFileContents(previous => ({...previous,[conflict.path]:{...latest,content,draft:undefined,version:result.data.version,workspaceRevision:result.data.workspaceRevision,loading:false,error:null}}));
+        setConflict(null); setSaveError("");
+      }} onClose={() => setConflict(null)} onReload={async () => {
         if (!conflict) return;
         downloadEditorDraft(conflict.path, conflict.draft);
         setSaving(true);

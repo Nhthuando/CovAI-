@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { ArrowUpRight, FileCode2, Layers, AlertCircle, CheckCircle2, Filter, GitBranch, Code2, ShieldAlert } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ArrowUpRight, FileCode2, CheckCircle2, GitBranch, Code2, ShieldAlert, ChevronDown } from 'lucide-react';
 
 export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
   const [filterType, setFilterType] = useState('ALL');
@@ -50,24 +50,24 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
   const getKindBadge = (kind) => {
     switch (kind) {
       case 'MEASURED_UNCOVERED_BRANCH':
-        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/10 text-amber-500 border border-amber-500/20"><GitBranch size={10} /> Branch</span>;
+        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--color-surface-secondary)] text-amber-400/90 border border-amber-500/25"><GitBranch size={10} /> Branch</span>;
       case 'MEASURED_UNCOVERED_STATEMENT':
-        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-blue-500/10 text-blue-500 border border-blue-500/20"><Code2 size={10} /> Statement</span>;
+        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--color-surface-secondary)] text-sky-400/90 border border-sky-500/25"><Code2 size={10} /> Statement</span>;
       case 'MEASURED_UNCOVERED_FUNCTION':
-        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-purple-500/10 text-purple-500 border border-purple-500/20">Function</span>;
+        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-primary)] border border-[var(--color-primary)]/25">Function</span>;
       default:
-        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-rose-500/10 text-rose-500 border border-rose-500/20">Line</span>;
+        return <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-[var(--color-surface-secondary)] text-rose-400/90 border border-rose-500/25">Line</span>;
     }
   };
 
   if (!gaps.length) {
     return (
-      <div className="flex items-center gap-3 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400">
-        <CheckCircle2 size={20} className="shrink-0" />
+      <div className="flex items-center gap-3 p-4 rounded-lg border border-[var(--color-border)] border-l-2 border-l-emerald-500/60 bg-[var(--color-surface)] text-[var(--color-text)]">
+        <CheckCircle2 size={18} className="shrink-0 text-emerald-500/80" />
         <div>
-          <h4 className="text-sm font-semibold">100% Edge-Case & Source Code Coverage Achieved!</h4>
+          <h4 className="text-xs font-semibold">No findings recorded in this assessment</h4>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            All code branches, keyboard interactions, validations, and error fallbacks have been executed and verified in independent Playwright runs.
+            An empty findings list does not establish complete coverage. Check measurement status and scope.
           </p>
         </div>
       </div>
@@ -75,24 +75,17 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
   }
 
   return (
-    <details className="group border-t border-[var(--color-border)] pt-4" open>
-      <summary className="cursor-pointer list-none flex items-center justify-between gap-4 font-medium text-sm text-[var(--color-text)] hover:text-purple-500 transition-colors">
-        <div className="flex items-center gap-2.5">
-          <ShieldAlert size={18} className="text-amber-500 shrink-0" />
-          <span className="font-semibold">Uncovered Code & Dimension Gap Insights ({gaps.length})</span>
-          <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+    <details className="group" open>
+      <summary className="cursor-pointer list-none flex items-center justify-between gap-4 font-medium text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors">
+        <div className="flex items-center gap-2">
+          <ShieldAlert size={16} className="text-amber-500/80 shrink-0" />
+          <span className="font-semibold text-xs">Uncovered Code &amp; Dimension Gap Insights ({gaps.length})</span>
+          <span className="px-2 py-0.5 text-[10.5px] font-mono font-medium rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
             Target: 95% Coverage
           </span>
         </div>
-        <span className="text-xs text-[var(--color-text-muted)] group-open:rotate-180 transition-transform">
-          ▼
-        </span>
+        <ChevronDown size={14} className="text-[var(--color-text-muted)] group-open:rotate-180 transition-transform duration-150" />
       </summary>
-
-      {/* Explanatory relationship banner */}
-      <div className="mt-3.5 p-3 rounded-lg bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] leading-relaxed">
-        <span className="font-semibold text-[var(--color-text)]">💡 Dimension Mapping Insight:</span> The 4 System Test Dimensions above measure macro-level functional completeness (<strong>100% passed</strong> for all user workflows, routes, and APIs). The <strong>{gaps.length} findings below</strong> pinpoint micro-level AST branches (keyboard shortcuts, edge validations, error states) that must be exercised to push code coverage to <strong>95%+</strong>.
-      </div>
 
       {/* Controls & Filters */}
       <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -102,7 +95,7 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
           <select
             value={selectedFile}
             onChange={e => setSelectedFile(e.target.value)}
-            className="px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-purple-500 text-xs font-mono"
+            className="px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)] text-xs font-mono"
           >
             <option value="ALL">All Files ({gaps.length})</option>
             {uniqueFiles.map(file => (
@@ -120,10 +113,10 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
               key={type}
               type="button"
               onClick={() => setFilterType(type)}
-              className={`px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors duration-150 cursor-pointer ${
                 filterType === type
-                  ? 'bg-purple-600 text-white shadow-sm'
-                  : 'bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)]'
+                  ? 'bg-[var(--color-primary)]/90 border-[var(--color-primary)] text-[var(--color-primary-foreground)]'
+                  : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border-[var(--color-border)]'
               }`}
             >
               {type}
@@ -133,15 +126,15 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
       </div>
 
       {/* List of findings */}
-      <div className="mt-3 max-h-96 overflow-y-auto space-y-3 pr-1">
+      <div className="mt-3 max-h-96 overflow-y-auto space-y-2.5 pr-1">
         {[...filteredGroups].map(([file, entries]) => (
-          <div key={file} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden shadow-sm">
-            <div className="flex items-center justify-between gap-3 bg-[var(--color-surface-secondary)]/80 px-3.5 py-2.5 border-b border-[var(--color-border)]">
+          <div key={file} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <div className="flex items-center justify-between gap-3 bg-[var(--color-surface-secondary)]/60 px-3.5 py-2 border-b border-[var(--color-border)]">
               <span className="flex min-w-0 items-center gap-2">
-                <FileCode2 size={15} className="text-purple-500 shrink-0" />
-                <span className="font-mono text-xs font-semibold text-[var(--color-text)] break-all">{file}</span>
+                <FileCode2 size={14} className="text-[var(--color-text-muted)] shrink-0" />
+                <span className="font-mono text-xs font-medium text-[var(--color-text)] break-all">{file}</span>
               </span>
-              <span className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+              <span className="shrink-0 text-[11px] font-mono tabular-nums font-medium px-2 py-0.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
                 {entries.length} findings
               </span>
             </div>
@@ -158,7 +151,7 @@ export default function SystemTestGapNavigator({ gaps = [], onOpenFile }) {
                           disabled={!onOpenFile}
                           onClick={() => onOpenFile?.(gap.filePath, gap.line || 1)}
                           title={`Open ${gap.filePath}:${gap.line || 1} in Explorer`}
-                          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs font-mono font-medium text-[var(--color-text)] hover:border-purple-500 hover:text-purple-600 dark:hover:text-purple-400 transition-colors shadow-2xs"
+                          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs font-mono tabular-nums font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-text)] transition-colors duration-150 cursor-pointer"
                         >
                           Line {gap.line || 1}
                           <ArrowUpRight size={12} className="opacity-70" />

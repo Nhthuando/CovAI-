@@ -9,6 +9,11 @@ export const getUserById = async (userId) => {
     throw new Error("User not found");
   }
 
+  const maxQuota = process.env.AI_DAILY_QUOTA ? parseInt(process.env.AI_DAILY_QUOTA) : 50;
+  const timeZone = process.env.AI_QUOTA_TIMEZONE || 'Asia/Ho_Chi_Minh';
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const currentDayUsage = user.aiUsageDate === today ? (user.aiUsageCount || 0) : 0;
+
   return {
     id: user.id,
     name: user.name,
@@ -19,6 +24,13 @@ export const getUserById = async (userId) => {
     githubUserId: user.githubUserId || null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
+    aiQuota: {
+      dailyLimit: maxQuota,
+      usedToday: currentDayUsage,
+      remainingRequests: Math.max(0, maxQuota - currentDayUsage),
+      totalTokens: user.aiTokenUsage || 0,
+      usageDate: user.aiUsageDate || today,
+    },
   };
 };
 

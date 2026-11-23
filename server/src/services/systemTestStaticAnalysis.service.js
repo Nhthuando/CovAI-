@@ -17,26 +17,58 @@ export const normalizeAst = node => {
     if (!node || typeof node !== 'object') return node;
     return Object.fromEntries(Object.entries(node).filter(([key]) => !['start', 'end', 'loc', 'extra', 'leadingComments', 'trailingComments', 'innerComments'].includes(key)).map(([key, value]) => [key, normalizeAst(value)]));
 };
+const parseTest = content => parse(content, { sourceType: 'unambiguous', plugins: ['typescript', 'jsx'] });
+const isPlaywrightRequire = node => node?.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require' &&
+    node.arguments.length === 1 && node.arguments[0]?.value === '@playwright/test';
+const memberName = node => node.computed ? node.property?.value : node.property?.name;
+
+const playwrightReferences = program => {
+    const names = { test: new Set(), expect: new Set() };
+    const namespaces = new Set();
+    const add = (name, local) => {
+        if (name === 'test' || name === 'expect') names[name].add(local);
+    };
+    for (const node of program.body) {
+        if (node.type === 'ImportDeclaration' && node.source.value === '@playwright/test') {
+            for (const spec of node.specifiers) add(spec.imported?.name, spec.local.name);
+        }
+        if (node.type !== 'VariableDeclaration') continue;
+        for (const { id, init } of node.declarations) {
+            if (isPlaywrightRequire(init)) {
+                if (id.type === 'Identifier') namespaces.add(id.name);
+                if (id.type === 'ObjectPattern') {
+                    for (const spec of id.properties) {
+                        if (spec.type === 'ObjectProperty' && spec.value.type === 'Identifier') {
+                            add(spec.key.type === 'StringLiteral' ? spec.key.value : !spec.computed && spec.key.name, spec.value.name);
+                        }
+                    }
+                }
+            } else if (id.type === 'Identifier' && init?.type === 'MemberExpression' && isPlaywrightRequire(init.object)) {
+                add(memberName(init), id.name);
+            }
+        }
+    }
+    const matches = (node, name) => (node?.type === 'Identifier' && names[name].has(node.name)) ||
+        (node?.type === 'MemberExpression' && node.object.type === 'Identifier' && namespaces.has(node.object.name) && memberName(node) === name);
+    return { isTest: node => matches(node, 'test'), isExpect: node => matches(node, 'expect'), hasTest: names.test.size > 0 || namespaces.size > 0 };
+};
+
 export const analyzeSystemTestFile = ({ content, filePath, framework = 'playwright' }) => {
-    const ast = parse(content, { sourceType: 'unambiguous', plugins: ['typescript', 'jsx'] });
+    const ast = parseTest(content);
     const findings = [], assertionSites = [], scenarioSites = [], unsupportedFeatures = [];
     const finding = (rule, node, message) => findings.push({ id: digest(`${filePath}:${node.start}:${rule}`), rule, filePath, line: node.loc.start.line, column: node.loc.start.column, message, snippet: content.slice(node.start, node.end).slice(0, 500) });
-    const testNames = new Set(); const expectNames = new Set();
-    for (const node of ast.program.body) if (node.type === 'ImportDeclaration' && node.source.value === '@playwright/test') for (const spec of node.specifiers) {
-        if (spec.imported?.name === 'test') testNames.add(spec.local.name);
-        if (spec.imported?.name === 'expect') expectNames.add(spec.local.name);
-    }
+    const { isTest, isExpect, hasTest } = playwrightReferences(ast.program);
     if (framework === 'cypress') unsupportedFeatures.push('CYPRESS_ASSERTION_EVIDENCE_UNSUPPORTED');
     walkAst(ast, (node, parents) => {
         if (node.type === 'CallExpression') {
             const prop = node.callee?.property?.name;
             if (['skip', 'only', 'fixme'].includes(prop)) finding('SELECTIVE_EXECUTION', node, 'Selected or skipped tests cannot establish suite verification.');
             if (prop === 'waitForTimeout') finding('FIXED_WAIT', node, 'A fixed delay does not establish the expected application state.');
-            if (node.callee.type === 'Identifier' && testNames.has(node.callee.name)) {
+            if (isTest(node.callee)) {
                 if (typeof node.arguments[0]?.value !== 'string') unsupportedFeatures.push('DYNAMIC_TEST_TITLE');
                 else scenarioSites.push({ id: digest(`${filePath}:${node.loc.start.line}:${node.arguments[0].value}`), title: node.arguments[0].value, line: node.loc.start.line, start: node.start, end: node.end, hash: digest(normalizeAst(node)) });
             }
-            if (node.callee.type === 'Identifier' && expectNames.has(node.callee.name)) {
+            if (isExpect(node.callee)) {
                 // Follow expect(actual).not.toHaveText(...) as one assertion,
                 // preserving the matcher, negation and expected value in its hash.
                 let expression=node,matcher=null,call=null;
@@ -55,7 +87,7 @@ export const analyzeSystemTestFile = ({ content, filePath, framework = 'playwrig
                 const awaited = parents.some(parent => parent.type === 'AwaitExpression' && (parent.argument === call || (isStepReturn && parent.argument?.type === 'CallExpression' && (parent.argument.callee?.property?.name === 'step' || parent.argument.callee?.name === 'step'))));
                 const webMatchers = new Set(['toBeAttached','toBeChecked','toBeDisabled','toBeEditable','toBeEmpty','toBeEnabled','toBeFocused','toBeHidden','toBeInViewport','toBeVisible','toContainText','toContainClass','toHaveAccessibleDescription','toHaveAccessibleName','toHaveAttribute','toHaveClass','toHaveCount','toHaveCSS','toHaveId','toHaveJSProperty','toHaveRole','toHaveText','toHaveValue','toHaveValues','toHaveTitle','toHaveURL','toHaveScreenshot','toMatchAriaSnapshot','toBeOK']);
                 if (!awaited && matcher && webMatchers.has(matcher.property?.name)) finding('ASSERTION_NOT_AWAITED', site, 'Async web assertions must be awaited.');
-                const enclosing = [...parents].reverse().find(parent => parent.type === 'CallExpression' && testNames.has(parent.callee?.name));
+                const enclosing = [...parents].reverse().find(parent => parent.type === 'CallExpression' && isTest(parent.callee));
                 // APIResponse.status()/ok() and awaited JSON are synchronous values.
                 // They do not require awaiting expect(...).toBe/toEqual. Trace only
                 // request-derived values; arbitrary constants still cannot qualify.
@@ -84,7 +116,7 @@ export const analyzeSystemTestFile = ({ content, filePath, framework = 'playwrig
         }
         if (node.type === 'CatchClause' && !JSON.stringify(normalizeAst(node.body)).includes('ThrowStatement')) finding('SWALLOWED_ERROR', node, 'Caught failures are not rethrown. Review whether the test can pass without the expected behavior.');
     });
-    if (!testNames.size) unsupportedFeatures.push('CUSTOM_FIXTURE_OR_TEST_IMPORT');
+    if (!hasTest) unsupportedFeatures.push('CUSTOM_FIXTURE_OR_TEST_IMPORT');
     if (!scenarioSites.length) unsupportedFeatures.push('NO_SUPPORTED_STATIC_SCENARIOS');
     return { findings, assertionSites, scenarioSites, unsupportedFeatures: [...new Set(unsupportedFeatures)] };
 };
@@ -95,11 +127,11 @@ export const preserveTestIntent = (before, after, filePath, mode = 'BOOST_COVERA
     if (old.unsupportedFeatures.length) throw new ServiceError('Automatic preservation is unsupported for this test structure; manual review is required', 422);
     if (next.unsupportedFeatures.length) throw new ServiceError('Candidate changed the supported test structure', 422);
     const infrastructure = content => {
-        const tree = parse(content, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
-        const names = new Set(tree.program.body.flatMap(node => node.type === 'ImportDeclaration' && node.source.value === '@playwright/test' ? node.specifiers.filter(s => s.imported?.name === 'test').map(s => s.local.name) : []));
+        const tree = parseTest(content);
+        const { isTest } = playwrightReferences(tree.program);
         const strip = node => {
             if (!node || typeof node !== 'object') return node;
-            if (Array.isArray(node)) return node.filter(child => !(child?.type === 'ExpressionStatement' && child.expression?.type === 'CallExpression' && names.has(child.expression.callee?.name))).map(strip);
+            if (Array.isArray(node)) return node.filter(child => !(child?.type === 'ExpressionStatement' && child.expression?.type === 'CallExpression' && isTest(child.expression.callee))).map(strip);
             return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, strip(value)]));
         };
         return digest(normalizeAst(strip(tree.program)));
@@ -126,15 +158,14 @@ export const validateAdditionalTestQuality = (before, after, filePath) => {
     const next = analyzeSystemTestFile({content: after, filePath});
     const titles = new Set(old.scenarioSites.map(site => site.title));
     const added = next.scenarioSites.filter(site => !titles.has(site.title));
-    const imports = parse(after,{sourceType:'module',plugins:['typescript','jsx']}).program.body;
-    const expectNames = new Set(imports.flatMap(node => node.type==='ImportDeclaration' && node.source.value==='@playwright/test' ? node.specifiers.filter(spec=>spec.imported?.name==='expect').map(spec=>spec.local.name) : []));
+    const { isExpect } = playwrightReferences(parseTest(after).program);
     for (const scenario of added) {
         if (!next.assertionSites.some(site => site.start >= scenario.start && site.end <= scenario.end && site.supported)) {
             throw new ServiceError(`New scenario "${scenario.title}" needs a supported assertion about the application outcome (await web assertions; API status/JSON assertions may be synchronous)`, 422);
         }
         const findings = next.findings.filter(site => site.line >= scenario.line && site.line <= after.slice(0, scenario.end).split('\n').length);
         if (findings.some(site => ['SMOKE_ASSERTION', 'FIXED_WAIT'].includes(site.rule))) throw new ServiceError(`New scenario "${scenario.title}" contains a smoke assertion or fixed wait`, 422);
-        const tree = parse(after.slice(scenario.start, scenario.end), {sourceType: 'module', plugins: ['typescript','jsx']});
+        const tree = parseTest(after.slice(scenario.start, scenario.end));
         const textFilteredRows = new Set();
         const usesTextFilter = expression => {
             let found = expression?.type==='Identifier' && textFilteredRows.has(expression.name);
@@ -152,7 +183,7 @@ export const validateAdditionalTestQuality = (before, after, filePath) => {
                 const nonTextInput=typeof selector==='string' && /^input\[type\s*=\s*['"]?(?:checkbox|radio|button|submit|reset|file|hidden|range|color)['"]?\]$/.test(selector.trim());
                 if((method==='locator' && typeof selector==='string' && /\b(input|textarea|form)\b/.test(selector) && !nonTextInput) || (method==='getByRole' && selector==='textbox')) throw new ServiceError(`New scenario "${scenario.title}" uses a text-filtered row for an edit input. Enter edit mode, then reacquire a stable form/input from page using source-supported structure; input values are not visible text and filling changes them`,422);
             }
-            if (node.type === 'CallExpression' && expectNames.has(node.callee?.name)) {
+            if (node.type === 'CallExpression' && isExpect(node.callee)) {
                 const actual = node.arguments[0];
                 if (['NullLiteral','ArrayExpression','ObjectExpression'].includes(actual?.type) || actual?.type==='TemplateLiteral' && !actual.expressions.length) throw new ServiceError(`New scenario "${scenario.title}" must assert application state, not literal values`,422);
             }

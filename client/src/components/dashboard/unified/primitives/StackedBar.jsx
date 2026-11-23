@@ -70,7 +70,7 @@ export function StackedBar({
                 {seg.label || seg.key}
               </span>
               <span className="font-mono tabular-nums text-xs font-semibold text-[var(--ud-text)]">
-                {seg.value ?? 0}
+                {seg.displayValue !== undefined ? seg.displayValue : (seg.value ?? 0)}
               </span>
             </div>
           ))}

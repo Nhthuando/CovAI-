@@ -15,5 +15,9 @@ export async function listProjectEvents({ projectId, userId, after = 0, limit = 
 export async function deliverProjectEvent(event) {
     // The subscription service revalidates individual recipients before emitting.
     const { deliverToProjectSubscribers } = await import('./projectSubscription.service.js');
-    return deliverToProjectSubscribers(event);
+    await deliverToProjectSubscribers(event);
+    if (/workspace|snapshot|project.deleted/.test(event.type)) {
+        const { notifyEditorProjectChange } = await import('../realtime/projectEditor.gateway.js');
+        await notifyEditorProjectChange(event.projectId);
+    }
 }

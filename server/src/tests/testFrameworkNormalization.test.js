@@ -11,7 +11,9 @@ import { parseAndSanitizeAiTestResponse } from "../services/unitTestGenerator.se
 const serverDir = fileURLToPath(new URL("../../", import.meta.url));
 const fixtures = [];
 const fixture = () => {
-    const dir = fs.mkdtempSync(path.join(serverDir, ".framework-runtime-"));
+    const tempBase = path.join(serverDir, ".covai-temp");
+    fs.mkdirSync(tempBase, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(tempBase, "framework-runtime-"));
     fixtures.push(dir);
     return dir;
 };
@@ -119,4 +121,9 @@ test('tracks calls with the real jest mock', () => {
         expect({ status: result.status, error: result.error?.message, output: result.stderr + result.stdout }).toEqual({ status: 0, error: undefined, output: expect.any(String) });
         expect(JSON.parse(fs.readFileSync(report, "utf8")).numPassedTests).toBe(1);
     }, 40000);
+});
+test("translates Jest's unsupported typeof matcher while preserving the operand and negation", () => {
+    const code = "expect(getValue()).not.toBeTypeOf('object');";
+    expect(normalizeTestFrameworkCode(code, { framework: "jest" })).toBe("expect(typeof (0, getValue())).not.toBe('object');");
+    expect(normalizeTestFrameworkCode(code, { framework: "vitest" })).toContain(".not.toBeTypeOf('object')");
 });

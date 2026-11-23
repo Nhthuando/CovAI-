@@ -5,7 +5,7 @@ import { resolveProjectAccess, withProjectGuard } from "./projectAccess.service.
 
 const conflict = (message, code = "CHAT_BUSY") => Object.assign(new ServiceError(message, 409), { code });
 export const chatRequestInputHash = input => createHash("sha256").update(JSON.stringify({
-    message: input.message, sessionId: input.sessionId || null, snapshotId: input.snapshotId || null,
+    message: input.message, regenerateMessageId: input.regenerateMessageId, sessionId: input.sessionId || null, snapshotId: input.snapshotId || null,
     model: input.model || null, useMemory: input.useMemory ?? true, attachments: input.attachments || [],
     screenContext: input.screenContext || null,
 })).digest("hex");
@@ -27,9 +27,10 @@ export const claimChatRequest = async ({ projectId, userId, input, snapshotId })
     withProjectGuard({ projectId, userId, capability: "chat.write" }, async tx => {
         if (!input.clientRequestId) throw new ServiceError("clientRequestId is required", 400);
         const inputHash = chatRequestInputHash(input);
-        const prior = await tx.chatRequest.findFirst({ where: {
-            actorId: userId, clientRequestId: input.clientRequestId, session: { projectId },
-        } });
+        const [prior, existingSession] = await Promise.all([
+            tx.chatRequest.findFirst({ where: { actorId: userId, clientRequestId: input.clientRequestId, session: { projectId } } }),
+            input.sessionId ? tx.chatSession.findFirst({ where: { id: input.sessionId, projectId } }) : null,
+        ]);
         if (prior) {
             if (prior.inputHash !== inputHash) throw conflict("This request ID was already used for a different message.", "CHAT_REQUEST_CHANGED");
             if (prior.status === "PROCESSING") {
@@ -41,19 +42,23 @@ export const claimChatRequest = async ({ projectId, userId, input, snapshotId })
             }
             return { request: prior, reused: true };
         }
-        const session = input.sessionId
-            ? await tx.chatSession.findFirst({ where: { id: input.sessionId, projectId } })
-            : await tx.chatSession.create({ data: {
+        if (input.sessionId && !existingSession) throw new ServiceError("Conversation not found", 404);
+        const token = randomUUID();
+        const processingUntil = new Date(Date.now() + 120000);
+        let session = existingSession;
+        if (session) {
+            const lease = await tx.chatSession.updateMany({ where: {
+                id: session.id, projectId,
+                OR: [{ processingUntil: null }, { processingUntil: { lt: new Date() } }],
+            }, data: { processingToken: token, processingUntil } });
+            if (!lease.count) throw conflict("This conversation is processing another message. Your draft was not saved.");
+        } else {
+            session = await tx.chatSession.create({ data: {
                 projectId, userId, title: input.message.replace(/[\r\n]+/g, " ").slice(0, 40),
                 useMemory: input.useMemory ?? true, snapshotId: snapshotId || null,
+                processingToken: token, processingUntil,
             } });
-        if (!session) throw new ServiceError("Conversation not found", 404);
-        const token = randomUUID();
-        const lease = await tx.chatSession.updateMany({ where: {
-            id: session.id, projectId,
-            OR: [{ processingUntil: null }, { processingUntil: { lt: new Date() } }],
-        }, data: { processingToken: token, processingUntil: new Date(Date.now() + 120000) } });
-        if (!lease.count) throw conflict("This conversation is processing another message. Your draft was not saved.");
+        }
         const request = await tx.chatRequest.create({ data: {
             sessionId: session.id, actorId: userId, clientRequestId: input.clientRequestId,
             inputHash, status: "PROCESSING",

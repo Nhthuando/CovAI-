@@ -23,11 +23,13 @@ export async function dispatchInvitationDeliveries({ db = prisma, send = sendEma
             const base = new URL(process.env.CLIENT_URL || 'http://localhost:5173');
             const link = new URL(`/invitations/${token}`, base).href;
             await send({ email, ...createProjectInvitationEmail({ projectName: row.invitation.project.name,
-                inviterName: row.invitation.invitedBy?.name, role: row.invitation.role, email,
+                inviterName: row.invitation.invitedBy?.name, role: row.invitation.role, disciplineRole: row.invitation.disciplineRole, email,
                 invitationUrl: link, expiresAt: row.invitation.expiresAt }) });
             await db.invitationDelivery.updateMany({ where: { id: row.id, status: 'SENDING', attempts: row.attempts }, data: { status: 'SENT', encryptedPayload: null, lockedUntil: null, lastErrorCode: null } });
-        } catch {
+        } catch (error) {
             // Never retain transport error strings containing credentials/email/token URLs.
+            // Log only the non-sensitive transport code so misconfiguration (e.g. EAUTH) is visible.
+            console.error(`[invitation-delivery] Send failed for delivery ${row.id} (attempt ${row.attempts}): ${error?.code || error?.cause?.code || error?.name || 'UNKNOWN'}`);
             const delay = [60000, 300000, 1800000][Math.min(row.attempts - 1, 2)];
             await db.invitationDelivery.updateMany({ where: { id: row.id, status: 'SENDING', attempts: row.attempts }, data: { status: 'FAILED', lockedUntil: null, nextAttemptAt: new Date(Date.now() + delay), lastErrorCode: 'EMAIL_DELIVERY_FAILED' } });
         }
@@ -41,7 +43,7 @@ export function startInvitationDeliveryWorker() {
         try { await dispatchInvitationDeliveries(); } catch { console.error('[invitation-delivery] Dispatch unavailable; retrying'); }
         finally { active = false; }
     };
-    const timer = setInterval(run, 2000);
+    const timer = setInterval(run, 15000);
     timer.unref();
     void run();
     return () => clearInterval(timer);

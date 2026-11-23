@@ -68,6 +68,16 @@ describe("project storage cleanup", () => {
         expect(bucket.file).not.toHaveBeenCalled();
     });
 
+    it("cleans owned evaluation copies while preserving other evaluations", async () => {
+        await write('.covai-temp/chatbot-evaluations/evaluation-a/index.js');
+        await write('.covai-temp/chatbot-evaluations/evaluation-b/keep.js');
+        await cleanupProjectStorageAsync(projectId, [], { baseDir, evaluationIds: ['evaluation-a'] });
+        expect(await exists('.covai-temp/chatbot-evaluations/evaluation-a')).toBe(false);
+        expect(await exists('.covai-temp/chatbot-evaluations/evaluation-b/keep.js')).toBe(true);
+        await expect(cleanupProjectStorageAsync(projectId, [], { baseDir, evaluationIds: ['../evaluation-b'] })).rejects.toThrow('Project deletion is incomplete');
+        expect(await exists('.covai-temp/chatbot-evaluations/evaluation-b/keep.js')).toBe(true);
+    });
+
     it.each(["../other", "..", "a/b", "a\\b", "", "C:\\private"])("rejects unsafe IDs before any deletion: %s", async id => {
         await write("storage/projects/project-a/keep.txt");
         await expect(cleanup([{ id }])).rejects.toMatchObject({ statusCode: 503, code: "PROJECT_CLEANUP_FAILED" });

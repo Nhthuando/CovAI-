@@ -7,6 +7,7 @@ import {
   createExtractorFromData,
   createExtractorFromFile,
 } from "node-unrar-js";
+import { isDisallowedSecretFile } from "../middlewares/upload.middleware.js";
 
 const assertStringField = (value, fieldName) => {
   if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -23,7 +24,8 @@ const isExcludedEntry = (normPath = "") => {
     normPath.startsWith("coverage/") ||
     normPath.includes("/coverage/") ||
     normPath.startsWith(".nyc_output/") ||
-    normPath.includes("/.nyc_output/")
+    normPath.includes("/.nyc_output/") ||
+    isDisallowedSecretFile(normPath)
   );
 };
 
@@ -84,12 +86,7 @@ export const extractZipSnapshot = async (
         const extracted = extractor.extract({
           files: (header) => {
             const normName = (header.name || "").replace(/\\/g, "/");
-            return (
-              !normName.includes("node_modules/") &&
-              !normName.includes(".git/") &&
-              !normName.includes("__MACOSX/") &&
-              !normName.endsWith(".DS_Store")
-            );
+            return !isExcludedEntry(normName);
           },
         });
         // Drain generator to complete file extraction to disk

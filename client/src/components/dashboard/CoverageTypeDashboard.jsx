@@ -1,4 +1,14 @@
+import {
+  applyBatchResultToSuggestionsMap,
+  buildUnitTestReviewFiles,
+  collectUnappliedReviewSuggestions,
+  normalizeReviewTestFile,
+  summarizeApplyBatchResult,
+} from '../../services/unitTestReview.js';
+import { resolveTargetTestFile } from '../../services/unitTestResolution.js';
+import { attachSocketAuthRecovery, socketAuth } from "../../lib/authSession.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useChatTestContext } from '../../hooks/useChatTestContext';
 import SystemTestEvidence from './SystemTestEvidence.jsx';
 import { io } from "socket.io-client";
 import {
@@ -31,6 +41,11 @@ import {
   Target,
   Play,
   FileCheck,
+  History,
+  Download,
+  SlidersHorizontal,
+  FileDiff,
+  FlaskConical,
 } from "lucide-react";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
@@ -43,8 +58,13 @@ import {
   runCoverageByType,
   getFileCoverage,
   installMissingDependency,
+  installMissingDependencies,
   suggestUnitTestcase,
+  suggestAllUnitTestcases,
   applyUnitTestSuggestion,
+  getUnitTestVersions,
+  switchUnitTestVersion,
+  saveUnitTestVersions,
   getSystemCoverageSummary,
   saveAiSystemTest,
 } from "../../services/coverage.service.js";
@@ -52,16 +72,25 @@ import {
   useCoverageDashboard,
   invalidateCoverageQueries,
   updateCoverageFilesData,
+  invalidateProjectTree,
 } from "../../hooks/useCoverageQuery.js";
-import { getJobDetailApi, cancelJobApi, getProjectJobsApi } from "../../services/job.service.js";
+import {
+  getJobDetailApi,
+  cancelJobApi,
+  getProjectJobsApi,
+} from "../../services/job.service.js";
 import { queryClient } from "../../lib/queryClient.js";
-import { getProjectCfgApi, generateSystemTestApi } from "../../services/project.service.js";
+import {
+  deleteProjectEntryApi,
+  getFileContentApi,
+  getProjectCfgApi,
+  generateSystemTestApi,
+  updateFileContentApi,
+} from "../../services/project.service.js";
 import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
-import UnitTestExecutionProcess from "./UnitTestExecutionProcess.jsx";
-import UnitTestExecutionVisualizer from "./UnitTestExecutionVisualizer.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
 import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
 import JobQueue from "./JobQueue.jsx";
@@ -70,9 +99,15 @@ import { useRunningProcess } from "../../contexts/RunningProcessContext.jsx";
 import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
 import UnitTestPackageInstaller from "./UnitTestPackageInstaller.jsx";
 import UnitTestTraceabilityMatrix, { extractMissingPackageFromError } from "./UnitTestTraceabilityMatrix.jsx";
-import DiffReviewModal from "./DiffReviewModal.jsx";
+import { loadSuggestionSourceFiles, needsUnitTestSuggestion } from '../../services/unitTestSuggestionQueue.js';
+import { refreshPublishedUnitTests } from '../../services/unitTestRefresh.js';
+import DiffReviewModal, { countDiffLines } from "./DiffReviewModal.jsx";
+import UnitTestVersionPopover from "./UnitTestVersionPopover.jsx";
+import UnitTestVersionHistoryView from "./UnitTestVersionHistoryView.jsx";
 import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
 import SuggestTestcaseModal from "./SuggestTestcaseModal.jsx";
+import UnitTestSimulationStudioModal from "./simulation/UnitTestSimulationStudioModal.jsx";
+import { ExportUnitTestReportModal } from "./modals/ExportUnitTestReportModal.jsx";
 
 const CONFIG = {
   unit: {
@@ -83,7 +118,10 @@ const CONFIG = {
     focus: ["Statements", "Branches", "Functions", "Lines"],
     explanation: [
       ["Statement coverage", "Percentage of statements executed by tests."],
-      ["Branch coverage", "Percentage of if/else/switch condition paths executed."],
+      [
+        "Branch coverage",
+        "Percentage of if/else/switch condition paths executed.",
+      ],
       ["Function coverage", "Percentage of functions or methods called."],
     ],
   },
@@ -100,11 +138,11 @@ const CONFIG = {
       "Critical APIs",
     ],
     explanation: [
-      ["API contracts", "Requests, responses, status codes, and payload contracts."],
       [
-        "Frontend ↔ Backend",
-        "API calls from UI to routes/controllers.",
+        "API contracts",
+        "Requests, responses, status codes, and payload contracts.",
       ],
+      ["Frontend ↔ Backend", "API calls from UI to routes/controllers."],
       [
         "Service integration",
         "Controller flows, services, and database/dependencies.",
@@ -113,7 +151,8 @@ const CONFIG = {
   },
   system: {
     title: "System Test Coverage",
-    subtitle: "Verify user journeys across the frontend, real API and database.",
+    subtitle:
+      "Verify user journeys across the frontend, real API and database.",
     supported: "Playwright",
     accent: "#ec4899",
     focus: ["E2E tests", "Passed", "Failed", "Flaky / Stability", "Coverage"],
@@ -133,13 +172,11 @@ const CONFIG = {
 
 const pct = (value) => `${Number(value || 0).toFixed(1)}%`;
 const coverageColor = (value) =>
-  value >= 80 ? "#22c55e" : value >= 60 ? "#fbbf24" : "#f87171";
-const getCoverageColor = (value, isLight = false) => {
-  if (isLight) {
-    return value >= 80 ? "#16a34a" : value >= 60 ? "#d97706" : "#dc2626";
-  }
-  return coverageColor(value);
-};
+  value >= 80
+    ? "var(--color-coverage-good)"
+    : value >= 60
+      ? "var(--color-coverage-warning)"
+      : "var(--color-coverage-low)";
 const apiFile = (file) =>
   /(^|\/)(api|routes?|controllers?|services?|endpoints?)(\/|\.|$)/i.test(
     file.filePath,
@@ -151,16 +188,24 @@ export const isTestFile = (filePath) => {
 
   // 1. Test directory pattern
   if (
-    /(^|\/)(?:tests?|__tests__|specs?|__specs__|e2e|cypress|playwright|step-definitions?|step_definitions|fixtures?|mocks?|__mocks__|test[-_]data|test[-_]utils?|testing|test[-_]helpers?|(?:[a-z0-9_-]+[-_])?tests?)(?:\/|$)/i.test(normalized)
-  ) return true;
+    /(^|\/)(?:tests?|__tests__|specs?|__specs__|e2e|cypress|playwright|step-definitions?|step_definitions|fixtures?|mocks?|__mocks__|test[-_]data|test[-_]utils?|testing|test[-_]helpers?|(?:[a-z0-9_-]+[-_])?tests?)(?:\/|$)/i.test(
+      normalized,
+    )
+  )
+    return true;
 
   // 2. Token-separated test file name (e.g. test-api.ts, api-test.ts, test.ts, auth.test.js, test_runner.js)
-  if (/(?:^|[._-])(?:tests?|specs?|testcase|steps?)(?:[._-]|$)/i.test(rawBase)) {
+  if (
+    /(?:^|[._-])(?:tests?|specs?|testcase|steps?)(?:[._-]|$)/i.test(rawBase)
+  ) {
     return true;
   }
 
   // 3. CamelCase / PascalCase test file names (e.g. testApi.ts, apiTest.ts, calculationServiceTest.ts)
-  if (/^tests?[A-Z]/.test(rawBase) || /[a-z0-9](?:Tests?|Specs?)\.[a-z0-9]+$/.test(rawBase)) {
+  if (
+    /^tests?[A-Z]/.test(rawBase) ||
+    /[a-z0-9](?:Tests?|Specs?)\.[a-z0-9]+$/.test(rawBase)
+  ) {
     return true;
   }
 
@@ -179,28 +224,42 @@ const isFrontendFile = (filePath) => {
 
 export const cleanDisplayPath = (fullPath = "") => {
   if (!fullPath) return "";
-  let normalized = fullPath.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
+  let normalized = fullPath
+    .replace(/\\/g, "/")
+    .replace(/^\.?\//, "")
+    .trim();
 
   // Match inside docker or repo storage: storage/projects/<id>/.../repo/<relativePath>
   const repoMatch = normalized.match(/(?:^|\/)repo\/(.+)$/i);
   if (repoMatch) return repoMatch[1].replace(/^\/+/, "");
 
   // If path ends with /repo or is just /app/storage/..., don't show full internal path
-  if (/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*)\/?$/i.test(normalized)) {
+  if (
+    /(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*)\/?$/i.test(
+      normalized,
+    )
+  ) {
     return "";
   }
 
-  const storageMatch = normalized.match(/(?:^|\/)storage\/projects\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
+  const storageMatch = normalized.match(
+    /(?:^|\/)storage\/projects\/[^/]+(?:\/[^/]+)*?\/(.+)$/i,
+  );
   if (storageMatch) return storageMatch[1].replace(/^\/+/, "");
 
-  const uploadProjMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/[^/]+\/(.+)$/i);
+  const uploadProjMatch = normalized.match(
+    /(?:^|\/)uploads\/snapshots\/[^/]+\/[^/]+\/(.+)$/i,
+  );
   if (uploadProjMatch) return uploadProjMatch[1].replace(/^\/+/, "");
 
-  const uploadMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/(.+)$/i);
+  const uploadMatch = normalized.match(
+    /(?:^|\/)uploads\/snapshots\/[^/]+\/(.+)$/i,
+  );
   if (uploadMatch) return uploadMatch[1].replace(/^\/+/, "");
 
   // Strip leading project name prefix if it wraps standard package directories (e.g. "Online-Food-Ordering-System/server/...")
-  const projPrefixMatch = normalized.match(/^[^/]+(?:\/)(server|client|src|tests?|__tests__|packages|apps|lib|dist)\/(.+)$/i);
+  // Do NOT strip if the first segment is already a valid package root (server, client, backend, frontend, services, packages, apps)
+  const projPrefixMatch = normalized.match(/^(?!(?:server|client|backend|frontend|services|packages|apps)\/)[^/]+(?:\/)(server|client|backend|frontend|services|src|tests?|__tests__|packages|apps|lib|dist)\/(.+)$/i);
   if (projPrefixMatch) {
     return `${projPrefixMatch[1]}/${projPrefixMatch[2]}`;
   }
@@ -222,23 +281,47 @@ const isBusinessLogicClientFile = (filePath) => {
   if (!/\.[cm]?[jt]s$/i.test(normalized)) return false;
 
   if (isTestFile(normalized)) return false;
-  if (/(^|\/)(node_modules|coverage|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(normalized)) return false;
-  if (/(?:^|\/)storage\/projects\//i.test(normalized) || /(?:^|\/)server\/storage\//i.test(normalized)) return false;
+  if (
+    /(^|\/)(node_modules|coverage|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(
+      normalized,
+    )
+  )
+    return false;
+  if (
+    /(?:^|\/)storage\/projects\//i.test(normalized) ||
+    /(?:^|\/)server\/storage\//i.test(normalized)
+  )
+    return false;
   if (/(^|\/)(examples?|demos?|samples?)\//i.test(normalized)) return false;
   if (normalized.includes(".config.") || base.includes("config")) return false;
-  if (/\.d\.ts$/i.test(normalized) || /(^|\/)(types?|interfaces?)\.[cm]?[jt]s$/i.test(normalized) || /\.types\.[cm]?[jt]s$/i.test(normalized) || /(^|\/)types\//i.test(normalized)) return false;
+  if (
+    /\.d\.ts$/i.test(normalized) ||
+    /(^|\/)(types?|interfaces?)\.[cm]?[jt]s$/i.test(normalized) ||
+    /\.types\.[cm]?[jt]s$/i.test(normalized) ||
+    /(^|\/)types\//i.test(normalized)
+  )
+    return false;
   if (
     /(^|\/)presets\/tier[0-9]+[a-z0-9_-]*\.[cm]?[jt]s$/i.test(normalized) ||
     /(^|\/)presets\/(data|catalogs?|fixtures?|definitions?)\//i.test(normalized)
-  ) return false;
-  if (/(^|\/)(client|frontend|components|views|pages|hooks|context|contexts|i18n|locales?|translations?)\//i.test(normalized)) return false;
+  )
+    return false;
+  if (
+    /(^|\/)(client|frontend|components|views|pages|hooks|context|contexts|i18n|locales?|translations?)\//i.test(
+      normalized,
+    )
+  )
+    return false;
   if (/\.[jt]sx$/i.test(normalized) || /^use[A-Z]/.test(rawBase)) return false;
   if (
     /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(normalized) ||
     /\.(route|routes)\.[cm]?[jt]sx?$/i.test(normalized) ||
     /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(normalized) ||
-    /^(?:[a-z0-9_-]+\/)?(?:src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(normalized.replace(/^\.?\//, ""))
-  ) return false;
+    /^(?:[a-z0-9_-]+\/)?(?:src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(
+      normalized.replace(/^\.?\//, ""),
+    )
+  )
+    return false;
 
   return true;
 };
@@ -246,10 +329,19 @@ const isBusinessLogicClientFile = (filePath) => {
 export const sanitizeErrorText = (text = "") => {
   if (!text || typeof text !== "string") return text;
   return text
-    .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]storage[\\/]projects[\\/][^ \t\r\n'\"()]+(?:[\\/][^ \t\r\n'\"()]+)*?[\\/]repo[\\/]/gi, "")
+    .replace(
+      /(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]storage[\\/]projects[\\/][^ \t\r\n'\"()]+(?:[\\/][^ \t\r\n'\"()]+)*?[\\/]repo[\\/]/gi,
+      "",
+    )
     .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/repo\//gi, "")
-    .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/snapshots\/[^\s'\"()]+\/coverage\//gi, "")
-    .replace(/(?:\/app)?\/storage\/projects\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*\/?/gi, "")
+    .replace(
+      /(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/snapshots\/[^\s'\"()]+\/coverage\//gi,
+      "",
+    )
+    .replace(
+      /(?:\/app)?\/storage\/projects\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*\/?/gi,
+      "",
+    )
     .replace(/\/app\/storage\/?/gi, "");
 };
 
@@ -342,7 +434,9 @@ export function PaginationControl({
     <div
       style={{
         padding: "10px 18px",
-        borderTop: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)",
+        borderTop: isLight
+          ? "1px solid #e2e8f0"
+          : "1px solid rgba(255, 255, 255, 0.06)",
         background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
         display: "flex",
         alignItems: "center",
@@ -352,12 +446,23 @@ export function PaginationControl({
         fontSize: 12,
       }}
     >
-      <div style={{ color: isLight ? "#64748b" : "#94a3b8", display: "flex", alignItems: "center", gap: 5 }}>
+      <div
+        style={{
+          color: isLight ? "#64748b" : "#94a3b8",
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+        }}
+      >
         <span>Showing</span>
-        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9" }}>{startItem} – {endItem}</b>
+        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9" }}>
+          {startItem} – {endItem}
+        </b>
         <span>of</span>
         <b style={{ color: isLight ? "#0f172a" : "#f1f5f9" }}>{totalItems}</b>
-        <span>{itemLabel} (Page {currentPage} / {totalPages})</span>
+        <span>
+          {itemLabel} (Page {currentPage} / {totalPages})
+        </span>
       </div>
 
       {totalPages > 1 && (
@@ -369,8 +474,17 @@ export function PaginationControl({
               padding: "3px 8px",
               borderRadius: 5,
               background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-              color: currentPage === 1 ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              border: isLight
+                ? "1px solid #cbd5e1"
+                : "1px solid rgba(255, 255, 255, 0.1)",
+              color:
+                currentPage === 1
+                  ? isLight
+                    ? "#cbd5e1"
+                    : "#475569"
+                  : isLight
+                    ? "#334155"
+                    : "#e2e8f0",
               cursor: currentPage === 1 ? "not-allowed" : "pointer",
               fontSize: 11,
               fontWeight: 600,
@@ -387,8 +501,17 @@ export function PaginationControl({
               padding: "3px 9px",
               borderRadius: 5,
               background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-              color: currentPage === 1 ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              border: isLight
+                ? "1px solid #cbd5e1"
+                : "1px solid rgba(255, 255, 255, 0.1)",
+              color:
+                currentPage === 1
+                  ? isLight
+                    ? "#cbd5e1"
+                    : "#475569"
+                  : isLight
+                    ? "#334155"
+                    : "#e2e8f0",
               cursor: currentPage === 1 ? "not-allowed" : "pointer",
               fontSize: 11,
               fontWeight: 600,
@@ -401,7 +524,13 @@ export function PaginationControl({
           {pages.map((p, idx) => {
             if (p === "...") {
               return (
-                <span key={`dots-${idx}`} style={{ color: isLight ? "#94a3b8" : "#64748b", padding: "0 2px" }}>
+                <span
+                  key={`dots-${idx}`}
+                  style={{
+                    color: isLight ? "#94a3b8" : "#64748b",
+                    padding: "0 2px",
+                  }}
+                >
                   ...
                 </span>
               );
@@ -417,14 +546,26 @@ export function PaginationControl({
                   padding: "0 6px",
                   borderRadius: 5,
                   background: isCurrent
-                    ? (isLight ? "#7c3aed" : "rgba(124, 58, 237, 0.3)")
-                    : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)"),
+                    ? isLight
+                      ? "#7c3aed"
+                      : "rgba(124, 58, 237, 0.3)"
+                    : isLight
+                      ? "#ffffff"
+                      : "rgba(255, 255, 255, 0.05)",
                   border: isCurrent
-                    ? (isLight ? "1px solid #7c3aed" : "1px solid rgba(192, 132, 252, 0.5)")
-                    : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                    ? isLight
+                      ? "1px solid #7c3aed"
+                      : "1px solid rgba(192, 132, 252, 0.5)"
+                    : isLight
+                      ? "1px solid #cbd5e1"
+                      : "1px solid rgba(255, 255, 255, 0.1)",
                   color: isCurrent
-                    ? (isLight ? "#ffffff" : "#c084fc")
-                    : (isLight ? "#334155" : "#e2e8f0"),
+                    ? isLight
+                      ? "#ffffff"
+                      : "#c084fc"
+                    : isLight
+                      ? "#334155"
+                      : "#e2e8f0",
                   fontWeight: isCurrent ? 700 : 500,
                   fontSize: 11.5,
                   cursor: "pointer",
@@ -443,8 +584,17 @@ export function PaginationControl({
               padding: "3px 9px",
               borderRadius: 5,
               background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-              color: currentPage === totalPages ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              border: isLight
+                ? "1px solid #cbd5e1"
+                : "1px solid rgba(255, 255, 255, 0.1)",
+              color:
+                currentPage === totalPages
+                  ? isLight
+                    ? "#cbd5e1"
+                    : "#475569"
+                  : isLight
+                    ? "#334155"
+                    : "#e2e8f0",
               cursor: currentPage === totalPages ? "not-allowed" : "pointer",
               fontSize: 11,
               fontWeight: 600,
@@ -461,8 +611,17 @@ export function PaginationControl({
               padding: "3px 8px",
               borderRadius: 5,
               background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
-              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-              color: currentPage === totalPages ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              border: isLight
+                ? "1px solid #cbd5e1"
+                : "1px solid rgba(255, 255, 255, 0.1)",
+              color:
+                currentPage === totalPages
+                  ? isLight
+                    ? "#cbd5e1"
+                    : "#475569"
+                  : isLight
+                    ? "#334155"
+                    : "#e2e8f0",
               cursor: currentPage === totalPages ? "not-allowed" : "pointer",
               fontSize: 11,
               fontWeight: 600,
@@ -477,59 +636,86 @@ export function PaginationControl({
   );
 }
 
+const activeJobSubscriptions = new Map();
+
 async function waitForJob(jobId, onProgress) {
-  let lastProgress = 8;
-  let consecutiveErrors = 0;
-  // Allow up to 15 minutes (600 attempts * 1500ms = 900s) for large test suites to complete
-  for (let attempt = 0; attempt < 600; attempt += 1) {
-    let job = null;
-    try {
-      const response = await getJobDetailApi(jobId);
-      job = response?.job;
-      consecutiveErrors = 0;
-    } catch (pollErr) {
-      consecutiveErrors += 1;
-      if (consecutiveErrors > 15) {
-        throw new Error(pollErr?.message || "Failed to communicate with job service.");
-      }
-    }
+  return new Promise((resolve, reject) => {
+    const jId = String(jobId);
+    let pollTimer = null;
+    let isSettled = false;
 
-    if (job) {
-      const prog = typeof job.progress === "number" ? Math.max(lastProgress, job.progress) : lastProgress;
-      lastProgress = prog;
-      if (onProgress) {
-        onProgress(prog, job.status);
-      }
-    }
+    const cleanup = () => {
+      isSettled = true;
+      if (pollTimer) clearInterval(pollTimer);
+      activeJobSubscriptions.delete(jId);
+    };
 
-    if (job?.status === "SUCCESS") {
+    const handleSuccess = (val) => {
+      if (isSettled) return;
+      cleanup();
       if (onProgress) onProgress(100, "SUCCESS");
-      return;
-    }
+      resolve(val);
+    };
 
-    if (["FAILED", "CANCELED"].includes(job?.status)) {
-      throw new Error(
-        job?.errorMessage ||
-        job?.error ||
-        `${job.status}: coverage analysis failed.`,
-      );
-    }
+    const handleFailure = (err) => {
+      if (isSettled) return;
+      cleanup();
+      reject(err instanceof Error ? err : new Error(err || "Job failed"));
+    };
 
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // Register listener for instantaneous Socket.IO resolution
+    activeJobSubscriptions.set(jId, {
+      onProgress: (prog, status) => {
+        if (!isSettled && onProgress) onProgress(prog, status);
+      },
+      resolve: handleSuccess,
+      reject: handleFailure,
+    });
+
+    // Low-frequency safety heartbeat (every 10s instead of 1.5s spam)
+    // Guarantees termination if WebSocket disconnects, reducing HTTP queries by >85%
+    pollTimer = setInterval(async () => {
+      if (isSettled) return;
+      try {
+        const response = await getJobDetailApi(jobId, { summary: true });
+        const job = response?.job;
+        if (!job) return;
+
+        if (job.status === "SUCCESS") {
+          handleSuccess(job);
+        } else if (["FAILED", "CANCELED"].includes(job.status)) {
+          handleFailure(job.errorMessage || job.error || `${job.status}: job failed`);
+        } else if (typeof job.progress === "number" && onProgress) {
+          onProgress(job.progress, job.status);
+        }
+      } catch {
+        // Network hiccup; retry on next heartbeat
+      }
+    }, 10000);
+  });
+}
+
+async function waitForQueueJobResult(jobId, onProgress) {
+  await waitForJob(jobId, onProgress);
+  const detail = await getJobDetailApi(jobId);
+  const raw = detail?.job?.result ?? detail?.job?.resultJson;
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
   }
-
-  try {
-    await cancelJobApi(jobId);
-  } catch (_) { }
-  throw new Error("Coverage analysis timed out after 15 minutes. The job was automatically paused/canceled to unblock the project.");
+  return raw;
 }
 
 export const invalidateDashboardCache = (snapshotId) => {
   invalidateCoverageQueries(snapshotId);
 };
 
-
 export default function CoverageTypeDashboard({
+  onChatContextChange,
   type,
   snapshotId,
   projectId,
@@ -551,7 +737,10 @@ export default function CoverageTypeDashboard({
   const [runningStatus, setRunningStatus] = useState("");
 
   const getExpectedWorkspaceRevision = () => {
-    if (typeof treeVersion !== "undefined" && treeVersion?.expectedWorkspaceRevision != null) {
+    if (
+      typeof treeVersion !== "undefined" &&
+      treeVersion?.expectedWorkspaceRevision != null
+    ) {
       return Number(treeVersion.expectedWorkspaceRevision) || 0;
     }
     return 0;
@@ -565,35 +754,53 @@ export default function CoverageTypeDashboard({
     refetch: refetchCoverage,
   } = useCoverageDashboard(snapshotId, type, projectId);
 
-  const summary = type === "system" && systemSummary
-    ? {
-      coverage: {
-        statements: 0,
-        branches: 0,
-        functions: 0,
-        lines: systemSummary.featureCoverage || 0,
-      },
-      rawTotals: null,
-      ...systemSummary,
-    }
-    : (coverageData?.summary || null);
-  const files = (type === "system" && systemSummary?.files?.length)
-    ? systemSummary.files
-    : (coverageData?.files || []);
-  const executions = (type === "system" && systemSummary?.latestRun)
-    ? {
-      playwright: systemSummary.latestRun.type === "PLAYWRIGHT" ? systemSummary.latestRun : null,
-      cypress: systemSummary.latestRun.type === "CYPRESS" ? systemSummary.latestRun : null,
-    }
-    : (coverageData?.executions || {});
+  const summary =
+    type === "system" && systemSummary
+      ? {
+          coverage: {
+            statements: 0,
+            branches: 0,
+            functions: 0,
+            lines: systemSummary.featureCoverage || 0,
+          },
+          rawTotals: null,
+          ...systemSummary,
+        }
+      : coverageData?.summary || null;
+  const files =
+    type === "system" && systemSummary?.files?.length
+      ? systemSummary.files
+      : coverageData?.files || [];
+  const executions =
+    type === "system" && systemSummary?.latestRun
+      ? {
+          playwright:
+            systemSummary.latestRun.type === "PLAYWRIGHT"
+              ? systemSummary.latestRun
+              : null,
+          cypress:
+            systemSummary.latestRun.type === "CYPRESS"
+              ? systemSummary.latestRun
+              : null,
+        }
+      : coverageData?.executions || {};
   const frameworks = coverageData?.frameworks || null;
   const functionsList = coverageData?.functionsList || [];
   const testSuites = coverageData?.testSuites || [];
 
   // Instant render: non-blocking loading only if cold fetch has zero cached data
-  const loading = (type === "system" ? !systemSummary : !coverageData) && isCoverageQueryLoading && Boolean(snapshotId);
-  const loadingFunctions = !coverageData?.functionsList?.length && isCoverageQueryLoading && type === "unit";
-  const loadingTestSuites = !coverageData?.testSuites?.length && isCoverageQueryLoading && type === "unit";
+  const loading =
+    (type === "system" ? !systemSummary : !coverageData) &&
+    isCoverageQueryLoading &&
+    Boolean(snapshotId);
+  const loadingFunctions =
+    !coverageData?.functionsList?.length &&
+    isCoverageQueryLoading &&
+    type === "unit";
+  const loadingTestSuites =
+    !coverageData?.testSuites?.length &&
+    isCoverageQueryLoading &&
+    type === "unit";
 
   const {
     processes,
@@ -623,6 +830,13 @@ export default function CoverageTypeDashboard({
   const [showAiDetails, setShowAiDetails] = useState(false);
   const isGenerating = generating || internalGenerating;
   const activeJobIdRef = useRef(null);
+  const pendingRunOptionsRef = useRef(null);
+
+  const applyWithEnvironment = useCallback(async (payload) => {
+    const requestId = payload.requestId || crypto.randomUUID();
+    const response = await applyUnitTestSuggestion(snapshotId, { ...payload, requestId });
+    return response;
+  }, [snapshotId]);
 
   // Suggest TestCase Modal configuration
   const [suggestModalConfig, setSuggestModalConfig] = useState({
@@ -632,16 +846,19 @@ export default function CoverageTypeDashboard({
     isBulk: false,
   });
 
-  const handleOpenSuggestModal = useCallback((filePath = null, functionName = null, isBulk = false) => {
-    setSuggestModalConfig({
-      isOpen: true,
-      filePath,
-      functionName,
-      isBulk: Boolean(isBulk),
-    });
-  }, []);
+  const handleOpenSuggestModal = useCallback(
+    (filePath = null, functionName = null, isBulk = false) => {
+      setSuggestModalConfig({
+        isOpen: true,
+        filePath,
+        functionName,
+        isBulk: Boolean(isBulk),
+      });
+    },
+    [],
+  );
 
-  // Socket.IO realtime progress listener
+  // Socket.IO realtime progress listener (F7)
   useEffect(() => {
     let userId = null;
     let socketToken = localStorage.getItem("token");
@@ -652,89 +869,163 @@ export default function CoverageTypeDashboard({
         userId = user?.id;
         socketToken ||= user?.token;
       }
-    } catch { /* Polling continues when stored user data is unavailable. */ }
+    } catch {
+      /* Polling continues when stored user data is unavailable. */
+    }
 
-    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+    const SOCKET_URL =
+      import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
     const socket = io(SOCKET_URL, {
-      auth: { token: socketToken },
+      auth: socketAuth,
       withCredentials: true,
       autoConnect: true,
       reconnectionAttempts: 5,
     });
+    attachSocketAuthRecovery(socket);
 
     socket.on("connect", () => {
       if (userId) socket.emit("subscribe_notifications", userId);
+      if (projectId) socket.emit("project:subscribe", { projectId });
     });
 
-    const onJobProgress = (data) => {
-      if (data && activeJobIdRef.current && data.jobId === activeJobIdRef.current) {
-        if (data.stage) {
-          setRunningStatus(data.stage);
+    if (socket.connected && projectId) {
+      socket.emit("project:subscribe", { projectId });
+    }
+
+    // Listen to real-time job progress emitted by dashboardEvents.service.js
+    const onDashboardJobProgress = (data) => {
+      if (!data) return;
+      const jId = String(data.jobId || "");
+      if (data.stage) {
+        setRunningStatus(data.stage);
+      }
+      if (typeof data.progress === "number") {
+        setRunProgress(data.progress);
+        if (typeof updateAnalysisProgress === "function") {
+          try {
+            updateAnalysisProgress(data.progress, data.stage || "Running analysis...");
+          } catch (_) {}
         }
+      }
+
+      // Dispatch to active job promise listener
+      const sub = activeJobSubscriptions.get(jId);
+      if (sub?.onProgress && typeof data.progress === "number") {
+        sub.onProgress(data.progress, data.stage || data.status);
+      }
+      if (sub?.onStage && data.stage) {
+        sub.onStage(data.stage);
       }
     };
 
-    socket.on("job:progress", onJobProgress);
+    // Listen to real-time run status emitted by dashboardEvents.service.js
+    const onDashboardRunStatus = (data) => {
+      if (!data) return;
+      const jId = String(data.jobId || "");
+      const status = data.status;
+      const sub = activeJobSubscriptions.get(jId);
+
+      if (status === "RUNNING") {
+        if (data.stage) setRunningStatus(data.stage);
+      } else if (status === "SUCCESS") {
+        setRunningStatus("");
+        setRunProgress(100);
+        if (activeJobIdRef.current && String(activeJobIdRef.current) === jId) {
+          activeJobIdRef.current = null;
+        }
+        sub?.resolve?.(data);
+      } else if (status === "FAILED" || status === "CANCELED") {
+        setRunningStatus("");
+        if (activeJobIdRef.current && String(activeJobIdRef.current) === jId) {
+          activeJobIdRef.current = null;
+        }
+        sub?.reject?.(new Error(data.errorMessage || data.error || `${status}: test run failed`));
+      }
+    };
+
+    // Listen to dashboard metrics update notifications
+    const onDashboardMetricsUpdated = (data) => {
+      if (data && (!data.snapshotId || data.snapshotId === snapshotId)) {
+        invalidateCoverageQueries(snapshotId);
+      }
+    };
+
+    const onUnitTestApplyProgress = (data) => {
+      if (data && (!data.snapshotId || data.snapshotId === snapshotId)) {
+        if (data.step) {
+          setBulkApplyStep(data.step);
+        }
+        if (data.progressPct !== undefined && data.progressPct !== null) {
+          setBulkApplyProgress(data.progressPct);
+        }
+        if (data.phase) {
+          setBulkApplyPhase(data.phase);
+        }
+        updateBulkApplyStep({
+          step: data.step,
+          stats: data.stats || (data.totalCount ? `${data.completedCount || 0}/${data.totalCount}` : undefined),
+          progressPct: data.progressPct,
+          phase: data.phase,
+          completedCount: data.completedCount,
+          totalCount: data.totalCount,
+          currentFile: data.currentFile || "",
+        });
+      }
+    };
+
+    const onUnitTestSuggestProgress = (data) => {
+      if (data && (data.snapshotId === snapshotId || data.projectId === projectId)) {
+        if (data.step) {
+          setBulkSuggestMessage(data.step);
+        }
+        updateSuggestionProgress({
+          snapshotId,
+          completedFiles: data.completedCount || 0,
+          totalFiles: data.totalCount || 0,
+          currentFile: data.currentFile || "",
+          filePath: data.currentFile || "",
+          message: data.step || `Processed ${data.completedCount || 0}/${data.totalCount || 0} source files.`
+        });
+      }
+    };
+
+    socket.on("dashboard:job-progress", onDashboardJobProgress);
+    socket.on("dashboard:run-status", onDashboardRunStatus);
+    socket.on("dashboard:metrics-updated", onDashboardMetricsUpdated);
+    socket.on("job:progress", onDashboardJobProgress);
+    socket.on("unit_test:apply_progress", onUnitTestApplyProgress);
+    socket.on("unit_test:suggest_progress", onUnitTestSuggestProgress);
 
     return () => {
-      socket.off("job:progress", onJobProgress);
+      if (projectId && socket.connected) {
+        socket.emit("project:unsubscribe", { projectId });
+      }
+      socket.off("dashboard:job-progress", onDashboardJobProgress);
+      socket.off("dashboard:run-status", onDashboardRunStatus);
+      socket.off("dashboard:metrics-updated", onDashboardMetricsUpdated);
+      socket.off("job:progress", onDashboardJobProgress);
+      socket.off("unit_test:apply_progress", onUnitTestApplyProgress);
+      socket.off("unit_test:suggest_progress", onUnitTestSuggestProgress);
       socket.disconnect();
     };
-  }, []);
+  }, [snapshotId, projectId, updateBulkApplyStep, updateAnalysisProgress]);
 
   const waitForJobWithProgress = useCallback(async (jobId, defaultInitial = "Starting AUT server...") => {
     activeJobIdRef.current = jobId;
     setRunningStatus(defaultInitial);
-    for (let attempt = 0; attempt < 600; attempt += 1) {
-      const response = await getJobDetailApi(jobId);
-      const job = response?.job;
-      if (job?.status === "SUCCESS") {
-        setRunningStatus("");
-        activeJobIdRef.current = null;
-        return;
-      }
-      if (["FAILED", "CANCELED"].includes(job?.status)) {
-        setRunningStatus("");
-        activeJobIdRef.current = null;
-        throw new Error(
-          job?.errorMessage ||
-          job?.error ||
-          `${job.status}: task failed.`,
-        );
-      }
-
-      // Live stage extraction from logs fallback
-      if (job?.logs && job.logs.length > 0) {
-        const latestLogs = [...job.logs].reverse();
-        for (const l of latestLogs) {
-          const msg = l.message || "";
-          if (/^(Inspecting|Generating system tests|Repairing generated tests|Verifying generated tests|Confirming generated tests)/.test(msg)) {
-            setRunningStatus(msg);
-            break;
-          } else if (msg.includes("Starting AUT server")) {
-            setRunningStatus("Starting AUT server...");
-            break;
-          } else if (msg.includes("Executing Playwright") || msg.includes("Selected playwright") || msg.includes("Run command")) {
-            setRunningStatus("Executing Playwright tests...");
-            break;
-          } else if (msg.includes("Executing Cypress") || msg.includes("Selected cypress")) {
-            setRunningStatus("Executing Cypress tests...");
-            break;
-          } else if (msg.includes("Parsing results") || msg.includes("Track 1") || msg.includes("Track 2")) {
-            setRunningStatus("Parsing results...");
-            break;
-          } else if (msg.includes("Dry-Run")) {
-            setRunningStatus("Verifying test syntax in isolated Dry-Run...");
-            break;
-          }
+    try {
+      await waitForJob(jobId, (prog, stage) => {
+        if (stage && typeof stage === "string") {
+          setRunningStatus(stage);
         }
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (typeof prog === "number") {
+          setRunProgress(prog);
+        }
+      });
+    } finally {
+      setRunningStatus("");
+      activeJobIdRef.current = null;
     }
-    activeJobIdRef.current = null;
-    setRunningStatus("");
-    throw new Error("Analysis timed out. Open Job Queue to inspect logs.");
   }, []);
 
   const handleGenerateAiSystemTest = async () => {
@@ -746,10 +1037,17 @@ export default function CoverageTypeDashboard({
     setInternalGenerating(true);
     setRunningStatus("Generating Playwright E2E tests with AI...");
     try {
-      const response = await generateSystemTestApi(projectId, snapshotId, executionMode);
+      const response = await generateSystemTestApi(
+        projectId,
+        snapshotId,
+        executionMode,
+      );
       const jobId = response?.data?.job?.id || response?.job?.id;
       if (jobId) {
-        await waitForJobWithProgress(jobId, "Generating Playwright E2E tests with AI...");
+        await waitForJobWithProgress(
+          jobId,
+          "Generating Playwright E2E tests with AI...",
+        );
       }
       const updatedSys = await load();
       if (updatedSys?.latestAiTest?.status === "VERIFIED") {
@@ -784,14 +1082,13 @@ export default function CoverageTypeDashboard({
   };
 
   const [showJobQueueModal, setShowJobQueueModal] = useState(false);
+  const [dependencyInstallError, setDependencyInstallError] = useState("");
+  const [dependencyInstallLogs, setDependencyInstallLogs] = useState([]);
 
-  // Mode view for Unit test: "traceability" (default for unit) | "testcases" | "visualization" | "all" | "statements" | "branches" | "functions"
+  // Mode view for Unit test: "traceability" (default for unit) | "testcases" | "versions" | "all" | "statements" | "branches" | "functions"
   const [activeMetricView, setActiveMetricView] = useState(
     type === "unit" ? "traceability" : "all",
   );
-
-  // View mode for Unit Testcases: "table" | "visualization"
-  const [testCaseViewMode, setTestCaseViewMode] = useState("table");
 
   // View mode for Function coverage
   const [functionViewMode, setFunctionViewMode] = useState("map"); // "map" | "table"
@@ -804,8 +1101,20 @@ export default function CoverageTypeDashboard({
   // In-place file viewer state to view source and test files directly inside Unit Test without redirecting
   const [inPlaceOpenFileTarget, setInPlaceOpenFileTarget] = useState(null);
 
+  // Interactive Unit Test Execution Simulation Studio target state
+  const [simulationTarget, setSimulationTarget] = useState(null);
+
+  // Unit Test Export Report Modal state
+  const [isUnitTestExportOpen, setIsUnitTestExportOpen] = useState(false);
+
   const handleOpenFileInPlace = useCallback(
-    (filePath, targetLine = null, functionName = null, endLine = null, testInfo = null) => {
+    (
+      filePath,
+      targetLine = null,
+      functionName = null,
+      endLine = null,
+      testInfo = null,
+    ) => {
       if (!filePath) return;
       setInPlaceOpenFileTarget({
         filePath,
@@ -827,7 +1136,9 @@ export default function CoverageTypeDashboard({
   const [inlineSuggestions, setInlineSuggestions] = useState(() => {
     return (snapshotId ? getSuggestions(snapshotId) : {}) || {};
   });
+  const [hasSuggestJobCompleted, setHasSuggestJobCompleted] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState({});
+  const [suggestionErrors, setSuggestionErrors] = useState({});
   const [applyingSuggestionIds, setApplyingSuggestionIds] = useState(new Set());
   const [applyResultsByFile, setApplyResultsByFile] = useState({});
   const [applyProgressSteps, setApplyProgressSteps] = useState({});
@@ -848,6 +1159,7 @@ export default function CoverageTypeDashboard({
   useEffect(() => {
     if (snapshotId && snapshotId !== lastRestoredSnapshotRef.current) {
       lastRestoredSnapshotRef.current = snapshotId;
+      setSuggestionErrors({});
       const cached = getSuggestions(snapshotId);
       if (cached && Object.keys(cached).length > 0) {
         setInlineSuggestions(cached);
@@ -869,9 +1181,248 @@ export default function CoverageTypeDashboard({
     }
   }, [snapshotId, inlineSuggestions, saveSuggestions]);
 
+  // Sync cached suggestions when RunningProcessContext finishes a background UNIT_TEST_SUGGEST job
+  useEffect(() => {
+    if (
+      type === "unit" &&
+      snapshotId &&
+      processes.suggestion.snapshotId === snapshotId &&
+      !processes.suggestion.isGenerating &&
+      processes.suggestion.completedAt
+    ) {
+      const cached = getSuggestions(snapshotId);
+      if (cached && Object.keys(cached).length > 0) {
+        setInlineSuggestions((prev) => ({ ...prev, ...cached }));
+      }
+      setHasSuggestJobCompleted(true);
+      setIsBulkSuggesting(false);
+    }
+  }, [
+    type,
+    snapshotId,
+    processes.suggestion.snapshotId,
+    processes.suggestion.isGenerating,
+    processes.suggestion.completedAt,
+    getSuggestions,
+  ]);
+
+  // Hydrate or resume UNIT_TEST_SUGGEST / UNIT_TEST_APPLY jobs from server queue when switching projects
+  useEffect(() => {
+    if (type !== "unit" || !projectId || !snapshotId) return;
+    setHasSuggestJobCompleted(false);
+    let cancelled = false;
+
+    const hydrateSuggestionsFromResult = (data) => {
+      if (!data || !Array.isArray(data.suggestions)) return;
+      const grouped = {};
+      for (let idx = 0; idx < data.suggestions.length; idx++) {
+        const sug = data.suggestions[idx];
+        const key = sug.sourceFile || sug.filePath || (Array.isArray(sug.sourceFiles) ? sug.sourceFiles[0] : null);
+        if (!key) continue;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push({
+          ...sug,
+          suggestionId: sug.suggestionId || sug.id || `${key}-sug-${grouped[key].length + 1}`,
+        });
+      }
+      if (Object.keys(grouped).length > 0) {
+        setInlineSuggestions((prev) => ({ ...prev, ...grouped }));
+      }
+      if (Array.isArray(data.failedFiles) && data.failedFiles.length > 0) {
+        const failMap = {};
+        for (const f of data.failedFiles) {
+          if (f?.filePath) failMap[f.filePath] = f.message || "Suggestion failed";
+        }
+        setSuggestionErrors((prev) => ({ ...prev, ...failMap }));
+      }
+    };
+
+    const syncFromProjectJobs = async () => {
+      try {
+        const res = await getProjectJobsApi(projectId);
+        if (cancelled) return;
+        const jobs = Array.isArray(res?.jobs) ? res.jobs : [];
+        const snapshotJobs = jobs.filter((j) => j.snapshotId === snapshotId);
+
+        const activeRunJob = snapshotJobs.find(
+          (j) =>
+            ["RUN_TESTS", "ANALYSIS", "RUN_VITEST_TESTS", "VITEST_COVERAGE"].includes(j.type) &&
+            ["QUEUED", "RUNNING"].includes(j.status)
+        );
+        if (activeRunJob && !activeJobIdRef.current) {
+          activeJobIdRef.current = activeRunJob.id;
+          setRunning(true);
+          setRunProgress(typeof activeRunJob.progress === "number" ? activeRunJob.progress : 10);
+          setRunStep("Running unit test suite & collecting coverage...");
+          setRunningStatus("Running analysis...");
+          startAnalysis({
+            snapshotId,
+            projectId,
+            type: "unit",
+            jobId: activeRunJob.id,
+            progress: activeRunJob.progress,
+          });
+          void (async () => {
+            try {
+              await waitForJob(activeRunJob.id, (prog) => {
+                if (cancelled) return;
+                setRunProgress(prog);
+                updateAnalysisProgress(prog, "Running unit test suite & collecting coverage...");
+              });
+              if (!cancelled) {
+                completeAnalysis(true);
+                invalidateCoverageQueries(snapshotId);
+                await refetchCoverage();
+              }
+            } catch (runErr) {
+              if (!cancelled) {
+                completeAnalysis(false, runErr?.message || "Test run failed.");
+              }
+            } finally {
+              if (activeJobIdRef.current === activeRunJob.id) {
+                activeJobIdRef.current = null;
+              }
+              if (!cancelled) {
+                setRunning(false);
+                setRunningStatus("");
+                setRunProgress(0);
+                setRunStep("");
+              }
+            }
+          })();
+        }
+
+        const latestSuggest = snapshotJobs.find((j) => j.type === "UNIT_TEST_SUGGEST");
+        if (latestSuggest) {
+          if (["QUEUED", "RUNNING"].includes(latestSuggest.status)) {
+            let payload = {};
+            try { payload = latestSuggest.payloadJson ? JSON.parse(latestSuggest.payloadJson) : {}; } catch (_) {}
+            const totalFiles = Array.isArray(payload.filePaths) ? payload.filePaths.length : 1;
+            setIsBulkSuggesting(true);
+            setBulkSuggestMessage("Resuming queued test suggestion session...");
+            startSuggestion({
+              snapshotId,
+              projectId,
+              jobId: latestSuggest.id,
+              totalFiles,
+              initialMessage: "Resuming queued test suggestion session...",
+            });
+            try {
+              const result = await waitForQueueJobResult(latestSuggest.id);
+              if (!cancelled) {
+                hydrateSuggestionsFromResult(result);
+                setHasSuggestJobCompleted(true);
+                completeSuggestion("Generated inline test suggestions.");
+              }
+            } catch (err) {
+              if (!cancelled) {
+                setBulkSuggestMessage(`Error generating testcases: ${err.message}`);
+                completeSuggestion(`Error: ${err.message}`);
+              }
+            } finally {
+              if (!cancelled) setIsBulkSuggesting(false);
+            }
+          } else if (latestSuggest.status === "SUCCESS") {
+            setHasSuggestJobCompleted(true);
+            const cachedLocal = getSuggestions(snapshotId);
+            if (cachedLocal && Object.keys(cachedLocal).length > 0) {
+              setInlineSuggestions((prev) => ({ ...prev, ...cachedLocal }));
+            } else if (latestSuggest.resultJson) {
+              try {
+                const parsed = JSON.parse(latestSuggest.resultJson);
+                hydrateSuggestionsFromResult(parsed);
+              } catch (_) {}
+            } else {
+              try {
+                const detail = await getJobDetailApi(latestSuggest.id);
+                const raw = detail?.job?.result ?? detail?.job?.resultJson;
+                const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+                if (!cancelled && parsed) {
+                  hydrateSuggestionsFromResult(parsed);
+                }
+              } catch (_) {}
+            }
+          }
+        }
+
+        const latestApply = snapshotJobs.find((j) => j.type === "UNIT_TEST_APPLY");
+        if (latestApply && !cancelled) {
+          let applyPayload = {};
+          try { applyPayload = latestApply.payloadJson ? JSON.parse(latestApply.payloadJson) : {}; } catch (_) {}
+          const sugsList = Array.isArray(applyPayload.suggestions)
+            ? applyPayload.suggestions
+            : applyPayload.suggestion
+            ? [applyPayload.suggestion]
+            : [];
+          const ids = new Set(sugsList.map((s) => s?.suggestionId || s?.id).filter(Boolean));
+
+          if (["QUEUED", "RUNNING"].includes(latestApply.status)) {
+            setIsBulkApplying(true);
+            setBulkApplyStep("Resuming queued apply & verification job...");
+            setApplyingSuggestionIds((prev) => new Set([...prev, ...ids]));
+            startBulkApply({
+              snapshotId,
+              projectId,
+              jobId: latestApply.id,
+              totalFiles: sugsList.length,
+              totalCount: sugsList.length,
+              totalSugs: sugsList.length,
+              step: "Resuming queued apply & verification job...",
+              phase: "verify",
+            });
+            try {
+              const result = await waitForQueueJobResult(latestApply.id);
+              if (!cancelled) {
+                setInlineSuggestions((prev) => applyBatchResultToSuggestionsMap(prev, ids, result));
+                const summary = summarizeApplyBatchResult(result, sugsList.length);
+                setBulkIsolatedDefects(summary.isolatedDefects);
+                completeBulkApply({ ...result, message: summary.message });
+                invalidateCoverageQueries(snapshotId);
+                await refetchCoverage();
+              }
+            } catch (err) {
+              if (!cancelled) {
+                completeBulkApply({ success: false, error: err.message });
+              }
+            } finally {
+              if (!cancelled) {
+                setIsBulkApplying(false);
+                setApplyingSuggestionIds((prev) => {
+                  const next = new Set(prev);
+                  ids.forEach((id) => next.delete(id));
+                  return next;
+                });
+              }
+            }
+          } else if (latestApply.status === "SUCCESS" && latestApply.resultJson && ids.size > 0) {
+            try {
+              const parsed = JSON.parse(latestApply.resultJson);
+              setInlineSuggestions((prev) => {
+                const hasPending = Object.values(prev || {})
+                  .flat()
+                  .some((s) => ids.has(s?.suggestionId || s?.id) && ["GENERATED", "APPLYING"].includes(s?.status));
+                return hasPending ? applyBatchResultToSuggestionsMap(prev, ids, parsed) : prev;
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (err) {
+        console.warn("[CoverageTypeDashboard] Failed to hydrate unit test jobs:", err?.message || err);
+      }
+    };
+
+    void syncFromProjectJobs();
+    return () => {
+      cancelled = true;
+    };
+  }, [type, projectId, snapshotId]);
+
   // Sync analysis running state with runningProcessContext
   useEffect(() => {
-    if (processes.analysis.isRunning && processes.analysis.snapshotId === snapshotId) {
+    if (
+      processes.analysis.isRunning &&
+      processes.analysis.snapshotId === snapshotId
+    ) {
       setRunning(true);
       if (typeof processes.analysis.progress === "number") {
         setRunProgress(processes.analysis.progress);
@@ -947,7 +1498,7 @@ export default function CoverageTypeDashboard({
 
   // Trigger inline suggestion generation directly below the source file
   const handleSuggestTestcaseInline = useCallback(
-    async (filePath, autoExpand = true, frameworkOverride = null) => {
+    async (filePath, autoExpand = true, frameworkOverride = null, throwOnError = false) => {
       if (!snapshotId || !filePath) return;
       if (autoExpand) {
         // Auto-expand this file so the suggestion displays immediately inline
@@ -957,28 +1508,49 @@ export default function CoverageTypeDashboard({
       }
 
       setLoadingSuggestions((prev) => ({ ...prev, [filePath]: true }));
-      setInlineSuggestions((prev) => ({ ...prev, [filePath]: [] }));
+      setSuggestionErrors((prev) => ({ ...prev, [filePath]: null }));
       try {
-        const res = await suggestUnitTestcase(snapshotId, filePath, projectId, frameworkOverride || activeFramework);
+        const res = await suggestUnitTestcase(
+          snapshotId,
+          filePath,
+          projectId,
+          frameworkOverride || activeFramework,
+        );
         const data = res?.data || res;
         const sugs = Array.isArray(data?.suggestions)
           ? data.suggestions
           : (data?.suggestion ? [data.suggestion] : (Array.isArray(data) ? data : []));
         const finalSugs = sugs.length > 0 ? sugs : (data ? [data] : []);
+        if (!finalSugs.some(s => s.isFullyCovered || s.status === 'FULLY_COVERED' ||
+          [s.fullUpdatedContent, s.suggestedTestCode, s.generatedCode, s.testCode].some(code => typeof code === 'string' && code.trim()))) {
+          throw new Error(data?.message || data?.validation?.message || 'No test draft was returned for this file. Retry Suggest Tests.');
+        }
 
+        const telemetry = data?.telemetry || finalSugs[0]?.telemetry || null;
         const mappedSugs = finalSugs.map((s, idx) => ({
           ...s,
+          originalGeneratedCode:
+            s.originalGeneratedCode ??
+            s.suggestedTestCode ??
+            s.generatedCode ??
+            "",
           suggestionId: s.suggestionId || `${filePath}-sug-${idx + 1}`,
           status: s.status || "GENERATED",
+          telemetry: s.telemetry || telemetry,
         }));
 
         setInlineSuggestions((prev) => ({
           ...prev,
           [filePath]: mappedSugs,
         }));
+
+        // Notify global quota pill
+        window.dispatchEvent(new CustomEvent("covai:ai-usage-updated"));
         return mappedSugs;
       } catch (err) {
         console.error("Failed to generate test suggestions inline:", err);
+        setSuggestionErrors((prev) => ({ ...prev, [filePath]: err.message || 'Test suggestion failed. Retry this file.' }));
+        if (throwOnError) throw err;
         return [];
       } finally {
         setLoadingSuggestions((prev) => ({ ...prev, [filePath]: false }));
@@ -990,23 +1562,40 @@ export default function CoverageTypeDashboard({
   // Auto-fetch file coverage details ONLY for expanded files (lazy loaded on user click)
   useEffect(() => {
     expandedFiles.forEach((fPath) => {
-      if (!fileCoverageCacheRef.current[fPath]?.data && !fileCoverageCacheRef.current[fPath]?.loading) {
+      if (
+        !fileCoverageCacheRef.current[fPath]?.data &&
+        !fileCoverageCacheRef.current[fPath]?.loading
+      ) {
         ensureFileCoverage(fPath);
       }
     });
   }, [expandedFiles, ensureFileCoverage]);
 
-
   // Apply single suggestion inline, execute runner, update real coverage
   const handleApplySuggestionInline = useCallback(
     async (filePath, suggestion) => {
       if (!snapshotId || !suggestion) return;
+      const cleanFile = cleanDisplayPath(filePath);
       const sugId = suggestion.suggestionId || suggestion.id;
       setApplyingSuggestionIds((prev) => new Set(prev).add(sugId));
+
+      const initialStep = `[1/1] Merging test for ${cleanFile}...`;
       setApplyProgressSteps((prev) => ({
         ...prev,
-        [filePath]: "Writing modified test file to disk...",
+        [filePath]: initialStep,
       }));
+
+      startBulkApply({
+        snapshotId,
+        projectId,
+        totalCount: 1,
+        totalFiles: 1,
+        totalSugs: 1,
+        step: initialStep,
+        stats: "1/1",
+        progressPct: 50,
+        phase: "merge",
+      });
 
       // Status transition: GENERATED/EDITED -> APPLYING
       setInlineSuggestions((prev) => {
@@ -1014,7 +1603,7 @@ export default function CoverageTypeDashboard({
         return {
           ...prev,
           [filePath]: fileSugs.map((s) =>
-            (s.suggestionId === sugId || s.id === sugId)
+            s.suggestionId === sugId || s.id === sugId
               ? { ...s, status: "APPLYING" }
               : s,
           ),
@@ -1022,12 +1611,20 @@ export default function CoverageTypeDashboard({
       });
 
       try {
+        const verifyStep = `[1/1] Running tests & measuring coverage for ${cleanFile}...`;
         setApplyProgressSteps((prev) => ({
           ...prev,
-          [filePath]: "Executing test runner & verifying real new coverage...",
+          [filePath]: verifyStep,
         }));
+        updateBulkApplyStep({
+          step: verifyStep,
+          stats: "1/1",
+          progressPct: 80,
+          phase: "verify",
+          currentFile: filePath,
+        });
 
-        const res = await applyUnitTestSuggestion(snapshotId, {
+        const res = await applyWithEnvironment({
           suggestion: {
             ...suggestion,
             proposalBase: suggestion.proposalBase || {
@@ -1040,7 +1637,12 @@ export default function CoverageTypeDashboard({
 
         const resultData = res?.data || res;
         const testStatus = resultData?.testStatus || resultData?.status;
-        const isPassed = testStatus === "PASSED" || resultData?.success === true;
+        const isPassed =
+          testStatus !== "FAILED" &&
+          resultData?.isPassed !== false &&
+          (testStatus === "PASSED" ||
+            resultData?.isPassed === true ||
+            resultData?.success === true);
 
         const appliedMap = new Map();
         if (Array.isArray(resultData?.appliedSuggestions)) {
@@ -1060,16 +1662,20 @@ export default function CoverageTypeDashboard({
                 return {
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
-                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
+                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)),
                   missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               if (s.suggestionId === sugId || s.id === sugId) {
                 return {
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
                   missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               return s;
@@ -1078,18 +1684,16 @@ export default function CoverageTypeDashboard({
         });
 
         const fileResult = resultData?.perFileResults?.[filePath];
-        const currentFile = selectedFiles.find((f) => f.filePath === filePath);
-        const currentFileCov = currentFile ? {
-          statements: currentFile.stmtsPct || 0,
-          branches: currentFile.branchesPct || 0,
-          functions: currentFile.funcsPct || 0,
-          lines: currentFile.linesPct || 0,
-        } : null;
 
-        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
-        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+        const oldCov =
+          fileResult?.oldCoverage ??
+          resultData?.oldCoverage ??
+          resultData?.previousCoverage ??
+          null;
+        const newCov =
+          fileResult?.newCoverage ?? resultData?.newCoverage ?? null;
 
-        if (oldCov && newCov) {
+        if (oldCov || newCov || !isPassed) {
           setApplyResultsByFile((prev) => ({
             ...prev,
             [filePath]: {
@@ -1102,39 +1706,75 @@ export default function CoverageTypeDashboard({
         }
 
         if (resultData?.perFileResults) {
-          updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
+          updateCoverageFilesData(
+            snapshotId,
+            type,
+            projectId,
+            resultData.perFileResults,
+          );
         }
 
         // Invalidate cached query data and refetch new verified coverage from test runner
         invalidateCoverageQueries(snapshotId);
-        await refetchCoverage();
+        const refreshErrors = await refreshPublishedUnitTests([() => refetchCoverage(), () => loadUnitTestVersions()]);
+        invalidateProjectTree(projectId);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("covai:project-event", {
+              detail: { projectId, type: "file" },
+            })
+          );
+        }
 
         // If backend returned a background analysis job, track it and auto-sync when it completes
         if (resultData?.backgroundJob?.id) {
           const bgJobId = resultData.backgroundJob.id;
-          startAnalysis({ snapshotId, projectId, type: "unit", jobId: bgJobId });
+          startAnalysis({
+            snapshotId,
+            projectId,
+            type: "unit",
+            jobId: bgJobId,
+          });
           (async () => {
             try {
               await waitForJob(bgJobId, (prog) => {
-                updateAnalysisProgress({ progress: prog, message: "Refreshing full project coverage analysis..." });
+                updateAnalysisProgress(
+                  prog,
+                  "Refreshing full project coverage analysis...",
+                );
               });
-              completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
+              completeAnalysis(
+                "✓ Full project unit test analysis completed! All metrics updated.",
+              );
               invalidateCoverageQueries(snapshotId);
-              await refetchCoverage();
-            } catch (_) { }
+              await refreshPublishedUnitTests([() => refetchCoverage(), () => ensureFileCoverage(filePath, true)]);
+            } catch (error) {
+              completeAnalysis(`Coverage refresh failed: ${error.message}`);
+              setBulkSuggestMessage(`Coverage refresh failed: ${error.message}`);
+            }
           })();
         }
 
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
-        await ensureFileCoverage(filePath, true);
+        refreshErrors.push(...await refreshPublishedUnitTests([() => ensureFileCoverage(filePath, true)]));
+
+        const inlineDoneMsg = resultData.status === "NO_CHANGES" ? resultData.postApplyAnalysisError || resultData.message
+          : refreshErrors.length ? `Tests saved for ${cleanFile}. Some views could not refresh. Reload to see the committed results.` : isPassed
+          ? `✓ Successfully applied test for ${cleanFile}! Coverage updated.`
+          : `Applied test for ${cleanFile} (test runner reported some failures).`;
+        completeBulkApply({
+          ...resultData,
+          message: inlineDoneMsg,
+        });
       } catch (err) {
         console.error("Failed to apply suggestion:", err);
+        completeBulkApply({ error: err.message });
         setInlineSuggestions((prev) => {
           const fileSugs = prev[filePath] || [];
           return {
             ...prev,
             [filePath]: fileSugs.map((s) =>
-              (s.suggestionId === sugId || s.id === sugId)
+              s.suggestionId === sugId || s.id === sugId
                 ? { ...s, status: "FAILED", testRunError: err.message }
                 : s,
             ),
@@ -1156,10 +1796,17 @@ export default function CoverageTypeDashboard({
     [snapshotId, projectId, refetchCoverage, ensureFileCoverage],
   );
 
+  const [reviewUndo, setReviewUndo] = useState({});
+  useEffect(() => {
+    setReviewUndo({});
+  }, [snapshotId]);
+
   // Apply all suggestions inline safely without overwriting
   const handleApplyAllInline = useCallback(
-    async (filePath, suggestions) => {
+    async (filePath, suggestions, reviewFile = null, customCode = null) => {
       if (!snapshotId || !suggestions?.length) return;
+      const cleanFile = cleanDisplayPath(filePath);
+      const totalSugs = suggestions.length;
       const sugIds = suggestions.map((s) => s.suggestionId || s.id);
       setApplyingSuggestionIds((prev) => {
         const next = new Set(prev);
@@ -1167,10 +1814,23 @@ export default function CoverageTypeDashboard({
         return next;
       });
 
+      const initialInlineStep = `[1/1] Merging ${totalSugs} tests for ${cleanFile}...`;
       setApplyProgressSteps((prev) => ({
         ...prev,
-        [filePath]: `Applying ${suggestions.length} suggestions safely without conflicts...`,
+        [filePath]: initialInlineStep,
       }));
+
+      startBulkApply({
+        snapshotId,
+        projectId,
+        totalCount: totalSugs,
+        totalFiles: 1,
+        totalSugs,
+        step: initialInlineStep,
+        stats: "1/1",
+        progressPct: 50,
+        phase: "merge",
+      });
 
       setInlineSuggestions((prev) => {
         const fileSugs = prev[filePath] || [];
@@ -1185,14 +1845,43 @@ export default function CoverageTypeDashboard({
       });
 
       try {
+        const verifyInlineStep = `[1/1] Running tests & measuring coverage for ${cleanFile}...`;
         setApplyProgressSteps((prev) => ({
           ...prev,
-          [filePath]: "Running tests to measure verified new coverage...",
+          [filePath]: verifyInlineStep,
         }));
+        updateBulkApplyStep({
+          step: verifyInlineStep,
+          stats: "1/1",
+          progressPct: 80,
+          phase: "verify",
+          currentFile: filePath,
+        });
 
-        const res = await applyUnitTestSuggestion(snapshotId, {
-          suggestions: suggestions.map((s) => ({
+        let previousFile;
+        if (reviewFile) {
+          try {
+            previousFile = (
+              await getFileContentApi(projectId, reviewFile, {
+                snapshotId,
+                forceFresh: true,
+              })
+            ).data;
+          } catch (error) {
+            if (error.status !== 404) throw error;
+            previousFile = null;
+          }
+        }
+        const res = await applyWithEnvironment({
+          suggestions: suggestions.map((s, idx) => ({
             ...s,
+            ...(customCode && idx === 0
+              ? {
+                  generatedCode: customCode,
+                  suggestedTestCode: customCode,
+                  fullUpdatedContent: customCode,
+                }
+              : {}),
             proposalBase: s.proposalBase || {
               snapshotId,
               workspaceRevision: getExpectedWorkspaceRevision(),
@@ -1203,7 +1892,43 @@ export default function CoverageTypeDashboard({
 
         const resultData = res?.data || res;
         const testStatus = resultData?.testStatus || resultData?.status;
-        const isPassed = testStatus === "PASSED" || resultData?.success === true;
+        const isPassed =
+          testStatus !== "FAILED" &&
+          resultData?.isPassed !== false &&
+          (testStatus === "PASSED" ||
+            resultData?.isPassed === true ||
+            resultData?.success === true);
+
+        const fileWritten = Boolean(
+          isPassed &&
+          (resultData?.fileUpdated ||
+            resultData?.changedPaths?.some(
+              (path) =>
+                cleanDisplayPath(path) === cleanDisplayPath(reviewFile || ""),
+            )),
+        );
+        if (reviewFile && fileWritten) {
+          try {
+            const current = (
+              await getFileContentApi(projectId, reviewFile, {
+                snapshotId,
+                forceFresh: true,
+              })
+            ).data;
+            if (current.content !== previousFile?.content) {
+              setReviewUndo((previous) => ({
+                ...previous,
+                [cleanDisplayPath(reviewFile)]: {
+                  previous: previousFile,
+                  appliedContent: current.content,
+                  version: current.version,
+                },
+              }));
+            }
+          } catch (error) {
+            console.warn("Unable to capture applied file for undo:", error);
+          }
+        }
 
         const appliedMap = new Map();
         if (Array.isArray(resultData?.appliedSuggestions)) {
@@ -1222,17 +1947,23 @@ export default function CoverageTypeDashboard({
                 const itemPassed = matchedItem.status === "PASSED";
                 return {
                   ...s,
+                  applied: (fileWritten && itemPassed) || s.applied,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
-                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
+                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)),
                   missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               if (sugIds.includes(s.suggestionId || s.id)) {
                 return {
                   ...s,
+                  applied: (fileWritten && isPassed) || s.applied,
                   status: isPassed ? "PASSED" : "FAILED",
+                  qualityGate: resultData?.qualityGate || s.qualityGate,
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
                   missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
+                  missingDependencies: resultData?.missingDependencies,
                 };
               }
               return s;
@@ -1240,19 +1971,20 @@ export default function CoverageTypeDashboard({
           };
         });
 
-        const fileResult = resultData?.perFileResults?.[filePath];
-        const currentFile = selectedFiles.find((f) => f.filePath === filePath);
-        const currentFileCov = currentFile ? {
-          statements: currentFile.stmtsPct || 0,
-          branches: currentFile.branchesPct || 0,
-          functions: currentFile.funcsPct || 0,
-          lines: currentFile.linesPct || 0,
-        } : null;
+        const cleanTarget = cleanDisplayPath(filePath);
+        const fileResult =
+          resultData?.perFileResults?.[filePath] ||
+          resultData?.perFileResults?.[cleanTarget];
 
-        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
-        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+        const oldCov =
+          fileResult?.oldCoverage ??
+          resultData?.oldCoverage ??
+          resultData?.previousCoverage ??
+          null;
+        const newCov =
+          fileResult?.newCoverage ?? resultData?.newCoverage ?? null;
 
-        if (oldCov && newCov) {
+        if (oldCov || newCov || !isPassed) {
           setApplyResultsByFile((prev) => ({
             ...prev,
             [filePath]: {
@@ -1260,44 +1992,85 @@ export default function CoverageTypeDashboard({
               oldCoverage: oldCov,
               newCoverage: newCov,
               isPassed,
+              isDryRun: false,
             },
           }));
         }
 
         if (resultData?.perFileResults) {
-          updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
+          updateCoverageFilesData(
+            snapshotId,
+            type,
+            projectId,
+            resultData.perFileResults,
+          );
         }
 
         invalidateCoverageQueries(snapshotId);
-        await refetchCoverage();
+        const refreshErrors = await refreshPublishedUnitTests([() => refetchCoverage(), () => loadUnitTestVersions()]);
+        invalidateProjectTree(projectId);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("covai:project-event", {
+              detail: { projectId, type: "file" },
+            })
+          );
+        }
 
         // If backend returned a background analysis job, track it and auto-sync when it completes
         if (resultData?.backgroundJob?.id) {
           const bgJobId = resultData.backgroundJob.id;
-          startAnalysis({ snapshotId, projectId, type: "unit", jobId: bgJobId });
+          startAnalysis({
+            snapshotId,
+            projectId,
+            type: "unit",
+            jobId: bgJobId,
+          });
           (async () => {
             try {
               await waitForJob(bgJobId, (prog) => {
-                updateAnalysisProgress({ progress: prog, message: "Refreshing full project coverage analysis..." });
+                updateAnalysisProgress(
+                  prog,
+                  "Refreshing full project coverage analysis...",
+                );
               });
-              completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
+              completeAnalysis(
+                "✓ Full project unit test analysis completed! All metrics updated.",
+              );
               invalidateCoverageQueries(snapshotId);
-              await refetchCoverage();
-            } catch (_) { }
+              await refreshPublishedUnitTests([() => refetchCoverage(), () => ensureFileCoverage(filePath, true)]);
+            } catch (error) {
+              completeAnalysis(`Coverage refresh failed: ${error.message}`);
+              setBulkSuggestMessage(`Coverage refresh failed: ${error.message}`);
+            }
           })();
         }
 
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
-        await ensureFileCoverage(filePath, true);
+        refreshErrors.push(...await refreshPublishedUnitTests([() => ensureFileCoverage(filePath, true)]));
+
+        const inlineDoneMsg = resultData.status === "NO_CHANGES" ? resultData.postApplyAnalysisError || resultData.message
+          : refreshErrors.length ? `Tests saved for ${cleanFile}. Some views could not refresh. Reload to see the committed results.` : isPassed
+          ? `✓ Successfully applied ${totalSugs} tests for ${cleanFile}! Coverage updated.`
+          : `Applied tests for ${cleanFile} (test runner reported some failures).`;
+        completeBulkApply({
+          ...resultData,
+          message: inlineDoneMsg,
+        });
       } catch (err) {
         console.error("Failed to apply all suggestions:", err);
+        completeBulkApply({ error: err.message });
         setInlineSuggestions((prev) => {
           const fileSugs = prev[filePath] || [];
           return {
             ...prev,
             [filePath]: fileSugs.map((s) =>
               sugIds.includes(s.suggestionId || s.id)
-                ? { ...s, status: "FAILED", testRunError: err.message || "Failed to apply suggestions" }
+                ? {
+                    ...s,
+                    status: "FAILED",
+                    testRunError: err.message || "Failed to apply suggestions",
+                  }
                 : s,
             ),
           };
@@ -1316,6 +2089,144 @@ export default function CoverageTypeDashboard({
       }
     },
     [snapshotId, projectId, refetchCoverage, ensureFileCoverage],
+  );
+
+  // Dry-run candidate unit test suggestions in isolated sandbox BEFORE applying to disk
+  const handleDryRunInline = useCallback(
+    async (filePath, suggestions, customCode = null) => {
+      if (!snapshotId || !suggestions?.length) return null;
+      const sugIds = suggestions.map((s) => s.suggestionId || s.id);
+      setApplyingSuggestionIds((prev) => {
+        const next = new Set(prev);
+        sugIds.forEach((id) => next.add(id));
+        return next;
+      });
+      setApplyProgressSteps((prev) => ({
+        ...prev,
+        [filePath]: "Testing candidate test cases in isolated sandbox...",
+      }));
+
+      try {
+        const res = await applyUnitTestSuggestion(snapshotId, {
+          suggestions: suggestions.map((s, idx) => ({
+            ...s,
+            ...(customCode && idx === 0
+              ? {
+                  generatedCode: customCode,
+                  suggestedTestCode: customCode,
+                  fullUpdatedContent: customCode,
+                }
+              : {}),
+            proposalBase: s.proposalBase || {
+              snapshotId,
+              workspaceRevision: getExpectedWorkspaceRevision(),
+            },
+          })),
+          projectId,
+          skipBackgroundJob: true,
+          dryRun: true,
+        });
+
+        const resultData = res?.data || res;
+        const testStatus = resultData?.testStatus || resultData?.status;
+        const isPassed =
+          testStatus !== "FAILED" &&
+          resultData?.isPassed !== false &&
+          (testStatus === "PASSED" ||
+            resultData?.isPassed === true ||
+            resultData?.success === true);
+
+        const cleanTarget = cleanDisplayPath(filePath);
+        const fileResult =
+          resultData?.perFileResults?.[filePath] ||
+          resultData?.perFileResults?.[cleanTarget];
+
+        const oldCov =
+          fileResult?.oldCoverage ??
+          resultData?.oldCoverage ??
+          resultData?.previousCoverage ??
+          null;
+        const newCov =
+          fileResult?.newCoverage ?? resultData?.newCoverage ?? null;
+
+        setApplyResultsByFile((prev) => ({
+          ...prev,
+          [filePath]: {
+            ...resultData,
+            oldCoverage: oldCov,
+            newCoverage: newCov,
+            isPassed,
+            isDryRun: true,
+          },
+        }));
+
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              sugIds.includes(s.suggestionId || s.id)
+                ? {
+                    ...s,
+                    dryRunStatus: isPassed ? "VERIFIED" : "FAILED",
+                    testRunError: isPassed
+                      ? null
+                      : resultData?.testRunError ||
+                        resultData?.errorDetail ||
+                        resultData?.message ||
+                        null,
+                    missingDependency: isPassed
+                      ? null
+                      : resultData?.missingDependency ||
+                        resultData?.moduleResolutionError?.missingDependency ||
+                        null,
+                  }
+                : s,
+            ),
+          };
+        });
+
+        return resultData;
+      } catch (err) {
+        console.error("Dry-run test suggestions failed:", err);
+        setApplyResultsByFile((prev) => ({
+          ...prev,
+          [filePath]: {
+            isPassed: false,
+            isDryRun: true,
+            errorDetail: err.message || "Dry-run failed",
+          },
+        }));
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              sugIds.includes(s.suggestionId || s.id)
+                ? {
+                    ...s,
+                    dryRunStatus: "FAILED",
+                    testRunError: err.message || "Dry-run failed",
+                  }
+                : s,
+            ),
+          };
+        });
+        return null;
+      } finally {
+        setApplyingSuggestionIds((prev) => {
+          const next = new Set(prev);
+          sugIds.forEach((id) => next.delete(id));
+          return next;
+        });
+        setApplyProgressSteps((prev) => {
+          const next = { ...prev };
+          delete next[filePath];
+          return next;
+        });
+      }
+    },
+    [snapshotId, projectId],
   );
 
   // Reject a suggestion and remove it from inline suggestions list
@@ -1379,7 +2290,9 @@ export default function CoverageTypeDashboard({
         ...prev,
         [filePath]: fileSugs.map((s) =>
           (s.suggestionId === sugId || s.id === sugId)
-            ? { ...s, generatedCode: newCode, suggestedTestCode: newCode, status: "EDITED" }
+            ? { ...s, originalGeneratedCode: s.originalGeneratedCode ?? s.suggestedTestCode ?? s.generatedCode,
+                generatedCode: newCode, suggestedTestCode: newCode, fullUpdatedContent:newCode,testCode:newCode,changeSet:undefined,
+                validation:{status:'UNVERIFIED',message:'The edited candidate must be verified again before publication.'},status: "EDITED" }
             : s,
         ),
       };
@@ -1393,19 +2306,22 @@ export default function CoverageTypeDashboard({
     Object.entries(inlineSuggestions).forEach(([fPath, sugs]) => {
       (sugs || []).forEach((s) => {
         if (
+          !reviewUndo[cleanDisplayPath(s.testFile || s.targetTestFile || "")] &&
           s.status !== "REJECTED" &&
           s.status !== "PASSED" &&
           s.status !== "APPLIED" &&
+          s.status !== "ISOLATED" &&
+          s.status !== "NO_CHANGES" &&
           s.status !== "FULLY_COVERED" &&
           !s.isFullyCovered &&
-          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent)
+          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent || s.testCode || s.code)
         ) {
           list.push({ ...s, sourceFile: s.sourceFile || fPath });
         }
       });
     });
     return list;
-  }, [inlineSuggestions, type]);
+  }, [inlineSuggestions, reviewUndo, type]);
 
   const filesWithPendingSuggestions = useMemo(() => {
     const set = new Set();
@@ -1424,7 +2340,7 @@ export default function CoverageTypeDashboard({
       (sugs || []).forEach((s) => {
         if (
           s.status !== "REJECTED" &&
-          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent)
+          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent || s.testCode || s.code)
         ) {
           list.push({ ...s, sourceFile: s.sourceFile || fPath });
         }
@@ -1439,428 +2355,306 @@ export default function CoverageTypeDashboard({
 
   const reviewFiles = useMemo(() => {
     if (type !== "unit") return [];
-    const fileMap = new Map();
-
-    // Prioritize pending suggestions if available, otherwise preserve applied suggestions for diff review
     const targetList = allReviewSuggestions.length > 0 ? allReviewSuggestions : allPendingSuggestions;
-
-    targetList.forEach((sug) => {
-      const fPath = sug.sourceFile || sug.filePath;
-      if (!fPath) return;
-      const testFile = sug.testFile || sug.targetTestFile || fPath.replace(/\.[cm]?[jt]sx?$/, ".test.js");
-      const isApplied = sug.status === "PASSED" || sug.status === "APPLIED" || sug.applied === true;
-      if (!fileMap.has(fPath)) {
-        fileMap.set(fPath, {
-          fileName: cleanDisplayPath(testFile || fPath),
-          filePath: fPath,
-          testFilePath: testFile,
-          originalContent: sug.originalCode || "",
-          fullUpdatedContent: sug.fullUpdatedContent || sug.suggestedTestCode || sug.generatedCode || "",
-          suggestedTestCode: sug.suggestedTestCode || sug.generatedCode || "",
-          framework: sug.framework || "jest",
-          applied: isApplied,
-          suggestions: [sug],
-        });
-      } else {
-        const existing = fileMap.get(fPath);
-        existing.suggestions.push(sug);
-        if (isApplied) existing.applied = true;
-        if (sug.fullUpdatedContent) {
-          existing.fullUpdatedContent = sug.fullUpdatedContent;
-        } else if (sug.suggestedTestCode && !existing.fullUpdatedContent.includes(sug.suggestedTestCode)) {
-          existing.fullUpdatedContent += `\n\n${sug.suggestedTestCode}`;
-        }
-      }
-    });
-
-    return Array.from(fileMap.values());
+    return buildUnitTestReviewFiles(targetList);
   }, [allPendingSuggestions, allReviewSuggestions, type]);
 
-  const openReviewForFile = useCallback((fPath) => {
-    if (!fPath) {
-      setReviewInitialFileIndex(0);
+  const openReviewForFile = useCallback(
+    (fPath) => {
+      if (!fPath) {
+        setReviewInitialFileIndex(0);
+        setReviewModalOpen(true);
+        return;
+      }
+      const idx = reviewFiles.findIndex(
+        (rf) =>
+          rf.filePath === fPath ||
+          rf.testFilePath === fPath ||
+          rf.suggestions?.some((s) => (s.sourceFile || s.filePath || s.sourceFilePath) === fPath),
+      );
+      setReviewInitialFileIndex(idx >= 0 ? idx : 0);
       setReviewModalOpen(true);
-      return;
-    }
-    const idx = reviewFiles.findIndex((rf) => rf.filePath === fPath || rf.testFilePath === fPath);
-    setReviewInitialFileIndex(idx >= 0 ? idx : 0);
-    setReviewModalOpen(true);
-  }, [reviewFiles]);
+    },
+    [reviewFiles],
+  );
 
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkApplyStep, setBulkApplyStep] = useState("");
+  const [bulkApplyProgress, setBulkApplyProgress] = useState(null);
+  const [bulkApplyPhase, setBulkApplyPhase] = useState("");
 
-  // Apply all suggestions across all files with real-time step progress (1/N, 2/N...)
-  const handleApplyAllGlobal = useCallback(async () => {
-    if (!snapshotId || allPendingSuggestions.length === 0 || isBulkApplying) return;
-
+  // A single request stages and verifies the entire batch before publishing any version.
+  const handleApplyAllGlobal = useCallback(async (suggestionsOverride = null) => {
+    const batch = Array.isArray(suggestionsOverride) ? suggestionsOverride : allPendingSuggestions;
+    if (!snapshotId || !batch.length || isBulkApplying) return;
+    const revision = getExpectedWorkspaceRevision();
+    const requestId = crypto.randomUUID();
+    const cleanedSuggestions = batch.map((s) => ({
+      ...s,
+      suggestionId: s.suggestionId || s.id,
+      sourceFile: s.sourceFile || s.filePath,
+      framework: s.framework || "jest",
+      originalCode: s.originalCode ?? s.originalContent ?? s.baseContent ?? "",
+      testFile:
+        s.testFile ||
+        s.targetTestFile ||
+        resolveTargetTestFile(s.sourceFile || s.filePath, unitTestSuites, {
+          framework: s.framework || activeFramework,
+        }),
+      generatedCode: s.generatedCode || s.fullUpdatedContent || s.suggestedTestCode || s.testCode || s.code || "",
+      suggestedTestCode: s.fullUpdatedContent || s.generatedCode || s.suggestedTestCode || s.testCode || s.code || "",
+      proposalBase: s.proposalBase || { snapshotId, workspaceRevision: revision },
+    }));
+    const batchSourceFiles = [...new Set(cleanedSuggestions.map((s) => s.sourceFile).filter(Boolean))];
+    const ids = new Set(cleanedSuggestions.map((s) => s?.suggestionId || s?.id).filter(Boolean));
+    const totalFiles = new Set(cleanedSuggestions.map((s) => s.testFile || s.sourceFile)).size;
     setIsBulkApplying(true);
-    const totalFiles = filesWithPendingSuggestions.length;
-    const totalSugs = allPendingSuggestions.length;
-    const initialStep = `[0/${totalFiles}] Applying ${totalSugs} suggestions across ${totalFiles} files...`;
-    setBulkApplyStep(initialStep);
+    setError("");
+    setBulkIsolatedDefects([]);
+    setBulkApplyStep('Verifying the entire batch; the active version is unchanged…');
+    setBulkApplyProgress(null);
+    setBulkApplyPhase('verify');
     startBulkApply({
       snapshotId,
       projectId,
+      totalFiles,
       totalCount: totalFiles,
-      step: initialStep,
+      totalSugs: batch.length,
+      completedCount: 0,
+      step: 'Verifying the entire batch before creating a version',
+      phase: 'verify',
     });
-
-    const allSugIds = allPendingSuggestions.map((s) => s.suggestionId || s.id);
-    setApplyingSuggestionIds((prev) => {
-      const next = new Set(prev);
-      allSugIds.forEach((id) => next.add(id));
-      return next;
-    });
-
-    setInlineSuggestions((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((fPath) => {
-        next[fPath] = (next[fPath] || []).map((s) =>
-          allSugIds.includes(s.suggestionId || s.id) ? { ...s, status: "APPLYING" } : s
-        );
-      });
-      return next;
-    });
-
-    let completedCount = 0;
-    let anyPassedGlobal = false;
-    let lastResultData = null;
-    let runningWorkspaceRevision = getExpectedWorkspaceRevision();
+    setApplyingSuggestionIds((prev) => new Set([...prev, ...ids]));
+    setInlineSuggestions((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).map(([filePath, list]) => [
+          filePath,
+          (list || []).map((s) =>
+            ids.has(s.suggestionId || s.id)
+              ? { ...s, status: 'APPLYING', testRunError: null }
+              : s,
+          ),
+        ]),
+      ),
+    );
 
     try {
-      const allCleanedSuggestions = [];
-      for (let i = 0; i < totalFiles; i++) {
-        const fPath = filesWithPendingSuggestions[i];
-        const cleanTarget = cleanDisplayPath(fPath);
-        const fileSugs = allPendingSuggestions.filter((s) => {
-          const sPath = s.sourceFile || s.filePath;
-          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
+      const response = await applyUnitTestSuggestion(snapshotId, {
+        suggestions: cleanedSuggestions,
+        projectId,
+        skipBackgroundJob: false,
+        requestId,
+        async: true,
+      });
+      const payload = response && typeof response === "object" && "data" in response ? (response.data ?? {}) : response;
+      let result = payload;
+      if (payload?.queued && payload?.job?.id) {
+        const queuedJobId = payload.job.id;
+        startBulkApply({
+          snapshotId,
+          projectId,
+          jobId: queuedJobId,
+          totalFiles,
+          totalCount: totalFiles,
+          totalSugs: batch.length,
+          completedCount: 0,
+          step: 'Queued unit test apply & verification job...',
+          phase: 'verify',
         });
-        for (const s of fileSugs) {
-          allCleanedSuggestions.push({
-            ...s,
-            suggestionId: s.suggestionId || s.id,
-            sourceFile: s.sourceFile || fPath,
-            testFile: s.testFile || s.targetTestFile,
-            generatedCode: s.generatedCode || s.suggestedTestCode,
-            suggestedTestCode: s.suggestedTestCode || s.generatedCode,
-            fullUpdatedContent: s.fullUpdatedContent,
-            framework: s.framework,
-            targetLines: s.targetLines,
-            targetBranches: s.targetBranches,
-            proposalBase: {
-              snapshotId,
-              workspaceRevision: runningWorkspaceRevision,
-            },
-          });
-        }
+        result = await waitForQueueJobResult(queuedJobId);
+      }
+      setInlineSuggestions((prev) => applyBatchResultToSuggestionsMap(prev, ids, result));
+      const batchSummary = summarizeApplyBatchResult(result, cleanedSuggestions.length);
+      setBulkIsolatedDefects(batchSummary.isolatedDefects);
+
+      if (result?.perFileResults) {
+        updateCoverageFilesData(snapshotId, type, projectId, result.perFileResults);
       }
 
-      let batchApplied = false;
-      if (allCleanedSuggestions.length > 0) {
-        const batchStep = `[1/${totalFiles}] Batch applying ${allCleanedSuggestions.length} suggestions across ${totalFiles} files...`;
-        setBulkApplyStep(batchStep);
-        updateBulkApplyStep({
-          step: batchStep,
-          completedCount: 1,
-          totalCount: totalFiles,
-          stats: `${totalFiles}/${totalFiles}`,
-          progressPct: 50,
-          currentFile: filesWithPendingSuggestions[0],
-        });
-
-        try {
-          let batchRes;
-          try {
-            batchRes = await applyUnitTestSuggestion(snapshotId, {
-              suggestions: allCleanedSuggestions,
-              projectId,
-              skipBackgroundJob: true,
-            });
-          } catch (firstBatchErr) {
-            if (firstBatchErr?.status === 409 || firstBatchErr?.message?.includes("Source changed") || firstBatchErr?.message?.includes("Workspace changed")) {
-              batchRes = await applyUnitTestSuggestion(snapshotId, {
-                suggestions: allCleanedSuggestions,
-                projectId,
-                skipBackgroundJob: true,
-              });
-            } else {
-              throw firstBatchErr;
-            }
-          }
-
-          const resultData = batchRes?.data || batchRes;
-          lastResultData = resultData;
-          if (resultData?.workspaceRevision != null) {
-            runningWorkspaceRevision = resultData.workspaceRevision;
-          }
-          const testStatus = resultData?.testStatus || resultData?.status;
-          const isBatchPassed = testStatus === "PASSED" || resultData?.success === true;
-          if (isBatchPassed) anyPassedGlobal = true;
-
-          setInlineSuggestions((prev) => {
-            const next = { ...prev };
-            for (const fPath of filesWithPendingSuggestions) {
-              const list = next[fPath] || [];
-              next[fPath] = list.map((s) => {
-                const sid = s.suggestionId || s.id;
-                if (allSugIds.includes(sid)) {
-                  const matchedApplied = (resultData?.appliedSuggestions || []).find(
-                    (a) => (a.suggestionId || a.id) === sid
-                  );
-                  const itemPassed = matchedApplied
-                    ? matchedApplied.status === "PASSED"
-                    : isBatchPassed;
-                  if (itemPassed) anyPassedGlobal = true;
-                  return {
-                    ...s,
-                    status: itemPassed ? "PASSED" : "FAILED",
-                    testRunError: !itemPassed
-                      ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
-                      : null,
-                    missingDependency: !itemPassed
-                      ? (matchedApplied?.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null)
-                      : null,
-                  };
-                }
-                return s;
-              });
-            }
-            return next;
-          });
-
-          setApplyResultsByFile((prev) => {
-            const next = { ...prev };
-            for (const fPath of filesWithPendingSuggestions) {
-              const cleanTarget = cleanDisplayPath(fPath);
-              const fileResult = resultData?.perFileResults?.[fPath] || resultData?.perFileResults?.[cleanTarget];
-              const currentFile = selectedFiles.find((f) => f.filePath === fPath || cleanDisplayPath(f.filePath) === cleanTarget);
-              const currentFileCov = currentFile ? {
-                statements: currentFile.stmtsPct || 0,
-                branches: currentFile.branchesPct || 0,
-                functions: currentFile.funcsPct || 0,
-                lines: currentFile.linesPct || 0,
-              } : null;
-
-              const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
-              const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
-              if (oldCov && newCov) {
-                next[fPath] = {
-                  ...resultData,
-                  oldCoverage: oldCov,
-                  newCoverage: newCov,
-                  isPassed: isBatchPassed,
-                };
-              }
-            }
-            return next;
-          });
-
-          if (resultData?.perFileResults) {
-            updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
-          }
-
-          completedCount = totalFiles;
-          batchApplied = true;
-        } catch (batchErr) {
-          console.warn("[handleApplyAllGlobal] Batch apply encountered error, falling back to per-file apply:", batchErr);
-        }
-      }
-
-      for (let i = 0; !batchApplied && i < totalFiles; i++) {
-        const fPath = filesWithPendingSuggestions[i];
-        const cleanTarget = cleanDisplayPath(fPath);
-        const fileSugs = allPendingSuggestions.filter((s) => {
-          const sPath = s.sourceFile || s.filePath;
-          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
-        });
-        if (!fileSugs || fileSugs.length === 0) continue;
-
-        completedCount++;
-        const currentStats = `${completedCount}/${totalFiles}`;
-        const progressPct = Math.round((completedCount / totalFiles) * 100);
-        const displayFile = cleanDisplayPath(fPath);
-        const runnerStep = `[${currentStats}] Executing tests for ${displayFile}...`;
-
-        setBulkApplyStep(runnerStep);
-        updateBulkApplyStep({
-          step: runnerStep,
-          completedCount,
-          totalCount: totalFiles,
-          stats: currentStats,
-          progressPct,
-          currentFile: fPath,
-        });
-
-        const cleanedSuggestions = fileSugs.map((s) => ({
-          ...s,
-          suggestionId: s.suggestionId || s.id,
-          sourceFile: s.sourceFile || fPath,
-          testFile: s.testFile || s.targetTestFile,
-          generatedCode: s.generatedCode || s.suggestedTestCode,
-          suggestedTestCode: s.suggestedTestCode || s.generatedCode,
-          fullUpdatedContent: s.fullUpdatedContent,
-          framework: s.framework,
-          targetLines: s.targetLines,
-          targetBranches: s.targetBranches,
-          proposalBase: {
-            snapshotId,
-            workspaceRevision: runningWorkspaceRevision,
-          },
-        }));
-
-        const thisFileSugIds = fileSugs.map((s) => s.suggestionId || s.id);
-
-        try {
-          let res;
-          try {
-            res = await applyUnitTestSuggestion(snapshotId, {
-              suggestions: cleanedSuggestions,
-              projectId,
-              skipBackgroundJob: true,
-            });
-          } catch (firstErr) {
-            if (firstErr?.status === 409 || firstErr?.message?.includes("Source changed") || firstErr?.message?.includes("Workspace changed")) {
-              console.warn("[handleApplyAllGlobal] Retrying file apply with refreshed revision for", fPath);
-              res = await applyUnitTestSuggestion(snapshotId, {
-                suggestions: cleanedSuggestions,
-                projectId,
-                skipBackgroundJob: true,
-              });
-            } else {
-              throw firstErr;
-            }
-          }
-
-          const resultData = res?.data || res;
-          lastResultData = resultData;
-          if (resultData?.workspaceRevision != null) {
-            runningWorkspaceRevision = resultData.workspaceRevision;
-          }
-          const testStatus = resultData?.testStatus || resultData?.status;
-          const isPassed = testStatus === "PASSED" || resultData?.success === true;
-          if (isPassed) anyPassedGlobal = true;
-
-          setInlineSuggestions((prev) => {
-            const next = { ...prev };
-            const list = next[fPath] || [];
-            next[fPath] = list.map((s) => {
-              const sid = s.suggestionId || s.id;
-              if (thisFileSugIds.includes(sid)) {
-                const matchedApplied = (resultData?.appliedSuggestions || []).find(
-                  (a) => (a.suggestionId || a.id) === sid
-                );
-                const itemPassed = matchedApplied
-                  ? matchedApplied.status === "PASSED"
-                  : isPassed;
-                return {
-                  ...s,
-                  status: itemPassed ? "PASSED" : "FAILED",
-                  testRunError: !itemPassed
-                    ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
-                    : null,
-                  missingDependency: !itemPassed
-                    ? (matchedApplied?.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null)
-                    : null,
-                };
-              }
-              return s;
-            });
-            return next;
-          });
-
-          const fileResult = resultData?.perFileResults?.[fPath] || resultData?.perFileResults?.[cleanTarget];
-          const currentFile = selectedFiles.find((f) => f.filePath === fPath);
-          const currentFileCov = currentFile ? {
-            statements: currentFile.stmtsPct || 0,
-            branches: currentFile.branchesPct || 0,
-            functions: currentFile.funcsPct || 0,
-            lines: currentFile.linesPct || 0,
-          } : null;
-
-          const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
-          const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
-
-          if (oldCov && newCov) {
-            setApplyResultsByFile((prev) => ({
-              ...prev,
-              [fPath]: {
-                ...resultData,
+      if (result?.perFileResults || !batchSummary.isOverallSuccess || batchSummary.hasIsolatedDefects) {
+        setApplyResultsByFile((prev) => {
+          const next = { ...prev };
+          for (const fPath of batchSourceFiles) {
+            const fileResult = result?.perFileResults?.[fPath];
+            const oldCov = fileResult?.oldCoverage ?? result?.oldCoverage ?? result?.previousCoverage ?? null;
+            const newCov = fileResult?.newCoverage ?? result?.newCoverage ?? null;
+            const fileSuggestions = cleanedSuggestions.filter((s) => s.sourceFile === fPath);
+            const fileSuggestionIds = new Set(fileSuggestions.map((s) => s.suggestionId || s.id).filter(Boolean));
+            const fileTestKeys = new Set(
+              fileSuggestions
+                .map((s) => normalizeReviewTestFile(s.testFile || s.targetTestFile || "").groupKey)
+                .filter(Boolean),
+            );
+            const itemList = Array.isArray(result?.appliedSuggestions)
+              ? result.appliedSuggestions.filter((item) => {
+                  const itemId = item?.suggestionId || item?.id;
+                  const itemTfKey = normalizeReviewTestFile(item?.testFile || item?.targetTestFile || "").groupKey;
+                  if (itemId && fileSuggestionIds.has(itemId)) {
+                    return !itemTfKey || fileTestKeys.size === 0 || fileTestKeys.has(itemTfKey);
+                  }
+                  if (!itemId) {
+                    return Boolean(itemTfKey && fileTestKeys.has(itemTfKey));
+                  }
+                  return false;
+                })
+              : [];
+            const fileHasFailure = itemList.some((item) => item.status === 'FAILED');
+            const filePassed = itemList.length > 0
+              ? itemList.some((item) => item.status === 'PASSED' || item.status === 'APPLIED') && !fileHasFailure
+              : batchSummary.isOverallSuccess;
+            if (oldCov || newCov || !filePassed || batchSummary.hasIsolatedDefects) {
+              next[fPath] = {
+                ...result,
+                ...(fileResult || {}),
                 oldCoverage: oldCov,
                 newCoverage: newCov,
-                isPassed,
-              },
-            }));
+                isPassed: filePassed,
+              };
+            }
           }
+          return next;
+        });
+      }
 
-          if (resultData?.perFileResults) {
-            updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
+      if (!batchSummary.isOverallSuccess && batchSummary.passedCount === 0) {
+        setError(batchSummary.errorMessage);
+        setBulkSuggestMessage(batchSummary.errorMessage);
+        completeBulkApply({ ...result, success: false, error: batchSummary.errorMessage });
+        if (result?.fileUpdated) {
+          invalidateCoverageQueries(snapshotId);
+          invalidateProjectTree(projectId);
+          await refreshPublishedUnitTests([
+            () => refetchCoverage(),
+            () => loadUnitTestVersions(),
+            ...batchSourceFiles.map((filePath) => () => ensureFileCoverage(filePath, true)),
+          ]);
+        }
+        return;
+      }
+
+      if (batchSummary.errorMessage) {
+        setError(batchSummary.errorMessage);
+      } else {
+        setError("");
+      }
+
+      setBulkApplyProgress(100);
+      setBulkApplyPhase('done');
+      setBulkSuggestMessage(batchSummary.message);
+      completeBulkApply({
+        ...result,
+        message: batchSummary.message,
+        ...(batchSummary.errorMessage ? { error: batchSummary.errorMessage } : {}),
+      });
+
+      if (result?.backgroundJob?.id) {
+        const jobId = result.backgroundJob.id;
+        startAnalysis({ snapshotId, projectId, type: 'unit', jobId });
+        void (async () => {
+          try {
+            await waitForJob(jobId, (progress) =>
+              updateAnalysisProgress({ progress, message: 'Running full Unit Test analysis after Apply...' }),
+            );
+            completeAnalysis('Full Unit Test analysis after Apply completed.');
+            invalidateCoverageQueries(snapshotId);
+            await refreshPublishedUnitTests([
+              () => refetchCoverage(),
+              () => loadUnitTestVersions(),
+              ...batchSourceFiles.map((filePath) => () => ensureFileCoverage(filePath, true)),
+            ]);
+          } catch (error) {
+            completeAnalysis(`Post-Apply analysis failed: ${error.message}`);
+            setBulkSuggestMessage(`Coverage refresh failed: ${error.message}`);
           }
-        } catch (fileErr) {
-          console.warn(`[handleApplyAllGlobal] Failed applying for ${fPath}:`, fileErr);
-          setInlineSuggestions((prev) => {
-            const next = { ...prev };
-            const list = next[fPath] || [];
-            next[fPath] = list.map((s) => {
-              const sid = s.suggestionId || s.id;
-              if (thisFileSugIds.includes(sid)) {
-                return {
-                  ...s,
-                  status: "FAILED",
-                  testRunError: fileErr.message || "Failed to apply suggestion",
-                };
-              }
-              return s;
-            });
-            return next;
-          });
+        })();
+      } else if (result?.postApplyAnalysisError) {
+        setBulkSuggestMessage(result.postApplyAnalysisError);
+      }
+
+      if (!batchSummary.isNoChanges || result?.fileUpdated) {
+        invalidateCoverageQueries(snapshotId);
+        invalidateProjectTree(projectId);
+        const refreshErrors = await refreshPublishedUnitTests([
+          () => refetchCoverage(),
+          () => loadUnitTestVersions(),
+          ...batchSourceFiles.map((filePath) => () => ensureFileCoverage(filePath, true)),
+        ]);
+        if (refreshErrors.length) {
+          setBulkSuggestMessage(`${batchSummary.message} Some views could not refresh. Reload to see the latest results.`);
         }
       }
-
-      setBulkSuggestMessage(
-        anyPassedGlobal
-          ? `✓ Successfully applied test suggestions across ${totalFiles} files! Coverage updated.`
-          : `Applied suggestions (Test runner reported some failures).`
-      );
-
-      completeBulkApply(lastResultData);
-      invalidateCoverageQueries(snapshotId);
-      await refetchCoverage();
-
-      // Only trigger full project re-run if incremental coverage was not already returned by applyUnitTestSuggestion
-      const hasIncrementalCoverage = Boolean(lastResultData?.newCoverage && lastResultData?.perFileResults);
-      if (anyPassedGlobal && !hasIncrementalCoverage) {
-        await run({ restart: true });
-      }
-
-      await Promise.all(filesWithPendingSuggestions.map((fPath) => ensureFileCoverage(fPath, true)));
     } catch (err) {
-      console.error("Failed to apply all suggestions globally:", err);
-      setBulkSuggestMessage(`Error applying suggestions: ${err.message}`);
-      completeBulkApply({ error: err.message });
-      setInlineSuggestions((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((fPath) => {
-          next[fPath] = (next[fPath] || []).map((s) =>
-            allSugIds.includes(s.suggestionId || s.id)
-              ? { ...s, status: "FAILED", testRunError: err.message || "Failed to apply suggestions" }
-              : s
-          );
-        });
-        return next;
-      });
+      const errMsg = err?.message || 'Batch verification failed. The active version is unchanged.';
+      setInlineSuggestions((prev) =>
+        applyBatchResultToSuggestionsMap(prev, ids, {
+          success: false,
+          status: 'FAILED',
+          errorDetail: errMsg,
+        }),
+      );
+      setError(errMsg);
+      setBulkSuggestMessage(errMsg);
+      completeBulkApply({ success: false, error: errMsg });
     } finally {
       setIsBulkApplying(false);
-      setBulkApplyStep("");
-      setApplyingSuggestionIds((prev) => {
-        const next = new Set(prev);
-        allSugIds.forEach((id) => next.delete(id));
-        return next;
-      });
-      setTimeout(() => setBulkSuggestMessage(""), 10000);
+      setBulkApplyStep('');
+      setBulkApplyProgress(null);
+      setBulkApplyPhase('');
+      setApplyingSuggestionIds((prev) => new Set([...prev].filter((id) => !ids.has(id))));
     }
-  }, [snapshotId, allPendingSuggestions, filesWithPendingSuggestions, isBulkApplying, projectId, refetchCoverage, ensureFileCoverage, startBulkApply, updateBulkApplyStep, completeBulkApply, saveSuggestions]);
+  }, [snapshotId, allPendingSuggestions, isBulkApplying, projectId, refetchCoverage,
+    ensureFileCoverage, startBulkApply, completeBulkApply, startAnalysis, updateAnalysisProgress, completeAnalysis, type]);
+
+  const [isDryRunningGlobal, setIsDryRunningGlobal] = useState(false);
+
+  const handleDryRunAllGlobal = useCallback(async () => {
+    if (
+      !snapshotId ||
+      allPendingSuggestions.length === 0 ||
+      isDryRunningGlobal ||
+      isBulkApplying
+    )
+      return;
+    setIsDryRunningGlobal(true);
+    const totalFiles = filesWithPendingSuggestions.length;
+    setBulkSuggestMessage(
+      `Testing ${allPendingSuggestions.length} candidate suggestions across ${totalFiles} file(s) in isolated sandbox...`,
+    );
+    try {
+      let passedFiles = 0;
+      for (const fPath of filesWithPendingSuggestions) {
+        const cleanTarget = cleanDisplayPath(fPath);
+        const fileSugs = allPendingSuggestions.filter((s) => {
+          const sPath = s.sourceFile || s.filePath;
+          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
+        });
+        if (!fileSugs.length) continue;
+        const res = await handleDryRunInline(fPath, fileSugs);
+        const status = res?.testStatus || res?.status;
+        if (
+          status === "PASSED" ||
+          res?.isPassed === true ||
+          res?.success === true
+        ) {
+          passedFiles++;
+        }
+      }
+      setBulkSuggestMessage(
+        passedFiles === totalFiles
+          ? `Dry-Run Passed: ${passedFiles}/${totalFiles} candidate file(s) verified in sandbox and ready to apply.`
+          : `Dry-Run Completed: ${passedFiles}/${totalFiles} file(s) passed. Open Review & Test to inspect individual test cases.`,
+      );
+    } finally {
+      setIsDryRunningGlobal(false);
+    }
+  }, [
+    snapshotId,
+    allPendingSuggestions,
+    filesWithPendingSuggestions,
+    isDryRunningGlobal,
+    isBulkApplying,
+    handleDryRunInline,
+  ]);
 
   // Test suites & functions search and filter state
   const [expandedSuite, setExpandedSuite] = useState(null);
@@ -1955,32 +2749,115 @@ export default function CoverageTypeDashboard({
     }
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
   const [installingDependencyName, setInstallingDependencyName] = useState(null);
+  const [unitTestVersions, setUnitTestVersions] = useState({});
 
-  const activeMissingDependency = useMemo(() => {
-    if (summary?.missingDependency?.packageName) {
-      return summary.missingDependency;
-    }
-    const fromRunErr = extractMissingPackageFromError(summary?.latestRunError || coverageData?.latestRunError || "");
-    if (fromRunErr) return fromRunErr;
-    for (const [fPath, sugs] of Object.entries(inlineSuggestions || {})) {
-      for (const s of (sugs || [])) {
-        if (s.status === "FAILED") {
-          if (s.missingDependency?.packageName) {
-            return { ...s.missingDependency, sourceFile: fPath };
-          }
-          const parsed = extractMissingPackageFromError(s.testRunError || "");
-          if (parsed) {
-            return { ...parsed, sourceFile: fPath };
-          }
-        }
+  const uniqueVersionsCount = useMemo(() => {
+    const vers = new Set();
+    Object.values(unitTestVersions || {}).forEach((f) => {
+      (f.versions || []).forEach((v) => vers.add(v.version));
+    });
+    return vers.size > 0 ? vers.size : 1;
+  }, [unitTestVersions]);
+  const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
+  const [switchingVersionFile, setSwitchingVersionFile] = useState(null);
+
+  const loadUnitTestVersions = useCallback(async () => {
+    if (!snapshotId || type !== "unit") return;
+    try {
+      const res = await getUnitTestVersions(snapshotId);
+      if (res?.success && res.data) {
+        setUnitTestVersions(res.data);
       }
+    } catch (err) {
+      console.warn("Failed to load unit test versions:", err);
     }
-    return null;
+  }, [snapshotId, type]);
+
+  useEffect(() => {
+    loadUnitTestVersions();
+  }, [loadUnitTestVersions]);
+
+  const handleSwitchVersion = useCallback(async ({ filePath = null, targetVersion = 1, allFiles = false }) => {
+    if (isSwitchingVersion || !snapshotId) return;
+    setIsSwitchingVersion(true);
+    setSwitchingVersionFile(allFiles ? "all" : filePath);
+    try {
+      const res = await switchUnitTestVersion(snapshotId, {
+        projectId,
+        filePath,
+        targetVersion,
+        allFiles,
+        runTests: true
+      });
+      const result = res?.data || res;
+      if (result?.success || res?.success) {
+        await loadUnitTestVersions();
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+        invalidateProjectTree(projectId);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("covai:project-event", {
+              detail: { projectId, type: "file" },
+            })
+          );
+        }
+      } else {
+        setError(result?.message || "Failed to switch unit test version.");
+      }
+      return res;
+    } catch (err) {
+      console.error("[handleSwitchVersion] Error:", err);
+      setError(err.message || "Error switching unit test version.");
+    } finally {
+      setIsSwitchingVersion(false);
+      setSwitchingVersionFile(null);
+    }
+  }, [snapshotId, projectId, isSwitchingVersion, loadUnitTestVersions, refetchCoverage]);
+
+  const activeMissingDependencies = useMemo(() => {
+    const fromReport = (report, error) => report?.missingDependencies ??
+      [report?.missingDependency || extractMissingPackageFromError(error)];
+    const dependencies = [
+      ...fromReport(summary, summary?.latestRunError || coverageData?.latestRunError),
+      ...Object.entries(inlineSuggestions || {}).flatMap(([sourceFile, suggestions]) =>
+        suggestions.filter(suggestion => suggestion.status === "FAILED").flatMap(suggestion =>
+          fromReport(suggestion, suggestion.testRunError).filter(Boolean).map(dependency => ({
+            ...dependency, importedFrom: dependency.importedFrom || sourceFile,
+          })))),
+    ];
+    const unique = new Map();
+    for (const dependency of dependencies.filter(item => item?.packageName)) {
+      const key = JSON.stringify([dependency.packageName, dependency.targetPackage || dependency.importedFrom]);
+      if (!unique.has(key)) unique.set(key, dependency);
+    }
+    return [...unique.values()];
   }, [summary, coverageData, inlineSuggestions]);
 
-  const handleInstallDependency = async (packageName, isDev = false, importedFrom = null, onAfterInstall = null) => {
+  const handleInstallDependencies = async (dependencies) => {
+    if (!snapshotId || !dependencies.length || installingDependencyName) throw new Error("The package installer is busy or unavailable.");
+    setInstallingDependencyName(dependencies[0].packageName);
+    try {
+      const result = await installMissingDependencies(snapshotId, dependencies);
+      if (result.installed.length) {
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+      }
+      return result;
+    } finally {
+      setInstallingDependencyName(null);
+    }
+  };
+
+  const handleInstallDependency = async (
+    packageName,
+    isDev = false,
+    importedFrom = null,
+    onAfterInstall = null,
+  ) => {
     if (!snapshotId || !packageName || installingDependencyName) return;
     setInstallingDependencyName(packageName);
+    setDependencyInstallError("");
     setError("");
     try {
       const shouldRerunFull = !onAfterInstall;
@@ -1989,21 +2866,29 @@ export default function CoverageTypeDashboard({
         packageName,
         isDev,
         shouldRerunFull,
-        importedFrom || activeMissingDependency?.importedFrom || activeMissingDependency?.sourceFile || null
+        importedFrom
       );
       if (res?.success) {
+        setDependencyInstallLogs((previous) => [
+          ...previous,
+          `[SUCCESS] ${res.message || `Installed ${packageName}`}`,
+        ]);
         invalidateCoverageQueries(snapshotId);
         await refetchCoverage();
         if (typeof onAfterInstall === "function") {
           await onAfterInstall();
         }
       } else {
-        setError(res?.message || `Failed to install ${packageName}`);
+        throw new Error(res?.message || `Failed to install ${packageName}`);
       }
       return res;
     } catch (err) {
       console.error("[handleInstallDependency] Error:", err);
-      setError(err.message || `Error installing ${packageName}`);
+      const message = err.message || `Error installing ${packageName}`;
+      setError(message);
+      setDependencyInstallError(message);
+      setDependencyInstallLogs(previous => [...previous, `[ERROR] ${message}`]);
+      throw err;
     } finally {
       setInstallingDependencyName(null);
     }
@@ -2011,26 +2896,45 @@ export default function CoverageTypeDashboard({
 
   const run = async (options = {}) => {
     if (!snapshotId) return;
+
     activeJobIdRef.current = null;
     setRunning(true);
     setRunProgress(8);
-    const initialStep = type === "system"
-      ? "Initializing E2E system testing environment..."
-      : type === "integration"
-        ? "Initializing API integration test environment..."
-        : "Initializing unit test analysis environment...";
+    const initialStep =
+      type === "system"
+        ? "Initializing E2E system testing environment..."
+        : type === "integration"
+          ? "Initializing API integration test environment..."
+          : "Initializing unit test analysis environment...";
     setRunStep(initialStep);
     setError("");
-    setRunningStatus(type === "system" ? "Starting AUT server..." : "Running analysis...");
+    setRunningStatus(
+      type === "system" ? "Starting AUT server..." : "Running analysis...",
+    );
     startAnalysis({ snapshotId, projectId, type });
     try {
       let response;
       try {
-        response = await runCoverageByType(snapshotId, type, undefined, type === "system" ? executionMode : undefined, options);
+        response = await runCoverageByType(
+          snapshotId,
+          type,
+          undefined,
+          type === "system" ? executionMode : undefined,
+          options,
+        );
       } catch (err) {
-        if (err.message && (err.message.includes("already queued") || err.message.includes("running") || err.message.includes("409"))) {
-          const projJobs = await getProjectJobsApi(projectId).catch(() => ({ jobs: [] }));
-          const active = (projJobs.jobs || []).find((j) => ["QUEUED", "RUNNING"].includes(j.status));
+        if (
+          err.message &&
+          (err.message.includes("already queued") ||
+            err.message.includes("running") ||
+            err.message.includes("409"))
+        ) {
+          const projJobs = await getProjectJobsApi(projectId).catch(() => ({
+            jobs: [],
+          }));
+          const active = (projJobs.jobs || []).find((j) =>
+            ["QUEUED", "RUNNING"].includes(j.status),
+          );
           if (active) {
             response = { data: { jobs: [active] } };
           } else {
@@ -2040,14 +2944,22 @@ export default function CoverageTypeDashboard({
           throw err;
         }
       }
-      const fw = response.data?.framework || (type === "unit" ? "jest & vitest" : type === "system" ? "playwright · cypress" : "supertest");
+      const fw =
+        response.data?.framework ||
+        (type === "unit"
+          ? "jest & vitest"
+          : type === "system"
+            ? "playwright · cypress"
+            : "supertest");
       setActiveFramework(fw);
-      const jobs = response.data?.jobs || (response.data?.job ? [response.data.job] : []);
-      if (jobs.length === 0) throw new Error("Backend did not return test run jobs.");
+      const jobs =
+        response.data?.jobs || (response.data?.job ? [response.data.job] : []);
+      if (jobs.length === 0)
+        throw new Error("Backend did not return test run jobs.");
       for (const j of jobs) {
         if (j?.id) {
           activeJobIdRef.current = j.id;
-          startAnalysis({ snapshotId, projectId, type, jobId: j.id });
+          startAnalysis({ snapshotId, projectId, type, jobId: j.id, progress: j.progress });
           if (type === "system") {
             await waitForJobWithProgress(j.id, "Starting AUT server...");
           } else {
@@ -2059,20 +2971,22 @@ export default function CoverageTypeDashboard({
                   s = "Preparing Supertest integration test suite...";
                 } else if (prog <= 70) {
                   s = "Executing HTTP route endpoints & assertions...";
-                } else if (prog < 100) {
+                } else if (prog <= 95) {
                   s = "Calculating API integration coverage metrics...";
                 } else {
                   s = "Integration test execution completed!";
                 }
               } else {
                 if (prog <= 20) {
-                  s = "Preparing dependencies & Docker environment...";
+                  s = "Preparing dependencies & isolated mock environment...";
                 } else if (prog <= 45) {
                   s = "Running Jest unit test suites & generating coverage...";
                 } else if (prog <= 65) {
-                  s = "Running Vitest unit test suites & generating coverage...";
+                  s =
+                    "Running Vitest unit test suites & generating coverage...";
                 } else if (prog <= 85) {
-                  s = "Merging multi-framework coverage & analyzing AST functions...";
+                  s =
+                    "Merging multi-framework coverage & analyzing AST functions...";
                 } else if (prog < 100) {
                   s = "Saving analysis results & syncing data...";
                 } else {
@@ -2086,7 +3000,11 @@ export default function CoverageTypeDashboard({
         }
       }
       setRunProgress(100);
-      setRunStep(type === "system" ? "System test completed successfully!" : "Analysis completed successfully!");
+      setRunStep(
+        type === "system"
+          ? "System test completed successfully!"
+          : "Analysis completed successfully!",
+      );
       completeAnalysis(true);
       setApplyResultsByFile({});
       invalidateCoverageQueries(snapshotId);
@@ -2121,14 +3039,11 @@ export default function CoverageTypeDashboard({
     if (rawMetric) {
       const total = Number(rawMetric.total || 0);
       const covered = Number(rawMetric.covered || 0);
-      if (total === 0 && covered === 0) {
-        return 0;
-      }
       if (rawMetric.pct != null && !isNaN(Number(rawMetric.pct))) {
-        if (total === 0 && covered === 0) {
-          return 0;
+        const parsedPct = Number(rawMetric.pct);
+        if (parsedPct > 0 || (total > 0 && covered === 0)) {
+          return parsedPct;
         }
-        return Number(rawMetric.pct);
       }
       if (total > 0) {
         return (covered / total) * 100;
@@ -2146,18 +3061,25 @@ export default function CoverageTypeDashboard({
   const funcPct = getPctVal(cov.functions, rawTotals?.functions);
   const linePct = getPctVal(cov.lines, rawTotals?.lines);
 
-  // If 0% statements or lines are covered, branch coverage cannot be 100%
+  // If 0% statements AND lines are covered, branch coverage cannot be 100%
   const branchesCovered = Number(rawTotals?.branches?.covered || 0);
   const stmtsCovered = Number(rawTotals?.statements?.covered || 0);
   const linesCovered = Number(rawTotals?.lines?.covered || 0);
-  if (branchesCovered === 0 && (statPct === 0 || linePct === 0 || (stmtsCovered === 0 && linesCovered === 0))) {
+  if (
+    branchesCovered === 0 &&
+    (statPct === 0 ||
+      linePct === 0 ||
+      (stmtsCovered === 0 && linesCovered === 0))
+  ) {
     branchPct = 0;
   }
 
   const selectedFiles = useMemo(() => {
     let nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
     if (type === "unit") {
-      nonTestFiles = nonTestFiles.filter((f) => isBusinessLogicClientFile(f.filePath));
+      nonTestFiles = nonTestFiles.filter((f) =>
+        isBusinessLogicClientFile(f.filePath),
+      );
     }
     return type === "integration" ? nonTestFiles.filter(apiFile) : nonTestFiles;
   }, [files, type]);
@@ -2249,7 +3171,9 @@ export default function CoverageTypeDashboard({
   const unitTestSuites = useMemo(() => {
     let list = testSuites;
     if (type === "unit") {
-      list = list.filter((s) => !isFrontendFile(s.filePath) && !isFrontendFile(s.fileName));
+      list = list.filter(
+        (s) => !isFrontendFile(s.filePath) && !isFrontendFile(s.fileName),
+      );
     }
     return list;
   }, [testSuites, type]);
@@ -2276,34 +3200,37 @@ export default function CoverageTypeDashboard({
   // Generates suggestions directly inline below each file without redirecting to a separate panel
   const [isBulkSuggesting, setIsBulkSuggesting] = useState(false);
   const [bulkSuggestMessage, setBulkSuggestMessage] = useState("");
+  const [bulkIsolatedDefects, setBulkIsolatedDefects] = useState([]);
 
   const handleBulkSuggestTest = async (frameworkOverride = null) => {
     let sourceFiles = selectedFiles;
-    if ((!sourceFiles || sourceFiles.length === 0) && snapshotId) {
+    if (snapshotId && (type === 'unit' || !sourceFiles?.length)) {
       try {
-        const res = await getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200, type });
-        sourceFiles = res?.data?.files?.filter((f) => !isTestFile(f.filePath) && !isFrontendFile(f.filePath)) || [];
+        sourceFiles = (await loadSuggestionSourceFiles(page => getCoverageFiles(snapshotId,
+          { page, sortBy: 'linesPct', order: 'asc', limit: 200, type }), sourceFiles))
+          .filter(f => type === 'unit' ? isBusinessLogicClientFile(f.filePath) : !isTestFile(f.filePath) && !isFrontendFile(f.filePath));
       } catch (err) {
         console.warn("Could not load source files:", err);
+        setBulkSuggestMessage(`Could not load the complete source list: ${err.message}. Retry Suggest Tests.`);
+        return;
       }
     }
 
     if (type === "unit") {
       if (!sourceFiles || sourceFiles.length === 0) {
-        setBulkSuggestMessage("No source files found to generate suggestions. Please run analysis first.");
+        setBulkSuggestMessage(
+          "No source files found to generate suggestions. Please run analysis first.",
+        );
         setTimeout(() => setBulkSuggestMessage(""), 5000);
         return;
       }
 
-      const needImprovementFiles = (sourceFiles || []).filter((sf) => {
-        const linesPct = sf.linesPct ?? 100;
-        const branchesPct = sf.branchesPct ?? 100;
-        const stmtsPct = sf.stmtsPct ?? 100;
-        return linesPct < 100 || branchesPct < 100 || stmtsPct < 100;
-      });
+      const needImprovementFiles = (sourceFiles || []).filter(needsUnitTestSuggestion);
 
       if (needImprovementFiles.length === 0) {
-        setBulkSuggestMessage("All analyzed source files have reached 100% test coverage!");
+        setBulkSuggestMessage(
+          "All analyzed source files have reached 100% test coverage!",
+        );
         setTimeout(() => setBulkSuggestMessage(""), 5000);
         return;
       }
@@ -2319,7 +3246,6 @@ export default function CoverageTypeDashboard({
         initialMessage: startMsg,
       });
 
-
       // Expand only the first file to give an immediate preview without lagging the DOM with 200 editors
       if (needImprovementFiles.length > 0) {
         setExpandedFiles(new Set([needImprovementFiles[0].filePath]));
@@ -2327,31 +3253,53 @@ export default function CoverageTypeDashboard({
       }
 
       try {
-        let completed = 0;
-        const BATCH_SIZE = 4;
-        for (let i = 0; i < needImprovementFiles.length; i += BATCH_SIZE) {
-          const batch = needImprovementFiles.slice(i, i + BATCH_SIZE);
-          await Promise.all(
-            batch.map(async (fileObj) => {
-              // Pass autoExpand = false during bulk run so DOM doesn't mount 200 code editors simultaneously
-              const resSugs = await handleSuggestTestcaseInline(fileObj.filePath, false, frameworkOverride);
-              completed += 1;
-              const pctDone = Math.round((completed / needImprovementFiles.length) * 100);
-              const msg = `Generating test suggestions: ${completed}/${needImprovementFiles.length} files (${pctDone}%)...`;
-              setBulkSuggestMessage(msg);
-              updateSuggestionProgress({
-                snapshotId,
-                completedFiles: completed,
-                totalFiles: needImprovementFiles.length,
-                currentFile: fileObj.filePath,
-                message: msg,
-                filePath: fileObj.filePath,
-                fileSuggestions: resSugs,
-              });
-            })
-          );
+        const paths = needImprovementFiles.map(file => file.filePath);
+        setLoadingSuggestions(prev => ({...prev,...Object.fromEntries(paths.map(file => [file,true]))}));
+        setBulkSuggestMessage(`Generating ${paths.length} source drafts and verifying one combined batch...`);
+        const response = await suggestAllUnitTestcases(snapshotId,{projectId,filePaths:paths,
+          framework:frameworkOverride || activeFramework,validationMode:'fast',async:true});
+        const payload = response?.data || response;
+        let data = payload;
+        if (payload?.queued && payload?.job?.id) {
+          const suggestJobId = payload.job.id;
+          startSuggestion({
+            snapshotId,
+            projectId,
+            jobId: suggestJobId,
+            totalFiles: paths.length,
+            initialMessage: startMsg,
+          });
+          data = await waitForQueueJobResult(suggestJobId);
         }
-        const doneMsg = `✓ Generated test suggestions for ${needImprovementFiles.length} files. Click any file to view and edit, or click 'Apply All' to run.`;
+        const failures = new Map((data.failedFiles || []).map(file => [file.filePath,file.message]));
+        if (Array.isArray(data.suggestions) && data.suggestions.length > 0) {
+          setReviewUndo((prev) => {
+            const next = { ...prev };
+            for (const s of data.suggestions) {
+              const tf = cleanDisplayPath(s.testFile || s.targetTestFile || "");
+              if (tf) delete next[tf];
+            }
+            return next;
+          });
+        }
+        let completed = 0;
+        for (const filePath of paths) {
+          const suggestions = (data.suggestions || [])
+            .filter(suggestion => suggestion.sourceFile === filePath || suggestion.sourceFiles?.includes(filePath))
+            .map((suggestion, idx) => ({
+              ...suggestion,
+              suggestionId: suggestion.suggestionId || suggestion.id || `${filePath}-sug-${idx + 1}`,
+            }));
+          setSuggestionErrors(prev => ({...prev,[filePath]:failures.get(filePath) || null}));
+          if (suggestions.length) setInlineSuggestions(prev => ({...prev,[filePath]:suggestions}));
+          completed++;
+          updateSuggestionProgress({snapshotId,completedFiles:completed,totalFiles:paths.length,
+            currentFile:filePath,filePath,fileSuggestions:suggestions,message:`Processed ${completed}/${paths.length} source files.`});
+        }
+        const verification = data.validation?.status === 'VERIFIED_DRAFT' ? 'The combined batch passed verification.' : data.validation?.message || 'Review draft diagnostics before applying.';
+        const doneMsg = failures.size
+          ? `Generated drafts for ${paths.length - failures.size}/${paths.length} source files. Failed: ${[...failures.keys()].join(', ')}. ${verification}`
+          : `Generated drafts for ${paths.length} source files. ${verification}`;
         setBulkSuggestMessage(doneMsg);
         completeSuggestion(doneMsg);
       } catch (err) {
@@ -2360,6 +3308,7 @@ export default function CoverageTypeDashboard({
         setBulkSuggestMessage(errMsg);
         completeSuggestion(errMsg);
       } finally {
+        setLoadingSuggestions(prev => ({...prev,...Object.fromEntries(needImprovementFiles.map(file => [file.filePath,false]))}));
         setIsBulkSuggesting(false);
         setTimeout(() => setBulkSuggestMessage(""), 10000);
       }
@@ -2385,18 +3334,24 @@ export default function CoverageTypeDashboard({
         await handleSuggestTestcaseInline(filePath, true, framework);
       }
     },
-    [suggestModalConfig.isBulk, handleBulkSuggestTest, handleSuggestTestcaseInline],
+    [
+      suggestModalConfig.isBulk,
+      handleBulkSuggestTest,
+      handleSuggestTestcaseInline,
+    ],
   );
 
   const handleConfirmManualApply = useCallback(
-    async ({ framework, filePath, generatedCode }) => {
+    async ({ framework, filePath, generatedCode, targetTestFile: explicitTestFile }) => {
       if (!snapshotId || !filePath || !generatedCode) return;
       setIsBulkApplying(true);
       setBulkApplyStep("Applying manual unit test case...");
       try {
         const cleanPath = cleanDisplayPath(filePath);
-        const targetTestFile = `tests/${cleanPath.replace(/^src\//, "").replace(/\.[^.]+$/, "")}.test.js`;
-        const res = await applyUnitTestSuggestion(snapshotId, {
+        const targetTestFile = explicitTestFile
+          ? cleanDisplayPath(explicitTestFile)
+          : resolveTargetTestFile(filePath, unitTestSuites, { framework: framework || activeFramework });
+        const res = await applyWithEnvironment({
           projectId,
           suggestion: {
             sourceFile: filePath,
@@ -2409,18 +3364,57 @@ export default function CoverageTypeDashboard({
             },
           },
         });
-        if (res?.success) {
+        const result = res?.data || res;
+        if (result?.fileUpdated) {
           invalidateCoverageQueries(snapshotId);
           await load();
         }
+        const status = result?.testStatus || result?.status;
+        const passed =
+          status !== "FAILED" &&
+          result?.isPassed !== false &&
+          (status === "PASSED" ||
+            status === "SUCCESS" ||
+            result?.isPassed === true);
+        const coverage = result?.newCoverage ?? result?.coverage;
+        const coverageMessage =
+          coverage == null
+            ? ""
+            : ` Coverage: ${
+                typeof coverage === "object"
+                  ? Object.entries(coverage)
+                      .map(
+                        ([metric, value]) =>
+                          `${metric}: ${value?.pct ?? value}%`,
+                      )
+                      .join(", ")
+                  : `${coverage}%`
+              }.`;
+        return {
+          error: !passed,
+          message: passed
+            ? `Test run: ${status || "PASSED"}.${coverageMessage}`
+            : result?.errorDetail ||
+              result?.testRunError ||
+              result?.message ||
+              res?.message ||
+              "The test run failed.",
+        };
       } catch (err) {
         console.error("Failed to apply manual unit test:", err);
+        return {
+          error: true,
+          message:
+            err.response?.data?.message ||
+            err.message ||
+            "Unable to save and run the test.",
+        };
       } finally {
         setIsBulkApplying(false);
         setBulkApplyStep("");
       }
     },
-    [snapshotId, projectId, activeFramework, load],
+    [snapshotId, projectId, activeFramework, unitTestSuites, load],
   );
 
   const functionsForTargetFile = useMemo(() => {
@@ -2428,7 +3422,10 @@ export default function CoverageTypeDashboard({
     const cleanTarget = cleanDisplayPath(suggestModalConfig.filePath);
     return functionsList.filter((fn) => {
       const fPath = fn.filePath || "";
-      return fPath === suggestModalConfig.filePath || cleanDisplayPath(fPath) === cleanTarget;
+      return (
+        fPath === suggestModalConfig.filePath ||
+        cleanDisplayPath(fPath) === cleanTarget
+      );
     });
   }, [suggestModalConfig.filePath, functionsList]);
 
@@ -2442,6 +3439,7 @@ export default function CoverageTypeDashboard({
       ).filter(Boolean),
     [executions, type],
   );
+  const chatRun = [...relevantRuns].sort((a, b) => new Date(b.createdAt || b.finishedAt || 0) - new Date(a.createdAt || a.finishedAt || 0))[0];
 
   const totals = relevantRuns.reduce(
     (acc, item) => ({
@@ -2454,7 +3452,7 @@ export default function CoverageTypeDashboard({
 
   const avg = selectedFiles.length
     ? selectedFiles.reduce((sum, file) => sum + (file.linesPct || 0), 0) /
-    selectedFiles.length
+      selectedFiles.length
     : 0;
 
   const hasSystemTests = useMemo(() => {
@@ -2462,24 +3460,43 @@ export default function CoverageTypeDashboard({
     return Boolean(
       (systemSummary?.hasRun && systemSummary?.e2eTests > 0) ||
       (systemSummary?.scenarios && systemSummary.scenarios.length > 0) ||
-      (frameworks?.supported?.system && frameworks.supported.system.length > 0)
+      (frameworks?.supported?.system && frameworks.supported.system.length > 0),
     );
   }, [type, systemSummary, frameworks]);
 
   const isLatestRunFailed = Boolean(
-    (summary?.latestRunStatus === "failed" || coverageData?.latestRunStatus === "failed") &&
+    (summary?.latestRunStatus === "failed" ||
+      coverageData?.latestRunStatus === "failed") &&
     (type === "unit"
       ? true
-      : (summary?.latestRunError || relevantRuns.some((r) => r?.status === "FAILED")))
+      : summary?.latestRunError ||
+        relevantRuns.some((r) => r?.status === "FAILED")),
   );
-  const hasPartialFailures = type === "unit"
-    ? (summary?.latestRunStatus === "passed_with_failures" || coverageData?.latestRunStatus === "passed_with_failures" || summary?.hasTestFailures)
-    : (totals.failed > 0);
-  const lastSuccessfulCov = type === "unit"
-    ? (summary?.lastSuccessfulCoverage || coverageData?.lastSuccessfulCoverage)
-    : (summary?.lastSuccessfulCoverage?.statements > 0 ? summary.lastSuccessfulCoverage : null);
+  const hasPartialFailures =
+    type === "unit"
+      ? summary?.latestRunStatus === "passed_with_failures" ||
+        coverageData?.latestRunStatus === "passed_with_failures" ||
+        summary?.hasTestFailures
+      : totals.failed > 0;
+  const lastSuccessfulCov =
+    type === "unit"
+      ? summary?.lastSuccessfulCoverage || coverageData?.lastSuccessfulCoverage
+      : summary?.lastSuccessfulCoverage?.statements > 0
+        ? summary.lastSuccessfulCoverage
+        : null;
   const latestRunErr = summary?.latestRunError || coverageData?.latestRunError;
-  const failedSuiteName = cleanDisplayPath(summary?.failedSuite || coverageData?.failedSuite);
+  const failedSuiteName = cleanDisplayPath(
+    summary?.failedSuite || coverageData?.failedSuite,
+  );
+  const failedSuiteNames = (
+    summary?.failedSuites?.length
+      ? summary.failedSuites
+      : coverageData?.failedSuites?.length
+        ? coverageData.failedSuites
+        : [failedSuiteName]
+  )
+    .filter(Boolean)
+    .map((name) => cleanDisplayPath(name));
 
   const lastSuccessfulValues = useMemo(() => {
     if (!lastSuccessfulCov) return [0, 0, 0, 0];
@@ -2493,27 +3510,61 @@ export default function CoverageTypeDashboard({
 
   const values =
     type === "unit"
-      ? [statPct, branchPct, funcPct, linePct]
+      ? isLatestRunFailed && lastSuccessfulCov
+        ? lastSuccessfulValues
+        : [statPct, branchPct, funcPct, linePct]
       : type === "integration"
         ? [
-          selectedFiles.length,
-          selectedFiles.filter((f) => f.linesPct > 0).length,
-          pct(avg),
-          selectedFiles.filter((f) => f.linesPct < 60).length,
-        ]
+            selectedFiles.length,
+            selectedFiles.filter((f) => f.linesPct > 0).length,
+            pct(avg),
+            selectedFiles.filter((f) => f.linesPct < 60).length,
+          ]
         : type === "system"
           ? [
-            systemSummary?.hasRun ? systemSummary.e2eTests : 0,
-            systemSummary?.hasRun ? systemSummary.passed : 0,
-            systemSummary?.hasRun ? systemSummary.failed : 0,
-            systemSummary?.hasRun ? (systemSummary.flaky || 0) : 0,
-            systemSummary?.hasRun && systemSummary.coverageAvailable && systemSummary.featureCoverage != null
-              ? pct(systemSummary.featureCoverage)
-              : systemSummary?.hasRun
-                ? "N/A (Black-box E2E)"
-                : "N/A",
-          ]
-          : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
+              systemSummary?.hasRun ? systemSummary.e2eTests : 0,
+              systemSummary?.hasRun ? systemSummary.passed : 0,
+              systemSummary?.hasRun ? systemSummary.failed : 0,
+              systemSummary?.hasRun ? systemSummary.flaky || 0 : 0,
+              systemSummary?.hasRun &&
+              systemSummary.coverageAvailable &&
+              systemSummary.featureCoverage != null
+                ? pct(systemSummary.featureCoverage)
+                : systemSummary?.hasRun
+                  ? "N/A (Black-box E2E)"
+                  : "N/A",
+            ]
+          : [
+              totals.total,
+              totals.passed,
+              totals.failed,
+              pct(linePct || cov.lines),
+            ];
+
+  const unitCards = ["statements", "branches", "functions", "lines"].map((key, index) => {
+    const total = rawTotals?.[key]?.total == null ? null : Number(rawTotals[key].total);
+    const covered = total == null ? null : Number(rawTotals[key]?.covered || 0);
+    const value = key === "branches" && !covered && (!statPct || !linePct) ? 0 : values[index];
+    return {
+      metric: key,
+      value,
+      percent: isLatestRunFailed ? null : Number(pct(value).slice(0, -1)),
+      covered,
+      total,
+      status: isLatestRunFailed ? "Unavailable" : value >= 80 ? "PASSING" : value >= 60 ? "FAIR" : "LOW",
+    };
+  });
+  const unitRunStatus = summary?.latestRunStatus || coverageData?.latestRunStatus || chatRun?.status;
+  const hasUnitRun = unitRunStatus ? unitRunStatus.toLowerCase() !== "not_run" : Boolean(summary?.hasRun || chatRun);
+  useChatTestContext(onChatContextChange, {
+    projectId, snapshotId, testType: type, testRunId: chatRun?.id || chatRun?.testRunId,
+    displayedMetrics: type === "unit" ? {
+      kind: "unit", tab: activeMetricView, framework: activeFramework || chatRun?.type,
+      state: loading ? "loading" : isLatestRunFailed || !summary ? "unavailable" : hasUnitRun ? "ready" : "not-run",
+      runStatus: unitRunStatus,
+      cards: loading ? undefined : unitCards.map(({ value, ...card }) => card),
+    } : undefined,
+  });
 
   return (
     <div
@@ -2536,42 +3587,71 @@ export default function CoverageTypeDashboard({
           marginBottom: 22,
         }}
       >
-        <div style={{ flex: '1 1 300px', minWidth: 0 }}>
+        <div style={{ flex: "1 1 300px", minWidth: 0 }}>
           {type === "unit" ? (
-            <>
-              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: isLight ? "#0f172a" : "#f8fafc", letterSpacing: "-0.02em" }}>
-                {config.title}
-              </h1>
-              <div style={{ color: isLight ? "#64748b" : "#94a3b8", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span>Engines:</span>
-                <span style={{ padding: "2px 7px", borderRadius: 4, background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.15)", border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.35)", color: isLight ? "#be123c" : "#fb7185", fontWeight: 700, fontSize: 11 }}>Jest</span>
-                <span style={{ padding: "2px 7px", borderRadius: 4, background: isLight ? "#f0fdf4" : "rgba(16, 185, 129, 0.15)", border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(16, 185, 129, 0.35)", color: isLight ? "#15803d" : "#4ade80", fontWeight: 700, fontSize: 11 }}>Vitest</span>
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="m-0 text-base font-semibold tracking-tight text-[var(--color-text)]">
+                  {config.title}
+                </h1>
+                <div className="flex items-center gap-1.5 text-[11px] font-mono text-[var(--color-text-muted)]">
+                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                    Jest
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                    Vitest
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)] font-mono">
                 {frameworks && (
                   <span>
-                    {" "}· Detected:{" "}
-                    <b style={{ color: isLight ? "#1e293b" : "#f1f5f9", fontWeight: 700 }}>
+                    Detected:{" "}
+                    <strong className="font-medium text-[var(--color-text-secondary)]">
                       {frameworks.supported?.[type]?.join(", ") || "none"}
-                    </b>
+                    </strong>
                   </span>
                 )}
                 {activeFramework && (
                   <span>
-                    {" "}· Last execution:{" "}
-                    <b style={{ padding: "2px 8px", borderRadius: 4, background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.2)", border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)", color: isLight ? "#4338ca" : "#c7d2fe", fontSize: 11 }}>{activeFramework}</b>
+                    Last execution:{" "}
+                    <strong className="font-medium text-[var(--color-text-secondary)]">
+                      {activeFramework}
+                    </strong>
                   </span>
                 )}
               </div>
-            </>
+            </div>
           ) : (
             <>
-              <h1 style={{ margin: 0, fontSize: 27, color: isLight ? "#0f172a" : "#f8fafc" }}>{config.title}</h1>
-              <p style={{ color: isLight ? "#475569" : "#8b949e", fontSize: 13, margin: "7px 0 0" }}>
+              <h1
+                style={{
+                  margin: 0,
+                  fontSize: 27,
+                  color: isLight ? "#0f172a" : "#f8fafc",
+                }}
+              >
+                {config.title}
+              </h1>
+              <p
+                style={{
+                  color: isLight ? "#475569" : "#8b949e",
+                  fontSize: 13,
+                  margin: "7px 0 0",
+                }}
+              >
                 {config.subtitle}
               </p>
-              <div style={{ color: isLight ? "#64748b" : "#6e7681", fontSize: 12, marginTop: 7 }}>
-                {type === 'system' ? 'Runner: ' : 'Supported: '}
+              <div
+                style={{
+                  color: isLight ? "#64748b" : "#6e7681",
+                  fontSize: 12,
+                  marginTop: 7,
+                }}
+              >
+                {type === "system" ? "Runner: " : "Supported: "}
                 <span style={{ color: config.accent }}>{config.supported}</span>
-                {frameworks && type !== 'system' && (
+                {frameworks && type !== "system" && (
                   <span>
                     {" "}
                     · Detected:{" "}
@@ -2580,7 +3660,7 @@ export default function CoverageTypeDashboard({
                     </b>
                   </span>
                 )}
-                {activeFramework && type !== 'system' && (
+                {activeFramework && type !== "system" && (
                   <span>
                     {" "}
                     · Last run:{" "}
@@ -2588,25 +3668,62 @@ export default function CoverageTypeDashboard({
                   </span>
                 )}
               </div>
-              {type === 'system' && systemSummary?.hasRun && (
-                <div style={{ color: isLight ? "#475569" : "#8b949e", fontSize: 12, marginTop: 7 }}>
-                  Last result: {systemSummary.executionMode === 'full' ? 'Full system' : 'Legacy frontend-only run'}
+              {type === "system" && systemSummary?.hasRun && (
+                <div
+                  style={{
+                    color: isLight ? "#475569" : "#8b949e",
+                    fontSize: 12,
+                    marginTop: 7,
+                  }}
+                >
+                  Last result:{" "}
+                  {systemSummary.executionMode === "full"
+                    ? "Full system"
+                    : "Legacy frontend-only run"}
                 </div>
               )}
             </>
           )}
         </div>
-        <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: 'wrap', flex: '0 1 auto', minWidth: 0, maxWidth: '100%' }}>
-          {type === "system" && <span style={{ color: '#8b949e', fontSize: 12, padding: '7px 10px', border: '1px solid #30363d', borderRadius: 6 }}>Full system · Real API & database</span>}
+        <div
+          style={{
+            display: "flex",
+            gap: 9,
+            alignItems: "center",
+            flexWrap: "wrap",
+            flex: "0 1 auto",
+            minWidth: 0,
+            maxWidth: "100%",
+          }}
+        >
+          {type === "system" && (
+            <span
+              style={{
+                color: "#8b949e",
+                fontSize: 12,
+                padding: "7px 10px",
+                border: "1px solid #30363d",
+                borderRadius: 6,
+              }}
+            >
+              Full system · Real API & database
+            </span>
+          )}
           {projectId && type !== "unit" && (
             <button
               onClick={() => setShowJobQueueModal(true)}
               style={{
                 ...buttonStyle(running || isGenerating ? "#38bdf8" : "#8b949e"),
-                background: running || isGenerating
-                  ? (isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.15)")
-                  : "rgba(255, 255, 255, 0.05)",
-                border: running || isGenerating ? "1px solid rgba(56,189,248,0.5)" : "1px solid rgba(255, 255, 255, 0.12)",
+                background:
+                  running || isGenerating
+                    ? isLight
+                      ? "#e0f2fe"
+                      : "rgba(56, 189, 248, 0.15)"
+                    : "rgba(255, 255, 255, 0.05)",
+                border:
+                  running || isGenerating
+                    ? "1px solid rgba(56,189,248,0.5)"
+                    : "1px solid rgba(255, 255, 255, 0.12)",
                 color: running || isGenerating ? "#38bdf8" : "#c9d1d9",
                 display: "flex",
                 alignItems: "center",
@@ -2638,56 +3755,116 @@ export default function CoverageTypeDashboard({
                 style={{
                   ...buttonStyle("#67e8f9"),
                   background: isLight ? "#f0f9ff" : "rgba(56, 189, 248, 0.15)",
-                  border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(103,232,249,0.45)",
+                  border: isLight
+                    ? "1px solid #7dd3fc"
+                    : "1px solid rgba(103,232,249,0.45)",
                   color: isLight ? "#0284c7" : "#67e8f9",
                   borderRadius: 6,
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
                 }}
-                title={!hasSystemTests ? "Automatically generate Playwright E2E test scenarios using AI" : "Use AI Agent to generate additional E2E test scenarios"}
+                title={
+                  !hasSystemTests
+                    ? "Automatically generate Playwright E2E test scenarios using AI"
+                    : "Use AI Agent to generate additional E2E test scenarios"
+                }
               >
-                {isGenerating && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                {isGenerating && (
+                  <span
+                    style={{
+                      display: "inline-block",
+                      animation: "spin 1s linear infinite",
+                    }}
+                  >
+                    ⟳
+                  </span>
+                )}
                 <span>{isGenerating ? "Generating..." : "Generate tests"}</span>
               </button>
               <button
                 onClick={load}
-                disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating}
+                disabled={
+                  isCoverageQueryFetching ||
+                  (running && Boolean(activeJobIdRef.current)) ||
+                  isGenerating
+                }
                 style={{
                   ...buttonStyle(isLight ? "#64748b" : "#8b949e"),
-                  background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-                  border: isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border, #29313d)",
-                  color: isLight ? "#475569" : "var(--color-text-secondary, #cbd5e1)",
+                  background: isLight
+                    ? "#ffffff"
+                    : "var(--color-surface, #11161d)",
+                  border: isLight
+                    ? "1px solid #cbd5e1"
+                    : "1px solid var(--color-border, #29313d)",
+                  color: isLight
+                    ? "#475569"
+                    : "var(--color-text-secondary, #cbd5e1)",
                   borderRadius: 6,
-                  opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating) ? 0.6 : 1,
-                  cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating) ? "wait" : "pointer",
+                  opacity:
+                    isCoverageQueryFetching ||
+                    (running && Boolean(activeJobIdRef.current)) ||
+                    isGenerating
+                      ? 0.6
+                      : 1,
+                  cursor:
+                    isCoverageQueryFetching ||
+                    (running && Boolean(activeJobIdRef.current)) ||
+                    isGenerating
+                      ? "wait"
+                      : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
                 }}
               >
-                <RefreshCw size={13} className={isCoverageQueryFetching ? "animate-spin" : ""} />
-                <span>{isCoverageQueryFetching ? "Refreshing..." : "Refresh"}</span>
+                <RefreshCw
+                  size={13}
+                  className={isCoverageQueryFetching ? "animate-spin" : ""}
+                />
+                <span>
+                  {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
+                </span>
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current)) || isGenerating}
+                disabled={
+                  !snapshotId ||
+                  (running && Boolean(activeJobIdRef.current)) ||
+                  isGenerating
+                }
                 style={{
-                  background: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "#fce7f3" : "rgba(236, 72, 153, 0.2)")
-                    : (isLight ? "#db2777" : "#ec4899"),
-                  border: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "1px solid #fbcfe8" : "1px solid rgba(236, 72, 153, 0.4)")
-                    : (isLight ? "1px solid #be185d" : "1px solid #db2777"),
-                  color: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "#9d174d" : "#fbcfe8")
-                    : "#ffffff",
+                  background:
+                    running && Boolean(activeJobIdRef.current)
+                      ? isLight
+                        ? "#fce7f3"
+                        : "rgba(236, 72, 153, 0.2)"
+                      : isLight
+                        ? "#db2777"
+                        : "#ec4899",
+                  border:
+                    running && Boolean(activeJobIdRef.current)
+                      ? isLight
+                        ? "1px solid #fbcfe8"
+                        : "1px solid rgba(236, 72, 153, 0.4)"
+                      : isLight
+                        ? "1px solid #be185d"
+                        : "1px solid #db2777",
+                  color:
+                    running && Boolean(activeJobIdRef.current)
+                      ? isLight
+                        ? "#9d174d"
+                        : "#fbcfe8"
+                      : "#ffffff",
                   boxShadow: "none",
                   borderRadius: 6,
                   padding: "8px 16px",
                   fontWeight: 650,
                   fontSize: 12.5,
-                  cursor: (running && Boolean(activeJobIdRef.current)) ? "wait" : "pointer",
+                  cursor:
+                    running && Boolean(activeJobIdRef.current)
+                      ? "wait"
+                      : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
@@ -2695,43 +3872,58 @@ export default function CoverageTypeDashboard({
                 }}
                 title="Run System Test Analysis (Playwright / Cypress)"
               >
-                {(running && Boolean(activeJobIdRef.current)) ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run System Test"}
+                {running && Boolean(activeJobIdRef.current)
+                  ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...`
+                  : "Run System Test"}
               </button>
             </>
           ) : type === "unit" ? (
-            <button
-              onClick={load}
-              disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
-              style={{
-                background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border, #29313d)",
-                color: isLight ? "#475569" : "var(--color-text-secondary, #cbd5e1)",
-                borderRadius: 6,
-                padding: "8px 14px",
-                fontWeight: 650,
-                fontSize: 12.5,
-                opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
-                cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                transition: "all 0.15s ease",
-              }}
-              title="Refresh Coverage Analysis"
-            >
-              <RefreshCw size={13} className={isCoverageQueryFetching ? "animate-spin" : ""} />
-              <span>{isCoverageQueryFetching ? "Refreshing..." : "Refresh"}</span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setIsUnitTestExportOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[var(--color-border,#29313D)] bg-[var(--color-surface,#11161D)] text-[var(--color-text,#F8FAFC)] hover:bg-[var(--color-surface-secondary,#171D25)] transition-colors cursor-pointer"
+                title="Export Unit Test Report (Markdown, JSON, Standalone HTML)"
+              >
+                <Download size={13} className="text-[#8B7CFD]" />
+                <span>Export Report</span>
+              </button>
+              <button
+                type="button"
+                onClick={load}
+                disabled={
+                  isCoverageQueryFetching ||
+                  (running && Boolean(activeJobIdRef.current))
+                }
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-wait"
+                title="Refresh Coverage Analysis"
+              >
+                <RefreshCw
+                  size={13}
+                  className={isCoverageQueryFetching ? "animate-spin" : ""}
+                />
+                <span>
+                  {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
+                </span>
+              </button>
+            </div>
           ) : (
             <>
               {onGenerate && (
                 <button
                   onClick={async () => {
                     setGenerateError("");
-                    try { await onGenerate(type); }
-                    catch (err) { setGenerateError(err.message || "Generation failed."); }
+                    try {
+                      await onGenerate(type);
+                    } catch (err) {
+                      setGenerateError(err.message || "Generation failed.");
+                    }
                   }}
-                  disabled={loading || (running && Boolean(activeJobIdRef.current)) || generating}
+                  disabled={
+                    loading ||
+                    (running && Boolean(activeJobIdRef.current)) ||
+                    generating
+                  }
                   style={buttonStyle("#67e8f9")}
                 >
                   {generating ? "Generating..." : "Generate AI Tests"}
@@ -2739,36 +3931,68 @@ export default function CoverageTypeDashboard({
               )}
               <button
                 onClick={load}
-                disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
+                disabled={
+                  isCoverageQueryFetching ||
+                  (running && Boolean(activeJobIdRef.current))
+                }
                 style={{
                   ...buttonStyle(isLight ? "#64748b" : "#8b949e"),
-                  opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
-                  cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
+                  opacity:
+                    isCoverageQueryFetching ||
+                    (running && Boolean(activeJobIdRef.current))
+                      ? 0.6
+                      : 1,
+                  cursor:
+                    isCoverageQueryFetching ||
+                    (running && Boolean(activeJobIdRef.current))
+                      ? "wait"
+                      : "pointer",
                 }}
               >
                 {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current))}
+                disabled={
+                  !snapshotId || (running && Boolean(activeJobIdRef.current))
+                }
                 style={{
-                  background: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "#e0f2fe" : "rgba(14, 165, 233, 0.2)")
-                    : (isLight ? "#0284c7" : "#0ea5e9"),
-                  border: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "1px solid #bae6fd" : "1px solid rgba(14, 165, 233, 0.4)")
-                    : (isLight ? "1px solid #0369a1" : "1px solid #0284c7"),
-                  color: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "#0369a1" : "#bae6fd")
-                    : "#ffffff",
-                  boxShadow: (running && Boolean(activeJobIdRef.current))
-                    ? "none"
-                    : (isLight ? "0 2px 6px rgba(14, 165, 233, 0.25)" : "0 2px 10px rgba(14, 165, 233, 0.35)"),
+                  background:
+                    running && Boolean(activeJobIdRef.current)
+                      ? isLight
+                        ? "#e0f2fe"
+                        : "rgba(14, 165, 233, 0.2)"
+                      : isLight
+                        ? "#0284c7"
+                        : "#0ea5e9",
+                  border:
+                    running && Boolean(activeJobIdRef.current)
+                      ? isLight
+                        ? "1px solid #bae6fd"
+                        : "1px solid rgba(14, 165, 233, 0.4)"
+                      : isLight
+                        ? "1px solid #0369a1"
+                        : "1px solid #0284c7",
+                  color:
+                    running && Boolean(activeJobIdRef.current)
+                      ? isLight
+                        ? "#0369a1"
+                        : "#bae6fd"
+                      : "#ffffff",
+                  boxShadow:
+                    running && Boolean(activeJobIdRef.current)
+                      ? "none"
+                      : isLight
+                        ? "0 2px 6px rgba(14, 165, 233, 0.25)"
+                        : "0 2px 10px rgba(14, 165, 233, 0.35)",
                   borderRadius: 8,
                   padding: "8px 16px",
                   fontWeight: 700,
                   fontSize: 12.5,
-                  cursor: (running && Boolean(activeJobIdRef.current)) ? "wait" : "pointer",
+                  cursor:
+                    running && Boolean(activeJobIdRef.current)
+                      ? "wait"
+                      : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
@@ -2776,14 +4000,16 @@ export default function CoverageTypeDashboard({
                 }}
                 title="Run Integration Test Analysis (Supertest)"
               >
-                {(running && Boolean(activeJobIdRef.current)) ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Integration Test"}
+                {running && Boolean(activeJobIdRef.current)
+                  ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...`
+                  : "Run Integration Test"}
               </button>
             </>
           )}
         </div>
       </div>
 
-      {/* ── Guided Sequential Workflow Stepper (Unit Test Mode) ── */}
+      {/* ── Unit Test Candidate & Live Progress Bar (Integration-Style Control Strip) ── */}
       {type === "unit" && (
         <>
           <UnitTestGuidedWorkflow
@@ -2795,18 +4021,28 @@ export default function CoverageTypeDashboard({
             activeJobId={activeJobIdRef.current}
             onRun={run}
             onBulkSuggest={handleBulkSuggestTest}
-            onOpenSuggestModal={(opts) => handleOpenSuggestModal(opts?.filePath, opts?.functionName, opts?.isBulk ?? true)}
+            onOpenSuggestModal={(opts) =>
+              handleOpenSuggestModal(
+                opts?.filePath,
+                opts?.functionName,
+                opts?.isBulk ?? true,
+              )
+            }
             isBulkSuggesting={isBulkSuggesting}
+            hasCompletedSuggest={hasSuggestJobCompleted}
             pendingSuggestionsCount={allPendingSuggestions.length}
             pendingFilesCount={filesWithPendingSuggestions.length}
             onApplyAll={handleApplyAllGlobal}
             isBulkApplying={isBulkApplying}
             bulkApplyStep={bulkApplyStep}
+            bulkApplyProgress={bulkApplyProgress}
+            bulkApplyPhase={bulkApplyPhase}
             summary={summary}
             rawTotals={rawTotals}
             executions={executions}
             testTotals={totals}
-            hasExecuted={relevantRuns.some(r => ["COMPLETED", "PASSED", "SUCCESS", "FAILED"].includes(r?.status)) || (totals.total > 0 && !running)}
+            scenarios={summary?.scenarios || summary?.data?.scenarios || []}
+            hasExecuted={!running && (relevantRuns.some(r => ["COMPLETED", "PASSED", "SUCCESS", "FAILED"].includes(r?.status)) || totals.total > 0)}
             isLatestRunFailed={isLatestRunFailed}
             hasPartialFailures={hasPartialFailures}
             onRefresh={load}
@@ -2817,19 +4053,21 @@ export default function CoverageTypeDashboard({
             activeTab={activeMetricView}
             onChangeTab={(tabId) => setActiveMetricView(tabId)}
             isLight={isLight}
+            unitTestVersions={unitTestVersions}
+            onSwitchVersion={handleSwitchVersion}
+            isSwitchingVersion={isSwitchingVersion}
+            switchingVersionFile={switchingVersionFile}
           />
 
           <UnitTestPackageInstaller
-            snapshotId={snapshotId}
-            missingDependency={activeMissingDependency}
-            onInstallDependency={handleInstallDependency}
+            key={snapshotId}
+            missingDependencies={activeMissingDependencies}
+            onInstallDependencies={handleInstallDependencies}
             isInstalling={Boolean(installingDependencyName)}
-            onRerunTests={run}
             isLight={isLight}
           />
         </>
       )}
-
 
       {/* Live Job Progress Banner */}
       {type !== "unit" && (running || isGenerating) && (
@@ -2840,12 +4078,16 @@ export default function CoverageTypeDashboard({
             background: isLight
               ? "var(--color-surface, #f8fafc)"
               : "var(--color-surface, #11161d)",
-            border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
+            border: isLight
+              ? "1px solid #e2e8f0"
+              : "1px solid var(--color-border, #29313d)",
             borderRadius: 8,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            boxShadow: isLight ? "0 2px 8px rgba(0,0,0,0.06)" : "0 4px 14px rgba(0, 0, 0, 0.35)",
+            boxShadow: isLight
+              ? "0 2px 8px rgba(0,0,0,0.06)"
+              : "0 4px 14px rgba(0, 0, 0, 0.35)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -2862,14 +4104,48 @@ export default function CoverageTypeDashboard({
                 fontSize: 16,
               }}
             >
-              <span style={{ display: "inline-block", animation: "spin 1.5s linear infinite" }}>⟳</span>
+              <span
+                style={{
+                  display: "inline-block",
+                  animation: "spin 1.5s linear infinite",
+                }}
+              >
+                ⟳
+              </span>
             </div>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: isLight ? "#0f172a" : "#f0f6fc", display: "flex", alignItems: "center", gap: 8 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: isLight ? "#0f172a" : "#f0f6fc",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
                 <span>Job in progress</span>
-                <span style={{ fontSize: 10, fontWeight: 700, background: "rgba(56, 189, 248, 0.25)", color: "#0284c7", padding: "1px 6px", borderRadius: 4, letterSpacing: "0.5px" }}>RUNNING</span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    background: "rgba(56, 189, 248, 0.25)",
+                    color: "#0284c7",
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    letterSpacing: "0.5px",
+                  }}
+                >
+                  RUNNING
+                </span>
               </div>
-              <div style={{ fontSize: 12, color: isLight ? "#64748b" : "#94a3b8", marginTop: 2 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: isLight ? "#64748b" : "#94a3b8",
+                  marginTop: 2,
+                }}
+              >
                 {runningStatus || runStep || "Processing task..."}
               </div>
             </div>
@@ -2898,7 +4174,7 @@ export default function CoverageTypeDashboard({
         </div>
       )}
 
-            {generateError && (
+      {generateError && (
         <div
           style={{
             padding: "12px 15px",
@@ -2913,7 +4189,61 @@ export default function CoverageTypeDashboard({
         </div>
       )}
 
-      {error && (
+      {type === "unit" && (bulkSuggestMessage || bulkIsolatedDefects.length > 0) && (
+        <div
+          role={bulkIsolatedDefects.length > 0 ? "alert" : "status"}
+          className={`mb-4 rounded-md px-4 py-3 border text-xs flex items-start justify-between gap-3 ${
+            bulkIsolatedDefects.length > 0
+              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+              : error && bulkSuggestMessage === error
+                ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+          }`}
+        >
+          <div className="flex-1 min-w-0 space-y-2">
+            {bulkSuggestMessage && (
+              <div className="flex items-center gap-2 font-medium">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{bulkSuggestMessage}</span>
+              </div>
+            )}
+            {bulkIsolatedDefects.length > 0 && (
+              <div className="space-y-1 pl-6 font-mono tabular-nums text-[11px]">
+                {bulkIsolatedDefects.map((defect, idx) => (
+                  <div key={`${defect.symbol || "defect"}-${defect.file || ""}-${defect.line || idx}`}>
+                    <span className="font-semibold text-amber-300">
+                      {defect.symbol || "Source defect"}
+                    </span>
+                    {defect.file && (
+                      <span className="text-amber-400/80">
+                        {" "}({defect.file}{defect.line ? `:${defect.line}` : ""})
+                      </span>
+                    )}
+                    {": "}
+                    <span>{defect.diagnostic || defect.reason || defect.message || "Isolated during verification"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (error && error === bulkSuggestMessage) {
+                setError("");
+              }
+              setBulkSuggestMessage("");
+              setBulkIsolatedDefects([]);
+            }}
+            className="p-1 rounded-md hover:bg-[var(--color-surface-secondary)] transition-colors duration-150 cursor-pointer shrink-0"
+            aria-label="Dismiss status notice"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {error && (type !== "unit" || error !== bulkSuggestMessage) && (
         <div
           style={{
             padding: "12px 15px",
@@ -2930,87 +4260,71 @@ export default function CoverageTypeDashboard({
 
       {/* Test Execution Failure Banner with Diagnostic Detail & Previous Coverage Notice */}
       {isLatestRunFailed && (
-        <div
-          style={{
-            padding: "16px 20px",
-            marginBottom: 20,
-            borderRadius: 10,
-            background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-            border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.4)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 20 }}>❌</span>
+        <div className="mb-4 rounded-lg border border-[var(--color-border)] border-l-2 border-l-rose-400/65 bg-[var(--color-surface)] p-4 space-y-2.5">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle
+              size={16}
+              className="text-rose-400/80 shrink-0 mt-0.5"
+            />
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: isLight ? "#991b1b" : "#fca5a5" }}>
+              <div className="text-xs font-semibold text-[var(--color-text)]">
                 Test execution failed for current run
               </div>
-              <div style={{ fontSize: 12, color: isLight ? "#b91c1c" : "#cbd5e1", marginTop: 2 }}>
-                Coverage: <span style={{ color: "#ef4444", fontWeight: 600 }}>Unavailable for current run</span> (Results of failed runs excluded)
+              <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                Coverage:{" "}
+                <span className="text-rose-300/85 font-medium">
+                  Unavailable for current run
+                </span>{" "}
+                (results of failed runs excluded)
               </div>
             </div>
           </div>
 
-          {failedSuiteName && (
-            <div style={{ fontSize: 12, color: isLight ? "#334155" : "#e2e8f0" }}>
-              <span style={{ color: isLight ? "#64748b" : "#94a3b8" }}>Failed Suite: </span>
-              <code style={{ background: isLight ? "#fff1f2" : "rgba(0,0,0,0.4)", border: isLight ? "1px solid #fecdd3" : "none", padding: "2px 6px", borderRadius: 4, color: isLight ? "#be123c" : "#f87171" }}>
-                {cleanDisplayPath(failedSuiteName)}
+          {failedSuiteNames.length > 0 && (
+            <div className="text-xs text-[var(--color-text-secondary)] pl-6">
+              <span className="text-[var(--color-text-muted)]">
+                Failed suite:{" "}
+              </span>
+              <code className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-rose-300/85">
+                {failedSuiteNames.join(", ")}
               </code>
             </div>
           )}
 
           {latestRunErr && (
-            <div
-              style={{
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                background: isLight ? "#ffffff" : "rgba(0, 0, 0, 0.5)",
-                border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.25)",
-                padding: "10px 14px",
-                borderRadius: 6,
-                color: isLight ? "#991b1b" : "#fca5a5",
-                whiteSpace: "pre-wrap",
-                maxHeight: 140,
-                overflowY: "auto",
-              }}
-            >
+            <div className="ml-6 font-mono text-[11px] bg-[var(--color-bg)] border border-[var(--color-border)] px-3 py-2.5 rounded-md text-rose-300/85 whitespace-pre-wrap max-h-36 overflow-y-auto custom-scrollbar">
               {sanitizeErrorText(latestRunErr)}
             </div>
           )}
 
           {lastSuccessfulCov && (
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: 14,
-                fontSize: 12,
-                padding: "10px 14px",
-                background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.04)",
-                borderRadius: 6,
-                border: isLight ? "1px dashed #cbd5e1" : "1px dashed rgba(255, 255, 255, 0.2)",
-                color: isLight ? "#475569" : "#94a3b8",
-              }}
-            >
-              <span style={{ fontWeight: 600, color: isLight ? "#0f172a" : "#e2e8f0" }}>
-                ℹ️ Displaying results from previous successful run (cached):
+            <div className="ml-6 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs px-3 py-2 rounded-md bg-[var(--color-bg)] border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)]">
+              <span className="font-medium text-[var(--color-text-secondary)]">
+                Previous successful run (cached):
               </span>
-              <span>
-                Statements: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.statements || lastSuccessfulCov.lines || 0}%</b>
+              <span className="font-mono tabular-nums">
+                Statements:{" "}
+                <strong className="text-[var(--color-text)]">
+                  {lastSuccessfulValues[0]}%
+                </strong>
               </span>
-              <span>
-                Branches: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.branches || 0}%</b>
+              <span className="font-mono tabular-nums">
+                Branches:{" "}
+                <strong className="text-[var(--color-text)]">
+                  {lastSuccessfulValues[1]}%
+                </strong>
               </span>
-              <span>
-                Functions: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.functions || 0}%</b>
+              <span className="font-mono tabular-nums">
+                Functions:{" "}
+                <strong className="text-[var(--color-text)]">
+                  {lastSuccessfulValues[2]}%
+                </strong>
               </span>
-              <span>
-                Lines: <b style={{ color: isLight ? "#0f172a" : "#cbd5e1" }}>{lastSuccessfulCov.lines || 0}%</b>
+              <span className="font-mono tabular-nums">
+                Lines:{" "}
+                <strong className="text-[var(--color-text)]">
+                  {lastSuccessfulValues[3]}%
+                </strong>
               </span>
             </div>
           )}
@@ -3019,34 +4333,29 @@ export default function CoverageTypeDashboard({
 
       {/* Partial Test Assertions Notice (Coverage is valid, but some assertions failed) */}
       {!isLatestRunFailed && hasPartialFailures && (
-        <div
-          style={{
-            padding: "12px 18px",
-            marginBottom: 20,
-            borderRadius: 10,
-            background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.1)",
-            border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.35)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 18 }}>⚠️</span>
+        <div className="mb-4 rounded-lg border border-[var(--color-border)] border-l-2 border-l-amber-500/60 bg-[var(--color-surface)] px-4 py-3 space-y-1.5">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle
+              size={15}
+              className="text-amber-500/75 shrink-0 mt-0.5"
+            />
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: isLight ? "#92400e" : "#fcd34d" }}>
-                Coverage measured from current run (some test assertions failed)
+              <div className="text-xs font-semibold text-[var(--color-text)]">
+                Coverage measured from current run (some assertions failed)
               </div>
-              <div style={{ fontSize: 12, color: isLight ? "#b45309" : "#94a3b8", marginTop: 2 }}>
-                The files below display accurate % code coverage based on actual tests executed.
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                The files below display measured code coverage from the executed
+                tests.
               </div>
             </div>
           </div>
-          {failedSuiteName && (
-            <div style={{ fontSize: 12, color: isLight ? "#334155" : "#cbd5e1" }}>
-              <span style={{ color: isLight ? "#64748b" : "#94a3b8" }}>Suites with failed tests: </span>
-              <code style={{ background: isLight ? "#fefce8" : "rgba(0,0,0,0.4)", border: isLight ? "1px solid #fef08a" : "none", padding: "2px 6px", borderRadius: 4, color: isLight ? "#a16207" : "#fcd34d" }}>
-                {cleanDisplayPath(failedSuiteName)}
+          {failedSuiteNames.length > 0 && (
+            <div className="text-xs text-[var(--color-text-secondary)] pl-6">
+              <span className="text-[var(--color-text-muted)]">
+                Suites with failures:{" "}
+              </span>
+              <code className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                {failedSuiteNames.join(", ")}
               </code>
             </div>
           )}
@@ -3059,138 +4368,109 @@ export default function CoverageTypeDashboard({
         <>
           {/* Focus Metrics Cards */}
           <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-              gap: 12,
-            }}
+            className={
+              type === "unit"
+                ? "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[var(--color-border)] overflow-hidden"
+                : undefined
+            }
+            style={
+              type === "unit"
+                ? undefined
+                : {
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                    gap: 12,
+                  }
+            }
           >
             {config.focus.map((label, i) => {
-              let metricVal = Number(values[i] || 0);
-              const rawInfo = i === 0 ? rawTotals?.statements : i === 1 ? rawTotals?.branches : i === 2 ? rawTotals?.functions : rawTotals?.lines;
-              if (i === 1 && (Number(rawInfo?.covered || 0) === 0) && (Number(values[0] || 0) === 0 || Number(values[3] || 0) === 0)) {
+              const unitCard = type === "unit" ? unitCards[i] : null;
+              let metricVal = Number(unitCard?.value ?? values[i] ?? 0);
+              const rawInfo = unitCard || (i === 0 ? rawTotals?.statements : i === 1 ? rawTotals?.branches : i === 2 ? rawTotals?.functions : rawTotals?.lines);
+              if (!unitCard && i === 1 && (Number(rawInfo?.covered || 0) === 0) && (Number(values[0] || 0) === 0 || Number(values[3] || 0) === 0)) {
                 metricVal = 0;
               }
-              const color = getCoverageColor(metricVal, isLight);
-              const MetricIcon = i === 0 ? FileCode : i === 1 ? GitBranch : i === 2 ? Cpu : Layers;
+              const MetricIcon =
+                i === 0
+                  ? FileCode
+                  : i === 1
+                    ? GitBranch
+                    : i === 2
+                      ? Cpu
+                      : Layers;
 
               if (type === "unit") {
-                const accentLineColor = i === 0 ? "#6366f1" : i === 1 ? "#10b981" : i === 2 ? "#0284c7" : "#059669";
+                const statusDot =
+                  metricVal >= 80
+                    ? "bg-emerald-500/65"
+                    : metricVal >= 60
+                      ? "bg-amber-500/60"
+                      : "bg-rose-400/75";
+                const statusLabel =
+                  metricVal >= 80
+                    ? "Passing"
+                    : metricVal >= 60
+                      ? "Fair"
+                      : "Low";
                 return (
                   <div
                     key={label}
-                    style={{
-                      background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-                      border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-                      borderRadius: 8,
-                      padding: "14px 16px",
-                      boxShadow: isLight
-                        ? "0 1px 2px 0 rgba(15, 23, 42, 0.04)"
-                        : "none",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "space-between",
-                      minHeight: 118,
-                    }}
+                    className="px-4 py-3.5 flex flex-col justify-between gap-2.5"
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div
-                        style={{
-                          color: isLight ? "#334155" : "var(--color-text, #f8fafc)",
-                          fontSize: 13,
-                          fontWeight: 700,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <MetricIcon size={14} style={{ color: accentLineColor }} />
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-secondary)]">
+                        <MetricIcon
+                          size={13}
+                          className="text-[var(--color-text-muted)] shrink-0"
+                        />
                         <span>{label}</span>
                       </div>
 
                       {!isLatestRunFailed && (
-                        <span
-                          style={{
-                            fontSize: 10.5,
-                            fontWeight: 700,
-                            padding: "2px 7px",
-                            borderRadius: 4,
-                            background: metricVal >= 80
-                              ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
-                              : metricVal >= 60
-                                ? (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)")
-                                : (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)"),
-                            color: metricVal >= 80
-                              ? (isLight ? "#059669" : "#34d399")
-                              : metricVal >= 60
-                                ? (isLight ? "#d97706" : "#fbbf24")
-                                : (isLight ? "#dc2626" : "#f87171"),
-                            border: metricVal >= 80
-                              ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.35)")
-                              : metricVal >= 60
-                                ? (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.35)")
-                                : (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.35)"),
-                          }}
-                        >
-                          {metricVal >= 80 ? "✓ PASSING" : metricVal >= 60 ? "⚠ FAIR" : "× LOW"}
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] font-mono">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${statusDot}`}
+                          />
+                          <span>{statusLabel}</span>
                         </span>
                       )}
                     </div>
 
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
-                        <div
-                          style={{
-                            color: isLatestRunFailed ? (isLight ? "#dc2626" : "#f87171") : (isLight ? "#0f172a" : "var(--color-text, #f8fafc)"),
-                            fontSize: isLatestRunFailed ? 18 : 24,
-                            fontWeight: 800,
-                            fontFamily: "var(--font-mono, monospace)",
-                            letterSpacing: "-0.02em",
-                            lineHeight: "1.1",
-                          }}
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums">
+                        <span
+                          className={`text-2xl font-bold tracking-tight ${
+                            isLatestRunFailed
+                              ? "text-rose-300/85 text-lg"
+                              : "text-[var(--color-text)]"
+                          }`}
                         >
                           {isLatestRunFailed ? "Unavailable" : pct(metricVal)}
-                        </div>
+                        </span>
 
-                        {/* Fraction: covered / total formatted with comma, prevent awkward line wrap */}
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            color: isLight ? "#64748b" : "var(--color-text-secondary, #cbd5e1)",
-                            fontFamily: "var(--font-mono, monospace)",
-                            fontWeight: 500,
-                            textAlign: "right",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
+                        <span className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">
                           {rawInfo?.total != null && rawInfo.total > 0 ? (
-                            <span>{Number(rawInfo.covered || 0).toLocaleString()} / {Number(rawInfo.total).toLocaleString()}</span>
+                            <span>
+                              {Number(rawInfo.covered || 0).toLocaleString()} /{" "}
+                              {Number(rawInfo.total).toLocaleString()}
+                            </span>
                           ) : rawInfo?.total === 0 ? (
                             <span>0 / 0</span>
                           ) : (
                             <span>—</span>
                           )}
-                        </div>
+                        </span>
                       </div>
 
-                      {/* Clean 4px full-width progress bar replacing arbitrary 64px line */}
-                      <div
-                        style={{
-                          width: "100%",
-                          height: 4,
-                          borderRadius: 2,
-                          background: isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.08)",
-                          marginTop: 10,
-                          overflow: "hidden",
-                        }}
-                      >
+                      <div className="w-full h-1 rounded-sm bg-[var(--color-surface-secondary)] overflow-hidden">
                         <div
+                          className={`h-full transition-all duration-300 ${
+                            metricVal >= 80
+                              ? "bg-emerald-500/60"
+                              : "bg-[var(--color-primary)]/70"
+                          }`}
                           style={{
                             width: `${Math.min(100, Math.max(0, metricVal))}%`,
-                            height: "100%",
-                            background: accentLineColor,
-                            borderRadius: 2,
-                            transition: "width 0.4s ease",
                           }}
                         />
                       </div>
@@ -3246,14 +4526,24 @@ export default function CoverageTypeDashboard({
                   <div
                     style={{
                       color: metricColor,
-                      fontSize: typeof values[i] === "string" && values[i].length > 6 ? 17 : 27,
+                      fontSize:
+                        typeof values[i] === "string" && values[i].length > 6
+                          ? 17
+                          : 27,
                       fontWeight: 750,
                       marginTop: 8,
                       lineHeight: "1.2",
                     }}
                   >
                     {isFlakyCard ? (
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          gap: 7,
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <span>{values[i]}</span>
                         {hasRun && (
                           <span
@@ -3262,12 +4552,21 @@ export default function CoverageTypeDashboard({
                               fontWeight: 700,
                               padding: "2px 6px",
                               borderRadius: 4,
-                              background: Number(values[i]) > 0 ? "rgba(251, 191, 36, 0.15)" : "rgba(34, 197, 94, 0.12)",
-                              color: Number(values[i]) > 0 ? "#fbbf24" : "#4ade80",
-                              border: Number(values[i]) > 0 ? "1px solid rgba(251, 191, 36, 0.35)" : "1px solid rgba(34, 197, 94, 0.25)",
+                              background:
+                                Number(values[i]) > 0
+                                  ? "rgba(251, 191, 36, 0.15)"
+                                  : "rgba(34, 197, 94, 0.12)",
+                              color:
+                                Number(values[i]) > 0 ? "#fbbf24" : "#4ade80",
+                              border:
+                                Number(values[i]) > 0
+                                  ? "1px solid rgba(251, 191, 36, 0.35)"
+                                  : "1px solid rgba(34, 197, 94, 0.25)",
                             }}
                           >
-                            {Number(values[i]) > 0 ? "⚠ Needs Attention" : "✓ Stable"}
+                            {Number(values[i]) > 0
+                              ? "⚠ Needs Attention"
+                              : "✓ Stable"}
                           </span>
                         )}
                       </div>
@@ -3320,81 +4619,32 @@ export default function CoverageTypeDashboard({
 
           {/* Mode Navigation Tabs (Unit Test Coverage) */}
           {type === "unit" && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginTop: 20,
-                overflowX: "auto",
-                padding: "4px 6px",
-                background: isLight ? "#f8fafc" : "var(--color-surface, #11161d)",
-                borderRadius: 8,
-                border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-              }}
-            >
+            <div className="mt-5 border-b border-[var(--color-border)] flex items-center gap-5 overflow-x-auto custom-scrollbar">
               {[
-                ...(type === "unit"
-                  ? [
-                    {
-                      id: "traceability",
-                      label: "Logic & Test Traceability",
-                      count: `${functionsList.length} fns`,
-                      icon: Target,
-                      accent: isLight ? "#4f46e5" : "#a5b4fc",
-                    },
-                    {
-                      id: "testcases",
-                      label: "Test Suites & Specs",
-                      count: `${unitTestSuites.length} files`,
-                      icon: FileCheck,
-                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
-                    },
-                    {
-                      id: "visualization",
-                      label: "Execution Terminal & Logs",
-                      count: "Logs & Pipeline",
-                      icon: Terminal,
-                      accent: isLight ? "#0f172a" : "#38bdf8",
-                    },
-                  ]
-                  : [
-                    {
-                      id: "testcases",
-                      label: "Test Files",
-                      count: unitTestSuites.length,
-                      icon: null,
-                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
-                    },
-                    {
-                      id: "all",
-                      label: "Source file coverage",
-                      count: selectedFiles.length,
-                      icon: ListChecks,
-                      accent: isLight ? "#2563eb" : "#60a5fa",
-                    },
-                    {
-                      id: "statements",
-                      label: "Statement coverage",
-                      count: pct(statPct),
-                      icon: FileCode,
-                      accent: isLight ? "#6366f1" : "#a78bfa",
-                    },
-                    {
-                      id: "branches",
-                      label: "Branch coverage",
-                      count: pct(branchPct),
-                      icon: GitBranch,
-                      accent: isLight ? "#d97706" : "#fbbf24",
-                    },
-                    {
-                      id: "functions",
-                      label: "Function coverage",
-                      count: pct(funcPct),
-                      icon: Cpu,
-                      accent: isLight ? "#0284c7" : "#38bdf8",
-                    },
-                  ]),
+                {
+                  id: "traceability",
+                  label: "Logic & Test Traceability",
+                  count: `${functionsList.length} fns`,
+                  icon: Target,
+                },
+                {
+                  id: "simulation",
+                  label: "Test Execution Simulation",
+                  count: "Interactive Studio",
+                  icon: Zap,
+                },
+                {
+                  id: "testcases",
+                  label: "Test Suites & Specs",
+                  count: `${unitTestSuites.length} files`,
+                  icon: FileCheck,
+                },
+                {
+                  id: "versions",
+                  label: "Version History",
+                  count: `${uniqueVersionsCount} versions`,
+                  icon: History,
+                },
               ].map((tab) => {
                 const isCurrent = activeMetricView === tab.id;
                 const TabIcon = tab.icon;
@@ -3402,54 +4652,26 @@ export default function CoverageTypeDashboard({
                 return (
                   <button
                     key={tab.id}
+                    type="button"
                     onClick={() => setActiveMetricView(tab.id)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "6px 14px",
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: isCurrent ? 650 : 500,
-                      cursor: "pointer",
-                      background: isCurrent
-                        ? (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)")
-                        : "transparent",
-                      color: isCurrent
-                        ? (isLight ? "#0f172a" : "#f8fafc")
-                        : (isLight ? "#64748b" : "#94a3b8"),
-                      border: isCurrent
-                        ? (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)")
-                        : "1px solid transparent",
-                      boxShadow: isCurrent
-                        ? (isLight ? "0 1px 2px rgba(15, 23, 42, 0.06)" : "none")
-                        : "none",
-                      transition: "all 0.15s ease",
-                      whiteSpace: "nowrap",
-                    }}
+                    className={`relative flex items-center gap-1.5 py-2.5 text-xs transition-colors cursor-pointer whitespace-nowrap border-b-2 -mb-px ${
+                      isCurrent
+                        ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
+                        : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium"
+                    }`}
                   >
                     {TabIcon && (
                       <TabIcon
-                        size={14}
-                        style={{ color: isCurrent ? tab.accent : (isLight ? "#94a3b8" : "#64748b") }}
+                        size={13}
+                        className={
+                          isCurrent
+                            ? "text-[var(--color-primary)]"
+                            : "text-[var(--color-text-muted)]"
+                        }
                       />
                     )}
                     <span>{tab.label}</span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        padding: "1px 6px",
-                        borderRadius: 4,
-                        background: isCurrent
-                          ? (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.1)")
-                          : (isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.05)"),
-                        color: isCurrent
-                          ? (isLight ? "#334155" : "#f8fafc")
-                          : (isLight ? "#64748b" : "#94a3b8"),
-                        fontFamily: "var(--font-mono, monospace)",
-                      }}
-                    >
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono tabular-nums bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
                       {tab.count}
                     </span>
                   </button>
@@ -3459,225 +4681,114 @@ export default function CoverageTypeDashboard({
           )}
 
           {/* Active View Explanatory Banner */}
-          {activeMetricView !== "testcases" && activeMetricView !== "traceability" && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: "10px 16px",
-                borderRadius: 8,
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                flexWrap: "wrap",
-                gap: 12,
-                background: isLight
-                  ? activeMetricView === "visualization"
-                    ? "#ecfdf5"
-                    : activeMetricView === "testcases"
-                      ? "#faf5ff"
-                      : activeMetricView === "statements"
-                        ? "#eef2ff"
-                        : activeMetricView === "branches"
-                          ? "#fffbeb"
-                          : activeMetricView === "functions"
-                            ? "#f0f9ff"
-                            : "#f8fafc"
-                  : activeMetricView === "visualization"
-                    ? "rgba(16, 185, 129, 0.08)"
-                    : activeMetricView === "testcases"
-                      ? "rgba(192, 132, 252, 0.08)"
-                      : activeMetricView === "statements"
-                        ? "rgba(167, 139, 250, 0.08)"
-                        : activeMetricView === "branches"
-                          ? "rgba(251, 191, 36, 0.08)"
-                          : activeMetricView === "functions"
-                            ? "rgba(56, 189, 248, 0.08)"
-                            : "rgba(255, 255, 255, 0.04)",
-                border: isLight
-                  ? activeMetricView === "visualization"
-                    ? "1px solid #a7f3d0"
-                    : activeMetricView === "testcases"
-                      ? "1px solid #e9d5ff"
-                      : activeMetricView === "statements"
-                        ? "1px solid #c7d2fe"
-                        : activeMetricView === "branches"
-                          ? "1px solid #fde68a"
-                          : activeMetricView === "functions"
-                            ? "1px solid #bae6fd"
-                            : "1px solid #e2e8f0"
-                  : activeMetricView === "visualization"
-                    ? "1px solid rgba(16, 185, 129, 0.25)"
-                    : activeMetricView === "testcases"
-                      ? "1px solid rgba(192, 132, 252, 0.25)"
-                      : activeMetricView === "statements"
-                        ? "1px solid rgba(167, 139, 250, 0.25)"
-                        : activeMetricView === "branches"
-                          ? "1px solid rgba(251, 191, 36, 0.25)"
-                          : activeMetricView === "functions"
-                            ? "1px solid rgba(56, 189, 248, 0.25)"
-                            : "1px solid rgba(255, 255, 255, 0.08)",
-                color: isLight
-                  ? activeMetricView === "visualization"
-                    ? "#065f46"
-                    : activeMetricView === "testcases"
-                      ? "#581c87"
-                      : activeMetricView === "statements"
-                        ? "#3730a3"
-                        : activeMetricView === "branches"
-                          ? "#92400e"
-                          : activeMetricView === "functions"
-                            ? "#075985"
-                            : "#334155"
-                  : activeMetricView === "visualization"
-                    ? "#6ee7b7"
-                    : activeMetricView === "testcases"
-                      ? "#e9d5ff"
-                      : activeMetricView === "statements"
-                        ? "#c4b5fd"
-                        : activeMetricView === "branches"
-                          ? "#fde68a"
-                          : activeMetricView === "functions"
-                            ? "#bae6fd"
-                            : "#8b949e",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  flex: 1,
-                  minWidth: 260,
-                }}
-              >
-                {activeMetricView === "visualization" ? (
-                  <>
-                    <Terminal
-                      size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#0f172a" : "#38bdf8" }}
-                    />
-                    <span>
-                      <b>Execution Terminal & Logs:</b> Real-time terminal runner output, BullMQ pipeline stages, and V8 coverage synchronization.
-                    </span>
-                  </>
-                ) : activeMetricView === "testcases" ? (
-                  <>
-                    <FileCheck
-                      size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#6d5dfb" : "#8b7cfd" }}
-                    />
-                    <span>
-                      <b>Test Suites & Specs:</b> Test suite files executed by <b>Jest</b> and <b>Vitest</b> with assertion results and execution durations.
-                    </span>
-                  </>
-                ) : activeMetricView === "statements" ? (
-                  <>
-                    <FileCode
-                      size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#4f46e5" : "#a78bfa" }}
-                    />
-                    <span>
-                      <b>Statement Coverage:</b> Statistical percentage of source code statements executed during unit testing.
-                    </span>
-                  </>
-                ) : activeMetricView === "branches" ? (
-                  <>
-                    <GitBranch
-                      size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#d97706" : "#fbbf24" }}
-                    />
-                    <span>
-                      <b>Branch Coverage:</b> Statistical percentage of conditional branches (if/else, switch, ternary) evaluated across all paths.
-                    </span>
-                  </>
-                ) : activeMetricView === "functions" ? (
-                  <>
-                    <Cpu
-                      size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#0284c7" : "#38bdf8" }}
-                    />
-                    <span>
-                      <b>Function Coverage:</b> Identified methods and functions with invocation metrics and integrated CFG analysis.
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <ListChecks size={15} style={{ flexShrink: 0, color: isLight ? "#2563eb" : undefined }} />
-                    <span>
-                      <b>Source File Coverage:</b> Aggregated coverage summary across source files (Lines, Branches, Functions, Statements).
-                    </span>
-                  </>
+          {activeMetricView !== "testcases" &&
+            activeMetricView !== "traceability" &&
+            activeMetricView !== "versions" &&
+            activeMetricView !== "simulation" && (
+              <div className="mt-3 px-4 py-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--color-text-secondary)]">
+                <div className="flex items-center gap-2.5 flex-1 min-w-[240px]">
+                  {activeMetricView === "visualization" ? (
+                    <>
+                      <Terminal
+                        size={14}
+                        className="shrink-0 text-[var(--color-text-muted)]"
+                      />
+                      <span>
+                        <strong className="font-medium text-[var(--color-text)]">
+                          Execution Terminal &amp; Logs:
+                        </strong>{" "}
+                        Real-time runner output, BullMQ pipeline stages, and
+                        coverage synchronization.
+                      </span>
+                    </>
+                  ) : activeMetricView === "statements" ? (
+                    <>
+                      <FileCode
+                        size={14}
+                        className="shrink-0 text-[var(--color-text-muted)]"
+                      />
+                      <span>
+                        <strong className="font-medium text-[var(--color-text)]">
+                          Statement Coverage:
+                        </strong>{" "}
+                        Percentage of source code statements executed during
+                        unit testing.
+                      </span>
+                    </>
+                  ) : activeMetricView === "branches" ? (
+                    <>
+                      <GitBranch
+                        size={14}
+                        className="shrink-0 text-[var(--color-text-muted)]"
+                      />
+                      <span>
+                        <strong className="font-medium text-[var(--color-text)]">
+                          Branch Coverage:
+                        </strong>{" "}
+                        Percentage of conditional branches evaluated across all
+                        paths.
+                      </span>
+                    </>
+                  ) : activeMetricView === "functions" ? (
+                    <>
+                      <Cpu
+                        size={14}
+                        className="shrink-0 text-[var(--color-text-muted)]"
+                      />
+                      <span>
+                        <strong className="font-medium text-[var(--color-text)]">
+                          Function Coverage:
+                        </strong>{" "}
+                        Identified methods and functions with invocation metrics
+                        and CFG analysis.
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <ListChecks
+                        size={14}
+                        className="shrink-0 text-[var(--color-text-muted)]"
+                      />
+                      <span>
+                        <strong className="font-medium text-[var(--color-text)]">
+                          Source File Coverage:
+                        </strong>{" "}
+                        Aggregated coverage summary across source files.
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {activeMetricView === "functions" && (
+                  <div className="inline-flex items-center rounded-md bg-[var(--color-bg)] p-0.5 border border-[var(--color-border)] shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setFunctionViewMode("map")}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                        functionViewMode === "map"
+                          ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)]"
+                          : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent"
+                      }`}
+                    >
+                      <Cpu size={11} />
+                      <span>Method Call Map</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFunctionViewMode("table")}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                        functionViewMode === "table"
+                          ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)]"
+                          : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent"
+                      }`}
+                    >
+                      <ListChecks size={11} />
+                      <span>Details Table</span>
+                    </button>
+                  </div>
                 )}
               </div>
-
-              {/* View Mode Switcher for Function */}
-              {activeMetricView === "functions" && (
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button
-                    onClick={() => setFunctionViewMode("map")}
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 650,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      background:
-                        functionViewMode === "map"
-                          ? (isLight ? "#0284c7" : "var(--color-primary)")
-                          : (isLight ? "#ffffff" : "var(--color-surface)"),
-                      color:
-                        functionViewMode === "map"
-                          ? "#ffffff"
-                          : (isLight ? "#475569" : "var(--color-text-secondary)"),
-                      border:
-                        functionViewMode === "map"
-                          ? (isLight ? "1px solid #0284c7" : "1px solid var(--color-primary)")
-                          : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                      transition: "all 0.15s ease",
-                      boxShadow: isLight && functionViewMode === "map" ? "0 1px 2px rgba(2, 132, 199, 0.2)" : "none",
-                    }}
-                  >
-                    <Cpu size={12} />
-                    <span>🕸️ Method Call Map</span>
-                  </button>
-                  <button
-                    onClick={() => setFunctionViewMode("table")}
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 650,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      background:
-                        functionViewMode === "table"
-                          ? (isLight ? "#0284c7" : "var(--color-primary)")
-                          : (isLight ? "#ffffff" : "var(--color-surface)"),
-                      color:
-                        functionViewMode === "table"
-                          ? "#ffffff"
-                          : (isLight ? "#475569" : "var(--color-text-secondary)"),
-                      border:
-                        functionViewMode === "table"
-                          ? (isLight ? "1px solid #0284c7" : "1px solid var(--color-primary)")
-                          : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                      transition: "all 0.15s ease",
-                      boxShadow: isLight && functionViewMode === "table" ? "0 1px 2px rgba(2, 132, 199, 0.2)" : "none",
-                    }}
-                  >
-                    <ListChecks size={12} />
-                    <span>📋 Details Table</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+            )}
 
           {/* ── TABLE VIEW SWITCHER ─────────────────────────────────── */}
           {type === "unit" && activeMetricView === "traceability" ? (
@@ -3697,43 +4808,69 @@ export default function CoverageTypeDashboard({
                   if (onOpenCFG) {
                     onOpenCFG(filePath, funcName, line);
                   } else {
-                    setCfgModalContext({ file: filePath, func: funcName, line });
+                    setCfgModalContext({
+                      file: filePath,
+                      func: funcName,
+                      line,
+                    });
                     setShowCfgModal(true);
                   }
                 }}
-                onSuggestTestcase={(filePath, fnName) => handleOpenSuggestModal(filePath, fnName, false)}
+                onSuggestTestcase={(filePath, fnName) =>
+                  handleOpenSuggestModal(filePath, fnName, false)
+                }
                 inlineSuggestions={inlineSuggestions}
                 loadingSuggestions={loadingSuggestions}
+                suggestionErrors={suggestionErrors}
                 applyingSuggestionIds={applyingSuggestionIds}
                 applyResultsByFile={applyResultsByFile}
                 onApplySuggestion={handleApplySuggestionInline}
                 onApplyAllFileSuggestions={handleApplyAllInline}
+                onDryRunFileSuggestions={handleDryRunInline}
                 onReviewDiff={openReviewForFile}
                 onInstallDependency={handleInstallDependency}
                 installingDependencyName={installingDependencyName}
                 isLight={isLight}
+                unitTestVersions={unitTestVersions}
+                onSwitchVersion={handleSwitchVersion}
+                isSwitchingVersion={isSwitchingVersion}
+                switchingVersionFile={switchingVersionFile}
+                isBulkApplying={isBulkApplying}
+                bulkApplyStep={bulkApplyStep}
+                bulkApplyPhase={bulkApplyPhase}
+                bulkApplyProgress={bulkApplyProgress}
+                applyProgressSteps={applyProgressSteps}
+                onOpenSimulation={(simTarget) => {
+                  if (simTarget?.filePath) setSelectedSourceFile(simTarget.filePath);
+                  setActiveMetricView("simulation");
+                }}
               />
             </div>
-          ) : type === "unit" && activeMetricView === "visualization" ? (
+          ) : type === "unit" && activeMetricView === "simulation" ? (
             <div style={{ marginTop: 14 }}>
-              <UnitTestExecutionProcess
-                testSuites={unitTestSuites}
-                executions={executions}
-                sourceFiles={selectedFiles}
+              <UnitTestSimulationStudioModal
+                isOpen={true}
+                isEmbedded={true}
                 snapshotId={snapshotId}
                 projectId={projectId}
                 isLight={isLight}
-                onOpenFile={handleOpenFileInPlace}
-                onRunTests={run}
-                running={running}
-                runProgress={runProgress}
-                runStep={runStep}
-                runningStatus={runningStatus}
-                rawTotals={rawTotals}
-                summary={summary}
-                missingDependency={summary?.missingDependency}
-                onInstallDependency={handleInstallDependency}
-                isInstallingDependency={Boolean(installingDependencyName)}
+                availableSourceFiles={selectedFiles}
+                availableFunctionsList={functionsList}
+                availableTestSuites={unitTestSuites}
+                initialSourceFile={selectedSourceFile || selectedFiles?.[0]?.filePath || selectedFiles?.[0]?.path}
+              />
+            </div>
+          ) : type === "unit" && activeMetricView === "versions" ? (
+            <div style={{ marginTop: 14 }}>
+              <UnitTestVersionHistoryView
+                unitTestVersions={unitTestVersions}
+                onSwitchVersion={handleSwitchVersion}
+                isSwitchingVersion={isSwitchingVersion}
+                switchingVersionFile={switchingVersionFile}
+                onReviewDiff={openReviewForFile}
+                isLight={isLight}
+                snapshotId={snapshotId}
+                projectId={projectId}
               />
             </div>
           ) : type === "unit" && activeMetricView === "testcases" ? (
@@ -3746,14 +4883,18 @@ export default function CoverageTypeDashboard({
                 overflow: "hidden",
                 background: isLight ? "#ffffff" : cardStyle.background,
                 border: isLight ? "1px solid #e2e8f0" : cardStyle.border,
-                boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.05)" : "none",
+                boxShadow: isLight
+                  ? "0 1px 3px rgba(15, 23, 42, 0.05)"
+                  : "none",
               }}
             >
               <div
                 style={{
                   padding: "14px 18px",
                   fontWeight: 700,
-                  borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.07)",
+                  borderBottom: isLight
+                    ? "1px solid #f1f5f9"
+                    : "1px solid rgba(255,255,255,.07)",
                   background: isLight ? "#ffffff" : "transparent",
                   display: "flex",
                   justifyContent: "space-between",
@@ -3763,51 +4904,42 @@ export default function CoverageTypeDashboard({
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: isLight ? "#0f172a" : undefined }}>File Testcase (Jest & Vitest)</span>
+                  <span style={{ color: isLight ? "#0f172a" : undefined }}>
+                    File Testcase (Jest & Vitest)
+                  </span>
                   <span
-                    style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 400 }}
+                    style={{
+                      fontSize: 11,
+                      color: isLight ? "#64748b" : "#8b949e",
+                      fontWeight: 400,
+                    }}
                   >
                     ({filteredTestSuites.length} test files)
                   </span>
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <button
-                    onClick={() => setTestCaseViewMode("visualization")}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      padding: "4px 9px",
-                      borderRadius: 6,
-                      background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.15)",
-                      color: isLight ? "#4f46e5" : "#a5b4fc",
-                      border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.35)",
-                      fontSize: 11,
-                      fontWeight: 650,
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                    title="Switch to Unit Test Execution Process"
-                  >
-                    <Terminal size={12} />
-                    <span>Execution Process</span>
-                  </button>
-
                   {/* Search input */}
                   <div
                     style={{
                       display: "flex",
                       alignItems: "center",
                       gap: 6,
-                      background: isLight ? "#ffffff" : "rgba(255,255,255,0.04)",
-                      border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                      background: isLight
+                        ? "#ffffff"
+                        : "rgba(255,255,255,0.04)",
+                      border: isLight
+                        ? "1px solid #cbd5e1"
+                        : "1px solid rgba(255,255,255,0.1)",
                       borderRadius: 6,
                       padding: "4px 8px",
                       fontSize: 12,
                     }}
                   >
-                    <Search size={13} style={{ color: isLight ? "#64748b" : "#8b949e" }} />
+                    <Search
+                      size={13}
+                      style={{ color: isLight ? "#64748b" : "#8b949e" }}
+                    />
                     <input
                       type="text"
                       placeholder="Search testcase files..."
@@ -3828,16 +4960,24 @@ export default function CoverageTypeDashboard({
 
               {loadingTestSuites ? (
                 <div
-                  style={{ padding: 30, textAlign: "center", color: isLight ? "#64748b" : "#6e7681" }}
+                  style={{
+                    padding: 30,
+                    textAlign: "center",
+                    color: isLight ? "#64748b" : "#6e7681",
+                  }}
                 >
                   Loading test case files...
                 </div>
               ) : filteredTestSuites.length === 0 ? (
                 <div
-                  style={{ padding: 30, textAlign: "center", color: isLight ? "#64748b" : "#6e7681" }}
+                  style={{
+                    padding: 30,
+                    textAlign: "center",
+                    color: isLight ? "#64748b" : "#6e7681",
+                  }}
                 >
-                  No Jest or Vitest test case files found. Click
-                  "Run Analysis Unit" to run and analyze.
+                  No Jest or Vitest test case files found. Click "Run Analysis
+                  Unit" to run and analyze.
                 </div>
               ) : (
                 <div>
@@ -3851,8 +4991,12 @@ export default function CoverageTypeDashboard({
                         gap: 10,
                         minWidth: 840,
                         padding: "10px 18px",
-                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                        background: isLight
+                          ? "#f8fafc"
+                          : "rgba(255,255,255,0.02)",
+                        borderBottom: isLight
+                          ? "1px solid #e2e8f0"
+                          : "1px solid rgba(255,255,255,0.05)",
                         fontSize: 11,
                         fontWeight: 650,
                         color: isLight ? "#475569" : "#8b949e",
@@ -3876,7 +5020,11 @@ export default function CoverageTypeDashboard({
                       const isExpanded = expandedSuite === suite.filePath;
 
                       return (
-                        <div key={suite.id || `${suite.filePath || 'suite'}-${idx}`}>
+                        <div
+                          key={
+                            suite.id || `${suite.filePath || "suite"}-${idx}`
+                          }
+                        >
                           <div
                             style={{
                               display: "grid",
@@ -3886,37 +5034,59 @@ export default function CoverageTypeDashboard({
                               minWidth: 840,
                               padding: "12px 18px",
                               alignItems: "center",
-                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              borderBottom: isLight
+                                ? "1px solid #f1f5f9"
+                                : "1px solid rgba(255,255,255,.04)",
                               transition: "background 0.15s ease",
                               background: isExpanded
-                                ? (isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)")
+                                ? isLight
+                                  ? "#f8fafc"
+                                  : "rgba(255, 255, 255, 0.03)"
                                 : "transparent",
                             }}
-                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
+                            className={
+                              isLight
+                                ? "hover:bg-slate-50/80"
+                                : "hover:bg-white/[0.02]"
+                            }
                           >
                             {/* File Index */}
-                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                                alignItems: "center",
+                              }}
+                            >
                               <span
                                 style={{
                                   fontSize: 11,
                                   fontWeight: 700,
                                   fontFamily: "var(--font-mono, monospace)",
                                   color: isLight ? "#64748b" : "#94a3b8",
-                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  background: isLight
+                                    ? "#f1f5f9"
+                                    : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight
+                                    ? "1px solid #e2e8f0"
+                                    : "1px solid rgba(255, 255, 255, 0.08)",
                                   borderRadius: 6,
                                   padding: "2px 6px",
                                   minWidth: 26,
                                   textAlign: "center",
                                 }}
                               >
-                                {(testSuitePage - 1) * TEST_SUITES_PER_PAGE + idx + 1}
+                                {(testSuitePage - 1) * TEST_SUITES_PER_PAGE +
+                                  idx +
+                                  1}
                               </span>
                             </div>
 
                             {/* File path */}
                             <div
-                              onClick={() => handleOpenFileInPlace(suite.filePath)}
+                              onClick={() =>
+                                handleOpenFileInPlace(suite.filePath)
+                              }
                               style={{
                                 cursor: "pointer",
                                 display: "flex",
@@ -3927,7 +5097,9 @@ export default function CoverageTypeDashboard({
                               title={`Open test file ${suite.filePath}`}
                             >
                               {(() => {
-                                const cleaned = cleanDisplayPath(suite.filePath);
+                                const cleaned = cleanDisplayPath(
+                                  suite.filePath,
+                                );
                                 const parts = cleaned.split("/");
                                 if (parts.length <= 1) {
                                   return (
@@ -3959,119 +5131,85 @@ export default function CoverageTypeDashboard({
                                     }}
                                     title={cleaned}
                                   >
-                                    <span style={{ color: isLight ? "#64748b" : "#8b949e", marginRight: 5 }}>{dir} /</span>
-                                    <span style={{ color: isLight ? "#0f172a" : "#e6edf3", fontWeight: 600 }}>{file}</span>
+                                    <span
+                                      style={{
+                                        color: isLight ? "#64748b" : "#8b949e",
+                                        marginRight: 5,
+                                      }}
+                                    >
+                                      {dir} /
+                                    </span>
+                                    <span
+                                      style={{
+                                        color: isLight ? "#0f172a" : "#e6edf3",
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {file}
+                                    </span>
                                   </span>
                                 );
                               })()}
                             </div>
 
                             {/* Framework Badge */}
-                            <div
-                              style={{
-                                display: "flex",
-                                justifyContent: "center",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  padding: "2px 8px",
-                                  borderRadius: 4,
-                                  background:
-                                    suite.framework === "vitest"
-                                      ? (isLight ? "#f0fdf4" : "rgba(56, 189, 248, 0.15)")
-                                      : (isLight ? "#fff1f2" : "rgba(192, 132, 252, 0.15)"),
-                                  color:
-                                    suite.framework === "vitest"
-                                      ? (isLight ? "#15803d" : "#38bdf8")
-                                      : (isLight ? "#be123c" : "#c084fc"),
-                                  border:
-                                    suite.framework === "vitest"
-                                      ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(56, 189, 248, 0.35)")
-                                      : (isLight ? "1px solid #fecdd3" : "1px solid rgba(192, 132, 252, 0.35)"),
-                                  textTransform: "uppercase",
-                                }}
-                              >
+                            <div className="flex justify-center">
+                              <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-[var(--color-bg)] text-[var(--color-text-secondary)] border border-[var(--color-border)] uppercase">
                                 {suite.framework}
                               </span>
                             </div>
 
                             {/* Test Cases Count */}
-                            <div
-                              style={{
-                                textAlign: "right",
-                                fontSize: 12,
-                                fontFamily: "var(--font-mono)",
-                              }}
-                            >
-                              <span style={{ color: isLight ? "#16a34a" : "#4ade80", fontWeight: 600 }}>
+                            <div className="text-right text-xs font-mono tabular-nums">
+                              <span className="text-[var(--color-text-secondary)] font-medium">
                                 ✓ {suite.passedTests || 0}
                               </span>
                               {suite.failedTests > 0 && (
-                                <span
-                                  style={{
-                                    color: isLight ? "#dc2626" : "#f87171",
-                                    fontWeight: 600,
-                                    marginLeft: 6,
-                                  }}
-                                >
+                                <span className="text-rose-300/85 font-medium ml-1.5">
                                   × {suite.failedTests}
                                 </span>
                               )}
                             </div>
 
                             {/* Duration */}
-                            <div
-                              style={{
-                                textAlign: "right",
-                                fontSize: 12,
-                                color: isLight ? "#64748b" : "#8b949e",
-                                fontFamily: "var(--font-mono)",
-                              }}
-                            >
+                            <div className="text-right text-xs font-mono tabular-nums text-[var(--color-text-muted)]">
                               {suite.durationMs ? `${suite.durationMs}ms` : "—"}
                             </div>
 
                             {/* Status */}
-                            <div
-                              style={{
-                                display: "flex",
-                                justifyContent: "center",
-                              }}
-                            >
+                            <div className="flex justify-center">
                               <span
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  padding: "2px 8px",
-                                  borderRadius: 4,
-                                  background: isPassed
-                                    ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
+                                className={`inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded border ${
+                                  isPassed
+                                    ? "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
                                     : suite.status === "pending"
-                                      ? (isLight ? "#fefce8" : "rgba(234, 179, 8, 0.15)")
-                                      : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)"),
-                                  color: isPassed
-                                    ? (isLight ? "#15803d" : "#4ade80")
-                                    : suite.status === "pending"
-                                      ? (isLight ? "#a16207" : "#fde047")
-                                      : (isLight ? "#b91c1c" : "#fca5a5"),
-                                  border: isPassed
-                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
-                                    : suite.status === "pending"
-                                      ? (isLight ? "1px solid #fef08a" : "1px solid rgba(234, 179, 8, 0.3)")
-                                      : (isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)"),
-                                }}
+                                      ? "bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)]"
+                                      : "bg-rose-500/[0.06] text-rose-300/85 border-rose-500/20"
+                                }`}
                                 title={
                                   suite.status === "pending"
-                                    ? (suite.pendingReason || suite.message || "Pending: Test file not executed during test run")
+                                    ? suite.pendingReason ||
+                                      suite.message ||
+                                      "Pending: Test file not executed during test run"
                                     : isPassed
                                       ? "Test suite passed"
-                                      : (suite.message || "Test suite failed")
+                                      : suite.message || "Test suite failed"
                                 }
                               >
-                                {isPassed ? "✓ PASSED" : suite.status === "pending" ? "— PENDING" : "× FAILED"}
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full ${
+                                    isPassed
+                                      ? "bg-emerald-500/65"
+                                      : suite.status === "pending"
+                                        ? "bg-amber-500/60"
+                                        : "bg-rose-400/75"
+                                  }`}
+                                />
+                                {isPassed
+                                  ? "Passed"
+                                  : suite.status === "pending"
+                                    ? "Pending"
+                                    : "Failed"}
                               </span>
                             </div>
 
@@ -4085,12 +5223,18 @@ export default function CoverageTypeDashboard({
                               }}
                             >
                               <button
-                                onClick={() => handleOpenFileInPlace(suite.filePath)}
+                                onClick={() =>
+                                  handleOpenFileInPlace(suite.filePath)
+                                }
                                 style={{
                                   padding: "4px 8px",
                                   borderRadius: 5,
-                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
-                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  background: isLight
+                                    ? "#ffffff"
+                                    : "rgba(255,255,255,0.05)",
+                                  border: isLight
+                                    ? "1px solid #cbd5e1"
+                                    : "1px solid rgba(255,255,255,0.1)",
                                   color: isLight ? "#334155" : "#c9d1d9",
                                   fontSize: 11,
                                   fontWeight: isLight ? 600 : 400,
@@ -4101,7 +5245,11 @@ export default function CoverageTypeDashboard({
                                 Open test
                               </button>
 
-                              {((suite.assertions && suite.assertions.length > 0) || suite.message || suite.pendingReason || suite.status === "pending") && (
+                              {((suite.assertions &&
+                                suite.assertions.length > 0) ||
+                                suite.message ||
+                                suite.pendingReason ||
+                                suite.status === "pending") && (
                                 <button
                                   onClick={() =>
                                     setExpandedSuite(
@@ -4111,15 +5259,25 @@ export default function CoverageTypeDashboard({
                                   style={{
                                     padding: "4px 6px",
                                     borderRadius: 5,
-                                    background: isLight ? "#ffffff" : "rgba(255,255,255,0.03)",
-                                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.08)",
+                                    background: isLight
+                                      ? "#ffffff"
+                                      : "rgba(255,255,255,0.03)",
+                                    border: isLight
+                                      ? "1px solid #cbd5e1"
+                                      : "1px solid rgba(255,255,255,0.08)",
                                     color: isLight ? "#64748b" : "#8b949e",
                                     fontSize: 11,
                                     cursor: "pointer",
                                     display: "flex",
                                     alignItems: "center",
                                   }}
-                                  title={suite.status === "pending" ? "View pending reason" : suite.message ? "View error details" : "View child test cases"}
+                                  title={
+                                    suite.status === "pending"
+                                      ? "View pending reason"
+                                      : suite.message
+                                        ? "View error details"
+                                        : "View child test cases"
+                                  }
                                 >
                                   {isExpanded ? (
                                     <ChevronDown size={13} />
@@ -4132,171 +5290,246 @@ export default function CoverageTypeDashboard({
                           </div>
 
                           {/* Expanded Test Cases Accordion */}
-                          {isExpanded && (suite.assertions?.length > 0 || suite.message || suite.pendingReason || suite.status === "pending") && (
-                            <div
-                              style={{
-                                background: isLight ? "#f8fafc" : "rgba(0,0,0,0.25)",
-                                padding: "12px 24px",
-                                borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,.05)",
-                              }}
-                            >
-                              {/* Pending reason banner */}
-                              {suite.status === "pending" && (
-                                <div style={{
-                                  background: isLight ? "#fefce8" : "rgba(234,179,8,0.08)",
-                                  border: isLight ? "1px solid #fef08a" : "1px solid rgba(234,179,8,0.25)",
-                                  borderRadius: 6,
-                                  padding: "8px 12px",
-                                  marginBottom: suite.assertions?.length > 0 ? 10 : 0,
-                                  fontSize: 11,
-                                  fontFamily: "var(--font-mono)",
-                                  color: isLight ? "#854d0e" : "#fef08a",
-                                  whiteSpace: "pre-wrap",
-                                  wordBreak: "break-all",
-                                }}>
-                                  <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#a16207" : "#fde047" }}>
-                                    ⏳ Pending Reason:
-                                  </span>
-                                  {suite.pendingReason || suite.message || "File was discovered on disk but was not executed during the test run."}
-                                </div>
-                              )}
-
-                              {/* Error message banner */}
-                              {suite.status !== "pending" && suite.message && (
-                                <div style={{
-                                  background: isLight ? "#fef2f2" : "rgba(239,68,68,0.08)",
-                                  border: isLight ? "1px solid #fecaca" : "1px solid rgba(239,68,68,0.25)",
-                                  borderRadius: 6,
-                                  padding: "8px 12px",
-                                  marginBottom: suite.assertions?.length > 0 ? 10 : 0,
-                                  fontSize: 11,
-                                  fontFamily: "var(--font-mono)",
-                                  color: isLight ? "#991b1b" : "#fca5a5",
-                                  whiteSpace: "pre-wrap",
-                                  wordBreak: "break-all",
-                                  maxHeight: 200,
-                                  overflowY: "auto",
-                                }}>
-                                  <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#dc2626" : "#f87171" }}>
-                                    ⚠ Error Details:
-                                  </span>
-                                  {suite.message}
-                                </div>
-                              )}
-                              {suite.assertions && suite.assertions.length > 0 && (
-                                <>
+                          {isExpanded &&
+                            (suite.assertions?.length > 0 ||
+                              suite.message ||
+                              suite.pendingReason ||
+                              suite.status === "pending") && (
+                              <div
+                                style={{
+                                  background: isLight
+                                    ? "#f8fafc"
+                                    : "rgba(0,0,0,0.25)",
+                                  padding: "12px 24px",
+                                  borderBottom: isLight
+                                    ? "1px solid #e2e8f0"
+                                    : "1px solid rgba(255,255,255,.05)",
+                                }}
+                              >
+                                {/* Pending reason banner */}
+                                {suite.status === "pending" && (
                                   <div
                                     style={{
+                                      background: isLight
+                                        ? "#fefce8"
+                                        : "rgba(234,179,8,0.08)",
+                                      border: isLight
+                                        ? "1px solid #fef08a"
+                                        : "1px solid rgba(234,179,8,0.25)",
+                                      borderRadius: 6,
+                                      padding: "8px 12px",
+                                      marginBottom:
+                                        suite.assertions?.length > 0 ? 10 : 0,
                                       fontSize: 11,
-                                      fontWeight: 700,
-                                      color: isLight ? "#475569" : "#8b949e",
-                                      marginBottom: 6,
-                                      textTransform: "uppercase",
+                                      fontFamily: "var(--font-mono)",
+                                      color: isLight ? "#854d0e" : "#fef08a",
+                                      whiteSpace: "pre-wrap",
+                                      wordBreak: "break-all",
                                     }}
                                   >
-                                    Test cases in {suite.fileName}:
+                                    <span
+                                      style={{
+                                        fontWeight: 700,
+                                        display: "block",
+                                        marginBottom: 4,
+                                        color: isLight ? "#a16207" : "#fde047",
+                                      }}
+                                    >
+                                      ⏳ Pending Reason:
+                                    </span>
+                                    {suite.pendingReason ||
+                                      suite.message ||
+                                      "File was discovered on disk but was not executed during the test run."}
                                   </div>
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                                    {suite.assertions.map((testCase, idx) => {
-                                      const targetFn = testCase.targetFunction ||
-                                        (Array.isArray(testCase.ancestorTitles) && testCase.ancestorTitles.length > 1
-                                          ? testCase.ancestorTitles[testCase.ancestorTitles.length - 1]
-                                          : null);
+                                )}
 
-                                      return (
-                                        <div
-                                          key={idx}
-                                          onClick={() => handleOpenFileInPlace(suite.filePath, testCase.line || testCase.location?.line || null, testCase.title)}
-                                          style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 9,
-                                            fontSize: 12,
-                                            fontFamily: "var(--font-mono)",
-                                            padding: "4px 6px",
-                                            borderRadius: 4,
-                                            cursor: "pointer",
-                                            borderBottom: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255,255,255,0.03)",
-                                            transition: "all 0.12s ease",
-                                          }}
-                                          className="hover:bg-indigo-500/10"
-                                          title={`Click to view test case source code: ${testCase.title}`}
-                                        >
-                                          <span
-                                            style={{
-                                              fontSize: 10.5,
-                                              fontWeight: 700,
-                                              fontFamily: "var(--font-mono)",
-                                              color: isLight ? "#94a3b8" : "#64748b",
-                                              minWidth: 22,
-                                            }}
-                                          >
-                                            #{idx + 1}
-                                          </span>
-                                          {testCase.status === "passed" ? (
-                                            <Check size={13} style={{ color: isLight ? "#16a34a" : "#4ade80", flexShrink: 0 }} />
-                                          ) : (
-                                            <X size={13} style={{ color: isLight ? "#dc2626" : "#f87171", flexShrink: 0 }} />
-                                          )}
-                                          {targetFn && (
-                                            <span
-                                              style={{
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                gap: 3,
-                                                fontSize: 10.5,
-                                                fontWeight: 700,
-                                                padding: "1px 7px",
-                                                borderRadius: 4,
-                                                background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.16)",
-                                                color: isLight ? "#1d4ed8" : "#60a5fa",
-                                                border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
-                                                whiteSpace: "nowrap",
-                                                flexShrink: 0,
-                                                letterSpacing: "0.2px",
-                                              }}
-                                              title={`Target function: ${targetFn}`}
-                                            >
-                                              <span style={{ color: isLight ? "#3b82f6" : "#93c5fd", opacity: 0.8 }}>ƒ</span>
-                                              {targetFn}
-                                            </span>
-                                          )}
-                                          <span
-                                            style={{
-                                              color:
-                                                testCase.status === "passed"
-                                                  ? (isLight ? "#1e293b" : "#c9d1d9")
-                                                  : (isLight ? "#991b1b" : "#fca5a5"),
-                                              flex: 1,
-                                              overflow: "hidden",
-                                              textOverflow: "ellipsis",
-                                              whiteSpace: "nowrap",
-                                            }}
-                                            title={testCase.title}
-                                          >
-                                            {testCase.title}
-                                          </span>
-                                          {testCase.duration ? (
-                                            <span
-                                              style={{
-                                                color: isLight ? "#64748b" : "#6e7681",
-                                                fontSize: 11,
-                                                marginLeft: "auto",
-                                                flexShrink: 0,
-                                                paddingLeft: 10,
-                                              }}
-                                            >
-                                              {testCase.duration}ms
-                                            </span>
-                                          ) : null}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          )}
+                                {/* Error message banner */}
+                                {suite.status !== "pending" &&
+                                  suite.message && (
+                                    <div
+                                      style={{
+                                        background: isLight
+                                          ? "#fef2f2"
+                                          : "rgba(239,68,68,0.08)",
+                                        border: isLight
+                                          ? "1px solid #fecaca"
+                                          : "1px solid rgba(239,68,68,0.25)",
+                                        borderRadius: 6,
+                                        padding: "8px 12px",
+                                        marginBottom:
+                                          suite.assertions?.length > 0 ? 10 : 0,
+                                        fontSize: 11,
+                                        fontFamily: "var(--font-mono)",
+                                        color: isLight ? "#991b1b" : "#fca5a5",
+                                        whiteSpace: "pre-wrap",
+                                        wordBreak: "break-all",
+                                        maxHeight: 200,
+                                        overflowY: "auto",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontWeight: 700,
+                                          display: "block",
+                                          marginBottom: 4,
+                                          color: isLight
+                                            ? "#dc2626"
+                                            : "#f87171",
+                                        }}
+                                      >
+                                        ⚠ Error Details:
+                                      </span>
+                                      {suite.message}
+                                    </div>
+                                  )}
+                                {suite.assertions &&
+                                  suite.assertions.length > 0 && (
+                                    <>
+                                      <div
+                                        style={{
+                                          fontSize: 11,
+                                          fontWeight: 700,
+                                          color: isLight
+                                            ? "#475569"
+                                            : "#8b949e",
+                                          marginBottom: 6,
+                                          textTransform: "uppercase",
+                                        }}
+                                      >
+                                        Test cases in {suite.fileName}:
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          gap: 5,
+                                        }}
+                                      >
+                                        {suite.assertions.map(
+                                          (testCase, idx) => {
+                                            const targetFn =
+                                              testCase.targetFunction ||
+                                              (Array.isArray(
+                                                testCase.ancestorTitles,
+                                              ) &&
+                                              testCase.ancestorTitles.length > 1
+                                                ? testCase.ancestorTitles[
+                                                    testCase.ancestorTitles
+                                                      .length - 1
+                                                  ]
+                                                : null);
+
+                                            return (
+                                              <div
+                                                key={idx}
+                                                onClick={() =>
+                                                  handleOpenFileInPlace(
+                                                    suite.filePath,
+                                                    testCase.line ||
+                                                      testCase.location?.line ||
+                                                      null,
+                                                    testCase.title,
+                                                  )
+                                                }
+                                                style={{
+                                                  display: "flex",
+                                                  alignItems: "center",
+                                                  gap: 9,
+                                                  fontSize: 12,
+                                                  fontFamily:
+                                                    "var(--font-mono)",
+                                                  padding: "4px 6px",
+                                                  borderRadius: 4,
+                                                  cursor: "pointer",
+                                                  borderBottom: isLight
+                                                    ? "1px dashed #e2e8f0"
+                                                    : "1px dashed rgba(255,255,255,0.03)",
+                                                  transition: "all 0.12s ease",
+                                                }}
+                                                className="hover:bg-indigo-500/10"
+                                                title={`Click to view test case source code: ${testCase.title}`}
+                                              >
+                                                <span
+                                                  style={{
+                                                    fontSize: 10.5,
+                                                    fontWeight: 700,
+                                                    fontFamily:
+                                                      "var(--font-mono)",
+                                                    color: isLight
+                                                      ? "#94a3b8"
+                                                      : "#64748b",
+                                                    minWidth: 22,
+                                                  }}
+                                                >
+                                                  #{idx + 1}
+                                                </span>
+                                                {testCase.status ===
+                                                "passed" ? (
+                                                  <Check
+                                                    size={13}
+                                                    className="text-emerald-500/75 shrink-0"
+                                                  />
+                                                ) : (
+                                                  <X
+                                                    size={13}
+                                                    className="text-rose-400/80 shrink-0"
+                                                  />
+                                                )}
+                                                {targetFn && (
+                                                  <span
+                                                    className="inline-flex items-center gap-1 text-[10.5px] font-mono px-1.5 py-0.2 rounded bg-[var(--color-surface)] text-[var(--color-text-secondary)] border border-[var(--color-border)] whitespace-nowrap shrink-0"
+                                                    title={`Target function: ${targetFn}`}
+                                                  >
+                                                    <span className="text-[var(--color-text-muted)]">
+                                                      ƒ
+                                                    </span>
+                                                    {targetFn}
+                                                  </span>
+                                                )}
+                                                <span
+                                                  style={{
+                                                    color:
+                                                      testCase.status ===
+                                                      "passed"
+                                                        ? isLight
+                                                          ? "#1e293b"
+                                                          : "#c9d1d9"
+                                                        : isLight
+                                                          ? "#991b1b"
+                                                          : "#fca5a5",
+                                                    flex: 1,
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap",
+                                                  }}
+                                                  title={testCase.title}
+                                                >
+                                                  {testCase.title}
+                                                </span>
+                                                {testCase.duration ? (
+                                                  <span
+                                                    style={{
+                                                      color: isLight
+                                                        ? "#64748b"
+                                                        : "#6e7681",
+                                                      fontSize: 11,
+                                                      marginLeft: "auto",
+                                                      flexShrink: 0,
+                                                      paddingLeft: 10,
+                                                    }}
+                                                  >
+                                                    {testCase.duration}ms
+                                                  </span>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          },
+                                        )}
+                                      </div>
+                                    </>
+                                  )}
+                              </div>
+                            )}
                         </div>
                       );
                     })}
@@ -4328,7 +5561,11 @@ export default function CoverageTypeDashboard({
                     if (onOpenCFG) {
                       onOpenCFG(filePath, funcName, line);
                     } else {
-                      setCfgModalContext({ file: filePath, func: funcName, line });
+                      setCfgModalContext({
+                        file: filePath,
+                        func: funcName,
+                        line,
+                      });
                       setShowCfgModal(true);
                     }
                   }}
@@ -4344,14 +5581,18 @@ export default function CoverageTypeDashboard({
                   overflow: "hidden",
                   background: isLight ? "#ffffff" : cardStyle.background,
                   border: isLight ? "1px solid #e2e8f0" : cardStyle.border,
-                  boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.05)" : "none",
+                  boxShadow: isLight
+                    ? "0 1px 3px rgba(15, 23, 42, 0.05)"
+                    : "none",
                 }}
               >
                 <div
                   style={{
                     padding: "14px 18px",
                     fontWeight: 700,
-                    borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.07)",
+                    borderBottom: isLight
+                      ? "1px solid #f1f5f9"
+                      : "1px solid rgba(255,255,255,.07)",
                     background: isLight ? "#ffffff" : "transparent",
                     display: "flex",
                     justifyContent: "space-between",
@@ -4363,8 +5604,13 @@ export default function CoverageTypeDashboard({
                   <div
                     style={{ display: "flex", alignItems: "center", gap: 10 }}
                   >
-                    <Cpu size={16} style={{ color: isLight ? "#0284c7" : "#38bdf8" }} />
-                    <span style={{ color: isLight ? "#0f172a" : undefined }}>Function Coverage Breakdown</span>
+                    <Cpu
+                      size={16}
+                      style={{ color: isLight ? "#0284c7" : "#38bdf8" }}
+                    />
+                    <span style={{ color: isLight ? "#0f172a" : undefined }}>
+                      Function Coverage Breakdown
+                    </span>
                     <span
                       style={{
                         fontSize: 11,
@@ -4384,14 +5630,21 @@ export default function CoverageTypeDashboard({
                         display: "flex",
                         alignItems: "center",
                         gap: 6,
-                        background: isLight ? "#ffffff" : "rgba(255,255,255,0.04)",
-                        border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                        background: isLight
+                          ? "#ffffff"
+                          : "rgba(255,255,255,0.04)",
+                        border: isLight
+                          ? "1px solid #cbd5e1"
+                          : "1px solid rgba(255,255,255,0.1)",
                         borderRadius: 6,
                         padding: "4px 8px",
                         fontSize: 12,
                       }}
                     >
-                      <Search size={13} style={{ color: isLight ? "#64748b" : "#8b949e" }} />
+                      <Search
+                        size={13}
+                        style={{ color: isLight ? "#64748b" : "#8b949e" }}
+                      />
                       <input
                         type="text"
                         placeholder="Search function or file..."
@@ -4419,22 +5672,35 @@ export default function CoverageTypeDashboard({
                           onClick={() => setFunctionStatusFilter(st.id)}
                           style={{
                             fontSize: 11,
-                            fontWeight: functionStatusFilter === st.id ? 650 : 500,
+                            fontWeight:
+                              functionStatusFilter === st.id ? 650 : 500,
                             padding: "4px 10px",
                             borderRadius: 5,
                             cursor: "pointer",
                             background:
                               functionStatusFilter === st.id
-                                ? (isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.2)")
-                                : (isLight ? "#ffffff" : "rgba(255,255,255,0.03)"),
+                                ? isLight
+                                  ? "#e0f2fe"
+                                  : "rgba(56, 189, 248, 0.2)"
+                                : isLight
+                                  ? "#ffffff"
+                                  : "rgba(255,255,255,0.03)",
                             color:
                               functionStatusFilter === st.id
-                                ? (isLight ? "#0369a1" : "#38bdf8")
-                                : (isLight ? "#64748b" : "#8b949e"),
+                                ? isLight
+                                  ? "#0369a1"
+                                  : "#38bdf8"
+                                : isLight
+                                  ? "#64748b"
+                                  : "#8b949e",
                             border:
                               functionStatusFilter === st.id
-                                ? (isLight ? "1px solid #7dd3fc" : "1px solid rgba(56, 189, 248, 0.4)")
-                                : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.05)"),
+                                ? isLight
+                                  ? "1px solid #7dd3fc"
+                                  : "1px solid rgba(56, 189, 248, 0.4)"
+                                : isLight
+                                  ? "1px solid #cbd5e1"
+                                  : "1px solid rgba(255,255,255,0.05)",
                             transition: "all 0.15s ease",
                           }}
                         >
@@ -4478,8 +5744,12 @@ export default function CoverageTypeDashboard({
                           gap: 10,
                           minWidth: 760,
                           padding: "10px 18px",
-                          background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                          borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                          background: isLight
+                            ? "#f8fafc"
+                            : "rgba(255,255,255,0.02)",
+                          borderBottom: isLight
+                            ? "1px solid #e2e8f0"
+                            : "1px solid rgba(255,255,255,0.05)",
                           fontSize: 11,
                           fontWeight: 650,
                           color: isLight ? "#475569" : "#8b949e",
@@ -4512,33 +5782,58 @@ export default function CoverageTypeDashboard({
                               minWidth: 760,
                               padding: "10px 18px",
                               alignItems: "center",
-                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              borderBottom: isLight
+                                ? "1px solid #f1f5f9"
+                                : "1px solid rgba(255,255,255,.04)",
                               transition: "background 0.15s ease",
                             }}
-                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
+                            className={
+                              isLight
+                                ? "hover:bg-slate-50/80"
+                                : "hover:bg-white/[0.02]"
+                            }
                           >
                             {/* Function Index */}
-                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                                alignItems: "center",
+                              }}
+                            >
                               <span
                                 style={{
                                   fontSize: 11,
                                   fontWeight: 700,
                                   fontFamily: "var(--font-mono, monospace)",
                                   color: isLight ? "#64748b" : "#94a3b8",
-                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  background: isLight
+                                    ? "#f1f5f9"
+                                    : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight
+                                    ? "1px solid #e2e8f0"
+                                    : "1px solid rgba(255, 255, 255, 0.08)",
                                   borderRadius: 6,
                                   padding: "2px 6px",
                                   minWidth: 26,
                                   textAlign: "center",
                                 }}
                               >
-                                {(functionPage - 1) * FUNCTIONS_PER_PAGE + idx + 1}
+                                {(functionPage - 1) * FUNCTIONS_PER_PAGE +
+                                  idx +
+                                  1}
                               </span>
                             </div>
 
                             <div
-                              onClick={() => handleOpenFileInPlace(fn.filePath, fn.startLine || fn.line || 1, fn.functionName, fn.endLine)}
+                              onClick={() =>
+                                handleOpenFileInPlace(
+                                  fn.filePath,
+                                  fn.startLine || fn.line || 1,
+                                  fn.functionName,
+                                  fn.endLine,
+                                )
+                              }
                               style={{
                                 display: "flex",
                                 alignItems: "center",
@@ -4552,8 +5847,12 @@ export default function CoverageTypeDashboard({
                                 size={14}
                                 style={{
                                   color: isCovered
-                                    ? (isLight ? "#0284c7" : "#38bdf8")
-                                    : (isLight ? "#d97706" : "#fbbf24"),
+                                    ? isLight
+                                      ? "#0284c7"
+                                      : "#38bdf8"
+                                    : isLight
+                                      ? "#d97706"
+                                      : "#fbbf24",
                                   flexShrink: 0,
                                 }}
                               />
@@ -4562,8 +5861,12 @@ export default function CoverageTypeDashboard({
                                   fontFamily: "var(--font-mono)",
                                   fontSize: 13,
                                   color: isCovered
-                                    ? (isLight ? "#0f172a" : "#e6edf3")
-                                    : (isLight ? "#b45309" : "#fde68a"),
+                                    ? isLight
+                                      ? "#0f172a"
+                                      : "#e6edf3"
+                                    : isLight
+                                      ? "#b45309"
+                                      : "#fde68a",
                                   fontWeight: 600,
                                   overflow: "hidden",
                                   textOverflow: "ellipsis",
@@ -4575,7 +5878,14 @@ export default function CoverageTypeDashboard({
                             </div>
 
                             <div
-                              onClick={() => handleOpenFileInPlace(fn.filePath, fn.startLine || fn.line || 1, fn.functionName, fn.endLine)}
+                              onClick={() =>
+                                handleOpenFileInPlace(
+                                  fn.filePath,
+                                  fn.startLine || fn.line || 1,
+                                  fn.functionName,
+                                  fn.endLine,
+                                )
+                              }
                               style={{
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
@@ -4608,8 +5918,12 @@ export default function CoverageTypeDashboard({
                                 fontSize: 12,
                                 fontWeight: 600,
                                 color: isCovered
-                                  ? (isLight ? "#16a34a" : "#22c55e")
-                                  : (isLight ? "#d97706" : "#fbbf24"),
+                                  ? isLight
+                                    ? "#16a34a"
+                                    : "#22c55e"
+                                  : isLight
+                                    ? "#d97706"
+                                    : "#fbbf24",
                               }}
                             >
                               {isCovered ? `${fn.hit} hits` : "0 hits"}
@@ -4628,14 +5942,26 @@ export default function CoverageTypeDashboard({
                                   padding: "2px 7px",
                                   borderRadius: 10,
                                   background: isCovered
-                                    ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
-                                    : (isLight ? "#fefce8" : "rgba(251, 191, 36, 0.15)"),
+                                    ? isLight
+                                      ? "#f0fdf4"
+                                      : "rgba(34, 197, 94, 0.15)"
+                                    : isLight
+                                      ? "#fefce8"
+                                      : "rgba(251, 191, 36, 0.15)",
                                   color: isCovered
-                                    ? (isLight ? "#15803d" : "#4ade80")
-                                    : (isLight ? "#a16207" : "#fde047"),
+                                    ? isLight
+                                      ? "#15803d"
+                                      : "#4ade80"
+                                    : isLight
+                                      ? "#a16207"
+                                      : "#fde047",
                                   border: isCovered
-                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
-                                    : (isLight ? "1px solid #fef08a" : "1px solid rgba(251, 191, 36, 0.3)"),
+                                    ? isLight
+                                      ? "1px solid #bbf7d0"
+                                      : "1px solid rgba(34, 197, 94, 0.3)"
+                                    : isLight
+                                      ? "1px solid #fef08a"
+                                      : "1px solid rgba(251, 191, 36, 0.3)",
                                 }}
                               >
                                 {isCovered ? "✓ PASS" : "⚑ UNCALLED"}
@@ -4656,7 +5982,7 @@ export default function CoverageTypeDashboard({
                                     fn.filePath,
                                     fn.startLine || fn.line || 1,
                                     fn.functionName,
-                                    fn.endLine
+                                    fn.endLine,
                                   )
                                 }
                                 style={{
@@ -4665,8 +5991,12 @@ export default function CoverageTypeDashboard({
                                   gap: 4,
                                   padding: "4px 8px",
                                   borderRadius: 5,
-                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
-                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  background: isLight
+                                    ? "#ffffff"
+                                    : "rgba(255,255,255,0.05)",
+                                  border: isLight
+                                    ? "1px solid #cbd5e1"
+                                    : "1px solid rgba(255,255,255,0.1)",
                                   color: isLight ? "#334155" : "#c9d1d9",
                                   fontSize: 11,
                                   fontWeight: isLight ? 600 : 400,
@@ -4680,10 +6010,16 @@ export default function CoverageTypeDashboard({
 
                               <button
                                 onClick={() => {
-                                  const targetLine = fn.startLine || fn.line || 1;
-                                  const targetFunc = fn.displayName || fn.functionName;
+                                  const targetLine =
+                                    fn.startLine || fn.line || 1;
+                                  const targetFunc =
+                                    fn.displayName || fn.functionName;
                                   if (onOpenCFG) {
-                                    onOpenCFG(fn.filePath, targetFunc, targetLine);
+                                    onOpenCFG(
+                                      fn.filePath,
+                                      targetFunc,
+                                      targetLine,
+                                    );
                                   } else {
                                     setCfgModalContext({
                                       file: fn.filePath,
@@ -4699,8 +6035,12 @@ export default function CoverageTypeDashboard({
                                   gap: 4,
                                   padding: "4px 8px",
                                   borderRadius: 5,
-                                  background: isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.12)",
-                                  border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(56, 189, 248, 0.3)",
+                                  background: isLight
+                                    ? "#e0f2fe"
+                                    : "rgba(56, 189, 248, 0.12)",
+                                  border: isLight
+                                    ? "1px solid #7dd3fc"
+                                    : "1px solid rgba(56, 189, 248, 0.3)",
                                   color: isLight ? "#0284c7" : "#38bdf8",
                                   fontSize: 11,
                                   fontWeight: 600,
@@ -4739,14 +6079,18 @@ export default function CoverageTypeDashboard({
                 overflow: "hidden",
                 background: isLight ? "#ffffff" : cardStyle.background,
                 border: isLight ? "1px solid #e2e8f0" : cardStyle.border,
-                boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.05)" : "none",
+                boxShadow: isLight
+                  ? "0 1px 3px rgba(15, 23, 42, 0.05)"
+                  : "none",
               }}
             >
               <div
                 style={{
                   padding: "14px 18px",
                   fontWeight: 700,
-                  borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.07)",
+                  borderBottom: isLight
+                    ? "1px solid #f1f5f9"
+                    : "1px solid rgba(255,255,255,.07)",
                   background: isLight ? "#ffffff" : "transparent",
                   display: "flex",
                   justifyContent: "space-between",
@@ -4757,7 +6101,8 @@ export default function CoverageTypeDashboard({
                   {type === "integration"
                     ? "API / integration files"
                     : type === "system"
-                      ? systemSummary?.hasRun && !systemSummary?.coverageAvailable
+                      ? systemSummary?.hasRun &&
+                        !systemSummary?.coverageAvailable
                         ? "E2E Test Scenarios"
                         : "Files exercised by E2E tests"
                       : activeMetricView === "statements"
@@ -4773,14 +6118,21 @@ export default function CoverageTypeDashboard({
                       display: "flex",
                       alignItems: "center",
                       gap: 6,
-                      background: isLight ? "#ffffff" : "rgba(255,255,255,0.04)",
-                      border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                      background: isLight
+                        ? "#ffffff"
+                        : "rgba(255,255,255,0.04)",
+                      border: isLight
+                        ? "1px solid #cbd5e1"
+                        : "1px solid rgba(255,255,255,0.1)",
                       borderRadius: 6,
                       padding: "4px 8px",
                       fontSize: 12,
                     }}
                   >
-                    <Search size={13} style={{ color: isLight ? "#64748b" : "#8b949e" }} />
+                    <Search
+                      size={13}
+                      style={{ color: isLight ? "#64748b" : "#8b949e" }}
+                    />
                     <input
                       type="text"
                       placeholder="Search source files..."
@@ -4798,9 +6150,15 @@ export default function CoverageTypeDashboard({
                   </div>
 
                   <span
-                    style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 400 }}
+                    style={{
+                      fontSize: 11,
+                      color: isLight ? "#64748b" : "#8b949e",
+                      fontWeight: 400,
+                    }}
                   >
-                    {type === "system" && systemSummary?.hasRun && !systemSummary?.coverageAvailable
+                    {type === "system" &&
+                    systemSummary?.hasRun &&
+                    !systemSummary?.coverageAvailable
                       ? `${systemSummary.scenarios?.length || 0} scenarios executed`
                       : filteredSourceFiles.length !== displayFiles.length
                         ? `${filteredSourceFiles.length} of ${displayFiles.length} files`
@@ -4827,11 +6185,27 @@ export default function CoverageTypeDashboard({
                   >
                     <Zap size={22} />
                   </div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", marginBottom: 6 }}>
+                  <div
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 700,
+                      color: "#f0f6fc",
+                      marginBottom: 6,
+                    }}
+                  >
                     No E2E scenarios executed on this snapshot yet
                   </div>
-                  <p style={{ color: "#8b949e", fontSize: 13, maxWidth: 500, margin: "0 auto 20px", lineHeight: 1.55 }}>
-                    No System / E2E test runs (Playwright or Cypress) recorded yet. Run tests or generate AI E2E scenarios to get started.
+                  <p
+                    style={{
+                      color: "#8b949e",
+                      fontSize: 13,
+                      maxWidth: 500,
+                      margin: "0 auto 20px",
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    No System / E2E test runs (Playwright or Cypress) recorded
+                    yet. Run tests or generate AI E2E scenarios to get started.
                   </p>
 
                   {systemSummary?.latestAiTest && (
@@ -4842,24 +6216,44 @@ export default function CoverageTypeDashboard({
                         textAlign: "left",
                         padding: 16,
                         borderRadius: 10,
-                        border: systemSummary.latestAiTest.status === "VERIFIED"
-                          ? "1px solid rgba(34, 197, 94, 0.35)"
-                          : "1px solid rgba(251, 191, 36, 0.35)",
-                        background: systemSummary.latestAiTest.status === "VERIFIED"
-                          ? "rgba(34, 197, 94, 0.08)"
-                          : "rgba(251, 191, 36, 0.08)",
+                        border:
+                          systemSummary.latestAiTest.status === "VERIFIED"
+                            ? "1px solid rgba(34, 197, 94, 0.35)"
+                            : "1px solid rgba(251, 191, 36, 0.35)",
+                        background:
+                          systemSummary.latestAiTest.status === "VERIFIED"
+                            ? "rgba(34, 197, 94, 0.08)"
+                            : "rgba(251, 191, 36, 0.08)",
                       }}
                     >
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          marginBottom: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
                           <span style={{ fontSize: 16 }}>
-                            {systemSummary.latestAiTest.status === "VERIFIED" ? "✓" : "⚠️"}
+                            {systemSummary.latestAiTest.status === "VERIFIED"
+                              ? "✓"
+                              : "⚠️"}
                           </span>
                           <span
                             style={{
                               fontWeight: 700,
                               fontSize: 14,
-                              color: systemSummary.latestAiTest.status === "VERIFIED" ? "#22c55e" : "#fbbf24",
+                              color:
+                                systemSummary.latestAiTest.status === "VERIFIED"
+                                  ? "#22c55e"
+                                  : "#fbbf24",
                             }}
                           >
                             {systemSummary.latestAiTest.status === "VERIFIED"
@@ -4873,32 +6267,73 @@ export default function CoverageTypeDashboard({
                             padding: "2px 8px",
                             borderRadius: 12,
                             fontWeight: 600,
-                            background: systemSummary.latestAiTest.status === "VERIFIED"
-                              ? "rgba(34, 197, 94, 0.2)"
-                              : "rgba(251, 191, 36, 0.2)",
-                            color: systemSummary.latestAiTest.status === "VERIFIED" ? "#4ade80" : "#fde047",
+                            background:
+                              systemSummary.latestAiTest.status === "VERIFIED"
+                                ? "rgba(34, 197, 94, 0.2)"
+                                : "rgba(251, 191, 36, 0.2)",
+                            color:
+                              systemSummary.latestAiTest.status === "VERIFIED"
+                                ? "#4ade80"
+                                : "#fde047",
                           }}
                         >
-                          {systemSummary.latestAiTest.status === "VERIFIED" ? "VERIFIED" : "DRY-RUN FAILED"}
+                          {systemSummary.latestAiTest.status === "VERIFIED"
+                            ? "VERIFIED"
+                            : "DRY-RUN FAILED"}
                         </span>
                       </div>
 
-                      <p style={{ margin: "0 0 10px", fontSize: 13, color: "#c9d1d9", lineHeight: 1.55 }}>
+                      <p
+                        style={{
+                          margin: "0 0 10px",
+                          fontSize: 13,
+                          color: "#c9d1d9",
+                          lineHeight: 1.55,
+                        }}
+                      >
                         {systemSummary.latestAiTest.status === "VERIFIED"
                           ? `Test scenario saved to: ${systemSummary.latestAiTest.filePath}. Click "Run System Test" to execute!`
                           : `The generated test scenario failed dry-run verification in the sandbox. The file was not saved automatically to prevent test suite regressions.`}
                       </p>
 
                       {systemSummary.latestAiTest.status === "FAILED" && (
-                        <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(0,0,0,0.25)", borderRadius: 6, fontSize: 12, color: "#e6edf3" }}>
-                          <div style={{ fontWeight: 600, color: "#fbbf24", marginBottom: 4 }}>Verification did not pass</div>
+                        <div
+                          style={{
+                            marginBottom: 12,
+                            padding: "10px 12px",
+                            background: "rgba(0,0,0,0.25)",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            color: "#e6edf3",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              color: "#fbbf24",
+                              marginBottom: 4,
+                            }}
+                          >
+                            Verification did not pass
+                          </div>
                           <div style={{ color: "#8b949e", lineHeight: 1.5 }}>
-                            Tests were checked against the real application and a fresh test database. Review the startup or assertion error below. Regenerate to retry automatic repair; an unverified candidate cannot be saved as a passing test.
+                            Tests were checked against the real application and
+                            a fresh test database. Review the startup or
+                            assertion error below. Regenerate to retry automatic
+                            repair; an unverified candidate cannot be saved as a
+                            passing test.
                           </div>
                         </div>
                       )}
 
-                      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 12,
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <button
                           onClick={() => setShowAiDetails(!showAiDetails)}
                           style={{
@@ -4911,7 +6346,9 @@ export default function CoverageTypeDashboard({
                             textDecoration: "underline",
                           }}
                         >
-                          {showAiDetails ? "▲ Hide failure details & AI code" : "▼ View failure details & AI code"}
+                          {showAiDetails
+                            ? "▲ Hide failure details & AI code"
+                            : "▼ View failure details & AI code"}
                         </button>
 
                         {systemSummary.latestAiTest.status === "VERIFIED" && (
@@ -4927,7 +6364,9 @@ export default function CoverageTypeDashboard({
                               padding: "4px 12px",
                               fontSize: 12,
                               fontWeight: 600,
-                              cursor: isSavingAiTest ? "not-allowed" : "pointer",
+                              cursor: isSavingAiTest
+                                ? "not-allowed"
+                                : "pointer",
                               display: "inline-flex",
                               alignItems: "center",
                               gap: 6,
@@ -4935,24 +6374,75 @@ export default function CoverageTypeDashboard({
                             }}
                           >
                             <Zap size={13} />
-                            {isSavingAiTest ? "Saving..." : "⚡ Save Test to Project"}
+                            {isSavingAiTest
+                              ? "Saving..."
+                              : "⚡ Save Test to Project"}
                           </button>
                         )}
                       </div>
 
                       {showAiDetails && (
-                        <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 10 }}>
+                        <div
+                          style={{
+                            marginTop: 12,
+                            borderTop: "1px solid rgba(255,255,255,0.1)",
+                            paddingTop: 10,
+                          }}
+                        >
                           {systemSummary.latestAiTest.meta?.error && (
                             <div style={{ marginBottom: 10 }}>
-                              <div style={{ fontSize: 11, fontWeight: 600, color: "#f87171", marginBottom: 4 }}>Dry-run failure details:</div>
-                              <pre style={{ margin: 0, padding: 8, background: "#0d1117", borderRadius: 6, fontSize: 11, color: "#ff7b72", maxHeight: 150, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  color: "#f87171",
+                                  marginBottom: 4,
+                                }}
+                              >
+                                Dry-run failure details:
+                              </div>
+                              <pre
+                                style={{
+                                  margin: 0,
+                                  padding: 8,
+                                  background: "#0d1117",
+                                  borderRadius: 6,
+                                  fontSize: 11,
+                                  color: "#ff7b72",
+                                  maxHeight: 150,
+                                  overflowY: "auto",
+                                  whiteSpace: "pre-wrap",
+                                }}
+                              >
                                 {systemSummary.latestAiTest.meta.error}
                               </pre>
                             </div>
                           )}
                           <div>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: "#8b949e", marginBottom: 4 }}>AI-generated test code ({systemSummary.latestAiTest.filePath}):</div>
-                            <pre style={{ margin: 0, padding: 8, background: "#0d1117", borderRadius: 6, fontSize: 11, color: "#c9d1d9", maxHeight: 180, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: "#8b949e",
+                                marginBottom: 4,
+                              }}
+                            >
+                              AI-generated test code (
+                              {systemSummary.latestAiTest.filePath}):
+                            </div>
+                            <pre
+                              style={{
+                                margin: 0,
+                                padding: 8,
+                                background: "#0d1117",
+                                borderRadius: 6,
+                                fontSize: 11,
+                                color: "#c9d1d9",
+                                maxHeight: 180,
+                                overflowY: "auto",
+                                whiteSpace: "pre-wrap",
+                              }}
+                            >
                               {systemSummary.latestAiTest.content}
                             </pre>
                           </div>
@@ -4960,7 +6450,13 @@ export default function CoverageTypeDashboard({
                       )}
                     </div>
                   )}
-                  <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "center",
+                      gap: 12,
+                    }}
+                  >
                     <button
                       onClick={handleGenerateAiSystemTest}
                       disabled={loading || running || isGenerating}
@@ -4975,7 +6471,16 @@ export default function CoverageTypeDashboard({
                         gap: 7,
                       }}
                     >
-                      {isGenerating && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                      {isGenerating && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            animation: "spin 1s linear infinite",
+                          }}
+                        >
+                          ⟳
+                        </span>
+                      )}
                       <span>
                         {isGenerating
                           ? runningStatus || "Generating AI tests..."
@@ -4994,23 +6499,50 @@ export default function CoverageTypeDashboard({
                         gap: 7,
                       }}
                     >
-                      {running && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
-                      <span>{running ? runningStatus || "Running analysis..." : "Run System Test"}</span>
+                      {running && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            animation: "spin 1s linear infinite",
+                          }}
+                        >
+                          ⟳
+                        </span>
+                      )}
+                      <span>
+                        {running
+                          ? runningStatus || "Running analysis..."
+                          : "Run System Test"}
+                      </span>
                     </button>
                   </div>
                   {generateError && (
-                    <div style={{ margin: "14px auto 0", padding: "10px 14px", background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 8, color: "#f87171", fontSize: 12, maxWidth: 500 }}>
+                    <div
+                      style={{
+                        margin: "14px auto 0",
+                        padding: "10px 14px",
+                        background: "rgba(248,113,113,0.1)",
+                        border: "1px solid rgba(248,113,113,0.3)",
+                        borderRadius: 8,
+                        color: "#f87171",
+                        fontSize: 12,
+                        maxWidth: 500,
+                      }}
+                    >
                       ⚠ {generateError}
                     </div>
                   )}
                 </div>
-              ) : type === "system" && systemSummary?.hasRun && !systemSummary?.coverageAvailable ? (
+              ) : type === "system" &&
+                systemSummary?.hasRun &&
+                !systemSummary?.coverageAvailable ? (
                 /* E2E Test Scenarios Table */
-                <div style={{ overflowX: 'auto' }}>
+                <div style={{ overflowX: "auto" }}>
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
+                      gridTemplateColumns:
+                        "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
                       minWidth: 760,
                       gap: 10,
                       padding: "10px 18px",
@@ -5029,13 +6561,15 @@ export default function CoverageTypeDashboard({
                     <span style={{ textAlign: "center" }}>Status</span>
                   </div>
 
-                  {(systemSummary.scenarios && systemSummary.scenarios.length > 0) ? (
+                  {systemSummary.scenarios &&
+                  systemSummary.scenarios.length > 0 ? (
                     systemSummary.scenarios.map((sc, idx) => {
                       const isFlaky = sc.status === "flaky";
                       const isPassed = sc.status === "passed";
                       const scKey = sc.id || idx;
                       const isExpanded = expandedScenario === scKey;
-                      const hasFailures = sc.failureMessages && sc.failureMessages.length > 0;
+                      const hasFailures =
+                        sc.failureMessages && sc.failureMessages.length > 0;
 
                       return (
                         <div key={scKey}>
@@ -5047,39 +6581,106 @@ export default function CoverageTypeDashboard({
                             }}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
+                              gridTemplateColumns:
+                                "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
                               minWidth: 760,
                               gap: 10,
                               padding: "12px 18px",
                               alignItems: "center",
                               borderBottom: "1px solid rgba(255,255,255,.04)",
                               cursor: hasFailures ? "pointer" : "default",
-                              background: isExpanded ? "rgba(255,255,255,0.03)" : "transparent",
+                              background: isExpanded
+                                ? "rgba(255,255,255,0.03)"
+                                : "transparent",
                               transition: "background 0.15s ease",
                             }}
                             className="hover:bg-white/[0.02]"
                           >
-                            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                              <span style={{ color: isPassed ? "#22c55e" : isFlaky ? "#fbbf24" : "#f87171", fontWeight: 700 }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 9,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color: isPassed
+                                    ? "#22c55e"
+                                    : isFlaky
+                                      ? "#fbbf24"
+                                      : "#f87171",
+                                  fontWeight: 700,
+                                }}
+                              >
                                 {isPassed ? "✓" : isFlaky ? "⚠" : "✗"}
                               </span>
-                              <span style={{ fontSize: 13, fontWeight: 600, color: "#f0f6fc" }}>
+                              <span
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  color: "#f0f6fc",
+                                }}
+                              >
                                 {sc.title}
                               </span>
                               {hasFailures && (
-                                <span style={{ fontSize: 10, color: "#8b949e", background: "rgba(255,255,255,0.06)", padding: "1px 5px", borderRadius: 4 }}>
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    color: "#8b949e",
+                                    background: "rgba(255,255,255,0.06)",
+                                    padding: "1px 5px",
+                                    borderRadius: 4,
+                                  }}
+                                >
                                   {isExpanded ? "▲ Hide error" : "▼ View error"}
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: 11, color: "#8b949e", fontFamily: "var(--font-mono)", overflowWrap: 'anywhere' }}>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: "#8b949e",
+                                fontFamily: "var(--font-mono)",
+                                overflowWrap: "anywhere",
+                              }}
+                            >
                               {sc.file || "E2E Spec"}
                             </div>
-                            <div>{sc.hasEvidence ? <SystemTestEvidence snapshotId={snapshotId} scenarioId={sc.id} title={sc.title} /> : <span style={{ color: '#6e7681', fontSize: 12 }}>Not captured</span>}</div>
-                            <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
-                              {sc.durationMs ? `${Number(sc.durationMs).toFixed(0)}ms` : "—"}
+                            <div>
+                              {sc.hasEvidence ? (
+                                <SystemTestEvidence
+                                  snapshotId={snapshotId}
+                                  scenarioId={sc.id}
+                                  title={sc.title}
+                                />
+                              ) : (
+                                <span
+                                  style={{ color: "#6e7681", fontSize: 12 }}
+                                >
+                                  Not captured
+                                </span>
+                              )}
                             </div>
-                            <div style={{ display: "flex", justifyContent: "center" }}>
+                            <div
+                              style={{
+                                textAlign: "right",
+                                fontSize: 12,
+                                color: "#c9d1d9",
+                                fontFamily: "var(--font-mono)",
+                              }}
+                            >
+                              {sc.durationMs
+                                ? `${Number(sc.durationMs).toFixed(0)}ms`
+                                : "—"}
+                            </div>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                              }}
+                            >
                               <span
                                 style={{
                                   fontSize: 10,
@@ -5091,7 +6692,11 @@ export default function CoverageTypeDashboard({
                                     : isFlaky
                                       ? "rgba(251, 191, 36, 0.15)"
                                       : "rgba(248, 113, 113, 0.15)",
-                                  color: isPassed ? "#4ade80" : isFlaky ? "#fbbf24" : "#f87171",
+                                  color: isPassed
+                                    ? "#4ade80"
+                                    : isFlaky
+                                      ? "#fbbf24"
+                                      : "#f87171",
                                   border: isPassed
                                     ? "1px solid rgba(34, 197, 94, 0.3)"
                                     : isFlaky
@@ -5099,7 +6704,11 @@ export default function CoverageTypeDashboard({
                                       : "1px solid rgba(248, 113, 113, 0.3)",
                                 }}
                               >
-                                {isPassed ? "✓ PASS" : isFlaky ? "⚠ FLAKY" : "✗ FAIL"}
+                                {isPassed
+                                  ? "✓ PASS"
+                                  : isFlaky
+                                    ? "⚠ FLAKY"
+                                    : "✗ FAIL"}
                               </span>
                             </div>
                           </div>
@@ -5108,7 +6717,8 @@ export default function CoverageTypeDashboard({
                               style={{
                                 padding: "12px 18px",
                                 background: "rgba(0,0,0,0.35)",
-                                borderBottom: "1px solid rgba(255,255,255,0.06)",
+                                borderBottom:
+                                  "1px solid rgba(255,255,255,0.06)",
                                 fontFamily: "var(--font-mono)",
                                 fontSize: 11,
                                 color: "#fca5a5",
@@ -5116,7 +6726,15 @@ export default function CoverageTypeDashboard({
                                 lineHeight: 1.5,
                               }}
                             >
-                              <div style={{ fontWeight: 700, marginBottom: 4, color: "#f87171" }}>Failure details:</div>
+                              <div
+                                style={{
+                                  fontWeight: 700,
+                                  marginBottom: 4,
+                                  color: "#f87171",
+                                }}
+                              >
+                                Failure details:
+                              </div>
                               {sc.failureMessages.join("\n\n")}
                             </div>
                           )}
@@ -5127,37 +6745,68 @@ export default function CoverageTypeDashboard({
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
+                        gridTemplateColumns:
+                          "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
                         minWidth: 760,
                         gap: 10,
                         padding: "14px 18px",
                         alignItems: "center",
                       }}
                     >
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#f0f6fc" }}>
-                        {systemSummary.runner ? `${systemSummary.runner.toUpperCase()} E2E Suite` : "Playwright E2E Suite"}
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: "#f0f6fc",
+                        }}
+                      >
+                        {systemSummary.runner
+                          ? `${systemSummary.runner.toUpperCase()} E2E Suite`
+                          : "Playwright E2E Suite"}
                       </div>
-                      <div style={{ fontSize: 12, color: "#8b949e", fontFamily: "var(--font-mono)" }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#8b949e",
+                          fontFamily: "var(--font-mono)",
+                        }}
+                      >
                         {systemSummary.latestRun?.type || "PLAYWRIGHT"}
                       </div>
-                      <div style={{ color: '#6e7681' }}>Not captured</div>
-                      <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
-                        {systemSummary.latestRun?.durationMs ? `${Number(systemSummary.latestRun.durationMs).toFixed(0)}ms` : "—"}
+                      <div style={{ color: "#6e7681" }}>Not captured</div>
+                      <div
+                        style={{
+                          textAlign: "right",
+                          fontSize: 12,
+                          color: "#c9d1d9",
+                          fontFamily: "var(--font-mono)",
+                        }}
+                      >
+                        {systemSummary.latestRun?.durationMs
+                          ? `${Number(systemSummary.latestRun.durationMs).toFixed(0)}ms`
+                          : "—"}
                       </div>
-                      <div style={{ display: "flex", justifyContent: "center" }}>
+                      <div
+                        style={{ display: "flex", justifyContent: "center" }}
+                      >
                         <span
                           style={{
                             fontSize: 10,
                             fontWeight: 700,
                             padding: "2px 8px",
                             borderRadius: 10,
-                            background: systemSummary.failed === 0
-                              ? "rgba(34, 197, 94, 0.15)"
-                              : "rgba(248, 113, 113, 0.15)",
-                            color: systemSummary.failed === 0 ? "#4ade80" : "#f87171",
-                            border: systemSummary.failed === 0
-                              ? "1px solid rgba(34, 197, 94, 0.3)"
-                              : "1px solid rgba(248, 113, 113, 0.3)",
+                            background:
+                              systemSummary.failed === 0
+                                ? "rgba(34, 197, 94, 0.15)"
+                                : "rgba(248, 113, 113, 0.15)",
+                            color:
+                              systemSummary.failed === 0
+                                ? "#4ade80"
+                                : "#f87171",
+                            border:
+                              systemSummary.failed === 0
+                                ? "1px solid rgba(34, 197, 94, 0.3)"
+                                : "1px solid rgba(248, 113, 113, 0.3)",
                           }}
                         >
                           {systemSummary.failed === 0 ? "✓ PASS" : "✗ FAIL"}
@@ -5168,7 +6817,11 @@ export default function CoverageTypeDashboard({
                 </div>
               ) : displayFiles.length === 0 ? (
                 <div
-                  style={{ padding: 30, textAlign: "center", color: isLight ? "#64748b" : "#6e7681" }}
+                  style={{
+                    padding: 30,
+                    textAlign: "center",
+                    color: isLight ? "#64748b" : "#6e7681",
+                  }}
                 >
                   {type === "system"
                     ? "No E2E test data available. Click Run System Test to start."
@@ -5188,8 +6841,12 @@ export default function CoverageTypeDashboard({
                         gap: 10,
                         minWidth: 700,
                         padding: "10px 18px",
-                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                        background: isLight
+                          ? "#f8fafc"
+                          : "rgba(255,255,255,0.02)",
+                        borderBottom: isLight
+                          ? "1px solid #e2e8f0"
+                          : "1px solid rgba(255,255,255,0.05)",
                         fontSize: 11,
                         fontWeight: 650,
                         color: isLight ? "#475569" : "#8b949e",
@@ -5205,7 +6862,9 @@ export default function CoverageTypeDashboard({
                           textAlign: "right",
                           color:
                             activeMetricView === "branches"
-                              ? (isLight ? "#d97706" : "#fbbf24")
+                              ? isLight
+                                ? "#d97706"
+                                : "#fbbf24"
                               : undefined,
                         }}
                       >
@@ -5217,7 +6876,9 @@ export default function CoverageTypeDashboard({
                           textAlign: "right",
                           color:
                             activeMetricView === "statements"
-                              ? (isLight ? "#6366f1" : "#a78bfa")
+                              ? isLight
+                                ? "#6366f1"
+                                : "#a78bfa"
                               : undefined,
                         }}
                       >
@@ -5233,10 +6894,14 @@ export default function CoverageTypeDashboard({
                       const cacheEntry = fileCoverageCache[file.filePath];
                       const isLoadingDetails = cacheEntry?.loading;
                       const fileDetails = cacheEntry?.data;
-                      const fileSuggestions = inlineSuggestions[file.filePath] || [];
-                      const isSuggesting = loadingSuggestions[file.filePath] || false;
-                      const lastApply = applyResultsByFile[file.filePath] || null;
-                      const progressStep = applyProgressSteps[file.filePath] || "";
+                      const fileSuggestions =
+                        inlineSuggestions[file.filePath] || [];
+                      const isSuggesting =
+                        loadingSuggestions[file.filePath] || false;
+                      const lastApply =
+                        applyResultsByFile[file.filePath] || null;
+                      const progressStep =
+                        applyProgressSteps[file.filePath] || "";
 
                       return (
                         <div key={file.filePath}>
@@ -5249,31 +6914,51 @@ export default function CoverageTypeDashboard({
                               minWidth: 700,
                               padding: "10px 18px",
                               alignItems: "center",
-                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              borderBottom: isLight
+                                ? "1px solid #f1f5f9"
+                                : "1px solid rgba(255,255,255,.04)",
                               transition: "background 0.15s ease",
                               background: isExpanded
-                                ? (isLight ? "#f8fafc" : "rgba(255,255,255,0.03)")
+                                ? isLight
+                                  ? "#f8fafc"
+                                  : "rgba(255,255,255,0.03)"
                                 : "transparent",
                             }}
-                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
+                            className={
+                              isLight
+                                ? "hover:bg-slate-50/80"
+                                : "hover:bg-white/[0.02]"
+                            }
                           >
                             {/* File Index */}
-                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                                alignItems: "center",
+                              }}
+                            >
                               <span
                                 style={{
                                   fontSize: 11,
                                   fontWeight: 700,
                                   fontFamily: "var(--font-mono, monospace)",
                                   color: isLight ? "#64748b" : "#94a3b8",
-                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  background: isLight
+                                    ? "#f1f5f9"
+                                    : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight
+                                    ? "1px solid #e2e8f0"
+                                    : "1px solid rgba(255, 255, 255, 0.08)",
                                   borderRadius: 6,
                                   padding: "2px 6px",
                                   minWidth: 26,
                                   textAlign: "center",
                                 }}
                               >
-                                {(sourceFilePage - 1) * SOURCE_FILES_PER_PAGE + idx + 1}
+                                {(sourceFilePage - 1) * SOURCE_FILES_PER_PAGE +
+                                  idx +
+                                  1}
                               </span>
                             </div>
 
@@ -5292,7 +6977,13 @@ export default function CoverageTypeDashboard({
                                   cursor: "pointer",
                                   fontSize: 12,
                                   fontWeight: 700,
-                                  color: isFull ? (isLight ? "#16a34a" : "#22c55e") : (isLight ? "#d97706" : "#eab308"),
+                                  color: isFull
+                                    ? isLight
+                                      ? "#16a34a"
+                                      : "#22c55e"
+                                    : isLight
+                                      ? "#d97706"
+                                      : "#eab308",
                                   flexShrink: 0,
                                 }}
                               >
@@ -5307,8 +6998,12 @@ export default function CoverageTypeDashboard({
                                   textOverflow: "ellipsis",
                                   whiteSpace: "nowrap",
                                   color: isExpanded
-                                    ? (isLight ? "#0f172a" : "#ffffff")
-                                    : (isLight ? "#1e293b" : "#c9d1d9"),
+                                    ? isLight
+                                      ? "#0f172a"
+                                      : "#ffffff"
+                                    : isLight
+                                      ? "#1e293b"
+                                      : "#c9d1d9",
                                   fontSize: 13,
                                   fontWeight: isExpanded ? 700 : 500,
                                   fontFamily: "var(--font-mono)",
@@ -5338,7 +7033,7 @@ export default function CoverageTypeDashboard({
                                 <span
                                   key={i}
                                   style={{
-                                    color: getCoverageColor(val, isLight),
+                                    color: coverageColor(val),
                                     textAlign: "right",
                                     fontSize: 12,
                                     fontFamily: "var(--font-mono)",
@@ -5383,8 +7078,12 @@ export default function CoverageTypeDashboard({
                                   style={{
                                     padding: "3px 6px",
                                     borderRadius: 5,
-                                    background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.18)",
-                                    border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
+                                    background: isLight
+                                      ? "#f5f3ff"
+                                      : "rgba(168, 85, 247, 0.18)",
+                                    border: isLight
+                                      ? "1px solid #ddd6fe"
+                                      : "1px solid rgba(168, 85, 247, 0.35)",
                                     color: isLight ? "#6d28d9" : "#d8b4fe",
                                     fontSize: 10,
                                     fontWeight: 700,
@@ -5408,21 +7107,41 @@ export default function CoverageTypeDashboard({
                                   padding: "4px 8px",
                                   borderRadius: 5,
                                   background: isExpanded
-                                    ? (isLight ? "#eff6ff" : "rgba(56, 189, 248, 0.18)")
-                                    : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)"),
+                                    ? isLight
+                                      ? "#eff6ff"
+                                      : "rgba(56, 189, 248, 0.18)"
+                                    : isLight
+                                      ? "#ffffff"
+                                      : "rgba(255, 255, 255, 0.05)",
                                   border: isExpanded
-                                    ? (isLight ? "1px solid #93c5fd" : "1px solid rgba(56, 189, 248, 0.4)")
-                                    : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                                    ? isLight
+                                      ? "1px solid #93c5fd"
+                                      : "1px solid rgba(56, 189, 248, 0.4)"
+                                    : isLight
+                                      ? "1px solid #cbd5e1"
+                                      : "1px solid rgba(255, 255, 255, 0.1)",
                                   color: isExpanded
-                                    ? (isLight ? "#1d4ed8" : "#38bdf8")
-                                    : (isLight ? "#334155" : "#c9d1d9"),
+                                    ? isLight
+                                      ? "#1d4ed8"
+                                      : "#38bdf8"
+                                    : isLight
+                                      ? "#334155"
+                                      : "#c9d1d9",
                                   fontSize: 11,
                                   fontWeight: isLight ? 600 : 400,
                                   cursor: "pointer",
                                   transition: "all 0.15s ease",
                                 }}
-                                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
-                                title={isExpanded ? "Close view & edit" : "View coverage & edit code directly"}
+                                className={
+                                  isLight
+                                    ? "hover:bg-slate-100"
+                                    : "hover:bg-white/10 hover:text-white"
+                                }
+                                title={
+                                  isExpanded
+                                    ? "Close view & edit"
+                                    : "View coverage & edit code directly"
+                                }
                               >
                                 {isExpanded ? "Close" : "View & Edit"}
                               </button>
@@ -5436,12 +7155,22 @@ export default function CoverageTypeDashboard({
                                   padding: "4px 6px",
                                   borderRadius: 4,
                                   background: isExpanded
-                                    ? (isLight ? "#f1f5f9" : "rgba(255,255,255,0.14)")
-                                    : (isLight ? "#ffffff" : "rgba(255,255,255,0.04)"),
-                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                    ? isLight
+                                      ? "#f1f5f9"
+                                      : "rgba(255,255,255,0.14)"
+                                    : isLight
+                                      ? "#ffffff"
+                                      : "rgba(255,255,255,0.04)",
+                                  border: isLight
+                                    ? "1px solid #cbd5e1"
+                                    : "1px solid rgba(255,255,255,0.1)",
                                   color: isExpanded
-                                    ? (isLight ? "#0f172a" : "#ffffff")
-                                    : (isLight ? "#64748b" : "#8b949e"),
+                                    ? isLight
+                                      ? "#0f172a"
+                                      : "#ffffff"
+                                    : isLight
+                                      ? "#64748b"
+                                      : "#8b949e",
                                   cursor: "pointer",
                                   display: "flex",
                                   alignItems: "center",
@@ -5449,7 +7178,11 @@ export default function CoverageTypeDashboard({
                                   transition: "all 0.15s ease",
                                   flexShrink: 0,
                                 }}
-                                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
+                                className={
+                                  isLight
+                                    ? "hover:bg-slate-100"
+                                    : "hover:bg-white/10 hover:text-white"
+                                }
                                 title={
                                   isExpanded
                                     ? "Collapse flow analysis"
@@ -5470,7 +7203,9 @@ export default function CoverageTypeDashboard({
                             <div
                               style={{
                                 padding: "14px 18px",
-                                background: isLight ? "#f8fafc" : "rgba(0, 0, 0, 0.4)",
+                                background: isLight
+                                  ? "#f8fafc"
+                                  : "rgba(0, 0, 0, 0.4)",
                                 borderBottom: isLight
                                   ? "1px solid #e2e8f0"
                                   : "1px solid rgba(255, 255, 255, 0.08)",
@@ -5480,25 +7215,43 @@ export default function CoverageTypeDashboard({
                               }}
                             >
                               {/* Inline Suggestions Section (only for unit test, when not in FileCodeExecutionView) */}
-                              {type === "unit" && (fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
-                                <InlineTestSuggestions
-                                  filePath={file.filePath}
-                                  suggestions={fileSuggestions}
-                                  isLoading={isSuggesting}
-                                  onApply={(sug) => handleApplySuggestionInline(file.filePath, sug)}
-                                  onApplyAll={(sugs) => handleApplyAllInline(file.filePath, sugs)}
-                                  onReject={(sugId) => handleRejectInline(file.filePath, sugId)}
-                                  onDismiss={(fPath) => handleDismissFileSuggestions(fPath)}
-                                  onUpdateSuggestionCode={(sugId, newCode) =>
-                                    handleUpdateSuggestionCode(file.filePath, sugId, newCode)
-                                  }
-                                  applyingIds={applyingSuggestionIds}
-                                  lastApplyResult={lastApply}
-                                  progressStep={progressStep}
-                                />
-                              )}
+                              {type === "unit" &&
+                                (fileSuggestions.length > 0 || isSuggesting) &&
+                                activeMetricView !== "statements" && (
+                                  <InlineTestSuggestions
+                                    filePath={file.filePath}
+                                    suggestions={fileSuggestions}
+                                    isLoading={isSuggesting}
+                                    onApply={(sug) =>
+                                      handleApplySuggestionInline(
+                                        file.filePath,
+                                        sug,
+                                      )
+                                    }
+                                    onApplyAll={(sugs) =>
+                                      handleApplyAllInline(file.filePath, sugs)
+                                    }
+                                    onReject={(sugId) =>
+                                      handleRejectInline(file.filePath, sugId)
+                                    }
+                                    onDismiss={(fPath) =>
+                                      handleDismissFileSuggestions(fPath)
+                                    }
+                                    onUpdateSuggestionCode={(sugId, newCode) =>
+                                      handleUpdateSuggestionCode(
+                                        file.filePath,
+                                        sugId,
+                                        newCode,
+                                      )
+                                    }
+                                    applyingIds={applyingSuggestionIds}
+                                    lastApplyResult={lastApply}
+                                    progressStep={progressStep}
+                                  />
+                                )}
 
-                              {isLoadingDetails || (!fileDetails && !cacheEntry?.error) ? (
+                              {isLoadingDetails ||
+                              (!fileDetails && !cacheEntry?.error) ? (
                                 <div
                                   style={{
                                     padding: "24px",
@@ -5511,20 +7264,90 @@ export default function CoverageTypeDashboard({
                                     gap: 8,
                                   }}
                                 >
-                                  <Loader2 size={16} className={`animate-spin ${isLight ? "text-indigo-600" : "text-purple-400"}`} />
-                                  <span>Analyzing execution flow for {cleanDisplayPath(file.filePath)}...</span>
+                                  <Loader2
+                                    size={16}
+                                    className={`animate-spin ${isLight ? "text-indigo-600" : "text-purple-400"}`}
+                                  />
+                                  <span>
+                                    Analyzing execution flow for{" "}
+                                    {cleanDisplayPath(file.filePath)}...
+                                  </span>
                                 </div>
                               ) : fileDetails ? (
-                                activeMetricView === "branches" ? (
+                                <>
+                                  {Array.isArray(fileDetails.uncoverageDiagnostics?.items) &&
+                                    fileDetails.uncoverageDiagnostics.items.length > 0 && (
+                                      <div
+                                        style={{
+                                          padding: "10px 14px",
+                                          borderRadius: 8,
+                                          background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)",
+                                          border: isLight
+                                            ? "1px solid #fde68a"
+                                            : "1px solid rgba(245, 158, 11, 0.25)",
+                                          fontSize: 11.5,
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          gap: 6,
+                                        }}
+                                      >
+                                        <div
+                                          style={{
+                                            fontWeight: 750,
+                                            color: isLight ? "#92400e" : "#fde68a",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 6,
+                                          }}
+                                        >
+                                          <AlertCircle size={13} />
+                                          <span>
+                                            Uncoverage Diagnostics ({fileDetails.uncoverageDiagnostics.items.length} unreached code elements)
+                                          </span>
+                                        </div>
+                                        <div
+                                          style={{
+                                            maxHeight: 140,
+                                            overflowY: "auto",
+                                            display: "flex",
+                                            flexDirection: "column",
+                                            gap: 4,
+                                          }}
+                                        >
+                                          {fileDetails.uncoverageDiagnostics.items.slice(0, 8).map((diag, idx) => (
+                                            <div
+                                              key={idx}
+                                              style={{
+                                                fontSize: 11,
+                                                color: isLight ? "#78350f" : "#fef3c7",
+                                                display: "flex",
+                                                alignItems: "baseline",
+                                                gap: 6,
+                                              }}
+                                            >
+                                              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>
+                                                L{diag.line} [{diag.reasonCategory || "UNCOVERED"}]:
+                                              </span>
+                                              <span>{diag.reason}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  {activeMetricView === "branches" ? (
                                   <FileBranchCFGView
                                     filePath={file.filePath}
                                     fileCoverage={fileDetails}
                                     onOpenFile={handleOpenFileInPlace}
                                     onSuggestTestcase={(target) => {
                                       if (type === "unit") {
-                                        handleSuggestTestcaseInline(target || file.filePath);
+                                        handleSuggestTestcaseInline(
+                                          target || file.filePath,
+                                        );
                                       } else {
-                                        onSuggestTestcase?.(target || file.filePath);
+                                        onSuggestTestcase?.(
+                                          target || file.filePath,
+                                        );
                                       }
                                     }}
                                   />
@@ -5536,9 +7359,13 @@ export default function CoverageTypeDashboard({
                                     onOpenFile={handleOpenFileInPlace}
                                     onSuggestTestcase={(target) => {
                                       if (type === "unit") {
-                                        handleSuggestTestcaseInline(target || file.filePath);
+                                        handleSuggestTestcaseInline(
+                                          target || file.filePath,
+                                        );
                                       } else {
-                                        onSuggestTestcase?.(target || file.filePath);
+                                        onSuggestTestcase?.(
+                                          target || file.filePath,
+                                        );
                                       }
                                     }}
                                   />
@@ -5556,25 +7383,66 @@ export default function CoverageTypeDashboard({
                                     }}
                                     onSuggestTestcase={(target) => {
                                       if (type === "unit") {
-                                        handleSuggestTestcaseInline(target || file.filePath);
+                                        handleSuggestTestcaseInline(
+                                          target || file.filePath,
+                                        );
                                       } else {
-                                        onSuggestTestcase?.(target || file.filePath);
+                                        onSuggestTestcase?.(
+                                          target || file.filePath,
+                                        );
                                       }
                                     }}
-                                    suggestions={type === "unit" ? fileSuggestions : []}
-                                    isLoadingSuggestions={type === "unit" ? isSuggesting : false}
-                                    applyingSuggestionIds={type === "unit" ? applyingSuggestionIds : new Set()}
-                                    onApplySuggestion={type === "unit" ? (sug) => handleApplySuggestionInline(file.filePath, sug) : undefined}
-                                    onApplyAllSuggestions={type === "unit" ? (sugs) => handleApplyAllInline(file.filePath, sugs) : undefined}
-                                    onRejectSuggestion={type === "unit" ? (sugId) => handleRejectInline(file.filePath, sugId) : undefined}
+                                    suggestions={
+                                      type === "unit" ? fileSuggestions : []
+                                    }
+                                    isLoadingSuggestions={
+                                      type === "unit" ? isSuggesting : false
+                                    }
+                                    applyingSuggestionIds={
+                                      type === "unit"
+                                        ? applyingSuggestionIds
+                                        : new Set()
+                                    }
+                                    onApplySuggestion={
+                                      type === "unit"
+                                        ? (sug) =>
+                                            handleApplySuggestionInline(
+                                              file.filePath,
+                                              sug,
+                                            )
+                                        : undefined
+                                    }
+                                    onApplyAllSuggestions={
+                                      type === "unit"
+                                        ? (sugs) =>
+                                            handleApplyAllInline(
+                                              file.filePath,
+                                              sugs,
+                                            )
+                                        : undefined
+                                    }
+                                    onRejectSuggestion={
+                                      type === "unit"
+                                        ? (sugId) =>
+                                            handleRejectInline(
+                                              file.filePath,
+                                              sugId,
+                                            )
+                                        : undefined
+                                    }
                                     onUpdateSuggestionCode={(sugId, newCode) =>
-                                      handleUpdateSuggestionCode(file.filePath, sugId, newCode)
+                                      handleUpdateSuggestionCode(
+                                        file.filePath,
+                                        sugId,
+                                        newCode,
+                                      )
                                     }
                                     lastApplyResult={lastApply}
                                     progressStep={progressStep}
                                     isLight={isLight}
                                   />
-                                )
+                                )}
+                                </>
                               ) : (
                                 <div
                                   style={{
@@ -5588,13 +7456,23 @@ export default function CoverageTypeDashboard({
                                     gap: 8,
                                   }}
                                 >
-                                  <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
+                                  <span>
+                                    {cacheEntry?.error
+                                      ? `Error: ${cacheEntry.error}`
+                                      : "Failed to load flow analysis data for this file."}
+                                  </span>
                                   <button
-                                    onClick={() => ensureFileCoverage(file.filePath, true)}
+                                    onClick={() =>
+                                      ensureFileCoverage(file.filePath, true)
+                                    }
                                     style={{
                                       padding: "4px 10px",
-                                      background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)",
-                                      border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
+                                      background: isLight
+                                        ? "#fef2f2"
+                                        : "rgba(239, 68, 68, 0.15)",
+                                      border: isLight
+                                        ? "1px solid #fecaca"
+                                        : "1px solid rgba(239, 68, 68, 0.3)",
                                       borderRadius: 4,
                                       color: isLight ? "#b91c1c" : "#f87171",
                                       fontSize: 11,
@@ -5629,6 +7507,7 @@ export default function CoverageTypeDashboard({
       {showCfgModal && projectId && (
         <CFGCalculator
           project={{ id: projectId }}
+          snapshotId={snapshotId}
           onClose={() => {
             setShowCfgModal(false);
             setCfgModalContext(null);
@@ -5687,7 +7566,14 @@ export default function CoverageTypeDashboard({
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <ListOrdered size={20} color="#38bdf8" />
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#f0f6fc" }}>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 16,
+                    fontWeight: 700,
+                    color: "#f0f6fc",
+                  }}
+                >
                   System Test Job Queue & Live Execution Logs
                 </h2>
               </div>
@@ -5725,23 +7611,110 @@ export default function CoverageTypeDashboard({
           isOpen={reviewModalOpen}
           onClose={() => setReviewModalOpen(false)}
           files={reviewFiles}
+          error={error}
           initialFileIndex={reviewInitialFileIndex}
-          onApplyFile={async (file, currentSuggestion) => {
-            const cleanTarget = cleanDisplayPath(file.filePath);
-            let fileSugs = allPendingSuggestions.filter((s) => {
-              const sPath = s.sourceFile || s.filePath;
-              return sPath === file.filePath || cleanDisplayPath(sPath) === cleanTarget;
-            });
-            if (fileSugs.length === 0 && Array.isArray(file.suggestions) && file.suggestions.length > 0) {
-              fileSugs = file.suggestions;
-            } else if (fileSugs.length === 0 && currentSuggestion) {
-              fileSugs = [currentSuggestion];
-            }
+          applyResultsByFile={applyResultsByFile}
+          isDryRunning={isDryRunningGlobal}
+          onDryRunFile={async (file, currentSuggestion, customCode) => {
+            if (file.reviewError) return;
+            const fileSugs = file.suggestions?.length
+              ? file.suggestions
+              : currentSuggestion
+                ? [currentSuggestion]
+                : [];
             if (fileSugs.length > 0) {
-              await handleApplyAllInline(file.filePath, fileSugs);
+              await handleDryRunInline(file.filePath, fileSugs, customCode);
             }
           }}
-          onApplyAll={handleApplyAllGlobal}
+          onDryRunAll={handleDryRunAllGlobal}
+          onApplyFile={async (file, currentSuggestion, customCode) => {
+            if (file.reviewError) return;
+            const fileSugs = file.suggestions?.length
+              ? file.suggestions
+              : currentSuggestion
+                ? [currentSuggestion]
+                : [];
+            if (fileSugs.length > 0) {
+              await handleApplyAllInline(
+                file.filePath,
+                fileSugs,
+                file.testFilePath,
+                customCode,
+              );
+            }
+          }}
+          onUndoFile={async (file) => {
+            const path = cleanDisplayPath(file.testFilePath);
+            const undo = reviewUndo[path];
+            if (!undo) {
+              setError("Undo is not available for this file yet.");
+              return;
+            }
+            setError(null);
+            try {
+              const current = (
+                await getFileContentApi(projectId, path, {
+                  snapshotId,
+                  forceFresh: true,
+                })
+              ).data;
+              if (
+                current.content !== undo.appliedContent ||
+                current.version?.revision !== undo.version?.revision
+              ) {
+                throw new Error(
+                  "The file changed after applying these suggestions. Review it before undoing.",
+                );
+              }
+              const options = {
+                snapshotId,
+                expectedVersion: current.version,
+                expectedWorkspaceRevision: current.workspaceRevision,
+              };
+              if (undo.previous)
+                await updateFileContentApi(
+                  projectId,
+                  path,
+                  undo.previous.content,
+                  options,
+                );
+              else await deleteProjectEntryApi(projectId, path, options);
+              setReviewUndo((previous) => {
+                const next = { ...previous };
+                delete next[path];
+                return next;
+              });
+              setInlineSuggestions((previous) => ({
+                ...previous,
+                [file.filePath]: (previous[file.filePath] || []).map(
+                  (suggestion) =>
+                    file.suggestions.some(
+                      (item) =>
+                        (item.id || item.suggestionId) ===
+                        (suggestion.id || suggestion.suggestionId),
+                    )
+                      ? {
+                          ...suggestion,
+                          status: "GENERATED",
+                          applied: false,
+                          testRunError: null,
+                          proposalBase: undefined,
+                        }
+                      : suggestion,
+                ),
+              }));
+              invalidateCoverageQueries(snapshotId);
+            } catch (error) {
+              console.error("Undo test suggestions failed:", error);
+              setError(error.message || "Unable to undo the changes.");
+            }
+          }}
+          onApplyAll={async () => {
+            const unapplied = collectUnappliedReviewSuggestions(reviewFiles);
+            if (unapplied.length > 0) {
+              await handleApplyAllGlobal(unapplied);
+            }
+          }}
           onRunAnalysis={run}
           isApplying={isBulkApplying}
           applyingStep={bulkApplyStep}
@@ -5766,6 +7739,7 @@ export default function CoverageTypeDashboard({
           }}
           isLight={isLight}
           testSuites={unitTestSuites}
+          onOpenSimulation={(simTarget) => setSimulationTarget(simTarget)}
         />
       )}
 
@@ -5773,19 +7747,57 @@ export default function CoverageTypeDashboard({
       {suggestModalConfig.isOpen && (
         <SuggestTestcaseModal
           isOpen={suggestModalConfig.isOpen}
-          onClose={() => setSuggestModalConfig((prev) => ({ ...prev, isOpen: false }))}
+          onClose={() =>
+            setSuggestModalConfig((prev) => ({ ...prev, isOpen: false }))
+          }
           targetFilePath={suggestModalConfig.filePath}
           targetFunction={suggestModalConfig.functionName}
           targetFunctionsList={functionsForTargetFile}
           allBusinessFiles={selectedFiles}
           allFunctions={functionsList}
-          defaultFramework={activeFramework || "vitest"}
+          testSuites={unitTestSuites}
+          defaultFramework={activeFramework || frameworks?.supported?.unit?.[0] || "jest"}
           onConfirmAi={handleConfirmAiSuggest}
           onApplyManualTest={handleConfirmManualApply}
           isApplying={isBulkApplying}
           isLight={isLight}
         />
       )}
+
+      {/* Interactive Unit Test Execution Simulation Studio Modal */}
+      {simulationTarget && (
+        <UnitTestSimulationStudioModal
+          isOpen={Boolean(simulationTarget)}
+          onClose={() => setSimulationTarget(null)}
+          snapshotId={snapshotId}
+          projectId={projectId}
+          availableSourceFiles={selectedFiles}
+          availableFunctionsList={functionsList}
+          availableTestSuites={unitTestSuites}
+          initialSourceFile={simulationTarget.filePath || simulationTarget.sourceFilePath}
+          initialTestFile={simulationTarget.testFilePath || simulationTarget.testFile}
+          initialTestCaseId={simulationTarget.testCaseId || simulationTarget.testTitle}
+          initialFunctionName={simulationTarget.functionName}
+          initialTestCode={simulationTarget.testCode || simulationTarget.initialTestCode}
+          initialCategory={simulationTarget.category || "HAPPY_PATH"}
+          isLight={isLight}
+        />
+      )}
+
+      {/* Unit Test Export Report Modal */}
+      <ExportUnitTestReportModal
+        isOpen={isUnitTestExportOpen}
+        onClose={() => setIsUnitTestExportOpen(false)}
+        data={{
+          snapshotId,
+          projectId,
+          summary,
+          rawTotals,
+          executions,
+          testTotals: totals,
+          scenarios: summary?.scenarios || summary?.data?.scenarios || [],
+        }}
+      />
     </div>
   );
 }

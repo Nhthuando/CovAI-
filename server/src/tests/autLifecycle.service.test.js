@@ -45,6 +45,15 @@ afterEach(() => {
 });
 
 describe("autLifecycle.service", () => {
+  it('accepts an authenticated HTTP handshake only for an inferred readiness policy',async()=>{
+    const server=http.createServer((_req,res)=>{res.writeHead(401);res.end('Authentication required');});
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    try {
+      const port=server.address().port;
+      expect((await waitForHttpHealthy({port,timeoutMs:1000,allowHttpClientError:true})).status).toBe(401);
+      await expect(waitForHttpHealthy({port,timeoutMs:1000})).rejects.toThrow('status 401');
+    } finally {await new Promise(resolve=>server.close(resolve));}
+  });
   it('keeps the original startup error, strips ANSI and redacts credentials', () => {
     const message=formatAutStartupFailure('\x1b[31mError: Prisma initialization failed for secret-value\x1b[39m\n'+' at Module.load\n'.repeat(100),{DB_PASSWORD:'secret-value'});
     expect(message).toContain('Error: Prisma initialization failed for [redacted]');
@@ -154,7 +163,7 @@ describe("autLifecycle.service", () => {
       }
     });
 
-    it("Tầng 1 (Socket check): waitForPortOpen succeeds when port is listening", async () => {
+    it("Tier 1 (Socket check): waitForPortOpen succeeds when port is listening", async () => {
       server = net.createServer();
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       testPort = server.address().port;
@@ -163,12 +172,12 @@ describe("autLifecycle.service", () => {
       expect(open).toBe(true);
     });
 
-    it("Tầng 1 (Socket check): waitForPortOpen throws when port is closed and times out", async () => {
+    it("Tier 1 (Socket check): waitForPortOpen throws when port is closed and times out", async () => {
       // Choose a high port unlikely to be open
       await expect(waitForPortOpen(49999, 1000, "127.0.0.1", 200)).rejects.toThrow("did not open");
     });
 
-    it("Tầng 2 (HTTP verify): responds healthy with status 200", async () => {
+    it("Tier 2 (HTTP verify): responds healthy with status 200", async () => {
       server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("OK");
@@ -181,7 +190,7 @@ describe("autLifecycle.service", () => {
       expect(result.status).toBe(200);
     });
 
-    it("Tầng 2 (HTTP verify): captures HTTP 500 without crashing/hanging and flags warning", async () => {
+    it("Tier 2 (HTTP verify): captures HTTP 500 without crashing/hanging and flags warning", async () => {
       server = http.createServer((req, res) => {
         res.writeHead(500, { "Content-Type": "text/plain" });
         res.end("Internal Server Error - DB Missing");

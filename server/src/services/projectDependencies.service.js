@@ -2,37 +2,54 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { currentDependencyCache, canCacheProjectDependencies, copyDependencyTree, isDependencyWorkspace } from './projectDependencyCache.service.js';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { dockerRunner } from './dockerRunner.service.js';
 import { addJobLog } from './job.service.js';
 import { resolvePackageRuntime, runtimeDependencyFingerprint } from './projectRuntimePlan.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 
-const exec=promisify(execFile),pending=new Map();
+const pending=new Map();
 const tooling=['vite','next','react-scripts','@vue/cli-service','astro','nuxt','@angular/cli','webpack-dev-server','parcel','tsx','ts-node','nodemon','express','fastify','koa'];
 export const redactRuntimeOutput = (output,env={}) => {
     let text=String(output || '').replace(/\x1b\[[0-9;]*m/g,'');
     for(const [key,value] of Object.entries({...process.env,...env}))if(value&&/PASSWORD|SECRET|TOKEN|KEY|URL/i.test(key))text=text.replaceAll(value,'[redacted]');
     return text.replace(/(?:mysql|postgres(?:ql)?|mongodb(?:\+srv)?):\/\/[^\s'"`]+/gi,'[redacted connection URL]').slice(-2000);
 };
+// Find an installed package the way Node's node_modules lookup does, walking from
+// the app directory up to the repository root. Only the package manifest is
+// required: CLI-only tools such as react-scripts have no importable entry point,
+// so import.meta.resolve() reports them missing even after a successful install.
+// The resolved package must stay inside the repository (symlinked pnpm/bun stores
+// included) so CovAI never borrows its own tools.
+const installedPackageDirectory = ({ name, directory, repositoryRoot }) => {
+    const root = path.resolve(repositoryRoot);
+    let realRoot = root;
+    try { realRoot = fs.realpathSync(root); } catch (error) { console.warn(`[Project runtime] Could not resolve repository root ${root}: ${error.message}`); }
+    for (let current = path.resolve(directory); ; current = path.dirname(current)) {
+        const manifest = path.join(current, 'node_modules', ...name.split('/'), 'package.json');
+        if (fs.existsSync(manifest)) {
+            const real = fs.realpathSync(path.dirname(manifest));
+            const relative = path.relative(realRoot, real);
+            if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) return real;
+        }
+        const relativeToRoot = path.relative(root, current);
+        if (!relativeToRoot || relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot) || current === path.dirname(current)) return null;
+    }
+};
 export const verifyRuntimeTooling = async plan => {
     const declared={...plan.pkg.dependencies,...plan.pkg.devDependencies};
     const required=tooling.filter(name=>declared[name]);
     if(!required.length)return;
-    // Resolve from the app's own ESM context, without executing imported code or
-    // borrowing CovAI's tools through PATH/NODE_PATH. Hoisted workspace deps work.
-    const code=`import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
-const missing=[];for(const name of ${JSON.stringify(required)}){try{const file=fileURLToPath(import.meta.resolve(name));const relative=path.relative(${JSON.stringify(plan.repositoryRoot)},fs.realpathSync(file));if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error();}catch{missing.push(name);}}if(missing.length){console.error(missing.join(', '));process.exitCode=1;}`;
-    try {await exec(process.execPath,['--input-type=module','--eval',code],{cwd:plan.directory,windowsHide:true,timeout:15000,env:{...process.env,NODE_PATH:'',NODE_OPTIONS:''}});}
-    catch(error){const failure=new ServiceError(`Application dependencies are incomplete: ${String(error.stderr || required.join(', ')).trim().slice(0,300)}. Local runtime packages could not be resolved after installation.`,422);failure.code='AUT_DEPENDENCY_MISSING';throw failure;}
+    const missing=required.filter(name=>!installedPackageDirectory({name,directory:plan.directory,repositoryRoot:plan.repositoryRoot||plan.directory}));
+    if(missing.length){const failure=new ServiceError(`Application dependencies are incomplete: ${missing.join(', ')}. Local runtime packages could not be resolved after installation.`,422);failure.code='AUT_DEPENDENCY_MISSING';throw failure;}
 };
 const log=async(jobId,level,message)=>{if(jobId)await addJobLog(jobId,level,`[Project runtime] ${message}`);};
 export const prepareProjectDependencies = async ({directory,repositoryRoot=directory,jobId,signal,env={},dependencies={}}) => {
     const plan=resolvePackageRuntime({directory,repositoryRoot});
     const previous=pending.get(plan.installRoot);
     const task=(async()=>{
-        if(previous)await previous;
+        // A failed/canceled preparation must not poison another caller queued
+        // for the same install root. That caller has its own env and signal.
+        if(previous)await previous.catch(()=>{});
         if(signal?.aborted)throw new ServiceError('Dependency preparation canceled',409);
         const stamp=path.join(plan.installRoot,'.covai-system-test','runtime-dependencies.json');
         const fingerprint=runtimeDependencyFingerprint(plan.installRoot);
@@ -72,7 +89,7 @@ export const prepareProjectDependencies = async ({directory,repositoryRoot=direc
         }
         await log(jobId,'INFO',`Preparing ${plan.manager}${plan.version?'@'+plan.version:''} dependencies (${path.relative(repositoryRoot,plan.installRoot).replaceAll('\\','/') || '.'}); dev and optional runtime packages included.`);
         const run=dependencies.run || dockerRunner.run;
-        const options={snapshotPath:plan.installRoot,jobId,forceHost:true,timeoutMs:600000,signal,
+        const options={snapshotPath:plan.installRoot,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,
             env:{...env,...plan.env,PATH:process.env.PATH || '',NODE_OPTIONS:'',...(plan.manager==='npm'?{npm_config_yes:'true'}:{})}};
         let result=await run({...options,command:plan.install});
         if(!result.success && plan.repairInstall && /EUSAGE|package\.json.*(?:in sync|lock)|Missing:.*from lock file|Invalid:.*lock file/i.test((result.stderr || '')+(result.stdout || ''))) {

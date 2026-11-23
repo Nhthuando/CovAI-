@@ -198,6 +198,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
     snapshotId,
     coverageReport,
     userId,
+    preserveOtherFiles = false,
 }) => {
     assertStringField(projectId, "projectId");
     assertStringField(snapshotId, "snapshotId");
@@ -242,9 +243,18 @@ export const parseCoverageFunctionsForSnapshot = async ({
     const uniqueFunctionRows = Array.from(dedupedFuncsMap.values());
 
     const persist = async tx => {
-        await tx.coverageFunction.deleteMany({
-            where: { snapshotId },
-        });
+        if (preserveOtherFiles && uniqueFunctionRows.length > 0) {
+            const touchedFiles = [...new Set(uniqueFunctionRows.map(r => r.filePath).filter(Boolean))];
+            if (touchedFiles.length > 0) {
+                await tx.coverageFunction.deleteMany({
+                    where: { snapshotId, filePath: { in: touchedFiles } },
+                });
+            }
+        } else if (!preserveOtherFiles) {
+            await tx.coverageFunction.deleteMany({
+                where: { snapshotId },
+            });
+        }
 
         if (uniqueFunctionRows.length > 0) {
             await tx.coverageFunction.createMany({
@@ -254,7 +264,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
         }
     };
     if (currentProjectOperation()?.preparedPublications) await stagePreparedPublication(persist);
-    else await prisma.$transaction(persist);
+    else await prisma.$transaction(persist, { maxWait: 15000, timeout: 30000 });
 
     return {
         totalFunctions: uniqueFunctionRows.length,

@@ -1,39 +1,16 @@
-import { Sparkles, Terminal } from "lucide-react";
-import Button from "../../common/Button.jsx";
+import { FlaskConical, FileCode2 } from 'lucide-react';
+import Button from '../../common/Button.jsx';
 
-export default function SystemTestZeroStateBanner({ onOpenGenerator }) {
+export default function SystemTestZeroStateBanner({ onOpenGenerator, canGenerate = true }) {
   return (
-    <div className="p-6 sm:p-8 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-      <div className="flex items-start gap-3.5 max-w-2xl">
-        <div className="p-2.5 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] shrink-0 mt-0.5">
-          <Terminal size={20} />
-        </div>
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h4 className="text-sm font-semibold text-[var(--color-text)]">
-              No system tests yet
-            </h4>
-
-          </div>
-          <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed m-0">
-            This project does not contain any Playwright or Cypress end-to-end test specs yet.
-            Generate tests with the AI model selected in your chat. CovAI reads your source and checks generated tests before saving. Then run them to measure coverage and view results.
-          </p>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2.5 shrink-0 w-full md:w-auto">
-        <Button
-          variant="primary"
-          size="sm"
-          icon={Sparkles}
-          onClick={onOpenGenerator}
-          className="system-test-primary-action w-full md:w-auto font-medium"
-        >
-          Generate tests with AI
-        </Button>
-      </div>
-    </div>
+    <section className="mx-auto flex w-full max-w-lg flex-col items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-10 text-center sm:px-10">
+      <FlaskConical size={26} className="mb-4 text-[var(--color-primary)]" aria-hidden="true" />
+      <h1 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">No system tests yet</h1>
+      <p className="mt-2.5 max-w-sm text-xs leading-5 text-[var(--color-text-secondary)]">
+        Generate Full Stack tests, review the draft, then apply it to get started.
+      </p>
+      <Button className="mt-5" icon={FileCode2} disabled={!canGenerate} onClick={onOpenGenerator}>Generate tests</Button>
+      {!canGenerate && <p className="mt-3 text-xs text-[var(--color-text-muted)]">You need AI generation permission for this project.</p>}
+    </section>
   );
 }
-

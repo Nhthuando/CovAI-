@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { cleanStoragePath } from "./pathSanitizer.js";
+import { isCovaiJestArtifact } from "./covaiJestArtifact.js";
 
 /**
  * Extracts coverage exclusion patterns from test runner config files
@@ -87,7 +88,7 @@ export const isTestFilePath = (filePath = "") => {
  * @returns {boolean}
  */
 export const isBusinessLogicSourceFile = (filePath = "", configExclusions = []) => {
-    if (!filePath || typeof filePath !== "string") return false;
+    if (!filePath || typeof filePath !== "string" || isCovaiJestArtifact(filePath)) return false;
     const cleanStorage = cleanStoragePath(filePath);
     const cleanP = (cleanStorage || filePath).replace(/\\/g, "/");
     const norm = cleanP.toLowerCase();

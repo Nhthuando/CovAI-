@@ -17,7 +17,11 @@ import {
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
 import { Button } from "../../../common/Button.jsx";
-import { fmtDuration, fmtPct, fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
+import {
+  fmtDuration,
+  fmtPct,
+  fmtRelativeTime,
+} from "../../../../services/unifiedDashboard/format.js";
 import { getUnifiedTestRunInspection } from "../../../../services/coverage.service.js";
 import { useToast } from "../../ToastContext.jsx";
 
@@ -30,8 +34,10 @@ export function SlideOverInspectorDrawer({
 }) {
   const { addToast } = useToast();
   const [copied, setCopied] = useState(false);
-  const [fetchedRunDetails, setFetchedRunDetails] = useState(null);
-  const [loadingRunDetails, setLoadingRunDetails] = useState(false);
+  const [settledRunDetails, setSettledRunDetails] = useState({
+    key: null,
+    data: null,
+  });
 
   useEffect(() => {
     if (!item) return;
@@ -42,48 +48,70 @@ export function SlideOverInspectorDrawer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [item, onClose]);
 
-  useEffect(() => {
-    setFetchedRunDetails(null);
-    if (!item) return;
-    const isRunItem = item.inspectorType === "run" || Boolean(item.startedAt && item.type);
-    const runId = item.runId || item.id;
-    const targetSnapId = item.snapshotId || snapshotId;
+  const isRunItem = Boolean(
+    item && (item.inspectorType === "run" || (item.startedAt && item.type)),
+  );
+  const runId = item?.runId || item?.id || "";
+  const targetSnapId = item?.snapshotId || snapshotId || "";
+  const isFetchableRun = Boolean(
+    isRunItem && runId && targetSnapId && !String(runId).startsWith("run-"),
+  );
+  const runRequestKey = isFetchableRun ? `${targetSnapId}:${runId}` : null;
 
-    if (isRunItem && runId && targetSnapId && !String(runId).startsWith("run-")) {
-      let cancelled = false;
-      setLoadingRunDetails(true);
-      getUnifiedTestRunInspection(targetSnapId, runId)
-        .then((res) => {
-          if (!cancelled && res?.data) {
-            setFetchedRunDetails(res.data);
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (!cancelled) setLoadingRunDetails(false);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-  }, [item, snapshotId]);
+  useEffect(() => {
+    if (!runRequestKey || !targetSnapId || !runId) return;
+    let cancelled = false;
+    getUnifiedTestRunInspection(targetSnapId, runId)
+      .then((res) => {
+        if (!cancelled) {
+          setSettledRunDetails({
+            key: runRequestKey,
+            data: res?.data || null,
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn(
+          "[SlideOverInspectorDrawer] Failed to fetch run inspection:",
+          err?.message,
+        );
+        if (!cancelled) {
+          setSettledRunDetails({ key: runRequestKey, data: null });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runRequestKey, targetSnapId, runId]);
 
   if (!item) return null;
 
-  const effectiveItem = fetchedRunDetails ? { ...item, ...fetchedRunDetails } : item;
+  const fetchedRunDetails =
+    runRequestKey && settledRunDetails.key === runRequestKey
+      ? settledRunDetails.data
+      : null;
+  const loadingRunDetails =
+    Boolean(runRequestKey) && settledRunDetails.key !== runRequestKey;
+
+  const effectiveItem = fetchedRunDetails
+    ? { ...item, ...fetchedRunDetails }
+    : item;
 
   // Normalize whether `item` is an Action Item, Matrix Module, or Recent Execution Run
-  const isRun = effectiveItem.inspectorType === "run" || Boolean(effectiveItem.startedAt && effectiveItem.type);
+  const isRun =
+    effectiveItem.inspectorType === "run" ||
+    Boolean(effectiveItem.startedAt && effectiveItem.type);
   const pillar = isRun
     ? effectiveItem.type
     : effectiveItem.pillar || effectiveItem.diagnostics?.suspectLayer || "unit";
   const status = isRun
     ? effectiveItem.status
-    : effectiveItem.priority === "CRITICAL" || effectiveItem.priority === "HIGH"
-    ? "fail"
-    : effectiveItem.priority === "MEDIUM"
-    ? "warn"
-    : "pass";
+    : effectiveItem.status ||
+      (effectiveItem.priority === "CRITICAL" || effectiveItem.priority === "HIGH"
+        ? "fail"
+        : effectiveItem.priority === "MEDIUM"
+          ? "warn"
+          : "pass");
 
   const title = isRun
     ? `Execution Run ${String(effectiveItem.id || "").slice(0, 10)}`
@@ -96,16 +124,21 @@ export function SlideOverInspectorDrawer({
   const diag = effectiveItem.diagnostics || {};
   const failureLayerLabel = isRun
     ? effectiveItem.failureLayer || "Execution Layer"
-    : `${(diag.suspectLayer || pillar).toUpperCase()} • ${diag.failureCategory || "Defect"}`;
+    : effectiveItem.failureLayer ||
+      `${(diag.suspectLayer || pillar).toUpperCase()} • ${diag.failureCategory || "Defect"}`;
 
   const stackTrace =
-    (isRun ? effectiveItem.stackTrace : diag.stackTrace) ||
+    (isRun
+      ? effectiveItem.stackTrace
+      : diag.stackTrace || effectiveItem.stackTrace) ||
     `// No failure stack trace captured for ${title}`;
 
-  const testCases = (isRun ? effectiveItem.testCases : diag.testCases) || [];
+  const testCases =
+    (isRun ? effectiveItem.testCases : diag.testCases || effectiveItem.testCases) ||
+    [];
 
   const aiPrompt =
-    (isRun ? effectiveItem.aiPrompt : diag.aiPrompt) ||
+    (isRun ? effectiveItem.aiPrompt : diag.aiPrompt || effectiveItem.aiPrompt) ||
     `Please diagnose "${title}" in the ${pillar.toUpperCase()} testing layer:\n${stackTrace}\nSuggest the root cause and code fix.`;
 
   const handleCopyStack = () => {
@@ -117,12 +150,13 @@ export function SlideOverInspectorDrawer({
   const handleTriggerAiDiagnosis = () => {
     if (onAskAi) {
       onAskAi(aiPrompt);
+    } else if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("covai:prefill-prompt", {
+          detail: { promptText: aiPrompt },
+        }),
+      );
     }
-    window.dispatchEvent(
-      new CustomEvent("covai:prefill-prompt", {
-        detail: { promptText: aiPrompt },
-      })
-    );
     addToast({
       title: "Sent Context to COV AI Agent",
       message: "Diagnostic prompt pre-filled in the right-hand AI Assistant.",
@@ -136,7 +170,7 @@ export function SlideOverInspectorDrawer({
       role="dialog"
       aria-modal="true"
       aria-labelledby="ud-inspector-drawer-title"
-      className="unified-dashboard fixed inset-0 z-50 flex justify-end bg-black/65 backdrop-blur-[1px]"
+      className="portfolio-studio unified-dashboard fixed inset-0 z-50 flex justify-end bg-black/65 backdrop-blur-[1px]"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -197,9 +231,17 @@ export function SlideOverInspectorDrawer({
                     <span>Pass / Fail</span>
                   </span>
                   <span className="font-mono text-xs font-semibold mt-1 block">
-                    <span className="text-[var(--ud-pass)]">{effectiveItem.passed} passed</span>
+                    <span className="text-[var(--ud-pass)]">
+                      {effectiveItem.passed} passed
+                    </span>
                     <span className="text-[var(--ud-text-muted)]"> / </span>
-                    <span className={effectiveItem.failed > 0 ? "text-[var(--ud-fail)]" : "text-[var(--ud-text-muted)]"}>
+                    <span
+                      className={
+                        effectiveItem.failed > 0
+                          ? "text-[var(--ud-fail)]"
+                          : "text-[var(--ud-text-muted)]"
+                      }
+                    >
                       {effectiveItem.failed} failed
                     </span>
                   </span>
@@ -210,7 +252,11 @@ export function SlideOverInspectorDrawer({
                     <span>Coverage & Time</span>
                   </span>
                   <span className="font-mono text-xs font-semibold text-[var(--ud-text)] mt-1 block">
-                    {fmtPct(effectiveItem.coverageLinesPct ?? effectiveItem.coveragePct)} • {fmtDuration(effectiveItem.durationMs)}
+                    {fmtPct(
+                      effectiveItem.coverageLinesPct ??
+                        effectiveItem.coveragePct,
+                    )}{" "}
+                    • {fmtDuration(effectiveItem.durationMs)}
                   </span>
                 </div>
               </>
@@ -222,17 +268,40 @@ export function SlideOverInspectorDrawer({
                   </span>
                   <span
                     className="font-mono text-xs font-semibold text-[var(--ud-text)] mt-1 block truncate"
-                    title={diag.endpoint !== "N/A" ? diag.endpoint : diag.filePath}
+                    title={
+                      diag.endpoint && diag.endpoint !== "N/A"
+                        ? diag.endpoint
+                        : diag.filePath && diag.filePath !== "N/A"
+                          ? diag.filePath
+                          : effectiveItem.targetName
+                    }
                   >
-                    {diag.endpoint && diag.endpoint !== "N/A" ? diag.endpoint : diag.filePath || "N/A"}
+                    {diag.endpoint && diag.endpoint !== "N/A"
+                      ? diag.endpoint
+                      : diag.filePath && diag.filePath !== "N/A"
+                        ? diag.filePath
+                        : effectiveItem.targetName || "N/A"}
                   </span>
                 </div>
                 <div className="p-2.5 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/50 col-span-2 sm:col-span-1">
                   <span className="text-[10px] uppercase tracking-wider text-[var(--ud-text-muted)] block">
                     HTTP / Step Status
                   </span>
-                  <span className="font-mono text-xs font-semibold text-[var(--ud-warn)] mt-1 block truncate">
-                    {diag.httpStatus ? `HTTP ${diag.httpStatus}` : diag.failedStep || "Needs Fix"}
+                  <span
+                    className={`font-mono text-xs font-semibold mt-1 block truncate ${
+                      diag.httpStatus || effectiveItem.httpStatus
+                        ? (diag.httpStatus || effectiveItem.httpStatus) >= 400
+                          ? "text-[var(--ud-fail)]"
+                          : "text-[var(--ud-pass)]"
+                        : status === "pass"
+                          ? "text-[var(--ud-pass)]"
+                          : "text-[var(--ud-warn)]"
+                    }`}
+                  >
+                    {diag.httpStatus || effectiveItem.httpStatus
+                      ? `HTTP ${diag.httpStatus || effectiveItem.httpStatus}`
+                      : diag.failedStep ||
+                        (status === "pass" ? "Healthy" : "Needs Fix")}
                   </span>
                 </div>
               </>
@@ -270,7 +339,11 @@ export function SlideOverInspectorDrawer({
                 onClick={handleCopyStack}
                 className="inline-flex items-center gap-1 text-[11px] font-mono text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] px-2 py-0.5 rounded border border-[var(--ud-border)] bg-[var(--ud-surface-2)] cursor-pointer"
               >
-                {copied ? <Check size={11} className="text-[var(--ud-pass)]" /> : <Copy size={11} />}
+                {copied ? (
+                  <Check size={11} className="text-[var(--ud-pass)]" />
+                ) : (
+                  <Copy size={11} />
+                )}
                 <span>{copied ? "Copied" : "Copy Log"}</span>
               </button>
             </div>
@@ -305,11 +378,20 @@ export function SlideOverInspectorDrawer({
                     >
                       <div className="flex items-start gap-2 min-w-0">
                         {isFail ? (
-                          <AlertTriangle size={14} className="shrink-0 mt-0.5 text-[var(--ud-fail)]" />
+                          <AlertTriangle
+                            size={14}
+                            className="shrink-0 mt-0.5 text-[var(--ud-fail)]"
+                          />
                         ) : isPass ? (
-                          <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-[var(--ud-pass)]" />
+                          <CheckCircle2
+                            size={14}
+                            className="shrink-0 mt-0.5 text-[var(--ud-pass)]"
+                          />
                         ) : (
-                          <MinusCircle size={14} className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]" />
+                          <MinusCircle
+                            size={14}
+                            className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]"
+                          />
                         )}
                         <div className="min-w-0">
                           <div className="font-mono text-[11px] font-semibold text-[var(--ud-text)] break-words">
@@ -318,7 +400,9 @@ export function SlideOverInspectorDrawer({
                           {tc.step && (
                             <div
                               className={`text-[11px] font-sans mt-0.5 ${
-                                isFail ? "text-[var(--ud-fail)]" : "text-[var(--ud-text-muted)]"
+                                isFail
+                                  ? "text-[var(--ud-fail)]"
+                                  : "text-[var(--ud-text-muted)]"
                               }`}
                             >
                               {tc.step}
@@ -348,6 +432,7 @@ export function SlideOverInspectorDrawer({
             type="button"
             variant="primary"
             size="sm"
+            className="ps-btn-contrast border-0"
             icon={Bot}
             onClick={handleTriggerAiDiagnosis}
           >
@@ -376,9 +461,8 @@ export function SlideOverInspectorDrawer({
         </div>
       </aside>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 export default SlideOverInspectorDrawer;
-

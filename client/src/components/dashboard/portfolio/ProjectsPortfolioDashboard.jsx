@@ -1,18 +1,23 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import "./portfolio.css";
 import { useProjectsPortfolio } from "../../../hooks/useProjectsPortfolio.js";
 import { PortfolioCommandHeader } from "./zones/PortfolioCommandHeader.jsx";
 import { PortfolioExecutiveKpiRow } from "./zones/PortfolioExecutiveKpiRow.jsx";
 import { PortfolioBenchmarkAndRiskZone } from "./zones/PortfolioBenchmarkAndRiskZone.jsx";
 import { ProjectDirectoryWorkspaceZone } from "./zones/ProjectDirectoryWorkspaceZone.jsx";
 import { PortfolioActivityAndInfraZone } from "./zones/PortfolioActivityAndInfraZone.jsx";
-import { CompareProjectsModal } from "./modals/CompareProjectsModal.jsx";
 import { ExportPortfolioReportModal } from "./modals/ExportPortfolioReportModal.jsx";
 import { SlideOverInspectorDrawer } from "../unified/inspector/SlideOverInspectorDrawer.jsx";
 import { ZoneErrorBoundary } from "../unified/primitives/ZoneErrorBoundary.jsx";
+import { deriveFilteredPortfolioVm } from "../../../services/portfolioDashboard/portfolioDashboard.selectors.js";
+import {
+  applyLifecycleStatusToPortfolioCache,
+  applyLifecycleStatusToProjectsList,
+} from "../../../services/portfolioDashboard/portfolioLifecycleCache.js";
+import { resolvePortfolioLifecycleSummary } from "../../../services/portfolioDashboard/portfolioLifecycleSummary.js";
 
 export function ProjectsPortfolioDashboard({
-  dataMode = "live",
-  onChangeDataMode,
   favorites = [],
   onTogglePin,
   onOpenProjectOverview,
@@ -20,37 +25,106 @@ export function ProjectsPortfolioDashboard({
   onDeleteProject,
   onAddProject,
   onAskAi,
+  onProjectsLoaded = null,
   className = "",
 }) {
-  const { vm, isLoading, isError, error, refetch } = useProjectsPortfolio({
-    dataMode,
-    favorites,
-  });
+  const queryClient = useQueryClient();
+  const { vm, isFetching, isInitialLoading, refetch, forceRefresh } =
+    useProjectsPortfolio({
+      favorites,
+    });
+
+  useEffect(() => {
+    if (vm?.projects) {
+      onProjectsLoaded?.(vm.projects);
+    }
+  }, [vm?.projects, onProjectsLoaded]);
 
   const [highlightedProjectId, setHighlightedProjectId] = useState(null);
-  const [selectedForCompareIds, setSelectedForCompareIds] = useState([]);
-  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [inspectedRunItem, setInspectedRunItem] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [lifecycleTab, setLifecycleTab] = useState("active");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [layerDeficit, setLayerDeficit] = useState("all");
+  const [sortBy, setSortBy] = useState("health-desc");
 
-  const handleToggleCompare = useCallback((projectId) => {
-    setSelectedForCompareIds((prev) => {
-      if (prev.includes(projectId)) {
-        return prev.filter((id) => id !== projectId);
-      }
-      if (prev.length >= 3) {
-        return [prev[1], prev[2], projectId];
-      }
-      return [...prev, projectId];
-    });
+  const {
+    filteredVm,
+    filteredProjects,
+    lifecycleFilteredProjects,
+    allLifecycleCounts,
+    isFiltered,
+    activeFilterTags,
+  } = useMemo(
+    () =>
+      deriveFilteredPortfolioVm(vm, {
+        searchQuery,
+        lifecycleTab,
+        statusFilter,
+        layerDeficit,
+        sortBy,
+        favorites,
+      }),
+    [vm, searchQuery, lifecycleTab, statusFilter, layerDeficit, sortBy, favorites]
+  );
+
+  const lifecycleSummary = useMemo(
+    () =>
+      resolvePortfolioLifecycleSummary({
+        isFiltered,
+        filteredCounts: filteredVm?.lifecycleCounts,
+        allCounts: allLifecycleCounts,
+      }),
+    [isFiltered, filteredVm?.lifecycleCounts, allLifecycleCounts]
+  );
+
+  const handleLifecycleStatusChange = useCallback(
+    (projectId, newStatus) => {
+      queryClient.setQueryData(["projectsPortfolio", "live"], (old) =>
+        applyLifecycleStatusToPortfolioCache(old, projectId, newStatus)
+      );
+      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
+        applyLifecycleStatusToProjectsList(old, projectId, newStatus)
+      );
+    },
+    [queryClient]
+  );
+
+  const handleLifecycleStatusCommitted = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
+    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+  }, [queryClient]);
+
+  const pinnedCount = useMemo(
+    () =>
+      lifecycleFilteredProjects.filter(
+        (p) => favorites.includes(p.id) || p.isPinned
+      ).length,
+    [lifecycleFilteredProjects, favorites]
+  );
+
+  const effectiveHighlightedProjectId = useMemo(
+    () =>
+      highlightedProjectId &&
+      filteredProjects.some((p) => p.id === highlightedProjectId)
+        ? highlightedProjectId
+        : null,
+    [highlightedProjectId, filteredProjects]
+  );
+
+  const handleResetFilters = useCallback(() => {
+    setSearchQuery("");
+    setLifecycleTab("active");
+    setStatusFilter("all");
+    setLayerDeficit("all");
   }, []);
 
-  const handleFocusAttentionQueue = useCallback(() => {
-    const el = document.getElementById("portfolio-attention-queue");
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+  const handleRemoveFilterTag = useCallback((key) => {
+    if (key === "search") setSearchQuery("");
+    else if (key === "lifecycle") setLifecycleTab("active");
+    else if (key === "status") setStatusFilter("all");
+    else if (key === "layerDeficit") setLayerDeficit("all");
   }, []);
 
   const handleSelectBenchmarkProject = useCallback((projectId) => {
@@ -70,10 +144,16 @@ export function ProjectsPortfolioDashboard({
   const handleInspectRun = useCallback((runEvent) => {
     setInspectedRunItem({
       id: runEvent.id,
+      runId: runEvent.runId || runEvent.id,
+      snapshotId: runEvent.snapshotId,
+      projectId: runEvent.projectId,
+      inspectorType: "run",
       title: `${runEvent.projectName} • ${runEvent.type}`,
       pillar: runEvent.pillar,
+      type: runEvent.type,
+      startedAt: runEvent.timestamp || new Date().toISOString(),
       outcome: runEvent.outcome,
-      durationMs: 4000,
+      durationMs: runEvent.durationMs || 4000,
       timestamp: runEvent.timestamp,
       summary: runEvent.summary,
       rawItem: runEvent,
@@ -83,7 +163,12 @@ export function ProjectsPortfolioDashboard({
   const handleAskAiAboutProject = useCallback(
     (project) => {
       onAskAi?.(
-        `Please analyze the testing status and release readiness of project "${project.name}" (Health Score: ${project.healthScore}/100, Gate: ${project.gateStatus}). Identify the primary coverage gaps across Unit, Integration, and System testing layers.`
+        `Analyze the testing status and coverage profile of project "${project.name}" (Health Score: ${project.healthScore}/100, Coverage: ${project.unifiedCoveragePct ?? 0}%). Identify coverage gaps across Unit, Integration, and System testing layers.`,
+        {
+          projectId: project.id,
+          snapshotId: project.snapshotId || project.activeSnapshotId || null,
+          projectName: project.name,
+        }
       );
     },
     [onAskAi]
@@ -91,69 +176,110 @@ export function ProjectsPortfolioDashboard({
 
   const handleAskAiDiagnose = useCallback(
     (attentionItem) => {
+      const matched = (vm?.projects || []).find(
+        (p) => p.id === attentionItem.projectId
+      );
       onAskAi?.(
-        `Diagnose this priority cross-project bottleneck for "${attentionItem.projectName}": ${attentionItem.title}. Description: ${attentionItem.description}`
+        `Diagnose this bottleneck for "${attentionItem.projectName}": ${attentionItem.title}. ${attentionItem.description || ""}`,
+        {
+          projectId: attentionItem.projectId || matched?.id || null,
+          snapshotId: attentionItem.snapshotId || matched?.snapshotId || null,
+          projectName: attentionItem.projectName || matched?.name || "",
+        }
       );
     },
-    [onAskAi]
+    [onAskAi, vm?.projects]
   );
+
+  if (isInitialLoading) {
+    return (
+      <div
+        className={`portfolio-studio bg-[var(--ps-bg)] text-[var(--ps-ink)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
+      >
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-5 animate-pulse">
+          <div className="h-12 rounded-xl bg-[var(--ps-surface)] border border-[var(--ps-line)]" />
+          <div className="h-32 rounded-xl bg-[var(--ps-surface)] border border-[var(--ps-line)]" />
+          <div className="h-64 rounded-xl bg-[var(--ps-surface)] border border-[var(--ps-line)]" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
-      className={`unified-dashboard portfolio-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
+      className={`portfolio-studio bg-[var(--ps-bg)] text-[var(--ps-ink)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
     >
       <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* ── ZONE 1: Portfolio Command Header (NO duplicate "+ Project" buttons) ── */}
-        <ZoneErrorBoundary zoneTitle="Portfolio Command Header" onRetry={refetch}>
+        {/* ── 1. Compact Header ────────────────────────────────────────── */}
+        <ZoneErrorBoundary zoneTitle="Portfolio Header" onRetry={refetch}>
           <PortfolioCommandHeader
-            vm={vm}
-            dataMode={dataMode}
-            onChangeDataMode={onChangeDataMode}
-            onOpenCompareModal={() => setIsCompareModalOpen(true)}
+            vm={filteredVm}
             onOpenExportModal={() => setIsExportModalOpen(true)}
-            onSelectStatusFilter={setStatusFilter}
-            onBatchRunCompleted={refetch}
+            isSyncing={isFetching}
+            onForceRefresh={forceRefresh}
+            isFiltered={isFiltered}
+            activeFilterTags={activeFilterTags}
+            onRemoveFilterTag={handleRemoveFilterTag}
+            onResetFilters={handleResetFilters}
           />
         </ZoneErrorBoundary>
 
-        {/* ── ZONE 2: Portfolio Executive KPI Row ────────────────────────────── */}
-        <ZoneErrorBoundary zoneTitle="Executive KPIs" onRetry={refetch}>
+        {/* ── 2. Visual Executive Metrics Strip ────────────────────────── */}
+        <ZoneErrorBoundary zoneTitle="Portfolio Metrics" onRetry={refetch}>
           <PortfolioExecutiveKpiRow
-            kpis={vm?.kpis}
-            onSelectStatusFilter={setStatusFilter}
-            onFocusAttentionQueue={handleFocusAttentionQueue}
+            kpis={filteredVm?.kpis}
+            lifecycleCounts={lifecycleSummary.displayCounts}
+            scopeBadge={lifecycleSummary.scopeBadge}
+            excludedCount={lifecycleSummary.excludedFromActiveCount}
+            isFiltered={isFiltered}
           />
         </ZoneErrorBoundary>
 
-        {/* ── ZONE 3 (Promoted Above the Fold): Project Directory Workspace ──── */}
-        <ZoneErrorBoundary zoneTitle="Project Directory Workspace" onRetry={refetch}>
+        {/* ── 3. Imported Projects Workspace (High Priority Above Fold) ─── */}
+        <ZoneErrorBoundary zoneTitle="Projects Directory" onRetry={refetch}>
           <ProjectDirectoryWorkspaceZone
-            projects={vm?.projects}
+            projects={filteredProjects}
+            allProjects={vm?.projects}
+            allLifecycleCounts={allLifecycleCounts}
+            lifecycleFilteredCount={lifecycleFilteredProjects.length}
+            pinnedCount={pinnedCount}
             favorites={favorites}
-            highlightedProjectId={highlightedProjectId}
+            highlightedProjectId={effectiveHighlightedProjectId}
             onClearHighlight={() => setHighlightedProjectId(null)}
-            selectedForCompareIds={selectedForCompareIds}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            lifecycleTab={lifecycleTab}
+            onLifecycleTabChange={setLifecycleTab}
             statusFilter={statusFilter}
             onStatusFilterChange={setStatusFilter}
+            layerDeficit={layerDeficit}
+            onLayerDeficitChange={setLayerDeficit}
+            sortBy={sortBy}
+            onSortByChange={setSortBy}
+            isFiltered={isFiltered}
+            onResetFilters={handleResetFilters}
             onTogglePin={onTogglePin}
-            onToggleCompare={handleToggleCompare}
             onOpenOverview={onOpenProjectOverview}
             onNavigateWorkspace={onNavigateWorkspace}
             onDeleteProject={onDeleteProject}
-            onExportProject={(proj) => {
-              onAskAiAboutProject?.(proj);
-            }}
             onAskAiAboutProject={handleAskAiAboutProject}
+            onLifecycleStatusChange={handleLifecycleStatusChange}
+            onLifecycleStatusCommitted={handleLifecycleStatusCommitted}
             onAddProject={onAddProject}
           />
         </ZoneErrorBoundary>
 
-        {/* ── ZONE 4 (Below Directory): Benchmark Visualizer & Risk Radar ────── */}
-        <ZoneErrorBoundary zoneTitle="Benchmark & Risk Radar" onRetry={refetch}>
+        {/* ── 4. Multi-Diagram Analytics Suite ─────────────────────────── */}
+        <ZoneErrorBoundary zoneTitle="Quality Analytics" onRetry={refetch}>
           <PortfolioBenchmarkAndRiskZone
-            analytics={vm?.analytics}
-            attentionQueue={vm?.attentionQueue}
-            selectedProjectId={highlightedProjectId}
+            kpis={filteredVm?.kpis}
+            lifecycleCounts={lifecycleSummary.displayCounts}
+            lifecycleScopeLabel={lifecycleSummary.donutScopeLabel}
+            analytics={filteredVm?.analytics}
+            attentionQueue={filteredVm?.attentionQueue}
+            projects={filteredVm?.projects}
+            timeRoiAnalytics={filteredVm?.timeRoiAnalytics}
+            selectedProjectId={effectiveHighlightedProjectId}
             onSelectProject={handleSelectBenchmarkProject}
             onNavigateProjectWorkspace={(projId, pillar, focus) =>
               onNavigateWorkspace?.(projId, pillar, focus)
@@ -162,34 +288,24 @@ export function ProjectsPortfolioDashboard({
           />
         </ZoneErrorBoundary>
 
-        {/* ── ZONE 5: Activity Stream & Runner Infrastructure Status ───────── */}
-        <ZoneErrorBoundary zoneTitle="Activity & Runner Infrastructure" onRetry={refetch}>
+        {/* ── 5. Recent Runs & Runner Status ───────────────────────────── */}
+        <ZoneErrorBoundary zoneTitle="Recent Runs" onRetry={refetch}>
           <PortfolioActivityAndInfraZone
-            activityFeed={vm?.activityFeed}
+            activityFeed={filteredVm?.activityFeed}
+            runnerInfrastructure={filteredVm?.runnerInfrastructure}
             onInspectRun={handleInspectRun}
           />
         </ZoneErrorBoundary>
       </div>
 
-      {/* ── Overlays: Modals & Slide-Over Drawers ───────────────────────────── */}
-      {/* 1. Side-by-Side Comparison Modal */}
-      <CompareProjectsModal
-        isOpen={isCompareModalOpen}
-        onClose={() => setIsCompareModalOpen(false)}
-        projects={vm?.projects || []}
-        initialSelectedIds={selectedForCompareIds}
-        onOpenOverview={onOpenProjectOverview}
-        onNavigateWorkspace={onNavigateWorkspace}
-      />
-
-      {/* 2. Account-Wide Portfolio Report Modal */}
+      {/* Single PDF Report Modal */}
       <ExportPortfolioReportModal
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
-        vm={vm}
+        vm={filteredVm}
       />
 
-      {/* 3. Slide-Over Run Inspector Drawer */}
+      {/* Slide-Over Run Inspector */}
       <SlideOverInspectorDrawer
         item={inspectedRunItem}
         onClose={() => setInspectedRunItem(null)}
@@ -198,11 +314,22 @@ export function ProjectsPortfolioDashboard({
             onNavigateWorkspace?.(inspectedRunItem.rawItem.projectId, pillar);
           }
         }}
-        onAskAi={onAskAi}
+        onAskAi={(promptText) =>
+          onAskAi?.(promptText, {
+            projectId:
+              inspectedRunItem?.projectId ||
+              inspectedRunItem?.rawItem?.projectId ||
+              null,
+            snapshotId:
+              inspectedRunItem?.snapshotId ||
+              inspectedRunItem?.rawItem?.snapshotId ||
+              null,
+            projectName: inspectedRunItem?.rawItem?.projectName || "",
+          })
+        }
       />
     </div>
   );
 }
 
 export default ProjectsPortfolioDashboard;
-

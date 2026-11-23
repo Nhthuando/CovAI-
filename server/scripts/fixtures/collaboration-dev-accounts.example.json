@@ -1,0 +1,7 @@
+{
+  "note": "Test-only accounts for scripts/collaboration-dev-e2e.mjs on the local dev server. Not real users.",
+  "password": "Collaboration-local-123!",
+  "owner": { "email": "collab-owner@covai.test", "name": "Collab Test Owner" },
+  "member": { "email": "collab-editor@covai.test", "name": "Collab Test Editor" },
+  "project": "CovAI Collaboration Dev E2E"
+}

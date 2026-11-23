@@ -11,22 +11,34 @@ import {
 } from "../services/coverage.service.js";
 import { getProjectCfgApi, getProjectsApi, getProjectTreeApi } from "../services/project.service.js";
 import { queryClient } from "../lib/queryClient.js";
-import { useAuth } from "./useAuth";
+import { useAuth } from "./useAuth.js";
+import { loadSuggestionSourceFiles } from '../services/unitTestSuggestionQueue.js';
 
 /**
  * Fetch all coverage data for a given snapshot and coverage type in parallel.
  */
-export async function fetchCoverageDashboardData({ snapshotId, type, projectId }) {
+export async function fetchCoverageDashboardData({ snapshotId, type, projectId, fetchAll = false }) {
   if (!snapshotId) return null;
 
-  const promises = [
-    getCoverageSummary(snapshotId, type).catch(() => ({ data: null })),
-    getCoverageFiles(snapshotId, {
+  // Single-page query by default to eliminate pagination waterfall on mount.
+  // If caller explicitly passes fetchAll: true, use parallelized loadSuggestionSourceFiles.
+  const fetchFiles = () => {
+    if (fetchAll && type === 'unit') {
+      return loadSuggestionSourceFiles(page =>
+        getCoverageFiles(snapshotId, { page, sortBy: 'linesPct', order: 'asc', limit: 200, type })
+      ).then(files => ({ data: { files } }));
+    }
+    return getCoverageFiles(snapshotId, {
       sortBy: "linesPct",
       order: "asc",
       limit: 200,
       type,
-    }).catch(() => ({ data: { files: [] } })),
+    });
+  };
+
+  const promises = [
+    getCoverageSummary(snapshotId, type).catch(() => ({ data: null })),
+    fetchFiles().catch(() => ({ data: { files: [] } })),
     getTestExecution(snapshotId).catch(() => ({ data: {} })),
     getCoverageFrameworks(snapshotId).catch(() => ({ data: null })),
   ];
@@ -122,7 +134,7 @@ export function useIntegrationWorkspace(snapshotId) {
   return useQuery({
     queryKey: ["integrationWorkspace", snapshotId, userId],
     queryFn: async () => {
-      const res = await getIntegrationWorkspace(snapshotId);
+      const res = await getIntegrationWorkspace(snapshotId, { skipAutoScan: true });
       return res?.data || null;
     },
     enabled: Boolean(snapshotId),
@@ -137,25 +149,28 @@ export function useIntegrationWorkspace(snapshotId) {
  */
 export function invalidateCoverageQueries(snapshotId = null) {
   if (snapshotId) {
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        if (!Array.isArray(key) || key.length < 2) return false;
-        const [domain, snap] = key;
-        return (
-          (domain === "coverageDashboard" ||
-            domain === "fileCoverage" ||
-            domain === "integrationWorkspace" ||
-            domain === "unifiedDashboard") &&
-          snap === snapshotId
-        );
-      },
-    });
+    queryClient
+      .invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          if (!Array.isArray(key) || key.length < 2) return false;
+          const [domain, snap] = key;
+          return (
+            (domain === "coverageDashboard" ||
+              domain === "fileCoverage" ||
+              domain === "integrationWorkspace" ||
+              domain === "unifiedDashboard") &&
+            snap === snapshotId
+          );
+        },
+        cancelRefetch: false,
+      })
+      .catch(() => {});
   } else {
-    queryClient.invalidateQueries({ queryKey: ["coverageDashboard"] });
-    queryClient.invalidateQueries({ queryKey: ["fileCoverage"] });
-    queryClient.invalidateQueries({ queryKey: ["integrationWorkspace"] });
-    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["coverageDashboard"], cancelRefetch: false }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["fileCoverage"], cancelRefetch: false }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["integrationWorkspace"], cancelRefetch: false }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"], cancelRefetch: false }).catch(() => {});
   }
 }
 
@@ -240,4 +255,24 @@ export function useProjectTreeQuery(projectId) {
     staleTime: 5 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
   });
+}
+
+
+/**
+ * Invalidate Project file tree queries so Explorer immediately refreshes.
+ */
+export function invalidateProjectTree(projectId = null) {
+  queryClient
+    .invalidateQueries({
+      predicate: (query) => query.queryKey?.[0] === "projectTree",
+      cancelRefetch: false,
+    })
+    .catch(() => {});
+  if (typeof window !== "undefined" && projectId) {
+    window.dispatchEvent(
+      new CustomEvent("covai:project-event", {
+        detail: { projectId, type: "file" },
+      })
+    );
+  }
 }

@@ -20,3 +20,10 @@ it('deduplicates context and bounds gaps without dropping the existing test',()=
 it('handles a legacy null instruction without changing the available source',()=>{
     expect(focusTestContext({sourceCode:[{path:'app.js',content:'export const app=true;'}]},null).sourceCode).toHaveLength(1);
 });
+
+it('prioritizes a requested route and TypeScript index dependency within a small budget',()=>{
+    const target={path:'client/Account.tsx',content:"import helper from './account';const route='/account';"};
+    const result=focusTestContext({sourceCode:[{path:'unrelated.js',content:'x'.repeat(200)},target,{path:'client/account/index.ts',content:'export default 1;'}]},JSON.stringify({routes:['/account']}),90);
+    expect(result.sourceCode.map(file=>file.path)).toEqual(['client/Account.tsx','client/account/index.ts']);
+    expect(result.omittedFiles).toContain('unrelated.js');
+});

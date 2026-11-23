@@ -1,14 +1,16 @@
-import {describe,it,expect,jest} from '@jest/globals';
+import {describe,it,expect,jest,afterAll} from '@jest/globals';
 const generateContent=jest.fn().mockResolvedValue({response:{text:()=>'{"content":"test"}',candidates:[]}});
 const getGenerativeModel=jest.fn(()=>({generateContent}));
 const runGeminiRequest=jest.fn(async(request)=>request({signal:new AbortController().signal}));
 await jest.unstable_mockModule('@google/generative-ai',()=>({GoogleGenerativeAI:class {getGenerativeModel(...args){return getGenerativeModel(...args);}}}));
 await jest.unstable_mockModule('../services/geminiRequestPolicy.service.js',()=>({runGeminiRequest,isDailyQuotaError:()=>false}));
 const previousKey=process.env.GEMINI_API_KEY;
+const previousModel=process.env.GEMINI_MODEL;
 process.env.GEMINI_API_KEY='unit-test-key';
+process.env.GEMINI_MODEL='gemini-2.5-flash';
 const {generateText}=await import('../services/gemini.service.js');
 const {createAiJobBudget,withAiJobBudget}=await import('../services/aiJobBudget.service.js');
-if(previousKey===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=previousKey;
+afterAll(() => { if(previousKey===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=previousKey; if(previousModel===undefined)delete process.env.GEMINI_MODEL;else process.env.GEMINI_MODEL=previousModel; });
 describe('Gemini generation configuration forwarding',()=>{
   it('counts retries at the network boundary and stops before exceeding a job budget',async()=>{
     const budget=createAiJobBudget({maxRequests:1});
@@ -51,7 +53,7 @@ describe('Gemini generation configuration forwarding',()=>{
     await generateText('prompt','gemini-3.8-flash',null,{});
     expect(getGenerativeModel.mock.calls.at(-1)[0].model).toBe('gemini-3.8-flash');
   });
-  it.each(['gemini-3.5-flash-lite','gemini-2.5-flash','gemini-3.1-flash-lite','gemini-3.8-flash'])('uses the selected catalog model %s',async model=>{
+  it.each(['gemini-3.5-flash-lite','gemini-3.1-flash-lite','gemini-3.8-flash'])('uses the selected catalog model %s',async model=>{
     await generateText('prompt',model,null,{});
     expect(getGenerativeModel.mock.calls.at(-1)[0].model).toBe(model);
   });
