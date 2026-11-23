@@ -1,5 +1,6 @@
 import request from "supertest";
 import express from "express";
+import cookieParser from "cookie-parser";
 import { jest } from "@jest/globals";
 
 const prismaMock = {
@@ -8,6 +9,13 @@ const prismaMock = {
     update: jest.fn(),
     create: jest.fn(),
   },
+  githubPendingLink: {
+    deleteMany: jest.fn(),
+    create: jest.fn(),
+  },
+  $transaction: jest.fn(async (arg) =>
+    typeof arg === "function" ? arg(prismaMock) : Promise.all(arg),
+  ),
 };
 
 jest.unstable_mockModule("../config/prisma.js", () => ({
@@ -17,11 +25,16 @@ jest.unstable_mockModule("../config/prisma.js", () => ({
 jest.unstable_mockModule("../utils/crypto.js", () => ({
   encrypt: jest.fn((val) => `enc:${val}`),
   decrypt: jest.fn((val) => val.replace(/^enc:/, "")),
+  isEncryptedFormat: jest.fn(() => true),
 }));
 
 jest.unstable_mockModule("../middlewares/auth.middleware.js", () => ({
   authMiddleware: (req, _res, next) => {
-    req.user = { id: "user-regular-1", name: "Regular User", email: "regular@covai.dev" };
+    req.user = {
+      id: "user-regular-1",
+      name: "Regular User",
+      email: "regular@covai.dev",
+    };
     next();
   },
 }));
@@ -29,6 +42,7 @@ jest.unstable_mockModule("../middlewares/auth.middleware.js", () => ({
 const { default: authRouter } = await import("../routes/auth.route.js");
 
 const app = express();
+app.use(cookieParser());
 app.use(express.json());
 app.use("/api/auth", authRouter);
 
@@ -46,16 +60,32 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
     global.fetch = originalFetch;
   });
 
+  async function getStateAndCookie(mode) {
+    const urlRes = await request(app).get(`/api/auth/github/url?mode=${mode}`);
+    const parsed = new URL(urlRes.body.url);
+    const state = parsed.searchParams.get("state");
+    const cookie = (urlRes.headers["set-cookie"] || []).find((c) =>
+      c.startsWith("covai_oauth_state="),
+    );
+    return { state, cookie };
+  }
+
   describe("POST /api/auth/github/connect", () => {
     it("returns 400 when code is missing", async () => {
-      const res = await request(app).post("/api/auth/github/connect").send({});
+      const { state, cookie } = await getStateAndCookie("connect");
+      const res = await request(app)
+        .post("/api/auth/github/connect")
+        .set("Cookie", cookie)
+        .send({ state });
       expect(res.status).toBe(400);
       expect(res.body.message).toMatch(/Code parameter not found/i);
     });
 
     it("returns 400 when GitHub rejects the OAuth code", async () => {
+      const { state, cookie } = await getStateAndCookie("connect");
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
+        status: 200,
         json: async () => ({
           error: "bad_verification_code",
           error_description: "The code passed is incorrect or expired.",
@@ -64,7 +94,8 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
 
       const res = await request(app)
         .post("/api/auth/github/connect")
-        .send({ code: "expired-code" });
+        .set("Cookie", cookie)
+        .send({ code: "expired-code", state });
 
       expect(res.status).toBe(400);
       expect(res.body.message).toBe("The code passed is incorrect or expired.");
@@ -72,14 +103,17 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
     });
 
     it("returns 409 when GitHub account is already linked to another user", async () => {
+      const { state, cookie } = await getStateAndCookie("connect");
       global.fetch = jest
         .fn()
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({ access_token: "gho_123" }),
         })
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({ id: 999888, login: "octocat" }),
         });
 
@@ -87,7 +121,8 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
 
       const res = await request(app)
         .post("/api/auth/github/connect")
-        .send({ code: "valid-code" });
+        .set("Cookie", cookie)
+        .send({ code: "valid-code", state });
 
       expect(res.status).toBe(409);
       expect(res.body.message).toMatch(/already linked/i);
@@ -95,14 +130,17 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
     });
 
     it("links GitHub to the authenticated user without creating a duplicate account", async () => {
+      const { state, cookie } = await getStateAndCookie("connect");
       global.fetch = jest
         .fn()
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({ access_token: "gho_abc" }),
         })
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({ id: 777666, login: "dev-octo" }),
         });
 
@@ -114,7 +152,8 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
 
       const res = await request(app)
         .post("/api/auth/github/connect")
-        .send({ code: "valid-code" });
+        .set("Cookie", cookie)
+        .send({ code: "valid-code", state });
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({
@@ -136,41 +175,58 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
 
   describe("GET /api/auth/github/callback", () => {
     it("logs in existing linked user by githubUserId even if GitHub email differs", async () => {
+      const { state, cookie } = await getStateAndCookie("login");
       global.fetch = jest
         .fn()
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({ access_token: "gho_login" }),
         })
         .mockResolvedValueOnce({
           ok: true,
+          status: 200,
           json: async () => ({ id: 777666, login: "dev-octo", email: null }),
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => [{ email: "different@github.dev", primary: true }],
+          status: 200,
+          json: async () => [
+            { email: "different@github.dev", primary: true, verified: true },
+          ],
         });
 
       prismaMock.user.findUnique.mockResolvedValueOnce({
         id: "user-regular-1",
         email: "regular@covai.dev",
         name: "Regular User",
+        avatarUrl: null,
         githubUserId: "777666",
       });
-      prismaMock.user.update.mockResolvedValueOnce({
+      prismaMock.user.update.mockResolvedValue({
         id: "user-regular-1",
         email: "regular@covai.dev",
         name: "Regular User",
+        avatarUrl: null,
         githubUserId: "777666",
       });
 
-      const res = await request(app).get("/api/auth/github/callback?code=login-code");
+      const res = await request(app)
+        .get(`/api/auth/github/callback?code=login-code&state=${encodeURIComponent(state)}`)
+        .set("Cookie", cookie);
 
       expect(res.status).toBe(200);
       expect(res.body.userId).toBe("user-regular-1");
       expect(res.body.email).toBe("regular@covai.dev");
       expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
         where: { githubUserId: "777666" },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          avatarUrl: true,
+          githubUserId: true,
+        },
       });
       expect(prismaMock.user.create).not.toHaveBeenCalled();
     });

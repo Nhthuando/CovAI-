@@ -27,6 +27,7 @@ import { ToastProvider } from "./components/dashboard/ToastContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import FloatingJobQueue from "./components/FloatingJobQueue";
 import { useAuth } from "./hooks/useAuth";
+import { getAccessToken } from "./lib/authSession";
 import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
 
 /* ── Landing Page ─────────────────────────────────────────── */
@@ -66,11 +67,7 @@ function LandingPage() {
 
 /* ── Protected Route ────────────────────────────────────────── */
 function ProtectedRoute({ children }) {
-  const token =
-    localStorage.getItem("token") ||
-    (localStorage.getItem("user")
-      ? JSON.parse(localStorage.getItem("user")).token
-      : null);
+  const token = getAccessToken();
   if (!token) {
     return <Navigate to="/" replace />;
   }
@@ -79,11 +76,7 @@ function ProtectedRoute({ children }) {
 
 /* ── Redirect if Authenticated ─────────────────────────────── */
 function RedirectIfAuthenticated({ children }) {
-  const token =
-    localStorage.getItem("token") ||
-    (localStorage.getItem("user")
-      ? JSON.parse(localStorage.getItem("user")).token
-      : null);
+  const token = getAccessToken();
   if (token) {
     return <Navigate to="/projects" replace />;
   }

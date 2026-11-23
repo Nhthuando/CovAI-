@@ -1,5 +1,11 @@
 import axios from "axios";
-import { getAccessToken, isAuthEndpoint, installAxiosAuthRefresh, redirectToLogin, refreshAccessTokenWithStatus } from "../lib/authSession.js";
+import {
+  getAccessToken,
+  isAuthEndpoint,
+  installAxiosAuthRefresh,
+  redirectToLogin,
+  refreshAccessTokenWithStatus,
+} from "../lib/authSession.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -15,7 +21,8 @@ async function fetchWithAuth(input, init = {}) {
   let response = await fetch(input, { ...init, headers, credentials: "include" });
 
   if (response.status === 401 && !init._retry && !isAuthEndpoint(input)) {
-    const { token: accessToken, invalidSession } = await refreshAccessTokenWithStatus();
+    const { token: accessToken, invalidSession } =
+      await refreshAccessTokenWithStatus();
     if (accessToken) {
       response = await fetch(input, {
         ...init,
@@ -31,13 +38,39 @@ async function fetchWithAuth(input, init = {}) {
   return response;
 }
 
-/**
- * POST /api/auth/register
- * Body: { name, email, password }
- * Success 201: { message, userName, userEmail }
- * Error 400:  { error: { name?, email?, password? } }  (Zod field errors)
- *        400:  { message: "Account already exists!" }
- */
+export function parseAuthErrorResponse(res, data, fallbackMessage) {
+  if (data?.error && typeof data.error === "object") {
+    const fieldErrors = {};
+    for (const [key, msgs] of Object.entries(data.error)) {
+      fieldErrors[key] = Array.isArray(msgs) ? msgs[0] : msgs;
+    }
+    return {
+      type: "field",
+      status: res?.status || 400,
+      code: data?.code || "VALIDATION_ERROR",
+      errors: fieldErrors,
+    };
+  }
+
+  const retryHeader = res?.headers?.get?.("Retry-After");
+  const parsedRetryHeader = retryHeader ? Number(retryHeader) : NaN;
+  const retryAfterSeconds =
+    typeof data?.retryAfterSeconds === "number"
+      ? data.retryAfterSeconds
+      : Number.isFinite(parsedRetryHeader) && parsedRetryHeader > 0
+        ? parsedRetryHeader
+        : null;
+
+  return {
+    type: "message",
+    status: res?.status || 500,
+    code: data?.code || null,
+    message: data?.message || fallbackMessage,
+    lockedUntil: data?.lockedUntil || null,
+    retryAfterSeconds,
+  };
+}
+
 const httpClient = axios.create({ baseURL: BASE_URL });
 installAxiosAuthRefresh(httpClient);
 
@@ -48,30 +81,13 @@ export async function registerApi({ name, email, password }) {
     body: JSON.stringify({ name, email, password }),
   });
 
-  const data = await res.json();
-
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    // { error: { email: [...], password: [...] } } — Zod field errors
-    if (data.error && typeof data.error === "object") {
-      const fieldErrors = {};
-      for (const [key, msgs] of Object.entries(data.error)) {
-        fieldErrors[key] = Array.isArray(msgs) ? msgs[0] : msgs;
-      }
-      throw { type: "field", errors: fieldErrors };
-    }
-    // { message: "..." } — single message error
-    throw { type: "message", message: data.message || "Registration failed!" };
+    throw parseAuthErrorResponse(res, data, "Registration failed!");
   }
-
-  return data; // { message, userName, userEmail }
+  return data;
 }
 
-/**
- * POST /api/auth/login
- * Body: { email, password }
- * Success 200: { message, token, name, email }
- * Error 400:   { error: { ... } } or { message: "..." }
- */
 export async function loginApi({ email, password }) {
   const res = await fetchWithAuth(`${BASE_URL}/auth/login`, {
     method: "POST",
@@ -79,53 +95,45 @@ export async function loginApi({ email, password }) {
     body: JSON.stringify({ email, password }),
   });
 
-  const data = await res.json();
-
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (data.error && typeof data.error === "object") {
-      const fieldErrors = {};
-      for (const [key, msgs] of Object.entries(data.error)) {
-        fieldErrors[key] = Array.isArray(msgs) ? msgs[0] : msgs;
-      }
-      throw { type: "field", errors: fieldErrors };
-    }
-    throw { type: "message", message: data.message || "Login failed!" };
+    throw parseAuthErrorResponse(res, data, "Login failed!");
   }
-
-  return data; // { message, token, name, email }
+  return data;
 }
 
 /**
- * Build GitHub OAuth authorize URL for login or linking an existing account.
+ * Fetch server-generated GitHub OAuth authorize URL (sets HttpOnly CSRF state cookie).
  * @param {"login"|"connect"} mode
  */
-export function getGithubOAuthUrl(mode = "login") {
-  const clientId =
-    import.meta.env.VITE_GITHUB_CLIENT_ID ||
-    (mode === "login" ? "Ov23liQyAORXbj6NeqAB" : "");
-  if (!clientId) return null;
-
-  const redirectUri = `${window.location.origin}/auth/github/callback`;
-  const scope = mode === "connect" ? "repo,user:email" : "user:email repo";
-  const params = new URLSearchParams({
-    client_id: clientId,
-    scope,
-    redirect_uri: redirectUri,
-    state: mode,
-  });
-  return `https://github.com/login/oauth/authorize?${params.toString()}`;
+export async function fetchGithubAuthorizeUrlApi(mode = "login") {
+  const safeMode = mode === "connect" ? "connect" : "login";
+  const res = await fetchWithAuth(
+    `${BASE_URL}/auth/github/url?mode=${encodeURIComponent(safeMode)}`,
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.url) {
+    throw parseAuthErrorResponse(
+      res,
+      data,
+      "GitHub OAuth is currently unavailable.",
+    );
+  }
+  return data.url;
 }
 
 /**
- * GET /api/auth/github/callback?code=...
+ * GET /api/auth/github/callback?code=...&state=...
  */
-export async function oAuthGithubApi(code) {
+export async function oAuthGithubApi(code, state = "") {
+  const params = new URLSearchParams({ code });
+  if (state) params.set("state", state);
   const res = await fetchWithAuth(
-    `${BASE_URL}/auth/github/callback?code=${encodeURIComponent(code)}`,
+    `${BASE_URL}/auth/github/callback?${params.toString()}`,
   );
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.message || "GitHub login error");
+    throw parseAuthErrorResponse(res, data, "GitHub login error");
   }
   return data;
 }
@@ -134,57 +142,75 @@ export async function oAuthGithubApi(code) {
  * POST /api/auth/github/connect
  * Links GitHub account to the currently authenticated CovAI user.
  */
-export async function connectGithubApi(code) {
+export async function connectGithubApi(code, state = "") {
   const res = await fetchWithAuth(`${BASE_URL}/auth/github/connect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, state }),
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.message || "GitHub connection error");
+    throw parseAuthErrorResponse(res, data, "GitHub connection error");
   }
   return data;
 }
 
 /**
- * POST /api/auth/forgotPassword
- * Body: { email }
+ * POST /api/auth/github/confirm-link
+ * Confirms linking GitHub identity to an existing local account after verifying password.
  */
+export async function confirmGithubLinkApi({ linkToken, password }) {
+  const res = await fetchWithAuth(`${BASE_URL}/auth/github/confirm-link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ linkToken, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw parseAuthErrorResponse(
+      res,
+      data,
+      "Unable to link GitHub account. Please try again.",
+    );
+  }
+  return data;
+}
+
+/**
+ * POST /api/auth/github/cancel-link
+ */
+export async function cancelGithubLinkApi(linkToken) {
+  if (!linkToken) return { success: true };
+  const res = await fetchWithAuth(`${BASE_URL}/auth/github/cancel-link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ linkToken }),
+  });
+  return res.json().catch(() => ({}));
+}
+
 export async function forgotPasswordApi(email) {
   const res = await fetchWithAuth(`${BASE_URL}/auth/forgotPassword`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw { type: "message", message: data.message || "Request failed!" };
+    throw parseAuthErrorResponse(res, data, "Request failed!");
   }
   return data;
 }
 
-/**
- * POST /api/auth/resetPassword/:token
- * Body: { newPassword }
- */
 export async function resetPasswordApi(token, newPassword) {
   const res = await fetchWithAuth(`${BASE_URL}/auth/resetPassword/${token}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ newPassword }),
   });
-  const data = await res.json();
-
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (data.error && typeof data.error === "object") {
-      const fieldErrors = {};
-      for (const [key, msgs] of Object.entries(data.error)) {
-        fieldErrors[key] = Array.isArray(msgs) ? msgs[0] : msgs;
-      }
-      throw { type: "field", errors: fieldErrors };
-    }
-    throw { type: "message", message: data.message || "Update failed!" };
+    throw parseAuthErrorResponse(res, data, "Update failed!");
   }
   return data;
 }

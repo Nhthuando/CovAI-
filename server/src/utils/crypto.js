@@ -2,7 +2,8 @@ import crypto from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
-const TAG_LENGTH = 16;
+const HEX_KEY_RE = /^[0-9a-fA-F]{64}$/;
+const ENCRYPTED_FORMAT_RE = /^[0-9a-fA-F]{32}:[0-9a-fA-F]*:[0-9a-fA-F]{32}$/;
 
 /**
  * Get encryption key from env.
@@ -10,7 +11,7 @@ const TAG_LENGTH = 16;
  */
 function getKey() {
   const key = process.env.ENCRYPTION_KEY;
-  if (!key || key.length !== 64) {
+  if (!key || !HEX_KEY_RE.test(key)) {
     throw new Error(
       "ENCRYPTION_KEY must be configured in .env (64 hex chars / 32 bytes)."
     );
@@ -19,11 +20,23 @@ function getKey() {
 }
 
 /**
+ * Check whether a stored string matches the AES-256-GCM iv:ciphertext:authTag hex format.
+ * @param {string} value
+ * @returns {boolean}
+ */
+export function isEncryptedFormat(value) {
+  return typeof value === "string" && ENCRYPTED_FORMAT_RE.test(value);
+}
+
+/**
  * Encrypt plaintext string.
  * @param {string} plaintext
  * @returns {string} Encrypted string: iv:encrypted:authTag (hex)
  */
 export function encrypt(plaintext) {
+  if (typeof plaintext !== "string" || plaintext.length === 0) {
+    throw new Error("Plaintext must be a non-empty string.");
+  }
   const key = getKey();
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -42,13 +55,11 @@ export function encrypt(plaintext) {
  */
 export function decrypt(encryptedText) {
   const key = getKey();
-  const parts = encryptedText.split(":");
-
-  if (parts.length !== 3) {
+  if (!isEncryptedFormat(encryptedText)) {
     throw new Error("Invalid encrypted text format.");
   }
 
-  const [ivHex, encrypted, authTagHex] = parts;
+  const [ivHex, encrypted, authTagHex] = encryptedText.split(":");
   const iv = Buffer.from(ivHex, "hex");
   const authTag = Buffer.from(authTagHex, "hex");
   const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
