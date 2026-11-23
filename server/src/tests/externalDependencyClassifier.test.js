@@ -1,9 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
-import { classifyExternalDependencies, collectExternalRequirements } from '../services/externalDependencyClassifier.service.js';
+import { classifyExternalCalls, classifyExternalDependencies, collectExternalRequirements } from '../services/externalDependencyClassifier.service.js';
 
 const t = Date.parse('2026-01-01T00:00:00.000Z');
 const stripeStart = { id: 'call-1', t, event: 'start', host: 'api.stripe.com', method: 'POST' };
-const classify = (status, egressEvents, environment) => classifyExternalDependencies({
+const classificationInput = (status, egressEvents, environment) => ({
   egressEvents,
   environment,
   report: {
@@ -18,19 +18,46 @@ const classify = (status, egressEvents, environment) => classifyExternalDependen
     }],
   },
 });
+const classify = (...args) => classifyExternalDependencies(classificationInput(...args));
 
 describe('external dependency classifier', () => {
-  it('labels an unfinished Stripe call in a failed test', () => {
-    const dependencies = classify('failed', [stripeStart]);
+  it('labels a Stripe 401 as a credential failure with unknown configuration', () => {
+    const end = { id: stripeStart.id, t: t + 20, event: 'end', status: 401 };
+    const input = classificationInput('failed', [stripeStart, end]);
+    const { credentialFailures, callFailures } = classifyExternalCalls(input);
     const dependency = {
       services: [{ id: 'stripe', label: 'Stripe' }],
       hosts: ['api.stripe.com'],
+      calls: [{ host: 'api.stripe.com', status: 401, code: null }],
       variables: ['STRIPE_SECRET_KEY'],
-      configured: false,
-      reason: 'BACKEND_STOPPED_DURING_EXTERNAL_CALL',
+      configured: null,
+      reason: 'AUTH_REJECTED',
     };
-    expect(dependencies.get('checkout')).toEqual(dependency);
-    expect(dependencies.get('checkout.spec.js::checkout')).toEqual(dependency);
+    expect(credentialFailures.get('checkout')).toEqual(dependency);
+    expect(credentialFailures.get('checkout.spec.js::checkout')).toEqual(dependency);
+    expect(callFailures.size).toBe(0);
+  });
+
+  it.each([
+    ['REQUEST_REJECTED', { event: 'end', status: 400 }, 400, null],
+    ['PROVIDER_ERROR', { event: 'end', status: 503 }, 503, null],
+    ['UNREACHABLE', { event: 'error', code: 'ECONNRESET' }, null, 'ECONNRESET'],
+    ['BACKEND_STOPPED_DURING_EXTERNAL_CALL', null, null, null],
+  ])('records %s as a call failure', (category, terminalEvent, status, code) => {
+    const events = [stripeStart];
+    if (terminalEvent) events.push({ id: stripeStart.id, t: t + 20, ...terminalEvent });
+    const input = classificationInput('failed', events);
+    const { credentialFailures, callFailures } = classifyExternalCalls(input);
+    const failure = {
+      services: [{ id: 'stripe', label: 'Stripe' }],
+      hosts: ['api.stripe.com'],
+      calls: [{ host: 'api.stripe.com', status, code }],
+      category,
+    };
+    expect(credentialFailures.size).toBe(0);
+    expect(classifyExternalDependencies(input).size).toBe(0);
+    expect(callFailures.get('checkout')).toEqual(failure);
+    expect(callFailures.get('checkout.spec.js::checkout')).toEqual(failure);
   });
 
   it.each([

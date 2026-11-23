@@ -1,6 +1,6 @@
 import SystemTestEvidencePreview from "./SystemTestEvidencePreview.jsx";
 import SystemTestProgress from "./SystemTestProgress.jsx";
-import { ExternalDependencyBadge, ExternalDependencyNotice } from "./ExternalTestKeyNotices.jsx";
+import { ExternalCallNote, ExternalDependencyBadge, ExternalDependencyNotice } from "./ExternalTestKeyNotices.jsx";
 import { stripAnsi } from "../../../utils/stripAnsi.js";
 import { Fragment, useState, useMemo } from "react";
 import {
@@ -240,6 +240,7 @@ export default function SystemTestScenarioList({
                             >
                               <td className="py-2.5 px-4 font-medium text-[var(--color-text)] max-w-md truncate">
                                 <div>{sc.title}</div>
+                                {!sc.externalDependency && sc.externalCallFailure && <ExternalCallNote failure={sc.externalCallFailure} />}
                                 {sc.externalDependency ? (
                                   <ExternalDependencyNotice dependency={sc.externalDependency} onOpenSetup={onOpenSetup}>
                           {sc.errorMessage && <pre className="whitespace-pre-wrap break-words">{stripAnsi(sc.errorMessage)}</pre>}

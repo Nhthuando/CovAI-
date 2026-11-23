@@ -88,6 +88,33 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       expect(prompt).toContain('// covers: <checklist id>');
     });
 
+    it('includes live snapshots only in a Playwright prompt with captured pages', () => {
+      const context = makeContext();
+      const liveSnapshots = [{ route: '/', title: 'Home', snapshot: '- button "Giỏ hàng"' }];
+      const playwright = { context, framework: 'playwright' };
+      const prompt = buildColdStartSystemPrompt({ ...playwright, liveSnapshots });
+      expect(prompt).toMatch(/Backend Endpoints: [^\n]*\nLIVE PAGE SNAPSHOTS/);
+      expect(prompt).toContain(JSON.stringify(liveSnapshots));
+      expect(prompt).toContain('Locator rules (snapshots present)');
+      expect(buildColdStartSystemPrompt(playwright)).not.toContain('LIVE PAGE SNAPSHOTS');
+      expect(buildColdStartSystemPrompt({ ...playwright, liveSnapshots: [] })).toBe(buildColdStartSystemPrompt(playwright));
+      expect(buildColdStartSystemPrompt({ context, framework: 'cypress', liveSnapshots })).not.toContain('LIVE PAGE SNAPSHOTS');
+    });
+
+    it('includes the animated-controls rule in Playwright prompts only', () => {
+      const context = makeContext();
+      const liveSnapshots = [{ route: '/', title: 'Home', snapshot: '- button "Cart"' }];
+      const rule = '- Continuously animated controls (framer-motion animate with repeat: Infinity, CSS infinite animations) never become stable for Playwright: first assert the control is visible, then act with { force: true } (for example await cartButton.click({ force: true })). Use force only for such animated controls.';
+      const playwright = { context, framework: 'playwright' };
+      const prompt = buildColdStartSystemPrompt({ ...playwright, liveSnapshots });
+      const [beforeInstructions, instructions] = prompt.split('\nINSTRUCTIONS:\n');
+
+      expect(beforeInstructions).toContain(`Locator rules (snapshots present):\n${rule}`);
+      expect(instructions).toContain(rule);
+      expect(buildColdStartSystemPrompt(playwright).split(rule)).toHaveLength(2);
+      expect(buildColdStartSystemPrompt({ context, framework: 'cypress', liveSnapshots })).not.toContain(rule);
+    });
+
     it('includes the formatted checklist in verified prompts and keeps design rules out of repairs', () => {
       const context = makeContext();
       expect(buildVerifiedSystemPrompt(context, {})).toContain(testDesignPromptSection(context));

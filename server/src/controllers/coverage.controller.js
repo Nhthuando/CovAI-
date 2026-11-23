@@ -142,6 +142,11 @@ import {
 import { detectSystemTestFrameworksForSnapshot } from "../services/systemTestFrameworkDetection.service.js";
 import { optimizeSystemTest } from "../services/systemTestBooster.service.js";
 import { createSystemGenerationDraft } from "../services/systemGenerationProposal.service.js";
+import {
+  cancelSystemGenerationTask,
+  getSystemGenerationTask,
+  startSystemGenerationTask,
+} from "../services/systemGenerationTask.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 import { extractSuitesAndScenarios } from "../utils/testFileParser.js";
 import {
@@ -5719,6 +5724,7 @@ export const getSystemTestSummary = async (req, res) => {
         failedTests,
         blockedByExternal: blockedScenarios.length,
         externalServices,
+        runStartedAt: latestRun.startedAt || latestRun.createdAt,
         flaky: flakyTests,
         flakyTests,
         skippedTests: latestRun.skippedTests || 0,
@@ -5878,6 +5884,8 @@ export const getSystemTestScenarios = async (req, res) => {
         status: s.status,
         durationMs: s.durationMs ?? null,
         executionDetails: s.executionDetails || null,
+        externalDependency: s.executionDetails?.externalDependency || null,
+        externalCallFailure: s.executionDetails?.externalCallFailure || null,
         failureMessages: cleanedMsgs,
         ...(statusUpper === "FAILED" ||
         statusUpper === "FAIL" ||
@@ -6128,18 +6136,13 @@ export const saveAiSystemTest = async (req, res) => {
 
 /**
  * POST /api/coverage/:snapshotId/system/generate-tests
- * Cold-Start E2E system test generation for Playwright and Cypress.
- * Generates configuration if missing, harvests app context, prompts AI, validates AST,
- * and writes runnable test files to disk and DB.
+ * Starts a background generation task for a Playwright or Cypress draft.
  */
 export const generateColdStartSystemTestsController = async (req, res) => {
   if (!req.user?.id)
     return res
       .status(401)
       .json({ success: false, message: "Authentication required" });
-  const cancellation = new AbortController();
-  const onAbort = () => cancellation.abort();
-  req.once?.("aborted", onAbort);
   try {
     const framework = req.body?.framework || "playwright";
     const executionMode = requireFullStackMode(req.body?.executionMode);
@@ -6169,62 +6172,65 @@ export const generateColdStartSystemTestsController = async (req, res) => {
         .status(400)
         .json({ success: false, message: "snapshotId is required." });
     }
-    const { createSystemGenerationDraft } =
-      await import("../services/systemGenerationProposal.service.js");
-    const data = await createSystemGenerationDraft({
+    const userId = req.user.id;
+    await resolveSnapshotAccess({ snapshotId, userId, capability: "ai.use" });
+    const data = startSystemGenerationTask({
       snapshotId,
-      userId: req.user.id,
       framework,
-      targetRoutes,
-      executionMode,
-      model: requestedAiModel(req),
-      signal: AbortSignal.any([
-        cancellation.signal,
-        AbortSignal.timeout(10 * 60 * 1000),
-      ]),
+      run: ({ signal, onProgress }) => createSystemGenerationDraft({
+        snapshotId,
+        userId,
+        framework,
+        targetRoutes,
+        executionMode,
+        model: requestedAiModel(req),
+        signal,
+        onProgress,
+      }),
     });
-    return res.status(201).json({
-      success: true,
-      data,
-      message: "Draft generated. Review the tests before applying.",
-    });
+    return res.status(202).json({ success: true, data });
   } catch (error) {
-    if (!error.statusCode || error.statusCode >= 500) {
-      console.error("[generateColdStartSystemTests] Generation failed:", error);
-    }
-    const providerBusy =
-      !error.statusCode &&
-      (error?.status === 503 ||
-        error?.status === 429 ||
-        /\b(503|429)\b|high demand|overloaded|Service Unavailable/i.test(
-          String(error?.message || ""),
-        ));
-    if (providerBusy) {
-      return res.status(503).json({
+    if (error.code === "GENERATION_IN_PROGRESS") {
+      return res.status(409).json({
         success: false,
-        code: "AI_PROVIDER_BUSY",
-        details: error.details,
-        message:
-          "The AI model is busy right now. Retry in a minute or choose another model.",
+        code: error.code,
+        message: error.message,
+        data: error.details.task,
       });
     }
-    const timedOut =
-      !error.statusCode &&
-      (error?.name === "TimeoutError" || error?.name === "AbortError");
-    return res.status(error.statusCode || (timedOut ? 504 : 500)).json({
-      success: false,
-      code: error.code,
-      details: error.details,
-      message: error.statusCode
-        ? error.message
-        : timedOut
-          ? "System Test generation timed out. Retry with fewer target routes."
-          : "System Test generation failed because of an unexpected server error. Retry; if it repeats, check the server log.",
-    });
-  } finally {
-    req.off?.("aborted", onAbort);
+    return sendSystemGenerationRequestError(res, error);
   }
 };
+
+function sendSystemGenerationRequestError(res, error) {
+  if (!error.statusCode || error.statusCode >= 500) {
+    console.error("[systemGeneration] Request failed:", error);
+  }
+  return res.status(error.statusCode || 500).json({
+    success: false,
+    code: error.code,
+    details: error.details,
+    message: error.statusCode
+      ? error.message
+      : "System Test generation failed because of an unexpected server error. Retry; if it repeats, check the server log.",
+  });
+}
+
+const systemGenerationTaskController = (capability, action) => async (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ success: false, message: "Authentication required" });
+  const { snapshotId } = req.params;
+  if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+  try {
+    await resolveSnapshotAccess({ snapshotId, userId, capability });
+    return res.status(200).json({ success: true, data: action(snapshotId) });
+  } catch (error) {
+    return sendSystemGenerationRequestError(res, error);
+  }
+};
+
+export const getSystemGenerationStatusController = systemGenerationTaskController("project.read", getSystemGenerationTask);
+export const cancelSystemGenerationController = systemGenerationTaskController("ai.use", cancelSystemGenerationTask);
 
 /**
  * POST /api/coverage/:snapshotId/apply-suggestion

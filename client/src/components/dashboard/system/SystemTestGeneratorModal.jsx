@@ -11,8 +11,6 @@ import {
   RotateCcw,
   FileCode2,
   Settings2,
-  Clock,
-  Zap,
 } from "lucide-react";
 import Button from "../../common/Button.jsx";
 import { DraftVerification } from "./ExternalTestKeyNotices.jsx";
@@ -27,6 +25,8 @@ export default function SystemTestGeneratorModal({
   projectId,
   executionMode = "full",
   initialFramework = "playwright",
+  initialView = "latest",
+  onStarted,
   onSuccess,
   onOpenSetup,
 }) {
@@ -40,20 +40,29 @@ export default function SystemTestGeneratorModal({
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [loadingDraft, setLoadingDraft] = useState(initialView !== "generate");
 
   useEffect(() => {
+    if (!isOpen || initialView === "generate") return;
     let current = true;
-    if (isOpen) {
-      systemEvidenceRequest(snapshotId, "generation-drafts/latest")
-        .then((data) => {
-          if (current && data && data.executionMode === "full") setResult(data);
-        })
-        .catch(error => console.warn("Could not load the latest system test draft.", error.response?.status));
-    }
+    systemEvidenceRequest(snapshotId, "generation-drafts/latest")
+      .then((data) => {
+        if (!current) return;
+        if (data?.executionMode === "full") setResult(data);
+        else if (initialView === "review") setError("The latest draft is unavailable.");
+      })
+      .catch(error => {
+        if (!current) return;
+        if (initialView === "review") setError("Could not load the latest draft.");
+        else console.warn("Could not load the latest system test draft.", error.response?.status);
+      })
+      .finally(() => {
+        if (current) setLoadingDraft(false);
+      });
     return () => {
       current = false;
     };
-  }, [snapshotId, isOpen]);
+  }, [snapshotId, isOpen, initialView]);
 
   if (!isOpen) return null;
 
@@ -82,21 +91,14 @@ export default function SystemTestGeneratorModal({
   const handleGenerate = async () => {
     setGenerating(true);
     setError(null);
-    setResult(null);
-    setReviewed(false);
-    setSetupApproved(true);
-
     try {
-      const res = await generateColdStartSystemTests(snapshotId, {
+      const task = await generateColdStartSystemTests(snapshotId, {
         framework,
         routes,
         executionMode,
       });
-      setResult(res.data);
-      window.dispatchEvent(new CustomEvent("covai:ai-usage-updated"));
-      if (onSuccess) {
-        onSuccess(res.data);
-      }
+      onStarted?.(task);
+      onClose();
     } catch (err) {
       setError(
         err.response?.data?.message ||
@@ -136,6 +138,14 @@ export default function SystemTestGeneratorModal({
   };
 
   const hasSetupChanges = !!result?.setupChanges?.length;
+  const verified = ["VERIFIED", "PARTIAL"].includes(result?.verificationStatus);
+  const needsTestKey = result?.verificationStatus === "NEEDS_EXTERNAL_CONFIG";
+  const verificationLabel = verified ? "Verified on your app" : needsTestKey ? "Needs a test key" : "Not verified";
+  const verificationTone = verified
+    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+    : needsTestKey
+      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+      : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]";
   const canApply =
     !!result &&
     !result.stale &&
@@ -144,7 +154,7 @@ export default function SystemTestGeneratorModal({
     (!hasSetupChanges || setupApproved);
 
   const frameworkButtonClass = (name) =>
-    `px-4 py-3 rounded-xl border text-sm text-left flex items-center justify-between cursor-pointer transition-all ${
+    `px-4 py-3 rounded-lg border text-sm text-left flex items-center justify-between cursor-pointer transition-all ${
       framework === name
         ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)] text-[var(--color-primary)] font-semibold shadow-xs"
         : "bg-[var(--color-surface-secondary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
@@ -165,7 +175,7 @@ export default function SystemTestGeneratorModal({
             </div>
             <div>
               <h3 className="text-base font-semibold text-[var(--color-text)] leading-tight">
-                {result ? "Generated Test Suite" : "Generate Full Stack Tests"}
+                {result || (loadingDraft && initialView === "review") ? "Generated Test Suite" : "Generate Full Stack Tests"}
               </h3>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                 {result
@@ -187,66 +197,39 @@ export default function SystemTestGeneratorModal({
         {/* Content */}
         <div className="p-6 overflow-y-auto space-y-5 text-sm">
           {error && (
-            <div className="p-4 rounded-xl bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-[var(--color-danger)] flex items-start gap-3 text-xs leading-relaxed">
+            <div className="p-4 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-start gap-3 text-xs leading-relaxed">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
 
-          {result ? (
+          {loadingDraft ? (
+            <p role="status" className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+              <Loader2 size={14} className="animate-spin" aria-hidden="true" /> Loading draft…
+            </p>
+          ) : result ? (
             <div className="space-y-5">
               <DraftVerification draft={result} onOpenSetup={onOpenSetup} />
               {result.stale && (
-                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs">
+                <div className="p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
                   Workspace changed after this draft was generated. Click <strong>Regenerate</strong> before applying.
                 </div>
               )}
 
               {/* Summary Badges */}
-              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-lg bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)]/15 text-[var(--color-primary)]">
-                    {result.scenarioCount ?? result.scenariosCount ?? 0} scenarios
+                    {result.scenarioCount ?? result.scenariosCount ?? 0} {(result.scenarioCount ?? result.scenariosCount ?? 0) === 1 ? "scenario" : "scenarios"}
                   </span>
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
-                    {result.executionMode === "full" ? "Full Stack" : "Frontend"}
-                  </span>
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
-                    Not runtime verified
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium ${verificationTone}`}>
+                    {verificationLabel}
                   </span>
                 </div>
                 <code className="font-mono text-xs text-[var(--color-text-muted)] break-all">
                   {result.filePath}
                 </code>
               </div>
-
-              {/* Telemetry row */}
-              {result.telemetry && (
-                <div className="flex items-center gap-3 p-2.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-mono">
-                  <div className="flex items-center gap-1.5 text-indigo-400">
-                    <Clock size={13} />
-                    <span>
-                      {result.telemetry.durationSeconds ||
-                        (result.telemetry.durationMs / 1000).toFixed(1)}
-                      s
-                    </span>
-                  </div>
-                  <span className="opacity-40">•</span>
-                  <div className="flex items-center gap-1.5 text-amber-400">
-                    <Zap size={13} />
-                    <span>
-                      {(result.telemetry.tokens?.total || 0).toLocaleString()}{" "}
-                      tokens
-                    </span>
-                  </div>
-                  {result.telemetry.tokens?.prompt > 0 && (
-                    <span className="text-[10px] text-[var(--color-text-muted)] font-sans ml-auto">
-                      ({result.telemetry.tokens.prompt} in /{" "}
-                      {result.telemetry.tokens.completion} out)
-                    </span>
-                  )}
-                </div>
-              )}
 
               {/* Scenarios List */}
               {result.scenarios?.length > 0 && (
@@ -255,10 +238,14 @@ export default function SystemTestGeneratorModal({
                     Scenarios
                   </div>
                   <div className="grid gap-2.5">
-                    {result.scenarios.map((row, idx) => (
-                      <article
+                    {result.scenarios.map((row, idx) => {
+                      const input = [...(row.preconditions || []), ...(row.inputs || [])]
+                        .map(value => String(value ?? "").trim())
+                        .filter(value => value && value.toLowerCase() !== "not specified")
+                        .join("; ");
+                      return <article
                         key={row.id || row.title}
-                        className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/25 px-4 py-3.5 flex items-start gap-3.5 hover:border-[var(--color-border)]/80 transition-colors"
+                        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/25 px-4 py-3.5 flex items-start gap-3.5 hover:border-[var(--color-border)]/80 transition-colors"
                       >
                         <span className="mt-0.5 inline-flex items-center justify-center w-6 h-6 rounded-lg bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-[11px] font-semibold text-[var(--color-text-secondary)] shrink-0">
                           {idx + 1}
@@ -267,21 +254,21 @@ export default function SystemTestGeneratorModal({
                           <h4 className="text-sm font-medium text-[var(--color-text)] leading-snug">
                             {row.title}
                           </h4>
-                          <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                            Input: {[...(row.preconditions || []), ...(row.inputs || [])].join("; ") || "Not specified"}
-                          </p>
+                          {input && (
+                            <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">Input: {input}</p>
+                          )}
                           <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
                             Expected: {(row.expected || []).join("; ") || "Review the code assertions"}
                           </p>
                         </div>
-                      </article>
-                    ))}
+                      </article>;
+                    })}
                   </div>
                 </div>
               )}
 
               {/* Collapsible Code Preview */}
-              <details className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/20 overflow-hidden">
+              <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/20 overflow-hidden">
                 <summary className="px-4 py-3 cursor-pointer select-none flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors">
                   <span className="inline-flex items-center gap-2">
                     <FileCode2 size={15} className="text-[var(--color-primary)]" />
@@ -298,7 +285,7 @@ export default function SystemTestGeneratorModal({
 
               {/* Collapsible Auto-Configured Setup */}
               {hasSetupChanges && (
-                <details className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/20 overflow-hidden">
+                <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/20 overflow-hidden">
                   <summary className="px-4 py-3 cursor-pointer select-none flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors">
                     <span className="inline-flex items-center gap-2">
                       <Settings2 size={15} className="text-[var(--color-text-muted)]" />
@@ -523,7 +510,7 @@ export default function SystemTestGeneratorModal({
               >
                 Cancel
               </Button>
-              <Button
+              {!loadingDraft && <Button
                 variant="primary"
                 size="md"
                 className="system-test-primary-action"
@@ -532,8 +519,8 @@ export default function SystemTestGeneratorModal({
                 disabled={generating}
                 onClick={handleGenerate}
               >
-                {generating ? "Generating..." : "Generate Test Suite"}
-              </Button>
+                {generating ? "Generating…" : "Generate Test Suite"}
+              </Button>}
             </div>
           )}
         </div>

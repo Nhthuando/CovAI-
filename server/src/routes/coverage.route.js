@@ -32,6 +32,8 @@ import {
     runSystemTestCoverage,
     saveAiSystemTest,
     generateColdStartSystemTestsController,
+    getSystemGenerationStatusController,
+    cancelSystemGenerationController,
     getSystemTestFileContent,
     updateSystemTestFileContent,
     runSingleSystemTest,
@@ -77,7 +79,9 @@ router.get("/:snapshotId/system/scenarios", authMiddleware, getSystemTestScenari
 router.get("/:snapshotId/system/scenarios/:scenarioId/evidence", authMiddleware, getSystemTestEvidence);
 router.post("/:snapshotId/system/run", authMiddleware, runSystemTestCoverage);
 router.post("/:snapshotId/system/save-ai-test", authMiddleware, saveAiSystemTest);
+router.get("/:snapshotId/system/generate-tests/status", authMiddleware, getSystemGenerationStatusController);
 router.post("/:snapshotId/system/generate-tests", authMiddleware, generateColdStartSystemTestsController);
+router.delete("/:snapshotId/system/generate-tests", authMiddleware, cancelSystemGenerationController);
 router.get("/:snapshotId/frameworks", authMiddleware, getCoverageFrameworks);
 
 // Phase 5: Test Editor & AI Coverage Booster

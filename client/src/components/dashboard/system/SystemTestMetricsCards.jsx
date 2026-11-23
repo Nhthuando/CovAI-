@@ -1,7 +1,4 @@
 import {
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
   Clock,
   ShieldCheck,
   Layers,
@@ -47,7 +44,7 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-[var(--color-border)] border border-[var(--color-border)] rounded-lg overflow-hidden">
       {/* 1. Test Pass Rate */}
       <div className="px-4 py-3.5 bg-[var(--color-surface)] flex flex-col justify-between gap-2.5">
-        <div className="flex items-center justify-between text-xs text-[var(--color-text-secondary)] font-medium">
+        <div className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-muted)] font-medium">
           <span className="inline-flex items-center gap-1.5">
             <ShieldCheck size={13} className="text-[var(--color-text-muted)]" />
             Test Pass Rate
@@ -67,7 +64,7 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
               {total ? `${passed}/${total} passed` : "No test results yet"}
             </span>
           </div>
-          <div className="w-full h-1 rounded-sm bg-[var(--color-surface-secondary)] overflow-hidden">
+          <div className="w-full h-1 rounded-md bg-[var(--color-surface-secondary)] overflow-hidden">
             <div
               className={`h-full transition-all duration-300 ${
                 passRate !== null && passRate >= 90 ? "bg-emerald-500/65" : "bg-[var(--color-primary)]/75"
@@ -80,26 +77,10 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
 
       {/* 2. Scenarios Breakdown */}
       <div className="px-4 py-3.5 bg-[var(--color-surface)] flex flex-col justify-between gap-2.5">
-        <div className="flex items-center justify-between text-xs text-[var(--color-text-secondary)] font-medium">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-muted)] font-medium">
           <span className="inline-flex items-center gap-1.5">
             <Layers size={13} className="text-[var(--color-text-muted)]" />
-            Scenarios ({total})
-          </span>
-          <span className="text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
-            E2E suite
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 font-mono tabular-nums text-xs">
-          <span className="inline-flex items-center gap-1 text-[var(--color-text)] font-semibold">
-            <CheckCircle2 size={13} className="text-emerald-500/75" />
-            <span>{passed}</span>
-            <span className="font-normal text-[var(--color-text-muted)]">passed</span>
-          </span>
-          <span className={`inline-flex items-center gap-1 font-semibold ${failed > 0 ? "text-rose-400" : "text-[var(--color-text-muted)]"}`}>
-            <XCircle size={13} />
-            <span>{failed}</span>
-            <span className="font-normal text-[var(--color-text-muted)]">failed</span>
+            Scenarios
           </span>
           {blockedByExternal > 0 && (
             <span title={externalServiceLabels || 'External services'} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
@@ -107,49 +88,48 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
               <span className="font-mono tabular-nums">{blockedByExternal}</span> need keys
             </span>
           )}
-          {flaky > 0 && (
-            <span className="inline-flex items-center gap-1 text-amber-400 font-semibold">
-              <AlertTriangle size={13} />
-              <span>{flaky}</span>
-            </span>
-          )}
         </div>
 
-        <div className="text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums pt-1.5 border-t border-[var(--color-border)] flex justify-between">
-          <span>Skipped / flaky</span>
-          <span className="text-[var(--color-text-secondary)]">{skipped} / {flaky}</span>
+        <div className="space-y-1">
+          <div className="text-2xl font-bold tracking-tight font-mono tabular-nums">{total}</div>
+          <div className="flex gap-x-2 overflow-x-auto whitespace-nowrap text-[11px] text-[var(--color-text-muted)]">
+            <span><span className="font-mono tabular-nums">{passed}</span> passed</span>
+            <span><span className="font-mono tabular-nums">{failed}</span> failed</span>
+            <span><span className="font-mono tabular-nums">{skipped}</span> skipped</span>
+            <span><span className="font-mono tabular-nums">{flaky}</span> flaky</span>
+          </div>
         </div>
       </div>
 
       {/* 3. Measured Tier Coverage */}
       <div className="px-4 py-3.5 bg-[var(--color-surface)] flex flex-col justify-between gap-2.5">
-        <div className="flex items-center justify-between text-xs text-[var(--color-text-secondary)] font-medium">
+        <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)] font-medium">
           <span className="inline-flex items-center gap-1.5">
             <BarChart2 size={13} className="text-[var(--color-text-muted)]" />
-            Measured Coverage
-          </span>
-          <span className="text-[11px] font-mono text-[var(--color-text-muted)]">
-            Lines
+            Line coverage
           </span>
         </div>
 
-        <div className="text-sm font-mono font-semibold tabular-nums text-[var(--color-text)] truncate" title={measuredTiers.length ? measuredTiers.map(([name, tier]) => `${name} ${tier.counters.lines.pct}%`).join(" · ") : "—"}>
-          {measuredTiers.length
-            ? measuredTiers.map(([name, tier]) => `${name} ${tier.counters.lines.pct}%`).join(" · ")
-            : "—"}
-        </div>
-
-        <div className="text-[11px] text-[var(--color-text-muted)] pt-1.5 border-t border-[var(--color-border)] flex justify-between">
-          <span>Coverage instrumentation</span>
-          <span className="font-mono text-[var(--color-text-secondary)]">
-            {measuredTiers.length ? `${measuredTiers.length} tier(s)` : "Pending"}
-          </span>
-        </div>
+        {measuredTiers.length ? (
+          <div className="flex gap-3 overflow-x-auto">
+            {measuredTiers.map(([name, tier]) => (
+              <div key={name} className="shrink-0 space-y-1">
+                <div className="text-2xl font-bold tracking-tight font-mono tabular-nums">{tier.counters.lines.pct}%</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">{name}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <div className="text-2xl font-bold tracking-tight font-mono tabular-nums">—</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Pending</div>
+          </div>
+        )}
       </div>
 
       {/* 4. Execution Duration */}
       <div className="px-4 py-3.5 bg-[var(--color-surface)] flex flex-col justify-between gap-2.5">
-        <div className="flex items-center justify-between text-xs text-[var(--color-text-secondary)] font-medium">
+        <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)] font-medium">
           <span className="inline-flex items-center gap-1.5">
             <Clock size={13} className="text-[var(--color-text-muted)]" />
             Execution Duration
@@ -159,13 +139,6 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
         <div className="flex items-baseline gap-2">
           <span className="text-2xl font-bold tracking-tight text-[var(--color-text)] font-mono tabular-nums">
             {summary?.hasRun ? formatDuration(durationMs) : "—"}
-          </span>
-        </div>
-
-        <div className="text-[11px] text-[var(--color-text-muted)] pt-1.5 border-t border-[var(--color-border)] flex justify-between">
-          <span>Runner Engine</span>
-          <span className="font-mono font-medium uppercase text-[var(--color-text-secondary)]">
-            {summary?.runner || "Playwright"}
           </span>
         </div>
       </div>

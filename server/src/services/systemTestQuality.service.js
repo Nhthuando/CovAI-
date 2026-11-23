@@ -1,4 +1,5 @@
 import {ServiceError} from '../utils/serviceError.js';
+import {redactSystemTestSecrets} from './systemTestSecrets.service.js';
 
 export const SYSTEM_TEST_QUALITY_RULES = `Scenario quality requirements:
 - One test must verify ONE primary behavior and ONE expected outcome. Generate separate tests for CREATE, DELETE, UPDATE, TOGGLE, CANCEL and each distinct validation case supported by source. Do not combine add/reload/delete into one scenario, edit/cancel into one scenario, or toggle-on/toggle-off into one scenario. Reload may verify persistence of the same outcome.
@@ -15,7 +16,7 @@ const visit = (node, callback) => {
     for(const value of Object.values(node)) if(Array.isArray(value)) value.forEach(child=>visit(child,callback));else if(value?.type) visit(value,callback);
 };
 const member = node => node?.type === 'MemberExpression' ? node.property?.name || node.property?.value : null;
-const fail = (title,reason) => {throw new ServiceError(`Scenario "${title}" fails quality validation: ${reason}`,422);};
+const fail = (title,reason) => {throw new ServiceError(redactSystemTestSecrets(`Scenario "${title}" fails quality validation: ${reason}`),422);};
 
 export const validateSystemTestQuality = ast => {
     const scenarios=[];

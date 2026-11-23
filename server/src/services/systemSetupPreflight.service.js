@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import crypto from 'node:crypto';
 import {parse as parseEnvironment} from 'dotenv';
 import { z } from 'zod';
 import prisma from '../config/prisma.js';
@@ -15,11 +14,13 @@ import { inspectSystemSetupSource } from './fullSystemSetup.service.js';
 import { inferFullSystemPlan, systemPackageFiles } from './fullSystemPlan.service.js';
 import { requiredStartupEnvironment, startupEnvironmentFiles, referencedEnvironment, managedEnvironmentNames, buildAutomaticTestEnvironment, environmentFeatureMap, hardcodedServiceCredentials } from './fullSystemEnvironment.service.js';
 import { EXTERNAL_SERVICES, serviceForEnvName, serviceForPackage, isLiveCredential } from './externalServiceCatalog.service.js';
-import { readAssessmentTestEnvironment } from './fullSystemRuntime.service.js';
+import { readAssessmentTestEnvironment, readAssessmentTestEnvironmentFile } from './fullSystemRuntime.service.js';
+import { clearSystemTestSecrets, listSystemTestSecretNames, storeSystemTestSecrets, validateSystemTestSecret } from './systemTestSecrets.service.js';
+import { assertColocatedWorkerForSecret } from './aiEvaluation/ephemeralSecret.service.js';
 import { suiteDigest } from './systemSuiteManifest.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { humanizeVendorToken, vendorTokenForEnvName } from '../utils/vendorToken.js';
-import { parseRequest, setupEnvironmentRequest, setupEnvironmentImportRequest } from '../validators/systemAssessment.validator.js';
+import { parseRequest, setupEnvironmentRequest, setupEnvironmentImportRequest, setupEnvironmentDeleteRequest } from '../validators/systemAssessment.validator.js';
 
 const exec = promisify(execFile);
 const relative = z.string().min(1).max(512).refine(value => !value.includes('\\') && !value.split('/').includes('..') && !/^(?:\/|[a-z]:|https?:)/i.test(value), 'Use a project-relative path');
@@ -39,7 +40,7 @@ const sourceHash = async root => suiteDigest([...await captureWorkspaceFiles(roo
 const providerDetails = ({id,label,category,testKeyUrl,testKeyHint}) => ({id,label,category,testKeyUrl,testKeyHint});
 const providerByLabel = new Map(EXTERNAL_SERVICES.map(service=>[service.label,service]));
 
-export const inspectProjectTestEnvironment = ({rootDir,source,config}) => {
+export const inspectProjectTestEnvironment = ({rootDir,source,config,legacyFiles=new Set()}) => {
     const rows = new Map();
     const featureMap = environmentFeatureMap(source.files);
     for (const pkg of source.packages) {
@@ -52,16 +53,22 @@ export const inspectProjectTestEnvironment = ({rootDir,source,config}) => {
         const sdk=requiredStartupEnvironment(files,{startupOnly:false});
         const references=[...referencedEnvironment(files),...sdk];
         const managed=new Set([...managedEnvironmentNames(files,config?.backend.directory===pkg.directory?config:null),...Object.keys(buildAutomaticTestEnvironment({files,port:1,backendUrl:'http://127.0.0.1',frontendUrl:'http://127.0.0.1'}))]);
-        const env=readAssessmentTestEnvironment(containedPath(rootDir,pkg.directory));
+        const directory=containedPath(rootDir,pkg.directory);
+        const envFile=prefix+'.env.test';
+        const env=readAssessmentTestEnvironmentFile(directory);
+        const memory=new Set(listSystemTestSecretNames(directory).names);
         for (const item of references) {
             const required=mandatory.some(row=>row.name===item.name);
             const identity=`${pkg.directory}:${item.name}`;
-            const present=typeof env[item.name]==='string' && !!env[item.name].trim();
+            const inMemory=memory.has(item.name);
+            const present=inMemory || typeof env[item.name]==='string' && !!env[item.name].trim();
+            const isManaged=managed.has(item.name);
+            if(!isManaged && Object.hasOwn(env,item.name) && fs.existsSync(containedPath(rootDir,envFile)))legacyFiles.add(envFile);
             const sdkLabel=sdk.find(row=>row.name===item.name && providerByLabel.has(row.integration))?.integration;
             const provider=serviceForEnvName(item.name) || providerByLabel.get(sdkLabel);
             const integration=provider?.label || sdk.find(row=>row.name===item.name)?.integration || 'Application';
             const existing=rows.get(identity);
-            rows.set(identity,{name:item.name,service:integration,provider:provider ? providerDetails(provider) : null,features:featureMap.get(item.name) ?? [],required,status:managed.has(item.name)?'MANAGED':present?'PRESENT':required?'MISSING':'MAY_BE_NEEDED',envFile:prefix+'.env.test',sourceFiles:[...new Set([...(existing?.sourceFiles||[]),prefix+item.sourceFile])],purpose:required?`${integration} is initialized during application startup.`:`${integration} configuration is referenced by the application; a tested workflow may need it.`,guidance:managed.has(item.name)?'Created or overridden for the isolated test runtime.':present?'Present in the test environment; the provider has not been contacted.':'Add a test or sandbox value to this file, then check again.'});
+            rows.set(identity,{name:item.name,service:integration,provider:provider ? providerDetails(provider) : null,features:featureMap.get(item.name) ?? [],required,status:isManaged?'MANAGED':present?'PRESENT':required?'MISSING':'MAY_BE_NEEDED',...(!isManaged && present ? {storage:inMemory?'MEMORY':'FILE'} : {}),envFile,sourceFiles:[...new Set([...(existing?.sourceFiles||[]),prefix+item.sourceFile])],purpose:required?`${integration} is initialized during application startup.`:`${integration} configuration is referenced by the application; a tested workflow may need it.`,guidance:isManaged?'Created or overridden for the isolated test runtime.':present?'Present in the test environment; the provider has not been contacted.':'Enter a test or sandbox value, then check again.'});
         }
     }
     return [...rows.values()].sort((a,b)=>(a.status==='MISSING'?-1:0)-(b.status==='MISSING'?-1:0)||a.envFile.localeCompare(b.envFile)||a.name.localeCompare(b.name));
@@ -129,9 +136,11 @@ const inspectExternalServices = (source, environment, rootDir, config) => {
                 systemPackageFiles(source,pkg).some(file=>file.path===finding.sourceFile))?.directory;
             if (directory) {
                 const envFile = directory === '.' ? '.env.test' : directory + '/.env.test';
-                const env = readAssessmentTestEnvironment(containedPath(rootDir,directory));
+                const env = readAssessmentTestEnvironmentFile(containedPath(rootDir,directory));
+                const memory = new Set(listSystemTestSecretNames(containedPath(rootDir,directory)).names);
                 for (const name of new Set(service.hardcoded.map(item=>item.envName))) {
-                    service.variables.push({name,envFile,required:false,status:env[name]?.trim()?'PRESENT':'MISSING'});
+                    const storage = memory.has(name) ? 'MEMORY' : env[name]?.trim() ? 'FILE' : undefined;
+                    service.variables.push({name,envFile,required:false,status:storage?'PRESENT':'MISSING',...(storage && {storage})});
                 }
             }
         }
@@ -177,14 +186,18 @@ export const inspectSystemSetup = async ({rootDir,workspaceRevision=0,dependenci
             if(!fs.existsSync(containedPath(rootDir,name)))issues.push({code:'SCHEMA_REQUIRED',message:`Include the database schema file ${name} in the imported project.`});
         }
     }
-    const environment=inspectProjectTestEnvironment({rootDir,source,config:candidate});
+    const legacyFiles=new Set();
+    const environment=inspectProjectTestEnvironment({rootDir,source,config:candidate,legacyFiles});
+    const expiresAt=Math.max(0,...source.packages.map(pkg=>listSystemTestSecretNames(containedPath(rootDir,pkg.directory)).expiresAt ?? 0));
+    const updatedAt=Math.max(0,...source.packages.map(pkg=>listSystemTestSecretNames(containedPath(rootDir,pkg.directory)).updatedAt ?? 0));
+    const secrets={storage:'MEMORY',expiresAt:expiresAt?new Date(expiresAt).toISOString():null,updatedAt:updatedAt?new Date(updatedAt).toISOString():null,legacyFiles:[...legacyFiles].sort()};
     const externalServices=inspectExternalServices(source,environment,rootDir,candidate);
     const missing=environment.filter(row=>row.status==='MISSING');
     const dockerRequired=!!candidate && (['mysql','postgres','mongodb'].includes(candidate.database?.engine)||!!candidate.services?.redis);
     const docker=candidate ? await (dependencies.checkDocker||checkDocker)(dockerRequired) : {status:'NOT_CHECKED',required:null,message:'Choose startup setup before checking local services.'};
     if(missing.length)issues.push({code:'ENVIRONMENT_REQUIRED',message:`${missing.length} startup environment variable(s) need test values.`});
     if(docker.status==='UNAVAILABLE')issues.push({code:'DOCKER_REQUIRED',message:docker.message});
-    return {schemaVersion:1,ready:issues.length===0,status:!source.packages.length?'UNSUPPORTED':issues.length?'NEEDS_SETUP':'READY',workspaceRevision,sourceHash:await sourceHash(rootDir),setupHash:setupHash(rootDir),configured:!!configured,sourceInspection:source.inspection,candidateConfig:candidate,packages:source.packages.map(pkg=>({directory:pkg.directory,startScripts:['dev','start','serve','preview'].filter(name=>typeof pkg.scripts[name]==='string')})),services:candidate?{frontend:candidate.frontend.directory,backend:candidate.backend.directory,healthPath:candidate.backend?.healthPath||'/',topology:candidate.frontendOnly?'UI application; no backend identified':candidate.backendOnly?'API application':candidate.unified?'Unified application':'Frontend and backend',database:candidate.database?.engine||'Not required',schema:candidate.database?.prismaSchema||candidate.database?.initSql||null,redis:!!candidate.services?.redis}:null,environment,externalServices,docker,issues,limitations:['Checks inspect bounded source and test environment presence; they do not start the application or validate provider credentials.','Only .env.test is used for credentials in managed test runs. Production .env values are not reused.','Custom launchers, dynamic environment helpers and uninspected files can require additional configuration at runtime.']};
+    return {schemaVersion:1,ready:issues.length===0,status:!source.packages.length?'UNSUPPORTED':issues.length?'NEEDS_SETUP':'READY',workspaceRevision,sourceHash:await sourceHash(rootDir),setupHash:setupHash(rootDir),configured:!!configured,sourceInspection:source.inspection,candidateConfig:candidate,packages:source.packages.map(pkg=>({directory:pkg.directory,startScripts:['dev','start','serve','preview'].filter(name=>typeof pkg.scripts[name]==='string')})),services:candidate?{frontend:candidate.frontend.directory,backend:candidate.backend.directory,healthPath:candidate.backend?.healthPath||'/',topology:candidate.frontendOnly?'UI application; no backend identified':candidate.backendOnly?'API application':candidate.unified?'Unified application':'Frontend and backend',database:candidate.database?.engine||'Not required',schema:candidate.database?.prismaSchema||candidate.database?.initSql||null,redis:!!candidate.services?.redis}:null,environment,secrets,externalServices,docker,issues,limitations:['Checks inspect bounded source and test environment presence; they do not start the application or validate provider credentials.','Test keys entered here are kept in server memory for this session only and are never written to disk.','Custom launchers, dynamic environment helpers and uninspected files can require additional configuration at runtime.']};
 };
 
 export const systemSetupPreflight = async ({snapshotId,userId,db=prisma,dependencies={}}) => {
@@ -203,12 +216,11 @@ const withTestEnvironment = async ({snapshotId,userId,input,db=prisma,dependenci
         for (const service of report.externalServices) {
             if (service.status==='HARDCODED') rows.push(...service.variables.map(variable=>({...variable,service:service.label})));
         }
-        return action(rootDir,rows);
+        return action(rootDir,rows,report);
     });
 };
 
-// Credentials are written only to the owned project's .env.test files. They
-// never enter project versions, operation payloads, job logs or AI context.
+// Keep credentials in process memory for the owned project's test session.
 const writeTestEnvironment = (rootDir, rows, variables) => {
     const liveNames=[...new Set(variables.filter(({name,value})=>isLiveCredential(name,value)).map(({name})=>name))];
     if(liveNames.length)throw new ServiceError('Live credentials are not allowed for testing. Use test or sandbox keys.',422,'LIVE_CREDENTIAL_REJECTED',{variables:liveNames});
@@ -216,32 +228,29 @@ const writeTestEnvironment = (rootDir, rows, variables) => {
     const groups=new Map();
     for(const variable of variables) {
         if(!allowed.has(`${variable.envFile}:${variable.name}`))throw new ServiceError('Only detected test variables can be saved. Check setup again.',422);
-        if(variable.value.includes('\0'))throw new ServiceError('Enter a test value without null characters.',422);
-        if(!groups.has(variable.envFile))groups.set(variable.envFile,Object.assign(Object.create(null),readAssessmentTestEnvironment(path.dirname(containedPath(rootDir,variable.envFile)))));
+        validateSystemTestSecret(variable.value);
+        if(!groups.has(variable.envFile))groups.set(variable.envFile,Object.create(null));
         groups.get(variable.envFile)[variable.name]=variable.value;
     }
-    const writes=[...groups].map(([name,values])=>{
-        const content=Object.entries(values).map(([key,value])=>{
-            const quote=['"',"'",'`'].find(quote=>!value.includes(quote) && (quote!=='"' || !/\\[nr]/.test(value)));
-            if(!quote)throw new ServiceError('A test value contains an unsupported combination of quote characters.',422);
-            return `${key}=${quote}${value}${quote}`;
-        }).join('\n')+'\n';
-        if(Buffer.byteLength(content)>64*1024)throw new ServiceError('Test environment values cannot be encoded in a file up to 64 KiB.',422);
-        const decoded=parseEnvironment(content);
-        if(Object.entries(values).some(([key,value])=>decoded[key]!==value))throw new ServiceError('Test environment values cannot be encoded without changing their contents.',422);
-        return {file:containedPath(rootDir,name),content};
-    });
-    for(const {file,content} of writes) {
-        const temporary=file+'.'+crypto.randomUUID()+'.tmp';
-        try {fs.writeFileSync(temporary,content,{flag:'wx',mode:0o600});fs.renameSync(temporary,file);}
-        finally {if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
-    }
+    const destinations=[...groups].map(([envFile,values])=>[path.dirname(containedPath(rootDir,envFile)),values]);
+    if(destinations.length)assertColocatedWorkerForSecret();
+    for(const [directory,values] of destinations)storeSystemTestSecrets(directory,values);
     return {saved:variables.length};
 };
 
 export const saveSystemTestEnvironment = async options => {
     const input=parseRequest(setupEnvironmentRequest,options.input);
     return withTestEnvironment({...options,input},(rootDir,rows)=>writeTestEnvironment(rootDir,rows,input.variables));
+};
+
+export const deleteSystemTestEnvironment = async options => {
+    const input=parseRequest(setupEnvironmentDeleteRequest,options.input);
+    return withTestEnvironment({...options,input},(rootDir,rows,report)=>{
+        for(const pkg of report.packages)clearSystemTestSecrets(containedPath(rootDir,pkg.directory));
+        const removedFiles=input.removeLegacyFiles?report.secrets.legacyFiles:[];
+        for(const file of removedFiles)fs.unlinkSync(containedPath(rootDir,file));
+        return {cleared:true,removedFiles};
+    });
 };
 
 export const importSystemTestEnvironment = async options => {

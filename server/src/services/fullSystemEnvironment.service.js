@@ -384,7 +384,7 @@ export const validateStartupEnvironment = ({files,env,directory,scripts,entryFil
     const missing=requiredStartupEnvironment(startupEnvironmentFiles(files,scripts,{preferStart,entryFile})).filter(item=>!env[item.name]?.trim() && !managedVariables.includes(item.name));
     if(!missing.length)return;
     const envFile=(directory==='.'?'':directory+'/')+'.env.test';
-    const failure=new ServiceError(`Full Stack requires test environment configuration: ${[...new Set(missing.map(item=>item.name))].join(', ')}. Set these variables in ${envFile} for the imported project, then retry. ${missing[0].integration} is initialized during backend startup (${missing[0].sourceFile}); CovAI cannot generate third-party credentials. Existing secrets are never sent to setup AI.`,422);
+    const failure=new ServiceError(`Full Stack requires test environment configuration: ${[...new Set(missing.map(item=>item.name))].join(', ')}. Add them in Test setup (System Test → setup status), then retry. ${missing[0].integration} is initialized during backend startup (${missing[0].sourceFile}); CovAI cannot generate third-party credentials. Existing secrets are never sent to setup AI.`,422);
     failure.code='SYSTEM_TEST_ENVIRONMENT_REQUIRED';
     failure.details={variables:missing.map(item=>({name:item.name,service:item.integration,sourceFile:item.sourceFile,envFile}))};
     throw failure;

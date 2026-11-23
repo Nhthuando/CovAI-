@@ -121,7 +121,7 @@ Last synced: 2026-11-16 | git: 56795b3
 - client/src/services: one `*.service.js` per API area (`editorAwareRequest` + `authSession`); contexts/ hooks/ lib/ utils/
 - client/src/shared/aiModels.js: client copy of AI_MODELS (`@shared` alias in `client/vite.config.js`); canonical is `/shared/aiModels.js`
 - server/src/{routes,controllers,services,validators,middlewares,realtime,config,errors,constants,utils}; tests in `server/src/tests` (+ `*.test.js` beside services)
-- server/src/services/aiEvaluation: Chatbot Evaluation backend (`AI_EVALUATION_ENABLED=true`, optional mock gateway `AI_EVALUATION_ACTION_ENABLED=true`)
+- server/src/services/aiEvaluation: Chatbot Evaluation backend (on by default; `AI_EVALUATION_ENABLED=false` turns it off; optional mock gateway `AI_EVALUATION_ACTION_ENABLED=true`)
 - server/prisma/schema.prisma: User, Project, ProjectSnapshot, Job*, Coverage*, Cfg, Cyclomatic, Ai*, TestRun, TestScenario, System*, AiEvaluation* (15 tables)
 - shared/: aiModels (4 Gemini models), projectRoles, projectAccess, editorProtocol, editorBatchQueue, systemExpectedOutcome, systemImprovement
 - Other root dirs present but git-ignored by root whitelist: specs/, .specify/, scratch/, temp/

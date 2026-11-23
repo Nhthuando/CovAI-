@@ -6,6 +6,7 @@ import { prepareFullSystemPackage, readAssessmentTestEnvironment } from './fullS
 import { spawn } from 'node:child_process';
 import { startAutServer, stopAutServer, runSeedDataIfPresent } from './autLifecycle.service.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { redactDeep, redactSystemTestSecrets } from './systemTestSecrets.service.js';
 
 import { containedPath } from './fullSystemConfig.service.js';
 import { ensureFullSystemSetup, inspectSystemPackageSource } from './fullSystemSetup.service.js';
@@ -26,7 +27,7 @@ const writeSql = (container, engine, password, sql) => new Promise((resolve,reje
   child.stdin.on('error',() => {});
   child.stdin.end(sql);
   const timer = setTimeout(() => {child.kill();reject(new ServiceError('Test database initialization timed out',408));},30000);
-  child.once('close',code => {clearTimeout(timer);code === 0 ? resolve() : reject(new ServiceError(`Test database initialization failed: ${error.replaceAll(password,'[redacted]')}`,422));});
+  child.once('close',code => {clearTimeout(timer);code === 0 ? resolve() : reject(new ServiceError(`Test database initialization failed: ${redactSystemTestSecrets(error).replaceAll(password,'[redacted]')}`,422));});
 });
 
 export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPreparation,signal,environmentRoot}) => {
@@ -114,5 +115,5 @@ export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPrepa
       handles.push(frontend);
     }
     return {frontendPort,backendUrl,cleanup,egressLogPath};
-  } catch(error){await cleanup().catch(cleanupError=>console.warn('[fullSystemLifecycle] Cleanup failed:',cleanupError.message));let message=error.message;for(const [key,value] of Object.entries(resources?.environment || {}))if(value && /PASSWORD|SECRET|TOKEN|KEY|URL/.test(key))message=message.replaceAll(value,'[redacted]');const failure=new ServiceError(`Full system setup failed: ${message}`,error.statusCode || 422);failure.code=error.code || 'SYSTEM_RUNTIME_START_FAILED';failure.details=error.details;throw failure;}
+  } catch(error){await cleanup().catch(cleanupError=>console.warn('[fullSystemLifecycle] Cleanup failed:',redactSystemTestSecrets(cleanupError.message)));let message=redactSystemTestSecrets(error.message);for(const [key,value] of Object.entries(resources?.environment || {}))if(value && /PASSWORD|SECRET|TOKEN|KEY|URL/.test(key))message=message.replaceAll(value,'[redacted]');const failure=new ServiceError(`Full system setup failed: ${message}`,error.statusCode || 422);failure.code=error.code || 'SYSTEM_RUNTIME_START_FAILED';failure.details=redactDeep(error.details);throw failure;}
 };

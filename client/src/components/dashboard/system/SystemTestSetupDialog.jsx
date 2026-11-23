@@ -1,23 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
-  CheckCircle2,
   ChevronRight,
+  Database,
   FileCode2,
   Loader2,
+  Lock,
+  Monitor,
   RotateCcw,
-  Settings2,
+  Server,
   X,
 } from 'lucide-react';
+import { Button } from '../../ui/button.jsx';
 import { useProjectAccess } from '../../../hooks/useProjectAccess';
 import { systemEvidenceRequest } from '../../../services/systemTest.service.js';
 import ExternalServicesPanel from './ExternalServicesPanel.jsx';
+
+const buttonMotion = 'transition-colors duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]/40';
+const warningTone = 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+const errorTone = 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
 
 const databaseEngineLabel = {
   mysql: 'MySQL',
   postgres: 'PostgreSQL',
   sqlite: 'SQLite',
   mongodb: 'MongoDB',
+  none: 'Not needed',
 };
 
 const failureMessage = (error) =>
@@ -47,7 +55,7 @@ export default function SystemTestSetupDialog({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [configEdited, setConfigEdited] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [configText, setConfigText] = useState('');
   const [reviewed, setReviewed] = useState(false);
 
@@ -116,7 +124,7 @@ export default function SystemTestSetupDialog({
         },
       });
       edited.current = false;
-      setConfigEdited(false);
+      setEditorOpen(false);
       onChanged?.();
       await load();
     } catch (err) {
@@ -126,47 +134,46 @@ export default function SystemTestSetupDialog({
     }
   };
 
-  const downloadTemplate = () => {
-    const groups = new Map();
-    for (const row of report.environment.filter(
-      (item) => item.status !== 'MANAGED'
-    )) {
-      if (!groups.has(row.envFile)) groups.set(row.envFile, new Set());
-      groups.get(row.envFile).add(row.name);
+  const forgetKeys = async (removeLegacyFiles = false) => {
+    setSaving(true);
+    setError('');
+    try {
+      await systemEvidenceRequest(snapshotId, 'setup/environment', {
+        method: 'DELETE',
+        data: {
+          expectedWorkspaceRevision: report.workspaceRevision,
+          ...(removeLegacyFiles && { removeLegacyFiles: true }),
+        },
+      });
+      onChanged?.();
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not remove test keys. Try again.');
+    } finally {
+      setSaving(false);
     }
-    const content = [...groups]
-      .map(
-        ([file, names]) =>
-          `# ${file}\n${[...names].map((name) => `${name}=`).join('\n')}`
-      )
-      .join('\n\n');
-    const url = URL.createObjectURL(
-      new Blob([content], { type: 'text/plain' })
-    );
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'system-test-env-template.txt';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const external = report?.environment.filter(row => row.status !== 'MANAGED') ?? [];
-  const otherVariables = external.filter(row => !row.provider);
-  const managed =
-    report?.environment.filter((row) => row.status === 'MANAGED') || [];
-  const showSetupEditor =
-    Boolean(report) &&
-    report.status !== 'UNSUPPORTED' &&
-    (!report.candidateConfig || report.issues.some(issue=>['INVALID_SETUP','START_SCRIPT_REQUIRED','SCHEMA_REQUIRED','SETUP_REQUIRED'].includes(issue.code)) || configEdited);
-
-  const dockerStatusLabel =
-    report?.docker.status === 'AVAILABLE'
-      ? 'Available'
-      : report?.docker.status === 'NOT_REQUIRED'
-      ? 'Schema-aware Mock DB (No Docker required)'
-      : report?.docker.status === 'UNAVAILABLE'
-      ? 'Start Docker Desktop on the server'
-      : 'Not checked';
+  const otherVariables = report?.environment.filter(row => row.status !== 'MANAGED' && !row.provider) ?? [];
+  const managed = report?.environment.filter(row => row.status === 'MANAGED') ?? [];
+  const canEditStartup = Boolean(report && report.status !== 'UNSUPPORTED');
+  const canEditKeys = access.can('evidence.approve');
+  const needsKeys = report?.externalServices?.some(service => ['NEEDS_CONFIG', 'HARDCODED'].includes(service.status));
+  const statusLabel = report?.status === 'UNSUPPORTED' ? 'Unsupported stack'
+    : needsKeys ? 'Needs keys'
+    : report?.ready ? 'Ready' : 'Action required';
+  const runtimeAvailable = ['AVAILABLE', 'NOT_REQUIRED'].includes(report?.docker?.status);
+  const runtimeReason = report?.docker?.status === 'UNAVAILABLE' ? 'Start Docker' : 'Runtime unchecked';
+  const legacyFiles = report?.secrets?.legacyFiles ?? [];
+  const services = report?.services;
+  // "." means the package sits at the repository root; show that in words.
+  const folderLabel = directory => (directory === '.' ? 'Root folder' : directory);
+  const apiOnly = services?.topology === 'API application';
+  const appTiles = [
+    { Icon: Monitor, label: 'Frontend', value: apiOnly || !services?.frontend ? 'None (API only)' : folderLabel(services.frontend) },
+    { Icon: Server, label: 'Backend', value: services?.backend ? folderLabel(services.backend) : 'Not detected' },
+    { Icon: Database, label: 'Database', value: databaseEngineLabel[services?.database] || services?.database || 'Not needed' },
+  ];
 
   return (
     <dialog
@@ -180,59 +187,29 @@ export default function SystemTestSetupDialog({
     >
       <div className="flex max-h-[90vh] flex-col">
         {/* Header */}
-        <header className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h2
-                id="system-setup-heading"
-                className="text-base font-semibold tracking-tight text-[var(--color-text)]"
-              >
-                System Test setup
-              </h2>
-              {!loading && report && (
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium ${
-                    report.ready
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                      : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                  }`}
-                >
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${
-                      report.ready ? 'bg-emerald-500' : 'bg-amber-500'
-                    }`}
-                  />
-                  {report.ready
-                    ? report.configured
-                      ? 'Ready · Configured'
-                      : 'Ready · Auto-detected'
-                    : report.status === 'UNSUPPORTED'
-                    ? 'Unsupported stack'
-                    : 'Action required'}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              Check startup services and test credentials before running.
-            </p>
+        <header className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+            <h2 id="system-setup-heading" className="text-base font-semibold">Test setup</h2>
+            {!loading && report && (
+              <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-medium ${statusLabel === 'Ready'
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                : warningTone}`}>
+                <span className={`size-1.5 rounded-full ${statusLabel === 'Ready' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                {statusLabel}
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={onClose}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-50"
-          >
-            <X size={14} />
-            <span>Close</span>
-          </button>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="Close" disabled={saving} onClick={onClose} className={buttonMotion}>
+            <X />
+          </Button>
         </header>
 
         {/* Scrollable Body */}
-        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
           {error && (
             <div
               role="alert"
-              className="flex items-start gap-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-700 dark:text-rose-300"
+              className={`flex items-start gap-2.5 rounded-lg px-4 py-3 text-xs ${errorTone}`}
             >
               <AlertCircle size={15} className="mt-0.5 shrink-0" />
               <span className="leading-5">{error}</span>
@@ -250,241 +227,123 @@ export default function SystemTestSetupDialog({
           ) : (
             report && (
               <>
-                {/* Readiness Summary Callout */}
-                <section
-                  className={`rounded-lg border border-l-4 px-4 py-3.5 ${
-                    report.ready
-                      ? 'border-[var(--color-border)] border-l-emerald-500 bg-[var(--color-surface)]'
-                      : 'border-amber-500/30 border-l-amber-500 bg-amber-500/[0.04]'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    {report.ready ? (
-                      <CheckCircle2
-                        size={16}
-                        className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"
-                      />
-                    ) : (
-                      <AlertCircle
-                        size={16}
-                        className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400"
-                      />
+                {/* Setup problems */}
+                {!report.ready && (
+                  <div role="alert" className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${warningTone}`}>
+                    <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                    {report.issues.length ? (
+                      <ul className="space-y-1">
+                        {report.issues.map((item, index) => (
+                          <li key={`${item.code}:${index}`}>{item.message}</li>
+                        ))}
+                      </ul>
+                    ) : <span>{statusLabel}</span>}
+                  </div>
+                )}
+                {runtimeMessage && (
+                  <p role="alert" className={`rounded-md px-3 py-2 text-xs ${errorTone}`}>
+                    Last run couldn't start. Check the items below, then run again.
+                  </p>
+                )}
+
+                {/* App */}
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">App</h3>
+                    {canEditStartup && (
+                      <Button type="button" variant="ghost" size="sm" aria-expanded={editorOpen} onClick={() => setEditorOpen(open => !open)} className={buttonMotion}>
+                        {editorOpen ? 'Done editing' : 'Edit'}
+                      </Button>
                     )}
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-xs font-semibold text-[var(--color-text)]">
-                        {report.ready
-                          ? 'Startup checks passed'
-                          : report.status === 'UNSUPPORTED'
-                          ? 'Runtime adapter required'
-                          : 'Setup needs attention'}
-                      </h3>
-                      {report.issues.length > 0 && (
-                        <ul className="mt-1.5 space-y-1 text-xs leading-5 text-[var(--color-text-secondary)]">
-                          {report.issues.map((item, index) => (
-                            <li key={`${item.code}:${index}`}>{item.message}</li>
-                          ))}
-                        </ul>
-                      )}
-                      {report.ready && (
-                        <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">
-                          {report.configured
-                            ? 'You can return to the scenarios and run tests. Application startup and provider validity are checked during the run.'
-                            : 'Startup services were resolved automatically from the repository. You can run tests directly without manual configuration, or customize the setup below.'}
-                        </p>
-                      )}
-                    </div>
                   </div>
-                </section>
-
-                {/* Section 1: Application services */}
-                <section className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
-                        Application services
-                      </h3>
-                      {report.services && (
-                        <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-muted)]">
-                          {report.configured
-                            ? '.covai/system-test.json'
-                            : 'Auto-detected'}
-                        </span>
-                      )}
-                    </div>
-                    {report.status !== 'UNSUPPORTED' &&
-                      (report.configured || report.candidateConfig) && (
-                        <button
-                          type="button"
-                          onClick={() => setConfigEdited((prev) => !prev)}
-                          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                        >
-                          <Settings2 size={12} />
-                          <span>
-                            {configEdited
-                              ? 'Hide setup editor'
-                              : 'Edit startup setup'}
-                          </span>
-                        </button>
-                      )}
-                  </div>
-
-                  <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-                    {report.services ? (
-                      <dl className="grid grid-cols-1 divide-y divide-[var(--color-border)] text-xs sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                        <div className="p-3.5">
-                          <dt className="text-[11px] font-medium text-[var(--color-text-muted)]">
-                            Frontend directory
-                          </dt>
-                          <dd className="mt-1 flex items-center gap-1.5 font-mono font-medium text-[var(--color-text)]">
-                            <span>{report.services.frontend}</span>
+                  <dl className="grid divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                    {appTiles.map(({ Icon, label, value }) => (
+                      <div key={label} className="min-w-0 p-3">
+                        <dt className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
+                          <Icon size={14} aria-hidden="true" /> {label}
+                        </dt>
+                        <dd className="mt-1 break-words font-mono tabular-nums">{value}</dd>
+                        {label === 'Database' && (
+                          <dd className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+                            <span className={`size-1.5 shrink-0 rounded-full ${runtimeAvailable ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden="true" />
+                            {runtimeAvailable ? 'Runtime available' : runtimeReason}
                           </dd>
-                          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                            {report.services.topology}
-                          </p>
-                        </div>
-
-                        <div className="p-3.5">
-                          <dt className="text-[11px] font-medium text-[var(--color-text-muted)]">
-                            Backend service
-                          </dt>
-                          <dd className="mt-1 font-mono font-medium text-[var(--color-text)]">
-                            {report.services.backend}
-                          </dd>
-                          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                            Readiness:{' '}
-                            <code className="font-mono text-[var(--color-text-secondary)]">
-                              {report.services.healthPath || '/'}
-                            </code>
-                          </p>
-                        </div>
-
-                        <div className="p-3.5">
-                          <dt className="text-[11px] font-medium text-[var(--color-text-muted)]">
-                            Isolated data &amp; runtime
-                          </dt>
-                          <dd className="mt-1 font-medium text-[var(--color-text)]">
-                            {databaseEngineLabel[report.services.database] ||
-                              report.services.database}
-                            {report.services.redis ? ' + Redis' : ''}
-                          </dd>
-                          <p className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
-                            <span
-                              className={`h-1.5 w-1.5 rounded-full ${
-                                report.docker.status === 'AVAILABLE' || report.docker.status === 'NOT_REQUIRED'
-                                  ? 'bg-emerald-500'
-                                  : report.docker.status === 'UNAVAILABLE'
-                                  ? 'bg-amber-500'
-                                  : 'bg-slate-400'
-                              }`}
-                            />
-                            <span>Runtime: {dockerStatusLabel}</span>
-                          </p>
-                        </div>
-                      </dl>
-                    ) : (
-                      <div className="px-4 py-3.5 text-xs text-[var(--color-text-secondary)]">
-                        Choose a startup setup for the detected application.
+                        )}
                       </div>
-                    )}
-
-                    {!!report.packages.length && (
-                      <details className="group border-t border-[var(--color-border)] bg-[var(--color-bg)]/50 text-xs">
-                        <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] select-none">
-                          <span>
-                            Detected packages ({report.packages.length})
-                          </span>
-                          <ChevronRight
-                            size={14}
-                            className="transition-transform duration-150 group-open:rotate-90 text-[var(--color-text-muted)]"
-                          />
-                        </summary>
-                        <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] bg-[var(--color-bg)]">
-                          {report.packages.map((pkg) => (
-                            <li
-                              key={pkg.directory}
-                              className="flex flex-wrap items-center justify-between gap-2 px-4 py-2"
-                            >
-                              <code className="font-mono text-[11px] text-[var(--color-text)]">
-                                {pkg.directory === '.'
-                                  ? 'package.json'
-                                  : `${pkg.directory}/package.json`}
-                              </code>
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                {pkg.startScripts.length ? (
-                                  pkg.startScripts.map((script) => (
-                                    <span
-                                      key={script}
-                                      className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-secondary)]"
-                                    >
-                                      npm run {script}
-                                    </span>
-                                  ))
-                                ) : (
-                                  <span className="text-[11px] text-[var(--color-text-muted)]">
-                                    No supported start script
-                                  </span>
-                                )}
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
-                  </div>
-                </section>
-
-                {/* Section 2: Test environment */}
-                <section className="space-y-3">
-                  <ExternalServicesPanel
-                    snapshotId={snapshotId}
-                    revision={report.workspaceRevision}
-                    services={report.externalServices ?? []}
-                    otherVariables={otherVariables}
-                    focusServiceId={focusServiceId}
-                    canEdit={access.can('evidence.approve')}
-                    disabled={saving}
-                    onSaved={async () => { onChanged?.(); await load(); }}
-                    onDownloadTemplate={external.length ? downloadTemplate : undefined}
-                  />
-                  {!!managed.length && (
-                    <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-                      <details className="group border-t border-[var(--color-border)] bg-[var(--color-bg)]/50 text-xs">
-                        <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] select-none">
-                          <span>
-                            Automatically managed settings ({managed.length})
-                          </span>
-                          <ChevronRight
-                            size={14}
-                            className="transition-transform duration-150 group-open:rotate-90 text-[var(--color-text-muted)]"
-                          />
-                        </summary>
-                        <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
-                          <p className="mb-2 text-[11px] text-[var(--color-text-muted)]">
-                            Provided automatically by CovAI for isolated
-                            containers and local test ports:
-                          </p>
-                          <ul className="flex flex-wrap gap-1.5">
-                            {managed.map((row) => (
+                    ))}
+                  </dl>
+                  {!!(report.packages.length || managed.length) && (
+                    <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs">
+                      <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 font-medium text-[var(--color-text-secondary)]">
+                        Details
+                        <ChevronRight size={14} className="transition-transform duration-150 group-open:rotate-90" />
+                      </summary>
+                      {!!report.packages.length && (
+                        <div className="border-t border-[var(--color-border)]">
+                          <h4 className="px-4 py-2 font-medium">Detected packages</h4>
+                          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+                            {report.packages.map((pkg) => (
                               <li
-                                key={`${row.envFile}:${row.name}`}
-                                className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[11px] text-[var(--color-text)]"
-                                title={`${row.envFile} — isolated runtime value`}
+                                key={pkg.directory}
+                                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2"
                               >
-                                <code>{row.name}</code>
-                                <span className="text-[10px] font-sans text-[var(--color-text-muted)]">
-                                  isolated
-                                </span>
+                                <code className="font-mono tabular-nums text-[11px] text-[var(--color-text)]">
+                                  {pkg.directory === '.'
+                                    ? 'package.json'
+                                    : `${pkg.directory}/package.json`}
+                                </code>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {pkg.startScripts.length ? (
+                                    pkg.startScripts.map((script) => (
+                                      <span
+                                        key={script}
+                                        className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 font-mono tabular-nums text-[10px] text-[var(--color-text-secondary)]"
+                                      >
+                                        npm run {script}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                                      No supported start script
+                                    </span>
+                                  )}
+                                </div>
                               </li>
                             ))}
                           </ul>
                         </div>
-                      </details>
-                    </div>
+                      )}
+                      {!!managed.length && (
+                        <div>
+                          <h4 className="border-t border-[var(--color-border)] px-4 py-2 font-medium">Automatically managed settings</h4>
+                          <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
+                            <p className="mb-2 text-[11px] text-[var(--color-text-muted)]">
+                              Provided automatically by CovAI for isolated
+                              containers and local test ports:
+                            </p>
+                            <ul className="flex flex-wrap gap-1.5">
+                              {managed.map((row) => (
+                                <li
+                                  key={`${row.envFile}:${row.name}`}
+                                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono tabular-nums text-[11px] text-[var(--color-text)]"
+                                  title={`${row.envFile} — isolated runtime value`}
+                                >
+                                  <code>{row.name}</code>
+                                  <span className="text-[10px] font-sans text-[var(--color-text-muted)]">
+                                    isolated
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                    </details>
                   )}
                 </section>
 
                 {/* Section 3: Review startup setup */}
-                {showSetupEditor && (
+                {canEditStartup && editorOpen && (
                   <section className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -497,11 +356,7 @@ export default function SystemTestSetupDialog({
                           <code className="font-mono text-[11px]">
                             .covai/system-test.json
                           </code>
-                          . Put credentials in{' '}
-                          <code className="font-mono text-[11px]">
-                            .env.test
-                          </code>
-                          , never in this JSON.
+                          . Add credentials under Keys.
                         </p>
                       </div>
                       {report.candidateConfig &&
@@ -516,7 +371,7 @@ export default function SystemTestSetupDialog({
                               );
                               setReviewed(false);
                             }}
-                            className="text-xs text-[var(--color-text-secondary)] underline hover:text-[var(--color-text)] cursor-pointer"
+                            className={`rounded-md text-xs text-[var(--color-text-secondary)] underline hover:text-[var(--color-text)] cursor-pointer ${buttonMotion}`}
                           >
                             Reset to detected
                           </button>
@@ -533,7 +388,6 @@ export default function SystemTestSetupDialog({
                         value={configText}
                         onChange={(event) => {
                           edited.current = true;
-                          setConfigEdited(true);
                           setConfigText(event.target.value);
                           setReviewed(false);
                         }}
@@ -547,7 +401,7 @@ export default function SystemTestSetupDialog({
                         type="checkbox"
                         checked={reviewed}
                         onChange={(event) => setReviewed(event.target.checked)}
-                        className="h-3.5 w-3.5 rounded accent-[var(--color-primary)] cursor-pointer"
+                        className="h-3.5 w-3.5 rounded-md accent-[var(--color-primary)] cursor-pointer"
                       />
                       <span>
                         I reviewed the startup directories, services and schema
@@ -565,7 +419,7 @@ export default function SystemTestSetupDialog({
                           !access.can('evidence.approve')
                         }
                         onClick={apply}
-                        className="rounded-md bg-[var(--color-primary)] px-3.5 py-1.5 text-xs font-semibold text-[var(--color-primary-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        className={`rounded-md bg-[var(--color-primary)] px-3.5 py-1.5 text-xs font-semibold text-[var(--color-primary-foreground)] hover:opacity-90 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${buttonMotion}`}
                       >
                         {saving ? 'Saving setup...' : 'Apply startup setup'}
                       </button>
@@ -573,7 +427,7 @@ export default function SystemTestSetupDialog({
                         type="button"
                         disabled={saving || !access.can('ai.use')}
                         onClick={onGenerate}
-                        className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-1.5 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-40"
+                        className={`rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-1.5 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] cursor-pointer disabled:opacity-40 ${buttonMotion}`}
                       >
                         Generate test and setup draft
                       </button>
@@ -588,57 +442,46 @@ export default function SystemTestSetupDialog({
                   </section>
                 )}
 
-                {runtimeMessage && (
-                  <details className="group rounded-lg border border-rose-500/30 bg-rose-500/[0.04] px-4 py-3 text-xs">
-                    <summary className="flex cursor-pointer list-none items-center justify-between font-medium text-rose-700 dark:text-rose-300 select-none">
-                      <span>Last execution message</span>
-                      <ChevronRight
-                        size={14}
-                        className="transition-transform duration-150 group-open:rotate-90"
-                      />
-                    </summary>
-                    <p className="mt-2 leading-5 text-[var(--color-text-secondary)]">
-                      The previous run could not start or complete. Review the
-                      requirements above; if they are present, inspect the job
-                      log for provider or application errors.
+                {/* Keys */}
+                <ExternalServicesPanel
+                  snapshotId={snapshotId}
+                  revision={report.workspaceRevision}
+                  services={report.externalServices ?? []}
+                  otherVariables={otherVariables}
+                  secrets={report.secrets}
+                  focusServiceId={focusServiceId}
+                  canEdit={canEditKeys}
+                  disabled={saving}
+                  onSaved={async () => { onChanged?.(); await load(); }}
+                  onForget={() => forgetKeys()}
+                />
+                {!!legacyFiles.length && (
+                  <div role="alert" className={`flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs ${warningTone}`}>
+                    <p className="min-w-0 break-words">
+                      Keys from an older version are saved on disk: <code className="font-mono tabular-nums">{legacyFiles.join(', ')}</code>
                     </p>
-                  </details>
-                )}
-
-                <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/50 px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
-                  <summary className="flex cursor-pointer list-none items-center justify-between font-medium select-none hover:text-[var(--color-text-secondary)]">
-                    <span>What these checks cover</span>
-                    <ChevronRight
-                      size={14}
-                      className="transition-transform duration-150 group-open:rotate-90"
-                    />
-                  </summary>
-                  <div className="mt-2 space-y-1.5 border-t border-[var(--color-border)] pt-2 leading-5">
-                    {report.limitations.map((item) => (
-                      <p key={item}>{item}</p>
-                    ))}
+                    {canEditKeys && (
+                      <Button type="button" size="sm" variant="secondary" disabled={saving} onClick={() => forgetKeys(true)} className={buttonMotion}>
+                        Delete from disk
+                      </Button>
+                    )}
                   </div>
-                </details>
+                )}
               </>
             )
           )}
         </div>
 
         {/* Footer */}
-        <footer className="flex items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3.5">
-          <span className="text-[11px] text-[var(--color-text-muted)]">
-            Static preflight · Secrets in .env.test stay local to the test runner
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={loading || saving}
-              onClick={load}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-40"
-            >
-              <RotateCcw size={13} />
-              <span>Check again</span>
-            </button>
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3.5">
+          <p className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+            <Lock size={13} className="shrink-0" aria-hidden="true" /> Keys stay in memory for this session only. Never saved to disk.
+          </p>
+          <div className="ml-auto flex items-center gap-2">
+            <Button type="button" size="sm" variant="secondary" disabled={loading || saving} onClick={load} className={buttonMotion}>
+              <RotateCcw /> Check again
+            </Button>
+            <Button type="button" size="sm" disabled={saving} onClick={onClose} className={buttonMotion}>Done</Button>
           </div>
         </footer>
       </div>

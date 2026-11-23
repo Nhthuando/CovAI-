@@ -1,4 +1,5 @@
 import { systemTestEnvironmentDirectory } from './systemTestEnvironmentRoot.service.js';
+import { readSystemTestSecrets, redactSystemTestSecrets } from './systemTestSecrets.service.js';
 import { containedPath } from './fullSystemConfig.service.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,13 +23,17 @@ export const readApplicationEnvironment = directory => {
 
 // Measurement copies exclude credential files. Read the explicitly configured
 // test environment from the owned original snapshot into process memory only.
-export const readAssessmentTestEnvironment = directory => {
-    directory=systemTestEnvironmentDirectory(directory);
-    const file = containedPath(directory, '.env.test');
+export const readAssessmentTestEnvironmentFile = directory => {
+    const file = containedPath(systemTestEnvironmentDirectory(directory), '.env.test');
     if(!fs.existsSync(file))return {};
     if(!fs.statSync(file).isFile() || fs.statSync(file).size>64*1024)throw new ServiceError('The test environment file must be a text file up to 64 KiB.',422);
     return parse(fs.readFileSync(file,'utf8'));
 };
+
+export const readAssessmentTestEnvironment = directory => ({
+    ...readAssessmentTestEnvironmentFile(directory),
+    ...readSystemTestSecrets(directory),
+});
 
 export const prepareFullSystemPackage = async ({directory, repositoryRoot=directory, env={}, jobId, database = false, signal, schemaStrategy, prismaSchema}) => {
     const isMockDb = env.COVAI_MOCK_DB === 'true';
@@ -45,7 +50,7 @@ export const prepareFullSystemPackage = async ({directory, repositoryRoot=direct
         const result = await dockerRunner.run({snapshotPath:directory,command,jobId,forceHost:true,isolatedEnv:true,timeoutMs:600000,signal,
             env:{...cleanEnv,NODE_ENV:'development',PATH:process.env.PATH || '',NODE_PATH:''}});
         if (!result.success) {
-            let detail = [result.stderr,result.stdout].filter(Boolean).join('\n').replace(/\x1b\[[0-9;]*m/g,'').trim();
+            let detail = redactSystemTestSecrets([result.stderr,result.stdout].filter(Boolean).join('\n').replace(/\x1b\[[0-9;]*m/g,'').trim());
             for (const [key,value] of Object.entries(env)) if (value && /PASSWORD|SECRET|TOKEN|KEY|URL/.test(key)) detail=detail.replaceAll(value,'[redacted]');
             throw new ServiceError(`${label} failed. ${detail.slice(0,2000)}`,422);
         }

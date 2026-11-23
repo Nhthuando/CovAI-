@@ -14,12 +14,16 @@ import { containedPath, resolveSystemRepositoryRoot } from './fullSystemConfig.s
 import { syncSystemScenarioCatalog, updateScenarioDraft } from './systemScenarioCatalog.service.js';
 import { validateGeneratedTestCode } from '../validators/aiTestCode.validator.js';
 import { validateFullSystemTest } from './systemTestEvidence.service.js';
+import { redactSystemTestSecrets } from './systemTestSecrets.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { SYSTEM_PROMPT_VERSION } from './systemTestPrompt.service.js';
 import { currentAiJobBudget, createAiJobBudget, withAiJobBudget } from './aiJobBudget.service.js';
 import { generateText } from './gemini.service.js';
 import { withGeminiChannel } from './geminiTokenTracker.service.js';
 import { ensureFullSystemSetup } from './fullSystemSetup.service.js';
+import { startFullSystem } from './fullSystemLifecycle.service.js';
+import { captureLivePageSnapshots } from './livePageSnapshot.service.js';
+import { clearAppliedSystemGenerationTask } from './systemGenerationTask.service.js';
 
 export const systemDraftModuleExtension = code => {
     const source = String(code || '');
@@ -28,13 +32,13 @@ export const systemDraftModuleExtension = code => {
     return usesCjs && !usesEsm ? 'cjs' : 'mjs';
 };
 
-export const createSystemGenerationDraft = async ({signal=AbortSignal.timeout(10*60*1000),...options}) => {
+export const createSystemGenerationDraft = async ({signal=AbortSignal.timeout(10*60*1000),onProgress=()=>{},...options}) => {
     const deadlineAt = Date.now() + 7*60*1000;
-    const createDraft = () => prepareSystemGenerationDraft({...options,signal,deadlineAt});
+    const createDraft = () => prepareSystemGenerationDraft({...options,signal,deadlineAt,onProgress});
     return currentAiJobBudget() ? createDraft() : withAiJobBudget(createAiJobBudget({maxRequests:9,signal}),createDraft);
 };
 
-const prepareSystemGenerationDraft = async ({snapshotId,userId,framework,targetRoutes,executionMode,model,signal,deadlineAt,db=prisma,dependencies={}}) => {
+const prepareSystemGenerationDraft = async ({snapshotId,userId,framework,targetRoutes,executionMode,model,signal,deadlineAt,onProgress=()=>{},db=prisma,dependencies={}}) => {
     executionMode=requireFullStackMode(executionMode);
     if(signal?.aborted)throw new ServiceError('Generation canceled',409);
     const {snapshot,project} = await resolveSnapshotAccess({snapshotId,userId,capability:'ai.use',db});
@@ -53,15 +57,66 @@ const prepareSystemGenerationDraft = async ({snapshotId,userId,framework,targetR
         const aiGenerate = dependencies.generate
             ? (model ? (prompt, instruction, config) => dependencies.generate(prompt, model, instruction, config) : dependencies.generate)
             : (model ? (prompt, instruction, config) => withGeminiChannel("E2E_TEST", () => generateText(prompt, model, instruction, config)) : ((...args) => withGeminiChannel("E2E_TEST", () => generateText(...args))));
+        signal?.throwIfAborted();
+        onProgress({stage:'PREPARING',message:'Preparing your project',percent:5});
         const setup = executionMode === 'full' ? await (dependencies.setup || ensureFullSystemSetup)({ rootDir, model, dependencies: { generate: aiGenerate } }) : null;
-        const generated = await (dependencies.generate || generateColdStartSystemTests)({rootDir,framework,targetRoutes,executionMode,model,requirements:revision?.contentJson||null});
-        const verification = executionMode==='full' && framework!=='cypress'
-            ? await verifyAndRepairSystemDraft({rootDir,code:generated.code,generate:aiGenerate,signal,deadlineAt,dependencies:{run:dependencies.run}})
-            : {code:generated.code,verificationStatus:'NOT_VERIFIED',droppedScenarios:[]};
+        signal?.throwIfAborted();
+        let stack;
+        let stackError;
+        let generated;
+        let verification;
+        try {
+            if(executionMode==='full' && framework!=='cypress' && !dependencies.run){
+                onProgress({stage:'PREPARING',message:'Starting your app',percent:8});
+                try {
+                    stack = await startFullSystem({
+                        rootDir,jobId:null,signal,
+                        onProgress: (_percent, message) => onProgress({stage:'PREPARING',message,percent:8}),
+                    });
+                } catch(error) {
+                    if(signal?.aborted) throw error;
+                    stackError = error;
+                }
+            }
+            const reportDrafting = () => onProgress({stage:'DRAFTING',message:'Writing test scenarios with AI',percent:15});
+            if(!stack) reportDrafting();
+            generated = await (dependencies.generate || generateColdStartSystemTests)({
+                rootDir,framework,targetRoutes,executionMode,model,requirements:revision?.contentJson||null,
+                captureLiveSnapshots: stack ? async routes => {
+                    onProgress({stage:'PREPARING',message:"Reading your app's pages",percent:12});
+                    const snapshots = await captureLivePageSnapshots({rootDir,stack,routes,signal});
+                    reportDrafting();
+                    return snapshots;
+                } : undefined,
+            });
+            verification = executionMode==='full' && framework!=='cypress'
+                ? await verifyAndRepairSystemDraft({
+                    rootDir,code:generated.code,generate:aiGenerate,signal,deadlineAt,stack,stackError,dependencies:{run:dependencies.run},
+                    onProgress: (message, meta = {}) => onProgress({
+                        stage: meta.stage || 'VERIFYING',
+                        attempt: meta.attempt,
+                        message,
+                        percent: meta.stage === 'REPAIRING' ? 30 + (meta.attempt || 1) * 20 + 10 : 30 + ((meta.attempt || 1) - 1) * 20,
+                    }),
+                })
+                : {code:generated.code,verificationStatus:'NOT_VERIFIED',droppedScenarios:[]};
+        } finally {
+            try {
+                await stack?.cleanup();
+            } catch(error) {
+                console.warn(redactSystemTestSecrets(`[systemGenerationProposal] Draft stack cleanup failed: ${error.message}`));
+            }
+        }
     const {code,verificationStatus,droppedScenarios,verificationError,externalRequirements} = verification;
         if(verificationStatus==='FAILED'){
-            const errors = droppedScenarios.slice(0,2).map(({title,error})=>`${title}: ${error}`.slice(0,300)).join(' ');
-            throw new ServiceError(`None of the generated scenarios passed against the running application. ${errors} Retry generation or review the application setup.`,422);
+            const error = new ServiceError('None of the generated tests passed on your app. Generate again — each draft is different.',422);
+            error.code = 'NO_PASSING_SCENARIOS';
+            error.details = {droppedScenarios: droppedScenarios.slice(0,5).map(({title,error})=>({
+                title: redactSystemTestSecrets(title),
+                reason: redactSystemTestSecrets(String(error||'').split(/\r?\n/,1)[0]).slice(0,200),
+            }))};
+            console.warn('[systemGenerationProposal] No scenario passed:', redactSystemTestSecrets(JSON.stringify(error.details)));
+            throw error;
         }
         const droppedTitles = new Set(droppedScenarios.map(({title})=>title));
         const scenarios = (generated.generationMetadata?.scenarios||[]).filter(({title})=>!droppedTitles.has(title));
@@ -73,8 +128,12 @@ const prepareSystemGenerationDraft = async ({snapshotId,userId,framework,targetR
         if(executionMode==='full' && !systemConfigExisted)setupChanges.push({path:path.relative(context.rootDir,path.join(rootDir,'.covai/system-test.json')).replaceAll('\\','/'),content:await fs.readFile(path.join(rootDir,'.covai/system-test.json'),'utf8'),beforeHash:null});
         if(generated.configCreated && !existing.has(generated.configPath)) setupChanges.push({path:path.relative(context.rootDir,path.join(rootDir,generated.configPath)).replaceAll('\\','/'),content:await fs.readFile(path.join(rootDir,generated.configPath),'utf8'),beforeHash:null});
         const relative = path.relative(context.rootDir,path.join(rootDir,filePath)).replaceAll('\\','/');
-    const meta = {kind:'SYSTEM_GENERATION_DRAFT',framework,executionMode,promptVersion:SYSTEM_PROMPT_VERSION,model:model||null,contextHash:generated.contextHash||null,attempts:generated.generationAttempts||null,testDesign:generated.testDesign||null,aiUsage:currentAiJobBudget()?.snapshot()||null,sourceHash:baseline.sourceHash,suiteHash:baseline.suiteHash,workspaceRevision:project.workspaceRevision,setupChanges,scenarioCount,scenarios,metadataStatus:generated.generationMetadata?.metadataStatus||'CODE_ONLY',requirementRevisionId:revision?.id||null,applied:false,verificationStatus,droppedScenarios,verificationError,externalRequirements};
-        await stagePreparedPublication(async tx=>{draft=await tx.aiTest.create({data:{projectId:snapshot.projectId,snapshotId,filePath:relative,content:code,status:'DRAFT',mode:framework==='cypress'?'CYPRESS_E2E':'PLAYWRIGHT_E2E',metaJson:JSON.stringify(meta)}});});
+    const meta = {kind:'SYSTEM_GENERATION_DRAFT',framework,executionMode,promptVersion:SYSTEM_PROMPT_VERSION,model:model||null,contextHash:generated.contextHash||null,attempts:generated.generationAttempts||null,testDesign:generated.testDesign||null,liveSnapshotCount:generated.liveSnapshotCount||0,aiUsage:currentAiJobBudget()?.snapshot()||null,sourceHash:baseline.sourceHash,suiteHash:baseline.suiteHash,workspaceRevision:project.workspaceRevision,setupChanges,scenarioCount,scenarios,metadataStatus:generated.generationMetadata?.metadataStatus||'CODE_ONLY',requirementRevisionId:revision?.id||null,applied:false,verificationStatus,droppedScenarios,verificationError,externalRequirements};
+        onProgress({stage:'SAVING',message:'Saving the draft',percent:92});
+        await stagePreparedPublication(async tx=>{
+            signal?.throwIfAborted();
+            draft=await tx.aiTest.create({data:{projectId:snapshot.projectId,snapshotId,filePath:relative,content:code,status:'DRAFT',mode:framework==='cypress'?'CYPRESS_E2E':'PLAYWRIGHT_E2E',metaJson:JSON.stringify(meta)}});
+        });
     });
     if(!draft)throw new ServiceError('The generated draft could not be saved. Retry generation.',500);
     const meta = JSON.parse(draft.metaJson);
@@ -130,5 +189,6 @@ export const applySystemGenerationDraft = async ({snapshotId,draftId,userId,inpu
         });
         return {};
     });
+    clearAppliedSystemGenerationTask(snapshotId,draftId);
     return {...result,aiTestId:draftId,versionId:version.id,applied:true};
 };

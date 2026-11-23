@@ -1,5 +1,6 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { AiTestMode } from '@prisma/client';
+import { __resetSystemGenerationTasksForTest } from '../services/systemGenerationTask.service.js';
 
 const prismaMock = {
     project: { findFirst: jest.fn(async ({where})=> {
@@ -60,6 +61,7 @@ const mockCreateSystemTestAnalysisJob = jest.fn().mockImplementation((args) =>
 );
 
 jest.unstable_mockModule('../services/job.service.js', () => ({
+    createSnapshotJob: jest.fn(),
     createInstallDepsJob: jest.fn(),
     createRunTestsJob: jest.fn(),
     createSupertestCoverageJob: jest.fn(),
@@ -152,22 +154,28 @@ const {
 } = await import('../controllers/coverage.controller.js');
 
 describe('System generation draft endpoint', () => {
-    beforeEach(()=>{jest.clearAllMocks();mockCreateGenerationDraft.mockReset();});
+    beforeEach(()=>{
+        jest.clearAllMocks();
+        mockCreateGenerationDraft.mockReset();
+        __resetSystemGenerationTasksForTest();
+    });
     it.each(['playwright','cypress'])('delegates %s generation to draft storage without direct file publication', async framework=>{
-        const draft={draftId:'draft-1',applied:false,verificationStatus:'NOT_VERIFIED'};
+        prismaMock.projectSnapshot.findFirst.mockResolvedValue({id:'snap-1',projectId:'project-1'});
+        const draft={aiTestId:'draft-1',applied:false,verificationStatus:'NOT_VERIFIED'};
         mockCreateGenerationDraft.mockResolvedValue(draft);
         const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
         await generateColdStartSystemTestsController({user:{id:'user-1'},params:{snapshotId:'snap-1'},body:{framework,projectId:'untrusted-client-project'}},res);
         expect(mockCreateGenerationDraft).toHaveBeenCalledWith(expect.objectContaining({snapshotId:'snap-1',userId:'user-1',framework,executionMode:'full'}));
         expect(mockCreateGenerationDraft.mock.calls[0][0]).not.toHaveProperty('projectId');
-        expect(res.json).toHaveBeenCalledWith(expect.objectContaining({success:true,data:draft}));
+        expect(res.status).toHaveBeenCalledWith(202);
+        expect(res.json).toHaveBeenCalledWith({success:true,data:expect.objectContaining({state:'RUNNING',framework,draftId:null})});
         expect(prismaMock.aiTest.create).not.toHaveBeenCalled();
     });
     it('propagates a scoped access denial without generation fallback',async()=>{
-        mockCreateGenerationDraft.mockRejectedValue(Object.assign(new Error('Snapshot not found'),{statusCode:404}));
+        prismaMock.projectSnapshot.findFirst.mockResolvedValue(null);
         const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
         await generateColdStartSystemTestsController({user:{id:'other'},params:{snapshotId:'snap-1'},body:{}},res);
-        expect(res.status).toHaveBeenCalledWith(404);expect(mockGenerateColdStart).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(404);expect(mockCreateGenerationDraft).not.toHaveBeenCalled();
     });
     it('requires authentication before draft access',async()=>{
         const res={status:jest.fn().mockReturnThis(),json:jest.fn()};

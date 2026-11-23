@@ -1,5 +1,5 @@
 import prisma from '../config/prisma.js';
-import { systemSetupPreflight, applySystemSetup, setupApplyRequest, saveSystemTestEnvironment, importSystemTestEnvironment } from '../services/systemSetupPreflight.service.js';
+import { systemSetupPreflight, applySystemSetup, setupApplyRequest, saveSystemTestEnvironment, importSystemTestEnvironment, deleteSystemTestEnvironment } from '../services/systemSetupPreflight.service.js';
 import { parseRequest, setupEnvironmentRequest, setupEnvironmentImportRequest } from '../validators/systemAssessment.validator.js';
 
 export const createSystemSetupControllers = ({db=prisma,dependencies={}}={}) => {
@@ -16,6 +16,7 @@ export const createSystemSetupControllers = ({db=prisma,dependencies={}}={}) => 
         inspect:handler(req=>systemSetupPreflight(args(req))),
         apply:handler(req=>applySystemSetup({...args(req),input:parseRequest(setupApplyRequest,req.body)})),
         environment:handler(req=>saveSystemTestEnvironment({...args(req),input:parseRequest(setupEnvironmentRequest,req.body)})),
+        deleteEnvironment:handler(req=>deleteSystemTestEnvironment({...args(req),input:req.body})),
         importEnvironment:handler(req=>importSystemTestEnvironment({...args(req),input:parseRequest(setupEnvironmentImportRequest,req.body)})),
     };
 };

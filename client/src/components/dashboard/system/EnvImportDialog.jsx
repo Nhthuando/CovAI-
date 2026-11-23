@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CircleAlert, FileUp, Plus, RefreshCw, X } from 'lucide-react';
+import { CircleAlert, FileUp, Lock, Plus, RefreshCw, X } from 'lucide-react';
 import { Button } from '../../ui/button.jsx';
 import { Textarea } from '../../ui/input.jsx';
 import { importSystemEnvironment } from '../../../services/systemTest.service.js';
@@ -97,20 +97,23 @@ export default function EnvImportDialog({ snapshotId, revision, onClose, onImpor
     <div className="space-y-4">
       <header className="flex items-center justify-between gap-3">
         <h2 id="env-import-heading" className="text-base font-semibold">Import from .env</h2>
-        <Button className="transition-colors duration-150 active:scale-[0.98] focus:ring-2 focus:ring-[var(--color-focus)]/40" variant="ghost" size="icon-sm" aria-label="Close import" onClick={onClose} disabled={busy}><X /></Button>
+        <Button className="transition-colors duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]/40" variant="ghost" size="icon-sm" aria-label="Close import" onClick={onClose} disabled={busy}><X /></Button>
       </header>
       <Textarea aria-label=".env contents" rows={10} spellCheck={false} autoComplete="off"
         className="font-mono tabular-nums text-xs" placeholder="STRIPE_SECRET_KEY=sk_test_..." value={content}
         disabled={busy || reading} onChange={event => updateContent(event.target.value)}
         onDragOver={event => event.preventDefault()}
         onDrop={event => { event.preventDefault(); readFile(event.dataTransfer.files[0]); }} />
+      <p className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+        <Lock size={13} className="shrink-0" aria-hidden="true" /> Values are kept in memory for this session and never saved to disk.
+      </p>
       <div className="flex items-center justify-between gap-2">
         <input ref={picker} type="file" accept=".env,.txt" hidden onChange={event => {
           readFile(event.target.files[0]);
           event.target.value = '';
         }} />
-        <Button className="transition-colors duration-150 active:scale-[0.98] focus:ring-2 focus:ring-[var(--color-focus)]/40" variant="outline" size="sm" disabled={busy || reading} onClick={() => picker.current.click()}><FileUp /> Choose file</Button>
-        <Button className="transition-colors duration-150 active:scale-[0.98] focus:ring-2 focus:ring-[var(--color-focus)]/40" variant="secondary" size="sm" loading={busy && !preview} disabled={busy || reading || !content.trim()} onClick={() => submit(true)}>Preview</Button>
+        <Button className="transition-colors duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]/40" variant="outline" size="sm" disabled={busy || reading} onClick={() => picker.current.click()}><FileUp /> Choose file</Button>
+        <Button className="transition-colors duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]/40" variant="secondary" size="sm" loading={busy && !preview} disabled={busy || reading || !content.trim()} onClick={() => submit(true)}>Preview</Button>
       </div>
       {preview && <div className="space-y-3 rounded-lg border border-[var(--color-border)] p-3">
         <PreviewGroup title="Rejected" items={preview.rejected ?? []} icon={CircleAlert} tone="rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20" />
@@ -124,8 +127,8 @@ export default function EnvImportDialog({ snapshotId, revision, onClose, onImpor
       </div>}
       {error && <p role="alert" className="rounded-md text-xs bg-rose-500/10 text-rose-400 border border-rose-500/20">{error}</p>}
       <footer className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-[var(--color-text-muted)]">Only variables this app uses are saved. Values are not shown again.</p>
-        {preview && <Button className="transition-colors duration-150 active:scale-[0.98] focus:ring-2 focus:ring-[var(--color-focus)]/40" size="sm" loading={busy} disabled={!recognized.length} onClick={() => submit(false)}>
+        <p className="text-xs text-[var(--color-text-muted)]">Only keys this app uses are kept.</p>
+        {preview && <Button className="transition-colors duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]/40" size="sm" loading={busy} disabled={!recognized.length} onClick={() => submit(false)}>
           Import <span className="font-mono tabular-nums">{recognized.length}</span> {recognized.length === 1 ? 'key' : 'keys'}
         </Button>}
       </footer>

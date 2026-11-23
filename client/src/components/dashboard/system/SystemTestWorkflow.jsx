@@ -124,6 +124,7 @@ export default function SystemTestWorkflow({
   onReadyChange,
   onOpenFile,
   onGenerate,
+  generationRunning = false,
   onChanged,
   onRunScenario,
   onRunSelected,
@@ -132,6 +133,7 @@ export default function SystemTestWorkflow({
   const [loading, setLoading] = useState(true);
   const [features, setFeatures] = useState([]);
   const [selectedIds, setSelectedIds] = useState(null);
+  const knownIdsRef = useRef(new Set());
   const [expandedId, setExpandedId] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [editingExpected, setEditingExpected] = useState(null);
@@ -158,11 +160,18 @@ export default function SystemTestWorkflow({
         ]);
         const rows = nextCatalog.scenarios || [];
         setCatalog(rows);
-        const selectableRows = rows.filter(row => row.filePath);
+        // Mocked (frontend-only) tests cannot run on the real stack, so they are never selectable.
+        const selectableRows = rows.filter(row => row.filePath && row.fullStackCompatible !== false);
+        const known = knownIdsRef.current;
+        knownIdsRef.current = new Set(rows.map(row => row.id));
         setSelectedIds(previous =>
           previous === null
             ? selectableRows.map(row => row.id)
-            : previous.filter(id => selectableRows.some(row => row.id === id))
+            : [
+                ...previous.filter(id => selectableRows.some(row => row.id === id)),
+                // Newly applied scenarios start selected so "Run tests" includes them.
+                ...selectableRows.filter(row => !known.has(row.id) && !previous.includes(row.id)).map(row => row.id),
+              ]
         );
 
         const groups = nextFeatures.features || [];
@@ -182,7 +191,7 @@ export default function SystemTestWorkflow({
     return () => { active = false; };
   }, [refresh, refreshKey]);
 
-  const selectable = useMemo(() => catalog.filter(row => row.filePath), [catalog]);
+  const selectable = useMemo(() => catalog.filter(row => row.filePath && row.fullStackCompatible !== false), [catalog]);
   const selectedRows = useMemo(() => selectable.filter(row => selectedIds?.includes(row.id)), [selectable, selectedIds]);
   const selectedKey = selectedRows.map(row => row.id).join(',');
   const catalogKey = catalog.map(row => `${row.id}:${row.reviewState}:${row.testHash}:${row.scenarioHash}`).join('|');
@@ -343,17 +352,24 @@ export default function SystemTestWorkflow({
             </div>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || generationRunning}
               onClick={() => onGenerate?.()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 cursor-pointer disabled:opacity-50"
             >
-              <FileCode2 size={13} /> Generate Scenarios
+              <FileCode2 size={13} /> {generationRunning ? "Generating…" : "Generate Scenarios"}
             </button>
           </div>
         </div>
       )}
 
-      {incompatibleFiles.length > 0 && <div role="status" className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] border-l-2 border-l-amber-500/70 bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-secondary)]"><p>{incompatibleFiles.length} test file(s) need Full Stack regeneration. Frontend mocks cannot run against the real backend.</p><button type="button" onClick={onGenerate} className="font-medium text-[var(--color-text)] underline cursor-pointer">Generate Full Stack tests</button></div>}
+      {incompatibleFiles.length > 0 && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] border-l-2 border-l-amber-500/70 bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-secondary)]">
+          <p>{incompatibleFiles.length} test {incompatibleFiles.length === 1 ? "file uses" : "files use"} mocks and can't run on the real stack.</p>
+          <button type="button" onClick={onGenerate} disabled={generationRunning} className="font-medium text-[var(--color-text)] underline cursor-pointer disabled:opacity-50">
+            {generationRunning ? "Generating…" : "Generate Full Stack tests"}
+          </button>
+        </div>
+      )}
       {/* Catalog Table Header & Modern Filter Bar */}
       <div className="px-4 py-3.5 border-b border-[var(--color-border)] space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -384,11 +400,11 @@ export default function SystemTestWorkflow({
             </button>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || generationRunning}
               onClick={() => onGenerate?.()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 cursor-pointer disabled:opacity-50"
             >
-              <FileCode2 size={13} /> Generate with AI
+              <FileCode2 size={13} /> {generationRunning ? "Generating…" : "Generate with AI"}
             </button>
           </div>
         </div>
@@ -536,6 +552,7 @@ export default function SystemTestWorkflow({
           <button
             type="button"
             disabled={!selectedRows.length || !selectionReady || busy}
+            title={incompatibleSelected > 0 ? "Some selected tests use mocks. Generate Full Stack tests first." : undefined}
             onClick={() => {
               if (onRunSelected) onRunSelected(selectedRows);
               else onRunScenario?.(null, selectedRows);
@@ -547,8 +564,6 @@ export default function SystemTestWorkflow({
           </button>
         </div>
       </div>
-
-      {incompatibleSelected > 0 && <p role="status" className="border-b border-[var(--color-border)] bg-amber-500/[0.07] px-4 py-2.5 text-xs text-[var(--color-text-secondary)]">{incompatibleSelected} selected scenario(s) need Full Stack updates. You can review them, but Run stays disabled. Use <button type="button" onClick={onGenerate} className="font-medium text-[var(--color-text)] underline cursor-pointer">Generate Full Stack tests</button> to replace mocked tests.</p>}
 
       {pendingVisibleCount > 0 && !confirmableCount && <p role="status" className="border-b border-[var(--color-border)] px-4 py-2.5 text-xs text-[var(--color-text-secondary)]">Add a specific Expected outcome before confirming these scenarios.</p>}
 
@@ -684,7 +699,8 @@ function ModernScenarioRow({
               type="checkbox"
               aria-label={`Select ${cleanTitle}`}
               checked={selected}
-              disabled={!row.filePath || busy}
+              disabled={!row.filePath || row.fullStackCompatible === false || busy}
+              title={row.fullStackCompatible === false ? "Uses mocks — can't run on the real stack" : undefined}
               onChange={event => onSelect(event.target.checked)}
               className="mt-1 accent-[var(--color-primary)] h-4 w-4 rounded cursor-pointer"
             />
@@ -703,7 +719,7 @@ function ModernScenarioRow({
                 >
                   {cleanTitle}
                 </button>
-                {row.fullStackCompatible === false && <span className="text-[10px] font-medium text-amber-700 dark:text-amber-300">Full Stack update required</span>}
+                {row.fullStackCompatible === false && <span className="text-[10px] font-medium text-amber-700 dark:text-amber-300">Uses mocks</span>}
               </div>
               {row.filePath && (
                 <div className="mt-1 flex items-center gap-1 text-[11px] text-[var(--color-text-secondary)]/80 font-mono">
