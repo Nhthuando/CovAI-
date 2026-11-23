@@ -1,58 +1,120 @@
-import { authValid, loginValid } from "../validators/auth.validation.js";
+import {
+  authValid,
+  loginValid,
+  confirmGithubLinkValid,
+  cancelGithubLinkValid,
+} from "../validators/auth.validation.js";
 import {
   register as registerService,
   login as loginService,
-  issueSessionTokensForUser,
 } from "../services/auth.service.js";
+import {
+  GithubNetworkError,
+  isTransientGithubNetworkError,
+  githubFetch,
+  exchangeGithubCodeForToken,
+  createGithubOAuthState,
+  verifyGithubOAuthState,
+  handleGithubLoginCallback,
+  confirmGithubAccountLink,
+  cancelGithubAccountLink,
+  connectGithubForUser,
+} from "../services/githubOAuth.service.js";
 import prisma from "../config/prisma.js";
-import crypto from "crypto";
-import https from "node:https";
-import { encrypt, decrypt } from "../utils/crypto.js";
+import { decrypt } from "../utils/crypto.js";
+import { ServiceError } from "../utils/serviceError.js";
+import logger from "../utils/logger.js";
+import { logAuthSecurityEvent } from "../utils/authSecurityLogger.js";
+import {
+  AUTH_ERROR_CODES,
+  AUTH_LIMITS,
+  AUTH_MESSAGES,
+} from "../../../shared/authValidation.js";
+
+export {
+  isTransientGithubNetworkError,
+  githubFetch,
+  exchangeGithubCodeForToken,
+};
 
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const OAUTH_STATE_COOKIE_NAME = "covai_oauth_state";
 
-export const getRefreshCookieOptions = (req) => {
-  const isSecure = Boolean(
+function isSecureCookieRequest(req) {
+  return Boolean(
     req?.secure ||
       req?.headers?.["x-forwarded-proto"] === "https" ||
       (/^https:/i.test(process.env.CLIENT_URL || "") &&
         process.env.NODE_ENV === "production"),
   );
-  return {
-    httpOnly: true,
-    secure: isSecure,
-    sameSite: "lax",
-    path: "/",
-    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
-  };
-};
+}
+
+export const getRefreshCookieOptions = (req) => ({
+  httpOnly: true,
+  secure: isSecureCookieRequest(req),
+  sameSite: "lax",
+  path: "/",
+  maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+});
 
 export const setRefreshTokenCookie = (req, res, refreshToken) => {
   res.cookie("refreshToken", refreshToken, getRefreshCookieOptions(req));
 };
 
+function getOAuthStateCookieOptions(req, maxAge = AUTH_LIMITS.OAUTH_STATE_TTL_MS) {
+  return {
+    httpOnly: true,
+    secure: isSecureCookieRequest(req),
+    sameSite: "lax",
+    path: "/",
+    maxAge,
+  };
+}
+
+function clearOAuthStateCookie(req, res) {
+  const { maxAge: _maxAge, ...clearOpts } = getOAuthStateCookieOptions(req);
+  res.clearCookie(OAUTH_STATE_COOKIE_NAME, clearOpts);
+}
+
+function extractClientIp(req) {
+  const forwarded = req?.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req?.ip || req?.socket?.remoteAddress || null;
+}
+
 export const register = async (req, res) => {
   try {
     const result = authValid.safeParse(req.body);
-    if (!result.success)
-      return res
-        .status(400)
-        .json({ error: result.error.flatten().fieldErrors });
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERROR_CODES.VALIDATION_ERROR,
+        error: result.error.flatten().fieldErrors,
+      });
+    }
 
     const { name, email, password } = result.data;
     const response = await registerService(name, email, password);
     setRefreshTokenCookie(req, res, response.refreshToken);
     return res.status(201).json({
+      success: true,
       message: response.message,
       accessToken: response.accessToken,
+      userId: response.userId,
       userName: response.userName,
       userEmail: response.userEmail,
     });
   } catch (error) {
-    console.log(error);
-    if (error.message === "Account already exists!") {
-      return res.status(400).json({ message: error.message });
+    if (error instanceof ServiceError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+      });
     }
+    logger.error("[register] Unexpected error:", error?.message || "Unknown error");
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
@@ -60,35 +122,72 @@ export const register = async (req, res) => {
 export const login = async (req, res) => {
   try {
     const result = loginValid.safeParse(req.body);
-    if (!result.success)
-      return res
-        .status(400)
-        .json({ error: result.error.flatten().fieldErrors });
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERROR_CODES.VALIDATION_ERROR,
+        error: result.error.flatten().fieldErrors,
+      });
+    }
 
     const { email, password } = result.data;
-    const response = await loginService(email, password);
+    const response = await loginService(email, password, {
+      ip: extractClientIp(req),
+    });
     setRefreshTokenCookie(req, res, response.refreshToken);
     return res.status(200).json({
+      success: true,
       message: response.message,
       accessToken: response.accessToken,
+      userId: response.userId,
       name: response.name,
       email: response.email,
     });
   } catch (error) {
-    console.log(error);
-    if (
-      error.message === "Account already exists!" ||
-      error.message === "Incorrect email or password!"
-    ) {
-      return res.status(400).json({ message: error.message });
+    if (error instanceof ServiceError) {
+      if (error.statusCode === 423 && error.details?.retryAfterSeconds) {
+        res.set("Retry-After", String(error.details.retryAfterSeconds));
+      }
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+        ...(error.details || {}),
+      });
     }
+    logger.error("[login] Unexpected error:", error?.message || "Unknown error");
+    return res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
+export const getGithubOAuthUrlController = (req, res) => {
+  try {
+    const mode = req.query?.mode === "connect" ? "connect" : "login";
+    const { url, cookieValue, maxAgeMs } = createGithubOAuthState(mode);
+    res.cookie(
+      OAUTH_STATE_COOKIE_NAME,
+      cookieValue,
+      getOAuthStateCookieOptions(req, maxAgeMs),
+    );
+    return res.status(200).json({ success: true, url });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+      });
+    }
+    logger.error(
+      "[getGithubOAuthUrl] Unexpected error:",
+      error?.message || "Unknown error",
+    );
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
 export const getGithubRepositories = async (req, res) => {
   try {
-    // Get user from DB to retrieve stored token (from previous OAuth flow)
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
       select: { githubAccessTokenEnc: true },
@@ -100,16 +199,13 @@ export const getGithubRepositories = async (req, res) => {
       });
     }
 
-    // Decrypt encrypted token
     let accessToken;
     try {
       accessToken = decrypt(user.githubAccessTokenEnc);
     } catch {
-      // Fallback: legacy unencrypted token
       accessToken = user.githubAccessTokenEnc;
     }
 
-    // Use decrypted token to fetch repos from GitHub API
     let repos = [];
     let page = 1;
     const perPage = 15;
@@ -119,7 +215,6 @@ export const getGithubRepositories = async (req, res) => {
         `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=created&direction=desc`,
         {
           headers: {
-            Authorization: `token ${accessToken}`,
             Authorization: `Bearer ${accessToken}`,
             Accept: "application/vnd.github.v3+json",
             "User-Agent": "CovAI-App",
@@ -139,20 +234,16 @@ export const getGithubRepositories = async (req, res) => {
       page++;
     }
 
-    // Enrich repositories with all languages used (via GitHub languages API)
-    // As long as the project uses JavaScript or TypeScript (or web frontend), it is supported.
     const enrichedRepos = await Promise.all(
       repos.map(async (repo) => {
         let languages = [];
         let hasJsOrTs = false;
         const primLang = repo.language || "";
 
-        // 1. If GitHub already flags primary language as JS or TS
         if (primLang === "JavaScript" || primLang === "TypeScript") {
           hasJsOrTs = true;
           languages = [primLang];
         } else if (repo.languages_url) {
-          // 2. If GitHub primary language is HTML, Python, etc., check languages breakdown
           try {
             const langRes = await fetch(repo.languages_url, {
               headers: {
@@ -171,14 +262,13 @@ export const getGithubRepositories = async (req, res) => {
               );
             }
           } catch (err) {
-            console.warn(
+            logger.warn(
               `[getGithubRepositories] Could not fetch languages for ${repo.name}:`,
               err.message,
             );
           }
         }
 
-        // 3. Web projects with primary language HTML/CSS/Vue commonly contain JavaScript
         if (
           !hasJsOrTs &&
           (!primLang || ["HTML", "CSS", "Vue"].includes(primLang))
@@ -196,7 +286,7 @@ export const getGithubRepositories = async (req, res) => {
 
     return res.status(200).json(enrichedRepos);
   } catch (error) {
-    console.error(error);
+    logger.error("[getGithubRepositories] Error:", error?.message || error);
     return res.status(500).json({ message: error.message });
   }
 };
@@ -212,183 +302,45 @@ export const githubOAuthAccess = async (req, res) => {
     }
 
     if (!allowAccess) {
-      // If user declined, clear token
       await prisma.user.update({
         where: { id: req.user.id },
         data: { githubAccessTokenEnc: null },
+        select: { id: true },
       });
       return res
         .status(200)
         .json({ message: "You declined repository access permission!" });
     }
 
-    // If approved, keep token (assumes saved during OAuth)
     return res
       .status(200)
       .json({ message: "Repository access granted successfully!" });
   } catch (error) {
-    console.error(error);
+    logger.error("[githubOAuthAccess] Error:", error?.message || error);
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
-const GITHUB_USER_AGENT = "CovAI-App";
-const GITHUB_FETCH_TIMEOUT_MS = 15000;
-const GITHUB_FETCH_MAX_ATTEMPTS = 3;
-const TRANSIENT_NETWORK_CODES = new Set([
-  "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_HEADERS_TIMEOUT",
-  "UND_ERR_BODY_TIMEOUT",
-  "ETIMEDOUT",
-  "ECONNRESET",
-  "ECONNREFUSED",
-  "EAI_AGAIN",
-  "ENETUNREACH",
-  "EHOSTUNREACH",
-]);
-
-class GithubNetworkError extends Error {
-  constructor(message, cause) {
-    super(message);
-    this.name = "GithubNetworkError";
-    this.statusCode = 504;
-    this.cause = cause;
-  }
-}
-
-export function isTransientGithubNetworkError(err) {
-  if (!err) return false;
-  const code = err?.code || err?.cause?.code;
-  if (code && TRANSIENT_NETWORK_CODES.has(code)) return true;
-  if (err?.name === "AbortError" || err?.name === "TimeoutError") return true;
-  const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("fetch failed") || msg.includes("timed out") || msg.includes("timeout");
-}
-
-function httpsJsonRequest(url, options = {}, timeoutMs = GITHUB_FETCH_TIMEOUT_MS) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const req = https.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port || 443,
-        path: `${parsed.pathname}${parsed.search}`,
-        method: options.method || "GET",
-        headers: options.headers || {},
-        family: 4,
-        timeout: timeoutMs,
-      },
-      (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          const status = res.statusCode || 500;
-          resolve({
-            ok: status >= 200 && status < 300,
-            status,
-            json: async () => (raw ? JSON.parse(raw) : {}),
-          });
-        });
-      },
-    );
-    req.on("timeout", () => {
-      const err = new Error(`GitHub HTTPS request timed out after ${timeoutMs}ms`);
-      err.code = "ETIMEDOUT";
-      req.destroy(err);
-    });
-    req.on("error", reject);
-    if (options.body) {
-      req.write(options.body);
-    }
-    req.end();
-  });
-}
-
-export async function githubFetch(url, options = {}, deps = {}) {
-  const fetchImpl = deps.fetchImpl || fetch;
-  const httpsImpl = deps.httpsImpl || httpsJsonRequest;
-  const maxAttempts = deps.maxAttempts ?? GITHUB_FETCH_MAX_ATTEMPTS;
-  const retryDelayMs = deps.retryDelayMs ?? 500;
-  const timeoutMs = deps.timeoutMs ?? GITHUB_FETCH_TIMEOUT_MS;
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        return await fetchImpl(url, { ...options, signal: controller.signal });
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch (fetchErr) {
-      lastError = fetchErr;
-      if (!isTransientGithubNetworkError(fetchErr)) {
-        throw fetchErr;
-      }
-      // Fallback to explicit IPv4 node:https in case undici/IPv6 happy-eyeballs stalled
-      try {
-        return await httpsImpl(url, options, timeoutMs);
-      } catch (httpsErr) {
-        lastError = httpsErr;
-        if (!isTransientGithubNetworkError(httpsErr) || attempt === maxAttempts) {
-          break;
-        }
-      }
-      await new Promise((r) => setTimeout(r, retryDelayMs * attempt));
-    }
-  }
-
-  throw new GithubNetworkError(
-    "Unable to reach GitHub right now (connection timed out). Please try again in a moment.",
-    lastError,
-  );
-}
-
-function encryptGithubToken(accessToken) {
-  try {
-    return encrypt(accessToken);
-  } catch {
-    // Fallback if ENCRYPTION_KEY is not configured
-    return accessToken;
-  }
-}
-
-export async function exchangeGithubCodeForToken(code, deps = {}) {
-  const tokenResponse = await githubFetch(
-    "https://github.com/login/oauth/access_token",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "User-Agent": GITHUB_USER_AGENT,
-      },
-      body: JSON.stringify({
-        client_id: process.env.GITHUB_CLIENT_ID,
-        client_secret: process.env.GITHUB_CLIENT_SECRET,
-        code,
-      }),
-    },
-    deps,
-  );
-  const tokenData = await tokenResponse.json();
-  if (!tokenData?.access_token) {
-    console.error("GitHub access token exchange failed:", tokenData);
-    return {
-      accessToken: null,
-      errorMessage:
-        tokenData?.error_description ||
-        tokenData?.error ||
-        "Unable to retrieve access token!",
-    };
-  }
-  return { accessToken: tokenData.access_token, errorMessage: null };
-}
-
 export const connectGithub = async (req, res) => {
+  const ip = extractClientIp(req);
+  const cookieState = req.cookies?.[OAUTH_STATE_COOKIE_NAME];
+  clearOAuthStateCookie(req, res);
+
   try {
+    const state = req.body?.state || req.query?.state;
+    if (!verifyGithubOAuthState(state, cookieState, "connect")) {
+      logAuthSecurityEvent("OAUTH_STATE_INVALID", {
+        userId: req.user?.id,
+        ip,
+        mode: "connect",
+      });
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERROR_CODES.INVALID_OAUTH_STATE,
+        message: AUTH_MESSAGES.INVALID_OAUTH_STATE,
+      });
+    }
+
     const code = req.body?.code || req.query?.code;
     if (!code) {
       return res
@@ -396,169 +348,182 @@ export const connectGithub = async (req, res) => {
         .json({ message: "Code parameter not found from GitHub!" });
     }
 
-    const { accessToken, errorMessage } = await exchangeGithubCodeForToken(code);
-    if (!accessToken) {
-      return res.status(400).json({ message: errorMessage });
-    }
-
-    const userResponse = await githubFetch("https://api.github.com/user", {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": GITHUB_USER_AGENT,
-      },
+    const data = await connectGithubForUser({
+      userId: req.user.id,
+      code,
     });
-    const userData = await userResponse.json();
-
-    if (!userResponse.ok || !userData?.id) {
-      console.error("GitHub user profile fetch failed:", userData);
-      return res
-        .status(400)
-        .json({ message: "Unable to retrieve GitHub user profile!" });
-    }
-
-    const githubUserId = String(userData.id);
-    const existingOwner = await prisma.user.findUnique({
-      where: { githubUserId },
-      select: { id: true },
-    });
-
-    if (existingOwner && existingOwner.id !== req.user.id) {
-      return res.status(409).json({
-        message: "This GitHub account is already linked to another CovAI account.",
+    return res.status(200).json(data);
+  } catch (error) {
+    if (error instanceof GithubNetworkError || error instanceof ServiceError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
       });
     }
-
-    const encryptedToken = encryptGithubToken(accessToken);
-    const updatedUser = await prisma.user.update({
-      where: { id: req.user.id },
-      data: {
-        githubUserId,
-        githubAccessTokenEnc: encryptedToken,
-      },
-      select: { id: true, githubUserId: true },
-    });
-
-    return res.status(200).json({
-      message: "GitHub account connected successfully!",
-      githubUserId: updatedUser.githubUserId,
-      githubLogin: userData.login || null,
-    });
-  } catch (error) {
-    console.error("[connectGithub]", error);
-    if (error instanceof GithubNetworkError) {
-      return res.status(error.statusCode).json({ message: error.message });
-    }
+    logger.error("[connectGithub] Unexpected error:", error?.message || error);
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
 export const oAuthGithub = async (req, res) => {
-  try {
-    const { code, error } = req.query;
+  const ip = extractClientIp(req);
+  const cookieState = req.cookies?.[OAUTH_STATE_COOKIE_NAME];
+  clearOAuthStateCookie(req, res);
 
-    if (error === "access_denied") {
-      return res.status(200).json({
+  try {
+    const { code, error, error_description: errorDescription, state } = req.query;
+
+    if (error) {
+      if (error === "access_denied") {
+        logAuthSecurityEvent("OAUTH_ACCESS_DENIED", { ip, mode: "login" });
+        return res.status(400).json({
+          success: false,
+          code: AUTH_ERROR_CODES.OAUTH_ACCESS_DENIED,
+          message: AUTH_MESSAGES.OAUTH_ACCESS_DENIED,
+        });
+      }
+      logAuthSecurityEvent("OAUTH_PROVIDER_ERROR", {
+        ip,
+        mode: "login",
+        providerError: String(error),
+      });
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERROR_CODES.OAUTH_PROVIDER_ERROR,
         message:
-          "You declined private repository access; system can only access public repositories!",
+          errorDescription || "GitHub authentication failed. Please try again.",
       });
     }
 
-    if (!code)
+    if (!verifyGithubOAuthState(state, cookieState, "login")) {
+      logAuthSecurityEvent("OAUTH_STATE_INVALID", { ip, mode: "login" });
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERROR_CODES.INVALID_OAUTH_STATE,
+        message: AUTH_MESSAGES.INVALID_OAUTH_STATE,
+      });
+    }
+
+    if (!code) {
       return res
         .status(400)
         .json({ message: "Code parameter not found from GitHub!" });
-
-    const { accessToken, errorMessage } = await exchangeGithubCodeForToken(code);
-    if (!accessToken) {
-      return res.status(400).json({ message: errorMessage });
     }
 
-    const [userDetail, emailResponse] = await Promise.all([
-      githubFetch("https://api.github.com/user", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/vnd.github.v3+json",
-          "User-Agent": GITHUB_USER_AGENT,
-        },
-      }),
-      githubFetch("https://api.github.com/user/emails", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/vnd.github.v3+json",
-          "User-Agent": GITHUB_USER_AGENT,
-        },
-      }),
-    ]);
-
-    const userData = await userDetail.json();
-    const emails = await emailResponse.json();
-
-    const primaryEmail = Array.isArray(emails)
-      ? emails.find((e) => e.primary)?.email ||
-      emails[0]?.email ||
-      userData.email
-      : userData.email;
-
-    if (!primaryEmail) {
-      console.error(
-        "Could not obtain primary email. GitHub user:",
-        userData,
-        "emails:",
-        emails,
-      );
-      return res
-        .status(400)
-        .json({ message: "Unable to retrieve email from GitHub!" });
-    }
-
-    const githubUserId = String(userData.id);
-    const encryptedToken = encryptGithubToken(accessToken);
-
-    let user = await prisma.user.findUnique({
-      where: { githubUserId },
+    const result = await handleGithubLoginCallback({
+      code: String(code),
+      ip,
     });
-    if (!user) {
-      user = await prisma.user.findUnique({
-        where: { email: primaryEmail },
+
+    if (result.status === "LINK_REQUIRED") {
+      return res.status(200).json({
+        success: true,
+        ...result,
       });
     }
 
-    if (user) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          githubUserId,
-          name: user.name || userData.login,
-          githubAccessTokenEnc: encryptedToken,
-        },
-      });
-    } else {
-      user = await prisma.user.create({
-        data: {
-          githubUserId,
-          name: userData.login,
-          email: primaryEmail,
-          githubAccessTokenEnc: encryptedToken,
-        },
-      });
-    }
-    const { accessToken: sessionAccessToken, refreshToken } =
-      await issueSessionTokensForUser(user);
-    setRefreshTokenCookie(req, res, refreshToken);
+    setRefreshTokenCookie(req, res, result.refreshToken);
     return res.status(200).json({
+      success: true,
+      status: "AUTHENTICATED",
       message: "GitHub login successful!",
-      token: sessionAccessToken,
-      accessToken: sessionAccessToken,
-      userId: user.id,
-      name: user.name,
-      email: user.email,
+      token: result.accessToken,
+      accessToken: result.accessToken,
+      userId: result.user.id,
+      name: result.user.name,
+      email: result.user.email,
+      avatarUrl: result.user.avatarUrl,
     });
   } catch (error) {
-    console.error("[oAuthGithub]", error);
-    if (error instanceof GithubNetworkError) {
-      return res.status(error.statusCode).json({ message: error.message });
+    if (error instanceof GithubNetworkError || error instanceof ServiceError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+      });
     }
+    logger.error("[oAuthGithub] Unexpected error:", error?.message || error);
+    return res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
+export const confirmGithubLink = async (req, res) => {
+  try {
+    const parsed = confirmGithubLinkValid.safeParse(req.body);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten().fieldErrors;
+      const firstMessage =
+        flat.linkToken?.[0] || flat.password?.[0] || "Invalid link confirmation payload.";
+      const code = flat.linkToken
+        ? AUTH_ERROR_CODES.INVALID_LINK_TOKEN
+        : AUTH_ERROR_CODES.VALIDATION_ERROR;
+      return res.status(400).json({
+        success: false,
+        code,
+        message: firstMessage,
+        error: flat,
+      });
+    }
+
+    const result = await confirmGithubAccountLink({
+      linkToken: parsed.data.linkToken,
+      password: parsed.data.password,
+      ip: extractClientIp(req),
+    });
+
+    setRefreshTokenCookie(req, res, result.refreshToken);
+    return res.status(200).json({
+      success: true,
+      status: "AUTHENTICATED",
+      message: "GitHub account linked and signed in successfully!",
+      token: result.accessToken,
+      accessToken: result.accessToken,
+      userId: result.user.id,
+      name: result.user.name,
+      email: result.user.email,
+      avatarUrl: result.user.avatarUrl,
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      if (error.statusCode === 423 && error.details?.retryAfterSeconds) {
+        res.set("Retry-After", String(error.details.retryAfterSeconds));
+      }
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+        ...(error.details || {}),
+      });
+    }
+    logger.error(
+      "[confirmGithubLink] Unexpected error:",
+      error?.message || "Unknown error",
+    );
+    return res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
+export const cancelGithubLink = async (req, res) => {
+  try {
+    const parsed = cancelGithubLinkValid.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERROR_CODES.INVALID_LINK_TOKEN,
+        message: AUTH_MESSAGES.INVALID_LINK_TOKEN,
+      });
+    }
+    const result = await cancelGithubAccountLink({
+      linkToken: parsed.data.linkToken,
+      ip: extractClientIp(req),
+    });
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    logger.error(
+      "[cancelGithubLink] Unexpected error:",
+      error?.message || "Unknown error",
+    );
     return res.status(500).json({ message: "Internal server error!" });
   }
 };

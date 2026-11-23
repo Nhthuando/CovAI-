@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Mail,
   Lock,
@@ -9,14 +9,21 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  ShieldAlert,
 } from "lucide-react";
 import {
   loginApi,
   registerApi,
-  getGithubOAuthUrl,
+  fetchGithubAuthorizeUrlApi,
 } from "../../services/auth.service";
 import { consumeAuthReturn } from "../../lib/authReturn";
 import { queryClient } from "../../lib/queryClient";
+import {
+  EMAIL_REGEX,
+  AUTH_MESSAGES,
+  AUTH_ERROR_CODES,
+  formatLockoutMessage,
+} from "../../../../shared/authValidation.js";
 
 function GithubIcon({ size = 16, className = "" }) {
   return (
@@ -32,10 +39,15 @@ function GithubIcon({ size = 16, className = "" }) {
   );
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export default function AuthForm({ mode, onToggleMode, setMode }) {
+export default function AuthForm({
+  mode,
+  onToggleMode,
+  setMode,
+  onForgotPassword,
+}) {
   const isLogin = mode === "login";
+  const navigate = useNavigate();
+  const submittingRef = useRef(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -47,38 +59,42 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [status, setStatus] = useState("idle");
-  const [serverMessage, setServerMessage] = useState("");
+  const [githubLoading, setGithubLoading] = useState(false);
+  const [serverError, setServerError] = useState(null);
 
   const update = (field) => (e) => {
     setFormData((d) => ({ ...d, [field]: e.target.value }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }));
-    setServerMessage("");
+    if (serverError) setServerError(null);
   };
 
   function validate() {
     const errs = {};
+    const trimmedEmail = formData.email.trim();
     if (!isLogin && !formData.name.trim()) {
-      errs.name = "Full name is required";
+      errs.name = AUTH_MESSAGES.FULL_NAME_REQUIRED;
     }
-    if (!formData.email.trim()) {
-      errs.email = "Email address is required";
-    } else if (!EMAIL_RE.test(formData.email)) {
-      errs.email = "Please enter a valid email address";
+    if (!trimmedEmail) {
+      errs.email = AUTH_MESSAGES.EMAIL_REQUIRED;
+    } else if (!EMAIL_REGEX.test(trimmedEmail)) {
+      errs.email = AUTH_MESSAGES.EMAIL_INVALID;
     }
     if (!formData.password) {
-      errs.password = "Password is required";
-    } else if (formData.password.length < 8) {
-      errs.password = "Password must be at least 8 characters";
+      errs.password = AUTH_MESSAGES.PASSWORD_REQUIRED;
+    } else if (!isLogin && formData.password.length < 8) {
+      errs.password = AUTH_MESSAGES.PASSWORD_MIN_LENGTH;
     }
     if (!isLogin && formData.confirm !== formData.password) {
-      errs.confirm = "Passwords do not match";
+      errs.confirm = AUTH_MESSAGES.PASSWORDS_DO_NOT_MATCH;
     }
     return errs;
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setServerMessage("");
+    if (submittingRef.current || status === "loading") return;
+
+    setServerError(null);
 
     const errs = validate();
     if (Object.keys(errs).length) {
@@ -87,6 +103,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
       return;
     }
 
+    submittingRef.current = true;
     setErrors({});
     setStatus("loading");
 
@@ -94,50 +111,85 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
       await queryClient.cancelQueries();
       queryClient.clear();
       const normalizedEmail = formData.email.trim().toLowerCase();
+
       if (isLogin) {
         const data = await loginApi({
           email: normalizedEmail,
           password: formData.password,
         });
+        const userPayload = {
+          id: data.userId || null,
+          name: data.name || "",
+          email: data.email || normalizedEmail,
+          token: data.accessToken,
+        };
         localStorage.setItem("token", data.accessToken);
-        localStorage.setItem("userName", data.name);
-        localStorage.setItem("userEmail", data.email);
+        localStorage.setItem("user", JSON.stringify(userPayload));
+        localStorage.setItem("userName", data.name || "");
+        localStorage.setItem("userEmail", data.email || normalizedEmail);
       } else {
         const data = await registerApi({
           name: formData.name.trim(),
           email: normalizedEmail,
           password: formData.password,
         });
+        const userPayload = {
+          id: data.userId || null,
+          name: data.userName || "",
+          email: data.userEmail || normalizedEmail,
+          token: data.accessToken,
+        };
         localStorage.setItem("token", data.accessToken);
-        localStorage.setItem("userName", data.userName);
-        localStorage.setItem("userEmail", data.userEmail);
+        localStorage.setItem("user", JSON.stringify(userPayload));
+        localStorage.setItem("userName", data.userName || "");
+        localStorage.setItem("userEmail", data.userEmail || normalizedEmail);
       }
-      window.dispatchEvent(new Event("covai:auth-change"));
+
+      const targetPath = consumeAuthReturn();
       setStatus("success");
-      setTimeout(() => {
-        window.location.href = consumeAuthReturn();
-      }, 1000);
+      navigate(targetPath, { replace: true });
+      window.dispatchEvent(new Event("covai:auth-change"));
     } catch (err) {
+      submittingRef.current = false;
       setStatus("error");
-      if (err.type === "field" && err.errors) {
+      if (err?.type === "field" && err.errors) {
         setErrors(err.errors);
       } else {
-        setServerMessage(
-          err.message || "Authentication failed. Please verify credentials."
-        );
+        const msg =
+          err?.code === AUTH_ERROR_CODES.ACCOUNT_LOCKED && err?.retryAfterSeconds
+            ? formatLockoutMessage(err.retryAfterSeconds)
+            : err?.message || "Authentication failed. Please verify credentials.";
+        setServerError({
+          message: msg,
+          code: err?.code || null,
+          status: err?.status || null,
+          lockedUntil: err?.lockedUntil || null,
+          retryAfterSeconds: err?.retryAfterSeconds || null,
+        });
       }
     }
   }
 
-  const handleGithubOAuth = () => {
-    const oauthUrl = getGithubOAuthUrl("login");
-    if (!oauthUrl) {
-      setServerMessage("GitHub OAuth is not configured.");
-      return;
+  const handleGithubOAuth = async () => {
+    if (githubLoading || status === "loading") return;
+    setServerError(null);
+    setGithubLoading(true);
+    try {
+      const oauthUrl = await fetchGithubAuthorizeUrlApi("login");
+      sessionStorage.setItem("covai.githubOAuthMode", "login");
+      window.location.assign(oauthUrl);
+    } catch (err) {
+      setGithubLoading(false);
+      setServerError({
+        message: err?.message || "GitHub OAuth is not configured.",
+        code: err?.code || null,
+      });
     }
-    sessionStorage.setItem("covai.githubOAuthMode", "login");
-    window.location.href = oauthUrl;
   };
+
+  const isLockedError = serverError?.code === AUTH_ERROR_CODES.ACCOUNT_LOCKED;
+  const isOauthOnlyError =
+    serverError?.code === AUTH_ERROR_CODES.OAUTH_ONLY_ACCOUNT;
 
   return (
     <div className="w-full">
@@ -169,11 +221,18 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
           <button
             type="button"
             id="auth-github-btn"
+            disabled={githubLoading || status === "loading"}
             onClick={handleGithubOAuth}
-            className="w-full h-10 px-4 rounded-lg lp-btn-secondary text-xs sm:text-sm font-medium flex items-center justify-center gap-2.5 cursor-pointer mb-4"
+            className="w-full h-10 px-4 rounded-lg lp-btn-secondary text-xs sm:text-sm font-medium flex items-center justify-center gap-2.5 cursor-pointer mb-4 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <GithubIcon size={16} />
-            <span>Continue with GitHub</span>
+            {githubLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <GithubIcon size={16} />
+            )}
+            <span>
+              {githubLoading ? "Redirecting to GitHub..." : "Continue with GitHub"}
+            </span>
           </button>
 
           <div className="relative flex items-center justify-center my-5">
@@ -183,10 +242,58 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             </span>
           </div>
 
-          {serverMessage && (
-            <div className="p-3 rounded-lg bg-[var(--lp-fault-bg)] border border-[var(--lp-fault-border)] flex items-start gap-2 mb-4 text-xs text-[var(--lp-fault)]">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{serverMessage}</span>
+          {serverError && (
+            <div
+              role="alert"
+              id="auth-server-error"
+              className={`p-3 rounded-lg border flex flex-col gap-2 mb-4 text-xs ${
+                isOauthOnlyError
+                  ? "bg-[var(--lp-signal-bg)] border-[var(--lp-signal-border)] text-[var(--lp-ink)]"
+                  : "bg-[var(--lp-fault-bg)] border-[var(--lp-fault-border)] text-[var(--lp-fault)]"
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                {isLockedError ? (
+                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                )}
+                <div className="space-y-1">
+                  <span>{serverError.message}</span>
+                  {isLockedError && serverError.retryAfterSeconds && (
+                    <p className="lp-mono text-[11px] opacity-90">
+                      Wait{" "}
+                      {Math.ceil(serverError.retryAfterSeconds / 60)} min (
+                      {serverError.retryAfterSeconds}s) before retrying.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {isOauthOnlyError && (
+                <div className="flex flex-wrap items-center gap-2 pl-6 pt-1">
+                  <button
+                    type="button"
+                    id="auth-oauth-guidance-github"
+                    onClick={handleGithubOAuth}
+                    className="px-2.5 py-1 rounded-md border border-[var(--lp-line-strong)] bg-[var(--lp-surface)] text-[var(--lp-ink)] hover:border-[var(--lp-signal)] text-[11px] font-medium cursor-pointer"
+                  >
+                    Sign in with GitHub
+                  </button>
+                  <button
+                    type="button"
+                    id="auth-oauth-guidance-forgot"
+                    onClick={() =>
+                      onForgotPassword
+                        ? onForgotPassword(formData.email.trim())
+                        : setMode("forgot_password")
+                    }
+                    className="px-2.5 py-1 rounded-md text-[var(--lp-signal)] hover:underline text-[11px] font-medium cursor-pointer"
+                  >
+                    Set a local password
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -269,7 +376,11 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 {isLogin && (
                   <button
                     type="button"
-                    onClick={() => setMode("forgot_password")}
+                    onClick={() =>
+                      onForgotPassword
+                        ? onForgotPassword(formData.email.trim())
+                        : setMode("forgot_password")
+                    }
                     className="text-xs text-[var(--lp-signal)] hover:underline cursor-pointer"
                   >
                     Forgot password?
@@ -317,7 +428,8 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                   htmlFor="auth-confirm"
                   className="block text-xs font-medium text-[var(--lp-ink-secondary)] mb-1.5"
                 >
-                  Confirm password <span className="text-[var(--lp-fault)]">*</span>
+                  Confirm password{" "}
+                  <span className="text-[var(--lp-fault)]">*</span>
                 </label>
                 <div className="relative flex items-center">
                   <Lock className="w-4 h-4 text-[var(--lp-ink-muted)] absolute left-3.5 pointer-events-none" />

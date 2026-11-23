@@ -2,7 +2,10 @@ import express from "express";
 import {
   login,
   register,
+  getGithubOAuthUrlController,
   oAuthGithub,
+  confirmGithubLink,
+  cancelGithubLink,
   connectGithub,
   githubOAuthAccess,
   getGithubRepositories,
@@ -14,11 +17,15 @@ import {
   forgotPassword,
   resetPassword,
 } from "../controllers/forgotPassword.controller.js";
-import { authLimiter } from "../middlewares/rateLimit.middleware.js";
+import {
+  authLimiter,
+  loginIpLimiter,
+  oauthLimiter,
+} from "../middlewares/rateLimit.middleware.js";
 
 const router = express.Router();
 
-router.post("/login", authLimiter, login);
+router.post("/login", loginIpLimiter, login);
 router.post("/register", authLimiter, register);
 router.post("/logout", authMiddleware, async (req, res) => {
   try {
@@ -35,10 +42,12 @@ router.post("/logout", authMiddleware, async (req, res) => {
 });
 router.post("/forgotPassword", authLimiter, forgotPassword);
 router.post("/resetPassword/:token", authLimiter, resetPassword);
-router.get("/github/callback", oAuthGithub);
-router.post("/github/connect", authMiddleware, connectGithub);
+router.get("/github/url", oauthLimiter, getGithubOAuthUrlController);
+router.get("/github/callback", oauthLimiter, oAuthGithub);
+router.post("/github/confirm-link", loginIpLimiter, confirmGithubLink);
+router.post("/github/cancel-link", oauthLimiter, cancelGithubLink);
+router.post("/github/connect", authMiddleware, oauthLimiter, connectGithub);
 router.post("/github/access", authMiddleware, githubOAuthAccess);
 router.get("/github/repositories", authMiddleware, getGithubRepositories);
 
 export default router;
-

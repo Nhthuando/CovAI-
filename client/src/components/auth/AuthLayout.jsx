@@ -39,11 +39,19 @@ export default function AuthLayout({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [subMode, setSubMode] = useState(
+  const [subModeState, setSubModeState] = useState(() =>
     initialMode === "reset_password" || initialMode === "forgot_password"
-      ? initialMode
-      : null
+      ? { pathname: location.pathname, mode: initialMode }
+      : { pathname: location.pathname, mode: null }
   );
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+
+  const subMode =
+    subModeState.pathname === location.pathname ||
+    initialMode === "reset_password" ||
+    initialMode === "forgot_password"
+      ? subModeState.mode
+      : null;
 
   const routeMode =
     location.pathname === "/register"
@@ -57,17 +65,23 @@ export default function AuthLayout({
 
   const handleSetMode = (next) => {
     if (next === "login" || next === "register") {
-      setSubMode(null);
+      setSubModeState({ pathname: location.pathname, mode: null });
+      setRecoveryEmail("");
       navigate(next === "login" ? "/login" : "/register");
     } else {
-      setSubMode(next);
+      setSubModeState({ pathname: location.pathname, mode: next });
     }
+  };
+
+  const handleForgotPassword = (prefillEmail = "") => {
+    setRecoveryEmail(typeof prefillEmail === "string" ? prefillEmail : "");
+    setSubModeState({ pathname: location.pathname, mode: "forgot_password" });
   };
 
   const toggleMode = (e) => {
     if (e?.preventDefault) e.preventDefault();
     const nextMode = mode === "login" ? "register" : "login";
-    setSubMode(null);
+    setSubModeState({ pathname: location.pathname, mode: null });
     navigate(nextMode === "login" ? "/login" : "/register");
   };
 
@@ -144,7 +158,7 @@ export default function AuthLayout({
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg lp-btn-secondary text-xs font-medium"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Home</span>
+            <span>Back to home</span>
           </Link>
 
           <div className="flex items-center gap-2.5">
@@ -199,7 +213,10 @@ export default function AuthLayout({
 
             {children ||
               (mode === "forgot_password" ? (
-                <ForgotPasswordForm setMode={handleSetMode} />
+                <ForgotPasswordForm
+                  setMode={handleSetMode}
+                  initialEmail={recoveryEmail}
+                />
               ) : mode === "reset_password" ? (
                 <ResetPasswordForm />
               ) : (
@@ -208,6 +225,7 @@ export default function AuthLayout({
                   mode={mode}
                   onToggleMode={toggleMode}
                   setMode={handleSetMode}
+                  onForgotPassword={handleForgotPassword}
                 />
               ))}
           </div>

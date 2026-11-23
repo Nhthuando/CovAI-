@@ -297,6 +297,8 @@ model User {
   passwordHash         String?
   githubUserId         String?        @unique
   githubAccessTokenEnc String?
+  failedLoginAttempts  Int            @default(0)
+  lockedUntil          DateTime?
   name                 String?
   avatarUrl            String?
   createdAt            DateTime       @default(now())
@@ -309,6 +311,7 @@ model User {
   jobTitle             String?
   aiTokenUsage         Int            @default(0)
   refreshToken         String?
+  githubPendingLinks   GithubPendingLink[]
   jobs                 Job[]          @relation("UserJobs")
   notifications        Notification[]
   projects             Project[]
@@ -1356,4 +1359,24 @@ model ProjectCodeChange {
   snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
   actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
   @@index([projectId, snapshotId])
+}
+
+model GithubPendingLink {
+  id                   String    @id @default(cuid())
+  tokenHash            String    @unique
+  userId               String
+  email                String
+  githubUserId         String
+  githubLogin          String?
+  githubName           String?
+  githubAvatarUrl      String?
+  githubAccessTokenEnc String    @db.Text
+  expiresAt            DateTime
+  consumedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
 }

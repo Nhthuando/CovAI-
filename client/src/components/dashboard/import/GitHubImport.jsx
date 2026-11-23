@@ -8,7 +8,7 @@ import {
   deleteProjectApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
-import { getGithubOAuthUrl } from "../../../services/auth.service";
+import { fetchGithubAuthorizeUrlApi } from "../../../services/auth.service";
 
 function GithubIcon({ size = 16, className = "" }) {
   return (
@@ -199,22 +199,22 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
             </div>
             <button
               type="button"
-              onClick={() => {
-                const oauthUrl = getGithubOAuthUrl("connect");
-                if (!oauthUrl) {
+              onClick={async () => {
+                try {
+                  const oauthUrl = await fetchGithubAuthorizeUrlApi("connect");
+                  sessionStorage.setItem("covai.githubOAuthMode", "connect");
+                  sessionStorage.setItem(
+                    "covai.githubConnectReturn",
+                    `${window.location.pathname}${window.location.search}`,
+                  );
+                  window.location.assign(oauthUrl);
+                } catch (err) {
                   showToast({
                     type: "error",
                     title: "GitHub OAuth Unavailable",
-                    message: "VITE_GITHUB_CLIENT_ID is not configured.",
+                    message: err?.message || "GitHub OAuth is not configured.",
                   });
-                  return;
                 }
-                sessionStorage.setItem("covai.githubOAuthMode", "connect");
-                sessionStorage.setItem(
-                  "covai.githubConnectReturn",
-                  `${window.location.pathname}${window.location.search}`,
-                );
-                window.location.href = oauthUrl;
               }}
               className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer"
               id="connect-github-import-btn"
