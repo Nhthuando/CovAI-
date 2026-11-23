@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { AiTestMode } from '@prisma/client';
 import { __resetSystemGenerationTasksForTest } from '../services/systemGenerationTask.service.js';
@@ -295,7 +296,7 @@ describe('System Test Phase 4 Endpoints', () => {
             mockReadFullSystemConfig.mockReturnValueOnce(null);
             const res = {status:jest.fn().mockReturnThis(),json:jest.fn()};
             await runSystemTestCoverage({user:{id:'user-1'},params:{snapshotId:'snap-1'},body:{framework:'playwright',executionMode:'full'}},res);
-            expect(mockReadFullSystemConfig).toHaveBeenCalledWith('/repo',{allowMissing:true});
+            expect(mockReadFullSystemConfig).toHaveBeenCalledWith(expect.stringMatching(/repo$/),{allowMissing:true});
             expect(mockCreateSystemTestAnalysisJob).toHaveBeenCalled();
             expect(mockAddJobToQueue).toHaveBeenCalled();
         });
@@ -323,6 +324,9 @@ describe('System Test Phase 4 Endpoints', () => {
                 runner: 'playwright',
                 executionMode: 'full',
                 testFile: null,
+                headed: false,
+                selectedFiles: [],
+                selectedTitles: [],
             });
             expect(mockAddJobToQueue).toHaveBeenCalledWith(
                 'SYSTEM_TEST_ANALYSIS',
@@ -367,6 +371,9 @@ describe('System Test Phase 4 Endpoints', () => {
                 runner: 'cypress',
                 executionMode: 'full',
                 testFile: 'cypress/e2e/checkout.cy.js',
+                headed: false,
+                selectedFiles: [],
+                selectedTitles: [],
             });
             expect(res.status).toHaveBeenCalledWith(202);
             expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
@@ -515,10 +522,10 @@ describe('System Test Phase 4 Endpoints', () => {
         it('returns persisted execution details and historical null detail within the pinned owned run', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({ id: 'snap-1', projectId:'p-1',rootDir: '/repo' });
             const executionDetails = { version: 1, attempts: [{ index: 0, status: 'failed', steps: [{ title: 'Submit', error: 'timeout' }] }] };
-            prismaMock.testRun.findFirst.mockResolvedValueOnce({ id: 'run-1', type: 'PLAYWRIGHT', executionMode: 'full', testFiles: [], scenarios: [
+            prismaMock.testRun.findMany.mockResolvedValueOnce([{ id: 'run-1', type: 'PLAYWRIGHT', executionMode: 'full', testFiles: [], scenarios: [
                 { id: 'new', title: 'Login', testFile: 'login.spec.js', durationMs: 0, executionDetails },
                 { id: 'old', title: 'Old', testFile: 'login.spec.js', executionDetails: null },
-            ] });
+            ] }]);
             const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
             await getSystemTestScenarios({ user: { id: 'user-1' }, params: { snapshotId: 'snap-1' }, query: { testRunId: 'run-1', executionMode: 'full' } }, res);
             const data = res.json.mock.calls[0][0].data;
@@ -533,23 +540,24 @@ describe('System Test Phase 4 Endpoints', () => {
             await getSystemTestScenarios({ user: { id: 'other' }, params: { snapshotId: 'snap-1' }, query: {} }, res);
             expect(res.status).toHaveBeenCalledWith(404);
             expect(prismaMock.projectSnapshot.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ project: { OR:[{ownerId:'other'},{members:{some:{userId:'other'}}}] } }) }));
-            expect(prismaMock.testRun.findFirst).not.toHaveBeenCalled();
+            expect(prismaMock.testRun.findMany).not.toHaveBeenCalled();
         });
         it.each(['frontend','full'])('pins scenarios to the requested %s run and runner', async executionMode => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({id:'snap-1'});
-            prismaMock.testRun.findFirst.mockResolvedValueOnce({id:'selected-run',type:'PLAYWRIGHT',executionMode,scenarios:[],testFiles:[]});
+            prismaMock.testRun.findMany.mockResolvedValueOnce([{id:'selected-run',type:'PLAYWRIGHT',executionMode,scenarios:[],testFiles:[]}]);
             const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
             await getSystemTestScenarios({user:{id:'user-1'},params:{snapshotId:'snap-1'},query:{executionMode,runner:'playwright',testRunId:'selected-run'}},res);
-            expect(prismaMock.testRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({where:{snapshotId:'snap-1',id:'selected-run',executionMode,type:'PLAYWRIGHT'}}));
+            expect(prismaMock.testRun.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{snapshotId:'snap-1',id:'selected-run',executionMode,type:'PLAYWRIGHT'},take:1}));
             expect(res.json.mock.calls[0][0].data).toMatchObject({testRunId:'selected-run',executionMode});
         });
 
         it('does not fall back when a pinned run belongs to another selection', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({id:'snap-1'});
-            prismaMock.testRun.findFirst.mockResolvedValueOnce(null);
+            prismaMock.testRun.findMany.mockResolvedValueOnce([]);
             const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
             await getSystemTestScenarios({user:{id:'user-1'},params:{snapshotId:'snap-1'},query:{executionMode:'full',runner:'playwright',testRunId:'frontend-run'}},res);
-            expect(prismaMock.testRun.findFirst).toHaveBeenCalledTimes(1);
+            expect(prismaMock.testRun.findMany).toHaveBeenCalledTimes(1);
+            expect(prismaMock.testRun.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{snapshotId:'snap-1',id:'frontend-run',executionMode:'full',type:'PLAYWRIGHT'}}));
             expect(res.json.mock.calls[0][0].data).toMatchObject({hasRun:false,testRunId:null,testFiles:[]});
         });
 
@@ -558,7 +566,7 @@ describe('System Test Phase 4 Endpoints', () => {
             const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
             await getSystemTestScenarios({user:{id:'user-1'},params:{snapshotId:'snap-1'},query:{executionMode:'invalid'}},res);
             expect(res.status).toHaveBeenCalledWith(400);
-            expect(prismaMock.testRun.findFirst).not.toHaveBeenCalled();
+            expect(prismaMock.testRun.findMany).not.toHaveBeenCalled();
         });
         it('returns scenarios grouped by test file with breakpoint and coverage data', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
@@ -614,7 +622,7 @@ describe('System Test Phase 4 Endpoints', () => {
                     },
                 ],
             };
-            prismaMock.testRun.findFirst.mockResolvedValueOnce(mockTargetRun);
+            prismaMock.testRun.findMany.mockResolvedValueOnce([mockTargetRun]);
 
             const req = {
                 user: { id: 'user-1' },
@@ -672,7 +680,7 @@ describe('System Test Phase 4 Endpoints', () => {
                 projectId: 'p-1',
                 rootDir: '/repo',
             });
-            prismaMock.testRun.findFirst.mockResolvedValueOnce({
+            prismaMock.testRun.findMany.mockResolvedValueOnce([{
                 id: 'run-1',
                 type: 'PLAYWRIGHT',
                 executionMode: 'frontend',
@@ -681,7 +689,7 @@ describe('System Test Phase 4 Endpoints', () => {
                     { id: 'sc-1', title: 'Pass 1', status: 'PASSED', testFile: 'test.js' },
                     { id: 'sc-2', title: 'Fail 1', status: 'FAILED', testFile: 'test.js' },
                 ],
-            });
+            }]);
 
             const req = {
                 user: { id: 'user-1' },
