@@ -105,11 +105,13 @@ const extractFunctionRowsFromIstanbul = (entry, snapshotId, filePath, rootDir = 
                 const targetLineIdx = startLine ?? (typeof fnMeta?.line === "number" ? fnMeta.line : null);
                 if (targetLineIdx && codeLines[targetLineIdx - 1]) {
                     const lineText = codeLines[targetLineIdx - 1];
-                    const match = lineText.match(/(?:export\s+)?(?:default\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=/i) ||
-                        lineText.match(/([a-zA-Z0-9_$]+)\s*[:=]\s*(?:async\s*)?\(/i) ||
-                        lineText.match(/(?:function\s+)?([a-zA-Z0-9_$]+)\s*\(/i);
-                    if (match && match[1]) {
-                        functionName = match[1];
+                    const declMatch = lineText.match(/(?:export\s+)?(?:default\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[a-zA-Z0-9_$]+\s*=>)/i) ||
+                        lineText.match(/\bfunction\s+([a-zA-Z0-9_$]+)\s*\(/i) ||
+                        lineText.match(/^\s*(?:async\s+)?([a-zA-Z0-9_$]+)\s*:\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>)/i) ||
+                        lineText.match(/^\s*(?:async\s+)?([a-zA-Z0-9_$]+)\s*\([^)]*\)\s*\{/i);
+                    const extracted = declMatch?.[1] || "";
+                    if (extracted && !/^(if|for|while|switch|catch|return|function|typeof|new|else)$/i.test(extracted)) {
+                        functionName = extracted;
                     }
                 }
             }

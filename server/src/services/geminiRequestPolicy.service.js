@@ -68,7 +68,7 @@ export const runGeminiRequest = async (request, options = {}) => {
             if (!transient || attempt === maxAttempts) {
                 const remainingMs = deadline - Date.now();
                 const fallback = !controller.signal.aborted && remainingMs > 0 && getFallbackRequest?.(error);
-                if (fallback) return runGeminiRequest(fallback, { requestTimeoutMs, totalTimeoutMs: remainingMs, maxAttempts: 1, onWait });
+                if (fallback) return runGeminiRequest(fallback, { requestTimeoutMs, totalTimeoutMs: remainingMs, maxAttempts: 1, onWait, getFallbackRequest });
                 throw error;
             }
             if (isDailyQuotaError(error)) {

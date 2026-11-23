@@ -348,6 +348,8 @@ export const generateMultimodalText = async (
     onRetry,
     onWait,
     retryBaseDelayMs,
+    strictModel,
+    allowModelFallback,
     taskType: _taskType,
     apiKey: _apiKey,
     returnTelemetry: _returnTelemetry,
@@ -366,6 +368,8 @@ export const generateMultimodalText = async (
   }
 
   const primaryModelName = resolveModelName(modelName, configuration);
+  const triedModels = new Set([primaryModelName]);
+  let currentModelName = primaryModelName;
   const budget = currentAiJobBudget();
   const callerSignals = [callerSignal, budget?.signal].filter(Boolean);
 
@@ -511,15 +515,18 @@ export const generateMultimodalText = async (
   };
 
   const getFallbackRequest = error => {
-    if (modelName || error.name === 'AbortError' || callerSignals.some(signal => signal.aborted)) return;
+    if (strictModel === true || allowModelFallback === false || error.name === 'AbortError' || callerSignals.some(signal => signal.aborted)) return;
     const status = Number(error.status ?? error.statusCode);
     const message = String(error.message || '');
     if ((status >= 400 && status < 500) || /(?:^|\[|\bHTTP\s+|\bstatus(?:\s+code)?\s*[:=]?\s*)4\d{2}\b/i.test(message)) return;
     if (status !== 503 && !/503|Service Unavailable|high demand|overloaded|UNAVAILABLE/i.test(message)) return;
 
-    const fallback = AI_MODELS.find(({ id }) => id !== primaryModelName && !getModelQuotaError(id, configuration));
+    const fallback = AI_MODELS.find(({ id }) => !triedModels.has(id) && !getModelQuotaError(id, configuration));
     if (!fallback) return;
-    console.warn(`[Gemini API] ${primaryModelName} is overloaded; retrying once with ${fallback.id}`);
+    const previousModel = currentModelName;
+    triedModels.add(fallback.id);
+    currentModelName = fallback.id;
+    console.warn(`[Gemini API] ${previousModel} is overloaded; retrying once with ${fallback.id}`);
     return options => apiCall(options, fallback.id);
   };
 

@@ -75,10 +75,19 @@ import {
 } from "./integrationDetection.service.js";
 import {
   buildIntegrationTestPrompt,
+  buildIntegrationRepairPrompt,
   validateIntegrationTestCode,
   buildFaultyTestFixPrompt,
   harvestApiDeepContext,
 } from "./integrationAiTestGenerator.service.js";
+import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
+import {
+  prepareExpressEntriesForSupertest,
+  adaptPlaywrightApiCodeForJest,
+  transformTestCodeForProject,
+} from "./supertestCoverageJob.service.js";
+import { runSupertest } from "./supertestRunner.service.js";
+import { parseJestResults } from "./testResultParser.service.js";
 import { generateText as generateFeatureText } from './gemini.service.js';
 import { withGeminiFeature } from './geminiRouting.service.js';
 const generateText = (...args) => withGeminiFeature('integration-test', () => generateFeatureText(...args));
@@ -431,20 +440,34 @@ export const runIntegrationGenerationPipeline = async ({
   });
 
   // 2.5 Build multi-scenario prompt
-  await updateJobStatus({ jobId, progress: 50 }).catch(() => {});
+  await updateJobStatus({ jobId, progress: 45 }).catch(() => {});
   await addJobLog(
     jobId,
     "INFO",
     `[Integration AI] Thu thập AST context & sinh prompt cho ${endpointsToGenerate.length} API endpoint...`,
   ).catch(() => {});
 
+  const hydratedTestFiles = existingSuites.map((s) => {
+    let content = s.content || "";
+    if (!content && s.filePath && resolvedSnapshotRoot) {
+      try {
+        const absTest = path.isAbsolute(s.filePath)
+          ? s.filePath
+          : path.join(resolvedSnapshotRoot, s.filePath);
+        if (fs.existsSync(absTest)) {
+          content = fs.readFileSync(absTest, "utf8");
+        }
+      } catch (readErr) {
+        console.warn("[Integration AI] Could not read existing test file:", readErr?.message);
+      }
+    }
+    return { path: s.filePath, content };
+  });
+
   const prompt = buildIntegrationTestPrompt({
     endpoints: endpointsToGenerate,
     sourceCode,
-    testFiles: existingSuites.map((s) => ({
-      path: s.filePath,
-      content: s.content || "",
-    })),
+    testFiles: hydratedTestFiles,
     framework: normFramework.toLowerCase(),
   });
 
@@ -459,7 +482,7 @@ export const runIntegrationGenerationPipeline = async ({
   const callStart = Date.now();
   const aiResponse = await generateText(
     prompt,
-    model || process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
+    model || null,
     {
       taskType: "integration",
       temperature: 0.2,
@@ -496,66 +519,235 @@ export const runIntegrationGenerationPipeline = async ({
     "[Integration AI] Kiểm duyệt an toàn cú pháp Babel AST...",
   ).catch(() => {});
 
-  let cleanedCode = "";
-
-  // 4.1 Try to extract code from JSON structure (buildIntegrationTestPrompt specifies JSON output)
-  try {
-    let jsonStr = aiResponseText.trim();
-    const jsonMatch = jsonStr.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
-    if (jsonMatch && jsonMatch[1]) {
-      jsonStr = jsonMatch[1].trim();
-    } else {
-      jsonStr = jsonStr
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```$/i, "")
-        .trim();
-    }
-
-    const parsed = JSON.parse(jsonStr);
-    if (Array.isArray(parsed?.tests) && parsed.tests.length > 0) {
-      cleanedCode = parsed.tests
-        .map((t) => t.content)
-        .filter(Boolean)
-        .join("\n\n");
-    } else if (parsed?.content) {
-      cleanedCode = parsed.content;
-    } else if (typeof parsed === "string") {
-      cleanedCode = parsed;
-    }
-  } catch (_) {
-    // Fallback: If not valid JSON, proceed to extract raw code block
-  }
-
-  // 4.2 Fallback to markdown code block or raw text
-  if (!cleanedCode) {
-    const codeMatch = aiResponseText.match(
-      /```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i,
-    );
-    if (codeMatch && codeMatch[1]) {
-      cleanedCode = codeMatch[1].trim();
-    } else {
-      cleanedCode = aiResponseText.trim();
-    }
-  }
-
-  // 4.3 If cleanedCode itself contains markdown code fences, unwrap them
-  if (cleanedCode) {
-    const innerMatch = cleanedCode.match(
-      /```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i,
-    );
-    if (innerMatch && innerMatch[1]) {
-      cleanedCode = innerMatch[1].trim();
-    }
-  }
-
-  validateIntegrationTestCode(cleanedCode, normFramework.toLowerCase());
-
-  // 5. Extract scenarios and save to database
-  await updateJobStatus({ jobId, progress: 95 }).catch(() => {});
   const targetFilePath =
     normFramework === "PLAYWRIGHT_API"
       ? "tests/api/api-integration.spec.js"
       : "tests/integration/api-integration.test.js";
+
+  const parseAndDeduplicateResponse = (rawResponseText) => {
+    let extracted = "";
+    try {
+      let jsonStr = String(rawResponseText || "").trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonStr = jsonMatch[1].trim();
+      } else {
+        jsonStr = jsonStr
+          .replace(/^```(?:json)?\s*/i, "")
+          .replace(/\s*```$/i, "")
+          .trim();
+      }
+      const parsed = JSON.parse(jsonStr);
+      if (Array.isArray(parsed?.tests) && parsed.tests.length > 0) {
+        extracted = parsed.tests
+          .map((t) => t.content)
+          .filter(Boolean)
+          .join("\n\n");
+      } else if (parsed?.content) {
+        extracted = parsed.content;
+      } else if (typeof parsed === "string") {
+        extracted = parsed;
+      }
+    } catch (_) {
+      // Fallback: extract raw markdown code block when response is not JSON
+    }
+
+    if (!extracted) {
+      const codeMatch = String(rawResponseText || "").match(
+        /```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i,
+      );
+      extracted = codeMatch?.[1]?.trim() || String(rawResponseText || "").trim();
+    }
+
+    const innerMatch = extracted.match(
+      /```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i,
+    );
+    if (innerMatch?.[1]) extracted = innerMatch[1].trim();
+
+    if (extracted) {
+      try {
+        const deduped = deduplicateAstDeclarations(extracted, {
+          filePath: targetFilePath,
+        });
+        if (deduped?.changed && deduped.code) extracted = deduped.code;
+      } catch (dedupErr) {
+        console.warn(
+          "[Integration AI] AST declaration deduplication warning:",
+          dedupErr?.message,
+        );
+      }
+    }
+
+    validateIntegrationTestCode(extracted, normFramework.toLowerCase());
+    return extracted;
+  };
+
+  let cleanedCode = parseAndDeduplicateResponse(aiResponseText);
+
+  // 4.5 Verify generated scenarios against real Jest/Supertest runner & auto-repair failures
+  let verificationSummary = null;
+  const hasRunnableJestAndSupertest = Boolean(
+    resolvedSnapshotRoot &&
+      fs.existsSync(resolvedSnapshotRoot) &&
+      ["", "server", "backend", "api"].some(
+        (sub) =>
+          fs.existsSync(path.join(resolvedSnapshotRoot, sub, "node_modules", "jest")) &&
+          fs.existsSync(path.join(resolvedSnapshotRoot, sub, "node_modules", "supertest")),
+      ),
+  );
+
+  if (hasRunnableJestAndSupertest && !abortSignal?.aborted) {
+    const absCandidatePath = resolveAndValidateAiTestPath(resolvedSnapshotRoot, targetFilePath);
+    const hadOriginalFile = fs.existsSync(absCandidatePath);
+    const originalFileContent = hadOriginalFile ? fs.readFileSync(absCandidatePath, "utf8") : null;
+    let restoreEntries = () => {};
+    let bestCode = cleanedCode;
+    let bestPassed = -1;
+    let bestFailed = Number.POSITIVE_INFINITY;
+
+    try {
+      restoreEntries = await prepareExpressEntriesForSupertest(resolvedSnapshotRoot);
+      const maxVerifyPasses = 3;
+
+      for (let pass = 1; pass <= maxVerifyPasses; pass++) {
+        if (abortSignal?.aborted) break;
+        await updateJobStatus({ jobId, progress: Math.min(92, 72 + pass * 6) }).catch(() => {});
+        await addJobLog(
+          jobId,
+          "INFO",
+          `[Integration AI] Chạy kiểm thử xác minh kịch bản sinh ra (lượt ${pass}/${maxVerifyPasses})...`,
+        ).catch(() => {});
+
+        const adaptedForExec =
+          normFramework === "PLAYWRIGHT_API" || /@playwright\/test/.test(cleanedCode)
+            ? adaptPlaywrightApiCodeForJest(cleanedCode, resolvedSnapshotRoot, absCandidatePath)
+            : cleanedCode;
+        const execCode = await transformTestCodeForProject(
+          adaptedForExec,
+          resolvedSnapshotRoot,
+          absCandidatePath,
+        );
+        fs.mkdirSync(path.dirname(absCandidatePath), { recursive: true });
+        fs.writeFileSync(absCandidatePath, execCode, "utf8");
+
+        const runResult = await runSupertest(
+          jobId,
+          resolvedSnapshotRoot,
+          null,
+          [absCandidatePath],
+          { useLiveDatabase: false, signal: abortSignal },
+        ).catch((err) => ({ exitCode: 1, stderr: err?.message || "Execution failed", stdout: "", coverageDir: null }));
+
+        const parsedJest = runResult?.coverageDir
+          ? parseJestResults(runResult.coverageDir, { rootDir: resolvedSnapshotRoot })
+          : null;
+        const scenarios = Array.isArray(parsedJest?.scenarios) ? parsedJest.scenarios : [];
+        const totalTests = scenarios.length;
+        const passedTests = scenarios.filter((s) => s.status === "passed").length;
+        const failedScenarios = scenarios.filter((s) => s.status === "failed");
+        const failedTests = failedScenarios.length;
+
+        if (
+          (totalTests > 0 && passedTests > bestPassed) ||
+          (passedTests === bestPassed && failedTests < bestFailed)
+        ) {
+          bestCode = cleanedCode;
+          bestPassed = passedTests;
+          bestFailed = failedTests;
+        }
+
+        verificationSummary = {
+          passed: totalTests > 0 && failedTests === 0 && runResult.exitCode === 0,
+          totalTests,
+          passedTests,
+          failedTests,
+          attempts: pass,
+        };
+
+        if (verificationSummary.passed) {
+          await addJobLog(
+            jobId,
+            "INFO",
+            `[Integration AI] Xác minh thành công ${passedTests}/${totalTests} kịch bản pass 100%!`,
+          ).catch(() => {});
+          break;
+        }
+
+        if (pass === maxVerifyPasses) {
+          cleanedCode = bestCode;
+          break;
+        }
+
+        const failureDetails = [];
+        for (const fsItem of failedScenarios.slice(0, 8)) {
+          const msg = Array.isArray(fsItem.failureMessages)
+            ? fsItem.failureMessages.join("\n")
+            : fsItem.errorMessage || "";
+          failureDetails.push(`FAILED: ${fsItem.title}\n${String(msg).slice(0, 600)}`);
+        }
+        const rawStderr = String(runResult?.stderr || runResult?.stdout || "").trim();
+        if (failureDetails.length === 0 && rawStderr) {
+          failureDetails.push(rawStderr.slice(-2000));
+        } else if (rawStderr) {
+          failureDetails.push(`Jest Output Tail:\n${rawStderr.slice(-1200)}`);
+        }
+
+        await addJobLog(
+          jobId,
+          "WARN",
+          `[Integration AI] Phát hiện ${failedTests || "lỗi"} kịch bản fail (${passedTests}/${totalTests} pass). Đang gửi lại AI tự sửa...`,
+        ).catch(() => {});
+
+        const repairPrompt = buildIntegrationRepairPrompt({
+          code: cleanedCode,
+          failureSummary: failureDetails.join("\n---\n"),
+          framework: normFramework.toLowerCase(),
+          endpoints: endpointsToGenerate,
+          sourceCode,
+        });
+        const repairResponse = await generateText(repairPrompt, model || null, {
+          taskType: "integration",
+          temperature: 0.15,
+          maxOutputTokens: 4096,
+          returnTelemetry: true,
+        });
+        const repairText =
+          typeof repairResponse === "object" && repairResponse?.text !== undefined
+            ? repairResponse.text
+            : repairResponse;
+        if (repairText && repairText.trim()) {
+          try {
+            cleanedCode = parseAndDeduplicateResponse(repairText);
+          } catch (repairParseErr) {
+            console.warn(
+              `[Integration AI] Repair output failed validation on pass ${pass}:`,
+              repairParseErr?.message,
+            );
+          }
+        }
+      }
+    } catch (verifyErr) {
+      console.warn("[Integration AI] Verification pass warning:", verifyErr?.message);
+    } finally {
+      try {
+        restoreEntries();
+      } catch (restoreErr) {
+        console.warn("[Integration AI] Express restore warning:", restoreErr?.message);
+      }
+      try {
+        if (hadOriginalFile && originalFileContent !== null) {
+          fs.writeFileSync(absCandidatePath, originalFileContent, "utf8");
+        } else if (!hadOriginalFile && fs.existsSync(absCandidatePath)) {
+          fs.unlinkSync(absCandidatePath);
+        }
+      } catch (cleanupErr) {
+        console.warn("[Integration AI] Candidate cleanup warning:", cleanupErr?.message);
+      }
+    }
+  }
+
+  // 5. Extract scenarios and save to database
+  await updateJobStatus({ jobId, progress: 95 }).catch(() => {});
 
   const originalTestRequests = extractTestRequests(cleanedCode, targetFilePath);
   const seenGeneratedCaseKeys = new Map();
@@ -631,10 +823,11 @@ export const runIntegrationGenerationPipeline = async ({
           content: cleanedCode,
           metaJson: JSON.stringify({
             framework: normFramework,
-            status: "DRAFT",
+            status: verificationSummary?.passed ? "VERIFIED" : "DRAFT",
             isValid: true,
             requests: requestsMeta,
             telemetry,
+            ...(verificationSummary ? { verification: verificationSummary } : {}),
           }),
         },
       }),

@@ -512,13 +512,18 @@ export default function UnitTestWorkspace({
     [activeJobType, snapshotId, projectId, inlineSuggestions, addToast, refetch, loadUnitTestVersions],
   );
 
-  const handleJobFailed = useCallback((err) => {
-    setActiveJobId(null);
-    setActiveJobType(null);
-    setPendingAction(null);
-    setRunningTargetKey(null);
-    setError(err?.message || "Unit test task failed.");
-  }, []);
+  const handleJobFailed = useCallback(
+    (err) => {
+      setActiveJobId(null);
+      setActiveJobType(null);
+      setPendingAction(null);
+      setRunningTargetKey(null);
+      setError(err?.message || "Unit test task failed.");
+      invalidateCoverageQueries(snapshotId);
+      refetch?.();
+    },
+    [snapshotId, refetch],
+  );
 
   const handleJobCanceled = useCallback(() => {
     setActiveJobId(null);
@@ -886,10 +891,20 @@ export default function UnitTestWorkspace({
       for (const item of Object.values(inlineSuggestions || {})) {
         const list = Array.isArray(item) ? item : [item];
         for (const sug of list) {
-          if (!sug || typeof sug !== "object" || sug.isApplied || sug.isFullyCovered) continue;
+          const isApplied =
+            Boolean(sug?.isApplied) ||
+            sug?.applied === true ||
+            ["PASSED", "APPLIED"].includes(sug?.status);
+          if (!sug || typeof sug !== "object" || isApplied || sug.isFullyCovered) continue;
           const testFile = String(sug.targetTestFile || sug.testFile || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
           const sourceFile = String(sug.targetSourceFile || sug.sourceFile || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
-          const code = sug.fullUpdatedContent || sug.suggestedTestCode || sug.generatedCode || sug.testCode || "";
+          const code =
+            sug.fullUpdatedContent ||
+            sug.suggestedTestCode ||
+            sug.generatedCode ||
+            sug.testCode ||
+            sug.code ||
+            "";
           if (!testFile || !code.trim()) continue;
           if (normalizedTargets.length > 0) {
             const normTest = testFile.toLowerCase();
@@ -918,9 +933,65 @@ export default function UnitTestWorkspace({
           });
         }
       }
+
+      // Include staged UI additions/updates (before permanent Apply) when running from workspace
+      for (const addOp of pendingUnitOps?.adds || []) {
+        const testFile = cleanDisplayPath(addOp?.testFile || "");
+        const sourceFile = cleanDisplayPath(addOp?.sourceFile || "");
+        const addCode = String(addOp?.code || "").trim();
+        if (!testFile || !addCode) continue;
+        const normTest = testFile.toLowerCase();
+        const normSrc = sourceFile.toLowerCase();
+        if (normalizedTargets.length > 0) {
+          const matched = normalizedTargets.some(
+            (t) =>
+              normSrc === t ||
+              normTest === t ||
+              normSrc.endsWith("/" + t) ||
+              normTest.endsWith("/" + t) ||
+              t.endsWith("/" + normSrc) ||
+              t.endsWith("/" + normTest),
+          );
+          if (!matched) continue;
+        }
+        const existing = byTestFile.get(normTest);
+        if (existing) {
+          existing.code = `${existing.code.trimEnd()}\n\n${addCode}\n`;
+        } else {
+          byTestFile.set(normTest, {
+            sourceFile,
+            testFile,
+            framework: activeFramework === "vitest" || activeFramework === "jest" ? activeFramework : null,
+            code: addCode,
+          });
+        }
+      }
+
+      // Apply staged edits to any draft test file already queued for isolated run
+      for (const updOp of pendingUnitOps?.updates || []) {
+        const testFile = cleanDisplayPath(updOp?.testFile || "");
+        const normTest = testFile.toLowerCase();
+        const existing = normTest ? byTestFile.get(normTest) : null;
+        const updCode = String(updOp?.code || "").trim();
+        if (!existing || !updCode) continue;
+        const oldNorm = String(updOp?.originalTestName || updOp?.testName || "").trim().toLowerCase();
+        if (!oldNorm) continue;
+        const blocks = extractTestCasesFromCode(existing.code);
+        const targetBlock = blocks.find(
+          (b) => String(b.title || "").trim().toLowerCase() === oldNorm,
+        );
+        if (targetBlock) {
+          existing.code =
+            existing.code.slice(0, targetBlock.startIndex) +
+            updCode +
+            "\n" +
+            existing.code.slice(targetBlock.endIndex);
+        }
+      }
+
       return Array.from(byTestFile.values());
     },
-    [inlineSuggestions],
+    [inlineSuggestions, pendingUnitOps, activeFramework],
   );
 
   // Handlers
@@ -985,7 +1056,7 @@ export default function UnitTestWorkspace({
         filePaths: paths,
         projectId,
         framework: frameworkToSend,
-        validationMode: "fast",
+        validationMode: "full",
         async: true,
       });
       const payload = res?.data || res;
@@ -1050,19 +1121,64 @@ export default function UnitTestWorkspace({
     setError("");
     setNotice("");
     setFixingTestId(tc.id);
+    const isDraftCase = tc.origin === "AI_DRAFT" && !tc.isApplied;
+    const draftFullContent = isDraftCase
+      ? tc.suggestionObj?.fullUpdatedContent ||
+        tc.suggestionObj?.suggestedTestCode ||
+        tc.suggestionObj?.generatedCode ||
+        tc.suggestionObj?.testCode ||
+        tc.suggestionObj?.code ||
+        ""
+      : "";
     try {
       const res = await aiFixUnitTestCaseApi(snapshotId, {
-        sourceFile: entry?.filePath || "",
+        sourceFile: entry?.filePath || tc.sourceFile || "",
         testFile: tc.testFile,
         testName: tc.title || tc.testName,
         failureMessage: Array.isArray(tc.failureMessages) ? tc.failureMessages.join("\n") : tc.failureSummary || "",
+        currentCode: tc.code || "",
+        fullTestContent: draftFullContent,
+        isDraft: isDraftCase,
         framework: activeFramework,
       });
       const data = res?.data || res;
-      setNotice(`AI Fix applied to "${data.testName || tc.title}". Re-running test to verify...`);
-      loadUnitTestVersions();
+      if (data?.isDraft && data?.updatedContent) {
+        const cleanKey = cleanDisplayPath(entry?.filePath || tc.sourceFile || "");
+        const targetTitleNorm = String(tc.title || tc.testName || "").trim().toLowerCase();
+        const targetSugId = tc.suggestionObj?.suggestionId || tc.suggestionObj?.id;
+        setInlineSuggestions((prev) => {
+          const list = Array.isArray(prev[cleanKey]) ? prev[cleanKey] : [];
+          if (!list.length) return prev;
+          return {
+            ...prev,
+            [cleanKey]: list.map((s) => {
+              const sid = s?.suggestionId || s?.id;
+              if (targetSugId && sid && sid !== targetSugId) return s;
+              const nextTestCases = Array.isArray(s.testCases)
+                ? s.testCases.map((item) =>
+                    String(item.title || item.testName || "").trim().toLowerCase() === targetTitleNorm
+                      ? { ...item, code: data.fixedBlock || item.code }
+                      : item,
+                  )
+                : undefined;
+              return {
+                ...s,
+                fullUpdatedContent: data.updatedContent,
+                suggestedTestCode: data.updatedContent,
+                generatedCode: data.updatedContent,
+                testCode: data.updatedContent,
+                ...(nextTestCases ? { testCases: nextTestCases } : {}),
+              };
+            }),
+          };
+        });
+        setNotice(`AI Fix updated draft "${data.testName || tc.title}". Re-running test to verify...`);
+      } else {
+        setNotice(`AI Fix applied to "${data.testName || tc.title}". Re-running test to verify...`);
+        loadUnitTestVersions();
+      }
       await handleRunCoverage({
-        targetFiles: [tc.testFile || entry?.filePath].filter(Boolean),
+        targetFiles: [entry?.filePath || tc.sourceFile || tc.testFile].filter(Boolean),
         targetTestNames: [tc.title || tc.testName].filter(Boolean),
         targetKey: entry?.filePath || null,
       });
@@ -1818,21 +1934,30 @@ export default function UnitTestWorkspace({
             onApplySelected={(sugs) => handleApplySuggestions(sugs)}
             onApplySingleDraft={(sug) => handleApplySuggestions([sug])}
             onRunSelectedFiles={(paths) => handleRunCoverage({ targetFiles: paths })}
-            onRunSelectedTests={(tests) =>
+            onRunSelectedTests={(tests) => {
+              const targetFiles = [...new Set(tests.map((t) => t.sourceFile || t.testFile).filter(Boolean))];
+              const selectedSourceSet = new Set(targetFiles.map((p) => cleanDisplayPath(p)));
+              const totalCasesInSelectedFiles = fileEntries
+                .filter((e) => selectedSourceSet.has(cleanDisplayPath(e.filePath)))
+                .reduce((sum, e) => sum + (e.testCases?.length || 0), 0);
+              const isAllTestsOfSelectedFiles =
+                totalCasesInSelectedFiles > 0 && tests.length >= totalCasesInSelectedFiles;
               handleRunCoverage({
-                targetFiles: [...new Set(tests.map((t) => t.testFile || t.sourceFile).filter(Boolean))],
-                targetTestNames: tests.map((t) => t.title || t.testName).filter(Boolean),
-              })
-            }
+                targetFiles,
+                targetTestNames: isAllTestsOfSelectedFiles
+                  ? []
+                  : tests.map((t) => t.title || t.testName).filter(Boolean),
+              });
+            }}
             onRunFile={(entry) =>
               handleRunCoverage({
-                targetFiles: [entry.associatedTestFile || entry.filePath].filter(Boolean),
+                targetFiles: [entry.filePath || entry.associatedTestFile].filter(Boolean),
                 targetKey: entry.filePath,
               })
             }
             onRunTestCase={(tc, entry) =>
               handleRunCoverage({
-                targetFiles: [tc.testFile || entry?.filePath].filter(Boolean),
+                targetFiles: [entry?.filePath || tc.sourceFile || tc.testFile].filter(Boolean),
                 targetTestNames: [tc.title || tc.testName].filter(Boolean),
                 targetKey: entry?.filePath || null,
               })
@@ -1892,7 +2017,7 @@ export default function UnitTestWorkspace({
             onAIFixTestCase={handleAIFixTestCase}
             onRunTestCase={(tc, entry) =>
               handleRunCoverage({
-                targetFiles: [tc.testFile || entry?.filePath].filter(Boolean),
+                targetFiles: [entry?.filePath || tc.sourceFile || tc.testFile].filter(Boolean),
                 targetTestNames: [tc.title || tc.testName].filter(Boolean),
               })
             }

@@ -6666,7 +6666,7 @@ function healScopedAsyncDoneCallbacks(code) {
  * Inject a minimal guarded `document` / `alert` fallback into tests that touch
  * DOM globals when running under Jest's default `node` environment (without jsdom).
  */
-function ensureNodeDomFallback(code) {
+export function ensureNodeDomFallback(code, { force = false } = {}) {
   if (!code || typeof code !== "string") return code;
   let working = code;
   // Heal LLM `text: () => JSON.parse(JSON.stringify(...))` in Gemini response mocks where `.text()` must return a JSON string
@@ -6674,29 +6674,30 @@ function ensureNodeDomFallback(code) {
     /\btext\s*:\s*\(\s*\)\s*=>\s*JSON\.parse\s*\(\s*(JSON\.stringify\s*\([\s\S]*?\))\s*\)/g,
     "text: () => $1",
   );
-  if (working.includes("__covaiDomFallbackV2Applied")) return working;
-  // Strip legacy v1 fallback if present so v2 with window/chrome/persistent elements upgrades it cleanly
+  if (working.includes("__covaiDomFallbackV3Applied")) return working;
+  // Strip legacy v1/v2 fallbacks if present so v3 (with navigator/localStorage/sessionStorage) upgrades cleanly
   working = working.replace(
-    /\/\*\s*__covaiDomFallbackApplied\s*\*\/[\s\S]*?if\s*\(typeof\s+globalThis\.alert\s*===\s*'undefined'\)\s*\{[^\n]*\}\s*\r?\n?\r?\n?/,
+    /\/\*\s*__covaiDomFallbackApplied[\s\S]*?\}\)\(\);\s*\r?\n?\r?\n?/,
     "",
   );
-  if (/^\s*(?:const|let|var)\s+document\b/m.test(working)) return working;
+  if (!force && /^\s*(?:const|let|var)\s+document\b/m.test(working)) return working;
   const usesDomOrBrowser =
-    /\bjest\.spyOn\s*\(\s*(?:document|window|chrome)\b/.test(working) ||
+    force ||
+    /\bjest\.spyOn\s*\(\s*(?:document|window|chrome|navigator|localStorage|sessionStorage)\b/.test(working) ||
     /\bdocument\.(?:getElementById|querySelector|querySelectorAll|createElement|addEventListener|removeEventListener|dispatchEvent|body|cookie|title|documentElement|visibilityState|hidden)\b/.test(
       working,
     ) ||
-    /\bwindow\.(?:location|addEventListener|removeEventListener|dispatchEvent|innerHeight|innerWidth|scrollY|pageYOffset|scrollTo)\b/.test(
+    /\bwindow\.(?:location|addEventListener|removeEventListener|dispatchEvent|innerHeight|innerWidth|scrollY|pageYOffset|scrollTo|localStorage|sessionStorage)\b/.test(
       working,
     ) ||
     /\b(?:global(?:This)?\.)?chrome\.(?:runtime|alarms|storage|tabs)\b/.test(
       working,
     ) ||
-    /extension\/(?:background|content|popup)\b/.test(working);
+    /(?:extension|tests)\/(?:background|content|popup)\b/.test(working);
   if (!usesDomOrBrowser) return working;
 
   const fallbackSnippet =
-    `/* __covaiDomFallbackApplied __covaiDomFallbackV2Applied */\n` +
+    `/* __covaiDomFallbackApplied __covaiDomFallbackV2Applied __covaiDomFallbackV3Applied */\n` +
     `(() => {\n` +
     `  const __covaiDomFn = (impl) => (typeof jest !== 'undefined' && typeof jest.fn === 'function') ? jest.fn(impl) : (impl || (() => {}));\n` +
     `  const __covaiEls = new Map();\n` +
@@ -6747,6 +6748,15 @@ function ensureNodeDomFallback(code) {
     `  if (typeof globalThis.window.scrollTo !== 'function') globalThis.window.scrollTo = __covaiDomFn();\n` +
     `  if (typeof globalThis.window.innerHeight === 'undefined') { globalThis.window.innerHeight = 768; globalThis.window.innerWidth = 1024; globalThis.window.scrollY = 0; globalThis.window.pageYOffset = 0; }\n` +
     `  if (typeof globalThis.alert === 'undefined') { globalThis.alert = __covaiDomFn(); }\n` +
+    `  if (typeof globalThis.navigator === 'undefined') { globalThis.navigator = { userAgent: 'node-test', language: 'en-US', sendBeacon: __covaiDomFn(() => true) }; } else if (typeof globalThis.navigator.sendBeacon !== 'function') { globalThis.navigator.sendBeacon = __covaiDomFn(() => true); }\n` +
+    `  if (typeof globalThis.history === 'undefined') { globalThis.history = { state: null, length: 1, pushState: __covaiDomFn(), replaceState: __covaiDomFn(), back: __covaiDomFn(), forward: __covaiDomFn(), go: __covaiDomFn() }; }\n` +
+    `  if (!globalThis.window.history) { globalThis.window.history = globalThis.history; }\n` +
+    `  if (typeof globalThis.fetch !== 'function') { globalThis.fetch = __covaiDomFn(async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' })); }\n` +
+    `  const __covaiMkStorage = () => { const s = new Map(); return { getItem: __covaiDomFn((k) => s.has(k) ? s.get(k) : null), setItem: __covaiDomFn((k, v) => { s.set(k, String(v)); }), removeItem: __covaiDomFn((k) => { s.delete(k); }), clear: __covaiDomFn(() => { s.clear(); }) }; };\n` +
+    `  if (typeof globalThis.localStorage === 'undefined') { globalThis.localStorage = __covaiMkStorage(); }\n` +
+    `  if (typeof globalThis.sessionStorage === 'undefined') { globalThis.sessionStorage = __covaiMkStorage(); }\n` +
+    `  if (typeof globalThis.window.localStorage === 'undefined') { globalThis.window.localStorage = globalThis.localStorage; }\n` +
+    `  if (typeof globalThis.window.sessionStorage === 'undefined') { globalThis.window.sessionStorage = globalThis.sessionStorage; }\n` +
     `  if (typeof globalThis.chrome === 'undefined') {\n` +
     `    globalThis.chrome = {\n` +
     `      runtime: { onMessage: { addListener: __covaiDomFn() }, onInstalled: { addListener: __covaiDomFn() }, sendMessage: __covaiDomFn((m, cb) => cb && cb({})) },\n` +
@@ -6757,7 +6767,32 @@ function ensureNodeDomFallback(code) {
     `  }\n` +
     `})();\n\n`;
 
-  // Place after top-level static `import ...` statements so ESM syntax stays valid
+  // In CommonJS Jest tests (not Vitest/native ESM), rewrite static relative `import` of SUT modules
+  // into `require(...)` so the DOM shim executes BEFORE the SUT module initializes top-level `window`/`document`.
+  const isVitestOrNativeEsm =
+    /\bfrom\s+['"]vitest['"]|\bjest\.unstable_mockModule\b|\bimport\.meta\b/.test(working);
+  if (!isVitestOrNativeEsm) {
+    working = working
+      .replace(
+        /^[ \t]*import\s+\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+(['"]\.\.?\/[^'"]+['"])\s*;?/gm,
+        "const $1 = require($2);",
+      )
+      .replace(
+        /^[ \t]*import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+(['"]\.\.?\/[^'"]+['"])\s*;?/gm,
+        "const $1 = require($2);",
+      )
+      .replace(
+        /^[ \t]*import\s+\{([^}]+)\}\s+from\s+(['"]\.\.?\/[^'"]+['"])\s*;?/gm,
+        (_, specs, specPath) =>
+          `const { ${specs.replace(/\b([A-Za-z_$][A-Za-z0-9_$]*)\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)/g, "$1: $2").trim()} } = require(${specPath});`,
+      )
+      .replace(
+        /^[ \t]*import\s+(['"]\.\.?\/[^'"]+['"])\s*;?/gm,
+        "require($1);",
+      );
+  }
+
+  // Place after remaining top-level package `import ...` statements (e.g. @jest/globals, vitest) so ESM syntax stays valid
   let insertPos = 0;
   const importRe =
     /^[ \t]*import\b[\s\S]*?(?:from\s+['"][^'"]+['"]|['"][^'"]+['"])\s*;?[ \t]*\r?\n?/gm;

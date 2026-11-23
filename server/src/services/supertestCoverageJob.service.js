@@ -18,7 +18,10 @@ import {
   parseJestResults,
   formatScenariosForPrisma,
 } from "./testResultParser.service.js";
-import { resolveAppImportPath } from "./aiTestStorage.service.js";
+import {
+  resolveAppImportPath,
+  resolveAppEntryPoint,
+} from "./aiTestStorage.service.js";
 import { dockerRunner } from "./dockerRunner.service.js";
 import babel from "@babel/core";
 import transformCommonJsPlugin from "@babel/plugin-transform-modules-commonjs";
@@ -85,6 +88,25 @@ const ensureProjectDependencies = async (jobId, rootDir) => {
   } catch (_) {}
 };
 
+const isEsmProject = (rootDir) => {
+  const checkPkgEsm = (dir) => {
+    const pkgPath = path.join(dir, "package.json");
+    if (!fs.existsSync(pkgPath)) return false;
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      return pkg?.type === "module";
+    } catch (_) {
+      return false;
+    }
+  };
+  return (
+    checkPkgEsm(rootDir) ||
+    checkPkgEsm(path.join(rootDir, "server")) ||
+    checkPkgEsm(path.join(rootDir, "backend")) ||
+    checkPkgEsm(path.join(rootDir, "api"))
+  );
+};
+
 /**
  * Automatically transform ESM test code to CommonJS if the project is CommonJS.
  */
@@ -92,21 +114,7 @@ export const transformTestCodeForProject = async (code, rootDir, filePath) => {
   try {
     let transformedCode = resolveAppImportPath(code, rootDir, filePath);
 
-    const checkIsEsm = (dir) => {
-      const pkgPath = path.join(dir, "package.json");
-      if (fs.existsSync(pkgPath)) {
-        try {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-          if (pkg.type === "module") return true;
-        } catch (_) {}
-      }
-      return false;
-    };
-
-    const isEsm =
-      checkIsEsm(rootDir) ||
-      checkIsEsm(path.join(rootDir, "server")) ||
-      checkIsEsm(path.join(rootDir, "backend"));
+    const isEsm = isEsmProject(rootDir);
 
     if (
       !isEsm &&
@@ -132,39 +140,20 @@ export const transformTestCodeForProject = async (code, rootDir, filePath) => {
   }
 };
 
-/**
- * Create a lightweight Jest/Supertest-backed shim for `@playwright/test` API tests
- * (`test('...', async ({ request }) => ...)`), allowing Playwright API suites to
- * execute in-process with full Istanbul coverage and without requiring Chromium or a live port.
- */
-const adaptPlaywrightApiCodeForJest = (code, rootDir, testFilePath) => {
-  if (!code || !/@playwright\/test/.test(code)) return code;
-  const resolvedRoot = path.resolve(rootDir);
-  const shimDir = path.join(resolvedRoot, ".covai-temp");
-  if (!fs.existsSync(shimDir)) {
-    fs.mkdirSync(shimDir, { recursive: true });
+const resolveSupertestPackageSpecifier = (resolvedRoot) => {
+  const candidates = [
+    path.join(resolvedRoot, "node_modules", "supertest"),
+    path.join(resolvedRoot, "server", "node_modules", "supertest"),
+    path.join(resolvedRoot, "backend", "node_modules", "supertest"),
+    path.join(resolvedRoot, "api", "node_modules", "supertest"),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir.replace(/\\/g, "/");
   }
-  const shimPath = path.join(shimDir, "playwright-api-shim.cjs");
+  return "supertest";
+};
 
-  // Discover Express app entry path relative to shimDir
-  const probeApp = resolveAppImportPath(
-    "import app from '../../app.js';",
-    resolvedRoot,
-    path.join(shimDir, "probe.test.js"),
-  );
-  const appImportMatch = probeApp.match(/from\s+['"]([^'"]+)['"]/);
-  const appRelPath = appImportMatch ? appImportMatch[1] : "../app.js";
-
-  const shimSource = `
-const supertest = require('supertest');
-let appModule = null;
-try {
-  appModule = require('${appRelPath.replace(/\\/g, "/")}');
-} catch (e) {
-  appModule = null;
-}
-const app = (appModule && (appModule.default || appModule.app)) || appModule;
-
+const buildPlaywrightShimMethods = () => `
 const wrapResponse = (res) => ({
   status: () => res.status,
   statusText: () => (res.res && res.res.statusMessage) || '',
@@ -201,30 +190,102 @@ const pwRequest = {
   fetch: async (url, opts = {}) => makeReq(String(opts.method || 'get').toLowerCase())(url, opts),
 };
 
+const g = globalThis;
 const testFn = (title, fn) => {
-  if (typeof global.it !== 'function') return;
-  return global.it(title, () => fn({ request: pwRequest }));
+  if (typeof g.it !== 'function') return;
+  return g.it(title, () => fn({ request: pwRequest }));
 };
 testFn.skip = (title, fn) => {
-  if (typeof global.it !== 'function') return;
-  return global.it.skip(title, () => (typeof fn === 'function' ? fn({ request: pwRequest }) : undefined));
+  if (typeof g.it !== 'function') return;
+  return g.it.skip(title, () => (typeof fn === 'function' ? fn({ request: pwRequest }) : undefined));
 };
 testFn.only = (title, fn) => {
-  if (typeof global.it !== 'function') return;
-  return global.it.only(title, () => fn({ request: pwRequest }));
+  if (typeof g.it !== 'function') return;
+  return g.it.only(title, () => fn({ request: pwRequest }));
 };
-testFn.describe = (title, fn) => (typeof global.describe === 'function' ? global.describe(title, fn) : fn());
-testFn.beforeEach = (fn) => (typeof global.beforeEach === 'function' ? global.beforeEach(() => fn({ request: pwRequest })) : undefined);
-testFn.afterEach = (fn) => (typeof global.afterEach === 'function' ? global.afterEach(() => fn({ request: pwRequest })) : undefined);
-testFn.beforeAll = (fn) => (typeof global.beforeAll === 'function' ? global.beforeAll(() => fn({ request: pwRequest })) : undefined);
-testFn.afterAll = (fn) => (typeof global.afterAll === 'function' ? global.afterAll(() => fn({ request: pwRequest })) : undefined);
+testFn.describe = (title, fn) => (typeof g.describe === 'function' ? g.describe(title, fn) : fn());
+testFn.beforeEach = (fn) => (typeof g.beforeEach === 'function' ? g.beforeEach(() => fn({ request: pwRequest })) : undefined);
+testFn.afterEach = (fn) => (typeof g.afterEach === 'function' ? g.afterEach(() => fn({ request: pwRequest })) : undefined);
+testFn.beforeAll = (fn) => (typeof g.beforeAll === 'function' ? g.beforeAll(() => fn({ request: pwRequest })) : undefined);
+testFn.afterAll = (fn) => (typeof g.afterAll === 'function' ? g.afterAll(() => fn({ request: pwRequest })) : undefined);
+const expectProxy = new Proxy(function () {}, {
+  apply(_target, _thisArg, args) {
+    return g.expect(...args);
+  },
+  get(_target, prop) {
+    return g.expect ? g.expect[prop] : undefined;
+  },
+});
+`;
 
+/**
+ * Create a lightweight Jest/Supertest-backed shim for `@playwright/test` API tests
+ * (`test('...', async ({ request }) => ...)`), allowing Playwright API suites to
+ * execute in-process with full Istanbul coverage and without requiring Chromium or a live port.
+ */
+export const adaptPlaywrightApiCodeForJest = (code, rootDir, testFilePath) => {
+  if (!code || !/@playwright\/test/.test(code)) return code;
+  const resolvedRoot = path.resolve(rootDir);
+  const shimDir = path.join(resolvedRoot, ".covai-temp");
+  if (!fs.existsSync(shimDir)) {
+    fs.mkdirSync(shimDir, { recursive: true });
+  }
+
+  const appEntryPath = resolveAppEntryPoint(
+    resolvedRoot,
+    path.join(shimDir, "probe.test.js"),
+  );
+  let appRelPath = "../app.js";
+  if (appEntryPath) {
+    appRelPath = path.relative(shimDir, appEntryPath).replace(/\\/g, "/");
+    if (!appRelPath.startsWith(".")) appRelPath = `./${appRelPath}`;
+  } else {
+    const probeApp = resolveAppImportPath(
+      "import app from '../../app.js';",
+      resolvedRoot,
+      path.join(shimDir, "probe.test.js"),
+    );
+    const appImportMatch = probeApp.match(/from\s+['"]([^'"]+)['"]/);
+    if (appImportMatch?.[1]) appRelPath = appImportMatch[1];
+  }
+
+  const supertestSpec = resolveSupertestPackageSpecifier(resolvedRoot);
+  const useEsmShim =
+    isEsmProject(resolvedRoot) ||
+    /^\s*import\s+[\s\S]*?from\s+['"]@playwright\/test['"]/m.test(code);
+  const shimPath = path.join(
+    shimDir,
+    useEsmShim ? "playwright-api-shim.mjs" : "playwright-api-shim.cjs",
+  );
+
+  const shimSource = useEsmShim
+    ? `
+import { createRequire } from 'node:module';
+import * as appModule from '${appRelPath}';
+const __require = createRequire(import.meta.url);
+const supertest = __require('${supertestSpec}');
+const app = (appModule && ((appModule.default && appModule.default.default) || appModule.default || appModule.app)) || appModule;
+${buildPlaywrightShimMethods()}
+export { testFn as test, expectProxy as expect, pwRequest as request };
+`
+    : `
+const supertest = require('${supertestSpec}');
+let appModule = null;
+try {
+  appModule = require('${appRelPath}');
+} catch (e) {
+  console.error('[PlaywrightApiShim] Failed to load Express app entry:', e?.message || e);
+  appModule = null;
+}
+const app = (appModule && (appModule.default || appModule.app)) || appModule;
+${buildPlaywrightShimMethods()}
 module.exports = {
   test: testFn,
-  expect: global.expect,
+  expect: expectProxy,
   request: pwRequest,
 };
 `;
+
   fs.writeFileSync(shimPath, shimSource.trim() + "\n", "utf8");
 
   let relShim = path
@@ -241,11 +302,11 @@ module.exports = {
  * without exporting `app` or guarding `.listen()` under Jest.
  * Returns a `restore()` callback to revert any temporary edits in `finally`.
  */
-const prepareExpressEntriesForSupertest = async (rootDir) => {
+export const prepareExpressEntriesForSupertest = async (rootDir) => {
   const backups = new Map();
   if (!rootDir) return () => {};
 
-  const candidates = [
+  const baseCandidates = [
     "app.js",
     "server.js",
     "index.js",
@@ -255,13 +316,41 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
     "src/index.js",
     "src/main.js",
   ];
+  const candidates = [];
+  const seenResolved = new Set();
+  for (const prefix of ["", "server", "backend", "api"]) {
+    for (const rel of baseCandidates) {
+      const joined = prefix ? path.join(prefix, rel) : rel;
+      const full = path.resolve(rootDir, joined);
+      if (!seenResolved.has(full)) {
+        seenResolved.add(full);
+        candidates.push(full);
+      }
+    }
+  }
 
   const _genModule = await import("@babel/generator");
   const generate =
     _genModule.default?.default || _genModule.default || _genModule;
 
-  for (const rel of candidates) {
-    const filePath = path.join(rootDir, rel);
+  const isJestWorkerGuard = () => ({
+    type: "UnaryExpression",
+    operator: "!",
+    prefix: true,
+    argument: {
+      type: "MemberExpression",
+      object: {
+        type: "MemberExpression",
+        object: { type: "Identifier", name: "process" },
+        property: { type: "Identifier", name: "env" },
+        computed: false,
+      },
+      property: { type: "Identifier", name: "JEST_WORKER_ID" },
+      computed: false,
+    },
+  });
+
+  for (const filePath of candidates) {
     if (!fs.existsSync(filePath)) continue;
 
     let originalContent;
@@ -293,21 +382,50 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
     if (!Array.isArray(body) || body.length === 0) continue;
 
     let expressAppName = null;
-    let hasExport = false;
+    let hasDefaultExport = false;
+    let hasNamedAppExport = false;
+    let hasCjsExport = false;
     let hasEsm = false;
-    const listenIndices = [];
+    const guardIndices = [];
 
     for (let i = 0; i < body.length; i++) {
       const node = body[i];
       if (node.type === "ImportDeclaration") {
         hasEsm = true;
+      } else if (node.type === "ExportDefaultDeclaration") {
+        hasEsm = true;
+        hasDefaultExport = true;
       } else if (
-        node.type === "ExportDefaultDeclaration" ||
         node.type === "ExportNamedDeclaration" ||
         node.type === "ExportAllDeclaration"
       ) {
         hasEsm = true;
-        hasExport = true;
+        if (
+          node.declaration?.type === "VariableDeclaration" &&
+          node.declaration.declarations?.some(
+            (d) =>
+              d.id?.type === "Identifier" &&
+              (d.id.name === "app" ||
+                (d.init?.type === "CallExpression" &&
+                  d.init.callee?.name === "express")),
+          )
+        ) {
+          hasNamedAppExport = true;
+        }
+        if (
+          Array.isArray(node.specifiers) &&
+          node.specifiers.some(
+            (s) =>
+              s.exported?.name === "app" || s.exported?.name === "default",
+          )
+        ) {
+          if (node.specifiers.some((s) => s.exported?.name === "default")) {
+            hasDefaultExport = true;
+          }
+          if (node.specifiers.some((s) => s.exported?.name === "app")) {
+            hasNamedAppExport = true;
+          }
+        }
       } else if (node.type === "VariableDeclaration") {
         for (const decl of node.declarations || []) {
           if (
@@ -327,48 +445,44 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
         ) {
           const objName = expr.left.object?.name;
           const propName = expr.left.property?.name;
-          if (
-            (objName === "module" && propName === "exports") ||
-            objName === "exports"
-          ) {
-            hasExport = true;
+          if (objName === "module" && propName === "exports") {
+            hasCjsExport = true;
+            hasDefaultExport = true;
+          } else if (objName === "exports") {
+            hasCjsExport = true;
+            if (propName === "app") hasNamedAppExport = true;
           }
         }
-        if (
-          expr?.type === "CallExpression" &&
-          expr.callee?.type === "MemberExpression" &&
-          expr.callee.property?.type === "Identifier" &&
-          expr.callee.property.name === "listen"
-        ) {
-          listenIndices.push(i);
+        if (expr?.type === "CallExpression") {
+          if (
+            expr.callee?.type === "MemberExpression" &&
+            expr.callee.property?.type === "Identifier" &&
+            expr.callee.property.name === "listen"
+          ) {
+            guardIndices.push(i);
+          } else if (
+            expr.callee?.type === "Identifier" &&
+            /^(?:cleanup|start.*cron|schedule)/i.test(expr.callee.name || "")
+          ) {
+            guardIndices.push(i);
+          }
         }
       }
     }
 
-    if (!expressAppName || (hasExport && listenIndices.length === 0)) {
+    const needsAppExport =
+      Boolean(expressAppName) &&
+      (hasEsm ? !hasDefaultExport && !hasNamedAppExport : !hasCjsExport);
+
+    if (!expressAppName || (!needsAppExport && guardIndices.length === 0)) {
       continue;
     }
 
-    for (const idx of listenIndices) {
+    for (const idx of guardIndices) {
       const stmt = body[idx];
       body[idx] = {
         type: "IfStatement",
-        test: {
-          type: "UnaryExpression",
-          operator: "!",
-          prefix: true,
-          argument: {
-            type: "MemberExpression",
-            object: {
-              type: "MemberExpression",
-              object: { type: "Identifier", name: "process" },
-              property: { type: "Identifier", name: "env" },
-              computed: false,
-            },
-            property: { type: "Identifier", name: "JEST_WORKER_ID" },
-            computed: false,
-          },
-        },
+        test: isJestWorkerGuard(),
         consequent: {
           type: "BlockStatement",
           body: [stmt],
@@ -378,12 +492,28 @@ const prepareExpressEntriesForSupertest = async (rootDir) => {
       };
     }
 
-    if (!hasExport) {
+    if (needsAppExport) {
       if (hasEsm) {
-        body.push({
-          type: "ExportDefaultDeclaration",
-          declaration: { type: "Identifier", name: expressAppName },
-        });
+        if (!hasDefaultExport) {
+          body.push({
+            type: "ExportDefaultDeclaration",
+            declaration: { type: "Identifier", name: expressAppName },
+          });
+        }
+        if (!hasNamedAppExport && expressAppName === "app") {
+          body.push({
+            type: "ExportNamedDeclaration",
+            declaration: null,
+            specifiers: [
+              {
+                type: "ExportSpecifier",
+                local: { type: "Identifier", name: expressAppName },
+                exported: { type: "Identifier", name: "app" },
+              },
+            ],
+            source: null,
+          });
+        }
       } else {
         body.push({
           type: "ExpressionStatement",
@@ -647,6 +777,7 @@ export const processSupertestCoverageJob = async (jobId) => {
     });
 
     const supertestFiles = [];
+    const targetedAiExecutionFiles = new Set();
     const { parseCode, findScenarioPath, getScenarioIdentity } =
       await import("./scenarioManager.service.js");
     const _genModule = await import("@babel/generator");
@@ -677,9 +808,10 @@ export const processSupertestCoverageJob = async (jobId) => {
       if (!testCode) continue;
 
       // Sync DB content to disk and enforce approval & toggle semantics
-      const ast = parseCode(testCode);
+      const ast = parseCode(testCode, t.filePath || filePath);
       const requests = Array.isArray(meta.requests) ? meta.requests : [];
       const approvedScenarios = new Set(meta.approvedScenarios || []);
+      let hasActiveScenario = requests.length === 0;
 
       for (const r of requests) {
         const { testName, nameIndex } = getScenarioIdentity(t, r.scenarioId);
@@ -710,6 +842,8 @@ export const processSupertestCoverageJob = async (jobId) => {
           const shouldRun = isTargetedRun
             ? isEnabled && matchesTarget
             : isApproved && isEnabled;
+
+          if (shouldRun) hasActiveScenario = true;
 
           const callee = scenarioPath.node.callee;
           if (shouldRun) {
@@ -769,6 +903,9 @@ export const processSupertestCoverageJob = async (jobId) => {
       fs.mkdirSync(path.dirname(executionFilePath), { recursive: true });
       fs.writeFileSync(executionFilePath, executableCode, "utf8");
       supertestFiles.push(executionFilePath);
+      if (isTargetedRun && hasActiveScenario) {
+        targetedAiExecutionFiles.add(executionFilePath);
+      }
     }
 
     const projectTestFiles =
@@ -800,6 +937,7 @@ export const processSupertestCoverageJob = async (jobId) => {
       const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       testNamePattern = targetTestNames.map(escapeRegex).join("|");
       const matchedFiles = supertestFiles.filter((filePath) => {
+        if (targetedAiExecutionFiles.has(filePath)) return true;
         try {
           const content = fs.readFileSync(filePath, "utf8");
           return targetTestNames.some((tName) => content.includes(tName));

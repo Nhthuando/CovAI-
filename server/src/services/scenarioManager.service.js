@@ -20,6 +20,7 @@ import {
 import { withPreparedProjectWorkspace } from "./projectWorkspacePreparation.service.js";
 import { resolveContainedProjectPath } from "./projectFileVersion.service.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
 const scenarioTransactions = new AsyncLocalStorage();
 const scenarioDb = () => scenarioTransactions.getStore() || prisma;
 export const scenarioArtifactVersion = (row) =>
@@ -280,8 +281,22 @@ async function syncAiTestToDisk(aiTest, content) {
   if (fs.existsSync(target)) fs.writeFileSync(target, content, "utf8");
 }
 
-export function parseCode(code) {
-  return parse(code, {
+export function parseCode(code, filePath = "test.js") {
+  let source = code;
+  if (typeof code === "string" && code.trim()) {
+    try {
+      const deduped = deduplicateAstDeclarations(code, { filePath });
+      if (deduped?.changed && deduped.code) {
+        source = deduped.code;
+      }
+    } catch (err) {
+      console.warn(
+        "[scenarioManager] AST deduplication skipped before parse:",
+        err?.message,
+      );
+    }
+  }
+  return parse(source, {
     sourceType: "module",
     plugins: ["jsx", "typescript"],
   });

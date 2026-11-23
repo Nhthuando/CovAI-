@@ -7528,11 +7528,13 @@ export const aiFixUnitTestCaseController = async (req, res) => {
       req.user?.id,
       "ai.use",
     );
-    await resolveProjectAccess({
-      projectId: snapshot.projectId,
-      userId: req.user?.id,
-      capability: "files.write",
-    });
+    if (!req.body?.isDraft) {
+      await resolveProjectAccess({
+        projectId: snapshot.projectId,
+        userId: req.user?.id,
+        capability: "files.write",
+      });
+    }
     const { aiFixUnitTestCase } =
       await import("../services/unitTestCaseOperations.service.js");
     const data = await aiFixUnitTestCase({
@@ -7679,11 +7681,13 @@ export const aiFixSystemTestCaseController = async (req, res) => {
       req.user?.id,
       "ai.use",
     );
-    await resolveProjectAccess({
-      projectId: snapshot.projectId,
-      userId: req.user?.id,
-      capability: "files.write",
-    });
+    if (!req.body?.isDraft) {
+      await resolveProjectAccess({
+        projectId: snapshot.projectId,
+        userId: req.user?.id,
+        capability: "files.write",
+      });
+    }
     const { aiFixSystemTestCase } =
       await import("../services/systemTestCaseOperations.service.js");
     const data = await aiFixSystemTestCase({

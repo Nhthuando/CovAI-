@@ -382,9 +382,10 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
   );
   const browserExtensionMockDirective = hasBrowserOrExtensionGlobals
     ? `\n   - CRITICAL BROWSER & CHROME EXTENSION ENVIRONMENT CONTRACT:\n` +
-      `     * This source file executes in a browser / Chrome Extension environment and accesses globals such as 'chrome', 'document', 'window', 'navigator', 'localStorage', 'MutationObserver', or 'fetch'.\n` +
-      `     * Before importing or requiring the source module, stub 'globalThis.chrome', 'globalThis.window', 'globalThis.document', 'globalThis.navigator', 'globalThis.localStorage', 'globalThis.MutationObserver', and 'globalThis.fetch' in memory with jest.fn()/vi.fn() spies.\n` +
-      `     * Capture callbacks passed to 'chrome.runtime.onMessage.addListener', 'chrome.tabs.onUpdated.addListener', 'chrome.tabs.onActivated.addListener', 'chrome.alarms.onAlarm.addListener', 'document.addEventListener', and 'window.addEventListener', and invoke those captured listener callbacks directly in your tests with realistic event/message payloads so every internal handler function is executed.`
+      `     * This source file executes in a browser / Chrome Extension environment and accesses globals such as 'chrome', 'document', 'window', 'navigator', 'localStorage', 'history', 'MutationObserver', or 'fetch'.\n` +
+      `     * Before importing or requiring the source module, stub 'globalThis.chrome', 'globalThis.window', 'globalThis.document', 'globalThis.navigator', 'globalThis.localStorage', 'globalThis.history', 'globalThis.MutationObserver', and 'globalThis.fetch' in memory with jest.fn()/vi.fn() spies.\n` +
+      `     * Capture callbacks passed to 'chrome.runtime.onMessage.addListener', 'chrome.tabs.onUpdated.addListener', 'chrome.tabs.onActivated.addListener', 'chrome.alarms.onAlarm.addListener', 'document.addEventListener', and 'window.addEventListener', and invoke those captured listener callbacks directly in your tests with realistic event/message payloads so every internal handler function is executed.\n` +
+      `     * If the file has top-level DOM initialization (e.g. checking document.readyState === 'loading' vs 'complete', wrapping history.pushState/replaceState, or scheduling setTimeout/setInterval timers), use '${isVitest ? "vi.resetModules()" : "jest.resetModules()"}' across tests to test BOTH readyState branches, invoke patched history.pushState/replaceState, dispatch 'popstate'/'visibilitychange'/'beforeunload'/'pagehide' listeners, and advance timers with '${isVitest ? "vi.useFakeTimers()/vi.advanceTimersByTime()" : "jest.useFakeTimers()/jest.advanceTimersByTime()"}' so 100% of internal script functions are executed.`
     : "";
 
   const decisionTableMarkdown =
@@ -618,6 +619,7 @@ ${unexportedWarning}
    - Always preserve existing user tests without deleting or modifying them; generated tests will be merged cleanly alongside any existing test blocks.
    - Unit testing verifies business logic functions and their internal branches (NOT just 4 generic HTTP/integration cases!). You MUST generate dedicated \`it(...)\` / \`test(...)\` block(s) covering EVERY business logic function listed below, plus all conditional branches (\`if/else\`, \`switch\`, ternary, logical \`||\`/\`&&\`/\`??\`, \`try/catch\`) so the file reaches 100% Statements, Branches, Functions, and Lines coverage:
 ${requiredCaseSummary}
+${businessFunctionTargets.length > 1 ? `   - MINIMUM TEST BLOCK COUNT MANDATE: There are ${businessFunctionTargets.length} distinct business logic functions above. You MUST emit at least ${Math.min(businessFunctionTargets.length, 24)} separate test(...)/it(...) blocks — at least ONE dedicated test block per function prefixed with "[fnName] ...". NEVER collapse multiple functions into only 4 generic Category A/B/C/D tests!` : ""}
    - MANDATORY TITLE PREFIX CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the target function name in brackets, e.g. \`"[functionName] should ..."\` (or \`"[functionName] [Happy Path] should ..."\`, \`"[functionName] [Branch Paths] should ..."\`).
    - 100% PASSING ASSERTION GUARANTEE (ZERO FAILING AI TESTS):
      * NEVER write speculative \`expect(() => fn(...)).toThrow()\` or \`expect(fn(...)).rejects.toThrow()\` unless the function body literally contains an unguarded \`throw\` statement reachable in that exact test state! If a function catches errors internally (e.g. \`try/catch\` logging or returning \`null\`/\`undefined\`/\`false\` or \`res.status(500)\`), assert the returned fallback or \`res.status\` instead of \`.toThrow()\`!
@@ -737,6 +739,7 @@ ${unexportedWarning}
 4. MANDATORY COMPLETE BUSINESS FUNCTION & BRANCH COVERAGE SUITE (${businessFunctionTargets.length || requiredUnitCases.length} TARGET FUNCTION(S) | CC = ${cyclomaticComplexity}):
    - Unit testing verifies business logic functions and their internal branches (NOT just 4 generic HTTP/integration cases!). Generate dedicated \`it(...)\` / \`test(...)\` block(s) covering EVERY business logic function listed below, plus all conditional branches (\`if/else\`, \`switch\`, ternary, logical \`||\`/\`&&\`/\`??\`, \`try/catch\`) so the file achieves 100% Statements, Branches, Functions, and Lines coverage:
 ${requiredCaseSummary}
+${businessFunctionTargets.length > 1 ? `   - MINIMUM TEST BLOCK COUNT MANDATE: There are ${businessFunctionTargets.length} distinct business logic functions above. You MUST emit at least ${Math.min(businessFunctionTargets.length, 24)} separate test(...)/it(...) blocks — at least ONE dedicated test block per function prefixed with "[fnName] ...". NEVER collapse multiple functions into only 4 generic Category A/B/C/D tests!` : ""}
    - MANDATORY TITLE PREFIX CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the target function name in brackets, e.g. \`"[functionName] should ..."\` (or \`"[functionName] [Happy Path] should ..."\`, \`"[functionName] [Branch Paths] should ..."\`).
    - 100% PASSING ASSERTION GUARANTEE (ZERO FAILING AI TESTS):
      * NEVER write speculative \`expect(() => fn(...)).toThrow()\` or \`expect(fn(...)).rejects.toThrow()\` unless the function body literally contains an unguarded \`throw\` statement reachable in that exact test state! If a function catches errors internally (e.g. \`try/catch\` logging or returning \`null\`/\`undefined\`/\`false\` or \`res.status(500)\`), assert the returned fallback or \`res.status\` instead of \`.toThrow()\`!
@@ -1560,12 +1563,16 @@ export const generateAiUnitTestSuite = async ({
   if (!aiParsedResult)
     try {
       const callStart = Date.now();
+      const needsExtendedTokens =
+        (sourceContracts?.functions?.size || 0) >= 6 ||
+        (coverageDetails?.functions?.length || 0) >= 6 ||
+        (sourceCode || "").length > 6000;
       const aiResponse = await Promise.race([
         generateText(prompt, selectedAiModel, {
           requestTimeoutMs: 45000,
           totalTimeoutMs: 90000,
           maxAttempts: 2,
-          maxOutputTokens: 4096,
+          maxOutputTokens: needsExtendedTokens ? 8192 : 4096,
         }),
         new Promise((_, reject) => {
           generationTimer = setTimeout(
@@ -1822,14 +1829,16 @@ export const generateAiUnitTestSuite = async ({
     assembleCandidate();
   } catch (error) {
     try {
-      aiParsedResult = generateFallbackUnitTests(
-        cleanSource,
-        sourceCode,
-        coverageDetails,
+      aiParsedResult = generateFallbackUnitTests({
         framework,
-        testFileInfo.relativePath,
-        unitTestContext,
-      );
+        sourceFile: cleanSource,
+        targetTestFile: testFileInfo.relativePath,
+        rootDir: snapshot?.rootDir,
+        baseName,
+        uncoveredLines: coverageDetails?.uncoveredLines || [],
+        existingContent: testFileInfo.content,
+        sourceCode,
+      });
       assembleCandidate();
     } catch (fallbackError) {
       if (!testFileInfo.content) throw fallbackError;
@@ -2115,5 +2124,374 @@ export const generateAiUnitTestSuite = async ({
     scenarioMatrix,
     suggestions: [primarySuggestion],
     telemetry: primarySuggestion.telemetry,
+  };
+};
+
+const rootRunnerLocks = new Map();
+const withRootRunnerLock = async (rootDir, taskFn) => {
+  const key = path.resolve(String(rootDir || "default")).toLowerCase();
+  const prev = rootRunnerLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  rootRunnerLocks.set(key, prev.then(() => current, () => current));
+  await prev;
+  try {
+    return await taskFn();
+  } finally {
+    release();
+    if (rootRunnerLocks.get(key) === current) {
+      rootRunnerLocks.delete(key);
+    }
+  }
+};
+
+/**
+ * Executes a single generated unit test draft in isolation (`materializeDraftTestsForRun` ->
+ * Jest/Vitest -> `restoreDraftTestsForRun`), measures real passing tests & business function
+ * coverage, and performs up to 2 targeted AI repair/gap-fill passes toward 100% pass & coverage.
+ */
+export const verifyAndRefineUnitTestDraft = async ({
+  rootDir,
+  snapshot,
+  suggestion,
+  sourceCode = "",
+  selectedAiModel = null,
+  maxPasses = 2,
+  forceVerifyInTests = false,
+  runEvaluator = null,
+  generateTextFn = null,
+} = {}) => {
+  if (!suggestion || suggestion.isFullyCovered) return suggestion;
+  const cleanSource = String(suggestion.sourceFile || suggestion.targetSourceFile || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+  const cleanTestFile = String(suggestion.testFile || suggestion.targetTestFile || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+  const initialCode = String(
+    suggestion.fullUpdatedContent ||
+      suggestion.suggestedTestCode ||
+      suggestion.generatedCode ||
+      suggestion.testCode ||
+      "",
+  );
+  if (!cleanSource || !cleanTestFile || !initialCode.trim()) return suggestion;
+
+  if (!runEvaluator) {
+    if (process.env.JEST_WORKER_ID && !forceVerifyInTests) return suggestion;
+    if (!rootDir || !fs.existsSync(rootDir)) return suggestion;
+    const hasManifestOrModules =
+      fs.existsSync(path.join(rootDir, "package.json")) ||
+      fs.existsSync(path.join(rootDir, "node_modules")) ||
+      fs.existsSync(path.join(rootDir, "server", "node_modules"));
+    if (!hasManifestOrModules) return suggestion;
+  }
+
+  const framework = suggestion.framework === "vitest" ? "vitest" : "jest";
+  const effectiveSource =
+    sourceCode ||
+    (rootDir && fs.existsSync(path.join(rootDir, cleanSource))
+      ? fs.readFileSync(path.join(rootDir, cleanSource), "utf8")
+      : "");
+  const projectUsesEsm = Boolean(
+    (rootDir && isProjectEsm(rootDir, cleanSource)) ||
+      /^\s*(?:import|export)\s+/m.test(effectiveSource),
+  );
+  const existingUserTitles = new Set(
+    extractUnitTestBlocks(suggestion.originalCode || "").map((b) =>
+      String(b.title || "").trim().toLowerCase(),
+    ),
+  );
+
+  const defaultEvaluateCandidate = async (candidateCode) => {
+    return withRootRunnerLock(rootDir, async () => {
+      const verifyId = `draft-verify-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const relCovDir = `.covai-temp/${verifyId}`;
+      const absCovDir = path.join(rootDir, ".covai-temp", verifyId);
+      let draftState = null;
+      try {
+        const {
+          runJestCoverage,
+          materializeDraftTestsForRun,
+        } = await import("./runTestsJob.service.js");
+        const { parseJestResults, parseVitestResults } = await import("./testResultParser.service.js");
+
+        draftState = materializeDraftTestsForRun(rootDir, [
+          {
+            sourceFile: cleanSource,
+            testFile: cleanTestFile,
+            framework,
+            code: candidateCode,
+          },
+        ]);
+
+        let parsedRun = null;
+        if (framework === "vitest") {
+          const { runVitestCoverage } = await import("./vitestRunner.service.js");
+          await runVitestCoverage(`verify-${verifyId}`, rootDir, snapshot?.vitestCommand, [cleanTestFile], {
+            coverageDir: relCovDir,
+            targetSourceFiles: [cleanSource],
+            useHermeticMock: true,
+          });
+          parsedRun = parseVitestResults(absCovDir, { rootDir });
+        } else {
+          await runJestCoverage(`verify-${verifyId}`, rootDir, null, [cleanTestFile], snapshot?.jestCommand, {
+            coverageDir: relCovDir,
+            targetSourceFiles: [cleanSource],
+            useHermeticMock: true,
+          });
+          parsedRun = parseJestResults(absCovDir, { rootDir });
+        }
+
+        const sumPath = [
+          path.join(absCovDir, "coverage-summary.json"),
+          path.join(absCovDir, "jest-coverage-summary.json"),
+          path.join(absCovDir, "vitest-coverage-summary.json"),
+        ].find((p) => fs.existsSync(p));
+        const finalPath = [
+          path.join(absCovDir, "coverage-final.json"),
+          path.join(absCovDir, "jest-coverage-final.json"),
+          path.join(absCovDir, "vitest-coverage-final.json"),
+        ].find((p) => fs.existsSync(p));
+
+        const normTarget = cleanSource.toLowerCase();
+        const matchEntry = (obj) => {
+          if (!obj || typeof obj !== "object") return null;
+          for (const [k, v] of Object.entries(obj)) {
+            if (k === "total") continue;
+            const normK = k.replace(/\\/g, "/").toLowerCase();
+            if (normK === normTarget || normK.endsWith("/" + normTarget) || normTarget.endsWith("/" + normK)) {
+              return v;
+            }
+          }
+          return null;
+        };
+
+        const sumJson = sumPath ? JSON.parse(fs.readFileSync(sumPath, "utf8")) : null;
+        const finalJson = finalPath ? JSON.parse(fs.readFileSync(finalPath, "utf8")) : null;
+        const sumEntry = matchEntry(sumJson);
+        const finalEntry = matchEntry(finalJson);
+
+        const uncoveredFns = [];
+        const uncoveredLinesSet = new Set();
+        const uncoveredBranchLines = new Set();
+        if (finalEntry) {
+          for (const [fnId, fnMeta] of Object.entries(finalEntry.fnMap || {})) {
+            const hits = Number(finalEntry.f?.[fnId] || 0);
+            const fnName = String(fnMeta?.name || "").trim();
+            if (hits === 0 && fnName && !isTrivialCallbackFunctionName(fnName)) {
+              uncoveredFns.push({
+                name: fnName,
+                line: fnMeta?.decl?.start?.line || fnMeta?.loc?.start?.line || fnMeta?.line || 1,
+              });
+            }
+          }
+          for (const [sId, loc] of Object.entries(finalEntry.statementMap || {})) {
+            if (Number(finalEntry.s?.[sId] || 0) === 0 && loc?.start?.line) {
+              uncoveredLinesSet.add(loc.start.line);
+            }
+          }
+          for (const [bId, bMeta] of Object.entries(finalEntry.branchMap || {})) {
+            const arr = finalEntry.b?.[bId] || [];
+            if (Array.isArray(arr) && arr.some((h) => Number(h || 0) === 0)) {
+              const bLine = bMeta?.line || bMeta?.loc?.start?.line;
+              if (bLine) uncoveredBranchLines.add(bLine);
+            }
+          }
+        }
+
+        const scenarios = Array.isArray(parsedRun?.scenarios) ? parsedRun.scenarios : [];
+        const failedScenarios = scenarios
+          .filter((s) => String(s?.status || "").toLowerCase() === "failed" || s?.isSuiteLevelFailure)
+          .map((s) => ({
+            title: s.title || s.suiteName || cleanTestFile,
+            error: Array.isArray(s.failureMessages) ? s.failureMessages.join("\n").slice(0, 1200) : "",
+          }));
+        const passedTests = Number(parsedRun?.passedTests || 0);
+        const failedTests = Number(parsedRun?.failedTests || failedScenarios.length || 0);
+        const linesPct = Number(sumEntry?.lines?.pct ?? 0);
+        const branchesPct = Number(sumEntry?.branches?.pct ?? 0);
+        const funcsPct = Number(sumEntry?.functions?.pct ?? 0);
+        const stmtsPct = Number(sumEntry?.statements?.pct ?? 0);
+
+        return {
+          passedTests,
+          failedTests,
+          failedScenarios,
+          linesPct,
+          branchesPct,
+          funcsPct,
+          stmtsPct,
+          uncoveredFns,
+          uncoveredLines: Array.from(uncoveredLinesSet).sort((a, b) => a - b),
+          uncoveredBranchLines: Array.from(uncoveredBranchLines).sort((a, b) => a - b),
+        };
+      } finally {
+        if (draftState) {
+          try {
+            const { restoreDraftTestsForRun } = await import("./runTestsJob.service.js");
+            restoreDraftTestsForRun(draftState);
+          } catch {}
+        }
+        try {
+          if (fs.existsSync(absCovDir)) fs.rmSync(absCovDir, { recursive: true, force: true });
+        } catch {}
+      }
+    });
+  };
+
+  const evaluateFn = runEvaluator || defaultEvaluateCandidate;
+  const scoreEval = (ev) => {
+    if (!ev) return -1;
+    const passBonus = ev.failedTests === 0 && ev.passedTests > 0 ? 100000 : ev.passedTests * 25 - ev.failedTests * 200;
+    return passBonus + ev.funcsPct * 3 + ev.linesPct * 2 + ev.branchesPct * 2 + ev.stmtsPct;
+  };
+
+  let bestCode = initialCode;
+  let bestEval = null;
+  try {
+    bestEval = await evaluateFn(bestCode);
+  } catch (evalErr) {
+    console.warn(`[verifyAndRefineUnitTestDraft] Initial evaluation skipped for ${cleanSource}:`, evalErr.message);
+    return suggestion;
+  }
+
+  const aiCall = generateTextFn || generateText;
+  for (let pass = 1; pass <= maxPasses; pass++) {
+    const needsPassFix = bestEval.failedTests > 0 || bestEval.passedTests === 0;
+    const needsCovFill =
+      bestEval.uncoveredFns.length > 0 ||
+      bestEval.linesPct < 100 ||
+      bestEval.branchesPct < 100 ||
+      bestEval.funcsPct < 100;
+    if (!needsPassFix && !needsCovFill) break;
+
+    const refinePrompt = [
+      `Refine the ${framework.toUpperCase()} unit test file "${cleanTestFile}" for "${cleanSource}" so 100% of tests PASS and coverage reaches 100% across Functions, Lines, Branches, and Statements.`,
+      `CURRENT MEASURED RESULTS: Passed=${bestEval.passedTests}, Failed=${bestEval.failedTests}, Lines=${bestEval.linesPct}%, Functions=${bestEval.funcsPct}%, Branches=${bestEval.branchesPct}%, Statements=${bestEval.stmtsPct}%.`,
+      bestEval.failedScenarios.length > 0
+        ? `FAILING TESTS TO FIX (MUST ALL PASS):\n${bestEval.failedScenarios
+            .slice(0, 10)
+            .map((f, i) => `${i + 1}. "${f.title}"\nError: ${f.error}`)
+            .join("\n")}`
+        : "All existing tests currently pass — preserve every passing test intact.",
+      bestEval.uncoveredFns.length > 0
+        ? `STILL UNCOVERED BUSINESS FUNCTIONS (0 hits — MUST add/update dedicated "[fnName] ..." tests to invoke every one):\n${bestEval.uncoveredFns
+            .slice(0, 25)
+            .map((fn) => `- ${fn.name}() at line ${fn.line}`)
+            .join("\n")}`
+        : "",
+      bestEval.uncoveredLines.length > 0
+        ? `STILL UNCOVERED SOURCE LINES: ${bestEval.uncoveredLines.slice(0, 40).join(", ")}`
+        : "",
+      bestEval.uncoveredBranchLines.length > 0
+        ? `STILL UNCOVERED BRANCH LINES: ${bestEval.uncoveredBranchLines.slice(0, 30).join(", ")}`
+        : "",
+      effectiveSource
+        ? `SOURCE CODE (${cleanSource}):\n\`\`\`javascript\n${escapePromptCode(effectiveSource, 14000)}\n\`\`\``
+        : "",
+      `CURRENT TEST CODE (${cleanTestFile}):\n\`\`\`javascript\n${escapePromptCode(bestCode, 14000)}\n\`\`\``,
+      `REQUIREMENTS:`,
+      `- Preserve existing passing tests cleanly.`,
+      `- Fix every failing assertion or mock mismatch by tracing actual source behavior (NEVER invent speculative .toThrow() where errors are caught).`,
+      `- Cover EVERY remaining uncovered function and branch listed above.`,
+      `- Return strictly valid JSON: { "explanation": "...", "suggestedTestCode": "...", "fullUpdatedContent": "..." }`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    try {
+      const rawResp = await aiCall(refinePrompt, selectedAiModel, {
+        requestTimeoutMs: 45000,
+        totalTimeoutMs: 60000,
+        maxAttempts: 1,
+        maxOutputTokens: 8192,
+      });
+      const respText = typeof rawResp === "object" && rawResp?.text !== undefined ? rawResp.text : rawResp;
+      const parsed = parseAndSanitizeAiTestResponse({
+        rawResponse: respText,
+        framework,
+        cleanSource,
+        sourceCode: effectiveSource,
+        rootDir: rootDir || "",
+        targetTestFile: cleanTestFile,
+        isEsm: projectUsesEsm,
+      });
+      if (!parsed.success || !parsed.parsed) continue;
+      let candidate = normalizeTestFrameworkCode(
+        parsed.parsed.fullUpdatedContent || parsed.parsed.suggestedTestCode || "",
+        { framework, filePath: cleanTestFile },
+      );
+      candidate = rebaseGeneratedTestModulePaths(candidate, {
+        rootDir: rootDir || "",
+        testFile: cleanTestFile,
+        sourceFile: cleanSource,
+      });
+      if (projectUsesEsm && framework === "jest") {
+        candidate = convertJestMocksAndStaticImportsToEsm(candidate, {
+          testFilePath: cleanTestFile,
+          sourceCode: effectiveSource ? [{ path: cleanSource, content: effectiveSource }] : [],
+          rootDir: rootDir || "",
+          targetSourceFile: cleanSource,
+        });
+      }
+      if (!candidate.trim() || !parseJavaScriptCode(candidate, { filePath: cleanTestFile }).success) {
+        continue;
+      }
+
+      const nextEval = await evaluateFn(candidate);
+      const isStrictImprovement =
+        nextEval.failedTests < bestEval.failedTests ||
+        (nextEval.failedTests === bestEval.failedTests && scoreEval(nextEval) > scoreEval(bestEval));
+      if (isStrictImprovement) {
+        bestCode = candidate;
+        bestEval = nextEval;
+      }
+    } catch (refineErr) {
+      console.warn(`[verifyAndRefineUnitTestDraft] Pass ${pass} warning for ${cleanSource}:`, refineErr.message);
+      break;
+    }
+  }
+
+  const nextTestCases = extractUnitTestBlocks(bestCode)
+    .filter((b) => !existingUserTitles.has(String(b.title || "").trim().toLowerCase()))
+    .map((b) => {
+      const def = classifyUnitTestCase({ title: b.title });
+      return {
+        title: b.title,
+        caseKey: def.key,
+        caseLabel: def.label,
+        category: def.category,
+        code: b.code,
+        startLine: b.startLine,
+        endLine: b.endLine,
+        origin: "AI_DRAFT",
+      };
+    });
+
+  return {
+    ...suggestion,
+    generatedCode: bestCode,
+    suggestedTestCode: bestCode,
+    testCode: bestCode,
+    fullUpdatedContent: bestCode,
+    ...(nextTestCases.length > 0 ? { testCases: nextTestCases } : {}),
+    validation: {
+      ...(suggestion.validation || {}),
+      status: bestEval.failedTests === 0 ? "VERIFIED_DRAFT" : "NEEDS_REVIEW",
+      coverageGoalStatus:
+        bestEval.failedTests === 0 && bestEval.linesPct >= 100 && bestEval.funcsPct >= 100
+          ? "MET"
+          : "PARTIAL",
+      passedTests: bestEval.passedTests,
+      failedTests: bestEval.failedTests,
+      linesPct: bestEval.linesPct,
+      branchesPct: bestEval.branchesPct,
+      funcsPct: bestEval.funcsPct,
+      stmtsPct: bestEval.stmtsPct,
+      uncoveredFunctions: bestEval.uncoveredFns.map((f) => f.name),
+    },
   };
 };

@@ -132,7 +132,33 @@ export const detectIntegrationFrameworks = async (rootDir) => {
     }
 
     const detectionReasons = [];
-    const { pkg, dependencies } = readPackageJson(effectiveRootDir, detectionReasons);
+    const candidatePkgDirs = [
+        effectiveRootDir,
+        path.join(effectiveRootDir, "server"),
+        path.join(effectiveRootDir, "backend"),
+        path.join(effectiveRootDir, "api"),
+    ];
+    let pkg = null;
+    const dependencies = {};
+    let jestConfigPath = null;
+    let playwrightConfigPath = null;
+    let vitestConfigPath = null;
+
+    for (const dir of candidatePkgDirs) {
+        if (!fs.existsSync(dir)) continue;
+        const parsedPkg = readPackageJson(dir, dir === effectiveRootDir ? detectionReasons : []);
+        if (!pkg && parsedPkg.pkg) pkg = parsedPkg.pkg;
+        Object.assign(dependencies, parsedPkg.dependencies || {});
+        if (!jestConfigPath) {
+            jestConfigPath = findConfigFile(dir, JEST_CONFIG_FILES) || (parsedPkg.pkg?.jest ? path.join(dir, "package.json") : null);
+        }
+        if (!playwrightConfigPath) {
+            playwrightConfigPath = findConfigFile(dir, PLAYWRIGHT_CONFIG_FILES);
+        }
+        if (!vitestConfigPath) {
+            vitestConfigPath = findConfigFile(dir, VITEST_CONFIG_FILES);
+        }
+    }
 
     // 1. Dependency checks
     const supertestVersion = dependencies.supertest ?? null;
@@ -144,10 +170,7 @@ export const detectIntegrationFrameworks = async (rootDir) => {
     if (supertestVersion) detectionReasons.push(`Supertest found in package.json (${supertestVersion})`);
     if (playwrightVersion) detectionReasons.push(`Playwright found in package.json (${playwrightVersion})`);
 
-    // 2. Config file checks
-    const jestConfigPath = findConfigFile(effectiveRootDir, JEST_CONFIG_FILES) || (pkg?.jest ? path.join(effectiveRootDir, "package.json") : null);
-    const playwrightConfigPath = findConfigFile(effectiveRootDir, PLAYWRIGHT_CONFIG_FILES);
-    const vitestConfigPath = findConfigFile(effectiveRootDir, VITEST_CONFIG_FILES);
+    // 2. Config file checks already resolved across root & backend subpackages
 
     // 3. Scan test files
     const allTestFiles = [];
@@ -334,7 +357,11 @@ export const classifyIntegrationPermutation = (detection) => {
     // Permutation A: Has Tests + Has Library
     if (hasTestFiles && hasDependencies) {
         const activeFramework =
-            supertest.files.length > 0 && supertest.hasDep
+            supertest.files.length > 0 && playwrightApi.files.length === 0
+                ? "supertest"
+                : playwrightApi.files.length > 0 && supertest.files.length === 0
+                ? "playwright"
+                : supertest.files.length > 0 && supertest.hasDep
                 ? "supertest"
                 : playwrightApi.files.length > 0 && playwrightApi.hasDep
                 ? "playwright"
